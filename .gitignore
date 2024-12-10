@@ -7,3 +7,6 @@ __pycache__/
 .venv*
 venv*
 .ssh/
+
+.env
+**/.DS_Store
