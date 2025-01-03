@@ -31,7 +31,7 @@ def main():
     processor = FrameProcessor()
 
     # Video provider setup
-    my_video_provider = VideoProviderExample("Video File", video_source="rtsp://10.0.0.106:8080/h264.sdp") # "/app/dimos/multimedia/trimmed_video.mov")
+    my_video_provider = VideoProviderExample("Video File", video_source="rtsp://10.0.0.106:8080/h264.sdp") # "/app/dimos/assets/trimmed_video.mov")
     video_stream_obs = my_video_provider.video_capture_to_observable().pipe(
         ops.subscribe_on(ThreadPoolScheduler(6))
     )

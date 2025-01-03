@@ -14,7 +14,7 @@ class StreamUtils:
 
 # TODO: Reorganize, filenaming
 class FrameProcessor:
-    def __init__(self, output_dir='/app/dimos/multimedia/frames'):
+    def __init__(self, output_dir='/app/dimos/assets/frames'):
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
         self.image_count = 0 

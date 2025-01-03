@@ -21,7 +21,7 @@ class MediaProvider:
 
 # TODO: Test threading concurrency and instanciation more fully
 class VideoProviderExample(MediaProvider):
-    def __init__(self, dev_name: str, video_source:str="/app/dimos/multimedia/video-f30-480p.mp4"):
+    def __init__(self, dev_name: str, video_source:str="/app/dimos/assets/video-f30-480p.mp4"):
         super().__init__(dev_name)
         self.video_source = video_source
         # self.scheduler = ThreadPoolScheduler(1) # CurrentThreadScheduler
@@ -80,7 +80,7 @@ class VideoProviderExample(MediaProvider):
 
 
 # class VideoProviderExample(MediaProvider):
-#     def __init__(self, dev_name: str, provider_type:str="Video", video_source:str="/app/dimos/multimedia/video-f30-480p.mp4"):
+#     def __init__(self, dev_name: str, provider_type:str="Video", video_source:str="/app/dimos/assets/video-f30-480p.mp4"):
 #         super().__init__(dev_name)
 #         self.provider_type = provider_type
 #         self.video_source = video_source
@@ -118,7 +118,7 @@ class VideoProviderExample(MediaProvider):
 #             ops.ref_count()  # Start emitting when the first subscriber subscribes and stop when the last unsubscribes
 #         )
 
-#     def get_capture(self): # , video_source="/app/dimos/multimedia/video-f30-480p.mp4"):
+#     def get_capture(self): # , video_source="/app/dimos/assets/video-f30-480p.mp4"):
 #         # video_source = root_dir + '' # "udp://0.0.0.0:23000" # "/dev/video0"
 #         cap = cv2.VideoCapture(self.video_source)
 #         print("Opening video source")
@@ -129,7 +129,7 @@ class VideoProviderExample(MediaProvider):
 #         print("Opened video source")
 #         return cap
     
-#     def video_capture_to_observable(self): # , video_source="/app/dimos/multimedia/video-f30-480p.mp4"):
+#     def video_capture_to_observable(self): # , video_source="/app/dimos/assets/video-f30-480p.mp4"):
 #         cap = self.get_capture()
 #         return self.video_capture_to_observable(cap)
 

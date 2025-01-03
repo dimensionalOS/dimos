@@ -33,7 +33,7 @@ class Agent:
 class OpenAI_Agent(Agent):
     memory_file_lock = threading.Lock()
 
-    def __init__(self, dev_name: str, agent_type:str="Vision", query="What do you see?", output_dir='/app/dimos/multimedia/agent'):
+    def __init__(self, dev_name: str, agent_type:str="Vision", query="What do you see?", output_dir='/app/dimos/assets/agent'):
         """
         Initializes a new OpenAI_Agent instance, an agent specialized in handling vision tasks.
 
@@ -234,6 +234,6 @@ class OpenAI_Agent(Agent):
         Args:
             response (str): The response to log.
         """
-        with open('/app/dimos/multimedia/agent/memory.txt', 'a') as file:
+        with open('/app/dimos/assets/agent/memory.txt', 'a') as file:
             file.write(f"{self.dev_name}: {response}\n")
             print(f"OpenAI Response [{self.dev_name}]:", response)
