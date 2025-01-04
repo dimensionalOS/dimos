@@ -6,8 +6,6 @@ services:
     env_file:
       - ./../../.env
     mem_limit: 8048m
-    stdin_open: true
-    tty: true
     volumes:
       - ./../../assets:/app/assets
     ports:
@@ -15,16 +13,19 @@ services:
     # command: [ "python", "-m", "tests.test_agent" ] 
     # ^^ Working Sanity Test Cases - Expand to Agent Class
     #
-    # command: [ "python", "-m", "dimos.types.videostream" ] 
+    # command: [ "python", "-m", "tests.types.videostream" ] 
     # ^^ Working Skeleton - Needs Impl.
     #
-    # command: [ "python", "-m", "dimos.types.media_provider" ] 
+    # command: [ "python", "-m", "tests.types.media_provider" ] 
     # ^^ Working Instance - Needs Tests. 
     # 
-    # command: [ "python", "-m", "dimos.web.edge_io" ] 
+    # command: [ "python", "-m", "tests.web.edge_io" ] 
     # ^^ Working Instance - Needs Tests. 
     # 
-    command: [ "python", "-m", "demos.agent_manip_flow_test" ] 
+    command: [ "python", "-m", "tests.agent_manip_flow_test" ] 
+    # command: ["tail", "-f", "/dev/null"]
+    stdin_open: true
+    tty: true
 
 # ----
 # TO RUN:

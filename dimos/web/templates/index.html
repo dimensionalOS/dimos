@@ -4,20 +4,47 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Video Stream Example</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+        h1, h2 {
+            text-align: center;
+            margin: 20px 0; /* Adjusted margin for better spacing */
+        }
+        img {
+            display: block; /* Removes extra space below the image */
+            max-width: 100%; /* Ensures the image is not wider than its container */
+            height: auto; /* Keeps the original aspect ratio */
+            margin: 10px auto; /* Centers the image and adds some vertical spacing */
+            border: 1px solid #ccc; /* Optional: adds a light border around the image */
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1); /* Optional: adds a subtle shadow for better visual separation */
+        }
+        #reload-button {
+            display: block;
+            width: 200px;
+            margin: 20px auto;
+            padding: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+    </style>
 </head>
 <body>
-    <h1>Live Video Feed</h1>
-    <img src="{{ url_for('video_feed') }}" alt="Video Feed" style="width: 100%;">
+    <h1>Live Video Streams</h1>
+    
+    <!-- Dynamically generate video feed sections -->
+    {% for key in stream_keys %}
+        <h2>Live {{ key.replace('_', ' ').title() }} Feed</h2>
+        <img src="{{ url_for('video_feed_' + key) }}" alt="{{ key }} Feed">
+    {% endfor %}
 
-    <h1>Live Edge Detection Feed</h1>
-    <img src="{{ url_for('video_feed_edge') }}" alt="Video Feed" style="width: 100%;">
-
-    <h1>Live Optical Flow Feed</h1>
-    <img src="{{ url_for('video_feed_optical') }}" alt="Video Feed" style="width: 100%;">
-
-    <p>Current Status: {{ status_text }}</p>
-
-    <button onclick="reloadPage()">Reload Page</button>
+    <button id="reload-button" onclick="reloadPage()">Reload Page</button>
     <script>
         function reloadPage() {
             window.location.reload(true);
