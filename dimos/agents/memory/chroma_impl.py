@@ -5,7 +5,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 import os
 
-class AgentMemoryChroma(AbstractAgentSemanticMemory):
+class AgentSemanticMemory(AbstractAgentSemanticMemory):
     def __init__(self, collection_name="my_collection"):
         """Initialize the connection to the local Chroma DB."""
         self.collection_name = collection_name

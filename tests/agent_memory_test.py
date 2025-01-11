@@ -9,10 +9,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 import os
 
-from dimos.agents.memory.chroma_impl import AgentMemoryChroma 
+from dimos.agents.memory.chroma_impl import AgentSemanticMemory 
 print("Hi.")
 
-agent_memory = AgentMemoryChroma()
+agent_memory = AgentSemanticMemory()
 print("Initialization done.")
 
 agent_memory.add_vector("id0", "Food")

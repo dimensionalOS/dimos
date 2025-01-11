@@ -1,7 +1,14 @@
+import sys
+import os
+
+# Add the parent directory of 'tests' to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# -----
+
 import chromadb
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
-import os
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
