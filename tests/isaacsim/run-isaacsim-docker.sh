@@ -14,6 +14,7 @@ sudo docker run --name isaac-sim --entrypoint bash -it --runtime=nvidia --gpus a
     -v ~/dimos:/dimos:rw \
     nvcr.io/nvidia/isaac-sim:4.2.0
 
-cd /dimos/tests/isaacsim
-/isaac-sim/python.sh -m pip install -r requirements.txt 
-/isaac-sim/python.sh stream_camera.py
+/isaac-sim/python.sh -m pip install -r /dimos/tests/isaacsim/requirements.txt
+apt-get update
+apt-get install -y ffmpeg
+/isaac-sim/python.sh /dimos/tests/isaacsim/stream_camera.py
