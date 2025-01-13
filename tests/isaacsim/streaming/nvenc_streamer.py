@@ -13,7 +13,7 @@ class NVENCStreamer:
         self.fps = fps
         self.frame_interval = 1.0 / fps
         self.last_frame_time = 0
-        self.frame_queue = queue.Queue(maxsize=5)  # Increased but still limited
+        self.frame_queue = queue.Queue(maxsize=5)
         self.running = False
         self.encoder_thread = None
         self.frames_processed = 0
@@ -40,6 +40,23 @@ class NVENCStreamer:
             '-rtsp_transport', 'tcp',
             f'rtsp://18.189.249.222:8554/live'
         ]
+
+    def start(self):
+        """Start the encoder thread"""
+        if self.running:
+            return
+        self.running = True
+        self.encoder_thread = threading.Thread(target=self._encoder_loop)
+        self.encoder_thread.start()
+        print("[NVENCStreamer] Encoder thread started")
+
+    def stop(self):
+        """Stop the encoder thread"""
+        print("[NVENCStreamer] Stopping encoder...")
+        self.running = False
+        if self.encoder_thread:
+            self.encoder_thread.join()
+        print("[NVENCStreamer] Encoder stopped")
             
     def push_frame(self, frame: np.ndarray):
         """Push a new frame to the encoding queue with rate limiting"""
