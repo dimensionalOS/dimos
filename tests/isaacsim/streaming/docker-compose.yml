@@ -15,3 +15,9 @@ services:
     image: redis:6-alpine
     ports:
       - "6379:6379" 
+
+  rtsp:
+    image: aler9/rtsp-simple-server
+    network_mode: host
+    ports:
+      - "8554:8554"  # RTSP port 

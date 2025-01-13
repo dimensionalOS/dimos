@@ -9,16 +9,15 @@ from typing import Optional
 class NVENCStreamer:
     def __init__(self, width: int = 1920, height: int = 1080, fps: int = 30, 
                  whip_endpoint: str = "http://localhost:8080/whip"):
-        print(f"[NVENCStreamer] Initializing with endpoint: {whip_endpoint}")
+        print(f"[NVENCStreamer] Initializing with RTSP output")
         self.width = width
         self.height = height
         self.fps = fps
-        self.whip_endpoint = whip_endpoint
         self.frame_queue = queue.Queue(maxsize=2)
         self.running = False
         self.encoder_thread = None
         
-        # FFmpeg command using RTP output
+        # FFmpeg command using RTSP output
         self.ffmpeg_command = [
             'ffmpeg',
             '-y',
@@ -35,8 +34,9 @@ class NVENCStreamer:
             '-b:v', '5M',
             '-maxrate', '5M',
             '-bufsize', '1M',
-            '-f', 'rtp',
-            'rtp://127.0.0.1:5004'
+            '-f', 'rtsp',
+            '-rtsp_transport', 'tcp',  # TCP for reliability
+            f'rtsp://18.189.249.222:8554/live'  # Stream to your EC2 IP
         ]
         print(f"[NVENCStreamer] FFmpeg command: {' '.join(self.ffmpeg_command)}")
         
