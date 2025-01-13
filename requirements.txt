@@ -17,5 +17,8 @@ reactivex
 langchain-chroma>=0.1.4
 langchain-openai>=0.2.14
 
+# RTSP / FFMPEG
+ffmpeg-python
+
 # Developer Specific
 ipykernel

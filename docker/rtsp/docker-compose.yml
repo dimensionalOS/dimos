@@ -1,0 +1,42 @@
+---
+services:
+  dimos_rtsp_streamer:
+    image: dimos_rtsp_streamer:latest
+    build: ./../../
+    env_file:
+      - ./../../.env
+    mem_limit: 8048m
+    volumes:
+      - ./../../assets:/app/assets
+    # ports:
+    #   - "8554:8554"
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: [ "python", "-m", "tests.test_standalone_rtsp_streamer" ]
+    # command: ["tail", "-f", "/dev/null"]
+    stdin_open: true
+    tty: true
+    depends_on:
+      - mediamtx
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx
+    ports:
+      - "8554:8554"  # RTSP port
+      - "1935:1935"  # RTMP port 
+      - "8888:8888"  # WebRTC port
+    environment:
+      - MTX_PROTOCOLS=tcp # Enable TCP for all protocols
+      - MTX_LOG_LEVEL=info 
+
+# ----
+# Pre-reqs:
+#  - Copy default.env to .env on fresh checkout
+#  - Copy video.mov to the assets folder (not checked into git)
+# ----
+# TO RUN:
+#   docker build -f ./Dockerfile -t dimos_rtsp_streamer ../../ && docker compose up
+# GO TO:
+#   rtsp://localhost:8554/stream
+# ----
