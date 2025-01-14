@@ -21,7 +21,7 @@ services:
 
   mediamtx:
     image: bluenviron/mediamtx:latest
-    container_name: mediamtx:x
+    container_name: mediamtx
 
     ports:
       - "8554:8554"  # RTSP port
