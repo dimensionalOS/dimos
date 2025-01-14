@@ -91,8 +91,8 @@ try:
         frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
         
         # Ensure frame is contiguous
-        if not frame.flags['C_CONTIGUOUS']:
-            frame = np.ascontiguousarray(frame)
+        # if not frame.flags['C_CONTIGUOUS']:
+        #     frame = np.ascontiguousarray(frame)
             
         # Write frame directly to FFmpeg
         proc.stdin.write(frame.tobytes())
