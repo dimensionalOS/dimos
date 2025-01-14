@@ -50,8 +50,7 @@ if not stage:
     exit()
 
 # Update the camera path to use the head camera
-camera_path = "/World/alfred_parent_prim/alfred_base_descr/head_cam_rgb_camera_frame/head_cam"
-
+camera_path = "/World/alfred_parent_prim/alfred_base_descr/chest_cam_rgb_camera_frame/chest_cam"
 # Get the camera prim
 camera_prim = stage.GetPrimAtPath(camera_path)
 if not camera_prim:
