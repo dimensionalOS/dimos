@@ -1,0 +1,38 @@
+version: '3'
+
+services:
+  dimos_simulator:
+    image: dimos_simulator:latest
+    build: 
+      context: ./../../
+      dockerfile: docker/simulation/Dockerfile
+    env_file:
+      - ./../../.env
+    runtime: nvidia  # Enable NVIDIA runtime
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./../../assets:/app/assets
+    networks:
+      - rtsp_net
+    depends_on:
+      - mediamtx
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx
+    networks:
+      - rtsp_net
+    ports:
+      - "8554:8554"  # RTSP port
+      - "1935:1935"  # RTMP port 
+      - "8888:8888"  # WebRTC port
+    environment:
+      - MTX_PROTOCOLS=tcp # Enable TCP for all protocols
+      - MTX_LOG_LEVEL=info 
+
+networks:
+  rtsp_net:
+    name: rtsp_net 
