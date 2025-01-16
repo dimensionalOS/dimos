@@ -35,9 +35,8 @@ RUN add-apt-repository universe -y \
 # Initialize rosdep
 RUN rosdep init && rosdep update
 
-# Setup ROS environment and source it immediately
-RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
-    source ~/.bashrc
+# Setup ROS environment (no source command)
+RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
 
 # Install Python packages directly
 RUN pip install --no-cache-dir \
@@ -48,12 +47,12 @@ RUN pip install --no-cache-dir \
     transforms3d \
     scipy
 
-# Create and setup ROS 2 workspace
+# Create and setup ROS 2 workspace (no source command)
+
 RUN mkdir -p ~/ros2_ws/src && \
     cd ~/ros2_ws && \
     colcon build && \
-    echo "source ~/ros2_ws/install/setup.bash" >> ~/.bashrc && \
-    source ~/.bashrc
+    echo "source ~/ros2_ws/install/setup.bash" >> ~/.bashrc
 
 WORKDIR /app
 
@@ -61,6 +60,8 @@ WORKDIR /app
 COPY ./dimos ./dimos
 COPY ./tests ./tests
 COPY ./dimos/__init__.py ./
+COPY ./docker/simulation/entrypoint.sh /
+RUN chmod +x /entrypoint.sh
 
-# Update CMD to use isaac-sim's python.sh
+ENTRYPOINT ["/entrypoint.sh"]
 CMD [ "/isaac-sim/python.sh", "/app/tests/isaacsim/stream_camera.py" ] 
