@@ -51,11 +51,19 @@ RUN pip install --no-cache-dir \
     transforms3d \
     scipy
 
-# Create and setup ROS 2 workspace
+# Create and setup ROS 2 workspaces
 RUN mkdir -p /home/ros/dev_ws/src && \
+    cd /home/ros && \
+    git clone https://github.com/isaac-sim/IsaacSim-ros_workspaces.git && \
+    cd IsaacSim-ros_workspaces/humble_ws && \
+    bash -c "source /opt/ros/humble/setup.bash && \
+    rosdep install -i --from-path src --rosdistro humble -y && \
+    colcon build" && \
+    echo "source /home/ros/IsaacSim-ros_workspaces/humble_ws/install/setup.bash" >> ~/.bashrc && \
     cd /home/ros/dev_ws && \
     git clone https://github.com/yashas-salankimatt/thesis_ros_ws.git src/thesis_ros_ws && \
     bash -c "source /opt/ros/humble/setup.bash && \
+    source /home/ros/IsaacSim-ros_workspaces/humble_ws/install/setup.bash && \
     rosdep install --from-paths src --ignore-src -r -y && \
     colcon build" && \
     echo "source /home/ros/dev_ws/install/setup.bash" >> ~/.bashrc
