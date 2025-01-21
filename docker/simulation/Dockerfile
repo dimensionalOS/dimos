@@ -55,9 +55,9 @@ RUN pip install --no-cache-dir \
 RUN mkdir -p /home/ros/dev_ws/src && \
     cd /home/ros/dev_ws && \
     git clone https://github.com/yashas-salankimatt/thesis_ros_ws.git src/thesis_ros_ws && \
-    source /opt/ros/humble/setup.bash && \
+    bash -c "source /opt/ros/humble/setup.bash && \
     rosdep install --from-paths src --ignore-src -r -y && \
-    colcon build && \
+    colcon build" && \
     echo "source /home/ros/dev_ws/install/setup.bash" >> ~/.bashrc
 
 WORKDIR /app
