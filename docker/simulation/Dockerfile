@@ -47,12 +47,13 @@ RUN pip install --no-cache-dir \
     transforms3d \
     scipy
 
-# Create and setup ROS 2 workspace (no source command)
-
-RUN mkdir -p ~/ros2_ws/src && \
-    cd ~/ros2_ws && \
+# Create and setup ROS 2 workspace
+RUN mkdir -p /home/ros/dev_ws/src && \
+    cd /home/ros/dev_ws && \
+    git clone https://github.com/yashas-salankimatt/thesis_ros_ws.git
     colcon build && \
-    echo "source ~/ros2_ws/install/setup.bash" >> ~/.bashrc
+    echo "source /home/ros/dev_ws/install/setup.bash" >> ~/.bashrc \
+
 
 WORKDIR /app
 
@@ -65,4 +66,6 @@ COPY ./docker/simulation/entrypoint.sh /
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD [ "/isaac-sim/python.sh", "/app/tests/isaacsim/stream_camera.py" ] 
+#CMD [ "/isaac-sim/python.sh", "/app/tests/isaacsim/stream_camera.py" ] 
+# For testing
+CMD ["tail", "-f", "/dev/null"]
