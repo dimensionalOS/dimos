@@ -30,12 +30,16 @@ RUN add-apt-repository universe -y \
         python3-colcon-common-extensions \
         python3-pip \
         python3.10-venv \
+        ament-cmake \
+        ros-humble-ament-cmake \
+        build-essential \
+        cmake \
     && rm -rf /var/lib/apt/lists/*
 
 # Initialize rosdep
 RUN rosdep init && rosdep update
 
-# Setup ROS environment (no source command)
+# Setup ROS environment
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
 
 # Install Python packages directly
@@ -50,10 +54,11 @@ RUN pip install --no-cache-dir \
 # Create and setup ROS 2 workspace
 RUN mkdir -p /home/ros/dev_ws/src && \
     cd /home/ros/dev_ws && \
-    git clone https://github.com/yashas-salankimatt/thesis_ros_ws.git
+    git clone https://github.com/yashas-salankimatt/thesis_ros_ws.git src/thesis_ros_ws && \
+    source /opt/ros/humble/setup.bash && \
+    rosdep install --from-paths src --ignore-src -r -y && \
     colcon build && \
-    echo "source /home/ros/dev_ws/install/setup.bash" >> ~/.bashrc \
-
+    echo "source /home/ros/dev_ws/install/setup.bash" >> ~/.bashrc
 
 WORKDIR /app
 
