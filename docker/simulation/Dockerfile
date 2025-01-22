@@ -151,18 +151,13 @@ RUN /bin/bash -c "cd /home/$USERNAME/IsaacSim-ros_workspaces/humble_ws && rosdep
 RUN mkdir -p /home/$USERNAME/dev_ws/src
 RUN cd /home/$USERNAME/dev_ws/src && git clone https://github.com/yashas-salankimatt/thesis_ros_ws.git
 
-# Install ZED SDK dependencies
-RUN apt-get update && apt-get install -y \
-    libusb-1.0-0-dev \
-    libhidapi-dev \
-    libglew-dev \
-    libjpeg-dev \
-    zlib1g-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Install ZED SDK
+RUN wget https://stereolabs.sfo2.cdn.digitaloceanspaces.com/zedsdk/4.2/ZED_SDK_Ubuntu22_cuda12.1_v4.2.1.zstd.run && chmod +x ZED_SDK_Ubuntu22_cuda12.1_v4.2.1.zstd.run
+RUN /bin/bash -c "./ZED_SDK_Ubuntu22_cuda12.1_v4.2.1.zstd.run -- silent skip_cuda"
 
-# Set ZED SDK environment variables
 ENV ZED_SDK_ROOT_DIR=/usr/local/zed
 ENV CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:${ZED_SDK_ROOT_DIR}
+
 
 RUN mkdir -p /home/$USERNAME/deps
 RUN cd /home/$USERNAME/deps && git clone https://github.com/facebookresearch/segment-anything-2.git
@@ -179,26 +174,10 @@ ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
 
 
-# Modify the ROS workspace build
+# Build dev_ws
 RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
     cd /home/$USERNAME/dev_ws && \
-    # Build only the packages that don't require CUDA/ZED first
-    colcon build --symlink-install \
-        --packages-skip zed_components \
-        --packages-skip depthai_bridge \
-        --packages-skip depthai_filters \
-        --packages-skip xarm_msgs && \
-    # Then build CUDA/ZED dependent packages
-    colcon build --symlink-install \
-        --packages-select zed_components \
-        --packages-select depthai_bridge \
-        --packages-select depthai_filters \
-        --packages-select xarm_msgs \
-        --cmake-args \
-        -DCUDA_TOOLKIT_ROOT_DIR=${CUDA_HOME} \
-        -DCUDA_INCLUDE_DIRS=${CUDA_HOME}/include \
-        -DCMAKE_CUDA_COMPILER=/usr/bin/nvcc \
-        -DZED_SDK_ROOT_DIR=${ZED_SDK_ROOT_DIR}"
+    colcon build --symlink-install"
 
 WORKDIR /app
 
