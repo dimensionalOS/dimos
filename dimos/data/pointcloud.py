@@ -11,6 +11,7 @@ from dimos.models.pointcloud.pointcloud_utils import (
     create_point_cloud_from_rgbd,
     canonicalize_point_cloud
 )
+from dimos.types.pointcloud import PointCloudType
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ class PointCloudProcessor:
             masks (list of np.ndarray): A list of binary masks for segmentation.
 
         Returns:
-            list of o3d.geometry.PointCloud: A list of point clouds for each mask.
+            list of PointCloudType: A list of point clouds for each mask.
             bool: A flag indicating if the point clouds were canonicalized.
         """
         try:
@@ -75,7 +76,7 @@ class PointCloudProcessor:
                 'width': width,
                 'height': height,
                 'cx': width / 2,
-                'cy': height / 2,
+                'cy': height / 2,      
             })
 
             point_clouds = []
@@ -98,7 +99,7 @@ class PointCloudProcessor:
                 if canonicalized:
                     inlier_cloud.transform(transformation)
 
-                point_clouds.append(inlier_cloud)
+                point_clouds.append(PointCloudType(point_cloud=inlier_cloud, metadata={"mask_index": idx}))
                 # Save point cloud to file
                 pointcloud_filename = f"pointcloud_{idx}.pcd"
                 pointcloud_filepath = os.path.join(self.output_dir, pointcloud_filename)

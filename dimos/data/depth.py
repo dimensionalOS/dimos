@@ -16,6 +16,7 @@ import gc
 import io
 import csv
 import numpy as np
+from dimos.types.depth_map import DepthMapType
 
 class DepthProcessor:
     def __init__(self, debug=False):
@@ -41,7 +42,7 @@ class DepthProcessor:
             intrinsics: Optional camera intrinsics parameters
         
         Returns:
-            PIL Image containing the depth map
+            DepthMapType containing the depth map
         """
         if intrinsics:
             self.metric_3d.update_intrinsic(intrinsics)
@@ -78,7 +79,7 @@ class DepthProcessor:
                 # Save depth map locally or to S3 as needed
                 pass  # Implement saving logic if required
 
-            return depth_map
+            return DepthMapType(depth_data=depth_map, metadata={"intrinsics": intrinsics})
 
         except Exception as e:
             self.logger.error(f"Error processing frame: {e}")
