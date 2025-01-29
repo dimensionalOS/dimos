@@ -4,6 +4,8 @@ import os
 # Add the parent directory of 'tests' to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+print(f"Hi from {os.path.basename(__file__)}\n")
+
 # -----
 
 import ast

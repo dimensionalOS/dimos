@@ -18,11 +18,12 @@ from dotenv import load_dotenv
 # Third-party imports
 from flask import Flask
 from reactivex import operators as ops
+from reactivex import of, interval, zip
 from reactivex.disposable import CompositeDisposable
 from reactivex.scheduler import ThreadPoolScheduler, CurrentThreadScheduler, ImmediateScheduler
 
 # Local application imports
-from dimos.agents.agent import OpenAI_Agent 
+from dimos.agents.agent import PromptBuilder, OpenAI_Agent 
 from dimos.types.videostream import FrameProcessor, VideoOperators as vops
 from dimos.types.media_provider import VideoProviderExample
 from dimos.web.flask_server import FlaskServer
@@ -56,66 +57,110 @@ def main():
         "/app/assets/ldru_480p.mp4",
         "/app/assets/trimmed_video_480p.mov",
         "/app/assets/video-f30-480p.mp4",
+        "/app/assets/video.mov",
         "rtsp://192.168.50.207:8080/h264.sdp",
-        "rtsp://10.0.0.106:8080/h264.sdp"
+        "rtsp://10.0.0.106:8080/h264.sdp",
+        "/app/assets/people_1080p_24fps.mp4"
     ]
 
-    VIDEO_SOURCE_INDEX = 3
-    VIDEO_SOURCE_INDEX_2 = 2
+    VIDEO_SOURCE_INDEX = 4
 
     my_video_provider = VideoProviderExample("Video File", video_source=VIDEO_SOURCES[VIDEO_SOURCE_INDEX])
-    my_video_provider_2 = VideoProviderExample("Video File 2", video_source=VIDEO_SOURCES[VIDEO_SOURCE_INDEX_2])
 
     video_stream_obs = my_video_provider.video_capture_to_observable(fps=120).pipe(
         ops.subscribe_on(thread_pool_scheduler),
         # Move downstream operations to thread pool for parallel processing
         # Disabled: Evaluating performance impact
         # ops.observe_on(thread_pool_scheduler),
-        vops.with_jpeg_export(processor, suffix="raw"),
+        # vops.with_jpeg_export(processor, suffix="raw"),
         vops.with_fps_sampling(fps=30),
-        vops.with_jpeg_export(processor, suffix="raw_slowed"),
-    )
-
-    video_stream_obs_2 = my_video_provider_2.video_capture_to_observable(fps=120).pipe(
-        ops.subscribe_on(thread_pool_scheduler),
-        # Move downstream operations to thread pool for parallel processing
-        # Disabled: Evaluating performance impact
-        # ops.observe_on(thread_pool_scheduler),
-        vops.with_jpeg_export(processor, suffix="raw_2"),
-        vops.with_fps_sampling(fps=30),
-        vops.with_jpeg_export(processor, suffix="raw_2_slowed"),
+        # vops.with_jpeg_export(processor, suffix="raw_slowed"),
     )
 
     edge_detection_stream_obs = processor.process_stream_edge_detection(video_stream_obs).pipe(
-        vops.with_jpeg_export(processor, suffix="edge"),
+        # vops.with_jpeg_export(processor, suffix="edge"),
     )
 
-    optical_flow_relevancy_stream_obs = processor.process_stream_optical_flow_with_relevancy(video_stream_obs)
+    optical_flow_relevancy_stream_obs = processor.process_stream_optical_flow(video_stream_obs)
 
     optical_flow_stream_obs = optical_flow_relevancy_stream_obs.pipe(
-        ops.do_action(lambda result: print(f"Optical Flow Relevancy Score: {result[1]}")),
-        vops.with_optical_flow_filtering(threshold=2.0),
-        ops.do_action(lambda _: print(f"Optical Flow Passed Threshold.")),
-        vops.with_jpeg_export(processor, suffix="optical")
+        # ops.do_action(lambda result: print(f"Optical Flow Relevancy Score: {result[1]}")),
+        # vops.with_optical_flow_filtering(threshold=2.0),
+        # ops.do_action(lambda _: print(f"Optical Flow Passed Threshold.")),
+        #vops.with_jpeg_export(processor, suffix="optical")
     )
 
     #
     # ====== Agent Orchastrator (Qu.s Awareness, Temporality, Routing) ====== 
     #
 
-    # Agent 1
-    # my_agent = OpenAI_Agent(
-    #     "Agent 1", 
-    #     query="You are a robot. What do you see? Put a JSON with objects of what you see in the format {object, description}.")
-    # my_agent.subscribe_to_image_processing(slowed_video_stream_obs)
-    # disposables.add(my_agent.disposables)
+    # Observable that emits every 2 seconds
+    secondly_emission = interval(2, scheduler=thread_pool_scheduler).pipe(
+        ops.map(lambda x: f"Second {x+1}"),
+        # ops.take(30)
+    )
 
-    # # Agent 2
-    # my_agent_two = OpenAI_Agent(
-    #     "Agent 2", 
-    #     query="This is a visualization of dense optical flow. What movement(s) have occured? Put a JSON with mapped directions you see in the format {direction, probability, english_description}.")
-    # my_agent_two.subscribe_to_image_processing(optical_flow_stream_obs)
-    # disposables.add(my_agent_two.disposables)
+    # Agent 1
+    my_agent = OpenAI_Agent(
+        "Agent 1", 
+        query="You are a robot. What do you see? Put a JSON with objects of what you see in the format {object, description}.",
+        json_mode=False
+    )
+    
+    # Create an agent for each subset of questions that it would be theroized to handle. 
+    # Set std. template/blueprints, and devs will add to that likely. 
+
+    ai_1_obs = video_stream_obs.pipe(
+        # vops.with_fps_sampling(fps=30),
+        # ops.throttle_first(1),
+        vops.with_jpeg_export(processor, suffix="open_ai_agent_1"),
+        ops.take(30),
+        ops.replay(buffer_size=30, scheduler=thread_pool_scheduler),
+    )
+    ai_1_obs.connect()
+
+    ai_1_repeat_obs = ai_1_obs.pipe(ops.repeat())
+    
+    my_agent.subscribe_to_image_processing(ai_1_obs)
+    disposables.add(my_agent.disposables)
+
+    # Agent 2
+    my_agent_two = OpenAI_Agent(
+        "Agent 2", 
+        query="This is a visualization of dense optical flow. What movement(s) have occured? Put a JSON with mapped directions you see in the format {direction, probability, english_description}.",
+        max_input_tokens_per_request=1000,
+        max_output_tokens_per_request=300,
+        json_mode=False,
+        model_name="gpt-4o-2024-08-06"
+    )
+    
+    ai_2_obs = optical_flow_stream_obs.pipe(
+        # vops.with_fps_sampling(fps=30),
+        # ops.throttle_first(1),
+        vops.with_jpeg_export(processor, suffix="open_ai_agent_2"),
+        ops.take(30),
+        ops.replay(buffer_size=30, scheduler=thread_pool_scheduler),
+    )
+    ai_2_obs.connect()
+
+    ai_2_repeat_obs = ai_2_obs.pipe(ops.repeat())
+
+
+    # Combine emissions using zip
+    ai_1_secondly_repeating_obs = zip(secondly_emission, ai_1_repeat_obs).pipe(
+        # ops.do_action(lambda s: print(f"AI 1 - Emission Count: {s[0]}")),
+        ops.map(lambda r: r[1]),
+    )
+
+    # Combine emissions using zip
+    ai_2_secondly_repeating_obs = zip(secondly_emission, ai_2_repeat_obs).pipe(
+        # ops.do_action(lambda s: print(f"AI 2 - Emission Count: {s[0]}")),
+        ops.map(lambda r: r[1]),
+    )
+
+    
+    my_agent_two.subscribe_to_image_processing(ai_2_obs)
+    disposables.add(my_agent_two.disposables)
 
     #
     # ====== Create and start the Flask server ====== 
@@ -123,10 +168,11 @@ def main():
 
     # Will be visible at http://[host]:[port]/video_feed/[key]
     flask_server = FlaskServer(
-        video_one=video_stream_obs,
-        video_two=video_stream_obs_2,
-        edge_detection=edge_detection_stream_obs,
-        optical_flow=optical_flow_stream_obs,
+        # video_one=video_stream_obs,
+        # edge_detection=edge_detection_stream_obs,
+        # optical_flow=optical_flow_stream_obs,
+        OpenAI_Agent_1=ai_1_secondly_repeating_obs,
+        OpenAI_Agent_2=ai_2_secondly_repeating_obs,
     )
     
     flask_server.run(threaded=True)

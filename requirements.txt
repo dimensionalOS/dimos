@@ -10,6 +10,7 @@ ffmpeg-python
 pytest
 python-dotenv
 openai
+tiktoken>=0.8.0
 Flask>=2.2
 reactivex
 
@@ -20,6 +21,9 @@ uvicorn>=0.34.0
 # Agent Memory 
 langchain-chroma>=0.1.4
 langchain-openai>=0.2.14
+
+# Class Extraction
+pydantic
 
 # Developer Specific
 ipykernel

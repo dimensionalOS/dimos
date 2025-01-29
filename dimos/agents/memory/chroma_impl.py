@@ -34,6 +34,7 @@ class AgentSemanticMemory(AbstractAgentSemanticMemory):
         self.db_connection = Chroma(
             collection_name=self.collection_name,
             embedding_function=self.embeddings,
+            collection_metadata={"hnsw:space": "cosine"}
         )
 
     def add_vector(self, vector_id, vector_data):
@@ -51,6 +52,26 @@ class AgentSemanticMemory(AbstractAgentSemanticMemory):
         result = self.db_connection.get(include=['embeddings'], ids=[vector_id])
         return result
 
+    def query(self, query_texts, n_results=4, similarity_threshold=None):
+        """Query the collection with a specific text and return up to n results."""
+        if not self.db_connection:
+            raise Exception("Collection not initialized. Call connect() first.")
+        
+        if similarity_threshold is not None:
+            if not (0 <= similarity_threshold <= 1):
+                raise ValueError("similarity_threshold must be between 0 and 1.")
+            return self.db_connection.similarity_search_with_relevance_scores(
+                query=query_texts,
+                k=n_results,
+                score_threshold=similarity_threshold
+            )
+        else:
+            documents = self.db_connection.similarity_search(
+                query=query_texts,
+                k=n_results
+            )
+            return [(doc, None) for doc in documents]
+
     def update_vector(self, vector_id, new_vector_data):
         # TODO
         return super().connect()
@@ -61,11 +82,3 @@ class AgentSemanticMemory(AbstractAgentSemanticMemory):
             raise Exception("Collection not initialized. Call connect() first.")
         self.my_collection.delete(ids=[vector_id])
     
-    def query(self, query_texts, n_results=2):
-        """Query the collection with a specific text and return up to n results."""
-        if not self.db_connection:
-            raise Exception("Collection not initialized. Call connect() first.")
-        return self.db_connection.similarity_search(
-            query=query_texts,
-            k=n_results
-        )
