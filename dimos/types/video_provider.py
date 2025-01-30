@@ -10,7 +10,7 @@ from threading import Lock
 
 from dimos.types.videostream import FrameProcessor
 
-class MediaProvider:
+class VideoProvider:
     def __init__(self, dev_name:str="NA"):
         self.dev_name = dev_name
         self.disposables = CompositeDisposable()
@@ -24,7 +24,7 @@ class MediaProvider:
 
 
 # TODO: Test threading concurrency and instanciation more fully
-class VideoProviderExample(MediaProvider):
+class VideoProviderExample(VideoProvider):
     def __init__(self, dev_name: str, video_source:str="/app/assets/video-f30-480p.mp4"):
         super().__init__(dev_name)
         self.video_source = video_source

@@ -18,7 +18,7 @@ services:
     # command: [ "python", "-m", "tests.types.videostream" ] 
     # ^^ Working Skeleton - Needs Impl.
     #
-    # command: [ "python", "-m", "tests.types.media_provider" ] 
+    # command: [ "python", "-m", "tests.types.video_provider" ] 
     # ^^ Working Instance - Needs Tests. 
     # 
     # command: [ "python", "-m", "tests.web.edge_io" ] 

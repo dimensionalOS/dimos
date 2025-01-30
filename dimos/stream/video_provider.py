@@ -6,7 +6,7 @@ from reactivex.disposable import CompositeDisposable
 from reactivex.scheduler import ThreadPoolScheduler, CurrentThreadScheduler
 from threading import Lock
 
-class MediaProvider:
+class VideoProvider:
     def __init__(self, dev_name:str="NA"):
         self.dev_name = dev_name
         self.disposables = CompositeDisposable()
@@ -20,7 +20,7 @@ class MediaProvider:
 
 
 # TODO: Test threading concurrency and instanciation more fully
-class VideoProviderExample(MediaProvider):
+class VideoProviderExample(VideoProvider):
     def __init__(self, dev_name: str, video_source:str="/app/assets/video-f30-480p.mp4"):
         super().__init__(dev_name)
         self.video_source = video_source
@@ -86,7 +86,7 @@ class VideoProviderExample(MediaProvider):
 
 
 
-# class VideoProviderExample(MediaProvider):
+# class VideoProviderExample(VideoProvider):
 #     def __init__(self, dev_name: str, provider_type:str="Video", video_source:str="/app/assets/video-f30-480p.mp4"):
 #         super().__init__(dev_name)
 #         self.provider_type = provider_type

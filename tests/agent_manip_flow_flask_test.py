@@ -25,7 +25,7 @@ from reactivex.scheduler import ThreadPoolScheduler, CurrentThreadScheduler, Imm
 # Local application imports
 from dimos.agents.agent import PromptBuilder, OpenAI_Agent 
 from dimos.types.videostream import FrameProcessor, VideoOperators as vops
-from dimos.types.media_provider import VideoProviderExample
+from dimos.types.video_provider import VideoProviderExample
 from dimos.web.flask_server import FlaskServer
 
 # Load environment variables
