@@ -1,4 +1,5 @@
 
+from textwrap import dedent
 from dimos.agents.tokenizer.openai_impl import AbstractTokenizer, OpenAI_Tokenizer
 
 # TODO: Make class more generic when implementing other tokenizers. Presently its OpenAI specific.
@@ -6,27 +7,27 @@ from dimos.agents.tokenizer.openai_impl import AbstractTokenizer, OpenAI_Tokeniz
 
 class PromptBuilder():
 
-    DEFAULT_SYSTEM_PROMPT = """
-You are an AI assistant capable of understanding and analyzing both visual and textual information. 
-Your task is to provide accurate and insightful responses based on the data provided to you. 
-Use the following information to assist the user with their query. Do not rely on any internal 
-knowledge or make assumptions beyond the provided data.
+    DEFAULT_SYSTEM_PROMPT = dedent("""
+    You are an AI assistant capable of understanding and analyzing both visual and textual information. 
+    Your task is to provide accurate and insightful responses based on the data provided to you. 
+    Use the following information to assist the user with their query. Do not rely on any internal 
+    knowledge or make assumptions beyond the provided data.
 
-Visual Context: You may have been given an image to analyze. Use the visual details to enhance your response.
-Textual Context: There may be some text retrieved from a relevant database to assist you
+    Visual Context: You may have been given an image to analyze. Use the visual details to enhance your response.
+    Textual Context: There may be some text retrieved from a relevant database to assist you
 
-Instructions:
-- Combine insights from both the image and the text to answer the user's question.
-- If the information is insufficient to provide a complete answer, acknowledge the limitation.
-- Maintain a professional and informative tone in your response.
-"""
+    Instructions:
+    - Combine insights from both the image and the text to answer the user's question.
+    - If the information is insufficient to provide a complete answer, acknowledge the limitation.
+    - Maintain a professional and informative tone in your response.
+    """)
 
-    DEFAULT_SYSTEM_PROMPT_WITHOUT_DOCUMENTS = """
-You are an AI assistant capable of understanding and analyzing both visual and textual information. 
-Currently, no additional textual data is available. Please proceed by analyzing the visual content 
-provided and respond to the user's query based on the image alone. If the image does not provide 
-enough context, inform the user accordingly.
-"""
+    DEFAULT_SYSTEM_PROMPT_WITHOUT_DOCUMENTS = dedent("""
+    You are an AI assistant capable of understanding and analyzing both visual and textual information. 
+    Currently, no additional textual data is available. Please proceed by analyzing the visual content 
+    provided and respond to the user's query based on the image alone. If the image does not provide 
+    enough context, inform the user accordingly.
+    """)
     
     def __init__(self, model_name='gpt-4o', max_tokens=128000, tokenizer: AbstractTokenizer = None):
         """
@@ -71,8 +72,8 @@ enough context, inform the user accordingly.
     
     def build(
         self,
-        system_prompt=DEFAULT_SYSTEM_PROMPT,
-        fallback_system_prompt=DEFAULT_SYSTEM_PROMPT_WITHOUT_DOCUMENTS,
+        system_prompt=None,
+        fallback_system_prompt=None,
         user_query=None,
         base64_image=None,
         image_width=None,
@@ -107,6 +108,9 @@ enough context, inform the user accordingly.
         if user_query is None:
             raise ValueError("User query is required.")
 
+        # Debug:
+        # base64_image = None
+
         budgets = budgets or {
             "system_prompt": self.max_tokens // 4,
             "user_query": self.max_tokens // 4,
@@ -125,8 +129,18 @@ enough context, inform the user accordingly.
             image_detail = "low"  # Default to "low" if invalid or None
 
         # Determine which system prompt to use
+        if system_prompt is None:
+            system_prompt = self.DEFAULT_SYSTEM_PROMPT
+        if fallback_system_prompt is None:
+            fallback_system_prompt = self.DEFAULT_SYSTEM_PROMPT_WITHOUT_DOCUMENTS
+
         rag_context = rag_context or ""
         system_prompt = fallback_system_prompt if not rag_context and fallback_system_prompt else system_prompt
+        
+        # Debug:
+        # print("system_prompt: ", system_prompt)
+        # print("rag_context: ", rag_context)
+        # print("fallback_system_prompt: ", fallback_system_prompt)
 
         # region Token Counts
         if not override_token_limit:
@@ -184,6 +198,10 @@ enough context, inform the user accordingly.
             })
         messages.append({"role": "user", "content": user_content})
 
+        # Debug:
+        # print("system_prompt: ", system_prompt)
+        # print("user_query: ", user_query)
+        # print("user_content: ", user_content)
         # print(f"Messages: {messages}")
 
         return messages
