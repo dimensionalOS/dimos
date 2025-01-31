@@ -2,8 +2,10 @@ from dimos.robot.robot import Robot
 from dimos.hardware.interface import HardwareInterface
 from dimos.agents.agent import Agent, OpenAI_Agent
 from dimos.agents.agent_config import AgentConfig
+from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.videostream import VideoStream
 from dimos.stream.video_provider import AbstractVideoProvider
+from dimos.stream.video_operators import VideoOperators as vops
 from reactivex import Observable, create
 from reactivex import operators as ops
 import asyncio
@@ -195,12 +197,20 @@ class UnitreeGo2(Robot):
         
         frame_counter = create_frame_counter()
         
+        # Define a frame processor that logs the frames to disk as jpgs
+        frame_processor = FrameProcessor(
+            delete_on_init=True,
+            output_dir=os.path.join(self.output_dir, "frames")
+        )
+
         # Add rate limiting to the video stream
         rate_limited_stream = video_stream_obs.pipe(
             # Add logging and count frames
             ops.do_action(lambda _: print(f"Frame {frame_counter()} received")),
             # Sample the latest frame every api_call_interval seconds
-            ops.sample(timedelta(seconds=self.api_call_interval)),
+            vops.with_fps_sampling(sample_interval=timedelta(seconds=self.api_call_interval), use_latest=False),
+            # Output to jpgs on disk for debugging
+            vops.with_jpeg_export(frame_processor, suffix="openai_frame_", save_limit=100),
             # Log when a frame is sampled
             ops.do_action(lambda _: print(f"\n=== Processing frame at {time.strftime('%H:%M:%S')} ===")),
             # Add error handling
