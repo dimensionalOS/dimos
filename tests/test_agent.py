@@ -1,5 +1,14 @@
-from dotenv import load_dotenv
+import sys
 import os
+
+# Add the parent directory of 'tests' to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+print(f"Hi from {os.path.basename(__file__)}\n")
+
+# -----
+
+from dotenv import load_dotenv
 
 # Sanity check for dotenv
 def test_dotenv():
@@ -19,7 +28,7 @@ def test_openai_connection():
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "What’s in this image?"},
+                    {"type": "text", "text": "What's in this image?"},
                     {
                         "type": "image_url",
                         "image_url": {

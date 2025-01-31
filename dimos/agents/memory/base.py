@@ -64,10 +64,23 @@ class AbstractAgentSemanticMemory(): # AbstractAgentMemory):
         """
     
     @abstractmethod
-    def query(self, ):
-        """Query the database using its identifier.
+    def query(self, query_texts, n_results=4, similarity_threshold=None):
+        """Performs a semantic search in the vector database.
+
         Args:
-            vector_id (any): The identifier of the vector to delete.
+            query_texts (Union[str, List[str]]): The query text or list of query texts to search for.
+            n_results (int, optional): Number of results to return. Defaults to 4.
+            similarity_threshold (float, optional): Minimum similarity score for results to be included [0.0, 1.0]. Defaults to None.
+
+        Returns:
+            List[Tuple[Document, Optional[float]]]: A list of tuples containing the search results. Each tuple
+            contains:
+                Document: The retrieved document object.
+                Optional[float]: The similarity score of the match, or None if not applicable.
+
+        Raises:
+            ValueError: If query_texts is empty or invalid.
+            ConnectionError: If database connection fails during query.
         """
 
     ## Update ##
