@@ -22,4 +22,6 @@ services:
 # ----
 # TO RUN:
 #   docker build -f ./Dockerfile -t dimos-unitree ../../ && docker compose up
+# OR TO RUN WITH DOCKER COMPOSE:
+#   docker compose down && docker compose build && docker compose up -d
 # ----
