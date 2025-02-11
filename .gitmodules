@@ -8,3 +8,6 @@
 [submodule "dimos/robot/unitree/external/go2_webrtc_connect"]
 	path = dimos/robot/unitree/external/go2_webrtc_connect
 	url = https://github.com/spomichter/go2_webrtc_connect
+[submodule "dimos/robot/unitree/external/go2_ros2_sdk"]
+	path = dimos/robot/unitree/external/go2_ros2_sdk
+	url = https://github.com/dimensionalOS/go2_ros2_sdk
