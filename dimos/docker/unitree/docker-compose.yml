@@ -1,0 +1,48 @@
+---
+services:
+  dimos-unitree:
+    image: dimos-unitree:latest
+    build: 
+      context: ./../../
+      dockerfile: docker/unitree/Dockerfile
+    env_file:
+      - ./../../.env
+    mem_limit: 8048m
+    volumes:
+      - ./../../assets:/app/assets
+      - ./../../output:/app/output  
+    ports:
+      - "5555:5555"
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Robot configuration - use shell variables with defaults
+      - ROBOT_IP=${ROBOT_IP:-192.168.9.140}
+      - CONNECTION_METHOD=${CONNECTION_METHOD:-LocalSTA}
+      - SERIAL_NUMBER=${SERIAL_NUMBER:-}
+      - OUTPUT_DIR=${OUTPUT_DIR:-/app/assets}
+      - API_CALL_INTERVAL=${API_CALL_INTERVAL:-5}
+    stdin_open: true
+    tty: true
+    command: ["python", "-m", "dimos.robot.unitree.run_go2"]
+    # command: ["tail", "-f", "/dev/null"]
+
+# ----
+# TO RUN with default values:
+#   docker compose up
+#
+# TO RUN with custom parameters:
+#   ROBOT_IP=192.168.1.100 CONNECTION_METHOD=LocalAP SERIAL_NUMBER=ABC123 docker compose up
+#
+# Examples:
+#   - With IP:
+#     ROBOT_IP=192.168.1.100 docker compose up
+#
+#   - With LocalAP:
+#     CONNECTION_METHOD=LocalAP docker compose up
+#
+#   - With Serial Number:
+#     CONNECTION_METHOD=LocalSTA SERIAL_NUMBER=ABC123 docker compose up
+#
+#   - With custom API interval:
+#     API_CALL_INTERVAL=10 docker compose up
+# ----
