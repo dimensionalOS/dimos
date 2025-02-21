@@ -46,8 +46,6 @@ class AbstractVideoProvider(ABC):
         """Destructor to ensure resources are cleaned up if not explicitly disposed."""
         self.dispose_all()
 
-
-# TODO: Test threading concurrency and instanciation more fully
 class VideoProvider(AbstractVideoProvider):
     """Video provider implementation for capturing video as an observable."""
 
@@ -61,7 +59,7 @@ class VideoProvider(AbstractVideoProvider):
         super().__init__(dev_name)
         self.video_source = video_source
         self.cap = None
-        self.lock = Lock()  # Ensure thread-safe access
+        self.lock = Lock()
 
     def _initialize_capture(self):
         """Initializes the video capture object if not already initialized."""
@@ -75,21 +73,32 @@ class VideoProvider(AbstractVideoProvider):
                 raise Exception(f"Failed to open video source: {self.video_source}")
             logging.info("Opened new capture")
 
-    def capture_video_as_observable(self, fps: int = 30) -> Observable:
-        """Creates an observable from video capture that emits frames at specified FPS.
+    def capture_video_as_observable(self, realtime: bool = True, fps: int = 30) -> Observable:
+        """Creates an observable from video capture that emits frames at specified FPS or the video's native FPS.
 
         Args:
-            fps: Frames per second to emit. Defaults to 30fps.
+            realtime: If True, use the video's native FPS. Defaults to True.
+            fps: Frames per second to emit. Defaults to 30fps. Only used if realtime is False and the video's native FPS is not available.
 
         Returns:
-            Observable: An observable emitting frames at the specified rate.
+            Observable: An observable emitting frames at the specified or native rate.
         """
-        frame_interval = 1.0 / fps
-
         def emit_frames(observer, scheduler):
             try:
                 self._initialize_capture()
+                
+                # Determine the FPS to use
+                local_fps = fps
+                if realtime:
+                    native_fps = self.cap.get(cv2.CAP_PROP_FPS)
+                    if native_fps > 0:
+                        local_fps = native_fps
+                    else:
+                        logging.warning("Native FPS not available, defaulting to specified FPS")
+                
+                frame_interval = 1.0 / local_fps
                 frame_time = time.monotonic()
+
                 while self.cap.isOpened():
                     with self.lock:  # Thread-safe access
                         ret, frame = self.cap.read()

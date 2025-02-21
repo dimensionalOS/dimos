@@ -1,10 +1,13 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 import cv2
 import numpy as np
 import os
-from reactivex import Observable
+from reactivex import Observable, create
 from reactivex import operators as ops
-from typing import Callable, Tuple, Optional
+from typing import Any, Callable, Tuple, Optional
+
+import zmq
+import base64
 
 from dimos.stream.frame_processor import FrameProcessor
 
@@ -89,7 +92,8 @@ class VideoOperators:
     def with_jpeg_export(
         frame_processor: 'FrameProcessor',
         save_limit: int = 100,
-        suffix: str = ""
+        suffix: str = "",
+        loop: bool = False
     ) -> Callable[[Observable], Observable]:
         """Creates an operator that saves video frames as JPEG files.
 
@@ -104,7 +108,9 @@ class VideoOperators:
             suffix: Optional string to append to filename before index.
                 Example: "raw" creates "1_raw.jpg".
                 Defaults to empty string.
-
+            loop: If True, when save_limit is reached, the files saved are 
+                loopbacked and overwritten with the most recent frame.
+                Defaults to False.
         Returns:
             A function that transforms an Observable of frames into another
             Observable of the same frames, with side effect of saving JPEGs.
@@ -120,7 +126,7 @@ class VideoOperators:
         """
         def _operator(source: Observable) -> Observable:
             return source.pipe(
-                ops.map(lambda frame: frame_processor.export_to_jpeg(frame, save_limit, suffix))
+                ops.map(lambda frame: frame_processor.export_to_jpeg(frame, save_limit, loop, suffix))
             )
         return _operator
     
@@ -167,3 +173,487 @@ class VideoOperators:
             ops.map(lambda result: result[0])
         )
 
+    @staticmethod
+    def with_edge_detection(
+        frame_processor: 'FrameProcessor',
+    ) -> Callable[[Observable], Observable]:
+        return lambda source: source.pipe(
+            ops.map(lambda frame: frame_processor.edge_detection(frame))
+        )
+
+    @staticmethod
+    def with_optical_flow(
+        frame_processor: 'FrameProcessor',
+    ) -> Callable[[Observable], Observable]:
+        return lambda source: source.pipe(
+            ops.scan(
+                lambda acc, frame: frame_processor.compute_optical_flow(acc, frame, compute_relevancy=False),
+                (None, None, None)
+            ),
+            ops.map(lambda result: result[1]),  # Extract flow component
+            ops.filter(lambda flow: flow is not None),
+            ops.map(frame_processor.visualize_flow),
+        )
+
+    @staticmethod
+    def with_zmq_socket(
+        socket: zmq.Socket,
+        scheduler: Optional[Any] = None
+    ) -> Callable[[Observable], Observable]:
+        def send_frame(frame, socket):
+            _, img_encoded = cv2.imencode('.jpg', frame)
+            socket.send(img_encoded.tobytes())
+            # print(f"Frame received: {frame.shape}")
+
+        # Use a default scheduler if none is provided
+        if scheduler is None:
+            from reactivex.scheduler import ThreadPoolScheduler
+            scheduler = ThreadPoolScheduler(1)  # Single-threaded pool for isolation
+
+        return lambda source: source.pipe(
+            ops.observe_on(scheduler),  # Ensure this part runs on its own thread
+            ops.do_action(lambda frame: send_frame(frame, socket)),
+        )
+
+
+
+from reactivex.disposable import Disposable
+from reactivex import Observable, create
+from threading import Lock
+
+class Operators:
+
+    # @staticmethod
+    # def exhaust(process_item):
+    #     """
+    #     exhaust(process_item) returns an operator that applies 'process_item'
+    #     to each incoming item, and IGNORES subsequent items until that
+    #     processing completes.
+
+    #     Usage:
+    #         source.pipe(
+    #             exhaust(lambda x: long_task(x))
+    #         )
+    #     """
+    #     def _exhaust(source: Observable) -> Observable:
+    #         def _subscribe(observer, scheduler=None):
+    #             in_flight = False
+    #             upstream_done = False
+
+    #             upstream_disposable = None
+    #             active_inner_disposable = None
+
+    #             def dispose_all():
+    #                 # Clean up upstream & inner subscriptions
+    #                 if upstream_disposable:
+    #                     upstream_disposable.dispose()
+    #                 if active_inner_disposable:
+    #                     active_inner_disposable.dispose()
+
+    #             def on_next(value):
+    #                 nonlocal in_flight, active_inner_disposable
+    #                 # If not busy, start processing the new item
+    #                 if not in_flight:
+    #                     in_flight = True
+    #                     try:
+    #                         inner_source = process_item(value)
+    #                     except Exception as ex:
+    #                         observer.on_error(ex)
+    #                         return
+
+    #                     def inner_on_next(ivalue):
+    #                         observer.on_next(ivalue)
+
+    #                     def inner_on_error(err):
+    #                         nonlocal in_flight
+    #                         in_flight = False
+    #                         observer.on_error(err)
+
+    #                     def inner_on_completed():
+    #                         nonlocal in_flight
+    #                         in_flight = False
+    #                         # If upstream is done AND we just finished in-flight
+    #                         if upstream_done:
+    #                             observer.on_completed()
+
+    #                     active_inner_disposable = inner_source.subscribe(
+    #                         on_next=inner_on_next,
+    #                         on_error=inner_on_error,
+    #                         on_completed=inner_on_completed,
+    #                         scheduler=scheduler,
+    #                     )
+    #                 else:
+    #                     # Busy? Drop this item.
+    #                     pass
+
+    #             def on_error(e):
+    #                 dispose_all()
+    #                 observer.on_error(e)
+
+    #             def on_completed():
+    #                 nonlocal upstream_done
+    #                 upstream_done = True
+    #                 # If no active item, then we're done
+    #                 if not in_flight:
+    #                     observer.on_completed()
+
+    #             # Subscribe to the source
+    #             upstream_disposable = source.subscribe(
+    #                 on_next=on_next,
+    #                 on_error=on_error,
+    #                 on_completed=on_completed,
+    #                 scheduler=scheduler
+    #             )
+
+    #             return Disposable(dispose_all)
+
+    #         return create(_subscribe)
+    #     return _exhaust
+
+
+    @staticmethod
+    def exhaust_lock(process_item):
+        """
+        For each incoming item, call `process_item(item)` to get an Observable.
+        - If we're busy processing the previous one, skip new items.
+        - Use a lock to ensure concurrency safety across threads.
+        """
+        def _exhaust_lock(source: Observable) -> Observable:
+            def _subscribe(observer, scheduler=None):
+                in_flight = False
+                lock = Lock()
+                upstream_done = False
+
+                upstream_disp = None
+                active_inner_disp = None
+
+                def dispose_all():
+                    if upstream_disp:
+                        upstream_disp.dispose()
+                    if active_inner_disp:
+                        active_inner_disp.dispose()
+
+                def on_next(value):
+                    nonlocal in_flight, active_inner_disp
+                    lock.acquire()
+                    try:
+                        if not in_flight:
+                            in_flight = True
+                            print("Processing new item.")
+                        else:
+                            print("Skipping item, already processing.")
+                            return
+                    finally:
+                        lock.release()
+
+                    # We only get here if we grabbed the in_flight slot
+                    try:
+                        inner_source = process_item(value)
+                    except Exception as ex:
+                        observer.on_error(ex)
+                        return
+
+                    def inner_on_next(ivalue):
+                        observer.on_next(ivalue)
+
+                    def inner_on_error(err):
+                        nonlocal in_flight
+                        with lock:
+                            in_flight = False
+                        observer.on_error(err)
+
+                    def inner_on_completed():
+                        nonlocal in_flight
+                        with lock:
+                            in_flight = False
+                            if upstream_done:
+                                observer.on_completed()
+
+                    # Subscribe to the inner observable
+                    nonlocal active_inner_disp
+                    active_inner_disp = inner_source.subscribe(
+                        on_next=inner_on_next,
+                        on_error=inner_on_error,
+                        on_completed=inner_on_completed,
+                        scheduler=scheduler
+                    )
+
+                def on_error(err):
+                    dispose_all()
+                    observer.on_error(err)
+
+                def on_completed():
+                    nonlocal upstream_done
+                    with lock:
+                        upstream_done = True
+                        # If we're not busy, we can end now
+                        if not in_flight:
+                            observer.on_completed()
+
+                upstream_disp = source.subscribe(
+                    on_next,
+                    on_error,
+                    on_completed,
+                    scheduler=scheduler
+                )
+                return dispose_all
+
+            return create(_subscribe)
+        return _exhaust_lock
+    
+    @staticmethod
+    def exhaust_lock_per_instance(process_item, lock: Lock):
+        """
+        - For each item from upstream, call process_item(item) -> Observable.
+        - If a frame arrives while one is "in flight", discard it.
+        - 'lock' ensures we safely check/modify the 'in_flight' state in a multithreaded environment.
+        """
+        def _exhaust_lock(source: Observable) -> Observable:
+            def _subscribe(observer, scheduler=None):
+                in_flight = False
+                upstream_done = False
+
+                upstream_disp = None
+                active_inner_disp = None
+
+                def dispose_all():
+                    if upstream_disp:
+                        upstream_disp.dispose()
+                    if active_inner_disp:
+                        active_inner_disp.dispose()
+
+                def on_next(value):
+                    nonlocal in_flight, active_inner_disp
+                    with lock:
+                        # If not busy, claim the slot
+                        if not in_flight:
+                            in_flight = True
+                            print("\033[34mProcessing new item.\033[0m")
+                        else:
+                            # Already processing => drop
+                            print("\033[34mSkipping item, already processing.\033[0m")
+                            return
+
+                    # We only get here if we acquired the slot
+                    try:
+                        inner_source = process_item(value)
+                    except Exception as ex:
+                        observer.on_error(ex)
+                        return
+
+                    def inner_on_next(ivalue):
+                        observer.on_next(ivalue)
+
+                    def inner_on_error(err):
+                        nonlocal in_flight
+                        with lock:
+                            in_flight = False
+                            print("\033[34mError in inner on error.\033[0m")
+                        observer.on_error(err)
+
+                    def inner_on_completed():
+                        nonlocal in_flight
+                        with lock:
+                            in_flight = False
+                            print("\033[34mInner on completed.\033[0m")
+                            if upstream_done:
+                                observer.on_completed()
+
+                    # Subscribe to the inner Observable
+                    nonlocal active_inner_disp
+                    active_inner_disp = inner_source.subscribe(
+                        on_next=inner_on_next,
+                        on_error=inner_on_error,
+                        on_completed=inner_on_completed,
+                        scheduler=scheduler
+                    )
+
+                def on_error(e):
+                    dispose_all()
+                    observer.on_error(e)
+
+                def on_completed():
+                    nonlocal upstream_done
+                    with lock:
+                        upstream_done = True
+                        print("\033[34mOn completed.\033[0m")
+                        if not in_flight:
+                            observer.on_completed()
+
+                upstream_disp = source.subscribe(
+                    on_next=on_next,
+                    on_error=on_error,
+                    on_completed=on_completed,
+                    scheduler=scheduler
+                )
+
+                return Disposable(dispose_all)
+
+            return create(_subscribe)
+        return _exhaust_lock
+
+    @staticmethod
+    def encode_image() -> Callable[[Observable], Observable]:
+        """
+        Operator to encode an image to JPEG format and convert it to a Base64 string.
+
+        Returns:
+            A function that transforms an Observable of images into an Observable
+            of tuples containing the Base64 string of the encoded image and its dimensions.
+        """
+        def _operator(source: Observable) -> Observable:
+            def _encode_image(image):
+                try:
+                    width, height = image.shape[:2]
+                    _, buffer = cv2.imencode('.jpg', image)
+                    if buffer is None:
+                        raise ValueError("Failed to encode image")
+                    base64_image = base64.b64encode(buffer).decode('utf-8')
+                    return base64_image, (width, height)
+                except Exception as e:
+                    raise e
+
+            return source.pipe(
+                ops.map(_encode_image)
+            )
+
+        return _operator
+    
+    @staticmethod
+    def exhaust_map(project):
+        def _exhaust_map(source: Observable):
+            def subscribe(observer, scheduler=None):
+                is_processing = False
+
+                def on_next(item):
+                    nonlocal is_processing
+                    if not is_processing:
+                        is_processing = True
+                        print(f"\033[35mProcessing item.\033[0m")
+                        try:
+                            inner_observable = project(item)  # Create the inner observable
+                            inner_observable.subscribe(
+                                on_next=observer.on_next,
+                                on_error=observer.on_error,
+                                on_completed=lambda: set_not_processing(),
+                                scheduler=scheduler
+                            )
+                        except Exception as e:
+                            observer.on_error(e)
+                    else:
+                        print(f"\033[35mSkipping item, already processing.\033[0m")
+                
+                def set_not_processing():
+                    nonlocal is_processing
+                    is_processing = False
+                    print(f"\033[35mItem processed.\033[0m")
+
+                return source.subscribe(
+                    on_next=on_next, 
+                    on_error=observer.on_error, 
+                    on_completed=observer.on_completed, 
+                    scheduler=scheduler
+                )
+
+            return create(subscribe)
+
+        return _exhaust_map
+    
+
+    @staticmethod
+    def with_lock(lock: Lock):
+        def operator(source: Observable):
+            def subscribe(observer, scheduler=None):
+                def on_next(item):
+                    if not lock.locked():  # Check if the lock is free
+                        if lock.acquire(blocking=False): # Non-blocking acquire
+                            try:
+                                print(f"\033[32mAcquired lock, processing item.\033[0m")
+                                observer.on_next(item)
+                            finally: # Ensure lock release even if observer.on_next throws
+                                lock.release()
+                        else:
+                            print(f"\033[34mLock busy, skipping item.\033[0m")
+                    else:
+                        print(f"\033[34mLock busy, skipping item.\033[0m")
+
+                def on_error(error):
+                    observer.on_error(error)
+
+                def on_completed():
+                    observer.on_completed()
+
+                return source.subscribe(
+                    on_next=on_next, on_error=on_error, on_completed=on_completed, scheduler=scheduler
+                )
+
+            return Observable(subscribe)
+
+        return operator
+    
+    @staticmethod
+    def with_lock_check(lock: Lock):  # Renamed for clarity
+        def operator(source: Observable):
+            def subscribe(observer, scheduler=None):
+                def on_next(item):
+                    if not lock.locked():  # Check if the lock is held WITHOUT acquiring
+                        print(f"\033[32mLock is free, processing item: {item}\033[0m")
+                        observer.on_next(item)
+                    else:
+                        print(f"\033[34mLock is busy, skipping item: {item}\033[0m")
+                        # observer.on_completed()
+
+                def on_error(error):
+                    observer.on_error(error)
+
+                def on_completed():
+                    observer.on_completed()
+
+                return source.subscribe(
+                    on_next=on_next, on_error=on_error, on_completed=on_completed, scheduler=scheduler
+                )
+
+            return Observable(subscribe)
+
+        return operator
+
+    # # Used to print the emission count at a given id in a pipe    # Used to print the emission count at a given id in a pipe
+    # def __init__(self):
+    #     self._emission_counts = {}
+    
+    # def print_emission_count(self, id, color="red"):
+    #     color_options = {
+    #         "red": "\033[31m",
+    #         "green": "\033[32m",
+    #         "blue": "\033[34m",
+    #         "yellow": "\033[33m",
+    #         "magenta": "\033[35m",
+    #         "cyan": "\033[36m",
+    #         "white": "\033[37m",
+    #         "reset": "\033[0m"
+    #     }
+    #     THIS_PRINT_COLOR = color_options.get(color, "\033[31m")
+    #     THIS_RESET_COLOR = color_options["reset"]
+
+    #     if id not in self._emission_counts:
+    #         self._emission_counts[id] = 0
+
+    #     self._emission_counts[id] += 1
+    #     print(f"{THIS_PRINT_COLOR}({id}) Emission Count - {self._emission_counts[id]} {datetime.datetime.now()}{THIS_RESET_COLOR}")
+    #     return self._emission_counts[id]
+
+    # @staticmethod
+    # def do_print_emission_count(self, id, color="red"):  # New operator method
+    #     def _do_print(source):
+    #         def subscribe(observer, scheduler=None):
+    #             def on_next(i):
+    #                 self.print_emission_count(id, color)
+    #                 observer.on_next(i)  # Pass the original value through
+    #             return source.subscribe(
+    #                 on_next=on_next,
+    #                 on_error=observer.on_error,
+    #                 on_completed=observer.on_completed,
+    #                 scheduler=scheduler
+    #             )
+    #         return create(subscribe)
+    #     return _do_print

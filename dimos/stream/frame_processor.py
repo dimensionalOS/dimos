@@ -39,7 +39,7 @@ class FrameProcessor:
                 print(f"Error cleaning up JPG files: {e}")
                 raise
         
-        self.image_count = 0 
+        self.image_count = 1 
         # TODO: Add randomness to jpg folder storage naming. 
         # Will overwrite between sessions.
 
@@ -55,7 +55,7 @@ class FrameProcessor:
     def resize(self, frame, scale=0.5):
         return cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
-    def export_to_jpeg(self, frame, save_limit=100, suffix=""):
+    def export_to_jpeg(self, frame, save_limit=100, loop=False, suffix=""):
         if frame is None:
             print("Error: Attempted to save a None image.")
             return None
@@ -67,9 +67,11 @@ class FrameProcessor:
 
         # If save_limit is not 0, only export a maximum number of frames
         if self.image_count > save_limit and save_limit != 0:
-            return frame
+            if loop:
+                self.image_count = 1
+            else:
+                return frame
         
-        # filepath = os.path.join(self.output_dir, f'{suffix}_image_{self.image_count}.jpg')
         filepath = os.path.join(self.output_dir, f'{self.image_count}_{suffix}.jpg')
         cv2.imwrite(filepath, frame)
         self.image_count += 1

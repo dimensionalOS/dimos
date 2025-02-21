@@ -25,6 +25,20 @@ RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libgl1-mesa-dri \
     software-properties-common \
+    libxcb1-dev \
+    libxcb-keysyms1-dev \
+    libxcb-util0-dev \
+    libxcb-icccm4-dev \
+    libxcb-image0-dev \
+    libxcb-randr0-dev \
+    libxcb-shape0-dev \
+    libxcb-xinerama0-dev \
+    libxcb-xkb-dev \
+    libxkbcommon-x11-dev \
+    qtbase5-dev \
+    qtchooser \
+    qt5-qmake \
+    qtbase5-dev-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Install specific numpy version first
