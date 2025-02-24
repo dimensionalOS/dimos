@@ -1,5 +1,4 @@
-version: '3.8'
-
+---
 services:
   unitree_ros_dimos:
     build:
@@ -18,7 +17,6 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix  # X11 forwarding
       - ${HOME}/.Xauthority:/root/.Xauthority:rw
       - ../../../assets/output/:/app/assets/output
-
     network_mode: "host"  # Required for ROS2 discovery and robot communication
     privileged: true  # Required for hardware access
     devices:
