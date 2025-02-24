@@ -38,12 +38,15 @@ UNITREE_GO2_RESET_COLOR = "\033[0m"
 class UnitreeGo2(Robot):
     def __init__(self, 
                  agent_config: AgentConfig = None,
-                 ros_control: UnitreeROSControl = UnitreeROSControl(node_name="unitree_go2"),
+                 ros_control: UnitreeROSControl = None,
                  ip = None,
                  connection_method: WebRTCConnectionMethod = WebRTCConnectionMethod.LocalSTA,
                  serial_number: str = None,
-                 output_dir: str = "/app/assets/output",
-                 api_call_interval: int = 5):
+                 output_dir: str = os.getcwd(), # TODO: Pull from ENV variable to handle docker and local development
+                 api_call_interval: int = 5,
+                 use_ros: bool = True,
+                 use_webrtc: bool = False):
+
         """Initialize the UnitreeGo2 robot.
         
         Args:
@@ -54,8 +57,15 @@ class UnitreeGo2(Robot):
             serial_number: Serial number of the robot (for LocalSTA with serial)
             output_dir: Directory for output files
             api_call_interval: Interval between API calls in seconds
+            use_ros: Whether to use ROSControl and ROS video provider
+            use_webrtc: Whether to use WebRTC video provider ONLY
         """
-        # Initialize parent class
+        if not (use_ros ^ use_webrtc):  # XOR operator ensures exactly one is True
+            raise ValueError("Exactly one video/control provider (ROS or WebRTC) must be enabled")
+
+        # Initialize ros_control if it is not provided and use_ros is True
+        if ros_control is None and use_ros:
+            ros_control = UnitreeROSControl(node_name="unitree_go2")
         super().__init__(agent_config=agent_config, ros_control=ros_control)
         
         # Initialize UnitreeGo2-specific attributes
@@ -76,17 +86,32 @@ class UnitreeGo2(Robot):
         os.makedirs(self.output_dir, exist_ok=True)
         print(f"Agent outputs will be saved to: {os.path.join(self.output_dir, 'memory.txt')}")
 
+        # Choose data provider based on configuration
+        if use_ros:
+            # Use ROS video provider from ROSControl
+           self.video_stream = self.ros_control.video_provider
+        elif use_webrtc:
+            # Use WebRTC ONLY video provider
+            self.video_stream = UnitreeVideoProvider(
+                dev_name="UnitreeGo2",
+                connection_method=connection_method,
+                serial_number=serial_number,
+                ip=self.ip if connection_method == WebRTCConnectionMethod.LocalSTA else None
+            )
         # Initialize video stream with specified connection method
         # self.video_stream = UnitreeVideoProvider(
+
         #     dev_name="UnitreeGo2",
         #     connection_method=connection_method,
         #     serial_number=serial_number,
         #     ip=self.ip if connection_method == WebRTCConnectionMethod.LocalSTA else None
         # )
-        self.video_stream = VideoProvider(
-            dev_name="UnitreeGo2",
-            video_source="/dimos/assets/framecount.mp4"
-        )
+        
+        # For local testing. TODO: remove
+        #self.video_stream = VideoProvider(
+        #    dev_name="UnitreeGo2",
+         #   video_source="/dimos/assets/framecount.mp4"
+        #)
 
     def start_perception(self):
         print(f"Starting video stream with {self.api_call_interval} second intervals...")
@@ -177,7 +202,11 @@ class UnitreeGo2(Robot):
 
     def __del__(self):
         """Cleanup resources when the robot is destroyed."""
-        self.video_stream.dispose_all()
+        try:
+            if hasattr(self, 'video_stream'):
+                self.video_stream.dispose_all()
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
 
     def read_agent_outputs(self):
         """Read and print the latest agent outputs from the memory file."""

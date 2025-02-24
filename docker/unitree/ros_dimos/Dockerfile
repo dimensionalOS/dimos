@@ -91,18 +91,17 @@ RUN git clone --recurse-submodules https://github.com/dimensionalOS/go2_ros2_sdk
 RUN cd src && pip install -r requirements.txt
 
 # Create dimos directory structure
-RUN mkdir -p /dimos/dimos /dimos/docker
+RUN mkdir -p /app/dimos /app/docker
 
-# Copy only the necessary directories
-COPY requirements.txt /dimos/
+COPY requirements.txt /app/
 
-WORKDIR /dimos
+WORKDIR /app
 
 # Install dimos requirements
 RUN pip install -r requirements.txt
 
 # Set PYTHONPATH permanently
-ENV PYTHONPATH=/dimos:${PYTHONPATH}
+ENV PYTHONPATH=/app:${PYTHONPATH}
 
 # Install ROS dependencies
 WORKDIR /ros2_ws
@@ -125,8 +124,7 @@ ENV CONN_TYPE="webrtc"
 ENV WEBRTC_SERVER_HOST="0.0.0.0"
 ENV WEBRTC_SERVER_PORT="9991"
 
-# Copy the docker directory
-COPY docker /dimos/docker/
+COPY docker /app/docker/
 
 # Setup supervisor configuration
 COPY docker/unitree/ros_dimos/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
@@ -135,11 +133,12 @@ COPY docker/unitree/ros_dimos/supervisord.conf /etc/supervisor/conf.d/supervisor
 COPY docker/unitree/ros_dimos/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Copy the main dimos directory
-COPY dimos /dimos/dimos/
+COPY dimos /app/dimos/
 
-# Create output directory for supervisord
-RUN mkdir -p /dimos/assets/output
+# Create output directories for supervisord and ROS
+RUN mkdir -p /app/assets/output/
+RUN mkdir -p /app/assets/output/ros
+
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

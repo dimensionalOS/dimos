@@ -2,11 +2,12 @@
 set -e
 
 # Create supervisor log directory
-mkdir -p /dimos/assets/output
+
+mkdir -p /app/assets/output
 
 # Delete old logs
 echo "Cleaning up old Supervisor logs..."
-rm -f /dimos/assets/output/*.log
+rm -f /app/assets/output/*.log
 
 # Source ROS2 environment
 source /opt/ros/${ROS_DISTRO}/setup.bash

@@ -1,4 +1,3 @@
-
 from go2_interfaces.msg import Go2State, IMU
 from enum import Enum, auto
 import threading
@@ -11,8 +10,28 @@ from dimos.robot.ros_control import ROSControl, RobotMode
 class UnitreeROSControl(ROSControl):
     """Hardware interface for Unitree Go2 robot using ROS2"""
     
-    def __init__(self, node_name: str = "unitree_hardware_interface"):
-        super().__init__(node_name, cmd_vel_topic='cmd_vel_out')
+    # Define topics as class constants
+    CAMERA_TOPICS = {
+        'raw': 'camera/image_raw',
+        'compressed': 'camera/compressed',
+        'info': 'camera/camera_info'
+    }
+    
+    def __init__(self, 
+                 node_name: str = "unitree_hardware_interface",
+                 use_compressed: bool = False,
+                 use_raw: bool = True):
+        # Select which camera topics to use
+        active_camera_topics = {
+            'main': self.CAMERA_TOPICS['raw' if use_raw else 'compressed']
+        }
+        
+        super().__init__(
+            node_name=node_name,
+            cmd_vel_topic='cmd_vel_out',
+            camera_topics=active_camera_topics,
+            use_compressed_video=use_compressed
+        )
         
         # Unitree-specific state tracking
         self._robot_state: Optional[Go2State] = None
