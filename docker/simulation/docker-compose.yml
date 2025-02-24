@@ -1,5 +1,4 @@
-version: '3'
-
+---
 services:
   dimos_simulator:
     image: dimos_simulator:latest
