@@ -3,8 +3,8 @@ version: '3.8'
 services:
   unitree_ros:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../../../
+      dockerfile: docker/unitree/ros/Dockerfile
     environment:
       - ROBOT_IP=${ROBOT_IP} 
       - CONN_TYPE=${CONN_TYPE:-webrtc}

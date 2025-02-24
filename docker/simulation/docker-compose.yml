@@ -4,10 +4,10 @@ services:
   dimos_simulator:
     image: dimos_simulator:latest
     build: 
-      context: ./../../
+      context: ../../
       dockerfile: docker/simulation/Dockerfile
     env_file:
-      - ./../../.env
+      - ../../.env
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all

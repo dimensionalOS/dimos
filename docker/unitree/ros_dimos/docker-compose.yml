@@ -6,7 +6,7 @@ services:
       context: ../../../
       dockerfile: docker/unitree/ros_dimos/Dockerfile
     env_file:
-      - ./../../../.env
+      - ../../../.env
     environment:
       - ROBOT_IP=${ROBOT_IP} 
       - CONN_TYPE=${CONN_TYPE:-webrtc}

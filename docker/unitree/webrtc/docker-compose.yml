@@ -3,14 +3,14 @@ services:
   dimos-unitree:
     image: dimos-unitree:latest
     build: 
-      context: ./../../
-      dockerfile: docker/unitree/Dockerfile
+      context: ../../../
+      dockerfile: docker/unitree/webrtc/Dockerfile
     env_file:
-      - ./../../.env
+      - ../../../.env
     mem_limit: 8048m
     volumes:
-      - ./../../assets:/app/assets
-      - ./../../output:/app/output  
+      - ../../../assets:/app/assets
+      - ../../../output:/app/output  
     ports:
       - "5555:5555"
     environment:
