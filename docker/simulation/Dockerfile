@@ -173,7 +173,7 @@ ENV CUDA_TOOLKIT_ROOT_DIR=${CUDA_HOME}
 ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
 
-
+# Change working directory to /app for proper relative pathing
 WORKDIR /app
 
 # Copy application code

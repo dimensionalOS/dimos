@@ -15,6 +15,7 @@ services:
       WEBRTC_SERVER_PORT: ${WEBRTC_SERVER_PORT:-9991}
       DISPLAY: ${DISPLAY:-}  # For GUI applications like rviz2
       ROS_OUTPUT_DIR: /app/assets/output/ros  # Change output directory
+      # TODO: ipc: host
     volumes:
       - ../../../assets:/app/assets
     ports:
