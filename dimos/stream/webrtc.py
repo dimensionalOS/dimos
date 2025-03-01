@@ -39,7 +39,7 @@ class WebRTCQueueManager:
                  is_ready_func: Callable[[], bool],
                  is_busy_func: Optional[Callable[[], bool]] = None,
                  logger=None,
-                 debug: bool = True):
+                 debug: bool = False):
         """
         Initialize the WebRTC queue manager.
         

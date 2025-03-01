@@ -37,7 +37,6 @@ def main():
     # First put the robot in a good starting state
     print("Running recovery stand...")
     robot.webrtc_req(api_id=1006)  # RecoveryStand
-    time.sleep(2)
     
     # Queue 20 WebRTC requests back-to-back
     print("\n🤖 QUEUEING 20 COMMANDS BACK-TO-BACK 🤖\n")
