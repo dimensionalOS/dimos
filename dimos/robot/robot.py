@@ -102,7 +102,7 @@ class Robot(ABC):
         """
         if self.ros_control is None:
             raise RuntimeError("No ROS control interface available for WebRTC commands")
-        return self.ros_control.webrtc_req(api_id, topic, parameter, priority)
+        return self.ros_control.queue_webrtc_req(api_id, topic, parameter, priority)
 
     @abstractmethod
     def do(self, *args, **kwargs):
