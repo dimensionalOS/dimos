@@ -44,7 +44,7 @@ class UnitreeROSControl(ROSControl):
                  max_angular_velocity: float = None,
                  use_compressed: bool = False,
                  use_raw: bool = True,
-                 debug: bool = False
+                 debug: bool = False,
                  disable_video_stream: bool = False,
                  mock_connection: bool = False):
         """

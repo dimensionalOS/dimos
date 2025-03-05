@@ -110,6 +110,7 @@ if __name__ == "__main__":
         # First put the robot in a good starting state
         print("Running recovery stand...")
         robot.webrtc_req(api_id=1006)  # RecoveryStand
+
         
         # Queue 20 WebRTC requests back-to-back
         print("\n🤖 QUEUEING 20 COMMANDS BACK-TO-BACK 🤖\n")
@@ -133,7 +134,7 @@ if __name__ == "__main__":
         
         robot.move(distance=1.0, speed=0.5)
 
-        robot.webrtc_req(api_id=1030)  # Dance1
+        robot.webrtc_req(api_id=1017)  # Dance1
 
         robot.reverse(distance=0.5, speed=0.5)
         

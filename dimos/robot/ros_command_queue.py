@@ -126,19 +126,18 @@ class ROSCommandQueue:
         except Exception as e:
             self._logger.error(f"Error stopping queue processing thread: {e}")
         
-    def queue_webrtc_request(self, api_id: int, topic: str = 'rt/api/sport/request', 
+    def queue_webrtc_request(self, api_id: int, topic: str = None, parameter: str = '', 
                              request_id: str = None, data: Dict[str, Any] = None,
-                             params: Dict[str, Any] = None, priority: int = 0, 
-                             timeout: float = 30.0) -> str:
+                             priority: int = 0, timeout: float = 30.0) -> str:
         """
         Queue a WebRTC request
         
         Args:
             api_id: API ID for the command
             topic: Topic to publish to
+            parameter: Optional parameter string
             request_id: Unique ID for the request (will be generated if not provided)
             data: Data to include in the request
-            params: Parameters to include in the request
             priority: Priority level (lower is higher priority)
             timeout: Maximum time to wait for the command to complete
             
@@ -157,9 +156,9 @@ class ROSCommandQueue:
                 result = self._webrtc_func(
                     api_id=api_id, 
                     topic=topic,
+                    parameter=parameter,
                     request_id=request_id,
                     data=data,
-                    params=params
                 )
                 if not result:
                     self._logger.warning(f"WebRTC request failed: {api_id} (ID: {request_id})")

@@ -639,7 +639,7 @@ class ROSControl(ABC):
         return self._command_queue.queue_webrtc_request(
             api_id=api_id,
             topic=topic if topic is not None else self._webrtc_api_topic,
-            params={'parameter': parameter},
+            parameter=parameter,
             priority=priority,
             timeout=timeout,
             request_id=request_id,
