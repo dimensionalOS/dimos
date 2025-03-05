@@ -28,10 +28,11 @@ from datetime import timedelta
 from dotenv import load_dotenv, find_dotenv
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from reactivex.scheduler import ThreadPoolScheduler
+from dimos.utils.logging_config import setup_logger
+
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = setup_logger("dimos.robot.unitree.unitree_go2", level=logging.DEBUG)
 
 # UnitreeGo2 Print Colors (Magenta)
 UNITREE_GO2_PRINT_COLOR = "\033[35m"
