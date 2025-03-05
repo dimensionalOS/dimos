@@ -115,88 +115,27 @@ if __name__ == "__main__":
         print("\n🤖 QUEUEING 20 COMMANDS BACK-TO-BACK 🤖\n")
         
         # Dance 1
-        robot.webrtc_req(api_id=1022)  # Dance1
+        robot.webrtc_req(api_id=1033)  # Dance1
         print("Queued: Dance1 (1022)")
         
+        robot.reverse(distance=0.5, speed=0.5)
+
         # Wiggle Hips
         robot.webrtc_req(api_id=1033)  # WiggleHips
         print("Queued: WiggleHips (1033)")
         
+        robot.move(distance=1.0, speed=0.5)
+
+
         # Stretch
         robot.webrtc_req(api_id=1017)  # Stretch
         print("Queued: Stretch (1017)")
         
-        # Hello
-        robot.webrtc_req(api_id=1016)  # Hello
-        print("Queued: Hello (1016)")
-        
-        # Dance 2
-        robot.webrtc_req(api_id=1023)  # Dance2
-        print("Queued: Dance2 (1023)")
-        
-        # Wallow
-        robot.webrtc_req(api_id=1021)  # Wallow
-        print("Queued: Wallow (1021)")
-        
-        # Scrape
-        robot.webrtc_req(api_id=1029)  # Scrape
-        print("Queued: Scrape (1029)")
-        
-        # Finger Heart
-        robot.webrtc_req(api_id=1036)  # FingerHeart
-        print("Queued: FingerHeart (1036)")
-        
-        # Recovery Stand (base position)
-        robot.webrtc_req(api_id=1006)  # RecoveryStand
-        print("Queued: RecoveryStand (1006)")
-        
-        # Hello again
-        robot.webrtc_req(api_id=1016)  # Hello
-        print("Queued: Hello (1016)")
-        
-        # Wiggle Hips again
-        robot.webrtc_req(api_id=1033)  # WiggleHips
-        print("Queued: WiggleHips (1033)")
-        
-        # Front Pounce
-        robot.webrtc_req(api_id=1032)  # FrontPounce
-        print("Queued: FrontPounce (1032)")
-        
-        # Dance 1 again
-        robot.webrtc_req(api_id=1022)  # Dance1
-        print("Queued: Dance1 (1022)")
-        
-        # Stretch again
-        robot.webrtc_req(api_id=1017)  # Stretch
-        print("Queued: Stretch (1017)")
-        
-        # Front Jump
-        robot.webrtc_req(api_id=1031)  # FrontJump
-        print("Queued: FrontJump (1031)")
-        
-        # Finger Heart again
-        robot.webrtc_req(api_id=1036)  # FingerHeart
-        print("Queued: FingerHeart (1036)")
-        
-        # Scrape again
-        robot.webrtc_req(api_id=1029)  # Scrape
-        print("Queued: Scrape (1029)")
-        
-        # Hello one more time
-        robot.webrtc_req(api_id=1016)  # Hello
-        print("Queued: Hello (1016)")
-        
-        # Dance 2 again
-        robot.webrtc_req(api_id=1023)  # Dance2
-        print("Queued: Dance2 (1023)")
-        
-        # Finish with recovery stand
-        robot.webrtc_req(api_id=1006)  # RecoveryStand
-        print("Queued: RecoveryStand (1006)")
-    
-        print("\nAll 20 commands queued successfully! Watch the robot perform them in sequence.")
-        print("The WebRTC queue manager will process them one by one when the robot is ready.")
-        print("Press Ctrl+C to stop the program when you've seen enough.\n")
+        robot.move(distance=1.0, speed=0.5)
+
+        robot.webrtc_req(api_id=1030)  # Dance1
+
+        robot.reverse(distance=0.5, speed=0.5)
         
 
 
