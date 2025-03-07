@@ -6,11 +6,7 @@ Provides a clean interface to the dimensional-interface FastAPI server.
 import os
 import sys
 
-# Add the dimos-interface api directory to path
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(CURRENT_DIR, "dimos-interface/api"))
-
-from dimos.web.fastapi_server import FastAPIServer
+from dimos.web.dimos_interface.api.server import FastAPIServer
 
 class RobotWebInterface(FastAPIServer):
     """Wrapper class for the dimos-interface FastAPI server."""
