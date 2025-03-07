@@ -1,5 +1,5 @@
 """
-Dimensional Website package
+Dimensional Interface package
 """
 
 from .api.server import FastAPIServer
