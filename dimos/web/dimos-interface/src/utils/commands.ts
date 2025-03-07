@@ -3,7 +3,7 @@ import themes from '../../themes.json';
 import { get } from 'svelte/store';
 import { history } from '../stores/history';
 import { theme } from '../stores/theme';
-import { fetchAvailableStreams, startStream, stopStream } from '../stores/stream';
+import { showStream, hideStream } from '../stores/stream';
 import { simulationStore, type SimulationState } from '../utils/simulation';
 
 let bloop: string | null = null;
@@ -156,20 +156,12 @@ Type 'help' to see list of available commands.
     const command = args[0].toLowerCase();
 
     if (command === 'stop') {
-      stopStream();
+      hideStream();
       return 'Stream stopped.';
     }
 
     if (command === 'start') {
-      // Fetch the streams and start the first one
-      fetchAvailableStreams()
-        .then(streams => {
-          if (streams.length > 0) {
-            startStream(streams[0]);
-          }
-        })
-        .catch(err => console.error('Error fetching streams:', err));
-      
+      showStream();
       return 'Starting simulation stream... Use "simulate stop" to end the stream';
     }
 
@@ -211,69 +203,67 @@ Type 'help' to see list of available commands.
     }
   },
   unitree: async (args: string[]) => {
-    const [subcommand, ...rest] = args;
-
-    if (!subcommand) {
-      return 'Usage: unitree [command] [args]';
+    if (args.length === 0) {
+      return 'Usage: unitree [status|start_stream|stop_stream|command <text>] - Interact with the Unitree API';
     }
 
-    switch (subcommand) {
-      case 'status':
-        try {
-          const response = await fetch('http://localhost:5555/unitree/status');
-          const data = await response.json();
-          return `Unitree API status: ${data.status}`;
-        } catch (error: unknown) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          return `Failed to connect to Unitree API: ${errorMessage}`;
-        }
-
-      case 'command':
-        try {
-          const commandText = rest.join(' ');
-          if (!commandText) {
-            return 'Usage: unitree command <text>';
-          }
-          
-          const response = await fetch('http://localhost:5555/unitree/command', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ command: commandText })
-          });
-          
-          const data = await response.json();
-          return data.success 
-            ? `Command sent: ${commandText}`
-            : `Error: ${data.message}`;
-        } catch (error: unknown) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          return `Failed to send command: ${errorMessage}`;
-        }
-
-      case 'start_stream':
-        try {
-          const streams = await fetchAvailableStreams();
-          if (streams.length === 0) {
-            return 'No video streams available';
-          }
-          
-          // Default to the first stream if none specified
-          const streamKey = rest[0] || streams[0];
-          startStream(streamKey);
-          return `Started video stream: ${streamKey}`;
-        } catch (error: unknown) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          return `Failed to start stream: ${errorMessage}`;
-        }
-
-      case 'stop_stream':
-        stopStream();
-        return 'Video stream stopped';
-
-      default:
-        return `Unknown unitree command: ${subcommand}`;
+    const subcommand = args[0].toLowerCase();
+    
+    if (subcommand === 'status') {
+      try {
+        const response = await fetch('/unitree/status');
+        const data = await response.json();
+        return `Unitree API Status: ${data.status}`;
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        return `Failed to get Unitree status: ${errorMessage}. Make sure the API server is running.`;
+      }
     }
+
+    if (subcommand === 'start_stream') {
+      try {
+        showStream();
+        return 'Starting Unitree video stream... Use "unitree stop_stream" to end the stream';
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        return `Failed to start video stream: ${errorMessage}. Make sure the API server is running.`;
+      }
+    }
+
+    if (subcommand === 'stop_stream') {
+      hideStream();
+      return 'Stopped Unitree video stream.';
+    }
+    
+    if (subcommand === 'command') {
+      if (args.length < 2) {
+        return 'Usage: unitree command <text> - Send a command to the Unitree API';
+      }
+      
+      const commandText = args.slice(1).join(' ');
+      
+      try {
+        const response = await fetch('/unitree/command', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ command: commandText })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          return `Command sent successfully. Result: ${data.result}`;
+        } else {
+          return `Error: ${data.message || 'Unknown error'}`;
+        }
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        return `Failed to send command: ${errorMessage}. Make sure the API server is running.`;
+      }
+    }
+    
+    return 'Invalid subcommand. Available subcommands: status, start, stop, command';
   },
 };

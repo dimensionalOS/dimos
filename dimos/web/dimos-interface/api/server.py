@@ -30,7 +30,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 
 class FastAPIServer(EdgeIO):
-    """FastAPI server implementation for DimOS."""
+
+    
 
     def __init__(self,
                  dev_name="FastAPI Server",
@@ -38,19 +39,20 @@ class FastAPIServer(EdgeIO):
                  host="0.0.0.0",
                  port=5555,
                  **streams):
-        print(f"Initializing FastAPIServer with {len(streams)} streams")
+        print("Starting FastAPIServer initialization...")  # Debug print
         super().__init__(dev_name, edge_type)
         self.app = FastAPI()
         
-        # Add CORS middleware to allow requests from the web frontend
+        # Add CORS middleware with more permissive settings for development
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],  # For development; restrict in production
+            allow_origins=["*"],  # More permissive for development
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
+            expose_headers=["*"]
         )
-
+        
         self.port = port
         self.host = host
         BASE_DIR = Path(__file__).resolve().parent
@@ -67,11 +69,12 @@ class FastAPIServer(EdgeIO):
 
         for key in self.streams:
             if self.streams[key] is not None:
-                print(f"Setting up stream: {key}")
                 self.active_streams[key] = self.streams[key].pipe(
                     ops.map(self.process_frame_fastapi), ops.share())
 
+        print("Setting up routes...")  # Debug print
         self.setup_routes()
+        print("FastAPIServer initialization complete")  # Debug print
 
     def process_frame_fastapi(self, frame):
         """Convert frame to JPEG format for streaming."""
@@ -141,6 +144,11 @@ class FastAPIServer(EdgeIO):
     def setup_routes(self):
         """Set up FastAPI routes."""
 
+        @self.app.get("/streams")
+        async def get_streams():
+            """Get list of available video streams"""
+            return {"streams": list(self.streams.keys())}
+
         @self.app.get("/", response_class=HTMLResponse)
         async def index(request: Request):
             stream_keys = list(self.streams.keys())
@@ -148,13 +156,30 @@ class FastAPIServer(EdgeIO):
                 "request": request,
                 "stream_keys": stream_keys
             })
-
-        # Add an endpoint that matches what the frontend expects
-        @self.app.get("/streams")
-        async def get_streams():
-            """Return list of available streams."""
-            return {"streams": list(self.streams.keys())}
-
+                    
+        @self.app.post("/submit_query")
+        async def submit_query(query: str = Form(...)):
+            # Using Form directly as a dependency ensures proper form handling
+            try:
+                if query:
+                    # Emit the query through our Subject
+                    self.query_subject.on_next(query)
+                    return JSONResponse({
+                        "success": True,
+                        "message": "Query received"
+                    })
+                return JSONResponse({
+                    "success": False,
+                    "message": "No query provided"
+                })
+            except Exception as e:
+                # Ensure we always return valid JSON even on error
+                return JSONResponse(status_code=500,
+                                    content={
+                                        "success": False,
+                                        "message": f"Server error: {str(e)}"
+                                    })
+        # Unitree API endpoints
         @self.app.get("/unitree/status")
         async def unitree_status():
             """Check the status of the Unitree API server"""
@@ -169,7 +194,6 @@ class FastAPIServer(EdgeIO):
             try:
                 data = await request.json()
                 command_text = data.get("command", "")
-                print(f"Received command: {command_text}")  # Debug print
                 
                 # Emit the command through the query_subject
                 self.query_subject.on_next(command_text)
@@ -177,11 +201,12 @@ class FastAPIServer(EdgeIO):
                 response = {
                     "success": True,
                     "command": command_text,
-                    "result": f"Command sent: {command_text}"
+                    "result": f"Processed command: {command_text}"
                 }
+                
                 return JSONResponse(response)
             except Exception as e:
-                print(f"Error processing command: {str(e)}")
+                print(f"Error processing command: {str(e)}")  
                 return JSONResponse(
                     status_code=500,
                     content={
@@ -189,19 +214,10 @@ class FastAPIServer(EdgeIO):
                         "message": f"Error processing command: {str(e)}"
                     }
                 )
-                
-        # Add video feed endpoints
+
         for key in self.streams:
-            video_feed_path = f"/video_feed/{key}"
-            print(f"Creating video feed endpoint: {video_feed_path}")
-            
-            @self.app.get(video_feed_path)
-            async def video_feed(key=key):
-                """Stream video for a specific key."""
-                return StreamingResponse(
-                    self.stream_generator(key)(),
-                    media_type="multipart/x-mixed-replace; boundary=frame"
-                )
+            self.app.get(f"/video_feed/{key}")(
+                self.create_video_feed_route(key))
 
     def run(self):
         """Run the FastAPI server."""
