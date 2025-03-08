@@ -5,6 +5,7 @@ services:
     build:
       context: ../../  # Root of the project
       dockerfile: docker/interface/Dockerfile
+    image: dimos-web-interface
     container_name: dimos-web-interface
     network_mode: "host"
     volumes:
