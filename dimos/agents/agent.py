@@ -657,7 +657,7 @@ class OpenAIAgent(LLMAgent):
         os.makedirs(self.output_dir, exist_ok=True)
 
         # Configure skills.
-        self.skills = skills if skills is not None else AbstractSkill()
+        self.skills = skills
 
         self.response_model = response_model if response_model is not None else NOT_GIVEN
         self.model_name = model_name
@@ -740,8 +740,7 @@ class OpenAIAgent(LLMAgent):
                     model=self.model_name,
                     messages=messages,
                     response_format=self.response_model,
-                    tools=(self.skills.get_tools()
-                           if self.skills is not None else NOT_GIVEN),
+                    tools=(self.skills.get_tools() if self.skills is not None else NOT_GIVEN),
                     max_tokens=self.max_output_tokens_per_request,
                 )
             else:

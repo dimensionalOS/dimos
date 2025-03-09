@@ -13,7 +13,7 @@ from textwrap import dedent
 from pydantic import BaseModel, Field
 
 # For response validation
-class AgentResponse(BaseModel):
+class PlanningAgentResponse(BaseModel):
     type: Literal["dialogue", "plan"]
     content: Union[str, List[str]]
     needs_confirmation: bool
@@ -105,7 +105,7 @@ class PlanningAgent(OpenAIAgent):
             input_query_stream=None,  # We'll handle query processing ourselves
             system_query=system_query,
             max_output_tokens_per_request=1000,
-            response_model=AgentResponse
+            response_model=PlanningAgentResponse
         )
         
         # Set up terminal mode if requested
@@ -173,20 +173,17 @@ class PlanningAgent(OpenAIAgent):
             dict: Parsed response with type, content, and needs_confirmation
         """
         try:
-            print(f"Sending query: {messages}")
             response_message = super()._send_query(messages)
             response_text = response_message.content
-            print(f"Received response: {response_text}")
             # Parse JSON and validate
             try:
                 parsed_json = json.loads(response_text)
-                return AgentResponse(**parsed_json).dict()
+                return PlanningAgentResponse(**parsed_json).dict()
             except:
-                self.logger.warning(f"WARNING: Invalid AgentResponse response: {response_text}")
-                return response_text
+                self.logger.error(f"WARNING: Invalid PlanningAgentResponse response: {response_text}")
                 
         except Exception as e:
-            return AgentResponse(content=f"Error: {str(e)}").dict()
+            return PlanningAgentResponse(content=f"Error: {str(e)}").dict()
 
     def process_user_input(self, user_input: str) -> None:
         """Process user input and generate appropriate response.
