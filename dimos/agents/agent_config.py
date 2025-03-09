@@ -18,8 +18,6 @@ class AgentConfig:
         Args:
             agent (Agent): Agent instance to add
         """
-        if not isinstance(agent, Agent):
-            raise TypeError("Agent must inherit from the Agent base class")
         self.agents.append(agent)
 
     def remove_agent(self, agent: Agent):

@@ -91,20 +91,17 @@ RUN git clone --recurse-submodules https://github.com/dimensionalOS/go2_ros2_sdk
 RUN cd src && pip install -r requirements.txt
 
 # Create dimos directory structure
-RUN mkdir -p /dimos/dimos /dimos/docker
+RUN mkdir -p /app/dimos /app/docker
 
-# Copy only the necessary directories
-COPY dimos /dimos/dimos/
-COPY docker /dimos/docker/
-COPY requirements.txt /dimos/
+COPY requirements.txt /app/
 
-WORKDIR /dimos
+WORKDIR /app
 
 # Install dimos requirements
 RUN pip install -r requirements.txt
 
 # Set PYTHONPATH permanently
-ENV PYTHONPATH=/dimos:${PYTHONPATH}
+ENV PYTHONPATH=/app:${PYTHONPATH}
 
 # Install ROS dependencies
 WORKDIR /ros2_ws
@@ -127,12 +124,25 @@ ENV CONN_TYPE="webrtc"
 ENV WEBRTC_SERVER_HOST="0.0.0.0"
 ENV WEBRTC_SERVER_PORT="9991"
 
+COPY docker /app/docker/
+
 # Setup supervisor configuration
 COPY docker/unitree/ros_dimos/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Copy entrypoint script
 COPY docker/unitree/ros_dimos/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+COPY dimos /app/dimos/
+
+# Change working directory to /app for proper relative pathing
+WORKDIR /app
+
+# Create output directories for supervisord and ROS
+RUN mkdir -p /app/assets/output/
+RUN mkdir -p /app/assets/output/ros
+
+# TODO: Cleanup multiple working directories and seprate the dockerfiles for each service.
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

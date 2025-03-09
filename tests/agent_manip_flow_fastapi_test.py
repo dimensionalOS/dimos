@@ -24,7 +24,7 @@ from reactivex.disposable import CompositeDisposable
 from reactivex.scheduler import ThreadPoolScheduler, CurrentThreadScheduler, ImmediateScheduler
 
 # Local application imports
-from dimos.agents.agent import OpenAI_Agent 
+from dimos.agents.agent import OpenAIAgent 
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.video_operators import VideoOperators as vops
 from dimos.stream.video_provider import VideoProvider
@@ -47,16 +47,16 @@ def main():
     """
     disposables = CompositeDisposable()
 
-    processor = FrameProcessor(output_dir="/app/assets/frames", delete_on_init=True)
+    processor = FrameProcessor(output_dir=f"{os.getcwd()}/assets/output/frames", delete_on_init=True)
 
     optimal_thread_count = multiprocessing.cpu_count()  # Gets number of CPU cores
     thread_pool_scheduler = ThreadPoolScheduler(optimal_thread_count)
 
     VIDEO_SOURCES = [
-        "/app/assets/ldru.mp4",
-        "/app/assets/ldru_480p.mp4",
-        "/app/assets/trimmed_video_480p.mov",
-        "/app/assets/video-f30-480p.mp4",
+        f"{os.getcwd()}/assets/ldru.mp4",
+        f"{os.getcwd()}/assets/ldru_480p.mp4",
+        f"{os.getcwd()}/assets/trimmed_video_480p.mov",
+        f"{os.getcwd()}/assets/video-f30-480p.mp4",
         "rtsp://192.168.50.207:8080/h264.sdp",
         "rtsp://10.0.0.106:8080/h264.sdp"
     ]
@@ -105,14 +105,14 @@ def main():
     #
 
     # Agent 1
-    # my_agent = OpenAI_Agent(
+    # my_agent = OpenAIAgent(
     #     "Agent 1", 
     #     query="You are a robot. What do you see? Put a JSON with objects of what you see in the format {object, description}.")
     # my_agent.subscribe_to_image_processing(slowed_video_stream_obs)
     # disposables.add(my_agent.disposables)
 
     # # Agent 2
-    # my_agent_two = OpenAI_Agent(
+    # my_agent_two = OpenAIAgent(
     #     "Agent 2", 
     #     query="This is a visualization of dense optical flow. What movement(s) have occured? Put a JSON with mapped directions you see in the format {direction, probability, english_description}.")
     # my_agent_two.subscribe_to_image_processing(optical_flow_stream_obs)

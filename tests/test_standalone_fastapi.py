@@ -33,7 +33,7 @@ def video_stream_generator():
     print(f"Stream initiated by worker with PID: {pid}")  # Log the PID when the generator is called
 
     # Use the correct path for your video source
-    cap = cv2.VideoCapture("/app/assets/trimmed_video_480p.mov")  # Change 0 to a filepath for video files
+    cap = cv2.VideoCapture(f"{os.getcwd()}/assets/trimmed_video_480p.mov")  # Change 0 to a filepath for video files
 
     if not cap.isOpened():
         yield (b'--frame\r\nContent-Type: text/plain\r\n\r\n' + b'Could not open video source\r\n')

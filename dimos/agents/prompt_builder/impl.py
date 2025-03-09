@@ -21,13 +21,6 @@ class PromptBuilder():
     - If the information is insufficient to provide a complete answer, acknowledge the limitation.
     - Maintain a professional and informative tone in your response.
     """)
-
-    DEFAULT_SYSTEM_PROMPT_WITHOUT_DOCUMENTS = dedent("""
-    You are an AI assistant capable of understanding and analyzing both visual and textual information. 
-    Currently, no additional textual data is available. Please proceed by analyzing the visual content 
-    provided and respond to the user's query based on the image alone. If the image does not provide 
-    enough context, inform the user accordingly.
-    """)
     
     def __init__(self, model_name='gpt-4o', max_tokens=128000, tokenizer: AbstractTokenizer = None):
         """
@@ -73,7 +66,6 @@ class PromptBuilder():
     def build(
         self,
         system_prompt=None,
-        fallback_system_prompt=None,
         user_query=None,
         base64_image=None,
         image_width=None,
@@ -83,14 +75,12 @@ class PromptBuilder():
         budgets=None,
         policies=None,
         override_token_limit=False,
-        json_mode=False
     ):
         """
         Builds a dynamic prompt tailored to token limits, respecting budgets and policies.
 
         Args:
             system_prompt (str): System-level instructions.
-            fallback_system_prompt (str): Alternative system prompt if no context is present.
             user_query (str, optional): User's query.
             base64_image (str, optional): Base64-encoded image string.
             image_width (int, optional): Width of the image.
@@ -100,7 +90,6 @@ class PromptBuilder():
             budgets (dict, optional): Token budgets for each input type. Defaults to equal allocation.
             policies (dict, optional): Truncation policies for each input type.
             override_token_limit (bool, optional): Whether to override the token limit. Defaults to False.
-            json_mode (bool, optional): Whether to use JSON mode. Defaults to False.
 
         Returns:
             dict: Messages array ready to send to the OpenAI API.
@@ -131,16 +120,12 @@ class PromptBuilder():
         # Determine which system prompt to use
         if system_prompt is None:
             system_prompt = self.DEFAULT_SYSTEM_PROMPT
-        if fallback_system_prompt is None:
-            fallback_system_prompt = self.DEFAULT_SYSTEM_PROMPT_WITHOUT_DOCUMENTS
 
         rag_context = rag_context or ""
-        system_prompt = fallback_system_prompt if not rag_context and fallback_system_prompt else system_prompt
         
         # Debug:
         # print("system_prompt: ", system_prompt)
         # print("rag_context: ", rag_context)
-        # print("fallback_system_prompt: ", fallback_system_prompt)
 
         # region Token Counts
         if not override_token_limit:

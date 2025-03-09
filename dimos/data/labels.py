@@ -1,4 +1,5 @@
-from dimos.models.labels.llava-34b import Llava
+import os
+from dimos.models.labels.llava_34b import Llava
 from PIL import Image
 from dimos.types.label import LabelType
 
@@ -11,7 +12,7 @@ class LabelProcessor:
     def _initialize_model(self):
         if self.model is None:
             from dimos.models.labels.llava_34b import Llava
-            self.model = Llava(mmproj="/app/models/mmproj-model-f16.gguf", model_path="/app/models/llava-v1.6-34b.Q4_K_M.gguf", gpu=True)
+            self.model = Llava(mmproj=f"{os.getcwd()}/models/mmproj-model-f16.gguf", model_path=f"{os.getcwd()}/models/llava-v1.6-34b.Q4_K_M.gguf", gpu=True)
             if self.debug:
                 print("Llava model initialized.")
 

@@ -2,12 +2,13 @@ from datetime import datetime, timedelta
 import cv2
 import numpy as np
 import os
-from reactivex import Observable, create
+from reactivex import Observable, Observer, create
 from reactivex import operators as ops
 from typing import Any, Callable, Tuple, Optional
 
 import zmq
 import base64
+from enum import Enum
 
 from dimos.stream.frame_processor import FrameProcessor
 
@@ -215,101 +216,38 @@ class VideoOperators:
             ops.do_action(lambda frame: send_frame(frame, socket)),
         )
 
+    @staticmethod
+    def encode_image() -> Callable[[Observable], Observable]:
+        """
+        Operator to encode an image to JPEG format and convert it to a Base64 string.
 
+        Returns:
+            A function that transforms an Observable of images into an Observable
+            of tuples containing the Base64 string of the encoded image and its dimensions.
+        """
+        def _operator(source: Observable) -> Observable:
+            def _encode_image(image: np.ndarray) -> Tuple[str, Tuple[int, int]]:
+                try:
+                    width, height = image.shape[:2]
+                    _, buffer = cv2.imencode('.jpg', image)
+                    if buffer is None:
+                        raise ValueError("Failed to encode image")
+                    base64_image = base64.b64encode(buffer).decode('utf-8')
+                    return base64_image, (width, height)
+                except Exception as e:
+                    raise e
+
+            return source.pipe(
+                ops.map(_encode_image)
+            )
+
+        return _operator
 
 from reactivex.disposable import Disposable
 from reactivex import Observable, create
 from threading import Lock
 
 class Operators:
-
-    # @staticmethod
-    # def exhaust(process_item):
-    #     """
-    #     exhaust(process_item) returns an operator that applies 'process_item'
-    #     to each incoming item, and IGNORES subsequent items until that
-    #     processing completes.
-
-    #     Usage:
-    #         source.pipe(
-    #             exhaust(lambda x: long_task(x))
-    #         )
-    #     """
-    #     def _exhaust(source: Observable) -> Observable:
-    #         def _subscribe(observer, scheduler=None):
-    #             in_flight = False
-    #             upstream_done = False
-
-    #             upstream_disposable = None
-    #             active_inner_disposable = None
-
-    #             def dispose_all():
-    #                 # Clean up upstream & inner subscriptions
-    #                 if upstream_disposable:
-    #                     upstream_disposable.dispose()
-    #                 if active_inner_disposable:
-    #                     active_inner_disposable.dispose()
-
-    #             def on_next(value):
-    #                 nonlocal in_flight, active_inner_disposable
-    #                 # If not busy, start processing the new item
-    #                 if not in_flight:
-    #                     in_flight = True
-    #                     try:
-    #                         inner_source = process_item(value)
-    #                     except Exception as ex:
-    #                         observer.on_error(ex)
-    #                         return
-
-    #                     def inner_on_next(ivalue):
-    #                         observer.on_next(ivalue)
-
-    #                     def inner_on_error(err):
-    #                         nonlocal in_flight
-    #                         in_flight = False
-    #                         observer.on_error(err)
-
-    #                     def inner_on_completed():
-    #                         nonlocal in_flight
-    #                         in_flight = False
-    #                         # If upstream is done AND we just finished in-flight
-    #                         if upstream_done:
-    #                             observer.on_completed()
-
-    #                     active_inner_disposable = inner_source.subscribe(
-    #                         on_next=inner_on_next,
-    #                         on_error=inner_on_error,
-    #                         on_completed=inner_on_completed,
-    #                         scheduler=scheduler,
-    #                     )
-    #                 else:
-    #                     # Busy? Drop this item.
-    #                     pass
-
-    #             def on_error(e):
-    #                 dispose_all()
-    #                 observer.on_error(e)
-
-    #             def on_completed():
-    #                 nonlocal upstream_done
-    #                 upstream_done = True
-    #                 # If no active item, then we're done
-    #                 if not in_flight:
-    #                     observer.on_completed()
-
-    #             # Subscribe to the source
-    #             upstream_disposable = source.subscribe(
-    #                 on_next=on_next,
-    #                 on_error=on_error,
-    #                 on_completed=on_completed,
-    #                 scheduler=scheduler
-    #             )
-
-    #             return Disposable(dispose_all)
-
-    #         return create(_subscribe)
-    #     return _exhaust
-
 
     @staticmethod
     def exhaust_lock(process_item):
@@ -493,33 +431,6 @@ class Operators:
         return _exhaust_lock
 
     @staticmethod
-    def encode_image() -> Callable[[Observable], Observable]:
-        """
-        Operator to encode an image to JPEG format and convert it to a Base64 string.
-
-        Returns:
-            A function that transforms an Observable of images into an Observable
-            of tuples containing the Base64 string of the encoded image and its dimensions.
-        """
-        def _operator(source: Observable) -> Observable:
-            def _encode_image(image):
-                try:
-                    width, height = image.shape[:2]
-                    _, buffer = cv2.imencode('.jpg', image)
-                    if buffer is None:
-                        raise ValueError("Failed to encode image")
-                    base64_image = base64.b64encode(buffer).decode('utf-8')
-                    return base64_image, (width, height)
-                except Exception as e:
-                    raise e
-
-            return source.pipe(
-                ops.map(_encode_image)
-            )
-
-        return _operator
-    
-    @staticmethod
     def exhaust_map(project):
         def _exhaust_map(source: Observable):
             def subscribe(observer, scheduler=None):
@@ -559,7 +470,6 @@ class Operators:
 
         return _exhaust_map
     
-
     @staticmethod
     def with_lock(lock: Lock):
         def operator(source: Observable):
@@ -617,43 +527,68 @@ class Operators:
 
         return operator
 
-    # # Used to print the emission count at a given id in a pipe    # Used to print the emission count at a given id in a pipe
-    # def __init__(self):
-    #     self._emission_counts = {}
+    # PrintColor enum for standardized color formatting
+    class PrintColor(Enum):
+        RED = "\033[31m"
+        GREEN = "\033[32m"
+        BLUE = "\033[34m"
+        YELLOW = "\033[33m"
+        MAGENTA = "\033[35m"
+        CYAN = "\033[36m"
+        WHITE = "\033[37m"
+        RESET = "\033[0m"
+
+    @staticmethod
+    def print_emission(id: str, 
+                       dev_name: str = "NA", 
+                       counts: dict = None, 
+                       color: 'Operators.PrintColor' = None, 
+                       enabled: bool = True):
+        """
+        Creates an operator that prints the emission with optional counts for debugging.
+        
+        Args:
+            id: Identifier for the emission point (e.g., 'A', 'B')
+            dev_name: Device or component name for context
+            counts: External dictionary to track emission count across operators. If None, will not print emission count.
+            color: Color for the printed output from PrintColor enum (default is RED)
+            enabled: Whether to print the emission count (default is True)
+        Returns:
+            An operator that counts and prints emissions without modifying the stream
+        """
+        # If enabled is false, return the source unchanged
+        if not enabled:
+            return lambda source: source
+        
+        # Use RED as default if no color provided
+        if color is None:
+            color = Operators.PrintColor.RED
+
+        def _operator(source: Observable) -> Observable:
+            def _subscribe(observer: Observer, scheduler=None):
+                def on_next(value):
+                    if counts is not None:
+                        # Initialize count if necessary
+                        if id not in counts:
+                            counts[id] = 0
+                    
+                        # Increment and print
+                        counts[id] += 1
+                        print(f"{color.value}({dev_name} - {id}) Emission Count - {counts[id]} {datetime.now()}{Operators.PrintColor.RESET.value}")
+                    else: 
+                        print(f"{color.value}({dev_name} - {id}) Emitted - {datetime.now()}{Operators.PrintColor.RESET.value}")
+
+                    # Pass value through unchanged
+                    observer.on_next(value)
+                    
+                return source.subscribe(
+                    on_next=on_next,
+                    on_error=observer.on_error,
+                    on_completed=observer.on_completed,
+                    scheduler=scheduler
+                )
+            
+            return create(_subscribe)
+        
+        return _operator
     
-    # def print_emission_count(self, id, color="red"):
-    #     color_options = {
-    #         "red": "\033[31m",
-    #         "green": "\033[32m",
-    #         "blue": "\033[34m",
-    #         "yellow": "\033[33m",
-    #         "magenta": "\033[35m",
-    #         "cyan": "\033[36m",
-    #         "white": "\033[37m",
-    #         "reset": "\033[0m"
-    #     }
-    #     THIS_PRINT_COLOR = color_options.get(color, "\033[31m")
-    #     THIS_RESET_COLOR = color_options["reset"]
-
-    #     if id not in self._emission_counts:
-    #         self._emission_counts[id] = 0
-
-    #     self._emission_counts[id] += 1
-    #     print(f"{THIS_PRINT_COLOR}({id}) Emission Count - {self._emission_counts[id]} {datetime.datetime.now()}{THIS_RESET_COLOR}")
-    #     return self._emission_counts[id]
-
-    # @staticmethod
-    # def do_print_emission_count(self, id, color="red"):  # New operator method
-    #     def _do_print(source):
-    #         def subscribe(observer, scheduler=None):
-    #             def on_next(i):
-    #                 self.print_emission_count(id, color)
-    #                 observer.on_next(i)  # Pass the original value through
-    #             return source.subscribe(
-    #                 on_next=on_next,
-    #                 on_error=observer.on_error,
-    #                 on_completed=observer.on_completed,
-    #                 scheduler=scheduler
-    #             )
-    #         return create(subscribe)
-    #     return _do_print

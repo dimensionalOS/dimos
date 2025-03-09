@@ -3,9 +3,9 @@ from typing import Callable, Dict, Type
 
 from pydantic import BaseModel, create_model
 
-from dimos.robot.skills import Skills
+from dimos.robot.skills import AbstractSkill
 
-class ROSSkillLibrary(Skills):
+class ROSSkillLibrary(AbstractSkill):
     _instance = None
 
     def __new__(cls):
@@ -54,7 +54,7 @@ def register_skill(name: str = None):
     def decorator(func: Callable):
         skill_name = name or func.__name__  # Default to function name if no name is given
         library = ROSSkillLibrary()
-        library.register(skill_name, func)
+        #library.register(skill_name, func)
 
         def wrapper(instance, *args, **kwargs):
             """Wrapper that validates input arguments using Pydantic"""

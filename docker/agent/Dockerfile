@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y \
     python3-pyaudio \
     python3-all-dev
 
+# Change working directory to /app for proper relative pathing
 WORKDIR /app
 
 COPY requirements.txt ./

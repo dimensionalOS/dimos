@@ -8,7 +8,7 @@ from typing import Callable, Tuple, Optional
 
 # TODO: Reorganize, filenaming - Consider merger with VideoOperators class
 class FrameProcessor:
-    def __init__(self, output_dir='/app/assets/frames', delete_on_init=False):
+    def __init__(self, output_dir=f'{os.getcwd()}/assets/output/frames', delete_on_init=False):
         """Initializes the FrameProcessor.
 
         Sets up the output directory for frame storage and optionally cleans up
@@ -16,7 +16,7 @@ class FrameProcessor:
 
         Args:
             output_dir: Directory path for storing processed frames.
-                Defaults to '/app/assets/frames'.
+                Defaults to '{os.getcwd()}/assets/output/frames'.
             delete_on_init: If True, deletes all existing JPG files in output_dir.
                 Defaults to False.
 

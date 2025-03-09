@@ -1,26 +1,25 @@
 ---
 services:
-  dimos-unitree:
-    image: dimos-unitree:latest
+  dimos-unitree-webrtc:
+    image: dimos-unitree-webrtc:latest
     build: 
-      context: ./../../
-      dockerfile: docker/unitree/Dockerfile
+      context: ../../../
+      dockerfile: docker/unitree/webrtc/Dockerfile
     env_file:
-      - ./../../.env
+      - ../../../.env
     mem_limit: 8048m
     volumes:
-      - ./../../assets:/app/assets
-      - ./../../output:/app/output  
+      - ../../../assets:/app/assets
+      - ../../../output:/app/output  
     ports:
       - "5555:5555"
     environment:
       - PYTHONUNBUFFERED=1
       # Robot configuration - use shell variables with defaults
-      - ROBOT_IP=${ROBOT_IP:-192.168.9.140}
+      - ROBOT_IP=${ROBOT_IP}
       - CONNECTION_METHOD=${CONNECTION_METHOD:-LocalSTA}
       - SERIAL_NUMBER=${SERIAL_NUMBER:-}
       - OUTPUT_DIR=${OUTPUT_DIR:-/app/assets}
-      - API_CALL_INTERVAL=${API_CALL_INTERVAL:-5}
     stdin_open: true
     tty: true
     command: ["python", "-m", "dimos.robot.unitree.run_go2"]
@@ -42,7 +41,4 @@ services:
 #
 #   - With Serial Number:
 #     CONNECTION_METHOD=LocalSTA SERIAL_NUMBER=ABC123 docker compose up
-#
-#   - With custom API interval:
-#     API_CALL_INTERVAL=10 docker compose up
 # ----

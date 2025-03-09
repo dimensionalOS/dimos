@@ -100,10 +100,73 @@
                 grid-template-columns: 1fr;
             }
         }
+
+        .query-container {
+            max-width: 800px;
+            margin: 30px auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .query-form {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .query-input {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        
+        .query-button {
+            padding: 10px 20px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        
+        .query-button:hover {
+            background-color: #218838;
+        }
+        
+        .query-response {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
     </style>
 </head>
 <body>
     <h1>Live Video Streams</h1>
+    
+    <div class="query-container">
+        <h2>Ask a Question</h2>
+        <form id="queryForm" class="query-form">
+            <input type="text" id="queryInput" class="query-input" placeholder="Type your query here..." required>
+            <button type="submit" class="query-button">Send</button>
+        </form>
+        <div id="queryResponse" class="query-response"></div>
+    </div>
     
     <div class="stream-grid">
         {% for key in stream_keys %}
@@ -141,6 +204,64 @@
         function reloadPage() {
             window.location.reload(true);
         }
+
+        // Handle query form submission
+        document.getElementById('queryForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const queryInput = document.getElementById('queryInput');
+            const queryResponse = document.getElementById('queryResponse');
+            const query = queryInput.value.trim();
+            
+            if (!query) return;
+            
+            try {
+                const formData = new FormData();
+                formData.append('query', query);
+                
+                const response = await fetch('/submit_query', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                let result;
+                
+                // Better error handling for non-200 responses
+                if (!response.ok) {
+                    try {
+                        // Try to parse as JSON first
+                        result = await response.json();
+                    } catch (jsonError) {
+                        // If not JSON, get text and create a result object
+                        const errorText = await response.text();
+                        result = {
+                            success: false,
+                            message: `Server error: ${response.status} ${response.statusText}`,
+                            details: errorText.substring(0, 100) // Just the first part to avoid showing too much HTML
+                        };
+                    }
+                } else {
+                    result = await response.json();
+                }
+                
+                queryResponse.textContent = result.message;
+                queryResponse.className = 'query-response ' + (result.success ? 'success' : 'error');
+                queryResponse.style.display = 'block';
+                
+                if (result.success) {
+                    queryInput.value = '';
+                    
+                    // Hide the success message after 3 seconds
+                    setTimeout(() => {
+                        queryResponse.style.display = 'none';
+                    }, 3000);
+                }
+            } catch (error) {
+                queryResponse.textContent = 'Error sending query: ' + error.message;
+                queryResponse.className = 'query-response error';
+                queryResponse.style.display = 'block';
+            }
+        });
     </script>
 </body>
 </html>

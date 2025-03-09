@@ -1,11 +1,12 @@
-version: '3.8'
-
+---
 services:
   unitree_ros:
+    image: unitree_ros:latest
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../../../
+      dockerfile: docker/unitree/ros/Dockerfile
     environment:
+      - PYTHONUNBUFFERED=1
       - ROBOT_IP=${ROBOT_IP} 
       - CONN_TYPE=${CONN_TYPE:-webrtc}
       - WEBRTC_SERVER_HOST=0.0.0.0  # Listen on all interfaces

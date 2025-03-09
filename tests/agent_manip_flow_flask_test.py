@@ -23,7 +23,7 @@ from reactivex.disposable import CompositeDisposable
 from reactivex.scheduler import ThreadPoolScheduler, CurrentThreadScheduler, ImmediateScheduler
 
 # Local application imports
-from dimos.agents.agent import PromptBuilder, OpenAI_Agent 
+from dimos.agents.agent import PromptBuilder, OpenAIAgent 
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.video_operators import VideoOperators as vops
 from dimos.stream.video_provider import VideoProvider
@@ -48,20 +48,20 @@ def main():
     """
     disposables = CompositeDisposable()
 
-    processor = FrameProcessor(output_dir="/app/assets/frames", delete_on_init=True)
+    processor = FrameProcessor(output_dir=f"{os.getcwd()}/assets/output/frames", delete_on_init=True)
 
     optimal_thread_count = multiprocessing.cpu_count()  # Gets number of CPU cores
     thread_pool_scheduler = ThreadPoolScheduler(optimal_thread_count)
 
     VIDEO_SOURCES = [
-        "/app/assets/ldru.mp4",
-        "/app/assets/ldru_480p.mp4",
-        "/app/assets/trimmed_video_480p.mov",
-        "/app/assets/video-f30-480p.mp4",
-        "/app/assets/video.mov",
+        f"{os.getcwd()}/assets/ldru.mp4",
+        f"{os.getcwd()}/assets/ldru_480p.mp4",
+        f"{os.getcwd()}/assets/trimmed_video_480p.mov",
+        f"{os.getcwd()}/assets/video-f30-480p.mp4",
+        f"{os.getcwd()}/assets/video.mov",
         "rtsp://192.168.50.207:8080/h264.sdp",
         "rtsp://10.0.0.106:8080/h264.sdp",
-        "/app/assets/people_1080p_24fps.mp4"
+        f"{os.getcwd()}/assets/people_1080p_24fps.mp4"
     ]
 
     VIDEO_SOURCE_INDEX = 4
@@ -102,7 +102,7 @@ def main():
     )
 
     # Agent 1
-    my_agent = OpenAI_Agent(
+    my_agent = OpenAIAgent(
         "Agent 1", 
         query="You are a robot. What do you see? Put a JSON with objects of what you see in the format {object, description}.",
         json_mode=False
@@ -126,7 +126,7 @@ def main():
     disposables.add(my_agent.disposables)
 
     # Agent 2
-    my_agent_two = OpenAI_Agent(
+    my_agent_two = OpenAIAgent(
         "Agent 2", 
         query="This is a visualization of dense optical flow. What movement(s) have occured? Put a JSON with mapped directions you see in the format {direction, probability, english_description}.",
         max_input_tokens_per_request=1000,
@@ -172,8 +172,8 @@ def main():
         # video_one=video_stream_obs,
         # edge_detection=edge_detection_stream_obs,
         # optical_flow=optical_flow_stream_obs,
-        OpenAI_Agent_1=ai_1_secondly_repeating_obs,
-        OpenAI_Agent_2=ai_2_secondly_repeating_obs,
+        OpenAIAgent_1=ai_1_secondly_repeating_obs,
+        OpenAIAgent_2=ai_2_secondly_repeating_obs,
     )
     
     flask_server.run(threaded=True)

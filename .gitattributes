@@ -1,3 +1,14 @@
-* text=auto
+# Handle line endings automatically for files Git considers text,
+# converting them to LF on checkout.
+* text=auto eol=lf
+
+# Ensure Python files always use LF for line endings.
 *.py text eol=lf
 
+# Treat designated file types as binary and do not alter their contents or line endings.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.mp4 binary

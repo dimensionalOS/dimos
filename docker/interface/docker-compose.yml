@@ -1,0 +1,18 @@
+---
+services:
+  dimos-web-interface:
+    build:
+      context: ../../  # Root of the project
+      dockerfile: docker/interface/Dockerfile
+    image: dimos-web-interface:latest
+    container_name: dimos-web-interface
+    network_mode: "host"
+    volumes:
+      - ../../dimos/web/dimos_interface:/app
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

@@ -3,13 +3,13 @@ services:
   dimos:
     image: dimos:latest
     build: 
-      context: ./../../
+      context: ../../
       dockerfile: docker/agent/Dockerfile
     env_file:
-      - ./../../.env
+      - ../../.env
     mem_limit: 8048m
     volumes:
-      - ./../../assets:/app/assets
+      - ../../assets:/app/assets
     ports:
       - "5555:5555"
     environment:

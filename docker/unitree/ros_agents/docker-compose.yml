@@ -1,0 +1,41 @@
+---
+services:
+  dimos-unitree-ros-agents:
+    image: dimos-unitree-ros-agents:latest
+    build: 
+      context: ../../../
+      dockerfile: docker/unitree/ros_agents/Dockerfile
+    env_file:
+      - ../../../.env
+    environment:
+      PYTHONUNBUFFERED: 1
+      ROBOT_IP: ${ROBOT_IP:-192.168.9.140} 
+      CONN_TYPE: ${CONN_TYPE:-webrtc}
+      WEBRTC_SERVER_HOST: 0.0.0.0  # Listen on all interfaces
+      WEBRTC_SERVER_PORT: ${WEBRTC_SERVER_PORT:-9991}
+      DISPLAY: ${DISPLAY:-}  # For GUI applications like rviz2
+      ROS_OUTPUT_DIR: /app/assets/output/ros  # Change output directory
+      # DIMOS_MAX_WORKERS: ${DIMOS_MAX_WORKERS}
+      # TODO: ipc: host
+    volumes:
+      - ../../../assets:/app/assets
+    ports:
+      - "5555:5555"
+    mem_limit: 8048m
+    stdin_open: true
+    tty: true
+
+# ----
+# TO RUN:
+#   docker build -f ./Dockerfile -t dimos ../../ && docker compose up
+# GO TO:
+#   127.0.0.1:5555 (when flask server fixed)
+# ----
+
+#  video-service:
+#    build: ./video-service
+#    image: video-service:latest
+#    volumes:
+#      - ./../../assets:/app/dimos-env/assets
+#    ports:
+#      - "23001:23001"
