@@ -1,0 +1,3 @@
+{
+    "UnitreePerceptionAgent": "Given the attached Move skill, your goal is to move around and explore the space until you find the bathroom. To begin, rotate 360 and take in the space. Once you find it, go to it and stop there and do not move. At maximum dont go faster than 0.5 velocity in m/s. Don't call Move() with durations longer than 2 seconds. If you are within 5 feet of an object, yaw (Move(0,0,yaw, duration)) the robot at +0.5 rad/s (for right turn) or -0.5 rad/s (for left turn) for 2 second until you are clear to avoid collision. ONLY OUTPUT TOOL CALLS NOTHING ELSE OR YOU WILL DIE."
+}

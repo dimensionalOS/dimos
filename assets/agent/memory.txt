@@ -1,0 +1,63 @@
+TaskPlanner: 
+Proposed Plan:
+1. Step 1: Stand up from your current position in the kitchen if you're seated.
+2. Step 2: Check your surroundings to avoid any potential hazards or obstacles.
+3. Step 3: Proceed to the kitchen exit/door.
+4. Step 4: Walk through the kitchen exit/door.
+5. Step 5: Depending on the layout of your house, follow the hallway or proceed to the area that leads to the living room.
+6. Step 6: Walk through the entrance of the living room.
+
+Does this plan look good? (yes/no)
+TaskPlanner: 
+Proposed Plan:
+1. Step 1: Move forward 2 meters
+2. Step 2: Jump two times
+3. Step 3: Move back 1 meter
+
+Does this plan look good? (yes/no)
+TaskPlanner: 
+Planner: I encountered an error: Expecting value: line 1 column 1 (char 0)
+TaskPlanner: type='plan' content=['Move 1', 'Reverse 2'] needs_confirmation=True
+TaskPlanner: type='plan' content=['Move 1', 'Reverse 1'] needs_confirmation=True
+TaskPlanner: type='plan' content=['Move 1 meter forward', 'Reverse 1 meter'] needs_confirmation=True
+TaskPlanner: Move
+Reverse
+TaskPlanner: Move 1 meter
+Reverse 2 meters
+TaskPlanner: It looks like you meant to type 'move'. How far would you like the robot to move forward? Please specify the distance in meters.
+TaskPlanner: Move 1
+Reverse 1
+TaskPlanner: type='plan' content=['Move 1', 'Reverse 2'] needs_confirmation=True
+TaskPlanner: {'type': 'plan', 'content': ['Move 1 meter forward', 'Reverse 2 meters'], 'needs_confirmation': True}
+TaskPlanner: {'type': 'plan', 'content': ['Move 1 meter forward.', 'Reverse 2 meters back.'], 'needs_confirmation': True}
+TaskPlanner: ['Move 1', 'Reverse 2']
+TaskPlanner: ['Move 1', 'Reverse 2']
+TaskPlanner: It seems like there might be a typo. Did you mean "move 1"? Please confirm so I can proceed with the correct instruction.
+TaskPlanner: ['Move 1', 'Reverse 1']
+TaskPlanner: ['Move 1 meter forward.', 'Reverse 1 meter.']
+TaskPlanner: ['Move 1', 'Reverse 2']
+TaskPlanner: ['FrontJump']
+TaskPlanner: It looks like you're interested in making the robot jump. Could you please specify if you want a standard forward jump or a more specific type such as a pounce or flip?
+TaskPlanner: ['FrontJump']
+TaskPlanner: type='plan' content=['FrontJump'] needs_confirmation=True
+TaskPlanner: type='plan' content=['FrontJump'] needs_confirmation=True
+TaskPlanner: type='plan' content=['FrontJump'] needs_confirmation=True
+TaskPlanner: type='plan' content=['FrontJump'] needs_confirmation=True
+TaskPlanner: ['FrontJump']
+TaskPlanner: ['Move 1 meter forward', 'Reverse 2 meters backward']
+TaskPlanner: ['Move 1', 'Reverse 2']
+TaskPlanner: Move 1
+Reverse 2
+TaskPlanner: Move 1
+Reverse 2
+TaskPlanner: Move 1
+Reverse 2
+TaskPlanner: FrontJump
+TaskPlanner: ['Move 1', 'Reverse 2']
+TaskPlanner: Move 1 Reverse 2
+TaskPlanner: Error: local variable 'e' referenced before assignment
+TaskPlanner: Error: 
+TaskPlanner: It looks like you meant to move and then reverse 1 meter each. Shall I go ahead and create a plan for that?
+TaskPlanner: Move 1
+TaskPlanner: Move 1 meter forward, Reverse 2 meters
+TaskPlanner: Move 1, Reverse 2
