@@ -241,8 +241,8 @@ class Robot(ABC):
         Returns:
             The initialized skills instance.
         """
-
-        skills.initialize_skills()
+        if skills is not None:
+            skills.initialize_skills()
     
     def get_skills(self) -> Optional[AbstractSkill]:
         """Get the robot's skills instance.

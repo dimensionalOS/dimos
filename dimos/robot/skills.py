@@ -52,37 +52,6 @@ class AbstractSkill(BaseModel):
         if robot.get_skills() is None:
             robot.skills = self  # Establish bidirectional connection
     
-    def initialize_skills(self) -> None:
-        """Initialize all skills for this instance.
-
-        Example implementation:
-        ```python
-        def initialize_skills(self):
-            # Create the skills and add them to the list of skills
-            self.add_skills(self.create_skills_live())
-            nested_skills = self.get_nested_skills()
-            self.set_list_of_skills(nested_skills)
-
-            # Provide the robot instance to each skill
-            for skill_class in nested_skills:
-                print("\033[92mCreating instance for skill: {}\033[0m".format(
-                    skill_class))
-                self.create_instance(skill_class.__name__, robot=self._robot)
-        ```
-        """
-        pass
-
-    def create_skills_live(self) -> List["AbstractSkill"]:
-        """Create and return a list of skill classes.
-        
-        This method can be overridden by subclasses to define and procedurally create their specific skills.
-        Default implementation returns an empty list.
-        
-        Returns:
-            List of skill classes that will be registered with this skills instance.
-        """
-        return []
-    
     def create_instance(self, name, **kwargs):
         # Key based only on the name
         key = name

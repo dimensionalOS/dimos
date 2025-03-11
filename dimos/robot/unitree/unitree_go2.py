@@ -36,7 +36,6 @@ logger = setup_logger("dimos.robot.unitree.unitree_go2", level=logging.DEBUG)
 UNITREE_GO2_PRINT_COLOR = "\033[35m"
 UNITREE_GO2_RESET_COLOR = "\033[0m"
 
-
 class UnitreeGo2(Robot):
 
     def __init__(
@@ -117,15 +116,6 @@ class UnitreeGo2(Robot):
 
     def do(self, *args, **kwargs):
         pass
-    
-    def initialize_skills(self, skills: Optional[AbstractSkill]):
-        """Initialize the skills for the robot.
-        
-        This overrides the parent Robot.initialize_skills() method to handle
-        Unitree-specific skill initialization. Here for clarity, not needed.
-        """
-        if skills is not None:
-            skills.initialize_skills()
 
     def read_agent_outputs(self):
         """Read and print the latest agent outputs from the memory file."""
