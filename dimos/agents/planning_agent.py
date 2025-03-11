@@ -175,34 +175,12 @@ class PlanningAgent(OpenAIAgent):
             # Parse JSON and validate
             try:
                 parsed_json = json.loads(response_text)
-                validated = PlanningAgentResponse(**parsed_json)
-                # Create response object that matches LLMAgent._observable_query expectations
-                class ResponseObj:
-                    def __init__(self, parsed):
-                        self.parsed = parsed
-                        self.__dict__.update(parsed.dict())
-                    def __str__(self):
-                        if isinstance(self.content, list):
-                            return "\n".join(self.content)
-                        return str(self.content)
-                return ResponseObj(validated)
+                return PlanningAgentResponse(**parsed_json).dict()
             except:
                 self.logger.error(f"WARNING: Invalid PlanningAgentResponse response: {response_text}")
-                # Create fallback response
-                fallback = PlanningAgentResponse(
-                    type="dialogue",
-                    content=f"Error: Invalid response format - {response_text}",
-                    needs_confirmation=False
-                )
-                return ResponseObj(fallback)
                 
         except Exception as e:
-            fallback = PlanningAgentResponse(
-                type="dialogue",
-                content=f"Error: {str(e)}",
-                needs_confirmation=False
-            )
-            return ResponseObj(fallback)
+            return PlanningAgentResponse(content=f"Error: {str(e)}").dict()
 
     def process_user_input(self, user_input: str) -> None:
         """Process user input and generate appropriate response.
@@ -291,27 +269,3 @@ class PlanningAgent(OpenAIAgent):
             except Exception as e:
                 print(f"\nError: {e}")
                 break
-
-    def _observable_query(self, observer, base64_image=None, dimensions=None, override_token_limit=False, incoming_query=None):
-        """Override to ensure we pass only string content to downstream agents."""
-        try:
-            self._update_query(incoming_query)
-            _, condensed_results = self._get_rag_context()
-            messages = self._build_prompt(base64_image, dimensions, override_token_limit, condensed_results)
-            self.logger.info("Sending Query.")
-            response = self._send_query(messages)
-            self.logger.info(f"LLM Response [{self.dev_name}]: {response.parsed}")
-            
-            # For plan responses, join steps with newlines
-            if response.type == "plan":
-                final_msg = "\n".join(response.content)
-            else:
-                final_msg = str(response.content)
-                
-            observer.on_next(final_msg)
-            self.response_subject.on_next(final_msg)
-            observer.on_completed()
-        except Exception as e:
-            self.logger.error(f"Query failed in {self.dev_name}: {e}")
-            observer.on_error(e)
-            self.response_subject.on_error(e)
