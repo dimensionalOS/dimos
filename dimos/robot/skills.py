@@ -37,7 +37,7 @@ class AbstractSkill(BaseModel):
         self._robot = None
         print(f"Instances: {self._instances}")
         
-        # Handle robot if provided in constructor
+        # Handle Robot() reference if AbstractSkill() is instantiated standalone with robot=Robot()
         if robot is not None:
             self.set_robot(robot)
     
