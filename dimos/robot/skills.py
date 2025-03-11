@@ -1,8 +1,11 @@
 import logging
-from typing import Any
+from typing import Any, List, Optional, TYPE_CHECKING
 from pydantic import BaseModel
-
 from openai import pydantic_function_tool
+if TYPE_CHECKING:
+    from dimos.robot.robot import Robot
+else:
+    Robot = 'Robot'
 
 # Configure logging for the module
 logging.basicConfig(level=logging.INFO)
@@ -26,12 +29,59 @@ class AbstractSkill(BaseModel):
 
     _skill_registry: SkillRegistry = SkillRegistry()
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, robot: Optional[Robot] = None, **kwargs):
         print("Initializing AbstractSkill Class")
         super().__init__(*args, **kwargs)
         self._instances = {}
         self._list_of_skills = []  # Initialize the list of skills
+        self._robot = None
         print(f"Instances: {self._instances}")
+        
+        # Handle robot if provided in constructor
+        if robot is not None:
+            self.set_robot(robot)
+    
+    def set_robot(self, robot: Robot) -> None:
+        """Set the robot reference for this skills instance and register skills with robot.
+        
+        Args:
+            robot: The robot instance to associate with these skills.
+        """
+        self._robot = robot
+        # Register skills with robot if not already registered
+        if robot.get_skills() is None:
+            robot.skills = self  # Establish bidirectional connection
+    
+    def initialize_skills(self) -> None:
+        """Initialize all skills for this instance.
+
+        Example implementation:
+        ```python
+        def initialize_skills(self):
+            # Create the skills and add them to the list of skills
+            self.add_skills(self.create_skills_live())
+            nested_skills = self.get_nested_skills()
+            self.set_list_of_skills(nested_skills)
+
+            # Provide the robot instance to each skill
+            for skill_class in nested_skills:
+                print("\033[92mCreating instance for skill: {}\033[0m".format(
+                    skill_class))
+                self.create_instance(skill_class.__name__, robot=self._robot)
+        ```
+        """
+        pass
+
+    def create_skills_live(self) -> List["AbstractSkill"]:
+        """Create and return a list of skill classes.
+        
+        This method can be overridden by subclasses to define and procedurally create their specific skills.
+        Default implementation returns an empty list.
+        
+        Returns:
+            List of skill classes that will be registered with this skills instance.
+        """
+        return []
     
     def create_instance(self, name, **kwargs):
         # Key based only on the name

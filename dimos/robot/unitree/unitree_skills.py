@@ -140,9 +140,14 @@ class MyUnitreeSkills(AbstractSkill):
     _robot: Optional[Robot] = None
 
     def __init__(self, robot: Optional[Robot] = None, **data):
-        super().__init__(**data)
-        self._robot: Robot = robot
+        super().__init__(robot=robot, **data)
+        self._robot: Robot = None
 
+        if robot is not None:
+            self._robot = robot
+            self.initialize_skills()
+
+    def initialize_skills(self):
         # Create the skills and add them to the list of skills
         self.add_skills(self.create_skills_live())
         nested_skills = self.get_nested_skills()
@@ -152,7 +157,7 @@ class MyUnitreeSkills(AbstractSkill):
         for skill_class in nested_skills:
             print("\033[92mCreating instance for skill: {}\033[0m".format(
                 skill_class))
-            self.create_instance(skill_class.__name__, robot=robot)
+            self.create_instance(skill_class.__name__, robot=self._robot)
 
     def create_skills_live(self) -> List[AbstractSkill]:
         # ================================================
