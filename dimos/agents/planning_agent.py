@@ -111,6 +111,7 @@ class PlanningAgent(OpenAIAgent):
 
         # Set up terminal mode if requested
         self.use_terminal = use_terminal
+        use_terminal = False
         if use_terminal:
             # Start terminal interface in a separate thread
             self.logger.info("Starting terminal interface in a separate thread")
@@ -196,9 +197,10 @@ class PlanningAgent(OpenAIAgent):
         if self.current_plan and user_input.lower() in ["yes", "y", "confirm"]:
             self.logger.info("Plan confirmation received")
             self.plan_confirmed = True
+            # Create a proper PlanningAgentResponse with content as a list
             confirmation_msg = PlanningAgentResponse(
                 type="dialogue",
-                content="Plan confirmed! Streaming steps to execution...",
+                content=["Plan confirmed! Streaming steps to execution..."],
                 needs_confirmation=False
             )
             self._handle_response(confirmation_msg)

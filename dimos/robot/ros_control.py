@@ -28,7 +28,7 @@ from dimos.robot.ros_command_queue import ROSCommandQueue
 from dimos.utils.logging_config import setup_logger
 import logging
 
-logger = setup_logger("dimos.robot.ros_control", level=logging.DEBUG)
+logger = setup_logger("dimos.robot.ros_control", level=logging.INFO)
 
 __all__ = ['ROSControl', 'RobotMode']
 
@@ -210,8 +210,7 @@ class ROSControl(ABC):
         # Call the abstract method to update RobotMode enum based on the received state
         self._robot_state = msg
 
-        if self._debug:
-            print(f"[ROSControl] State callback received: {msg}")
+        logger.debug(f"[ROSControl] State callback received: {msg}")
         self._update_mode(msg)
         # Log state changes
         self._logger.debug(f"Robot state updated: {self._robot_state}")
