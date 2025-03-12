@@ -131,6 +131,24 @@ agent = OpenAIAgent(
         )
 ```
 
+### DimOS Application with Agent chaining
+
+Our reactive Pub/Sub data streaming architecture allow for each chaining of Agent_1 output --> Agent_2 input via the ```input_query_stream``` parameter which takes an ```Observable``` input. 
+
+```python
+
+robot = UnitreeGo2(ip=robot_ip,
+                  ros_control=UnitreeROSControl(),
+                  skills=MyUnitreeSkills())
+
+# Initialize master planning agent
+agent = OpenAIAgent(
+            dev_name="UnitreePlanningAgent",
+            skills=robot.get_skills(),
+            system_query="Jump when you see a human! Front flip when you see a dog!"
+        )
+
+
 ## Documentation
 
 For detailed documentation, please visit our [documentation site](#) (Coming Soon).
