@@ -132,7 +132,8 @@ class LLMAgent(Agent):
                  agent_type: str = "LLM",
                  agent_memory: Optional[AbstractAgentSemanticMemory] = None,
                  pool_scheduler: Optional[ThreadPoolScheduler] = None, 
-                 process_all_inputs: bool = False):
+                 process_all_inputs: bool = False,
+                 system_query: Optional[str] = None):
         """
         Initializes a new instance of the LLMAgent.
 
@@ -151,7 +152,7 @@ class LLMAgent(Agent):
         self.query: Optional[str] = None
         self.prompt_builder: Optional[PromptBuilder] = None
         self.skills: Optional[AbstractSkill] = None
-        self.system_query: Optional[str] = None
+        self.system_query: Optional[str] = system_query
         self.image_detail: str = "low"
         self.max_input_tokens_per_request: int = 128000
         self.max_output_tokens_per_request: int = 16384
@@ -434,7 +435,8 @@ class LLMAgent(Agent):
                     lambda observer, _: self._observable_query(
                         observer,
                         base64_image=base64_and_dims[0],
-                        dimensions=base64_and_dims[1]))),
+                        dimensions=base64_and_dims[1],
+                        incoming_query=self.system_query))),
                 MyOps.print_emission(id='H', **print_emission_args),
             )
 
@@ -641,12 +643,12 @@ class OpenAIAgent(LLMAgent):
             agent_type=agent_type,
             agent_memory=agent_memory,
             pool_scheduler=pool_scheduler,
-            process_all_inputs=process_all_inputs
+            process_all_inputs=process_all_inputs,
+            system_query=system_query
         )
         self.client = OpenAI()
         self.query = query
         self.output_dir = output_dir
-        self.system_query = system_query
         os.makedirs(self.output_dir, exist_ok=True)
 
         # Configure skills.
