@@ -46,11 +46,9 @@ export const commands: Record<string, (args: string[]) => Promise<string> | stri
 
     switch (args[0]) {
       case 'ls': {
-        // Format themes in columns, 3 themes per line with more padding
         const themeNames = themes.map((t) => t.name.toLowerCase());
         const formattedThemes = themeNames
           .reduce((acc: string[], theme: string, i: number) => {
-            // Add spaces between words in theme names for better readability
             const readableTheme = theme.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
             const paddedTheme = readableTheme.padEnd(30, ' '); // Increased padding to 30 chars
             if (i % 5 === 4 || i === themeNames.length - 1) {
