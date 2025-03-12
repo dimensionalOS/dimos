@@ -8,6 +8,8 @@ from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 def get_env_var(var_name, default=None, required=False):
     """Get environment variable with validation."""
     value = os.getenv(var_name, default)
+    if value == '':
+        value = default
     if required and not value:
         raise ValueError(f"{var_name} environment variable is required")
     return value
