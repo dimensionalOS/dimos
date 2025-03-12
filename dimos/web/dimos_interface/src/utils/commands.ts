@@ -20,7 +20,7 @@ export const commands: Record<string, (args: string[]) => Promise<string> | stri
   help: () => 'Available commands: ' + Object.keys(commands).join(', '),
   hostname: () => hostname,
   whoami: () => 'guest',
-  build: () => 'Actively hiring all-stars. Build the future of dimensional computing with us. Reach out to build@dimensionalOS.com',
+  join: () => 'Actively recruiting all-star contributors. Build the future of dimensional computing with us. Reach out to build@dimensionalOS.com',
   date: () => new Date().toLocaleString(),
   vi: () => `why use vi? try 'vim'`,
   emacs: () => `why use emacs? try 'vim'`,
@@ -46,10 +46,19 @@ export const commands: Record<string, (args: string[]) => Promise<string> | stri
 
     switch (args[0]) {
       case 'ls': {
-        let result = themes.map((t) => t.name.toLowerCase()).join(', ');
-        result += `You can preview all these themes here: ${packageJson.repository.url}/tree/master/docs/themes`;
+        const themeNames = themes.map((t) => t.name.toLowerCase());
+        const formattedThemes = themeNames
+          .reduce((acc: string[], theme: string, i: number) => {
+            const readableTheme = theme.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+            const paddedTheme = readableTheme.padEnd(30, ' '); // Increased padding to 30 chars
+            if (i % 5 === 4 || i === themeNames.length - 1) {
+              return [...acc, paddedTheme + '\n'];
+            }
+            return [...acc, paddedTheme];
+          }, [])
+          .join('');
 
-        return result;
+        return formattedThemes;
       }
 
       case 'set': {

@@ -1,6 +1,6 @@
 [
   {
-    "name": "EncomBoardroom",
+    "name": "DimOS",
     "black": "#0b0f0f",
     "red": "#ff0000",
     "green": "#00eeee",
@@ -506,7 +506,7 @@
     "cursorColor": "#383a42"
   },
   {
-    "name": "Borland",
+    "name": "MS-DOS",
     "black": "#4f4f4f",
     "red": "#ff6c60",
     "green": "#a8ff60",
