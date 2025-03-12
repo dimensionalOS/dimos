@@ -80,7 +80,6 @@ DISPLAY=:0
 
 # Optional
 DIMOS_MAX_WORKERS=
-ROS_OUTPUT_DIR=/app/assets/output/ros
 ```
 
 ### Run via Docker 
