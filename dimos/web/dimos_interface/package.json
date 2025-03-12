@@ -1,0 +1,46 @@
+{
+  "name": "terminal",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "license": "MIT",
+  "author": {
+    "name": "S Pomichter",
+    "url": "https://dimensionalOS.com",
+    "email": "stashp@mit.edu"
+  },
+  "funding": {
+    "type": "SAFE",
+    "url": "https://docdrop.org/static/drop-pdf/YC---Form-of-SAFE-Valuation-Cap-and-Discount--tNRDy.pdf"
+  },
+  "donate": {
+    "type": "venmo",
+    "url": "https://venmo.com/u/StashPomichter"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/m4tt72/terminal"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^3.0.1",
+    "@tsconfig/svelte": "^5.0.2",
+    "@types/node": "^22.3.0",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "svelte": "^4.2.8",
+    "svelte-check": "^3.6.2",
+    "tailwindcss": "^3.4.0",
+    "tslib": "^2.6.2",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.13"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  }
+}

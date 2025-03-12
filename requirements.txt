@@ -13,6 +13,7 @@ python-dotenv
 openai
 tiktoken>=0.8.0
 Flask>=2.2
+python-multipart==0.0.20
 reactivex
 
 # Web Extensions

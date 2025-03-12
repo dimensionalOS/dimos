@@ -20,7 +20,6 @@ services:
       - CONNECTION_METHOD=${CONNECTION_METHOD:-LocalSTA}
       - SERIAL_NUMBER=${SERIAL_NUMBER:-}
       - OUTPUT_DIR=${OUTPUT_DIR:-/app/assets}
-      - API_CALL_INTERVAL=${API_CALL_INTERVAL:-5}
     stdin_open: true
     tty: true
     command: ["python", "-m", "dimos.robot.unitree.run_go2"]
@@ -42,7 +41,4 @@ services:
 #
 #   - With Serial Number:
 #     CONNECTION_METHOD=LocalSTA SERIAL_NUMBER=ABC123 docker compose up
-#
-#   - With custom API interval:
-#     API_CALL_INTERVAL=10 docker compose up
 # ----

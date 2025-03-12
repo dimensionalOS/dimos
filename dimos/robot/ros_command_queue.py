@@ -15,6 +15,8 @@ from typing import Callable, Optional, NamedTuple, Dict, Any, Tuple, List
 from dimos.utils.logging_config import setup_logger
 import logging
 
+# Initialize logger for the ros command queue module
+logger = setup_logger("dimos.robot.ros_command_queue", level=logging.DEBUG)
 
 class CommandType(Enum):
     """Types of commands that can be queued"""
@@ -51,7 +53,6 @@ class ROSCommandQueue:
                  webrtc_func: Callable,
                  is_ready_func: Callable[[], bool] = None,
                  is_busy_func: Optional[Callable[[], bool]] = None,
-                 logger=None,
                  debug: bool = True):
         """
         Initialize the ROSCommandQueue.
@@ -60,14 +61,11 @@ class ROSCommandQueue:
             webrtc_func: Function to send WebRTC requests
             is_ready_func: Function to check if the robot is ready for a command
             is_busy_func: Function to check if the robot is busy
-            logger: Logger to use
             debug: Whether to enable debug logging
         """
         self._webrtc_func = webrtc_func
         self._is_ready_func = is_ready_func or (lambda: True)
         self._is_busy_func = is_busy_func
-        self._logger = setup_logger("dimos.robot.ros_command_queue", level=logging.DEBUG)
-
         self._debug = debug
         
         # Queue of commands to process
@@ -92,18 +90,18 @@ class ROSCommandQueue:
         
         self._max_queue_wait_time = 30.0  # Maximum time to wait for robot to be ready before forcing
         
-        self._logger.info("ROSCommandQueue initialized")
+        logger.info("ROSCommandQueue initialized")
         
     def start(self):
         """Start the queue processing thread"""
         if self._queue_thread is not None and self._queue_thread.is_alive():
-            self._logger.warning("Queue processing thread already running")
+            logger.warning("Queue processing thread already running")
             return
             
         self._should_stop = False
         self._queue_thread = threading.Thread(target=self._process_queue, daemon=True)
         self._queue_thread.start()
-        self._logger.info("Queue processing thread started")
+        logger.info("Queue processing thread started")
         
     def stop(self, timeout=2.0):
         """
@@ -113,18 +111,18 @@ class ROSCommandQueue:
             timeout: Maximum time to wait for the thread to stop
         """
         if self._queue_thread is None or not self._queue_thread.is_alive():
-            self._logger.warning("Queue processing thread not running")
+            logger.warning("Queue processing thread not running")
             return
             
         self._should_stop = True
         try:
             self._queue_thread.join(timeout=timeout)
             if self._queue_thread.is_alive():
-                self._logger.warning(f"Queue processing thread did not stop within {timeout}s")
+                logger.warning(f"Queue processing thread did not stop within {timeout}s")
             else:
-                self._logger.info("Queue processing thread stopped")
+                logger.info("Queue processing thread stopped")
         except Exception as e:
-            self._logger.error(f"Error stopping queue processing thread: {e}")
+            logger.error(f"Error stopping queue processing thread: {e}")
         
     def queue_webrtc_request(self, api_id: int, topic: str = None, parameter: str = '', 
                              request_id: str = None, data: Dict[str, Any] = None,
@@ -149,9 +147,9 @@ class ROSCommandQueue:
         # Create a function that will execute this WebRTC request
         def execute_webrtc():
             try:
-                self._logger.info(f"Executing WebRTC request: {api_id} (ID: {request_id})")
+                logger.info(f"Executing WebRTC request: {api_id} (ID: {request_id})")
                 if self._debug:
-                    print(f"[WebRTC Queue] SENDING request: API ID {api_id}")
+                    logger.debug(f"[WebRTC Queue] SENDING request: API ID {api_id}")
                 
                 result = self._webrtc_func(
                     api_id=api_id, 
@@ -161,13 +159,13 @@ class ROSCommandQueue:
                     data=data,
                 )
                 if not result:
-                    self._logger.warning(f"WebRTC request failed: {api_id} (ID: {request_id})")
+                    logger.warning(f"WebRTC request failed: {api_id} (ID: {request_id})")
                     if self._debug:
-                        print(f"[WebRTC Queue] Request API ID {api_id} FAILED to send")
+                        logger.debug(f"[WebRTC Queue] Request API ID {api_id} FAILED to send")
                     return False
                 
                 if self._debug:
-                    print(f"[WebRTC Queue] Request API ID {api_id} sent SUCCESSFULLY")
+                    logger.debug(f"[WebRTC Queue] Request API ID {api_id} sent SUCCESSFULLY")
                 
                 # Allow time for the robot to process the command
                 start_time = time.time()
@@ -177,24 +175,24 @@ class ROSCommandQueue:
                 # Wait for the robot to complete the command (timeout check)
                 while self._is_busy_func() and (time.time() - start_time) < timeout:
                     if self._debug and (time.time() - start_time) % 5 < 0.1:  # Print every ~5 seconds
-                        print(f"[WebRTC Queue] Still waiting on API ID {api_id} - elapsed: {time.time()-start_time:.1f}s")
+                        logger.debug(f"[WebRTC Queue] Still waiting on API ID {api_id} - elapsed: {time.time()-start_time:.1f}s")
                     time.sleep(0.1)
                 
                 # Check if we timed out
                 if self._is_busy_func() and (time.time() - start_time) >= timeout:
-                    self._logger.warning(f"WebRTC request timed out: {api_id} (ID: {request_id})")
+                    logger.warning(f"WebRTC request timed out: {api_id} (ID: {request_id})")
                     return False
                 
                 wait_time = time.time() - start_time
                 if self._debug:
-                    print(f"[WebRTC Queue] Request API ID {api_id} completed after {wait_time:.1f}s")
+                    logger.debug(f"[WebRTC Queue] Request API ID {api_id} completed after {wait_time:.1f}s")
                 
-                self._logger.info(f"WebRTC request completed: {api_id} (ID: {request_id})")
+                logger.info(f"WebRTC request completed: {api_id} (ID: {request_id})")
                 return True
             except Exception as e:
-                self._logger.error(f"Error executing WebRTC request: {e}")
+                logger.error(f"Error executing WebRTC request: {e}")
                 if self._debug:
-                    print(f"[WebRTC Queue] ERROR processing request: {e}")
+                    logger.debug(f"[WebRTC Queue] ERROR processing request: {e}")
                 return False
         
         # Create the command and queue it
@@ -211,8 +209,8 @@ class ROSCommandQueue:
         self._queue.put((priority, self._command_count, command))
         self._command_count += 1
         if self._debug:
-            print(f"[WebRTC Queue] Added request ID {request_id} for API ID {api_id} - Queue size now: {self.queue_size}")
-        self._logger.info(f"Queued WebRTC request: {api_id} (ID: {request_id}, Priority: {priority})")
+            logger.debug(f"[WebRTC Queue] Added request ID {request_id} for API ID {api_id} - Queue size now: {self.queue_size}")
+        logger.info(f"Queued WebRTC request: {api_id} (ID: {request_id}, Priority: {priority})")
         
         return request_id
         
@@ -248,14 +246,14 @@ class ROSCommandQueue:
         self._command_count += 1
         
         action_params = ', '.join([f"{k}={v}" for k, v in kwargs.items()])
-        self._logger.info(f"Queued action request: {action_name} (ID: {request_id}, Priority: {priority}, Params: {action_params})")
+        logger.info(f"Queued action request: {action_name} (ID: {request_id}, Priority: {priority}, Params: {action_params})")
         
         return request_id
         
     def _process_queue(self):
         """Process commands in the queue"""
-        self._logger.info("Starting queue processing")
-        print("[WebRTC Queue] Processing thread started")
+        logger.info("Starting queue processing")
+        logger.debug("[WebRTC Queue] Processing thread started")
         
         while not self._should_stop:
             # Print queue status
@@ -268,15 +266,15 @@ class ROSCommandQueue:
                 is_busy = self._is_busy_func() if self._is_busy_func else False
                 
                 if self._debug:
-                    print(f"[WebRTC Queue] Status: {self.queue_size} requests waiting | Robot ready: {is_ready} | Robot busy: {is_busy}")
+                    logger.debug(f"[WebRTC Queue] Status: {self.queue_size} requests waiting | Robot ready: {is_ready} | Robot busy: {is_busy}")
                 
                 # Track robot state changes
                 if is_ready != self._last_ready_state:
-                    self._logger.debug(f"Robot ready state changed: {self._last_ready_state} -> {is_ready}")
+                    logger.debug(f"Robot ready state changed: {self._last_ready_state} -> {is_ready}")
                     self._last_ready_state = is_ready
                     
                 if is_busy != self._last_busy_state:
-                    self._logger.debug(f"Robot busy state changed: {self._last_busy_state} -> {is_busy}")
+                    logger.debug(f"Robot busy state changed: {self._last_busy_state} -> {is_busy}")
                     self._last_busy_state = is_busy
                     
                     # If the robot has transitioned to busy, record the time
@@ -290,7 +288,7 @@ class ROSCommandQueue:
                 if (not is_ready and is_busy and 
                     self._stuck_in_busy_since is not None and 
                     current_time - self._stuck_in_busy_since > self._max_queue_wait_time):
-                    self._logger.warning(
+                    logger.warning(
                         f"Robot has been busy for {current_time - self._stuck_in_busy_since:.1f}s, "
                         f"forcing queue to continue"
                     )
@@ -299,7 +297,7 @@ class ROSCommandQueue:
                 # Process the next command if ready or forcing
                 if is_ready or force_processing:
                     if self._debug and is_ready:
-                        print("[WebRTC Queue] Robot is READY for next command")
+                        logger.debug("[WebRTC Queue] Robot is READY for next command")
                     
                     try:
                         # Get the next command
@@ -313,15 +311,15 @@ class ROSCommandQueue:
                             api_id = command.params.get('api_id')
                             cmd_info += f", API: {api_id}"
                             if self._debug:
-                                print(f"[WebRTC Queue] DEQUEUED request: API ID {api_id}")
+                                logger.debug(f"[WebRTC Queue] DEQUEUED request: API ID {api_id}")
                         elif command.cmd_type == CommandType.ACTION:
                             action_name = command.params.get('action_name')
                             cmd_info += f", Action: {action_name}"
                             if self._debug:
-                                print(f"[WebRTC Queue] DEQUEUED action: {action_name}")
+                                logger.debug(f"[WebRTC Queue] DEQUEUED action: {action_name}")
                         
                         forcing_str = " (FORCED)" if force_processing else ""
-                        self._logger.info(f"Processing command{forcing_str}: {cmd_info}")
+                        logger.info(f"Processing command{forcing_str}: {cmd_info}")
                         
                         # Execute the command
                         try:
@@ -330,14 +328,14 @@ class ROSCommandQueue:
                             
                             if success:
                                 self._success_count += 1
-                                self._logger.info(f"Command succeeded: {cmd_info}")
+                                logger.info(f"Command succeeded: {cmd_info}")
                                 if self._debug:
-                                    print(f"[WebRTC Queue] Command {command.id} marked as COMPLETED")
+                                    logger.debug(f"[WebRTC Queue] Command {command.id} marked as COMPLETED")
                             else:
                                 self._failure_count += 1
-                                self._logger.warning(f"Command failed: {cmd_info}")
+                                logger.warning(f"Command failed: {cmd_info}")
                                 if self._debug:
-                                    print(f"[WebRTC Queue] Command {command.id} FAILED")
+                                    logger.debug(f"[WebRTC Queue] Command {command.id} FAILED")
                                 
                             # Record command history
                             self._command_history.append({
@@ -350,14 +348,14 @@ class ROSCommandQueue:
                             
                         except Exception as e:
                             self._failure_count += 1
-                            self._logger.error(f"Error executing command: {e}")
+                            logger.error(f"Error executing command: {e}")
                             if self._debug:
-                                print(f"[WebRTC Queue] ERROR executing command: {e}")
+                                logger.debug(f"[WebRTC Queue] ERROR executing command: {e}")
                         
                         # Mark the command as complete
                         self._current_command = None
                         if self._debug:
-                            print(f"[WebRTC Queue] Adding 0.5s stabilization delay before next command")
+                            logger.debug("[WebRTC Queue] Adding 0.5s stabilization delay before next command")
                             time.sleep(0.5)
                             
                     except Empty:
@@ -366,7 +364,7 @@ class ROSCommandQueue:
             # Sleep to avoid busy-waiting
             time.sleep(0.1)
         
-        self._logger.info("Queue processing stopped")
+        logger.info("Queue processing stopped")
         
     def _print_queue_status(self):
         """Print the current queue status"""
@@ -399,7 +397,7 @@ class ROSCommandQueue:
             f"Stats: {self._success_count} OK, {self._failure_count} FAIL"
         )
         
-        self._logger.debug(status)
+        logger.debug(status)
         self._last_command_time = current_time
         
     @property

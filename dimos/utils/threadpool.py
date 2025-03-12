@@ -42,6 +42,17 @@ def get_scheduler() -> ThreadPoolScheduler:
     """
     return scheduler
 
+def make_single_thread_scheduler() -> ThreadPoolScheduler:
+    """Create a new ThreadPoolScheduler with a single worker.
+
+    This provides a dedicated scheduler for tasks that should run serially
+    on their own thread rather than using the shared thread pool.
+
+    Returns:
+        ThreadPoolScheduler: A scheduler instance with a single worker thread.
+    """
+    return ThreadPoolScheduler(max_workers=1)
+
 
 # Example usage:
 # scheduler = get_scheduler()

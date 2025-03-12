@@ -27,6 +27,7 @@ import reactivex
 from reactivex import Observer, create, Observable, empty, operators as RxOps, throw, just
 from reactivex.disposable import CompositeDisposable, Disposable
 from reactivex.scheduler import ThreadPoolScheduler
+from reactivex.subject import Subject
 
 # Local imports
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
@@ -75,8 +76,7 @@ class Agent:
         self.agent_type = agent_type
         self.agent_memory = agent_memory or AgentSemanticMemory()
         self.disposables = CompositeDisposable()
-        self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler(
-        )
+        self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
         self.logger = setup_logger(
             f"dimos.agents.{self.agent_type}.{self.dev_name}")
 
@@ -103,6 +103,7 @@ class LLMAgent(Agent):
       - Building prompts via a prompt builder
       - Handling tooling callbacks in responses
       - Subscribing to image and query streams
+      - Emitting responses as an observable stream
 
     Subclasses must implement the `_send_query` method, which is responsible
     for sending the prompt to a specific LLM API.
@@ -112,7 +113,6 @@ class LLMAgent(Agent):
         prompt_builder (PromptBuilder): Handles construction of prompts.
         skills (AbstractSkill): Available tools/functions for the agent.
         system_query (str): System prompt for RAG context situations.
-        system_query_without_documents (str): System prompt when RAG unavailable.
         image_detail (str): Detail level for image processing ('low','high','auto').
         max_input_tokens_per_request (int): Maximum input token count.
         max_output_tokens_per_request (int): Maximum output token count.
@@ -121,6 +121,9 @@ class LLMAgent(Agent):
         rag_similarity_threshold (float): Minimum similarity for RAG results.
         frame_processor (FrameProcessor): Processes video frames.
         output_dir (str): Directory for output files.
+        response_subject (Subject): Subject that emits agent responses.
+        process_all_inputs (bool): Whether to process every input emission (True) or 
+            skip emissions when the agent is busy processing a previous input (False).
     """
     logging_file_memory_lock = threading.Lock()
 
@@ -128,7 +131,9 @@ class LLMAgent(Agent):
                  dev_name: str = "NA",
                  agent_type: str = "LLM",
                  agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-                 pool_scheduler: Optional[ThreadPoolScheduler] = None):
+                 pool_scheduler: Optional[ThreadPoolScheduler] = None, 
+                 process_all_inputs: bool = False,
+                 system_query: Optional[str] = None):
         """
         Initializes a new instance of the LLMAgent.
 
@@ -138,6 +143,8 @@ class LLMAgent(Agent):
             agent_memory (AbstractAgentSemanticMemory): The memory system for the agent.
             pool_scheduler (ThreadPoolScheduler): The scheduler to use for thread pool operations.
                 If None, the global scheduler from get_scheduler() will be used.
+            process_all_inputs (bool): Whether to process every input emission (True) or 
+                skip emissions when the agent is busy processing a previous input (False).
         """
         super().__init__(dev_name, agent_type, agent_memory or
                          AgentSemanticMemory(), pool_scheduler)
@@ -145,8 +152,7 @@ class LLMAgent(Agent):
         self.query: Optional[str] = None
         self.prompt_builder: Optional[PromptBuilder] = None
         self.skills: Optional[AbstractSkill] = None
-        self.system_query: Optional[str] = None
-        self.system_query_without_documents: Optional[str] = None
+        self.system_query: Optional[str] = system_query
         self.image_detail: str = "low"
         self.max_input_tokens_per_request: int = 128000
         self.max_output_tokens_per_request: int = 16384
@@ -156,7 +162,11 @@ class LLMAgent(Agent):
         self.rag_similarity_threshold: float = 0.45
         self.frame_processor: Optional[FrameProcessor] = None
         self.output_dir: str = os.path.join(os.getcwd(), "assets", "agent")
+        self.process_all_inputs: bool = process_all_inputs
         os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Subject for emitting responses
+        self.response_subject = Subject()
 
     def _update_query(self, incoming_query: Optional[str]) -> None:
         """Updates the query if an incoming query is provided.
@@ -230,7 +240,6 @@ class LLMAgent(Agent):
             image_height=dimensions[1] if dimensions is not None else None,
             image_detail=self.image_detail,
             rag_context=condensed_results,
-            fallback_system_prompt=self.system_query_without_documents,
             system_prompt=self.system_query,
             budgets=budgets,
             policies=policies,
@@ -324,15 +333,18 @@ class LLMAgent(Agent):
                              response_message.parsed else
                              response_message.content)
                 observer.on_next(final_msg)
+                self.response_subject.on_next(final_msg)
             else:
                 response_message_2 = self._handle_tooling(
                     response_message, messages)
                 final_msg = response_message_2 if response_message_2 is not None else response_message
                 observer.on_next(final_msg)
+                self.response_subject.on_next(final_msg)
             observer.on_completed()
         except Exception as e:
             self.logger.error(f"Query failed in {self.dev_name}: {e}")
             observer.on_error(e)
+            self.response_subject.on_error(e)
 
     def _send_query(self, messages: list) -> Any:
         """Sends the query to the LLM API.
@@ -423,7 +435,8 @@ class LLMAgent(Agent):
                     lambda observer, _: self._observable_query(
                         observer,
                         base64_image=base64_and_dims[0],
-                        dimensions=base64_and_dims[1]))),
+                        dimensions=base64_and_dims[1],
+                        incoming_query=self.system_query))),
                 MyOps.print_emission(id='H', **print_emission_args),
             )
 
@@ -431,8 +444,8 @@ class LLMAgent(Agent):
         is_processing = [False]
 
         def process_if_free(frame):
-            if is_processing[0]:
-                # Drop frame if a request is in progress
+            if not self.process_all_inputs and is_processing[0]:
+                # Drop frame if a request is in progress and process_all_inputs is False
                 return empty()
             else:
                 is_processing[0] = True
@@ -500,8 +513,9 @@ class LLMAgent(Agent):
         is_processing = [False]
 
         def process_if_free(query):
-            if is_processing[0]:
-                # Drop query if a request is already in progress.
+            self.logger.info(f"Processing Query: {query}")
+            if not self.process_all_inputs and is_processing[0]:
+                # Drop query if a request is already in progress and process_all_inputs is False
                 return empty()
             else:
                 is_processing[0] = True
@@ -534,6 +548,22 @@ class LLMAgent(Agent):
         self.disposables.add(disposable)
         return disposable
 
+    def get_response_observable(self) -> Observable:
+        """Gets an observable that emits responses from this agent.
+        
+        Returns:
+            Observable: An observable that emits string responses from the agent.
+        """
+        return self.response_subject.pipe(
+            RxOps.observe_on(self.pool_scheduler), 
+            RxOps.subscribe_on(self.pool_scheduler),
+            RxOps.share())
+
+    def dispose_all(self):
+        """Disposes of all active subscriptions managed by this agent."""
+        super().dispose_all()
+        self.response_subject.on_completed()
+
 
 # endregion LLMAgent Base Class (Generic LLM Agent)
 
@@ -555,10 +585,10 @@ class OpenAIAgent(LLMAgent):
                  query: str = "What do you see?",
                  input_query_stream: Optional[Observable] = None,
                  input_video_stream: Optional[Observable] = None,
-                 output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
+                 output_dir: str = os.path.join(os.getcwd(), "assets",
+                                                "agent"),
                  agent_memory: Optional[AbstractAgentSemanticMemory] = None,
                  system_query: Optional[str] = None,
-                 system_query_without_documents: Optional[str] = None,
                  max_input_tokens_per_request: int = 128000,
                  max_output_tokens_per_request: int = 16384,
                  model_name: str = "gpt-4o",
@@ -570,7 +600,8 @@ class OpenAIAgent(LLMAgent):
                  response_model: Optional[BaseModel] = None,
                  frame_processor: Optional[FrameProcessor] = None,
                  image_detail: str = "low",
-                 pool_scheduler: Optional[ThreadPoolScheduler] = None):
+                 pool_scheduler: Optional[ThreadPoolScheduler] = None,
+                 process_all_inputs: Optional[bool] = None):
         """
         Initializes a new instance of the OpenAIAgent.
 
@@ -583,7 +614,6 @@ class OpenAIAgent(LLMAgent):
             output_dir (str): Directory for output files.
             agent_memory (AbstractAgentSemanticMemory): The memory system.
             system_query (str): The system prompt to use with RAG context.
-            system_query_without_documents (str): The system prompt to use without RAG context.
             max_input_tokens_per_request (int): Maximum tokens for input.
             max_output_tokens_per_request (int): Maximum tokens for output.
             model_name (str): The OpenAI model name to use.
@@ -597,20 +627,32 @@ class OpenAIAgent(LLMAgent):
             image_detail (str): Detail level for images ("low", "high", "auto").
             pool_scheduler (ThreadPoolScheduler): The scheduler to use for thread pool operations.
                 If None, the global scheduler from get_scheduler() will be used.
+            process_all_inputs (bool): Whether to process all inputs or skip when busy.
+                If None, defaults to True for text queries, False for video streams.
         """
-        super().__init__(dev_name, agent_type, agent_memory or
-                         AgentSemanticMemory(), pool_scheduler)
+        # Determine appropriate default for process_all_inputs if not provided
+        if process_all_inputs is None:
+            # Default to True for text queries, False for video streams
+            if input_query_stream is not None and input_video_stream is None:
+                process_all_inputs = True
+            else:
+                process_all_inputs = False
+                
+        super().__init__(
+            dev_name=dev_name,
+            agent_type=agent_type,
+            agent_memory=agent_memory,
+            pool_scheduler=pool_scheduler,
+            process_all_inputs=process_all_inputs,
+            system_query=system_query
+        )
         self.client = OpenAI()
         self.query = query
         self.output_dir = output_dir
-        self.system_query = system_query
-        self.system_query_without_documents = system_query_without_documents
         os.makedirs(self.output_dir, exist_ok=True)
 
         # Configure skills.
-        self.skills = skills if skills is not None else AbstractSkill()
-        if skills is None:
-            self.skills.set_tools(NOT_GIVEN)
+        self.skills = skills
 
         self.response_model = response_model if response_model is not None else NOT_GIVEN
         self.model_name = model_name
@@ -654,18 +696,18 @@ class OpenAIAgent(LLMAgent):
         context_data = [
             ("id0",
              "Optical Flow is a technique used to track the movement of objects in a video sequence."
-            ),
+             ),
             ("id1",
              "Edge Detection is a technique used to identify the boundaries of objects in an image."
-            ),
+             ),
             ("id2",
              "Video is a sequence of frames captured at regular intervals."),
             ("id3",
              "Colors in Optical Flow are determined by the movement of light, and can be used to track the movement of objects."
-            ),
+             ),
             ("id4",
              "Json is a data interchange format that is easy for humans to read and write, and easy for machines to parse and generate."
-            ),
+             ),
         ]
         for doc_id, text in context_data:
             self.agent_memory.add_vector(doc_id, text)
@@ -693,8 +735,7 @@ class OpenAIAgent(LLMAgent):
                     model=self.model_name,
                     messages=messages,
                     response_format=self.response_model,
-                    tools=(self.skills.get_tools()
-                           if self.skills is not None else NOT_GIVEN),
+                    tools=(self.skills.get_tools() if self.skills is not None else NOT_GIVEN),
                     max_tokens=self.max_output_tokens_per_request,
                 )
             else:
@@ -720,6 +761,22 @@ class OpenAIAgent(LLMAgent):
         except Exception as e:
             self.logger.error(f"Unexpected error in API call: {e}")
             raise
+
+    def stream_query(self, query_text: str) -> Observable:
+        """Creates an observable that processes a text query and emits the response.
+        
+        This method provides a simple way to send a text query and get an observable
+        stream of the response. It's designed for one-off queries rather than
+        continuous processing of input streams.
+        
+        Args:
+            query_text (str): The query text to process.
+            
+        Returns:
+            Observable: An observable that emits the response as a string.
+        """
+        return create(lambda observer, _: self._observable_query(
+            observer, incoming_query=query_text))
 
 
 # endregion OpenAIAgent Subclass (OpenAI-Specific Implementation)
