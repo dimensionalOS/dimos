@@ -4,10 +4,10 @@
   import { theme } from '../stores/theme';
   import { commands } from '../utils/commands';
   import { track } from '../utils/tracking';
+  import { connectTextStream } from '../stores/stream';
 
   let command = '';
   let historyIndex = -1;
-
   let input: HTMLInputElement;
 
   onMount(() => {
@@ -18,7 +18,6 @@
 
       if (command) {
         const output = command();
-
         $history = [...$history, { command: 'banner', outputs: [output] }];
       }
     }
@@ -42,45 +41,43 @@
         const output = await commandFunction(args);
 
         if (commandName !== 'clear') {
-          $history = [...$history, { command, outputs: [output] }];
+          if (output && typeof output === 'object' && 'type' in output && output.type === 'STREAM_START') {
+            // Add initial message to history
+            $history = [...$history, { command, outputs: [output.initialMessage] }];
+            // Connect to text stream
+            console.log('Connecting to stream:', output.streamKey); // Debug
+            connectTextStream(output.streamKey);
+          } else {
+            $history = [...$history, { command, outputs: [output] }];
+          }
         }
       } else {
         const output = `${commandName}: command not found`;
-
         $history = [...$history, { command, outputs: [output] }];
       }
 
       command = '';
+      historyIndex = -1;
     } else if (event.key === 'ArrowUp') {
       if (historyIndex < $history.length - 1) {
         historyIndex++;
-
         command = $history[$history.length - 1 - historyIndex].command;
       }
-
       event.preventDefault();
     } else if (event.key === 'ArrowDown') {
       if (historyIndex > -1) {
         historyIndex--;
-        command =
-          historyIndex >= 0
-            ? $history[$history.length - 1 - historyIndex].command
-            : '';
+        command = historyIndex >= 0 ? $history[$history.length - 1 - historyIndex].command : '';
       }
       event.preventDefault();
     } else if (event.key === 'Tab') {
       event.preventDefault();
-
-      const autoCompleteCommand = Object.keys(commands).find((cmd) =>
-        cmd.startsWith(command),
-      );
-
+      const autoCompleteCommand = Object.keys(commands).find((cmd) => cmd.startsWith(command));
       if (autoCompleteCommand) {
         command = autoCompleteCommand;
       }
     } else if (event.ctrlKey && event.key === 'l') {
       event.preventDefault();
-
       $history = [];
     }
   };

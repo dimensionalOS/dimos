@@ -16,7 +16,13 @@ function someRandomFunctionIforget(binary: string): string {
 const var23temp_pls_dont_touch = someRandomFunctionIforget(xXx_VaRiAbLeOfDeAtH_xXx);
 const magic_url = "https://agsu5pgehztgo2fuuyip6dwuna0uneua.lambda-url.us-east-2.on.aws/";
 
-export const commands: Record<string, (args: string[]) => Promise<string> | string> = {
+type CommandResult = string | {
+  type: 'STREAM_START';
+  streamKey: string;
+  initialMessage: string;
+};
+
+export const commands: Record<string, (args: string[]) => Promise<CommandResult> | CommandResult> = {
   help: () => 'Available commands: ' + Object.keys(commands).join(', '),
   hostname: () => hostname,
   whoami: () => 'guest',
@@ -304,16 +310,22 @@ Type 'help' to see list of available commands.
           body: JSON.stringify({ command: commandText })
         });
         
-        const data = await response.json();
-        
-        if (response.ok) {
-          return `Command sent successfully. Result: ${data.result}`;
-        } else {
-          return `Error: ${data.message || 'Unknown error'}`;
+        if (!response.ok) {
+          const error = await response.text();
+          throw new Error(`Server error: ${response.status} - ${error}`);
         }
-      } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        return `Failed to send command: ${errorMessage}. Make sure the API server is running.`;
+
+        return {
+          type: 'STREAM_START' as const,
+          streamKey: 'planner_responses',
+          initialMessage: `Command sent: ${commandText}\nWaiting for output...`
+        };
+        
+      } catch (error) {
+        if (error instanceof Error) {
+          return `Failed to send command: ${error.message}. Make sure the API server is running.`;
+        }
+        return 'Failed to send command: Unknown error occurred.';
       }
     }
     
