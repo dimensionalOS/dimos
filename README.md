@@ -64,7 +64,7 @@ DISPLAY=:0
 ### Run docker compose 
 ```bash
 xhost +local:root # If running locally and desire RVIZ GUI
-docker compose -f docker/unitree/ros_agents/docker-compose.yml up --build # TODO: change docker path
+docker compose -f docker/unitree/agents_interface/docker-compose.yml up --build
 ```
 **Interface will start at http://localhost:3000**
 
@@ -79,13 +79,17 @@ docker compose -f docker/unitree/ros_agents/docker-compose.yml up --build # TODO
 ### Python Installation
 
 ```bash
+sudo apt install python3-venv
+
 # Clone the repository
 git clone https://github.com/dimensionalOS/dimos-unitree.git
 cd dimos-unitree
 
 # Create and activate virtual environment
-python -m venv venv
-source venv/bin/activate 
+python3 -m venv venv
+source venv/bin/activate
+
+sudo apt install portaudio19-dev python3-pyaudio
 
 # Install dependencies
 pip install -r requirements.txt

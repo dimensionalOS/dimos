@@ -4,6 +4,10 @@ openai
 numpy
 colorlog==6.9.0
 yapf==0.40.2
+typeguard
+empy==3.3.4
+catkin_pkg
+lark
 
 # pycolmap
 
