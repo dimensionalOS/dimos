@@ -1,5 +1,23 @@
 ![Screenshot 2025-02-18 at 16-31-22 DimOS Terminal](/assets/dimos_terminal.png)
 
+<div align="center">
+  <table>
+    <tr>
+      <td width="80%">
+        <img src="./assets/dimos_interface.gif" alt="dimOS interface" width="100%">
+        <p align="center"><em>A simple two-shot PlanningAgent</em></p>
+      </td>
+      <td width="20%">
+        <video width="100%" controls>
+          <source src="./assets/simple_demo.mp4" type="video/mp4">
+          Your browser does not support the video tag.
+        </video>
+        <p align="center"><em>3rd person POV</em></p>
+      </td>
+    </tr>
+  </table>
+</div>
+
 # The Dimensional Framework
 *The universal framework for AI-native generalist robotics*
 
@@ -280,6 +298,13 @@ class JumpAndFlip(AbstractRobotSkill):
         flip = Flip(robot=self._robot)
         return (jump() and flip())
 ```
+
+### Unitree Test Files
+- **`tests/run_go2_ros.py`**: Tests `UnitreeROSControl(ROSControl)` initialization in `UnitreeGo2(Robot)` via direct function calls `robot.move()` and `robot.webrtc_req()` 
+- **`tests/simple_agent_test.py`**: Tests a simple zero-shot class `OpenAIAgent` example
+- **`tests/unitree/test_webrtc_queue.py`**: Tests `ROSCommandQueue` via a 20 back-to-back WebRTC requests to the robot 
+- **`tests/test_planning_agent_web_interface.py`**: Tests a simple two-stage `PlanningAgent` chained to an `ExecutionAgent` with backend FastAPI interface.
+- **`tests/test_unitree_agent_queries_fastapi.py`**: Tests a zero-shot `ExecutionAgent` with backend FastAPI interface.
 
 ## Documentation
 
