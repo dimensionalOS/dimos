@@ -40,3 +40,5 @@ pyaudio
 requests
 wasmtime
 
+#Hugging Face
+transformers[torch]==4.49.0
