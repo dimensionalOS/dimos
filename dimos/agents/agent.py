@@ -803,7 +803,7 @@ class HuggingFaceLLMAgent(LLMAgent):
     def __init__(self,
                  dev_name: str,
                  agent_type: str = "HF-LLM",
-                 model_name: str = "Qwen/Qwen2.5-7B",
+                 model_name: str = "Qwen/Qwen2.5-0.5B",
                  query: str = "How many r's are in the word 'strawberry'?",
                  input_query_stream: Optional[Observable] = None,
                  input_video_stream: Optional[Observable] = None,
@@ -859,7 +859,28 @@ class HuggingFaceLLMAgent(LLMAgent):
         )
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-        self.stream_query(self.query).subscribe(lambda x: print(x))
+        self.max_output_tokens_per_request = max_output_tokens_per_request
+
+        # self.stream_query(self.query).subscribe(lambda x: print(x))
+
+        self.input_video_stream = input_video_stream
+        self.input_query_stream = input_query_stream
+
+        # Ensure only one input stream is provided.
+        if self.input_video_stream is not None and self.input_query_stream is not None:
+            raise ValueError(
+                "More than one input stream provided. Please provide only one input stream."
+            )
+
+        if self.input_video_stream is not None:
+            self.logger.info("Subscribing to input video stream...")
+            self.disposables.add(
+                self.subscribe_to_image_processing(self.input_video_stream))
+        if self.input_query_stream is not None:
+            self.logger.info("Subscribing to input query stream...")
+            self.disposables.add(
+                self.subscribe_to_query_processing(self.input_query_stream))
+
 
     def _send_query(self, messages: list) -> Any:
         try:
@@ -879,7 +900,7 @@ class HuggingFaceLLMAgent(LLMAgent):
             print("Generating response...")
             generated_ids = self.model.generate(
                 **model_inputs,
-                max_new_tokens=200 # self.max_output_tokens_per_request
+                max_new_tokens=self.max_output_tokens_per_request
             )
             print("Response generated.")
 

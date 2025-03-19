@@ -55,11 +55,14 @@ class HuggingFaceLLMAgentDemo:
             dev_name="HuggingFaceLLMAgent",
             agent_type="HF-LLM",
             input_query_stream=query_provider.data_stream,
-            process_all_inputs=True,
+            process_all_inputs=False,
             # output_dir=self.output_dir,
             # skills=skills_instance,
             # frame_processor=frame_processor,
         )
+
+        # Sample query to test the agent
+        # self.HuggingFaceLLMAgent.stream_query("What is the capital of France?").subscribe(lambda x: print(x))
 
         # Start the query stream.
         # Queries will be pushed every 1 second, in a count from 100 to 5000.
