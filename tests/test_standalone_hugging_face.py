@@ -48,7 +48,9 @@ print(f"Hi from {os.path.basename(__file__)}\n")
 # import json
 
 # API_URL = "https://api-inference.huggingface.co/models/Qwen/QwQ-32B"
-# HEADERS = {"Authorization": "Bearer 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"}
+# api_key = os.getenv('HUGGINGFACE_ACCESS_TOKEN')
+
+# HEADERS = {"Authorization": f"Bearer {api_key}"}
 
 # prompt = "How many r's are in the word \"strawberry\""
 # messages = [
@@ -84,7 +86,9 @@ print(f"Hi from {os.path.basename(__file__)}\n")
 # import time
 
 # API_URL = "https://api-inference.huggingface.co/models/Qwen/QwQ-32B"
-# HEADERS = {"Authorization": "Bearer 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"}
+# api_key = os.getenv('HUGGINGFACE_ACCESS_TOKEN')
+
+# HEADERS = {"Authorization": f"Bearer {api_key}"}
 
 # def query_with_retries(payload, max_retries=5, delay=15):
 #     for attempt in range(max_retries):
@@ -115,9 +119,12 @@ print(f"Hi from {os.path.basename(__file__)}\n")
 
 from huggingface_hub import InferenceClient
 
+# Use environment variable for API key
+api_key = os.getenv('HUGGINGFACE_ACCESS_TOKEN')
+
 client = InferenceClient(
     provider="hf-inference",
-    api_key="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",
+    api_key=api_key,
 )
 
 messages = [
