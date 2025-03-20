@@ -12,7 +12,7 @@ print(f"Current working directory: {os.getcwd()}")
 
 # -----
 
-from dimos.agents.agent import HuggingFaceLLMAgent
+from dimos.agents.agent import HuggingFaceLocalAgent, HuggingFaceRemoteAgent
 from dimos.stream.data_provider import QueryDataProvider
 
 
@@ -51,11 +51,12 @@ class HuggingFaceLLMAgentDemo:
         # By default, this will create all skills in this class and make them available.
 
         print("Starting HuggingFace LLM Agent")
-        self.HuggingFaceLLMAgent = HuggingFaceLLMAgent(
-            dev_name="HuggingFaceLLMAgent",
+        self.HuggingFaceAgent = HuggingFaceRemoteAgent(
+            dev_name="HuggingFaceAgent",
             agent_type="HF-LLM",
             input_query_stream=query_provider.data_stream,
             process_all_inputs=False,
+            # max_output_tokens_per_request=200,
             # output_dir=self.output_dir,
             # skills=skills_instance,
             # frame_processor=frame_processor,
@@ -70,8 +71,8 @@ class HuggingFaceLLMAgentDemo:
         # to them via skill execution and provide 1-shot responses.
         query_provider.start_query_stream(
             query_template=
-            "{query}; Denote the number at the beginning of this query before the semicolon as the 'reference number'. Provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
-            frequency=1,
+            "X is: {query}. If X < 500, then say 'hi'. If X <= 500, but lower than 1000, then say 'hello'. If X is >= 1000 but lower than 2000, then say 'hi hello'. If X is >= 2000, but lower than 4600 then say 'hello?'. If X >= 4600, then say 'good day'. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
+            frequency=250,
             start_count=1,
             end_count=10000,
             step=1)

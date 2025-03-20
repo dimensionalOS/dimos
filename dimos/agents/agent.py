@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Tuple, Optional
 
 # Third-party imports
 from dotenv import load_dotenv
+from huggingface_hub import InferenceClient
 from openai import NOT_GIVEN, OpenAI
 from pydantic import BaseModel
 import reactivex
@@ -788,7 +789,7 @@ class OpenAIAgent(LLMAgent):
 
 
 # -----------------------------------------------------------------------------
-# region HuggingFaceLLMAgent Subclass (HuggingFace-Specific Implementation)
+# region HuggingFaceLocalAgent Subclass (HuggingFace-Specific Implementation)
 # -----------------------------------------------------------------------------
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from reactivex import create, Observer
@@ -799,7 +800,7 @@ import json
 from typing import Any, List, Optional
 
 # HuggingFaceLLMAgent Class
-class HuggingFaceLLMAgent(LLMAgent):
+class HuggingFaceLocalAgent(LLMAgent):
     def __init__(self,
                  dev_name: str,
                  agent_type: str = "HF-LLM",
@@ -822,7 +823,8 @@ class HuggingFaceLLMAgent(LLMAgent):
                  frame_processor: Optional[FrameProcessor] = None,
                  image_detail: str = "low",
                  pool_scheduler: Optional[ThreadPoolScheduler] = None,
-                 process_all_inputs: Optional[bool] = None,):
+                 process_all_inputs: Optional[bool] = None,
+                 use_endpoint: bool = True):
 
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
@@ -915,6 +917,126 @@ class HuggingFaceLLMAgent(LLMAgent):
             response = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
             print("Response batch decoded.")
             return response
+        except Exception as e:
+            self.logger.error(f"Error during HuggingFace query: {e}")
+            return "Error processing request."
+
+    def stream_query(self, query_text: str) -> Subject:
+        """
+        Creates an observable that processes a text query and emits the response.
+        """
+        return create(lambda observer, _: self._observable_query(
+            observer, incoming_query=query_text))
+
+# endregion HuggingFaceLLMAgent Subclass (HuggingFace-Specific Implementation)
+
+
+# -----------------------------------------------------------------------------
+# region HuggingFaceRemoteAgent Subclass (HuggingFace-Specific Implementation)
+# -----------------------------------------------------------------------------
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from reactivex import create, Observer
+from reactivex.subject import Subject
+import torch
+import os
+import json
+from typing import Any, List, Optional
+
+# HuggingFaceLLMAgent Class
+class HuggingFaceRemoteAgent(LLMAgent):
+    def __init__(self,
+                 dev_name: str,
+                 agent_type: str = "HF-LLM",
+                 model_name: str = "Qwen/QwQ-32B",
+                 query: str = "How many r's are in the word 'strawberry'?",
+                 input_query_stream: Optional[Observable] = None,
+                 input_video_stream: Optional[Observable] = None,
+                 output_dir: str = os.path.join(os.getcwd(), "assets",
+                                                "agent"),
+                 agent_memory: Optional[AbstractAgentSemanticMemory] = None,
+                 system_query: Optional[str] = None,
+                 max_input_tokens_per_request: int = 128000,
+                 max_output_tokens_per_request: int = 16384,
+                 prompt_builder: Optional[PromptBuilder] = None,
+                 tokenizer: Optional[AbstractTokenizer] = None,
+                 rag_query_n: int = 4,
+                 rag_similarity_threshold: float = 0.45,
+                 skills: Optional[AbstractSkill] = None,
+                 response_model: Optional[BaseModel] = None,
+                 frame_processor: Optional[FrameProcessor] = None,
+                 image_detail: str = "low",
+                 pool_scheduler: Optional[ThreadPoolScheduler] = None,
+                 process_all_inputs: Optional[bool] = None,
+                 use_endpoint: bool = True):
+
+        # Determine appropriate default for process_all_inputs if not provided
+        if process_all_inputs is None:
+            # Default to True for text queries, False for video streams
+            if input_query_stream is not None and input_video_stream is None:
+                process_all_inputs = True
+            else:
+                process_all_inputs = False
+
+        super().__init__(
+            dev_name=dev_name,
+            agent_type=agent_type,
+            agent_memory=agent_memory,
+            pool_scheduler=pool_scheduler,
+            process_all_inputs=process_all_inputs,
+            system_query=system_query
+        )
+
+        self.query = query
+        self.output_dir = output_dir
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        self.model_name = model_name
+        self.prompt_builder = prompt_builder or PromptBuilder(
+            self.model_name,
+            tokenizer=tokenizer or HuggingFace_Tokenizer(self.model_name)
+        )
+
+        self.model_name = model_name
+
+        self.max_output_tokens_per_request = max_output_tokens_per_request
+
+        self.api_key = os.getenv('HUGGINGFACE_ACCESS_TOKEN')
+
+        self.client = InferenceClient(
+            provider="hf-inference",
+            api_key=self.api_key,
+        )
+
+        # self.stream_query(self.query).subscribe(lambda x: print(x))
+
+        self.input_video_stream = input_video_stream
+        self.input_query_stream = input_query_stream
+
+        # Ensure only one input stream is provided.
+        if self.input_video_stream is not None and self.input_query_stream is not None:
+            raise ValueError(
+                "More than one input stream provided. Please provide only one input stream."
+            )
+
+        if self.input_video_stream is not None:
+            self.logger.info("Subscribing to input video stream...")
+            self.disposables.add(
+                self.subscribe_to_image_processing(self.input_video_stream))
+        if self.input_query_stream is not None:
+            self.logger.info("Subscribing to input query stream...")
+            self.disposables.add(
+                self.subscribe_to_query_processing(self.input_query_stream))
+
+
+    def _send_query(self, messages: list) -> Any:
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model_name, 
+                messages=messages, 
+                max_tokens=self.max_output_tokens_per_request,
+            )
+
+            return (completion.choices[0].message)
         except Exception as e:
             self.logger.error(f"Error during HuggingFace query: {e}")
             return "Error processing request."
