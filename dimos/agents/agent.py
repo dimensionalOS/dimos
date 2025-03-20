@@ -803,7 +803,8 @@ class HuggingFaceLLMAgent(LLMAgent):
     def __init__(self,
                  dev_name: str,
                  agent_type: str = "HF-LLM",
-                 model_name: str = "Qwen/Qwen2.5-0.5B",
+                 model_name: str = "Qwen/Qwen2.5-7B",
+                 device: str = "auto",
                  query: str = "How many r's are in the word 'strawberry'?",
                  input_query_stream: Optional[Observable] = None,
                  input_video_stream: Optional[Observable] = None,
@@ -846,16 +847,23 @@ class HuggingFaceLLMAgent(LLMAgent):
         os.makedirs(self.output_dir, exist_ok=True)
 
         self.model_name = model_name
+        self.device = device
+
+        # Better device handling
+        if self.device == "auto":
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        print(f"Device: {self.device}")
         self.prompt_builder = prompt_builder or PromptBuilder(
             self.model_name,
             tokenizer=tokenizer or HuggingFace_Tokenizer(self.model_name)
         )
 
-        self.model_name = model_name
+
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype="auto",
-            device_map="auto"
+            torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+            device_map=self.device
         )
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 

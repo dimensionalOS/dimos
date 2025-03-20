@@ -51,11 +51,21 @@ class HuggingFaceLLMAgentDemo:
         # By default, this will create all skills in this class and make them available.
 
         print("Starting HuggingFace LLM Agent")
+
+        # Check for NVIDIA GPU availability
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cuda":
+            print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+        else:
+            print("GPU not available, using CPU")
+
         self.HuggingFaceLLMAgent = HuggingFaceLLMAgent(
             dev_name="HuggingFaceLLMAgent",
             agent_type="HF-LLM",
             input_query_stream=query_provider.data_stream,
             process_all_inputs=False,
+            device=device,
             # output_dir=self.output_dir,
             # skills=skills_instance,
             # frame_processor=frame_processor,
@@ -71,7 +81,7 @@ class HuggingFaceLLMAgentDemo:
         query_provider.start_query_stream(
             query_template=
             "{query}; Denote the number at the beginning of this query before the semicolon as the 'reference number'. Provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
-            frequency=1,
+            frequency=200,
             start_count=1,
             end_count=10000,
             step=1)
