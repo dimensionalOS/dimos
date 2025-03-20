@@ -33,7 +33,7 @@ from reactivex.subject import Subject
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.memory.chroma_impl import AgentSemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
-from dimos.agents.tokenizer.openai_impl import AbstractTokenizer, OpenAI_Tokenizer
+from dimos.agents.tokenizer.openai_impl import AbstractTokenizer, HuggingFace_Tokenizer, OpenAI_Tokenizer
 from dimos.robot.skills import AbstractSkill
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.video_operators import Operators as MyOps, VideoOperators as MyVidOps
@@ -232,6 +232,9 @@ class LLMAgent(Agent):
             "rag": "truncate_end",
         }
 
+        if self.prompt_builder is None:
+            raise ValueError("Prompt builder is not set.")
+
         return self.prompt_builder.build(
             user_query=self.query,
             override_token_limit=override_token_limit,
@@ -331,7 +334,7 @@ class LLMAgent(Agent):
                 final_msg = (response_message.parsed
                              if hasattr(response_message, 'parsed') and
                              response_message.parsed else
-                             response_message.content)
+                             (response_message.content if hasattr(response_message, 'content') else response_message))
                 observer.on_next(final_msg)
                 self.response_subject.on_next(final_msg)
             else:
@@ -782,3 +785,124 @@ class OpenAIAgent(LLMAgent):
 
 
 # endregion OpenAIAgent Subclass (OpenAI-Specific Implementation)
+
+
+# -----------------------------------------------------------------------------
+# region HuggingFaceLLMAgent Subclass (HuggingFace-Specific Implementation)
+# -----------------------------------------------------------------------------
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from reactivex import create, Observer
+from reactivex.subject import Subject
+import torch
+import os
+import json
+from typing import Any, List, Optional
+
+# HuggingFaceLLMAgent Class
+class HuggingFaceLLMAgent(LLMAgent):
+    def __init__(self,
+                 dev_name: str,
+                 agent_type: str = "HF-LLM",
+                 model_name: str = "Qwen/Qwen2.5-7B",
+                 query: str = "How many r's are in the word 'strawberry'?",
+                 input_query_stream: Optional[Observable] = None,
+                 input_video_stream: Optional[Observable] = None,
+                 output_dir: str = os.path.join(os.getcwd(), "assets",
+                                                "agent"),
+                 agent_memory: Optional[AbstractAgentSemanticMemory] = None,
+                 system_query: Optional[str] = None,
+                 max_input_tokens_per_request: int = 128000,
+                 max_output_tokens_per_request: int = 16384,
+                 prompt_builder: Optional[PromptBuilder] = None,
+                 tokenizer: Optional[AbstractTokenizer] = None,
+                 rag_query_n: int = 4,
+                 rag_similarity_threshold: float = 0.45,
+                 skills: Optional[AbstractSkill] = None,
+                 response_model: Optional[BaseModel] = None,
+                 frame_processor: Optional[FrameProcessor] = None,
+                 image_detail: str = "low",
+                 pool_scheduler: Optional[ThreadPoolScheduler] = None,
+                 process_all_inputs: Optional[bool] = None,):
+
+        # Determine appropriate default for process_all_inputs if not provided
+        if process_all_inputs is None:
+            # Default to True for text queries, False for video streams
+            if input_query_stream is not None and input_video_stream is None:
+                process_all_inputs = True
+            else:
+                process_all_inputs = False
+
+        super().__init__(
+            dev_name=dev_name,
+            agent_type=agent_type,
+            agent_memory=agent_memory,
+            pool_scheduler=pool_scheduler,
+            process_all_inputs=process_all_inputs,
+            system_query=system_query
+        )
+
+        self.query = query
+        self.output_dir = output_dir
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        self.model_name = model_name
+        self.prompt_builder = prompt_builder or PromptBuilder(
+            self.model_name,
+            tokenizer=tokenizer or HuggingFace_Tokenizer(self.model_name)
+        )
+
+        self.model_name = model_name
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype="auto",
+            device_map="auto"
+        )
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+        self.stream_query(self.query).subscribe(lambda x: print(x))
+
+    def _send_query(self, messages: list) -> Any:
+        try:
+            print("Applying chat template...")
+            prompt_text = self.tokenizer.apply_chat_template(
+                conversation=[{"role": "user", "content": str(messages)}],
+                tokenize=False,
+                add_generation_prompt=True
+            )
+            print("Chat template applied.")
+            print(f"Prompt text: {prompt_text}")
+
+            print("Preparing model inputs...")
+            model_inputs = self.tokenizer([prompt_text], return_tensors="pt").to(self.model.device)
+            print("Model inputs prepared.")
+
+            print("Generating response...")
+            generated_ids = self.model.generate(
+                **model_inputs,
+                max_new_tokens=200 # self.max_output_tokens_per_request
+            )
+            print("Response generated.")
+
+            print("Decoding generated IDs...")
+            generated_ids = [
+                output_ids[len(input_ids):] 
+                for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+            ]
+            print("Generated IDs decoded.")
+
+            print("Batch decoding response...")
+            response = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+            print("Response batch decoded.")
+            return response
+        except Exception as e:
+            self.logger.error(f"Error during HuggingFace query: {e}")
+            return "Error processing request."
+
+    def stream_query(self, query_text: str) -> Subject:
+        """
+        Creates an observable that processes a text query and emits the response.
+        """
+        return create(lambda observer, _: self._observable_query(
+            observer, incoming_query=query_text))
+
+# endregion HuggingFaceLLMAgent Subclass (HuggingFace-Specific Implementation)
