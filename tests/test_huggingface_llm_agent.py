@@ -12,7 +12,7 @@ print(f"Current working directory: {os.getcwd()}")
 
 # -----
 
-from dimos.agents.agent import HuggingFaceLLMAgent
+from dimos.agents.agent import HuggingFaceLocalAgent, HuggingFaceRemoteAgent
 from dimos.stream.data_provider import QueryDataProvider
 
 
