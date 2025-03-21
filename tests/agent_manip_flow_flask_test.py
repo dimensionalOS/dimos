@@ -23,7 +23,7 @@ from reactivex.disposable import CompositeDisposable
 from reactivex.scheduler import ThreadPoolScheduler, CurrentThreadScheduler, ImmediateScheduler
 
 # Local application imports
-from dimos.agents.agent import PromptBuilder, OpenAIAgent 
+from dimos.agents.agent import OpenAIAgent 
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.video_operators import VideoOperators as vops
 from dimos.stream.video_provider import VideoProvider

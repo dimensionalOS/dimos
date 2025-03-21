@@ -32,7 +32,7 @@ from reactivex.subject import Subject
 # Local imports
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.memory.chroma_impl import AgentSemanticMemory
-from dimos.agents.prompt_builder.impl import PromptBuilder
+from dimos.agents.prompts.builder.builder import PromptBuilder
 from dimos.agents.tokenizer.openai_impl import AbstractTokenizer, OpenAI_Tokenizer
 from dimos.robot.skills import AbstractSkill
 from dimos.stream.frame_processor import FrameProcessor

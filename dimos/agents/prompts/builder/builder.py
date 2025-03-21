@@ -1,9 +1,13 @@
+"""Prompt builder implementation for creating and managing AI prompts.
+
+This module provides functionality for building dynamic prompts with token optimization,
+including support for multimodal content like text and images.
+"""
 
 from textwrap import dedent
+from typing import Dict, Any, Optional, List, Union
 from dimos.agents.tokenizer.openai_impl import AbstractTokenizer, OpenAI_Tokenizer
 
-# TODO: Make class more generic when implementing other tokenizers. Presently its OpenAI specific.
-# TODO: Build out testing and logging
 
 class PromptBuilder():
 
