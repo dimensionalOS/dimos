@@ -25,23 +25,39 @@ def main():
     
     # Initialize video provider and segmentation stream
     video_provider = VideoProvider("test_camera", video_source=0)
-    seg_stream = SemanticSegmentationStream(enable_depth=True, camera_params=camera_params)
+    seg_stream = SemanticSegmentationStream(enable_mono_depth=True, camera_params=camera_params, gt_depth_scale=512.0)
     
     # Create streams
-    video_stream = video_provider.capture_video_as_observable(realtime=False, fps=2)
+    video_stream = video_provider.capture_video_as_observable(realtime=False, fps=5)
     segmentation_stream = seg_stream.create_stream(video_stream)
     
     # Define callbacks for the segmentation stream
     def on_next(segmentation):
         if stop_event.is_set():
             return
-            
+
         # Get the frame and visualize
         vis_frame = segmentation.metadata["viz_frame"]
+        depth_viz = segmentation.metadata["depth_viz"]
+        # Get the image dimensions
+        height, width = vis_frame.shape[:2]
+        depth_height, depth_width = depth_viz.shape[:2]
+
+        # Resize depth visualization to match segmentation height 
+        # (maintaining aspect ratio if needed)
+        depth_resized = cv2.resize(depth_viz, (int(depth_width * height / depth_height), height))
+
+        # Create a combined frame for side-by-side display
+        combined_viz = np.hstack((vis_frame, depth_resized))
+
+        # Add labels
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(combined_viz, "Semantic Segmentation", (10, 30), font, 0.8, (255, 255, 255), 2)
+        cv2.putText(combined_viz, "Depth Estimation", (width + 10, 30), font, 0.8, (255, 255, 255), 2)
 
         # Put frame in queue for main thread to display (non-blocking)
         try:
-            frame_queue.put_nowait(vis_frame)
+            frame_queue.put_nowait(combined_viz)
         except queue.Full:
             # Skip frame if queue is full
             pass
@@ -71,10 +87,10 @@ def main():
         while not stop_event.is_set():
             try:
                 # Get frame with timeout (allows checking stop_event periodically)
-                vis_frame = frame_queue.get(timeout=1.0)
+                combined_viz = frame_queue.get(timeout=1.0)
                 
                 # Display the frame in main thread
-                cv2.imshow("Semantic Segmentation", vis_frame)
+                cv2.imshow("Semantic Segmentation", combined_viz)
                 # Check for exit key
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     print("Exit key pressed")

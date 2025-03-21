@@ -26,7 +26,7 @@ import numpy as np
 
 
 class Metric3D:
-    def __init__(self):
+    def __init__(self, gt_depth_scale=256.0):
         #self.conf = get_config("zoedepth", "infer")
         #self.depth_model = build_model(self.conf)
         self.depth_model = torch.hub.load('yvanyin/metric3d', 'metric3d_vit_small', pretrain=True).cuda()
@@ -37,7 +37,7 @@ class Metric3D:
 
         self.intrinsic = [707.0493, 707.0493, 604.0814, 180.5066]  
         self.intrinsic_scaled = None
-        self.gt_depth_scale = 256.0  # And this
+        self.gt_depth_scale = gt_depth_scale # And this
         self.pad_info = None
         self.rgb_origin = None
     '''
@@ -75,7 +75,7 @@ class Metric3D:
 
         # Convert to PIL format
         depth_image = self.unpad_transform_depth(pred_depth)
-        out_16bit_numpy = (depth_image.squeeze().cpu().numpy() * 256).astype(np.uint16)
+        out_16bit_numpy = (depth_image.squeeze().cpu().numpy() * self.gt_depth_scale).astype(np.uint16)
         depth_map_pil = Image.fromarray(out_16bit_numpy)
 
         return depth_map_pil
@@ -129,7 +129,7 @@ class Metric3D:
         #### de-canonical transform
         canonical_to_real_scale = self.intrinsic_scaled[0] / 1000.0  # 1000.0 is the focal length of canonical camera
         pred_depth = pred_depth * canonical_to_real_scale  # now the depth is metric
-        pred_depth = torch.clamp(pred_depth, 0, 300)
+        pred_depth = torch.clamp(pred_depth, 0, 1000)
         return pred_depth
 
 

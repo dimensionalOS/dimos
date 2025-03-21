@@ -27,9 +27,10 @@ class SemanticSegmentationStream:
         self, 
         model_path: str = "FastSAM-s.pt",
         device: str = "cuda",
-        enable_depth: bool = False,
+        enable_mono_depth: bool = True,
         enable_rich_labeling: bool = True,
-        camera_params: dict = None
+        camera_params: dict = None,
+        gt_depth_scale=256.0
     ):
         """
         Initialize a semantic segmentation stream using Sam2DSegmenter.
@@ -37,7 +38,7 @@ class SemanticSegmentationStream:
         Args:
             model_path: Path to the FastSAM model file
             device: Computation device ("cuda" or "cpu")
-            enable_depth: Whether to enable depth processing
+            enable_mono_depth: Whether to enable monocular depth processing
             enable_rich_labeling: Whether to enable rich labeling
             camera_params: Dictionary containing either:
                 - Direct intrinsics: [fx, fy, cx, cy]
@@ -52,9 +53,9 @@ class SemanticSegmentationStream:
             use_rich_labeling=enable_rich_labeling
         )
         
-        self.enable_depth = enable_depth
-        if enable_depth:
-            self.depth_model = Metric3D()
+        self.enable_mono_depth = enable_mono_depth
+        if enable_mono_depth:
+            self.depth_model = Metric3D(gt_depth_scale)
             
             if camera_params:
                 # Check if direct intrinsics are provided
@@ -70,9 +71,6 @@ class SemanticSegmentationStream:
                         focal_length=camera_params.get('focal_length'),
                         sensor_size=camera_params.get('sensor_size')
                     )
-                    print(f"resolution: {camera_params.get('resolution')}")
-                    print(f"focal_length: {camera_params.get('focal_length')}")
-                    print(f"sensor_size: {camera_params.get('sensor_size')}")
                     intrinsics = self.camera.calculate_intrinsics()
                     self.depth_model.update_intrinsic([
                         intrinsics['focal_length_x'],
@@ -81,19 +79,7 @@ class SemanticSegmentationStream:
                         intrinsics['principal_point_y']
                     ])
             else:
-                # Use default camera parameters if none provided
-                self.camera = Camera(
-                    resolution=(1280, 720),
-                    focal_length=3.04,  # mm
-                    sensor_size=(4.8, 2.7)  # mm
-                )
-                intrinsics = self.camera.calculate_intrinsics()
-                self.depth_model.update_intrinsic([
-                    intrinsics['focal_length_x'],
-                    intrinsics['focal_length_y'],
-                    intrinsics['principal_point_x'],
-                    intrinsics['principal_point_y']
-                ])
+                raise ValueError("Camera parameters are required for monocular depth processing.")
         
     def create_stream(self, video_stream: Observable) -> Observable[SegmentationType]:
         """
@@ -126,7 +112,7 @@ class SemanticSegmentationStream:
             # Process depth if enabled
             depth_viz = None
             object_depths = []
-            if self.enable_depth:
+            if self.enable_mono_depth:
                 # Get depth map
                 depth_map = self.depth_model.infer_depth(frame)
                 depth_map = np.array(depth_map)
@@ -146,10 +132,10 @@ class SemanticSegmentationStream:
                 depth_viz = self._create_depth_visualization(depth_map)
                 
                 # Overlay depth values on the visualization frame
-                for bbox, depth, name in zip(bboxes, object_depths, names):
+                for bbox, depth in zip(bboxes, object_depths):
                     x1, y1, x2, y2 = map(int, bbox)
                     # Draw depth text at bottom left of bounding box
-                    depth_text = f"{depth:.1f}m"
+                    depth_text = f"{depth:.2f}mm"
                     # Add black background for better visibility
                     text_size = cv2.getTextSize(depth_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
                     cv2.rectangle(viz_frame, 
@@ -172,7 +158,7 @@ class SemanticSegmentationStream:
                 }
                 
                 # Add depth if available
-                if self.enable_depth and i < len(object_depths):
+                if self.enable_mono_depth and i < len(object_depths):
                     obj_data["depth"] = object_depths[i]
                     
                 objects.append(obj_data)
@@ -226,9 +212,9 @@ class SemanticSegmentationStream:
             scale_bar[:, i] = color[0, 0]
         
         # Add depth values to scale bar
-        cv2.putText(scale_bar, f"{depth_min:.1f}m", (5, 20),
+        cv2.putText(scale_bar, f"{depth_min:.1f}mm", (5, 20),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        cv2.putText(scale_bar, f"{depth_max:.1f}m", (scale_width-60, 20),
+        cv2.putText(scale_bar, f"{depth_max:.1f}mm", (scale_width-60, 20),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         # Combine depth map and scale bar
@@ -239,6 +225,6 @@ class SemanticSegmentationStream:
     def cleanup(self):
         """Clean up resources."""
         self.segmenter.cleanup()
-        if self.enable_depth:
+        if self.enable_mono_depth:
             del self.depth_model
 
