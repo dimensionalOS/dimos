@@ -4,6 +4,7 @@ This example demonstrates how to combine the PromptTemplates and PromptBuilder
 classes to create complex, token-optimized prompts.
 """
 
+from textwrap import dedent
 from dimos.agents.prompts import PromptTemplates, PromptBuilder
 from dimos.agents.prompts.examples.segmentation_example import create_segmentation_templates
 
@@ -54,11 +55,13 @@ def create_integrated_prompt(user_query, objects, target_objects, base64_image=N
     builder = PromptBuilder(model_name='gpt-4o')
     
     # Custom system prompt that includes our segmentation instructions
-    system_prompt = f"""You are an AI vision assistant specialized in segmenting and analyzing images.
+    system_prompt = dedent(f"""
+    You are an AI vision assistant specialized in segmenting and analyzing images.
     
-{segmentation_prompt}
+    {segmentation_prompt}
 
-Follow the instructions carefully and provide accurate segmentation results."""
+    Follow the instructions carefully and provide accurate segmentation results.
+    """)
     
     # Build the final prompt with the builder
     messages = builder.build(
