@@ -13,7 +13,11 @@ from dimos.perception.semantic_seg import SemanticSegmentationStream
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.web.fastapi_server import FastAPIServer
+from dimos.web.robot_web_interface import RobotWebInterface
+from dimos.stream.video_operators import VideoOperators as MyVideoOps, Operators as MyOps
+from dimos.stream.frame_processor import FrameProcessor
+from reactivex import operators as RxOps
+
 
 def main():
     # Create a queue for thread communication (limit to prevent memory issues)
@@ -81,39 +85,33 @@ def main():
     
     try:
         # Subscribe to start processing in background thread
-        subscription = segmentation_stream.subscribe(
-            on_next=on_next,
-            on_error=on_error,
-            on_completed=on_completed
-        )
-        
-        print("Semantic segmentation visualization started. Press 'q' to exit.")
-        
-        # streams = {
-        #     "segmentation_stream": segmentation_stream,
-        # }
-        #fast_api_server = FastAPIServer(port=5555, **streams)
-        #fast_api_server.run()
+        print_emission_args = {
+            "enabled": True,
+            "dev_name": "SemanticSegmentation",
+            "counts": {},
+        }
 
-        #Main thread loop for displaying frame
-        while not stop_event.is_set():
-            try:
-                # Get frame with timeout (allows checking stop_event periodically)
-                combined_viz = frame_queue.get(timeout=1.0)
-                
-                # Display the frame in main thread
-                cv2.imshow("Semantic Segmentation", combined_viz)
-                # Check for exit key
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    print("Exit key pressed")
-                    break
-                    
-            except queue.Empty:
-                # No frame available, check if we should continue
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    print("Exit key pressed")
-                    break
-                continue
+
+        frame_processor = FrameProcessor(delete_on_init=True)
+        subscription = segmentation_stream.pipe(
+            MyOps.print_emission(id="A", **print_emission_args),
+            RxOps.share(),
+            MyOps.print_emission(id="B", **print_emission_args),
+            RxOps.map(lambda x: x.metadata["viz_frame"] if x is not None else None),
+            MyOps.print_emission(id="C", **print_emission_args),
+            RxOps.filter(lambda x: x is not None),
+            MyOps.print_emission(id="D", **print_emission_args),
+            # MyVideoOps.with_jpeg_export(frame_processor=frame_processor, suffix="_frame_"), 
+            MyOps.print_emission(id="E", **print_emission_args),
+        )
+
+        print("Semantic segmentation visualization started. Press 'q' to exit.")
+
+        streams = {
+            "segmentation_stream": subscription,
+        }
+        fast_api_server = RobotWebInterface(port=5555, **streams)
+        fast_api_server.run()
                 
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received. Stopping...")
