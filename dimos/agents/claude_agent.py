@@ -343,19 +343,3 @@ class ClaudeAgent(LLMAgent):
         except Exception as e:
             self.logger.error(f"Unexpected error in Anthropic API call: {e}")
             raise
-
-    def stream_query(self, query_text: str) -> Observable:
-        """Creates an observable that processes a text query and emits the response.
-        
-        This method provides a simple way to send a text query and get an observable
-        stream of the response. It's designed for one-off queries rather than
-        continuous processing of input streams.
-        
-        Args:
-            query_text (str): The query text to process.
-            
-        Returns:
-            Observable: An observable that emits the response as a string.
-        """
-        return create(lambda observer, _: self._observable_query(
-            observer, incoming_query=query_text)) 

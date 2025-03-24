@@ -14,6 +14,6 @@ agent = ClaudeAgent(
 )
 
 # Use the stream_query method to get a response
-response = agent.stream_query("What is the capital of France?").run()
+response = agent.run_observable_query("What is the capital of France?").run()
 
 print(f"Response from Claude Agent: {response}") 
