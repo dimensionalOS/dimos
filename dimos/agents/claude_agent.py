@@ -34,8 +34,7 @@ from dimos.utils.threadpool import get_scheduler
 load_dotenv()
 
 # Initialize logger for the Claude agent
-logger = setup_logger("dimos.agents.claude", level=logging.DEBUG)
-
+logger = setup_logger("dimos.agents.claude")
 
 class ClaudeAgent(LLMAgent):
     """Claude agent implementation that uses Anthropic's API for processing.
@@ -129,7 +128,6 @@ class ClaudeAgent(LLMAgent):
         self.max_output_tokens_per_request = max_output_tokens_per_request
         self.max_input_tokens_per_request = max_input_tokens_per_request
         self.max_tokens_per_request = max_input_tokens_per_request + max_output_tokens_per_request
-        self.logger = logger
 
         # Add static context to memory.
         self._add_context_to_memory()
@@ -145,15 +143,15 @@ class ClaudeAgent(LLMAgent):
             )
 
         if self.input_video_stream is not None:
-            self.logger.info("Subscribing to input video stream...")
+            logger.info("Subscribing to input video stream...")
             self.disposables.add(
                 self.subscribe_to_image_processing(self.input_video_stream))
         if self.input_query_stream is not None:
-            self.logger.info("Subscribing to input query stream...")
+            logger.info("Subscribing to input query stream...")
             self.disposables.add(
                 self.subscribe_to_query_processing(self.input_query_stream))
 
-        self.logger.info("Claude Agent Initialized.")
+        logger.info("Claude Agent Initialized.")
 
     def _add_context_to_memory(self):
         """Adds initial context to the agent's memory."""
@@ -213,7 +211,6 @@ class ClaudeAgent(LLMAgent):
             
             claude_tools.append(claude_tool)
             
-        self.logger.info(f"Converted tools to Claude format: {json.dumps(claude_tools, indent=2)}")
         return claude_tools
 
     def _build_prompt(self, base64_image: Optional[str],
@@ -280,18 +277,17 @@ class ClaudeAgent(LLMAgent):
                 claude_params["tool_choice"] = {
                     "type": "auto"
                 }
-                self.logger.info(f"Added tools to Claude params: {json.dumps(claude_params['tools'], indent=2)}")
             
-        # Add thinking if enabled
+        # Add thinking if enabled and hard code required temperature = 1
         if self.thinking_budget_tokens is not None:
             claude_params["thinking"] = {
                 "type": "enabled",
                 "budget_tokens": self.thinking_budget_tokens
             }
+            claude_params["temperature"] = 1  # Required to be 1 when thinking is enabled # Default to 0 for deterministic responses
             
         # Store the parameters for use in _send_query
         self.claude_api_params = claude_params
-        self.logger.info(f"Final Claude parameters: {json.dumps(claude_params, indent=2)}")
             
         return {'claude_prompt': claude_params}
 
@@ -310,11 +306,11 @@ class ClaudeAgent(LLMAgent):
                            self.claude_api_params)
             
             # Make the API call
-            self.logger.info(f"Sending request to Claude API with params: {json.dumps(claude_params, indent=2)}")
+            logger.info(f"Sending request to Claude API")
+            logger.debug(f"Sending request to Claude API with params: {json.dumps(claude_params, indent=2)}")
             response = self.client.messages.create(**claude_params)
-            self.logger.info(f"Raw Claude response: {response}")
             
-            # Create a response object compatible with LLMAgent
+            # Response object compatible with LLMAgent TODO: Fix OpenAI specific format
             class ResponseMessage:
                 def __init__(self, content, tool_calls=None):
                     self.content = content
@@ -329,7 +325,6 @@ class ClaudeAgent(LLMAgent):
                 if content_block.type == 'text':
                     text_content += content_block.text
                 elif content_block.type == 'tool_use':
-                    self.logger.info(f"Found tool use block: {content_block}")
                     # Create a tool call object that matches OpenAI's format
                     tool_call_obj = type('ToolCall', (), {
                         'id': content_block.id,
@@ -339,37 +334,19 @@ class ClaudeAgent(LLMAgent):
                         })
                     })
                     tool_calls.append(tool_call_obj)
-                    self.logger.info(f"Converted tool call object: id={tool_call_obj.id}, name={tool_call_obj.function.name}, args={tool_call_obj.function.arguments}")
             
-            response_message = ResponseMessage(content=text_content, tool_calls=tool_calls if tool_calls else None)
-            self.logger.info(f"Created response message: content={text_content}, has_tool_calls={bool(tool_calls)}")
-            
-            # If we have tool calls, use LLMAgent's _handle_tooling
-            if tool_calls:
-                self.logger.info("Processing tool calls with _handle_tooling")
-                # Log the messages we're passing to _handle_tooling
-                self.logger.info(f"Messages being passed to _handle_tooling: {json.dumps(messages, indent=2)}")
-                
-                handled_response = self._handle_tooling(response_message, messages)
-                if handled_response is not None:
-                    self.logger.info(f"Got handled response from _handle_tooling: {handled_response}")
-                    return handled_response
-                else:
-                    self.logger.info("_handle_tooling returned None")
-                    
-            return response_message
+            return ResponseMessage(content=text_content, tool_calls=tool_calls if tool_calls else None)
             
         except ConnectionError as ce:
-            self.logger.error(f"Connection error with Anthropic API: {ce}")
+            logger.error(f"Connection error with Anthropic API: {ce}")
             raise
         except ValueError as ve:
-            self.logger.error(f"Invalid parameters for Anthropic API: {ve}")
+            logger.error(f"Invalid parameters for Anthropic API: {ve}")
             raise
         except Exception as e:
-            self.logger.error(f"Unexpected error in Anthropic API call: {e}")
-            self.logger.exception(e)  # This will print the full traceback
+            logger.error(f"Unexpected error in Anthropic API call: {e}")
+            logger.exception(e)  # This will print the full traceback
             raise
-
     def _handle_tooling(self, response_message, messages):
         """Override of LLMAgent._handle_tooling to handle Claude's message format.
         
@@ -380,14 +357,11 @@ class ClaudeAgent(LLMAgent):
         Returns:
             The final response after handling tools, or None if no further processing needed
         """
-        self.logger.info("Entering Claude's _handle_tooling override")
         
         if not hasattr(response_message, 'tool_calls') or not response_message.tool_calls:
-            self.logger.info("No tool calls found in response message")
+            logger.info("No tool calls found in response message")
             return None
             
-        self.logger.info(f"Processing {len(response_message.tool_calls)} tool calls")
-        
         has_called_tools = False
         tool_results = []
         
@@ -397,21 +371,23 @@ class ClaudeAgent(LLMAgent):
             name = tool_call.function.name
             args = json.loads(tool_call.function.arguments)
             result = self.skills.call_function(name, **args)
-            self.logger.info(f"Function Call Results: {result}")
+            logger.debug(f"Function Call Results: {result}")
             tool_results.append(f"Tool '{name}' returned: {result}")
         
         if has_called_tools:
-            # Add all tool results as a single assistant message
-            messages['claude_prompt']['messages'].append({
-                "role": "assistant",
-                "content": [{"type": "text", "text": response_message.content}]
-            })
+            # Only append non-empty messages
+            if response_message.content.strip():
+                messages['claude_prompt']['messages'].append({
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": response_message.content}]
+                })
+            
+            # Add tool results
             messages['claude_prompt']['messages'].append({
                 "role": "user",
                 "content": [{"type": "text", "text": "Tool execution results:\n" + "\n".join(tool_results)}]
             })
             
-            self.logger.info("Sending follow-up query with tool results")
             return self._send_query(messages)
         
         return None

@@ -31,7 +31,10 @@ web_interface = RobotWebInterface(port=5555, text_streams=text_streams)
 agent = ClaudeAgent(
     dev_name="test_agent",
     input_query_stream=web_interface.query_stream,
-    skills=robot.get_skills()
+    skills=robot.get_skills(),
+    system_query="You are a one-off agent sending commands to a virtual robot given a simple input query. EXECUTE TOOL CALLS TO THE BEST OF YOUR ABILITY AND ONLY RESPOND WITH TOOL CALLS. YOU CANNOT RECEIVE FOLLOW UP QUERIES.",
+    model_name="claude-3-7-sonnet-latest",
+    #thinking_budget_tokens=500
 )
 
 # Subscribe to agent responses and send them to the subject
