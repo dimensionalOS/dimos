@@ -231,9 +231,6 @@ class LLMAgent(Agent):
             "rag": "truncate_end",
         }
 
-        if self.prompt_builder is None:
-            raise ValueError("Prompt builder is not set.")
-
         return self.prompt_builder.build(
             user_query=self.query,
             override_token_limit=override_token_limit,
@@ -333,7 +330,7 @@ class LLMAgent(Agent):
                 final_msg = (response_message.parsed
                              if hasattr(response_message, 'parsed') and
                              response_message.parsed else
-                             (response_message.content if hasattr(response_message, 'content') else response_message))
+                             response_message.content)
                 observer.on_next(final_msg)
                 self.response_subject.on_next(final_msg)
             else:
@@ -562,7 +559,7 @@ class LLMAgent(Agent):
             RxOps.observe_on(self.pool_scheduler), 
             RxOps.subscribe_on(self.pool_scheduler),
             RxOps.share())
-    
+
     def run_observable_query(self, query_text: str) -> Observable:
         """Creates an observable that processes a one-off text query to Agent and emits the response.
         
