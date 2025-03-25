@@ -25,7 +25,22 @@ def setup_logger(
         log_format = "%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
     try:
+        # Get or create logger
+        logger = logging.getLogger(name)
+        
+        # Remove any existing handlers to avoid duplicates
+        if logger.hasHandlers():
+            logger.handlers.clear()
+            
+        # Set logger level first
+        logger.setLevel(level)
+        
+        # Ensure we're not blocked by parent loggers
+        logger.propagate = False
+        
+        # Create and configure handler
         handler = colorlog.StreamHandler()
+        handler.setLevel(level)  # Explicitly set handler level
         formatter = colorlog.ColoredFormatter(
             log_format,
             log_colors={
@@ -37,11 +52,7 @@ def setup_logger(
             },
         )
         handler.setFormatter(formatter)
-
-        logger = logging.getLogger(name)
-        if not logger.hasHandlers():
-            logger.addHandler(handler)
-            logger.setLevel(level)
+        logger.addHandler(handler)
 
         return logger
     except Exception as e:
