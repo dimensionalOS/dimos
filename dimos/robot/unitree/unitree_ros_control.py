@@ -7,6 +7,9 @@ from typing import Optional, Tuple, Dict, Any, Type
 from abc import ABC, abstractmethod
 
 from dimos.robot.ros_control import ROSControl, RobotMode
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger("dimos.robot.unitree.unitree_ros_control")
 
 class UnitreeROSControl(ROSControl):
     """Hardware interface for Unitree Go2 robot using ROS2"""
@@ -70,6 +73,7 @@ class UnitreeROSControl(ROSControl):
             mock_connection: Whether to run without active ActionClient servers for testing. 
         """
         
+        logger.info("Initializing Unitree ROS control interface")
         # Select which camera topics to use
         active_camera_topics = None
         if not disable_video_stream:
@@ -122,10 +126,10 @@ class UnitreeROSControl(ROSControl):
                 
         if progress == 0 and mode == 1:
             self._mode = RobotMode.IDLE
-            self._logger.debug("Robot mode set to IDLE (progress=0, mode=1)")
+            logger.debug("Robot mode set to IDLE (progress=0, mode=1)")
         elif progress == 1 or mode != 1:
             self._mode = RobotMode.MOVING
-            self._logger.debug(f"Robot mode set to MOVING (progress={progress}, mode={mode})")
+            logger.debug(f"Robot mode set to MOVING (progress={progress}, mode={mode})")
         else:
             self._mode = RobotMode.UNKNOWN
-            self._logger.debug(f"Robot mode set to UNKNOWN (progress={progress}, mode={mode})")
+            logger.debug(f"Robot mode set to UNKNOWN (progress={progress}, mode={mode})")

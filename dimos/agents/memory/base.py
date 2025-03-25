@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import logging
 from dimos.exceptions.agent_memory_exceptions import UnknownConnectionTypeError, AgentMemoryConnectionError
+from dimos.utils.logging_config import setup_logger
 
 # TODO
 # class AbstractAgentMemory(ABC):
@@ -18,7 +19,7 @@ class AbstractAgentSemanticMemory(): # AbstractAgentMemory):
             UnknownConnectionTypeError: If an unrecognized connection type is specified.
             AgentMemoryConnectionError: If initializing the database connection fails.
         """
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = setup_logger(self.__class__.__name__)
         self.logger.info('Initializing AgentMemory with connection type: %s', connection_type)
         self.connection_params = kwargs
         self.db_connection = None  # Holds the conection, whether local or remote, to the database used.

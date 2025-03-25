@@ -314,7 +314,7 @@ class LLMAgent(Agent):
             messages = self._build_prompt(base64_image, dimensions,
                                           override_token_limit,
                                           condensed_results)
-            # self.logger.debug(f"Sending Query: {messages}")
+            # logger.debug(f"Sending Query: {messages}")
             logger.info("Sending Query.")
             response_message = self._send_query(messages)
             logger.info(f"Received Response: {response_message}")

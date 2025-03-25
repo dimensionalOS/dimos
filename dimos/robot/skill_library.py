@@ -1,8 +1,8 @@
 import logging
+from dimos.utils.logging_config import setup_logger
 
 # Configure logging for the module
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 class SkillLibrary:
     def __init__(self):
