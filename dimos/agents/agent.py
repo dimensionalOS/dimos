@@ -77,8 +77,7 @@ class Agent:
         self.agent_memory = agent_memory or AgentSemanticMemory()
         self.disposables = CompositeDisposable()
         self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
-        self.logger = setup_logger(
-            f"dimos.agents.{self.agent_type}.{self.dev_name}")
+        self.logger = logger
 
     def dispose_all(self):
         """Disposes of all active subscriptions managed by this agent."""
