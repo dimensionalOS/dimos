@@ -31,7 +31,7 @@ web_interface = RobotWebInterface(port=5555, text_streams=text_streams)
 agent = ClaudeAgent(
     dev_name="test_agent",
     input_query_stream=web_interface.query_stream,
-    # skills=robot.get_skills()
+    skills=robot.get_skills()
 )
 
 # Subscribe to agent responses and send them to the subject
