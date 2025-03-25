@@ -44,7 +44,7 @@ from dimos.utils.logging_config import setup_logger
 load_dotenv()
 
 # Initialize logger for the agent module
-logger = setup_logger("dimos.agents", level=logging.DEBUG)
+logger = setup_logger("dimos.agents")
 
 # Constants
 _TOKEN_BUDGET_PARTS = 4  # Number of parts to divide token budget
@@ -77,14 +77,13 @@ class Agent:
         self.agent_memory = agent_memory or AgentSemanticMemory()
         self.disposables = CompositeDisposable()
         self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
-        self.logger = logger
 
     def dispose_all(self):
         """Disposes of all active subscriptions managed by this agent."""
         if self.disposables:
             self.disposables.dispose()
         else:
-            self.logger.info("No disposables to dispose.")
+            logger.info("No disposables to dispose.")
 
 
 # endregion Agent Base Class
@@ -192,8 +191,8 @@ class LLMAgent(Agent):
             for (doc, score) in results)
         condensed_results = " | ".join(
             f"{doc.page_content}" for (doc, _) in results)
-        self.logger.info(f"Agent Memory Query Results:\n{formatted_results}")
-        self.logger.info("=== Results End ===")
+        logger.info(f"Agent Memory Query Results:\n{formatted_results}")
+        logger.info("=== Results End ===")
         return formatted_results, condensed_results
 
     def _build_prompt(self, base64_image: Optional[str],
@@ -269,7 +268,7 @@ class LLMAgent(Agent):
                 name = tool_call.function.name
                 args = json.loads(tool_call.function.arguments)
                 result = skills.call_function(name, **args)
-                self.logger.info(f"Function Call Results: {result}")
+                logger.info(f"Function Call Results: {result}")
                 new_messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
@@ -277,13 +276,13 @@ class LLMAgent(Agent):
                     "name": name
                 })
             if has_called_tools:
-                self.logger.info("Sending Another Query.")
+                logger.info("Sending Another Query.")
                 messages.append(response_message)
                 messages.extend(new_messages)
                 # Delegate to sending the query again.
                 return self._send_query(messages)
             else:
-                self.logger.info("No Need for Another Query.")
+                logger.info("No Need for Another Query.")
                 return None
 
         if response_message.tool_calls is not None:
@@ -316,9 +315,9 @@ class LLMAgent(Agent):
                                           override_token_limit,
                                           condensed_results)
             # self.logger.debug(f"Sending Query: {messages}")
-            self.logger.info("Sending Query.")
+            logger.info("Sending Query.")
             response_message = self._send_query(messages)
-            self.logger.info(f"Received Response: {response_message}")
+            logger.info(f"Received Response: {response_message}")
             if response_message is None:
                 raise Exception("Response message does not exist.")
 
@@ -343,7 +342,7 @@ class LLMAgent(Agent):
                 self.response_subject.on_next(final_msg)
             observer.on_completed()
         except Exception as e:
-            self.logger.error(f"Query failed in {self.dev_name}: {e}")
+            logger.error(f"Query failed in {self.dev_name}: {e}")
             observer.on_error(e)
             self.response_subject.on_error(e)
 
@@ -378,7 +377,7 @@ class LLMAgent(Agent):
                 log_path = os.path.join(output_dir, 'memory.txt')
                 with open(log_path, 'a') as file:
                     file.write(f"{self.dev_name}: {response}\n")
-                self.logger.info(f"LLM Response [{self.dev_name}]: {response}")
+                logger.info(f"LLM Response [{self.dev_name}]: {response}")
 
     def subscribe_to_image_processing(
             self, frame_observable: Observable) -> Disposable:
@@ -472,8 +471,8 @@ class LLMAgent(Agent):
         disposable = observable.subscribe(
             on_next=lambda response: self._log_response_to_file(
                 response, self.output_dir),
-            on_error=lambda e: self.logger.error(f"Error encountered: {e}"),
-            on_completed=lambda: self.logger.info(
+            on_error=lambda e: logger.error(f"Error encountered: {e}"),
+            on_completed=lambda: logger.info(
                 f"Stream processing completed for {self.dev_name}"))
         self.disposables.add(disposable)
         return disposable
@@ -514,13 +513,13 @@ class LLMAgent(Agent):
         is_processing = [False]
 
         def process_if_free(query):
-            self.logger.info(f"Processing Query: {query}")
+            logger.info(f"Processing Query: {query}")
             if not self.process_all_inputs and is_processing[0]:
                 # Drop query if a request is already in progress and process_all_inputs is False
                 return empty()
             else:
                 is_processing[0] = True
-                self.logger.info("Processing Query.")
+                logger.info("Processing Query.")
                 return _process_query(query).pipe(
                     MyOps.print_emission(id='B', **print_emission_args),
                     RxOps.observe_on(self.pool_scheduler),
@@ -542,9 +541,9 @@ class LLMAgent(Agent):
         disposable = observable.subscribe(
             on_next=lambda response: self._log_response_to_file(
                 response, self.output_dir),
-            on_error=lambda e: self.logger.error(
+            on_error=lambda e: logger.error(
                 f"Error processing query for {self.dev_name}: {e}"),
-            on_completed=lambda: self.logger.info(
+            on_completed=lambda: logger.info(
                 f"Stream processing completed for {self.dev_name}"))
         self.disposables.add(disposable)
         return disposable
@@ -559,6 +558,22 @@ class LLMAgent(Agent):
             RxOps.observe_on(self.pool_scheduler), 
             RxOps.subscribe_on(self.pool_scheduler),
             RxOps.share())
+
+    def run_observable_query(self, query_text: str) -> Observable:
+        """Creates an observable that processes a one-off text query to Agent and emits the response.
+        
+        This method provides a simple way to send a text query and get an observable
+        stream of the response. It's designed for one-off queries rather than
+        continuous processing of input streams. Useful for testing and development.
+        
+        Args:
+            query_text (str): The query text to process.
+            
+        Returns:
+            Observable: An observable that emits the response as a string.
+        """
+        return create(lambda observer, _: self._observable_query(
+            observer, incoming_query=query_text)) 
 
     def run_observable_query(self, query_text: str) -> Observable:
         """Creates an observable that processes a one-off text query to Agent and emits the response.
@@ -698,15 +713,15 @@ class OpenAIAgent(LLMAgent):
             )
 
         if self.input_video_stream is not None:
-            self.logger.info("Subscribing to input video stream...")
+            logger.info("Subscribing to input video stream...")
             self.disposables.add(
                 self.subscribe_to_image_processing(self.input_video_stream))
         if self.input_query_stream is not None:
-            self.logger.info("Subscribing to input query stream...")
+            logger.info("Subscribing to input query stream...")
             self.disposables.add(
                 self.subscribe_to_query_processing(self.input_query_stream))
 
-        self.logger.info("OpenAI Agent Initialized.")
+        logger.info("OpenAI Agent Initialized.")
 
     def _add_context_to_memory(self):
         """Adds initial context to the agent's memory."""
@@ -766,17 +781,17 @@ class OpenAIAgent(LLMAgent):
 
             response_message = response.choices[0].message
             if response_message is None:
-                self.logger.error("Response message does not exist.")
+                logger.error("Response message does not exist.")
                 raise Exception("Response message does not exist.")
             return response_message
         except ConnectionError as ce:
-            self.logger.error(f"Connection error with API: {ce}")
+            logger.error(f"Connection error with API: {ce}")
             raise
         except ValueError as ve:
-            self.logger.error(f"Invalid parameters: {ve}")
+            logger.error(f"Invalid parameters: {ve}")
             raise
         except Exception as e:
-            self.logger.error(f"Unexpected error in API call: {e}")
+            logger.error(f"Unexpected error in API call: {e}")
             raise
 
     def stream_query(self, query_text: str) -> Observable:
