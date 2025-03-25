@@ -7,14 +7,6 @@ services:
       dockerfile: docker/unitree/ros_dimos/Dockerfile
     env_file:
       - ../../../.env
-    environment:
-      - PYTHONUNBUFFERED=1
-      - ROBOT_IP=${ROBOT_IP} 
-      - CONN_TYPE=${CONN_TYPE:-webrtc}
-      - WEBRTC_SERVER_HOST=0.0.0.0  # Listen on all interfaces
-      - WEBRTC_SERVER_PORT=${WEBRTC_SERVER_PORT:-9991}
-      - DISPLAY=${DISPLAY:-}  # For GUI applications like rviz2
-      - ROS_OUTPUT_DIR=/app/assets/output/ros  # Change output directory
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix  # X11 forwarding
       - ${HOME}/.Xauthority:/root/.Xauthority:rw
