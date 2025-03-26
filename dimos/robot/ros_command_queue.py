@@ -16,7 +16,7 @@ from dimos.utils.logging_config import setup_logger
 import logging
 
 # Initialize logger for the ros command queue module
-logger = setup_logger("dimos.robot.ros_command_queue", level=logging.DEBUG)
+logger = setup_logger("dimos.robot.ros_command_queue")
 
 class CommandType(Enum):
     """Types of commands that can be queued"""
