@@ -9,14 +9,7 @@ robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
                   skills=MyUnitreeSkills())
 
 # Move the robot forward
-robot.move_vel(0.5, 0, 0, duration=5)
+robot.move_vel(x=0.5, y=0, yaw=0, duration=5)
 
-# Wait for 5 seconds
-time.sleep(5)
-
-
-
-try:
-    input("Press ESC to exit...")
-except KeyboardInterrupt:
-    print("\nExiting...")
+while True:
+    time.sleep(1)
