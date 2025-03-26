@@ -117,8 +117,6 @@ RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /root/.bashrc && \
     echo "source /ros2_ws/install/setup.bash" >> /root/.bashrc
 
 # Set environment variables
-# Set to your robot IP address
-ENV ROBOT_IP="192.168.9.140" 
 # webrtc or cyclonedds
 ENV CONN_TYPE="webrtc" 
 ENV WEBRTC_SERVER_HOST="0.0.0.0"
@@ -134,6 +132,7 @@ COPY docker/unitree/ros_dimos/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 COPY dimos /app/dimos/
+COPY tests /app/tests/
 
 # Change working directory to /app for proper relative pathing
 WORKDIR /app

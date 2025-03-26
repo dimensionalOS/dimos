@@ -11,17 +11,17 @@ This README explains how to run the Unitree Go2 ROS nodes with DIMOS integration
 
 ## Configuration
 
-The connection can be configured through environment variables in two ways:
-
-1. Setting them before running docker-compose:
+1. Set environment variables in .env:
    ```bash
-   export ROBOT_IP=192.168.9.140
-   export CONN_TYPE=webrtc  # or cyclonedds
-   export WEBRTC_SERVER_HOST=0.0.0.0
-   export WEBRTC_SERVER_PORT=9991
+      ROBOT_IP=
+      CONN_TYPE=webrtc
+      WEBRTC_SERVER_HOST=0.0.0.0
+      WEBRTC_SERVER_PORT=9991
+      DISPLAY=:0
+      ROS_OUTPUT_DIR=/app/assets/output/ros
    ```
 
-2. Using environment variables during docker-compose:
+2. Or run with environment variables in command line docker-compose:
    ```bash
    ROBOT_IP=192.168.9.140 CONN_TYPE=webrtc docker compose -f docker/unitree/ros_dimos/docker-compose.yml up --build
    ```
