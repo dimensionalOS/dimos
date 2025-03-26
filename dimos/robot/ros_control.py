@@ -56,6 +56,7 @@ class ROSControl(ABC):
                  webrtc_topic: str = None,
                  webrtc_api_topic: str = None,
                  webrtc_msg_type: Type = None,
+                 move_vel_topic: str = None,
                  debug: bool = False):
       
         """
@@ -73,6 +74,7 @@ class ROSControl(ABC):
             webrtc_topic: Topic for WebRTC commands
             webrtc_api_topic: Topic for WebRTC API commands
             webrtc_msg_type: The ROS message type for webrtc data
+            move_vel_topic: Topic for direct movement commands
         """
         # Initialize rclpy and ROS node if not already running
         if not rclpy.ok():
@@ -172,6 +174,8 @@ class ROSControl(ABC):
             self._backup_client.wait_for_server()
 
         # Publishers
+        self._move_vel_pub = self._node.create_publisher(
+            Twist, move_vel_topic, command_qos)
         if webrtc_msg_type:
             self._webrtc_pub = self._node.create_publisher(
                 webrtc_msg_type, webrtc_topic, qos_profile=command_qos)
@@ -642,3 +646,43 @@ class ROSControl(ABC):
             request_id=request_id,
             data=data
         )
+
+    def move_vel(self, x: float, y: float, yaw: float, duration: float = 0.0) -> bool:
+        """
+        Send movement command to the robot using velocity commands
+        
+        Args:
+            x: Forward/backward velocity (m/s)
+            y: Left/right velocity (m/s)
+            yaw: Rotational velocity (rad/s)
+            duration: How long to move (seconds). If 0, command is continuous
+            
+        Returns:
+            bool: True if command was sent successfully
+        """
+        # Clamp velocities to safe limits
+        x = self._clamp_velocity(x, self.MAX_LINEAR_VELOCITY)
+        y = self._clamp_velocity(y, self.MAX_LINEAR_VELOCITY)
+        yaw = self._clamp_velocity(yaw, self.MAX_ANGULAR_VELOCITY)
+
+        # Create and send command
+        cmd = Twist()
+        cmd.linear.x = float(x)
+        cmd.linear.y = float(y)
+        cmd.angular.z = float(yaw)
+
+        try:
+            if duration > 0:
+                start_time = time.time()
+                while time.time() - start_time < duration:
+                    self._move_vel_pub.publish(cmd)
+                    time.sleep(0.1)  # 10Hz update rate
+                # Stop after duration
+                self.stop()
+            else:
+                self._move_vel_pub.publish(cmd)
+            return True
+
+        except Exception as e:
+            self._logger.error(f"Failed to send movement command: {e}")
+            return False
