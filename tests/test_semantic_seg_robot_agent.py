@@ -80,7 +80,7 @@ def main():
         input_video_stream=video_stream,
         process_all_inputs=False,
         pool_scheduler=get_scheduler(),
-        # skills=robot.get_skills()
+        skills=robot.get_skills()
     )
     agent_response_stream = segmentation_agent.get_response_observable()
 
