@@ -60,6 +60,7 @@ class HuggingFaceLLMAgentDemo:
         else:
             print("GPU not available, using CPU")
 
+        # TESTING LOCAL AGENT
         self.HuggingFaceLLMAgent = HuggingFaceLocalAgent(
             dev_name="HuggingFaceLLMAgent",
             model_name= "Qwen/Qwen2.5-3B",
@@ -71,6 +72,15 @@ class HuggingFaceLLMAgentDemo:
             # skills=skills_instance,
             # frame_processor=frame_processor,
         )
+
+        # TESTING REMOTE AGENT
+        # self.HuggingFaceLLMAgent = HuggingFaceRemoteAgent(
+        #     dev_name="HuggingFaceLLMAgent",
+        #     model_name= "Qwen/Qwen2.5-3B",
+        #     agent_type="HF-LLM",
+        #     input_query_stream=query_provider.data_stream,
+        #     process_all_inputs=False,
+        # )
 
         # Sample query to test the agent
         # self.HuggingFaceLLMAgent.stream_query("What is the capital of France?").subscribe(lambda x: print(x))
