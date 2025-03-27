@@ -1,3 +1,4 @@
+
 #!/bin/bash
 
 # Check if an argument was provided
@@ -10,7 +11,9 @@ else
   echo "3) Docker compose sequence: Takes down containers, builds, then brings them up."
   echo "4) Build and run web-os container"
   echo "5) Build and run agent container"
-  read -p "Enter option (1-5): " option
+  echo "6) Build and run semantic-seg model container"
+  echo "7) Build and run semantic-seg robot agent container"
+  read -p "Enter option (1-7): " option
 fi
 
 case $option in
@@ -36,6 +39,21 @@ case $option in
     docker compose -f ./docker/agent/docker-compose.yml down && \
     docker compose -f ./docker/agent/docker-compose.yml build && \
     docker compose -f ./docker/agent/docker-compose.yml up
+    ;;
+  6)
+    docker compose -f ./docker/models/semantic_seg/docker-compose.yml down && \
+    docker compose -f ./docker/models/semantic_seg/docker-compose.yml build && \
+    docker compose -f ./docker/models/semantic_seg/docker-compose.yml up
+    ;;
+  7)
+    docker compose -f ./docker/unitree/ros_dimos_seg/docker-compose.yml down && \
+    docker compose -f ./docker/unitree/ros_dimos_seg/docker-compose.yml build && \
+    docker compose -f ./docker/unitree/ros_dimos_seg/docker-compose.yml up
+    ;;
+  8)
+    docker compose -f ./docker/models/hugging_face_local/docker-compose.yml down && \
+    docker compose -f ./docker/models/hugging_face_local/docker-compose.yml build && \
+    docker compose -f ./docker/models/hugging_face_local/docker-compose.yml up
     ;;
   *)
     echo "Invalid option. Please run the script again and enter a number between 1 and 5."

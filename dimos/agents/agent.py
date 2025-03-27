@@ -804,7 +804,7 @@ class HuggingFaceLocalAgent(LLMAgent):
     def __init__(self,
                  dev_name: str,
                  agent_type: str = "HF-LLM",
-                 model_name: str = "Qwen/Qwen2.5-7B",
+                 model_name: str = "Qwen/Qwen2.5-3B",
                  device: str = "auto",
                  query: str = "How many r's are in the word 'strawberry'?",
                  input_query_stream: Optional[Observable] = None,

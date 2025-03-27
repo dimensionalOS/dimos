@@ -14,7 +14,7 @@ print(f"Current working directory: {os.getcwd()}")
 
 from dimos.agents.agent import HuggingFaceLocalAgent, HuggingFaceRemoteAgent
 from dimos.stream.data_provider import QueryDataProvider
-
+from dimos.web.robot_web_interface import RobotWebInterface
 
 class HuggingFaceLLMAgentDemo:
 
@@ -60,8 +60,9 @@ class HuggingFaceLLMAgentDemo:
         else:
             print("GPU not available, using CPU")
 
-        self.HuggingFaceLLMAgent = HuggingFaceLLMAgent(
+        self.HuggingFaceLLMAgent = HuggingFaceLocalAgent(
             dev_name="HuggingFaceLLMAgent",
+            model_name= "Qwen/Qwen2.5-3B",
             agent_type="HF-LLM",
             input_query_stream=query_provider.data_stream,
             process_all_inputs=False,
@@ -81,11 +82,10 @@ class HuggingFaceLLMAgentDemo:
         query_provider.start_query_stream(
             query_template=
             "{query}; Denote the number at the beginning of this query before the semicolon as the 'reference number'. Provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
-            frequency=200,
+            frequency=5,
             start_count=1,
             end_count=10000,
             step=1)
-
     # -----
 
     def stop(self):

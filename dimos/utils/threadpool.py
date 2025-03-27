@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Thread pool functionality for parallel execution in the Dimos framework.
 
 This module provides a shared ThreadPoolExecutor exposed through a
@@ -17,7 +31,8 @@ def get_max_workers() -> int:
         int: The number of workers, configurable via the DIMOS_MAX_WORKERS
         environment variable, defaulting to 4 times the CPU count.
     """
-    return int(os.getenv('DIMOS_MAX_WORKERS', multiprocessing.cpu_count() * 4))
+    env_value = os.getenv('DIMOS_MAX_WORKERS', '')
+    return int(env_value) if env_value.strip() else multiprocessing.cpu_count() * 4
 
 
 # Create a ThreadPoolScheduler with a configurable number of workers.
