@@ -636,6 +636,7 @@ class OpenAIAgent(LLMAgent):
                  agent_type: str = "Vision",
                  query: str = "What do you see?",
                  input_query_stream: Optional[Observable] = None,
+                 input_data_stream: Optional[Observable] = None,
                  input_video_stream: Optional[Observable] = None,
                  output_dir: str = os.path.join(os.getcwd(), "assets",
                                                 "agent"),
@@ -662,6 +663,7 @@ class OpenAIAgent(LLMAgent):
             agent_type (str): The type of the agent.
             query (str): The default query text.
             input_query_stream (Observable): An observable for query input.
+            input_data_stream (Observable): An observable for data input.
             input_video_stream (Observable): An observable for video frames.
             output_dir (str): Directory for output files.
             agent_memory (AbstractAgentSemanticMemory): The memory system.
@@ -723,7 +725,16 @@ class OpenAIAgent(LLMAgent):
         self.frame_processor = frame_processor or FrameProcessor(
             delete_on_init=True)
         self.input_video_stream = input_video_stream
-        self.input_query_stream = input_query_stream
+        self.input_query_stream = input_query_stream if (input_data_stream is None) else (input_query_stream.pipe(
+            RxOps.with_latest_from(input_data_stream),
+            RxOps.map(lambda combined: {
+                "query": combined[0],
+                "objects": combined[1] if len(combined) > 1 else "No object data available"
+            }),
+            RxOps.map(lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"),
+            RxOps.do_action(lambda x: print(f"\033[34mEnriched query: {x.split(chr(10))[0]}\033[0m") or 
+                                    [print(f"\033[34m{line}\033[0m") for line in x.split(chr(10))[1:]]),
+        ))
 
         # Setup stream subscriptions based on inputs provided
         if (self.input_video_stream is not None) and (self.input_query_stream is not None):
