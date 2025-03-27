@@ -27,11 +27,9 @@ def main():
     }
     
     # Initialize video provider and segmentation stream
-    video_provider = VideoProvider("test_camera", video_source=0)
     robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
                         ros_control=UnitreeROSControl(),
                         skills=MyUnitreeSkills())
-    robot = UnitreeROSControl()
             
     seg_stream = SemanticSegmentationStream(enable_mono_depth=True, camera_params=camera_params, gt_depth_scale=512.0)
     
@@ -89,7 +87,7 @@ def main():
         model_name="gpt-4o",
         system_query="You are a helpful assistant that can help with tasks related to semantic segmentation. You will get a list of objects as input, reprint them out to me in a list. Your task will be to execute the MOVE() skill towards the box on the ground in front of you",
         input_query_stream=enriched_query_stream,
-        input_video_stream=video_stream,
+        input_video_stream=segmentation_stream,
         process_all_inputs=False,
         pool_scheduler=get_scheduler(),
         skills=robot.get_skills()

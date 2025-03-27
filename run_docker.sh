@@ -11,7 +11,8 @@ else
   echo "4) Build and run web-os container"
   echo "5) Build and run agent container"
   echo "6) Build and run semantic-seg model container"
-  read -p "Enter option (1-6): " option
+  echo "7) Build and run semantic-seg robot agent container"
+  read -p "Enter option (1-7): " option
 fi
 
 case $option in
@@ -42,6 +43,11 @@ case $option in
     docker compose -f ./docker/models/semantic_seg/docker-compose.yml down && \
     docker compose -f ./docker/models/semantic_seg/docker-compose.yml build && \
     docker compose -f ./docker/models/semantic_seg/docker-compose.yml up
+    ;;
+  7)
+    docker compose -f ./docker/unitree/ros_dimos_seg/docker-compose.yml down && \
+    docker compose -f ./docker/unitree/ros_dimos_seg/docker-compose.yml build && \
+    docker compose -f ./docker/unitree/ros_dimos_seg/docker-compose.yml up
     ;;
   *)
     echo "Invalid option. Please run the script again and enter a number between 1 and 5."
