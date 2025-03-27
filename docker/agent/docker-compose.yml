@@ -62,13 +62,6 @@ services:
     # command: [ "python", "-m", "tests.test_video_rtsp" ]
     # ^^ WIP
 
-    # command: [ "python", "-m", "tests.test_video_agent_threading" ]
-    # ^^ WIP
-
-    # command: [ "python", "-m", "tests.test_standalone_hugging_face" ]
-    # ^^ WIP
-
-    command: [ "python", "-m", "tests.test_huggingface_llm_agent" ]
     # ^^ WIP
 
     # command: ["tail", "-f", "/dev/null"]
