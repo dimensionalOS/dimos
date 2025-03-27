@@ -40,7 +40,7 @@ aiortc==1.9.0
 pycryptodome
 opencv-python
 sounddevice
-# pyaudio
+pyaudio
 requests
 wasmtime
 
