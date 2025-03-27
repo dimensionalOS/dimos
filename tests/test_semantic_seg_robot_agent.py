@@ -75,7 +75,13 @@ def main():
     # Combine text query with latest object data when a new text query arrives
     enriched_query_stream = text_query_stream.pipe(
         RxOps.with_latest_from(object_stream),
-        RxOps.map(lambda combined: f"{combined[0]}\n\nCurrent objects detected:\n{combined[1]}")
+        RxOps.map(lambda combined: {
+            "query": combined[0],
+            "objects": combined[1] if len(combined) > 1 else "No object data available"
+        }),
+        RxOps.map(lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"),
+        RxOps.do_action(lambda x: print(f"\033[34mEnriched query: {x.split(chr(10))[0]}\033[0m") or 
+                                [print(f"\033[34m{line}\033[0m") for line in x.split(chr(10))[1:]]),
     )
 
     segmentation_agent = OpenAIAgent(
@@ -99,6 +105,7 @@ def main():
     }
     text_streams = {
         "object_stream": object_stream,
+        "enriched_query_stream": enriched_query_stream,
         "agent_response_stream": agent_response_stream,
     }
 
