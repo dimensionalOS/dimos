@@ -53,5 +53,9 @@ torchvision==0.15.2
 scikit-learn
 Pillow
 mmengine>=0.10.3
+mmcv==2.1.0
+timm==1.0.15
+lap==0.5.12 
+xformers==0.0.22
 -e ./dimos/perception/external/vector_perception
 

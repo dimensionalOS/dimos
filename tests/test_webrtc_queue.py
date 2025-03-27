@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import tests.test_header
+
 import time
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2, WebRTCConnectionMethod
 import os
