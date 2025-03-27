@@ -12,11 +12,8 @@ services:
       - ../../assets:/app/assets
     ports:
       - "5555:5555"
-    runtime: nvidia
     environment:
       - PYTHONUNBUFFERED=1
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
     # command: [ "python", "-m", "tests.test_agent" ] 
     # ^^ Working Sanity Test Cases - Expand to Agent Class
     #
@@ -65,13 +62,7 @@ services:
     # command: [ "python", "-m", "tests.test_video_rtsp" ]
     # ^^ WIP
 
-    # command: [ "python", "-m", "tests.test_video_agent_threading" ]
-    # ^^ WIP
-
-    # command: [ "python", "-m", "tests.test_rx_data_queries" ]
-    # ^^ WIP
-
-    command: [ "python", "-m", "tests.test_semantic_seg_robot_agent" ]
+    command: [ "python", "-m", "tests.test_video_agent_threading" ]
     # ^^ WIP
 
     # command: ["tail", "-f", "/dev/null"]

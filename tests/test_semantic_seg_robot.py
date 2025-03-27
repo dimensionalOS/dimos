@@ -1,11 +1,12 @@
-import tests.test_header
-
 import cv2
 import numpy as np
 import os
 import sys
 import queue
 import threading
+
+# Add the parent directory to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dimos.stream.video_provider import VideoProvider
 from dimos.perception.semantic_seg import SemanticSegmentationStream
@@ -20,6 +21,7 @@ from reactivex import operators as RxOps
 
 def main():
     # Create a queue for thread communication (limit to prevent memory issues)
+    frame_queue = queue.Queue(maxsize=5)
     stop_event = threading.Event()
     
     # Unitree Go2 camera parameters at 1080p
@@ -39,6 +41,44 @@ def main():
     # Create streams
     video_stream = robot.get_ros_video_stream(fps=5)
     segmentation_stream = seg_stream.create_stream(video_stream)
+    
+    # Define callbacks for the segmentation stream
+    def on_next(segmentation):
+        if stop_event.is_set():
+            return
+        # Get the frame and visualize
+        vis_frame = segmentation.metadata["viz_frame"]
+        depth_viz = segmentation.metadata["depth_viz"]
+        # Get the image dimensions
+        height, width = vis_frame.shape[:2]
+        depth_height, depth_width = depth_viz.shape[:2]
+
+        # Resize depth visualization to match segmentation height 
+        # (maintaining aspect ratio if needed)
+        depth_resized = cv2.resize(depth_viz, (int(depth_width * height / depth_height), height))
+
+        # Create a combined frame for side-by-side display
+        combined_viz = np.hstack((vis_frame, depth_resized))
+
+        # Add labels
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(combined_viz, "Semantic Segmentation", (10, 30), font, 0.8, (255, 255, 255), 2)
+        cv2.putText(combined_viz, "Depth Estimation", (width + 10, 30), font, 0.8, (255, 255, 255), 2)
+
+        # Put frame in queue for main thread to display (non-blocking)
+        try:
+            frame_queue.put_nowait(combined_viz)
+        except queue.Full:
+            # Skip frame if queue is full
+            pass
+    
+    def on_error(error):
+        print(f"Error: {error}")
+        stop_event.set()
+    
+    def on_completed():
+        print("Stream completed")
+        stop_event.set()
     
     # Start the subscription
     subscription = None

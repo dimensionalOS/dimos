@@ -9,8 +9,6 @@ Environment Variables:
     ROS_OUTPUT_DIR: Optional. Directory for ROS output files.
 """
 
-import tests.test_header
-
 import os
 import sys
 import reactivex as rx
