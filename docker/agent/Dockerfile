@@ -1,4 +1,4 @@
-FROM python:3
+FROM python:3.10.12
 
 # General
 # RUN apt-get update && apt-get install -y \
