@@ -80,24 +80,28 @@ if __name__ == "__main__":
     from dimos.stream.audio.sound_processing.node_normalizer import AudioNormalizer
     from dimos.stream.audio.sound_processing.node_key_recorder import KeyTriggeredAudioRecorder
     from dimos.stream.audio.text.node_stdout import TextPrinterNode
+    from dimos.stream.audio.tts.node_openai import OpenAITTSNode
     from dimos.stream.audio.utils import keepalive
 
     # Create microphone source, recorder, and audio output
     mic = SounddeviceAudioSource()
-    recorder = KeyTriggeredAudioRecorder()
     normalizer = AudioNormalizer()
+    recorder = KeyTriggeredAudioRecorder()
     whisper_node = WhisperNode()
-
+    output = SounddeviceAudioOutput(sample_rate=24000)
 
     normalizer.consume_audio(mic.emit_audio())
     recorder.consume_audio(normalizer.emit_audio())
-
     monitor(recorder.emit_audio())
     whisper_node.consume_audio(recorder.emit_recording())
-
 
     # Create and connect the text printer node
     text_printer = TextPrinterNode(prefix="USER: ")
     text_printer.consume_text(whisper_node.emit_text())
+
+    tts_node = OpenAITTSNode()
+    tts_node.consume_text(whisper_node.emit_text())
+
+    output.consume_audio(tts_node.emit_audio())
 
     keepalive()
