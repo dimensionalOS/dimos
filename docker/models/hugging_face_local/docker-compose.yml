@@ -1,0 +1,32 @@
+---
+services:
+  dimos-model-hugging-face-local:
+    image: dimos-model-hugging-face-local:latest
+    build: 
+      context: ../../../
+      dockerfile: docker/models/hugging_face_local/Dockerfile
+    env_file:
+      - ../../../.env
+    mem_limit: 8048m
+    volumes:
+      - ../../../assets:/app/assets
+      - ../../../assets/model-cache:/root/.cache/huggingface/hub
+    ports:
+      - "5555:5555"
+    runtime: nvidia
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    command: [ "python", "-m", "tests.test_agent_alibaba" ]
+    stdin_open: true
+    tty: true
+
+# IMPORTANT: This runs soley on the NVIDA GPU
+
+# ----
+# TO RUN:
+#   docker build -f ./Dockerfile -t dimos-models ../../ && docker compose up
+# GO TO:
+#   127.0.0.1:5555 (when flask server fixed)
+# ----

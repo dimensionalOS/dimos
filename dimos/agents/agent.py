@@ -607,7 +607,8 @@ class OpenAIAgent(LLMAgent):
                  frame_processor: Optional[FrameProcessor] = None,
                  image_detail: str = "low",
                  pool_scheduler: Optional[ThreadPoolScheduler] = None,
-                 process_all_inputs: Optional[bool] = None):
+                 process_all_inputs: Optional[bool] = None,
+                 openai_client: Optional[OpenAI] = None):
         """
         Initializes a new instance of the OpenAIAgent.
 
@@ -635,6 +636,8 @@ class OpenAIAgent(LLMAgent):
                 If None, the global scheduler from get_scheduler() will be used.
             process_all_inputs (bool): Whether to process all inputs or skip when busy.
                 If None, defaults to True for text queries, False for video streams.
+            openai_client (OpenAI): The OpenAI client to use. This can be used to specify 
+                a custom OpenAI client if targetting another provider.
         """
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
@@ -652,7 +655,7 @@ class OpenAIAgent(LLMAgent):
             process_all_inputs=process_all_inputs,
             system_query=system_query
         )
-        self.client = OpenAI()
+        self.client = openai_client or OpenAI()
         self.query = query
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
@@ -662,9 +665,10 @@ class OpenAIAgent(LLMAgent):
 
         self.response_model = response_model if response_model is not None else NOT_GIVEN
         self.model_name = model_name
-        self.prompt_builder = prompt_builder or PromptBuilder(self.model_name)
         self.tokenizer = tokenizer or OpenAI_Tokenizer(
             model_name=self.model_name)
+        self.prompt_builder = prompt_builder or PromptBuilder(
+            self.model_name, tokenizer=self.tokenizer)
         self.rag_query_n = rag_query_n
         self.rag_similarity_threshold = rag_similarity_threshold
         self.image_detail = image_detail

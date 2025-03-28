@@ -1,7 +1,12 @@
 from typing import List, Optional, Tuple, Type
 import time
 from pydantic import Field
-from dimos.robot.robot import Robot
+
+# from dimos.robot.robot import Robot
+class Robot:
+    def __init__(self):
+        pass
+
 from dimos.robot.skills import AbstractRobotSkill, AbstractSkill
 
 # Module-level constant for Unitree ROS control definitions
@@ -150,6 +155,7 @@ class MyUnitreeSkills(AbstractSkill):
     def initialize_skills(self):
         # Create the skills and add them to the list of skills
         self.add_skills(self.create_skills_live())
+        self.add_skills(self.create_another_skill())
         nested_skills = self.get_nested_skills()
         self.set_list_of_skills(nested_skills)
 
@@ -194,6 +200,47 @@ class MyUnitreeSkills(AbstractSkill):
                     '_app_id': app_id
                 })
             skills_classes.append(skill_class)
+
+        return skills_classes
+    
+    def create_another_skill(self) -> List[AbstractSkill]:
+        # ================================================
+        # Procedurally created skill
+        # ================================================
+        class BaseSkill(AbstractSkill):
+            """Base skill for dynamic skill creation."""
+
+            pixel_x: float = Field(..., description="Pixel X coordinate")
+            pixel_y: float = Field(..., description="Pixel Y coordinate")
+            object_description: str = Field(description="Description of the object at the coordinates")
+
+            def __init__(self, **data):
+                super().__init__(**data)
+
+            def __call__(self):
+                _GREEN_PRINT_COLOR = "\033[32m"
+                _BLUE_PRINT_COLOR = "\033[34m"
+                _RESET_COLOR = "\033[0m"
+                string = f"{_GREEN_PRINT_COLOR}This is a base skill, created for the specific skill.{_RESET_COLOR}"
+                print(string)
+                # Call Here.
+                print(f"{_BLUE_PRINT_COLOR}Pixel X: {self.pixel_x}, Pixel Y: {self.pixel_y}{_RESET_COLOR}")
+                print(f"{_BLUE_PRINT_COLOR}Object Description: {self.object_description}{_RESET_COLOR}")
+                # Call Here.
+                string = f"{_GREEN_PRINT_COLOR}{self.__class__.__name__} was successful.{_RESET_COLOR}"
+                print(string)
+                return "Success"
+
+        skills_classes = []
+        # Do Once [
+        skill_class = type(
+            "PrintTargetCoordinates",  # Name of the class
+            (BaseSkill,),  # Base classes
+            {
+                '__doc__': "Print the target coordinates to the console."
+            })
+        skills_classes.append(skill_class)
+        # Do Once ]
 
         return skills_classes
 
