@@ -24,14 +24,19 @@ class KeyRecorder(AbstractAudioTransform):
     def __init__(
         self,
         max_recording_time: float = 120.0,
+        always_subscribe: bool = False,
     ):
         """
         Initialize KeyRecorder.
 
         Args:
             max_recording_time: Maximum recording time in seconds
+            always_subscribe: If True, subscribe to audio source continuously,
+                              If False, only subscribe when recording (more efficient
+                              but some audio devices may need time to initialize)
         """
         self.max_recording_time = max_recording_time
+        self.always_subscribe = always_subscribe
 
         self._audio_buffer = []
         self._is_recording = False
@@ -53,7 +58,9 @@ class KeyRecorder(AbstractAudioTransform):
 
     def consume_audio(self, audio_observable: Observable) -> "KeyRecorder":
         """
-        Subscribe to an audio observable and record on key press.
+        Set the audio observable to use when recording.
+        If always_subscribe is True, subscribes immediately.
+        Otherwise, subscribes only when recording starts.
 
         Args:
             audio_observable: Observable emitting AudioEvent objects
@@ -63,12 +70,14 @@ class KeyRecorder(AbstractAudioTransform):
         """
         self._audio_observable = audio_observable
 
-        # Subscribe to the observable
-        self._subscription = audio_observable.subscribe(
-            on_next=self._process_audio_event,
-            on_error=self._handle_error,
-            on_completed=self._handle_completion,
-        )
+        # If configured to always subscribe, do it now
+        if self.always_subscribe and not self._subscription:
+            self._subscription = audio_observable.subscribe(
+                on_next=self._process_audio_event,
+                on_error=self._handle_error,
+                on_completed=self._handle_completion,
+            )
+            logger.debug("Subscribed to audio source (always_subscribe=True)")
 
         return self
 
@@ -94,6 +103,11 @@ class KeyRecorder(AbstractAudioTransform):
         """Stop recording and clean up resources."""
         logger.info("Stopping audio recorder")
 
+        # If recording is in progress, stop it first
+        if self._is_recording:
+            self._stop_recording()
+
+        # Always clean up subscription on full stop
         if self._subscription:
             self._subscription.dispose()
             self._subscription = None
@@ -105,11 +119,13 @@ class KeyRecorder(AbstractAudioTransform):
 
     def _input_monitor(self):
         """Monitor for key presses to toggle recording."""
-        print("Press Enter to start/stop recording...")
+        logger.info("Press Enter to start/stop recording...")
 
         while self._running:
             # Check if there's input available
             if select.select([sys.stdin], [], [], 0.1)[0]:
+                sys.stdin.readline()
+
                 if self._is_recording:
                     self._stop_recording()
                 else:
@@ -119,20 +135,37 @@ class KeyRecorder(AbstractAudioTransform):
             time.sleep(0.1)
 
     def _start_recording(self):
-        """Start recording audio."""
+        """Start recording audio and subscribe to the audio source if not always subscribed."""
+        if not self._audio_observable:
+            logger.error("Cannot start recording: No audio source has been set")
+            return
+
+        # Subscribe to the observable if not using always_subscribe
+        if not self._subscription:
+            self._subscription = self._audio_observable.subscribe(
+                on_next=self._process_audio_event,
+                on_error=self._handle_error,
+                on_completed=self._handle_completion,
+            )
+            logger.debug("Subscribed to audio source for recording")
+
         self._is_recording = True
         self._recording_start_time = time.time()
         self._audio_buffer = []
-        logger.info("Recording started")
-        print("Recording... (press Enter to stop)")
+        logger.info("Recording... (press Enter to stop)")
 
     def _stop_recording(self):
-        """Stop recording and emit the combined audio event."""
+        """Stop recording, unsubscribe from audio source if not always subscribed, and emit the combined audio event."""
         self._is_recording = False
         recording_duration = time.time() - self._recording_start_time
 
+        # Unsubscribe from the audio source if not using always_subscribe
+        if not self.always_subscribe and self._subscription:
+            self._subscription.dispose()
+            self._subscription = None
+            logger.debug("Unsubscribed from audio source after recording")
+
         logger.info(f"Recording stopped after {recording_duration:.2f} seconds")
-        print(f"Recording complete: {recording_duration:.2f} seconds")
 
         # Combine all audio events into one
         if len(self._audio_buffer) > 0:
@@ -225,42 +258,31 @@ if __name__ == "__main__":
     from dimos.stream.audio.node_normalizer import AudioNormalizer
     from dimos.stream.audio.utils import keepalive
 
-    import whisper
-
-    model = whisper.load_model("small")
-
     # Create microphone source, recorder, and audio output
     mic = SounddeviceAudioSource()
-    recorder = KeyRecorder()
+
+    # my audio device needs time to init, so for smoother ux we constantly listen
+    recorder = KeyRecorder(always_subscribe=True)
+
     normalizer = AudioNormalizer()
     speaker = SounddeviceAudioOutput()
 
     # Connect the components
     normalizer.consume_audio(mic.emit_audio())
     recorder.consume_audio(normalizer.emit_audio())
+    # recorder.consume_audio(mic.emit_audio())
 
     # Monitor microphone input levels (real-time pass-through)
-    print("Real-time audio monitoring:")
     monitor(recorder.emit_audio())
 
     # Connect the recorder output to the speakers to hear recordings when completed
     playback_speaker = SounddeviceAudioOutput()
     playback_speaker.consume_audio(recorder.emit_recording())
 
-    # Setup transcription for completed recordings if whisper is available
-    def process_recording(recording):
-        print("Processing recording for transcription...")
-        result = model.transcribe(recording.data.flatten(), language="en")
-        print("\nTranscription: " + result["text"].strip())
-
-    # Subscribe to the recording observable
-    recorder.emit_recording().subscribe(on_next=process_recording)
-
-    # Monitor the volume of completed recordings
-    print("Recording playback monitoring:")
-
-    print("------------------------------------------------------------")
-    print("\nPress Enter to start recording, press Enter again to stop and play back.")
-    print("------------------------------------------------------------")
+    # TODO: we should be able to run normalizer post hoc on the recording as well,
+    # it's not working, this needs a review
+    #
+    # normalizer.consume_audio(recorder.emit_recording())
+    # playback_speaker.consume_audio(normalizer.emit_audio())
 
     keepalive()

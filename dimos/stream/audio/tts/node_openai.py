@@ -8,8 +8,8 @@ import io
 import soundfile as sf
 from openai import OpenAI
 
-from dimos.stream.audio.text.abstract import AbstractTextConsumer, AbstractTextEmitter
-from dimos.stream.audio.sound_processing.abstract import (
+from dimos.stream.audio.text.base import AbstractTextConsumer, AbstractTextEmitter
+from dimos.stream.audio.base import (
     AbstractAudioEmitter,
     AudioEvent,
 )
@@ -207,7 +207,7 @@ if __name__ == "__main__":
     import time
     from dimos.stream.audio.utils import keepalive
     from reactivex import Subject
-    from dimos.stream.audio.sound_processing.node_output import SounddeviceAudioOutput
+    from dimos.stream.audio.node_output import SounddeviceAudioOutput
     from dimos.stream.audio.text.node_stdout import TextPrinterNode
 
     # Create a simple text subject that we can push values to

@@ -3,7 +3,7 @@ from typing import Dict, Any
 from reactivex import Observable, create, disposable
 import whisper
 
-from dimos.stream.audio.sound_processing.base import (
+from dimos.stream.audio.base import (
     AudioEvent,
     AbstractAudioConsumer,
 )
@@ -81,13 +81,13 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
 
 
 if __name__ == "__main__":
-    from dimos.stream.audio.sound_processing.node_microphone import (
+    from dimos.stream.audio.node_microphone import (
         SounddeviceAudioSource,
     )
-    from dimos.stream.audio.sound_processing.node_output import SounddeviceAudioOutput
-    from dimos.stream.audio.sound_processing.node_volume_monitor import monitor
-    from dimos.stream.audio.sound_processing.node_normalizer import AudioNormalizer
-    from dimos.stream.audio.sound_processing.node_key_recorder import KeyRecorder
+    from dimos.stream.audio.node_output import SounddeviceAudioOutput
+    from dimos.stream.audio.node_volume_monitor import monitor
+    from dimos.stream.audio.node_normalizer import AudioNormalizer
+    from dimos.stream.audio.node_key_recorder import KeyRecorder
     from dimos.stream.audio.text.node_stdout import TextPrinterNode
     from dimos.stream.audio.tts.node_openai import OpenAITTSNode
     from dimos.stream.audio.utils import keepalive

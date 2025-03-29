@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from dimos.stream.audio.abstract import (
+from dimos.stream.audio.base import (
     AbstractAudioEmitter,
     AudioEvent,
 )
@@ -8,12 +8,11 @@ import numpy as np
 from typing import Optional, List, Dict, Any
 from reactivex import Observable, create, disposable
 import time
-import logging
 import sounddevice as sd
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger("dimos.audio.node_microphone")
 
 
 class SounddeviceAudioSource(AbstractAudioEmitter):

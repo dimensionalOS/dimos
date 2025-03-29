@@ -9,7 +9,7 @@ from dimos.stream.audio.volume import (
     calculate_rms_volume,
     calculate_peak_volume,
 )
-from dimos.stream.audio.abstract import (
+from dimos.stream.audio.base import (
     AbstractAudioTransform,
     AudioEvent,
 )
@@ -28,7 +28,7 @@ class AudioNormalizer(AbstractAudioTransform):
 
     def __init__(
         self,
-        target_level: float = 0.8,
+        target_level: float = 1.0,
         min_volume_threshold: float = 0.01,
         max_gain: float = 10.0,
         decay_factor: float = 0.999,

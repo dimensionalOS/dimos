@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 from typing import Optional, List, Dict, Any
 import numpy as np
-import logging
 import sounddevice as sd
 from reactivex import Observable
 
+from dimos.utils.logging_config import setup_logger
 from dimos.stream.audio.base import (
     AbstractAudioTransform,
 )
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = setup_logger("dimos.stream.audio.node_output")
 
 
 class SounddeviceAudioOutput(AbstractAudioTransform):
