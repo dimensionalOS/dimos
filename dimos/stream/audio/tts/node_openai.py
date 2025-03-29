@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-
-import logging
 import threading
 import time
-import numpy as np
 from enum import Enum
 from typing import Optional
-from reactivex import Observable, Subject, disposable
+from reactivex import Observable, Subject
 import io
 import soundfile as sf
 from openai import OpenAI
 
 from dimos.stream.audio.text.abstract import AbstractTextConsumer, AbstractTextEmitter
-from dimos.stream.audio.sound_processing.abstract import AbstractAudioEmitter, AudioEvent
+from dimos.stream.audio.sound_processing.abstract import (
+    AbstractAudioEmitter,
+    AudioEvent,
+)
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger("dimos.stream.audio.tts.openai")
 
 
 class Voice(str, Enum):
@@ -79,7 +79,7 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
             Observable emitting AudioEvent objects
         """
         return self.audio_subject
-        
+
     def emit_text(self) -> Observable:
         """
         Returns an observable that emits the text being spoken.
@@ -110,7 +110,7 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
         # Subscribe to the text observable
         self.subscription = text_observable.subscribe(
             on_next=self._queue_text,
-            on_error=lambda e: logger.error(f"Error in OpenAITTSNode: {e}")
+            on_error=lambda e: logger.error(f"Error in OpenAITTSNode: {e}"),
         )
 
         return self
@@ -197,7 +197,7 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
         if self.subscription:
             self.subscription.dispose()
             self.subscription = None
-            
+
         # Complete the subjects
         self.audio_subject.on_completed()
         self.text_subject.on_completed()

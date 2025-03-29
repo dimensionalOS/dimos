@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import numpy as np
-from typing import Optional
 
 
 def calculate_rms_volume(audio_data: np.ndarray) -> float:
