@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from reactivex import Observable
 import numpy as np
-from typing import Any
 
 
 class AbstractAudioEmitter(ABC):
@@ -21,7 +20,7 @@ class AbstractAudioConsumer(ABC):
     """Base class for components that consume audio."""
 
     @abstractmethod
-    def consume_audio(self, audio_observable: Observable) -> 'AbstractAudioConsumer':
+    def consume_audio(self, audio_observable: Observable) -> "AbstractAudioConsumer":
         """Set the audio observable to consume.
 
         Args:
@@ -35,11 +34,11 @@ class AbstractAudioConsumer(ABC):
 
 class AbstractAudioTransform(AbstractAudioConsumer, AbstractAudioEmitter):
     """Base class for components that both consume and emit audio.
-    
+
     This represents a transform in an audio processing pipeline.
     """
-    pass
 
+    pass
 
 
 class AudioEvent:

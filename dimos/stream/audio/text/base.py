@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from reactivex import Observable
-from typing import Any
 
 
 class AbstractTextEmitter(ABC):
@@ -20,7 +19,7 @@ class AbstractTextConsumer(ABC):
     """Base class for components that consume audio."""
 
     @abstractmethod
-    def consume_text(self, text_observable: Observable) -> 'AbstractTextConsumer':
+    def consume_text(self, text_observable: Observable) -> "AbstractTextConsumer":
         """Set the audio observable to consume.
 
         Args:
@@ -37,10 +36,5 @@ class AbstractTextTransform(AbstractTextConsumer, AbstractTextEmitter):
 
     This represents a transform in an audio processing pipeline.
     """
+
     pass
-
-
-# check input query stream for agents
-# normalizer comments
-# check input query stream for agents
-# check simpleagent, readme

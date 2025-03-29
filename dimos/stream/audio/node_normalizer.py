@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
+from typing import Callable
+
 import numpy as np
 from reactivex import Observable, create, disposable
-from typing import Optional, Dict, Any, Callable
-import logging
-import time
-from dimos.stream.audio.sound_processing.volume import calculate_rms_volume, calculate_peak_volume
-from dimos.stream.audio.sound_processing.abstract import AbstractAudioTransform, AudioEvent
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from dimos.utils.logging_config import setup_logger
+from dimos.stream.audio.volume import (
+    calculate_rms_volume,
+    calculate_peak_volume,
+)
+from dimos.stream.audio.abstract import (
+    AbstractAudioTransform,
+    AudioEvent,
+)
+
+
+logger = setup_logger("dimos.stream.audio.node_normalizer")
 
 
 class AudioNormalizer(AbstractAudioTransform):
     """
     Audio normalizer that remembers max volume and rescales audio to normalize it.
 
-    This class applies dynamic normalization to audio frames. It keeps track of 
+    This class applies dynamic normalization to audio frames. It keeps track of
     the max volume encountered and uses that to normalize the audio to a target level.
     """
 
@@ -71,7 +77,6 @@ class AudioNormalizer(AbstractAudioTransform):
 
         # Update max volume with decay
         self.max_volume = max(current_volume, self.max_volume * self.decay_factor)
-        func_name = self.volume_func.__name__.replace("calculate_", "")
 
         # Calculate ideal gain
         if self.max_volume > self.min_volume_threshold:
@@ -101,7 +106,7 @@ class AudioNormalizer(AbstractAudioTransform):
             channels=audio_event.channels,
         )
 
-    def consume_audio(self, audio_observable: Observable) -> 'AudioNormalizer':
+    def consume_audio(self, audio_observable: Observable) -> "AudioNormalizer":
         """
         Set the audio source observable to consume.
 
@@ -149,10 +154,12 @@ class AudioNormalizer(AbstractAudioTransform):
 
 if __name__ == "__main__":
     import sys
-    from dimos.stream.audio.sound_processing.node_microphone import SounddeviceAudioSource
-    from dimos.stream.audio.sound_processing.node_simulated import SimulatedAudioSource
-    from dimos.stream.audio.sound_processing.node_volume_monitor import monitor
-    from dimos.stream.audio.sound_processing.node_output import SounddeviceAudioOutput
+    from dimos.stream.audio.node_microphone import (
+        SounddeviceAudioSource,
+    )
+    from dimos.stream.audio.node_simulated import SimulatedAudioSource
+    from dimos.stream.audio.node_volume_monitor import monitor
+    from dimos.stream.audio.node_output import SounddeviceAudioOutput
     from dimos.stream.audio.utils import keepalive
 
     # Parse command line arguments
@@ -189,11 +196,8 @@ if __name__ == "__main__":
     )
 
     # Create normalizer
-    normalizer = AudioNormalizer(
-        target_level=target_level, 
-        volume_func=volume_func
-    )
-    
+    normalizer = AudioNormalizer(target_level=target_level, volume_func=volume_func)
+
     # Connect the audio source to the normalizer
     normalizer.consume_audio(audio_source.emit_audio())
 

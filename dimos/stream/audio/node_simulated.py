@@ -1,14 +1,15 @@
-from dimos.stream.audio.sound_processing.abstract import AbstractAudioEmitter, AudioEvent
+from dimos.stream.audio.abstract import (
+    AbstractAudioEmitter,
+    AudioEvent,
+)
 import numpy as np
 from reactivex import Observable, create, disposable
-from typing import Dict, List, Optional, Union, Any
 import threading
-import logging
 import time
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger("dimos.stream.audio.node_simulated")
 
 
 class SimulatedAudioSource(AbstractAudioEmitter):
@@ -211,8 +212,8 @@ class SimulatedAudioSource(AbstractAudioEmitter):
 
 if __name__ == "__main__":
     from dimos.stream.audio.utils import keepalive
-    from dimos.stream.audio.sound_processing.node_volume_monitor import monitor
-    from dimos.stream.audio.sound_processing.node_output import SounddeviceAudioOutput
+    from dimos.stream.audio.node_volume_monitor import monitor
+    from dimos.stream.audio.node_output import SounddeviceAudioOutput
 
     source = SimulatedAudioSource()
     speaker = SounddeviceAudioOutput()
