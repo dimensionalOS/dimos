@@ -1,0 +1,18 @@
+---
+services:
+  dimos-unitree-agents:
+    image: dimos-unitree-agents:latest
+    build: 
+      context: ../../../
+      dockerfile: docker/unitree/agents/Dockerfile
+    env_file:
+      - ../../../.env
+      # TODO: ipc: host
+    volumes:
+      - ../../../assets:/app/assets
+    ports:
+      - "5555:5555"
+    mem_limit: 8048m
+    stdin_open: true
+    tty: true
+

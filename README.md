@@ -1,5 +1,20 @@
 ![Screenshot 2025-02-18 at 16-31-22 DimOS Terminal](/assets/dimos_terminal.png)
 
+<div align="center">
+  <table>
+    <tr>
+      <td width="80%">
+        <img src="./assets/dimos_interface.gif" alt="dimOS interface" width="100%">
+        <p align="center"><em>A simple two-shot PlanningAgent</em></p>
+      </td>
+      <td width="20%">
+        <img src="./assets/simple_demo_small.gif" alt="3rd person POV" width="100%">
+        <p align="center"><em>3rd person POV</em></p>
+      </td>
+    </tr>
+  </table>
+</div>
+
 # The Dimensional Framework
 *The universal framework for AI-native generalist robotics*
 
@@ -7,7 +22,7 @@
 
 Dimensional is an open-source framework for building agentive generalist robots. DimOS allows off-the-shelf Agents to call tools/functions and read sensor/state data directly from ROS. 
 
-The framework enables neurosymbolic orchestration of Agents() as generalized spatial planners and robot skills/action primitives as functions. 
+The framework enables neurosymbolic orchestration of Agents as generalized spatial reasoners/planners and Robot state/action primitives as functions. 
 
 The result: cross-embodied *"Dimensional Applications"* exceptional at generalization and robust at symbolic action execution. 
 
@@ -64,7 +79,7 @@ DISPLAY=:0
 ### Run docker compose 
 ```bash
 xhost +local:root # If running locally and desire RVIZ GUI
-docker compose -f docker/unitree/ros_agents/docker-compose.yml up --build # TODO: change docker path
+docker compose -f docker/unitree/agents_interface/docker-compose.yml up --build
 ```
 **Interface will start at http://localhost:3000**
 
@@ -76,16 +91,20 @@ docker compose -f docker/unitree/ros_agents/docker-compose.yml up --build # TODO
 - The robot's IP address
 - OpenAI API Key
 
-### Python Installation
+### Python Installation (Ubuntu 22.04)
 
 ```bash
+sudo apt install python3-venv
+
 # Clone the repository
-git clone https://github.com/dimensionalOS/dimos-unitree.git
+git clone --recurse-submodules https://github.com/dimensionalOS/dimos-unitree.git
 cd dimos-unitree
 
 # Create and activate virtual environment
-python -m venv venv
-source venv/bin/activate 
+python3 -m venv venv
+source venv/bin/activate
+
+sudo apt install portaudio19-dev python3-pyaudio
 
 # Install dependencies
 pip install -r requirements.txt
@@ -277,13 +296,20 @@ class JumpAndFlip(AbstractRobotSkill):
         return (jump() and flip())
 ```
 
+### Unitree Test Files
+- **`tests/run_go2_ros.py`**: Tests `UnitreeROSControl(ROSControl)` initialization in `UnitreeGo2(Robot)` via direct function calls `robot.move()` and `robot.webrtc_req()` 
+- **`tests/simple_agent_test.py`**: Tests a simple zero-shot class `OpenAIAgent` example
+- **`tests/unitree/test_webrtc_queue.py`**: Tests `ROSCommandQueue` via a 20 back-to-back WebRTC requests to the robot 
+- **`tests/test_planning_agent_web_interface.py`**: Tests a simple two-stage `PlanningAgent` chained to an `ExecutionAgent` with backend FastAPI interface.
+- **`tests/test_unitree_agent_queries_fastapi.py`**: Tests a zero-shot `ExecutionAgent` with backend FastAPI interface.
+
 ## Documentation
 
 For detailed documentation, please visit our [documentation site](#) (Coming Soon).
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) (Coming soon) for details on how to get started.
+We welcome contributions! See our [Bounty List](https://docs.google.com/spreadsheets/d/1tzYTPvhO7Lou21cU6avSWTQOhACl5H8trSvhtYtsk8U/edit?usp=sharing) for open requests for contributions. If you would like to suggest a feature or sponsor a bounty, open an issue.
 
 ## License
 

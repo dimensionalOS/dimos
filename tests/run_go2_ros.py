@@ -18,7 +18,7 @@ def get_env_var(var_name, default=None, required=False):
 
 if __name__ == "__main__":
     # Get configuration from environment variables
-    robot_ip = get_env_var("ROBOT_IP", "192.168.9.140")
+    robot_ip = get_env_var("ROBOT_IP")
     connection_method = get_env_var("CONNECTION_METHOD", "LocalSTA")
     serial_number = get_env_var("SERIAL_NUMBER", None)
     output_dir = get_env_var("ROS_OUTPUT_DIR",

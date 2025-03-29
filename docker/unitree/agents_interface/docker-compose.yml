@@ -1,0 +1,41 @@
+---
+services:
+  dimos-unitree-agents-interface:
+    image: dimos-unitree-agents-interface:latest
+    build: 
+      context: ../../../
+      dockerfile: docker/unitree/agents_interface/Dockerfile
+    env_file:
+      - ../../../.env
+    volumes:
+      - ../../../assets:/app/assets
+    network_mode: "host"
+    ports:
+      - "5555:5555"
+    mem_limit: 8048m
+    stdin_open: true
+    tty: true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5555/unitree/status"]
+      interval: 10s
+      timeout: 30s
+      retries: 5
+      start_period: 10s
+  
+  dimos-web-interface:
+    build:
+      context: ../../../
+      dockerfile: docker/interface/Dockerfile
+    image: dimos-web-interface:latest
+    container_name: dimos-web-interface
+    network_mode: "host"
+    volumes:
+      - ../../../dimos/web/dimos_interface:/app
+    depends_on:
+      dimos-unitree-agents-interface:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

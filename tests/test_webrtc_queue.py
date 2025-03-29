@@ -13,7 +13,8 @@ def main():
     print("Initializing UnitreeGo2...")
     
     # Get configuration from environment variables
-    robot_ip = os.getenv("ROBOT_IP", "192.168.9.140")
+
+    robot_ip = os.getenv("ROBOT_IP")
     connection_method = getattr(WebRTCConnectionMethod, 
                                os.getenv("CONNECTION_METHOD", "LocalSTA"))
     
