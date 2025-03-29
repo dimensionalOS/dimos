@@ -41,7 +41,7 @@ from dimos.robot.ros_command_queue import ROSCommandQueue
 from dimos.utils.logging_config import setup_logger
 import logging
 
-logger = setup_logger("dimos.robot.ros_control", level=logging.INFO)
+logger = setup_logger("dimos.robot.ros_control")
 
 __all__ = ['ROSControl', 'RobotMode']
 
@@ -70,6 +70,7 @@ class ROSControl(ABC):
                  webrtc_topic: str = None,
                  webrtc_api_topic: str = None,
                  webrtc_msg_type: Type = None,
+                 move_vel_topic: str = None,
                  debug: bool = False):
       
         """
@@ -87,6 +88,7 @@ class ROSControl(ABC):
             webrtc_topic: Topic for WebRTC commands
             webrtc_api_topic: Topic for WebRTC API commands
             webrtc_msg_type: The ROS message type for webrtc data
+            move_vel_topic: Topic for direct movement commands
         """
         # Initialize rclpy and ROS node if not already running
         if not rclpy.ok():
@@ -100,7 +102,6 @@ class ROSControl(ABC):
         self._webrtc_topic = webrtc_topic
         self._webrtc_api_topic = webrtc_api_topic
         self._node = Node(node_name)
-        self._logger = self._node.get_logger()
         self._debug = debug
         # Prepare a multi-threaded executor
         self._executor = MultiThreadedExecutor()
@@ -141,7 +142,7 @@ class ROSControl(ABC):
             # Create subscribers for each topic with sensor QoS
             msg_type = CompressedImage if use_compressed_video else Image
             for topic in camera_topics.values():
-                self._logger.info(f"Subscribing to {topic} with BEST_EFFORT QoS")
+                logger.info(f"Subscribing to {topic} with BEST_EFFORT QoS")
                 _camera_subscription = self._node.create_subscription(
                     msg_type,
                     topic,
@@ -152,7 +153,7 @@ class ROSControl(ABC):
         
         # Subscribe to state topic if provided
         if self._state_topic and self._state_msg_type:
-            self._logger.info(f"Subscribing to {state_topic} with BEST_EFFORT QoS")
+            logger.info(f"Subscribing to {state_topic} with BEST_EFFORT QoS")
             self._state_sub = self._node.create_subscription(
                 self._state_msg_type,
                 self._state_topic,
@@ -161,7 +162,7 @@ class ROSControl(ABC):
             )
             self._subscriptions.append(self._state_sub)
         else:
-            self._logger.warning("No state topic andor message type provided - robot state tracking will be unavailable")
+            logger.warning("No state topic andor message type provided - robot state tracking will be unavailable")
 
         if self._imu_topic and self._imu_msg_type:
             self._imu_sub = self._node.create_subscription(
@@ -172,7 +173,7 @@ class ROSControl(ABC):
             )
             self._subscriptions.append(self._imu_sub)
         else:
-            self._logger.warning("No IMU topic and/or message type provided - IMU data tracking will be unavailable")
+            logger.warning("No IMU topic and/or message type provided - IMU data tracking will be unavailable")
 
         # Nav2 Action Clients
         self._drive_client = ActionClient(self._node, DriveOnHeading, 'drive_on_heading')
@@ -186,6 +187,8 @@ class ROSControl(ABC):
             self._backup_client.wait_for_server()
 
         # Publishers
+        self._move_vel_pub = self._node.create_publisher(
+            Twist, move_vel_topic, command_qos)
         if webrtc_msg_type:
             self._webrtc_pub = self._node.create_publisher(
                 webrtc_msg_type, webrtc_topic, qos_profile=command_qos)
@@ -199,20 +202,21 @@ class ROSControl(ABC):
             # Start the queue processing thread
             self._command_queue.start()
         else:
-            self._logger.warning("No WebRTC message type provided - WebRTC commands will be unavailable")
+            logger.warning("No WebRTC message type provided - WebRTC commands will be unavailable")
             
         # Start ROS spin in a background thread via the executor
         self._spin_thread = threading.Thread(target=self._ros_spin, daemon=True)
         self._spin_thread.start()
         
-        self._logger.info(f"{node_name} initialized with multi-threaded executor")
+        logger.info(f"{node_name} initialized with multi-threaded executor")
         print(f"{node_name} initialized with multi-threaded executor")
     
 
     def _imu_callback(self, msg):
         """Callback for IMU data"""
         self._imu_state = msg
-        self._logger.debug(f"IMU state updated: {self._imu_state}")
+        # Log IMU state (very verbose)
+        #logger.debug(f"IMU state updated: {self._imu_state}")
 
 
     def _state_callback(self, msg):
@@ -220,11 +224,9 @@ class ROSControl(ABC):
         
         # Call the abstract method to update RobotMode enum based on the received state
         self._robot_state = msg
-
-        logger.debug(f"[ROSControl] State callback received: {msg}")
         self._update_mode(msg)
-        # Log state changes
-        self._logger.debug(f"Robot state updated: {self._robot_state}")
+        # Log state changes (very verbose)
+        # logger.debug(f"Robot state updated: {self._robot_state}")
     
     @property
     def robot_state(self) -> Optional[Any]:
@@ -259,7 +261,7 @@ class ROSControl(ABC):
             ROS msg containing the robot state information
         """            
         if not self._state_topic:
-            self._logger.warning("No state topic provided - robot state tracking will be unavailable")
+            logger.warning("No state topic provided - robot state tracking will be unavailable")
             return None
         
         return self._robot_state
@@ -275,7 +277,7 @@ class ROSControl(ABC):
             ROS msg containing the IMU state information
         """           
         if not self._imu_topic:
-            self._logger.warning("No IMU topic provided - IMU data tracking will be unavailable")
+            logger.warning("No IMU topic provided - IMU data tracking will be unavailable")
             return None
         return self._imu_state
     
@@ -289,7 +291,7 @@ class ROSControl(ABC):
                     frame = self._bridge.imgmsg_to_cv2(msg, "bgr8")
                 self._video_provider.push_data(frame)
             except Exception as e:
-                self._logger.error(f"Error converting image: {e}")
+                logger.error(f"Error converting image: {e}")
                 print(f"Full conversion error: {str(e)}")
     
     @property
@@ -312,7 +314,7 @@ class ROSControl(ABC):
             bool: True if action succeeded, False otherwise
         """
         if description:
-            self._logger.info(description)
+            logger.info(description)
             
         print(f"[ROSControl] Sending action client goal: {description}")
         print(f"[ROSControl] Goal message: {goal_msg}")
@@ -337,13 +339,13 @@ class ROSControl(ABC):
             
         # Check result    
         if self._action_success is None:
-            self._logger.error(f"Action timed out after {time_allowance}s")
+            logger.error(f"Action timed out after {time_allowance}s")
             return False
         elif self._action_success:
-            self._logger.info(f"Action succeeded")
+            logger.info(f"Action succeeded")
             return True
         else:
-            self._logger.error(f"Action failed")
+            logger.error(f"Action failed")
             return False
 
     def move(self, distance: float, speed: float = 0.5, time_allowance: float = 120) -> bool:
@@ -360,7 +362,7 @@ class ROSControl(ABC):
         """
         try:
             if distance <= 0:
-                self._logger.error("Distance must be positive")
+                logger.error("Distance must be positive")
                 return False
                 
             speed = min(abs(speed), self.MAX_LINEAR_VELOCITY)
@@ -375,7 +377,7 @@ class ROSControl(ABC):
                 goal.speed = speed
                 goal.time_allowance = Duration(sec=time_allowance)
                 
-                self._logger.info(f"Moving forward: distance={distance}m, speed={speed}m/s")
+                logger.info(f"Moving forward: distance={distance}m, speed={speed}m/s")
                 
                 return self._send_action_client_goal(
                     self._drive_client, 
@@ -393,13 +395,13 @@ class ROSControl(ABC):
                 distance=distance,
                 speed=speed
             )
-            self._logger.info(f"Queued move command: {cmd_id} - Distance: {distance}m, Speed: {speed}m/s")
+            logger.info(f"Queued move command: {cmd_id} - Distance: {distance}m, Speed: {speed}m/s")
             return True
                 
         except Exception as e:
-            self._logger.error(f"Forward movement failed: {e}")
+            logger.error(f"Forward movement failed: {e}")
             import traceback
-            self._logger.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
             return False
 
     def reverse(self, distance: float, speed: float = 0.5, time_allowance: float = 120) -> bool:
@@ -416,7 +418,7 @@ class ROSControl(ABC):
         """
         try:
             if distance <= 0:
-                self._logger.error("Distance must be positive")
+                logger.error("Distance must be positive")
                 return False
                 
             speed = min(abs(speed), self.MAX_LINEAR_VELOCITY)
@@ -435,7 +437,7 @@ class ROSControl(ABC):
                 print(f"[ROSControl] execute_reverse: Creating BackUp goal with distance={distance}m, speed={speed}m/s")
                 print(f"[ROSControl] execute_reverse: Goal details: x={goal.target.x}, y={goal.target.y}, z={goal.target.z}, speed={goal.speed}")
                 
-                self._logger.info(f"Moving backward: distance={distance}m, speed={speed}m/s")
+                logger.info(f"Moving backward: distance={distance}m, speed={speed}m/s")
                 
                 result = self._send_action_client_goal(
                     self._backup_client, 
@@ -456,13 +458,13 @@ class ROSControl(ABC):
                 distance=distance,
                 speed=speed
             )
-            self._logger.info(f"Queued reverse command: {cmd_id} - Distance: {distance}m, Speed: {speed}m/s")
+            logger.info(f"Queued reverse command: {cmd_id} - Distance: {distance}m, Speed: {speed}m/s")
             return True
                 
         except Exception as e:
-            self._logger.error(f"Backward movement failed: {e}")
+            logger.error(f"Backward movement failed: {e}")
             import traceback
-            self._logger.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
             return False
 
     def spin(self, degrees: float, speed: float = 45.0, time_allowance: float = 120) -> bool:
@@ -493,7 +495,7 @@ class ROSControl(ABC):
                 goal.target_yaw = angle  # Nav2 Spin action expects radians
                 goal.time_allowance = Duration(sec=time_allowance)
                 
-                self._logger.info(f"Spinning: angle={degrees}deg ({angle:.2f}rad)")
+                logger.info(f"Spinning: angle={degrees}deg ({angle:.2f}rad)")
                 
                 return self._send_action_client_goal(
                     self._spin_client, 
@@ -511,25 +513,25 @@ class ROSControl(ABC):
                 degrees=degrees,
                 speed=speed
             )
-            self._logger.info(f"Queued spin command: {cmd_id} - Degrees: {degrees}, Speed: {speed}deg/s")
+            logger.info(f"Queued spin command: {cmd_id} - Degrees: {degrees}, Speed: {speed}deg/s")
             return True
                 
         except Exception as e:
-            self._logger.error(f"Spin movement failed: {e}")
+            logger.error(f"Spin movement failed: {e}")
             import traceback
-            self._logger.error(traceback.format_exc())
+            logger.error(traceback.format_exc())
             return False
 
     def _goal_response_callback(self, future):
         """Handle the goal response."""
         goal_handle = future.result()
         if not goal_handle.accepted:
-            self._logger.warn('Goal was rejected!')
+            logger.warn('Goal was rejected!')
             print("[ROSControl] Goal was REJECTED by the action server")
             self._action_success = False
             return
 
-        self._logger.info('Goal accepted')
+        logger.info('Goal accepted')
         print("[ROSControl] Goal was ACCEPTED by the action server")
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._goal_result_callback)
@@ -538,11 +540,11 @@ class ROSControl(ABC):
         """Handle the goal result."""
         try:
             result = future.result().result
-            self._logger.info('Goal completed')
+            logger.info('Goal completed')
             print(f"[ROSControl] Goal COMPLETED with result: {result}")
             self._action_success = True
         except Exception as e:
-            self._logger.error(f'Goal failed with error: {e}')
+            logger.error(f'Goal failed with error: {e}')
             print(f"[ROSControl] Goal FAILED with error: {e}")
             self._action_success = False
     
@@ -554,7 +556,7 @@ class ROSControl(ABC):
             self._is_moving = False
             return True
         except Exception as e:
-            self._logger.error(f"Failed to stop movement: {e}")
+            logger.error(f"Failed to stop movement: {e}")
             return False
     
     def cleanup(self):
@@ -563,7 +565,7 @@ class ROSControl(ABC):
 
         # Stop the WebRTC queue manager
         if self._command_queue:
-            self._logger.info("Stopping WebRTC queue manager...")
+            logger.info("Stopping WebRTC queue manager...")
             self._command_queue.stop()
 
         # Shut down the executor to stop spin loop cleanly
@@ -603,11 +605,11 @@ class ROSControl(ABC):
             cmd.priority = priority
             
             self._webrtc_pub.publish(cmd)
-            self._logger.info(f"Sent WebRTC request: api_id={api_id}, topic={cmd.topic}")
+            logger.info(f"Sent WebRTC request: api_id={api_id}, topic={cmd.topic}")
             return True
             
         except Exception as e:
-            self._logger.error(f"Failed to send WebRTC request: {e}")
+            logger.error(f"Failed to send WebRTC request: {e}")
             return False
             
     def get_robot_mode(self) -> RobotMode:
@@ -656,3 +658,43 @@ class ROSControl(ABC):
             request_id=request_id,
             data=data
         )
+
+    def move_vel(self, x: float, y: float, yaw: float, duration: float = 0.0) -> bool:
+        """
+        Send movement command to the robot using velocity commands
+        
+        Args:
+            x: Forward/backward velocity (m/s)
+            y: Left/right velocity (m/s)
+            yaw: Rotational velocity (rad/s)
+            duration: How long to move (seconds). If 0, command is continuous
+            
+        Returns:
+            bool: True if command was sent successfully
+        """
+        # Clamp velocities to safe limits
+        x = self._clamp_velocity(x, self.MAX_LINEAR_VELOCITY)
+        y = self._clamp_velocity(y, self.MAX_LINEAR_VELOCITY)
+        yaw = self._clamp_velocity(yaw, self.MAX_ANGULAR_VELOCITY)
+
+        # Create and send command
+        cmd = Twist()
+        cmd.linear.x = float(x)
+        cmd.linear.y = float(y)
+        cmd.angular.z = float(yaw)
+
+        try:
+            if duration > 0:
+                start_time = time.time()
+                while time.time() - start_time < duration:
+                    self._move_vel_pub.publish(cmd)
+                    time.sleep(0.1)  # 10Hz update rate
+                # Stop after duration
+                self.stop()
+            else:
+                self._move_vel_pub.publish(cmd)
+            return True
+
+        except Exception as e:
+            self._logger.error(f"Failed to send movement command: {e}")
+            return False

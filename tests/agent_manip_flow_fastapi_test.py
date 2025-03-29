@@ -3,13 +3,8 @@ This module initializes and manages the video processing pipeline integrated wit
 It handles video capture, frame processing, and exposes the processed video streams via HTTP endpoints.
 """
 
-import sys
+import tests.test_header
 import os
-
-# Add the parent directory of 'tests' to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-print(f"Hi from {os.path.basename(__file__)}\n")
 
 # -----
 

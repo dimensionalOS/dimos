@@ -19,12 +19,13 @@ from reactivex import Subject, Observable, disposable, create
 from reactivex import operators as ops
 from openai import OpenAI, NOT_GIVEN
 import time
-import logging
 from dimos.robot.skills import AbstractSkill
 from dimos.agents.agent import OpenAIAgent
 from dimos.utils.logging_config import setup_logger
 from textwrap import dedent
 from pydantic import BaseModel, Field
+
+logger = setup_logger("dimos.agents.planning_agent")
 
 # For response validation
 class PlanningAgentResponse(BaseModel):
@@ -121,14 +122,14 @@ class PlanningAgent(OpenAIAgent):
             max_output_tokens_per_request=1000,
             response_model=PlanningAgentResponse
         )
-        self.logger.info("Planning agent initialized")
+        logger.info("Planning agent initialized")
 
         # Set up terminal mode if requested
         self.use_terminal = use_terminal
         use_terminal = False
         if use_terminal:
             # Start terminal interface in a separate thread
-            self.logger.info("Starting terminal interface in a separate thread")
+            logger.info("Starting terminal interface in a separate thread")
             terminal_thread = threading.Thread(target=self.start_terminal_interface, daemon=True)
             terminal_thread.start()
             
@@ -151,7 +152,7 @@ class PlanningAgent(OpenAIAgent):
         
         # If it's a plan, update current plan
         if planning_response.type == "plan":
-            self.logger.info(f"Updating current plan: {planning_response.content}")
+            logger.info(f"Updating current plan: {planning_response.content}")
             self.current_plan = planning_response.content
             
         # Store latest response
@@ -160,20 +161,20 @@ class PlanningAgent(OpenAIAgent):
 
     def _stream_plan(self) -> None:
         """Stream each step of the confirmed plan."""
-        self.logger.info("Starting to stream plan steps")
-        self.logger.debug(f"Current plan: {self.current_plan}")
+        logger.info("Starting to stream plan steps")
+        logger.debug(f"Current plan: {self.current_plan}")
 
         for i, step in enumerate(self.current_plan, 1):
-            self.logger.info(f"Streaming step {i}: {step}")
+            logger.info(f"Streaming step {i}: {step}")
             # Add a small delay between steps to ensure they're processed
             time.sleep(0.5)
             try:
                 self.response_subject.on_next(str(step))
-                self.logger.debug(f"Successfully emitted step {i} to response_subject")
+                logger.debug(f"Successfully emitted step {i} to response_subject")
             except Exception as e:
-                self.logger.error(f"Error emitting step {i}: {e}")
+                logger.error(f"Error emitting step {i}: {e}")
                 
-        self.logger.info("Plan streaming completed")
+        logger.info("Plan streaming completed")
         self.response_subject.on_completed()
     
     def _send_query(self, messages: list) -> PlanningAgentResponse:
@@ -191,7 +192,7 @@ class PlanningAgent(OpenAIAgent):
         try:
             return super()._send_query(messages)
         except Exception as e:
-            self.logger.error(f"Caught exception in _send_query: {str(e)}")
+            logger.error(f"Caught exception in _send_query: {str(e)}")
             return PlanningAgentResponse(
                 type="dialogue",
                 content=f"Error: {str(e)}",
@@ -209,7 +210,7 @@ class PlanningAgent(OpenAIAgent):
             
         # Check for plan confirmation
         if self.current_plan and user_input.lower() in ["yes", "y", "confirm"]:
-            self.logger.info("Plan confirmation received")
+            logger.info("Plan confirmation received")
             self.plan_confirmed = True
             # Create a proper PlanningAgentResponse with content as a list
             confirmation_msg = PlanningAgentResponse(

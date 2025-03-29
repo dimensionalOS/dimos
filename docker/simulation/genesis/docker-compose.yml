@@ -1,0 +1,38 @@
+---
+services:
+  dimos_simulator:
+    image: dimos_simulator_genesis:latest
+    build: 
+      context: ../../../
+      dockerfile: docker/simulation/genesis/Dockerfile
+    env_file:
+      - ../../../.env
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - PYTHONUNBUFFERED=1
+      - ACCEPT_EULA=Y
+      - PRIVACY_CONSENT=Y
+    volumes:
+      - ./../../../assets:/app/assets
+    networks:
+      - rtsp_net
+    depends_on:
+      - mediamtx
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    networks:
+      - rtsp_net
+    ports:
+      - "8554:8554"
+      - "1935:1935"
+      - "8888:8888"
+    environment:
+      - MTX_PROTOCOLS=tcp
+      - MTX_LOG_LEVEL=info 
+
+networks:
+  rtsp_net:
+    name: rtsp_net 

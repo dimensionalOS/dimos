@@ -3,6 +3,6 @@ name = "dimos"
 authors = [
     {name = "Stash Pomichter", email = "stash@dimensionalOS.com"},
 ]
-version = "0.0.0"
-description = "Coming soon"
+version = "0.0.2"
+description = "Powering agentive generalist robotics"
 

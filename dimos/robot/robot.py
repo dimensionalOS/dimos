@@ -210,6 +210,25 @@ class Robot(ABC):
             timeout=timeout
         )
 
+    def move_vel(self, x: float, y: float, yaw: float, duration: float = 0.0) -> bool:
+        """Move the robot using direct movement commands.
+        
+        Args:
+            x: Forward/backward velocity (m/s)
+            y: Left/right velocity (m/s)
+            yaw: Rotational velocity (rad/s)
+            duration: How long to move (seconds). If 0, command is continuous
+            
+        Returns:
+            bool: True if command was sent successfully
+            
+        Raises:
+            RuntimeError: If no ROS control interface is available.
+        """
+        if self.ros_control is None:
+            raise RuntimeError("No ROS control interface available for movement")
+        return self.ros_control.move_vel(x, y, yaw, duration)
+
     @abstractmethod
     def do(self, *args, **kwargs):
         """Executes motion on the robot.

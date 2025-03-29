@@ -15,16 +15,13 @@
 from isaacsim import SimulationApp
 import cv2
 import numpy as np
-import subprocess
 import time
 from typing import Literal, Optional, Union
 from pathlib import Path
+from ..base.stream_base import StreamBase, AnnotatorType, TransportType
 
-AnnotatorType = Literal['rgb', 'normals', 'bounding_box_3d', 'motion_vectors']
-TransportType = Literal['tcp', 'udp']
-
-class SimulationStream:
-    """Class to handle streaming from Isaac Sim simulation."""
+class IsaacStream(StreamBase):
+    """Isaac Sim stream implementation."""
     
     def __init__(
         self,
@@ -33,42 +30,31 @@ class SimulationStream:
         height: int = 1080,
         fps: int = 60,
         camera_path: str = "/World/alfred_parent_prim/alfred_base_descr/chest_cam_rgb_camera_frame/chest_cam",
-        annotator: AnnotatorType = 'rgb',
+        annotator_type: AnnotatorType = 'rgb',
         transport: TransportType = 'tcp',
         rtsp_url: str = "rtsp://mediamtx:8554/stream",
         usd_path: Optional[Union[str, Path]] = None
     ):
-        """Initialize the simulation stream.
+        """Initialize the Isaac Sim stream."""
+        super().__init__(
+            simulator=simulator,
+            width=width,
+            height=height,
+            fps=fps,
+            camera_path=camera_path,
+            annotator_type=annotator_type,
+            transport=transport,
+            rtsp_url=rtsp_url,
+            usd_path=usd_path
+        )
         
-        Args:
-            simulator: Simulator instance
-            width: Stream width in pixels
-            height: Stream height in pixels
-            fps: Frames per second
-            camera_path: USD path to the camera
-            annotator: Type of annotator to use
-            transport: Transport protocol (tcp/udp)
-            rtsp_url: RTSP stream URL
-            usd_path: Optional USD file path to load
-        """
-        self.simulator = simulator
-        self.width = width
-        self.height = height
-        self.fps = fps
-        self.camera_path = camera_path
-        self.annotator_type = annotator
-        self.transport = transport
-        self.rtsp_url = rtsp_url
-        
-        # Import omni.replicator only after SimulationApp is initialized
+        # Import omni.replicator after SimulationApp initialization
         import omni.replicator.core as rep
         self.rep = rep
         
-        # Initialize stage if USD path provided
+        # Initialize components
         if usd_path:
             self._load_stage(usd_path)
-            
-        # Setup streaming components
         self._setup_camera()
         self._setup_ffmpeg()
         self._setup_annotator()
@@ -76,7 +62,6 @@ class SimulationStream:
     def _load_stage(self, usd_path: Union[str, Path]):
         """Load USD stage from file."""
         import omni.usd
-        # Convert to absolute path
         abs_path = str(Path(usd_path).resolve())
         omni.usd.get_context().open_stage(abs_path)
         self.stage = self.simulator.get_stage()
@@ -90,31 +75,10 @@ class SimulationStream:
         if not camera_prim:
             raise RuntimeError(f"Failed to find camera at path: {self.camera_path}")
             
-        # Create render product
         self.render_product = self.rep.create.render_product(
             self.camera_path,
             resolution=(self.width, self.height)
         )
-        
-    def _setup_ffmpeg(self):
-        """Setup FFmpeg process for streaming."""
-        command = [
-            'ffmpeg',
-            '-y',
-            '-f', 'rawvideo',
-            '-vcodec', 'rawvideo',
-            '-pix_fmt', 'bgr24',
-            '-s', f"{self.width}x{self.height}",
-            '-r', str(self.fps),
-            '-i', '-',
-            '-an',  # No audio
-            '-c:v', 'h264_nvenc',
-            '-preset', 'fast',
-            '-f', 'rtsp',
-            '-rtsp_transport', self.transport,
-            self.rtsp_url
-        ]
-        self.proc = subprocess.Popen(command, stdin=subprocess.PIPE)
         
     def _setup_annotator(self):
         """Setup the specified annotator."""
@@ -136,20 +100,15 @@ class SimulationStream:
                 self.rep.orchestrator.step()
                 step_time = time.time() - step_start
                 print(f"[Stream] Simulation step took {step_time*1000:.2f}ms")
-                frame = self.annotator.get_data()
                 
-                # Convert frame format
+                frame = self.annotator.get_data()
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
                 
-                # Ensure frame is contiguous
-                # if not frame.flags['C_CONTIGUOUS']:
-                #     frame = np.ascontiguousarray(frame)
-                    
                 # Write to FFmpeg
                 self.proc.stdin.write(frame.tobytes())
                 self.proc.stdin.flush()
                 
-                # Calculate and log metrics
+                # Log metrics
                 frame_time = time.time() - frame_start
                 print(f"[Stream] Total frame processing took {frame_time*1000:.2f}ms")
                 frame_count += 1
@@ -172,4 +131,4 @@ class SimulationStream:
             self.proc.wait()
         print("[Cleanup] Closing simulation...")
         self.simulator.close()
-        print("[Cleanup] Successfully cleaned up resources") 
+        print("[Cleanup] Successfully cleaned up resources")

@@ -1,12 +1,12 @@
 ---
 services:
   dimos_simulator:
-    image: dimos_simulator:latest
+    image: dimos_simulator_isaac:latest
     build: 
-      context: ../../
-      dockerfile: docker/simulation/Dockerfile
+      context: ../../../
+      dockerfile: docker/simulation/isaac/Dockerfile
     env_file:
-      - ../../.env
+      - ../../../.env
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
@@ -15,7 +15,7 @@ services:
       - ACCEPT_EULA=Y
       - PRIVACY_CONSENT=Y
     volumes:
-      - ./../../assets:/app/assets
+      - ./../../../assets:/app/assets
       # Isaac Sim required volumes
       - ~/docker/isaac-sim/cache/kit:/isaac-sim/kit/cache:rw
       - ~/docker/isaac-sim/cache/ov:/root/.cache/ov:rw
@@ -32,7 +32,6 @@ services:
 
   mediamtx:
     image: bluenviron/mediamtx:latest
-    container_name: mediamtx
     networks:
       - rtsp_net
     ports:

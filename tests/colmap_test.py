@@ -1,10 +1,6 @@
-import sys
+import tests.test_header
 import os
-
-# Add the parent directory of 'demos' to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-print(f"Hi from {os.path.basename(__file__)}\n")
+import sys
 
 # -----
 
