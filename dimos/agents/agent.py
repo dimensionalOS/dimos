@@ -575,22 +575,6 @@ class LLMAgent(Agent):
         return create(lambda observer, _: self._observable_query(
             observer, incoming_query=query_text)) 
 
-    def run_observable_query(self, query_text: str) -> Observable:
-        """Creates an observable that processes a one-off text query to Agent and emits the response.
-        
-        This method provides a simple way to send a text query and get an observable
-        stream of the response. It's designed for one-off queries rather than
-        continuous processing of input streams. Useful for testing and development.
-        
-        Args:
-            query_text (str): The query text to process.
-            
-        Returns:
-            Observable: An observable that emits the response as a string.
-        """
-        return create(lambda observer, _: self._observable_query(
-            observer, incoming_query=query_text)) 
-
     def dispose_all(self):
         """Disposes of all active subscriptions managed by this agent."""
         super().dispose_all()
