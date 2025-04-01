@@ -184,23 +184,24 @@ class FastAPIServer(EdgeIO):
         
         try:
             while True:
-                if key in self.text_queues:
-                    try:
-                        text = self.text_queues[key].get(timeout=1)
-                        if text is not None:
-                            event_data = {
-                                "event": "message",
-                                "id": key,
-                                "data": text
-                            }
-                            yield event_data
-                    except Empty:
-                        # Send a keep-alive comment
+                if key not in self.text_queues:
+                    yield {"event": "ping", "data": ""}
+                    await asyncio.sleep(0.1)
+                    continue
+                    
+                try:
+                    text = self.text_queues[key].get_nowait()
+                    if text is not None:
                         yield {
-                            "event": "ping",
-                            "data": ""
+                            "event": "message",
+                            "id": key,
+                            "data": text
                         }
-                await asyncio.sleep(0.1)
+                    else:
+                        break
+                except Empty:
+                    yield {"event": "ping", "data": ""}
+                    await asyncio.sleep(0.1)
         finally:
             self.text_clients.remove(client_id)
 
