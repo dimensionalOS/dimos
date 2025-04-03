@@ -49,7 +49,7 @@ class VisualServoing:
     """
     
     def __init__(self, tracking_stream=None, max_linear_speed=0.5, max_angular_speed=1.5,
-                 desired_distance=1.5, max_lost_frames=100, iou_threshold=0.6):
+                 desired_distance=1.5, max_lost_frames=10000, iou_threshold=0.6):
         """Initialize the visual servoing.
         
         Args:
@@ -112,7 +112,7 @@ class VisualServoing:
         # Subscribe to the tracking stream
         self._subscribe_to_tracking_stream()
         
-    def start_tracking(self, point: Tuple[int, int] = None, timeout_wait_for_target: float = 20.0) -> bool:
+    def start_tracking(self, desired_distance: int = None, point: Tuple[int, int] = None, timeout_wait_for_target: float = 20.0,) -> bool:
         """
         Start tracking a human target using visual servoing.
         
@@ -124,17 +124,27 @@ class VisualServoing:
         Returns:
             bool: True if tracking was successfully started, False otherwise
         """
+        if desired_distance is not None:
+            self.desired_distance = desired_distance
+
         if self.tracking_stream is None:
             self.running = False
             return False
         
         # Get the latest frame and targets from person tracker
         try:
-            # Get the result of the person tracking stream
-            result = self._get_current_tracking_result()
+            # Try getting the result multiple times with delays
+            for attempt in range(10):  
+                result = self._get_current_tracking_result()
+                
+                if result is not None:
+                    break
+                    
+                logger.warning(f"Attempt {attempt + 1}: No tracking result, retrying in 1 second...")
+                time.sleep(3)  # Wait 1 second between attempts
 
             if result is None:
-                logger.warning("Stream error, no targets found")
+                logger.warning("Stream error, no targets found after multiple attempts")
                 return False
 
             targets = result.get("targets")

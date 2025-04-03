@@ -150,11 +150,11 @@ class UnitreeGo2(Robot):
             self.visual_servoing = VisualServoing(tracking_stream=person_tracking_stream)
             self.person_tracking_stream = person_tracking_stream
 
-    def follow_human(self, timeout: float = 20.0):
+    def follow_human(self, distance: int = 1.5, timeout: float = 20.0):
         if self.enable_visual_servoing:
             logger.warning(f"Following human for {timeout} seconds...")
             start_time = time.time()
-            success = self.visual_servoing.start_tracking()
+            success = self.visual_servoing.start_tracking(desired_distance=distance)
             while self.visual_servoing.running and time.time() - start_time < timeout:
                 output = self.visual_servoing.updateTracking()
                 x_vel = output.get("linear_vel")

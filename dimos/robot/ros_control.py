@@ -59,7 +59,7 @@ class ROSControl(ABC):
     def __init__(self, 
                  node_name: str,
                  camera_topics: Dict[str, str] = None,
-                 use_compressed_video: bool = False,
+                 use_compressed_video: bool = True,
                  max_linear_velocity: float = 1.0,
                  mock_connection: bool = False,
                  max_angular_velocity: float = 2.0,

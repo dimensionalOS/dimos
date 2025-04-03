@@ -15,15 +15,15 @@ from dimos.utils.logging_config import logger
 
 def main():
     # Hardcoded parameters
-    timeout = 30.0  # Maximum time to follow a person (seconds)
-    distance = 2.0  # Desired distance to maintain from target (meters)
+    timeout = 60.0  # Maximum time to follow a person (seconds)
+    distance = 0.5  # Desired distance to maintain from target (meters)
     
     print("Initializing Unitree Go2 robot...")
     
     # Initialize the robot with ROS control and skills
     robot = UnitreeGo2(
         ip=os.getenv('ROBOT_IP'),
-        ros_control=UnitreeROSControl(),
+        ros_control=UnitreeROSControl(use_raw=False, use_compressed=True),
         skills=MyUnitreeSkills(),
         enable_visual_servoing=True,
     )
@@ -56,7 +56,7 @@ def main():
         # Start following human in a separate thread
         import threading
         follow_thread = threading.Thread(
-            target=lambda: robot.follow_human(timeout=timeout),
+            target=lambda: robot.follow_human(timeout=timeout, distance=distance),
             daemon=True
         )
         follow_thread.start()
