@@ -228,6 +228,24 @@ class Robot(ABC):
         if self.ros_control is None:
             raise RuntimeError("No ROS control interface available for movement")
         return self.ros_control.move_vel(x, y, yaw, duration)
+    
+    def pose_command(self, roll: float, pitch: float, yaw: float) -> bool:
+        """Send a pose command to the robot.
+        
+        Args:
+            roll: Roll angle in radians.
+            pitch: Pitch angle in radians.
+            yaw: Yaw angle in radians.
+            
+        Returns:
+            bool: True if command was sent successfully.
+            
+        Raises:
+            RuntimeError: If no ROS control interface is available.
+        """
+        if self.ros_control is None:
+            raise RuntimeError("No ROS control interface available for pose commands")
+        return self.ros_control.pose_command(roll, pitch, yaw)
 
     @abstractmethod
     def do(self, *args, **kwargs):

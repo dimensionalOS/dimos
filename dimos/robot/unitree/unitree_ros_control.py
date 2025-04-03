@@ -43,6 +43,7 @@ class UnitreeROSControl(ROSControl):
     DEFAULT_IMU_TOPIC = 'imu'
     DEFAULT_WEBRTC_TOPIC = 'webrtc_req'
     DEFAULT_CMD_VEL_TOPIC = 'cmd_vel_out'
+    DEFAULT_POSE_TOPIC = 'pose_cmd'
     DEFAULT_MAX_LINEAR_VELOCITY = 1.0
     DEFAULT_MAX_ANGULAR_VELOCITY = 2.0
 
@@ -56,6 +57,7 @@ class UnitreeROSControl(ROSControl):
                  webrtc_topic: str = None,
                  webrtc_api_topic: str = None,
                  move_vel_topic: str = None,
+                 pose_topic: str = None,
                  state_msg_type: Type = None,
                  imu_msg_type: Type = None,
                  webrtc_msg_type: Type = None,
@@ -100,6 +102,7 @@ class UnitreeROSControl(ROSControl):
         imu_topic = imu_topic or self.DEFAULT_IMU_TOPIC
         webrtc_topic = webrtc_topic or self.DEFAULT_WEBRTC_TOPIC
         move_vel_topic = move_vel_topic or self.DEFAULT_CMD_VEL_TOPIC
+        pose_topic = pose_topic or self.DEFAULT_POSE_TOPIC
         webrtc_api_topic = webrtc_api_topic or self.DEFAULT_WEBRTC_API_TOPIC
         state_msg_type = state_msg_type or self.DEFAULT_STATE_MSG_TYPE
         imu_msg_type = imu_msg_type or self.DEFAULT_IMU_MSG_TYPE
@@ -120,6 +123,7 @@ class UnitreeROSControl(ROSControl):
             webrtc_topic=webrtc_topic,
             webrtc_api_topic=webrtc_api_topic,
             move_vel_topic=move_vel_topic,
+            pose_topic=pose_topic,
             max_linear_velocity=max_linear_velocity,
             max_angular_velocity=max_angular_velocity,
             debug=debug
