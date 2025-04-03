@@ -1,14 +1,9 @@
 opencv-python
 python-dotenv
 openai
-anthropic>=0.19.0
 numpy
 colorlog==6.9.0
 yapf==0.40.2
-typeguard
-empy==3.3.4
-catkin_pkg
-lark
 
 # pycolmap
 
@@ -45,9 +40,8 @@ pyaudio
 requests
 wasmtime
 
-# Audio
-openai-whisper
-soundfile
-
 #Hugging Face
 transformers[torch]==4.49.0
+blobfile
+sentencepiece
+gguf==0.14.0
