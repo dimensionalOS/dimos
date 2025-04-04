@@ -1,0 +1,32 @@
+---
+services:
+  dimos-model-ctransformers-gguf:
+    image: dimos-model-ctransformers-gguf:latest
+    build: 
+      context: ../../../
+      dockerfile: docker/models/ctransformers_gguf/Dockerfile
+    env_file:
+      - ../../../.env
+    mem_limit: 8048m
+    volumes:
+      - ../../../assets:/app/assets
+      - ../../../assets/model-cache:/root/.cache/huggingface/hub
+    ports:
+      - "5555:5555"
+    runtime: nvidia
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    command: [ "python", "-m", "tests.test_agent_ctransformers_gguf" ]
+    stdin_open: true
+    tty: true
+
+# IMPORTANT: This runs soley on the NVIDA GPU
+
+# ----
+# TO RUN:
+#   docker build -f ./Dockerfile -t dimos-models ../../ && docker compose up
+# GO TO:
+#   127.0.0.1:5555 (when flask server fixed)
+# ----
