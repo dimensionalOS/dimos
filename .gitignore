@@ -13,3 +13,4 @@ venv*
 
 # Ignore default runtime output folder
 /assets/output/
+/assets/model-cache/

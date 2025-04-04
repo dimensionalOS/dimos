@@ -14,7 +14,9 @@
 
 
 from textwrap import dedent
-from dimos.agents.tokenizer.openai_impl import AbstractTokenizer, OpenAI_Tokenizer
+from typing import Optional
+from dimos.agents.tokenizer.base import AbstractTokenizer
+from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
 
 # TODO: Make class more generic when implementing other tokenizers. Presently its OpenAI specific.
 # TODO: Build out testing and logging
@@ -36,7 +38,7 @@ class PromptBuilder():
     - Maintain a professional and informative tone in your response.
     """)
     
-    def __init__(self, model_name='gpt-4o', max_tokens=128000, tokenizer: AbstractTokenizer = None):
+    def __init__(self, model_name='gpt-4o', max_tokens=128000, tokenizer: Optional[AbstractTokenizer] = None):
         """
         Initialize the prompt builder.
         Args:
@@ -46,7 +48,7 @@ class PromptBuilder():
         """
         self.model_name = model_name
         self.max_tokens = max_tokens
-        self.tokenizer: AbstractTokenizer = tokenizer or OpenAI_Tokenizer(model_name=self.model_name)
+        self.tokenizer: AbstractTokenizer = tokenizer or OpenAITokenizer(model_name=self.model_name)
     
     def truncate_tokens(self, text, max_tokens, strategy):
         """

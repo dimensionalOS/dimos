@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import tests.test_header
+
 import time
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2, WebRTCConnectionMethod
 import os
@@ -11,6 +13,7 @@ def main():
     print("Initializing UnitreeGo2...")
     
     # Get configuration from environment variables
+
     robot_ip = os.getenv("ROBOT_IP")
     connection_method = getattr(WebRTCConnectionMethod, 
                                os.getenv("CONNECTION_METHOD", "LocalSTA"))

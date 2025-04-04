@@ -1,19 +1,19 @@
 import os
-from dimos.simulation.simulator import Simulator
-from dimos.simulation.stream import SimulationStream
+from dimos.simulation.isaac import IsaacSimulator
+from dimos.simulation.isaac import IsaacStream
 
 def main():
     # Initialize simulator
-    sim = Simulator(headless=True)
+    sim = IsaacSimulator(headless=True)
     
     # Create stream with custom settings
-    stream = SimulationStream(
+    stream = IsaacStream(
         simulator=sim,
         width=1920,
         height=1080,
         fps=60,
         camera_path="/World/alfred_parent_prim/alfred_base_descr/chest_cam_rgb_camera_frame/chest_cam",
-        annotator='rgb',
+        annotator_type='rgb',
         transport='tcp',
         rtsp_url="rtsp://mediamtx:8554/stream",
         usd_path=f"{os.getcwd()}/assets/TestSim3.usda"

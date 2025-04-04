@@ -23,7 +23,7 @@ interface StreamState {
   url: string | null;
   isLoading: boolean;
   error: string | null;
-  streamKey: string | null;
+  streamKeys: string[];
   availableStreams: string[];
 }
 
@@ -39,7 +39,7 @@ const initialState: StreamState = {
   url: null,
   isLoading: false,
   error: null,
-  streamKey: null,
+  streamKeys: [],
   availableStreams: []
 };
 
@@ -90,22 +90,21 @@ export const showStream = async (streamKey?: string) => {
   streamStore.update(state => ({ ...state, isLoading: true, error: null }));
   
   try {
-    // If no streamKey provided, get available streams and use the first one
-    if (!streamKey) {
-      const streams = await fetchAvailableStreams();
-      if (streams.length === 0) {
-        throw new Error('No video streams available');
-      }
-      streamKey = streams[0];
+    const streams = await fetchAvailableStreams();
+    if (streams.length === 0) {
+      throw new Error('No video streams available');
     }
+
+    // If streamKey is provided, only show that stream, otherwise show all available streams
+    const selectedStreams = streamKey ? [streamKey] : streams;
 
     streamStore.set({
       isVisible: true,
       url: 'http://0.0.0.0:5555',
-      streamKey,
+      streamKeys: selectedStreams,
       isLoading: false,
       error: null,
-      availableStreams: (await fetchAvailableStreams()),
+      availableStreams: streams,
     });
 
   } catch (error) {

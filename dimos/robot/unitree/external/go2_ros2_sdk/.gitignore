@@ -1,9 +1,0 @@
-build
-log
-install
-.vscode
-__pycache__
-.env
-.DS_Store
-go2_robot_sdk/.coverage
-go2_robot_sdk/coverage.xml

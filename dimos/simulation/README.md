@@ -1,6 +1,6 @@
 # Dimensional Streaming Setup
 
-This guide explains how to set up and run the Isaac Sim streaming functionality via Docker. The setup is tested on Ubuntu 22.04 (recommended).
+This guide explains how to set up and run the Isaac Sim and Genesis streaming functionality via Docker. The setup is tested on Ubuntu 22.04 (recommended).
 
 ## Prerequisites
 
@@ -68,15 +68,26 @@ This guide explains how to set up and run the Isaac Sim streaming functionality 
    ```
 
 2. **Build and run with docker-compose**
+   For Isaac Sim:
    ```bash
-   docker compose build
-   docker compose up
+   docker compose -f isaac/docker-compose.yml build
+   docker compose -f isaac/docker-compose.yml up
+
+   ```
+
+   For Genesis:
+   ```bash
+   docker compose -f genesis/docker-compose.yml build
+   docker compose -f genesis/docker-compose.yml up
+
    ```
 
 This will:
 - Build the dimos_simulator image with ROS2 and required dependencies
 - Start the MediaMTX RTSP server
-- Run the test streaming example from `/tests/isaacsim/stream_camera.py`
+- Run the test streaming example from either:
+  - `/tests/isaacsim/stream_camera.py` for Isaac Sim
+  - `/tests/genesissim/stream_camera.py` for Genesis
 
 ## Viewing the Stream
 

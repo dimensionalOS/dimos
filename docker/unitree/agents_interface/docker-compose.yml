@@ -7,6 +7,11 @@ services:
       dockerfile: docker/unitree/agents_interface/Dockerfile
     env_file:
       - ../../../.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ROS_OUTPUT_DIR=/app/assets/output/ros  # Change output directory
+      # DIMOS_MAX_WORKERS: ${DIMOS_MAX_WORKERS}
+      # TODO: ipc: host
     volumes:
       - ../../../assets:/app/assets
     network_mode: "host"

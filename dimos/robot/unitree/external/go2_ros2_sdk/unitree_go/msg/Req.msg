@@ -1,2 +1,0 @@
-string uuid
-string body

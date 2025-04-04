@@ -1,6 +1,0 @@
-class Name:
-    ...
-
-
-def from_text(text: str) -> Name:
-    ...

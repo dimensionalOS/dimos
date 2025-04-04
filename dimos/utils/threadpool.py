@@ -31,7 +31,8 @@ def get_max_workers() -> int:
         int: The number of workers, configurable via the DIMOS_MAX_WORKERS
         environment variable, defaulting to 4 times the CPU count.
     """
-    return int(os.getenv('DIMOS_MAX_WORKERS', multiprocessing.cpu_count() * 4))
+    env_value = os.getenv('DIMOS_MAX_WORKERS', '')
+    return int(env_value) if env_value.strip() else multiprocessing.cpu_count() * 4
 
 
 # Create a ThreadPoolScheduler with a configurable number of workers.

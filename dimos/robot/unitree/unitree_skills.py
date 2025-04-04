@@ -12,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Tuple, Type
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, List, Optional, Tuple, Type
 import time
 from pydantic import Field
-from dimos.robot.robot import Robot
+
+if TYPE_CHECKING:
+    from dimos.robot.robot import Robot
 from dimos.robot.skills import AbstractRobotSkill, AbstractSkill
 
 # Module-level constant for Unitree ROS control definitions
@@ -262,6 +266,21 @@ class MyUnitreeSkills(AbstractSkill):
             super().__call__()
             return self._robot.spin(degrees=-self.degrees)  # Spinning right is negative degrees
 
+    class MoveVel(AbstractRobotSkill):
+        """Move the robot using direct velocity commands."""
+
+        x: float = Field(..., description="Forward/backward velocity (m/s)")
+        y: float = Field(..., description="Left/right velocity (m/s)")
+        yaw: float = Field(..., description="Rotational velocity (rad/s)")
+        duration: float = Field(..., description="How long to move (seconds). If 0, command is continuous")
+
+        def __init__(self, robot: Optional[Robot] = None, **data):
+            super().__init__(robot=robot, **data)
+
+        def __call__(self):
+            super().__call__()
+            return self._robot.move_vel(x=self.x, y=self.y, yaw=self.yaw, duration=self.duration)
+
     class Wait(AbstractRobotSkill):
         """Wait for a specified amount of time."""
 
@@ -273,3 +292,13 @@ class MyUnitreeSkills(AbstractSkill):
         def __call__(self):
             super().__call__()
             return time.sleep(self.seconds)
+
+    class FollowHuman(AbstractRobotSkill):
+        """Follow a human using a camera."""
+
+        def __init__(self, robot: Optional[Robot] = None, **data):
+            super().__init__(robot=robot, **data)
+
+        def __call__(self):
+            super().__call__()
+            return self._robot.follow_human()

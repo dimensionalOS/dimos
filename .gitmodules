@@ -11,3 +11,6 @@
 [submodule "dimos/robot/unitree/external/go2_ros2_sdk"]
 	path = dimos/robot/unitree/external/go2_ros2_sdk
 	url = https://github.com/dimensionalOS/go2_ros2_sdk
+[submodule "dimos/perception/external/vector_perception"]
+	path = dimos/perception/external/vector_perception
+	url = git@github.com:alexlin2/vector_perception.git

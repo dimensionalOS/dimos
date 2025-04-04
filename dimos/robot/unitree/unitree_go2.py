@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import multiprocessing
-from typing import Optional, Union
-import cv2
+from typing import Optional, Union, Tuple
+import numpy as np
 from dimos.robot.robot import Robot
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.hardware.interface import HardwareInterface
@@ -42,6 +42,8 @@ from dotenv import load_dotenv, find_dotenv
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from reactivex.scheduler import ThreadPoolScheduler
 from dimos.utils.logging_config import setup_logger
+from dimos.perception.visual_servoing import VisualServoing
+from dimos.perception.person_tracker import PersonTrackingStream
 
 # Set up logging
 logger = setup_logger("dimos.robot.unitree.unitree_go2", level=logging.DEBUG)
@@ -63,6 +65,7 @@ class UnitreeGo2(Robot):
             use_webrtc: bool = False,
             disable_video_stream: bool = False,
             mock_connection: bool = False,
+            enable_visual_servoing: bool = False,
             skills: Optional[Union[MyUnitreeSkills, AbstractSkill]] = None):
 
         """Initialize the UnitreeGo2 robot.
@@ -87,7 +90,6 @@ class UnitreeGo2(Robot):
         if ros_control is None and use_ros:
             ros_control = UnitreeROSControl(
                 node_name="unitree_go2",
-                use_raw=True,
                 disable_video_stream=disable_video_stream,
                 mock_connection=mock_connection)
 
@@ -96,6 +98,11 @@ class UnitreeGo2(Robot):
         # Unitree specific skill initialization
         if skills is not None:
             self.initialize_skills(skills)
+
+        # camera stuff
+        self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
+        self.camera_pitch = np.deg2rad(0)  # negative for downward pitch
+        self.camera_height = 0.44  # meters
 
         # Initialize UnitreeGo2-specific attributes
         self.output_dir = output_dir
@@ -128,6 +135,37 @@ class UnitreeGo2(Robot):
                 ip=self.ip if connection_method == WebRTCConnectionMethod.LocalSTA else None)
         else:
             self.video_stream = None
+
+        self.enable_visual_servoing = enable_visual_servoing
+        # Initialize visual servoing if enabled
+        if enable_visual_servoing and self.video_stream is not None:
+            video_stream = self.get_ros_video_stream(fps=10)
+            person_tracker = PersonTrackingStream(
+                camera_intrinsics=self.camera_intrinsics,
+                camera_pitch=self.camera_pitch,
+                camera_height=self.camera_height
+            )
+            person_tracking_stream = person_tracker.create_stream(video_stream)
+            self.visual_servoing = VisualServoing(tracking_stream=person_tracking_stream)
+            self.person_tracking_stream = person_tracking_stream
+
+    def follow_human(self, distance: int = 1.5, timeout: float = 20.0, point: Tuple[int, int] = None):
+        if self.enable_visual_servoing:
+            logger.warning(f"Following human for {timeout} seconds...")
+            start_time = time.time()
+            success = self.visual_servoing.start_tracking(point=point, desired_distance=distance)
+            while self.visual_servoing.running and time.time() - start_time < timeout:
+                output = self.visual_servoing.updateTracking()
+                x_vel = output.get("linear_vel")
+                z_vel = output.get("angular_vel")
+                logger.debug(f"Following human: x_vel: {x_vel}, z_vel: {z_vel}")
+                self.ros_control.move_vel_control(x=x_vel, y=0, yaw=z_vel)
+                time.sleep(0.05)
+            self.visual_servoing.stop_tracking()
+            return success
+        else:
+            logger.warning("Visual servoing is disabled, cannot follow human")
+            return False
 
     def do(self, *args, **kwargs):
         pass

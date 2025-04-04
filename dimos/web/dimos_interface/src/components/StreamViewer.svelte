@@ -2,10 +2,10 @@
   import { onMount, onDestroy } from 'svelte';
   import { streamStore } from '../stores/stream';
 
-  let errorMessage: string | null = null;
-  let retryCount = 0;
-  let retryTimer: number | null = null;
-  let timestamp = Date.now();
+  let errorMessages: Record<string, string | null> = {};
+  let retryCount: Record<string, number> = {};
+  let retryTimers: Record<string, number | null> = {};
+  let timestamps: Record<string, number> = {};
   const TOTAL_TIMEOUT = 120000; // 2 minutes
   const RETRY_INTERVAL = 2000; // Retry every 2 seconds
   const MAX_RETRIES = Math.floor(TOTAL_TIMEOUT / RETRY_INTERVAL);
@@ -14,85 +14,101 @@
   const initialState = {
     isVisible: false,
     url: null,
-    streamKey: null
+    streamKeys: [],
+    availableStreams: []
   };
 
-  function clearRetryTimer() {
-    if (retryTimer !== null) {
-      clearTimeout(retryTimer);
-      retryTimer = null;
+  function clearRetryTimer(streamKey: string) {
+    if (retryTimers[streamKey] !== null) {
+      clearTimeout(retryTimers[streamKey]);
+      retryTimers[streamKey] = null;
     }
   }
 
-  function retryConnection() {
-    if (retryCount < MAX_RETRIES) {
-      retryCount++;
-      const timeLeft = TOTAL_TIMEOUT - (retryCount * RETRY_INTERVAL);
-      errorMessage = `Connection attempt ${retryCount}/${MAX_RETRIES}... (${Math.ceil(timeLeft / 1000)}s remaining)`;
+  function retryConnection(streamKey: string) {
+    if (!retryCount[streamKey]) retryCount[streamKey] = 0;
+    
+    if (retryCount[streamKey] < MAX_RETRIES) {
+      retryCount[streamKey]++;
+      const timeLeft = TOTAL_TIMEOUT - (retryCount[streamKey] * RETRY_INTERVAL);
+      errorMessages[streamKey] = `Connection attempt ${retryCount[streamKey]}/${MAX_RETRIES}... (${Math.ceil(timeLeft / 1000)}s remaining)`;
       
       // Update timestamp to force a new connection attempt
-      timestamp = Date.now();
+      timestamps[streamKey] = Date.now();
       
-      clearRetryTimer();
-      retryTimer = setTimeout(retryConnection, RETRY_INTERVAL);
+      clearRetryTimer(streamKey);
+      retryTimers[streamKey] = setTimeout(() => retryConnection(streamKey), RETRY_INTERVAL);
     } else {
-      errorMessage = 'Failed to connect to stream. Please check if the Robot() is running and sending data to RobotWebInterface.';
+      errorMessages[streamKey] = 'Failed to connect to stream. Please check if the Robot() is running and sending data to RobotWebInterface.';
     }
   }
 
-  function handleError() {
-    if (retryCount === 0) {
-      retryConnection();
+  function handleError(streamKey: string) {
+    if (!retryCount[streamKey] || retryCount[streamKey] === 0) {
+      retryConnection(streamKey);
     }
   }
 
-  function handleLoad() {
-    errorMessage = null;
-    retryCount = 0;
-    clearRetryTimer();
+  function handleLoad(streamKey: string) {
+    errorMessages[streamKey] = null;
+    retryCount[streamKey] = 0;
+    clearRetryTimer(streamKey);
   }
 
   function stopStream() {
-    clearRetryTimer();
+    Object.keys(retryTimers).forEach(key => clearRetryTimer(key));
     streamStore.set(initialState);
   }
 
   // Reset error state when stream URL changes
-  $: if ($streamStore.url) {
-    errorMessage = null;
-    retryCount = 0;
-    clearRetryTimer();
-    timestamp = Date.now();
+  $: if ($streamStore.url && $streamStore.streamKeys) {
+    $streamStore.streamKeys.forEach(key => {
+      errorMessages[key] = null;
+      retryCount[key] = 0;
+      clearRetryTimer(key);
+      timestamps[key] = Date.now();
+    });
   }
 
   onDestroy(() => {
-    clearRetryTimer();
+    Object.keys(retryTimers).forEach(key => clearRetryTimer(key));
   });
 
-  // Compute the current URL with timestamp to prevent caching
-  $: currentUrl = $streamStore.url && $streamStore.streamKey 
-    ? `${$streamStore.url}/video_feed/${$streamStore.streamKey}?t=${timestamp}` 
-    : null;
+  // Compute current URLs with timestamps to prevent caching
+  $: streamUrls = $streamStore.streamKeys.map(key => ({
+    key,
+    url: $streamStore.url ? `${$streamStore.url}/video_feed/${key}?t=${timestamps[key] || Date.now()}` : null
+  }));
+
+  // Calculate grid layout based on number of streams
+  $: gridCols = Math.ceil(Math.sqrt($streamStore.streamKeys.length));
+  $: gridRows = Math.ceil($streamStore.streamKeys.length / gridCols);
 </script>
 
 <div class="stream-viewer" class:visible={$streamStore.isVisible}>
-  <div class="stream-container">
-    <div class="stream-title">Unitree Robot Feed</div>
-    {#if $streamStore.isVisible && currentUrl}
-      <img
-        src={currentUrl}
-        alt="Robot video stream"
-        on:error={handleError}
-        on:load={handleLoad}
-      />
-    {/if}
-    {#if errorMessage}
-      <div class="error-message">
-        {errorMessage}
-      </div>
+  <div class="stream-container" style="--grid-cols: {gridCols}; --grid-rows: {gridRows};">
+    <div class="stream-title">Unitree Robot Feeds</div>
+    {#if $streamStore.isVisible}
+      {#each streamUrls as {key, url}}
+        <div class="stream-cell">
+          {#if url}
+            <img
+              src={url}
+              alt={`Robot video stream ${key}`}
+              on:error={() => handleError(key)}
+              on:load={() => handleLoad(key)}
+            />
+          {/if}
+          {#if errorMessages[key]}
+            <div class="error-message">
+              {errorMessages[key]}
+            </div>
+          {/if}
+        </div>
+      {/each}
     {/if}
     <button class="close-btn" on:click={stopStream}>
-      Stop Stream
+      Stop Streams
     </button>
   </div>
 </div>
@@ -116,16 +132,26 @@
 
   .stream-container {
     position: relative;
-    width: 640px;
-    height: 480px;
+    width: calc(640px * var(--grid-cols));
+    max-width: 90vw;
+    display: grid;
+    grid-template-columns: repeat(var(--grid-cols), 1fr);
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .stream-cell {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4/3;
     display: flex;
     align-items: center;
     justify-content: center;
   }
 
   img {
-    max-width: 100%;
-    max-height: 100%;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
   }
 
