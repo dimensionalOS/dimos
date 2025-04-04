@@ -11,6 +11,7 @@ from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.utils.logging_config import logger
+from dimos.models.qwen.video_query import query_single_frame
 
 
 def main():
@@ -52,16 +53,22 @@ def main():
         # Wait for camera and tracking to initialize
         print("Waiting for camera and tracking to initialize...")
         time.sleep(2)
+        time.sleep(5)
+        # Get initial point from Qwen
+        qwen_point = eval(query_single_frame(
+            video_stream,
+            "Look at this frame and point to the person in the gray jacket. Return ONLY their center coordinates as a tuple (x,y)."
+        ).pipe(RxOps.take(1)).run())  # Get first response and convert string tuple to actual tuple
         
         # Start following human in a separate thread
         import threading
         follow_thread = threading.Thread(
-            target=lambda: robot.follow_human(timeout=timeout, distance=distance),
+            target=lambda: robot.follow_human(timeout=timeout, distance=distance, point=qwen_point),
             daemon=True
         )
         follow_thread.start()
         
-        print(f"Following human for {timeout} seconds...")
+        print(f"Following human at point {qwen_point} for {timeout} seconds...")
         print("Web interface available at http://localhost:5555")
         
         # Start web server (blocking call)
