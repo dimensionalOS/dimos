@@ -26,6 +26,9 @@ from dimos.stream.video_providers.unitree import UnitreeVideoProvider
 from dimos.stream.videostream import VideoStream
 from dimos.stream.video_provider import AbstractVideoProvider
 from dimos.stream.video_operators import VideoOperators as vops
+from dimos.models.qwen.video_query import get_bbox_from_qwen
+from reactivex import operators as RxOps
+import json
 from reactivex import Observable, create
 from reactivex import operators as ops
 from reactivex.disposable import CompositeDisposable
@@ -44,6 +47,7 @@ from reactivex.scheduler import ThreadPoolScheduler
 from dimos.utils.logging_config import setup_logger
 from dimos.perception.visual_servoing import VisualServoing
 from dimos.perception.person_tracker import PersonTrackingStream
+from dimos.perception.object_tracker import ObjectTrackingStream
 
 # Set up logging
 logger = setup_logger("dimos.robot.unitree.unitree_go2", level=logging.DEBUG)
@@ -139,15 +143,24 @@ class UnitreeGo2(Robot):
         self.enable_visual_servoing = enable_visual_servoing
         # Initialize visual servoing if enabled
         if enable_visual_servoing and self.video_stream is not None:
-            video_stream = self.get_ros_video_stream(fps=10)
-            person_tracker = PersonTrackingStream(
+            self.video_stream_ros = self.get_ros_video_stream(fps=8)
+            self.person_tracker = PersonTrackingStream(
                 camera_intrinsics=self.camera_intrinsics,
                 camera_pitch=self.camera_pitch,
                 camera_height=self.camera_height
             )
-            person_tracking_stream = person_tracker.create_stream(video_stream)
-            self.visual_servoing = VisualServoing(tracking_stream=person_tracking_stream)
+            self.object_tracker = ObjectTrackingStream(
+                camera_intrinsics=self.camera_intrinsics,
+                camera_pitch=self.camera_pitch,
+                camera_height=self.camera_height
+            )
+            person_tracking_stream = self.person_tracker.create_stream(self.video_stream_ros)
+            object_tracking_stream = self.object_tracker.create_stream(self.video_stream_ros)
+
+            self.person_visual_servoing = VisualServoing(tracking_stream=person_tracking_stream)
+            self.object_visual_servoing = VisualServoing(tracking_stream=object_tracking_stream)
             self.person_tracking_stream = person_tracking_stream
+            self.object_tracking_stream = object_tracking_stream
 
     def follow_human(self, distance: int = 1.5, timeout: float = 20.0, point: Tuple[int, int] = None):
         if self.enable_visual_servoing:
@@ -166,6 +179,84 @@ class UnitreeGo2(Robot):
         else:
             logger.warning("Visual servoing is disabled, cannot follow human")
             return False
+        
+    def navigate_to(self, object_name: str, distance: float = 1.0, timeout: float = 40.0, max_retries: int = 3):
+        """
+        Navigate to an object identified by name using vision-based tracking.
+
+        Args:
+            object_name: Name of the object to navigate to
+            distance: Desired distance to maintain from object in meters
+            timeout: Maximum time to spend navigating in seconds
+            max_retries: Maximum number of retries when getting bounding box from Qwen
+            
+        Returns:
+            bool: True if navigation was successful, False otherwise
+        """
+        if not self.enable_visual_servoing:
+            logger.warning("Visual servoing is disabled, cannot navigate to object")
+            return False
+            
+        logger.warning(f"Navigating to {object_name} with desired distance {distance}m, timeout {timeout} seconds...")
+        
+        # Try to get a bounding box from Qwen with retries
+        bbox = None
+        retry_count = 0
+        
+        while bbox is None and retry_count < max_retries:
+            if retry_count > 0:
+                logger.info(f"Retry {retry_count}/{max_retries} to get bounding box for {object_name}")
+                # Wait a moment before retry to let the camera feed update
+                time.sleep(1.0)
+                
+            try:
+                bbox = get_bbox_from_qwen(self.video_stream_ros, object_name=object_name)
+            except Exception as e:
+                logger.error(f"Error querying Qwen: {e}")
+                
+            retry_count += 1
+        
+        if bbox is None:
+            logger.error(f"Failed to get bounding box for {object_name} after {max_retries} attempts")
+            return False
+        
+        logger.info(f"Found {object_name} at {bbox}")
+        
+        # Start the object tracker with the detected bbox
+        object_size = 0.5  # Default object size in meters
+        self.object_tracker.track(bbox, size=object_size)
+        
+        # Start visual servoing to the object
+        success = self.object_visual_servoing.start_tracking(desired_distance=distance)
+        if not success:
+            logger.error("Failed to start visual servoing")
+            return False
+        
+        # Main navigation loop
+        start_time = time.time()
+        goal_reached = False
+        
+        while self.object_visual_servoing.running and time.time() - start_time < timeout:
+            output = self.object_visual_servoing.updateTracking()
+            x_vel = output.get("linear_vel")
+            z_vel = output.get("angular_vel")
+            logger.debug(f"Navigating to object: x_vel: {x_vel}, z_vel: {z_vel}")
+            self.ros_control.move_vel_control(x=x_vel, y=0, yaw=z_vel)
+            time.sleep(0.05)
+            if self.object_visual_servoing.is_goal_reached():
+                goal_reached = True
+                break
+        
+        # Stop the robot and tracking
+        self.ros_control.stop()
+        self.object_visual_servoing.stop_tracking()
+        
+        if goal_reached:
+            logger.info(f"Successfully navigated to {object_name}")
+        else:
+            logger.warning(f"Failed to reach {object_name} within timeout")
+            
+        return goal_reached
 
     def do(self, *args, **kwargs):
         pass

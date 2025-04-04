@@ -1,25 +1,33 @@
 import os
 import time
 import sys
+import argparse
 from reactivex import Subject, operators as RxOps
-
-# Add the parent directory to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.utils.logging_config import logger
-from dimos.models.qwen.video_query import query_single_frame
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Navigate to an object using Qwen vision.')
+    parser.add_argument('--object', type=str, default="chair",
+                        help='Name of the object to navigate to (default: chair)')
+    parser.add_argument('--distance', type=float, default=2.5,
+                        help='Desired distance to maintain from object in meters (default: 0.8)')
+    parser.add_argument('--timeout', type=float, default=60.0,
+                        help='Maximum navigation time in seconds (default: 30.0)')
+    return parser.parse_args()
 
 def main():
-    # Hardcoded parameters
-    timeout = 60.0  # Maximum time to follow a person (seconds)
-    distance = 0.5  # Desired distance to maintain from target (meters)
+    # Get command line arguments
+    args = parse_args()
+    object_name = args.object  # Object to navigate to
+    distance = args.distance   # Desired distance to object
+    timeout = args.timeout     # Maximum navigation time
     
-    print("Initializing Unitree Go2 robot...")
+    print(f"Initializing Unitree Go2 robot for navigating to a {object_name}...")
     
     # Initialize the robot with ROS control and skills
     robot = UnitreeGo2(
@@ -29,8 +37,9 @@ def main():
         enable_visual_servoing=True,
     )
 
-    tracking_stream = robot.person_tracking_stream
-    viz_stream = tracking_stream.pipe(
+    # Set up tracking and visualization streams
+    object_tracking_stream = robot.object_tracking_stream
+    viz_stream = object_tracking_stream.pipe(
         RxOps.share(),
         RxOps.map(lambda x: x["viz_frame"] if x is not None else None),
         RxOps.filter(lambda x: x is not None),
@@ -41,8 +50,8 @@ def main():
         # Set up web interface
         logger.info("Initializing web interface")
         streams = {
-            "unitree_video": video_stream,
-            "person_tracking": viz_stream
+            "robot_video": video_stream,
+            "object_tracking": viz_stream
         }
         
         web_interface = RobotWebInterface(
@@ -52,22 +61,17 @@ def main():
         
         # Wait for camera and tracking to initialize
         print("Waiting for camera and tracking to initialize...")
-        time.sleep(5)
-        # Get initial point from Qwen
-        qwen_point = eval(query_single_frame(
-            video_stream,
-            "Look at this frame and point to the person in the gray jacket. Return ONLY their center coordinates as a tuple (x,y)."
-        ).pipe(RxOps.take(1)).run())  # Get first response and convert string tuple to actual tuple
+        time.sleep(3)
         
-        # Start following human in a separate thread
+        # Start navigating to object in a separate thread
         import threading
-        follow_thread = threading.Thread(
-            target=lambda: robot.follow_human(timeout=timeout, distance=distance, point=qwen_point),
+        navigate_thread = threading.Thread(
+            target=lambda: robot.navigate_to(object_name=object_name, distance=distance, timeout=timeout),
             daemon=True
         )
-        follow_thread.start()
+        navigate_thread.start()
         
-        print(f"Following human at point {qwen_point} for {timeout} seconds...")
+        print(f"Navigating to {object_name} with desired distance {distance}m and timeout {timeout}s...")
         print("Web interface available at http://localhost:5555")
         
         # Start web server (blocking call)
@@ -76,7 +80,7 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted by user")
     except Exception as e:
-        print(f"Error during test: {e}")
+        print(f"Error during navigation test: {e}")
     finally:
         print("Test completed")
         robot.cleanup()
