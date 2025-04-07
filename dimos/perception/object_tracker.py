@@ -2,7 +2,7 @@ import cv2
 from reactivex import Observable
 from reactivex import operators as ops
 import numpy as np
-from vector_perception.common.ibvs import ObjectDistanceEstimator
+from dimos.perception.common.ibvs import ObjectDistanceEstimator
 
 class ObjectTrackingStream:
     def __init__(self, camera_intrinsics=None, camera_pitch=0.0, camera_height=1.0):
