@@ -12,11 +12,11 @@ from dimos.utils.logging_config import logger
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Navigate to an object using Qwen vision.')
-    parser.add_argument('--object', type=str, default="chair",
+    parser.add_argument('--object', type=str, default="bathroom",
                         help='Name of the object to navigate to (default: chair)')
-    parser.add_argument('--distance', type=float, default=2.5,
+    parser.add_argument('--distance', type=float, default=0.5,
                         help='Desired distance to maintain from object in meters (default: 0.8)')
-    parser.add_argument('--timeout', type=float, default=60.0,
+    parser.add_argument('--timeout', type=float, default=600.0,
                         help='Maximum navigation time in seconds (default: 30.0)')
     return parser.parse_args()
 
@@ -50,7 +50,7 @@ def main():
         # Set up web interface
         logger.info("Initializing web interface")
         streams = {
-            "robot_video": video_stream,
+            # "robot_video": video_stream,
             "object_tracking": viz_stream
         }
         

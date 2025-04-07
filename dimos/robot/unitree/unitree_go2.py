@@ -157,9 +157,9 @@ class UnitreeGo2(Robot):
             person_tracking_stream = self.person_tracker.create_stream(self.video_stream_ros)
             object_tracking_stream = self.object_tracker.create_stream(self.video_stream_ros)
 
-            self.person_visual_servoing = VisualServoing(tracking_stream=person_tracking_stream)
+            # self.person_visual_servoing = VisualServoing(tracking_stream=person_tracking_stream)
             self.object_visual_servoing = VisualServoing(tracking_stream=object_tracking_stream)
-            self.person_tracking_stream = person_tracking_stream
+            # self.person_tracking_stream = person_tracking_stream
             self.object_tracking_stream = object_tracking_stream
 
     def follow_human(self, distance: int = 1.5, timeout: float = 20.0, point: Tuple[int, int] = None):
