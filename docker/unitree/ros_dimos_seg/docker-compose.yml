@@ -12,7 +12,7 @@ services:
       - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - ROBOT_IP=192.168.9.140 
+      # - ROBOT_IP=${ROBOT_IP} 
       # - CONN_TYPE=${CONN_TYPE:-webrtc}
       # - WEBRTC_SERVER_HOST=0.0.0.0  # Listen on all interfaces
       # - WEBRTC_SERVER_PORT=${WEBRTC_SERVER_PORT:-9991}
