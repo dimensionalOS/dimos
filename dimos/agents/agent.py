@@ -46,7 +46,7 @@ from reactivex.subject import Subject
 
 # Local imports
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
-from dimos.agents.memory.chroma_impl import AgentSemanticMemory
+from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
 from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
@@ -90,7 +90,7 @@ class Agent:
         """
         self.dev_name = dev_name
         self.agent_type = agent_type
-        self.agent_memory = agent_memory or AgentSemanticMemory()
+        self.agent_memory = agent_memory or OpenAISemanticMemory()
         self.disposables = CompositeDisposable()
         self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
 
@@ -162,8 +162,7 @@ class LLMAgent(Agent):
             process_all_inputs (bool): Whether to process every input emission (True) or 
                 skip emissions when the agent is busy processing a previous input (False).
         """
-        super().__init__(dev_name, agent_type, agent_memory or
-                         AgentSemanticMemory(), pool_scheduler)
+        super().__init__(dev_name, agent_type, agent_memory, pool_scheduler)
         # These attributes can be configured by a subclass if needed.
         self.query: Optional[str] = None
         self.prompt_builder: Optional[PromptBuilder] = None
