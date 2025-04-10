@@ -42,13 +42,14 @@ system_query = "You are a robot with the following functions. Move(), Reverse(),
 # Initialize agent
 agent = HuggingFaceLocalAgent(
     dev_name="HuggingFaceLLMAgent",
-    model_name= "Qwen/Qwen2.5-3B",
+    model_name="Qwen/Qwen2.5-0.5B",
+    #model_name="HuggingFaceTB/SmolLM2-135M",
     agent_type="HF-LLM",
     system_query=system_query,
     input_query_stream=query_provider.data_stream,
     process_all_inputs=False,
     max_input_tokens_per_request=250,
-    max_output_tokens_per_request=20,
+    max_output_tokens_per_request=100,
     # output_dir=self.output_dir,
     # skills=skills_instance,
     # frame_processor=frame_processor,
@@ -61,7 +62,7 @@ agent = HuggingFaceLocalAgent(
 query_provider.start_query_stream(
     query_template=
     "{query}; User: travel forward by 10 meters",
-    frequency=10,
+    frequency=30,
     start_count=1,
     end_count=10000,
     step=1)

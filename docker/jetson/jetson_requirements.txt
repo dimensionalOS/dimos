@@ -59,13 +59,12 @@ ctransformers[cuda]==0.2.27
 ultralytics>=8.3.70
 filterpy>=1.4.5
 scipy>=1.15.1
-torch>=2.0.1
-torchvision>=0.15.2
+https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch/torch-2.5.0a0+872d972e41.nv24.08.17622132-cp310-cp310-linux_aarch64.whl
 scikit-learn
 Pillow
 mmengine>=0.10.3
 mmcv==2.1.0
 timm==1.0.15
 lap==0.5.12 
-xformers==0.0.22
--e ./dimos/perception/external/vector_perception
+# xformers==0.0.22
+# -e ./dimos/perception/external/vector_perception

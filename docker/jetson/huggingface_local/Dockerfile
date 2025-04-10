@@ -28,7 +28,7 @@ RUN wget https://developer.download.nvidia.com/compute/cusparselt/0.7.0/local_in
 # Change working directory to /app for proper relative pathing
 WORKDIR /app
 
-COPY requirements.txt ./
+COPY docker/jetson/jetson_requirements.txt ./requirements.txt
 
 COPY ./dimos/perception/external ./dimos/perception/external
 
@@ -40,8 +40,5 @@ COPY ./tests ./tests
 
 COPY ./dimos/__init__.py ./
 
-# RUN echo "/usr/lib/aarch64-linux-gnu" > /etc/ld.so.conf.d/openblas.conf && ldconfig
-
 # Copy libopenblas.so.0 from host if it exists (Jetson path)
 RUN ldconfig
-
