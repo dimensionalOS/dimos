@@ -11,39 +11,45 @@ This guide explains how to set up and run local dimOS LLM Agents on NVIDIA Jetso
 
 ### Requirements
 - NVIDIA Jetson device (Orin/Xavier)
-- Docker installed
+- Docker installed (with GPU support)
 - Git installed
-
-## Initial Jetson Setup
-
-Before proceeding with any other setup steps, run the Jetson setup script:
-
-```bash
-# From the DIMOS project root
-./docker/jetson/setup_jetson.sh
-```
-
-This script will:
-- Install cuSPARSELt library for tensor operations
-- Fix libopenblas.so.0 dependencies
-- Configure system libraries
-
+- CUDA installed
 
 ## Basic Python Setup (Virtual Environment)
 
-1. Create a virtual environment:
+### 1. Create a virtual environment:
 ```bash
 python3 -m venv ~/jetson_env
 source ~/jetson_env/bin/activate
 ```
 
-2. Install the Jetson-specific requirements:
+### 2. Install cuSPARSELt:
+
+For PyTorch versions 24.06+ (see [Compatibility Matrix](https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform-release-notes/pytorch-jetson-rel.html#pytorch-jetson-rel)), cuSPARSELt is required. Install it with the [instructions](https://developer.nvidia.com/cusparselt-downloads) by selecting Linux OS, aarch64-jetson architecture, and Ubuntu distribution
+
+For Jetpack 6.2, Pytorch 2.5, and CUDA 12.6:
+```bash
+wget https://developer.download.nvidia.com/compute/cusparselt/0.7.0/local_installers/cusparselt-local-tegra-repo-ubuntu2204-0.7.0_1.0-1_arm64.deb
+sudo dpkg -i cusparselt-local-tegra-repo-ubuntu2204-0.7.0_1.0-1_arm64.deb
+sudo cp /var/cusparselt-local-tegra-repo-ubuntu2204-0.7.0/cusparselt-*-keyring.gpg /usr/share/keyrings/
+sudo apt-get update
+sudo apt-get -y install libcusparselt0 libcusparselt-dev
+```
+
+### 3. Install the Jetson-specific requirements:
 ```bash
 cd /path/to/dimos
 pip install -r docker/jetson/jetson_requirements.txt
 ```
 
-## Docker Setup
+### 4. Run testfile:
+```bash
+export PYTHONPATH=$PYTHONPATH:$(pwd) 
+python3 tests/test_agent_huggingface_local_jetson.py
+```
+
+## Docker Setup 
+for JetPack 6.2 (L4T 36.4.3), CUDA 12.6.68
 
 ### 1. Build and Run using Docker Compose
 
@@ -58,16 +64,22 @@ This will:
 - Start the container with GPU support
 - Run the HuggingFace local agent test script
 
-## Testing
+## Troubleshooting
 
-The default test script (`test_agent_huggingface_local_jetson.py`) will run automatically when using Docker Compose. 
+### Libopenblas or other library errors
 
-To run tests manually in your virtual environment:
+Run the Jetson fix script:
+
 ```bash
-python3 tests/test_agent_huggingface_local_jetson.py
+# From the DIMOS project root
+chmod +x ./docker/jetson/fix_jetson.sh
+./docker/jetson/fix_jetson.sh
 ```
 
-## Troubleshooting
+This script will:
+- Install cuSPARSELt library for tensor operations 
+- Fix libopenblas.so.0 dependencies
+- Configure system libraries
 
 1. If you encounter CUDA/GPU issues:
    - Ensure JetPack is properly installed
