@@ -62,7 +62,13 @@ ctransformers[cuda]==0.2.27
 ultralytics>=8.3.70
 filterpy>=1.4.5
 scipy>=1.15.1
-https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch/torch-2.5.0a0+872d972e41.nv24.08.17622132-cp310-cp310-linux_aarch64.whl
+
+# Pytorch wheel for JP6, cu12.6
+https://pypi.jetson-ai-lab.dev/jp6/cu126/+f/6cc/6ecfe8a5994fd/torch-2.6.0-cp310-cp310-linux_aarch64.whl
+
+# Torchvision wheel for JP6, cu12.6
+https://pypi.jetson-ai-lab.dev/jp6/cu126/+f/aa2/2da8dcf4c4c8d/torchvision-0.21.0-cp310-cp310-linux_aarch64.whl
+
 scikit-learn
 Pillow
 mmengine>=0.10.3
