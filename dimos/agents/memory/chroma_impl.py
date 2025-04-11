@@ -19,7 +19,6 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 import os
 import torch
-from sentence_transformers import SentenceTransformer
 
 
 class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
@@ -134,6 +133,8 @@ class LocalSemanticMemory(ChromaAgentSemanticMemory):
             collection_name (str): Name of the Chroma collection
             model_name (str): Embeddings model
         """
+        from sentence_transformers import SentenceTransformer
+        
         self.model_name = model_name
         super().__init__(collection_name=collection_name)
 
