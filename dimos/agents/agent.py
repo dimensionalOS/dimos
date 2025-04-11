@@ -50,6 +50,7 @@ from dimos.agents.prompt_builder.impl import PromptBuilder
 from dimos.agents.tokenizer.openai_impl import AbstractTokenizer, OpenAI_Tokenizer
 from dimos.robot.skills import AbstractSkill
 from dimos.stream.frame_processor import FrameProcessor
+from dimos.stream.stream_merger import create_stream_merger
 from dimos.stream.video_operators import Operators as MyOps, VideoOperators as MyVidOps
 from dimos.utils.threadpool import get_scheduler
 from dimos.utils.logging_config import setup_logger
@@ -394,7 +395,9 @@ class LLMAgent(Agent):
                 logger.info(f"LLM Response [{self.dev_name}]: {response}")
 
     def subscribe_to_image_processing(
-            self, frame_observable: Observable) -> Disposable:
+            self, 
+            frame_observable: Observable,
+            query_extractor=None) -> Disposable:
         """Subscribes to a stream of video frames for processing.
 
         This method sets up a subscription to process incoming video frames.
@@ -402,7 +405,11 @@ class LLMAgent(Agent):
         _observable_query method. The response is then logged to a file.
 
         Args:
-            frame_observable (Observable): An observable emitting video frames.
+            frame_observable (Observable): An observable emitting video frames or
+                                         (query, frame) tuples if query_extractor is provided.
+            query_extractor (callable, optional): Function to extract query and frame from 
+                                                each emission. If None, assumes emissions are 
+                                                raw frames and uses self.system_query.
 
         Returns:
             Disposable: A disposable representing the subscription.
@@ -417,18 +424,17 @@ class LLMAgent(Agent):
             "counts": {}
         }
 
-        def _process_frame(frame) -> Observable:
+        def _process_frame(emission) -> Observable:
             """
-            Processes a single frame by:
-            - Logging the receipt
-            - Exporting the frame as a JPEG
-            - Encoding the image
-            - Filtering out invalid results
-            - Sending the encoded image to the LLM via _observable_query
-            
-            Returns:
-                An observable that emits the response from _observable_query.
+            Processes a frame or (query, frame) tuple.
             """
+            # Extract query and frame
+            if query_extractor:
+                query, frame = query_extractor(emission)
+            else:
+                query = self.system_query
+                frame = emission
+                
             return just(frame).pipe(
                 MyOps.print_emission(id='B', **print_emission_args),
                 RxOps.observe_on(self.pool_scheduler),
@@ -450,20 +456,20 @@ class LLMAgent(Agent):
                         observer,
                         base64_image=base64_and_dims[0],
                         dimensions=base64_and_dims[1],
-                        incoming_query=self.system_query))),
+                        incoming_query=query))),  # Use the extracted query
                 MyOps.print_emission(id='H', **print_emission_args),
             )
 
         # Use a mutable flag to ensure only one frame is processed at a time.
         is_processing = [False]
 
-        def process_if_free(frame):
+        def process_if_free(emission):
             if not self.process_all_inputs and is_processing[0]:
                 # Drop frame if a request is in progress and process_all_inputs is False
                 return empty()
             else:
                 is_processing[0] = True
-                return _process_frame(frame).pipe(
+                return _process_frame(emission).pipe(
                     MyOps.print_emission(id='I', **print_emission_args),
                     RxOps.observe_on(self.pool_scheduler),
                     MyOps.print_emission(id='J', **print_emission_args),
@@ -630,6 +636,7 @@ class OpenAIAgent(LLMAgent):
                  agent_type: str = "Vision",
                  query: str = "What do you see?",
                  input_query_stream: Optional[Observable] = None,
+                 input_data_stream: Optional[Observable] = None,
                  input_video_stream: Optional[Observable] = None,
                  output_dir: str = os.path.join(os.getcwd(), "assets",
                                                 "agent"),
@@ -656,6 +663,7 @@ class OpenAIAgent(LLMAgent):
             agent_type (str): The type of the agent.
             query (str): The default query text.
             input_query_stream (Observable): An observable for query input.
+            input_data_stream (Observable): An observable for data input.
             input_video_stream (Observable): An observable for video frames.
             output_dir (str): Directory for output files.
             agent_memory (AbstractAgentSemanticMemory): The memory system.
@@ -674,12 +682,11 @@ class OpenAIAgent(LLMAgent):
             pool_scheduler (ThreadPoolScheduler): The scheduler to use for thread pool operations.
                 If None, the global scheduler from get_scheduler() will be used.
             process_all_inputs (bool): Whether to process all inputs or skip when busy.
-                If None, defaults to True for text queries, False for video streams.
+                If None, defaults to True for text queries and merged streams, False for video streams.
         """
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
-            # Default to True for text queries, False for video streams
-            if input_query_stream is not None and input_video_stream is None:
+            if input_query_stream is not None:
                 process_all_inputs = True
             else:
                 process_all_inputs = False
@@ -718,22 +725,44 @@ class OpenAIAgent(LLMAgent):
         self.frame_processor = frame_processor or FrameProcessor(
             delete_on_init=True)
         self.input_video_stream = input_video_stream
-        self.input_query_stream = input_query_stream
+        self.input_query_stream = input_query_stream if (input_data_stream is None) else (input_query_stream.pipe(
+            RxOps.with_latest_from(input_data_stream),
+            RxOps.map(lambda combined: {
+                "query": combined[0],
+                "objects": combined[1] if len(combined) > 1 else "No object data available"
+            }),
+            RxOps.map(lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"),
+            RxOps.do_action(lambda x: print(f"\033[34mEnriched query: {x.split(chr(10))[0]}\033[0m") or 
+                                    [print(f"\033[34m{line}\033[0m") for line in x.split(chr(10))[1:]]),
+        ))
 
-        # Ensure only one input stream is provided.
-        if self.input_video_stream is not None and self.input_query_stream is not None:
-            raise ValueError(
-                "More than one input stream provided. Please provide only one input stream."
+        # Setup stream subscriptions based on inputs provided
+        if (self.input_video_stream is not None) and (self.input_query_stream is not None):
+
+            self.merged_stream = create_stream_merger(
+                data_input_stream=self.input_video_stream,
+                text_query_stream=self.input_query_stream
             )
-
-        if self.input_video_stream is not None:
-            logger.info("Subscribing to input video stream...")
+            
+            logger.info("Subscribing to merged input stream...")
+            # Define a query extractor for the merged stream
+            query_extractor = lambda emission: (emission[0], emission[1][0])
             self.disposables.add(
-                self.subscribe_to_image_processing(self.input_video_stream))
-        if self.input_query_stream is not None:
-            logger.info("Subscribing to input query stream...")
-            self.disposables.add(
-                self.subscribe_to_query_processing(self.input_query_stream))
+                self.subscribe_to_image_processing(
+                    self.merged_stream, 
+                    query_extractor=query_extractor
+                )
+            )
+        else:
+            # If no merged stream, fall back to individual streams
+            if self.input_video_stream is not None:
+                logger.info("Subscribing to input video stream...")
+                self.disposables.add(
+                    self.subscribe_to_image_processing(self.input_video_stream))
+            if self.input_query_stream is not None:
+                logger.info("Subscribing to input query stream...")
+                self.disposables.add(
+                    self.subscribe_to_query_processing(self.input_query_stream))
 
         logger.info("OpenAI Agent Initialized.")
 

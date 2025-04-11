@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import tests.test_header
 import os
 from dotenv import load_dotenv
 from dimos.agents.claude_agent import ClaudeAgent

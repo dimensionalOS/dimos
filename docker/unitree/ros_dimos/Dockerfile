@@ -116,14 +116,6 @@ RUN . /opt/ros/${ROS_DISTRO}/setup.sh && \
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /root/.bashrc && \
     echo "source /ros2_ws/install/setup.bash" >> /root/.bashrc
 
-# Set environment variables
-# Set to your robot IP address
-ENV ROBOT_IP="192.168.9.140" 
-# webrtc or cyclonedds
-ENV CONN_TYPE="webrtc" 
-ENV WEBRTC_SERVER_HOST="0.0.0.0"
-ENV WEBRTC_SERVER_PORT="9991"
-
 COPY docker /app/docker/
 
 # Setup supervisor configuration

@@ -1,8 +1,11 @@
+import tests.test_header
+
 import cv2
 import numpy as np
 import os
 import sys
 
+from dimos.stream.stream_merger import create_stream_merger
 from dimos.stream.video_provider import VideoProvider
 from dimos.perception.semantic_seg import SemanticSegmentationStream
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
@@ -23,6 +26,7 @@ def main():
         'sensor_size': (4.8, 3.6)  # mm (1/4" sensor)
     }
     
+    # Initialize video provider and segmentation stream
     robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
                         ros_control=UnitreeROSControl(),
                         skills=MyUnitreeSkills())
@@ -65,24 +69,13 @@ def main():
     )
 
     text_query_stream = Subject()
-    
-    # Combine text query with latest object data when a new text query arrives
-    enriched_query_stream = text_query_stream.pipe(
-        RxOps.with_latest_from(object_stream),
-        RxOps.map(lambda combined: {
-            "query": combined[0],
-            "objects": combined[1] if len(combined) > 1 else "No object data available"
-        }),
-        RxOps.map(lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"),
-        RxOps.do_action(lambda x: print(f"\033[34mEnriched query: {x.split(chr(10))[0]}\033[0m") or 
-                                [print(f"\033[34m{line}\033[0m") for line in x.split(chr(10))[1:]]),
-    )
 
     segmentation_agent = OpenAIAgent(
         dev_name="SemanticSegmentationAgent",
         model_name="gpt-4o",
-        system_query="You are a helpful assistant that can control a virtual robot with semantic segmentation / distnace data as a guide. Only output skill calls, no other text",
-        input_query_stream=enriched_query_stream,
+        system_query="You are a helpful assistant that can help with tasks related to semantic segmentation. You will get a list of objects as input, reprint them out to me in a list. Your task will be to execute the MOVE() skill towards the box on the ground in front of you",
+        input_query_stream=text_query_stream,
+        input_data_stream=object_stream,
         process_all_inputs=False,
         pool_scheduler=get_scheduler(),
         skills=robot.get_skills()
@@ -98,7 +91,6 @@ def main():
     }
     text_streams = {
         "object_stream": object_stream,
-        "enriched_query_stream": enriched_query_stream,
         "agent_response_stream": agent_response_stream,
     }
 
