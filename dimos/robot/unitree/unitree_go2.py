@@ -204,7 +204,7 @@ class UnitreeGo2(Robot):
                 time.sleep(1.0)
                 
             try:
-                bbox = get_bbox_from_qwen(self.video_stream_ros, object_name=object_name)
+                bbox, object_size = get_bbox_from_qwen(self.video_stream_ros, object_name=object_name)
             except Exception as e:
                 logger.error(f"Error querying Qwen: {e}")
                 
@@ -214,10 +214,9 @@ class UnitreeGo2(Robot):
             logger.error(f"Failed to get bounding box for {object_name} after {max_retries} attempts")
             return False
         
-        logger.info(f"Found {object_name} at {bbox}")
+        logger.info(f"Found {object_name} at {bbox} with size {object_size}")
         
         # Start the object tracker with the detected bbox
-        object_size = 0.5  # Default object size in meters
         self.object_tracker.track(bbox, size=object_size)
         
         # Start visual servoing to the object
@@ -234,7 +233,7 @@ class UnitreeGo2(Robot):
             output = object_visual_servoing.updateTracking()
             x_vel = output.get("linear_vel")
             z_vel = output.get("angular_vel")
-            logger.debug(f"Navigating to object: x_vel: {x_vel}, z_vel: {z_vel}")
+            # logger.debug(f"Navigating to object: x_vel: {x_vel}, z_vel: {z_vel}")
             self.ros_control.move_vel_control(x=x_vel, y=0, yaw=z_vel)
             time.sleep(0.05)
             if object_visual_servoing.is_goal_reached():

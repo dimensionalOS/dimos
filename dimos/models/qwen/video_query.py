@@ -99,8 +99,8 @@ def get_bbox_from_qwen(
         bbox: Bounding box as [x1, y1, x2, y2] or None if no detection
     """
     prompt = (
-        f"Look at this image and find the {object_name if object_name else 'most prominent object'}. "
-        "Return ONLY a JSON object with format: {'name': 'object_name', 'bbox': [x1, y1, x2, y2]} "
+        f"Look at this image and find the {object_name if object_name else 'most prominent object'}. Estimate the approximate height of the subject."
+        "Return ONLY a JSON object with format: {'name': 'object_name', 'bbox': [x1, y1, x2, y2], 'size': height_in_meters} "
         "where x1,y1 is the top-left and x2,y2 is the bottom-right corner of the bounding box. If not found, return None."
     )
 
@@ -116,7 +116,7 @@ def get_bbox_from_qwen(
             
             # Extract and validate bbox
             if 'bbox' in result and len(result['bbox']) == 4:
-                return result['bbox']
+                return result['bbox'], result['size']
     except Exception as e:
         print(f"Error parsing Qwen response: {e}")
         print(f"Raw response: {response}")
