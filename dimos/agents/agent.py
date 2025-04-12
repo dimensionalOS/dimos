@@ -50,7 +50,6 @@ from dimos.agents.memory.chroma_impl import AgentSemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
 from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
-from dimos.robot.unitree.unitree_skills import SkillGroup
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.video_operators import Operators as MyOps, VideoOperators as MyVidOps
@@ -630,7 +629,7 @@ class OpenAIAgent(LLMAgent):
                  tokenizer: Optional[AbstractTokenizer] = None,
                  rag_query_n: int = 4,
                  rag_similarity_threshold: float = 0.45,
-                 skills: Optional[Union[AbstractSkill, list[AbstractSkill], SkillLibrary, SkillGroup]] = None,
+                 skills: Optional[Union[AbstractSkill, list[AbstractSkill], SkillLibrary]] = None,
                  response_model: Optional[BaseModel] = None,
                  frame_processor: Optional[FrameProcessor] = None,
                  image_detail: str = "low",
@@ -700,9 +699,6 @@ class OpenAIAgent(LLMAgent):
         elif isinstance(self.skills, AbstractSkill):
             self.skill_library = SkillLibrary()
             self.skill_library.add(self.skills)
-        elif isinstance(self.skills, SkillGroup):
-            print(f"{Colors.BLUE_PRINT_COLOR}Skill Group: {self.skills}{Colors.RESET_COLOR}")
-            self.skill_library = self.skills.skill_library
 
         self.response_model = response_model if response_model is not None else NOT_GIVEN
         self.model_name = model_name
