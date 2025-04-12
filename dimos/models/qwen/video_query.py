@@ -9,6 +9,8 @@ from reactivex.subject import Subject
 from dimos.agents.agent import OpenAIAgent
 from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.utils.threadpool import get_scheduler
+import json
+
 
 def query_single_frame(
     video_observable: Observable,
@@ -81,3 +83,42 @@ def query_single_frame(
     )
 
     return response_subject 
+
+
+def get_bbox_from_qwen(
+    video_stream: Observable,
+    object_name: Optional[str] = None
+) -> Optional[list]:
+    """Get bounding box coordinates from Qwen for a specific object or any object.
+    
+    Args:
+        video_stream: Observable video stream
+        object_name: Optional name of object to detect
+        
+    Returns:
+        bbox: Bounding box as [x1, y1, x2, y2] or None if no detection
+    """
+    prompt = (
+        f"Look at this image and find the {object_name if object_name else 'most prominent object'}. Estimate the approximate height of the subject."
+        "Return ONLY a JSON object with format: {'name': 'object_name', 'bbox': [x1, y1, x2, y2], 'size': height_in_meters} "
+        "where x1,y1 is the top-left and x2,y2 is the bottom-right corner of the bounding box. If not found, return None."
+    )
+
+    response = query_single_frame(video_stream, prompt).pipe(ops.take(1)).run()
+
+    try:
+        # Extract JSON from response
+        start_idx = response.find('{')
+        end_idx = response.rfind('}') + 1
+        if start_idx >= 0 and end_idx > start_idx:
+            json_str = response[start_idx:end_idx]
+            result = json.loads(json_str)
+            
+            # Extract and validate bbox
+            if 'bbox' in result and len(result['bbox']) == 4:
+                return result['bbox'], result['size']
+    except Exception as e:
+        print(f"Error parsing Qwen response: {e}")
+        print(f"Raw response: {response}")
+
+    return None

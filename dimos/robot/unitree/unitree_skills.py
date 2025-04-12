@@ -302,3 +302,15 @@ class MyUnitreeSkills(AbstractSkill):
         def __call__(self):
             super().__call__()
             return self._robot.follow_human()
+        
+    class NavigateToObject(AbstractRobotSkill):
+        """Navigate to an object using a camera."""
+
+        object_name: str = Field(..., description="Object to navigate to")
+
+        def __init__(self, robot: Optional[Robot] = None, **data):
+            super().__init__(robot=robot, **data)
+
+        def __call__(self):
+            super().__call__()
+            return self._robot.navigate_to(object_name=self.object_name)
