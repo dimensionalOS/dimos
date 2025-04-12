@@ -49,12 +49,12 @@ class TestSkillLibrary:
     # Call the skills
     for skill in skill_group:
         if skill.__name__ == "HelloAndStuff":
-            # Call the skill directly ()
+            # Call the skill directly
             print(f"{Colors.GREEN_PRINT_COLOR}Calling skill directly: {skill.__name__}{Colors.RESET_COLOR}")
             skill()
             print("Done.")
 
-            # Call the skill using the skill library (TEST)
+            # Call the skill using the skill library
             print(f"{Colors.GREEN_PRINT_COLOR}Calling skill using skill library: {skill.__name__}{Colors.RESET_COLOR}")
             skill_group.skill_library.call(skill.__name__)
             print("Done.")
