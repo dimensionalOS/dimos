@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any
+from typing import Any, Optional, Union
 from pydantic import BaseModel
 from openai import pydantic_function_tool
 
@@ -32,6 +32,16 @@ class SkillLibrary:
 
     def __init__(self):
         self.registered_skills: list["AbstractSkill"] = []
+
+        # region Transfered Back From SkillGroup
+
+        # By default, use this instance's class
+        self.parent_class = self.__class__
+        
+        # Collect all skills from the parent class and update self.skills
+        self.skills = self.get_skills_from_class(self.parent_class)
+
+        # endregion Transfered Back From SkillGroup
 
     def add(self, skill: "AbstractSkill") -> None:
         if skill not in self.registered_skills:
@@ -110,6 +120,93 @@ class SkillLibrary:
     
     def get_list_of_skills_as_json(self, list_of_skills: list["AbstractSkill"]) -> list[str]:
         return list(map(pydantic_function_tool, list_of_skills))
+
+    # ==== Transfered Back From SkillGroup ==== 
+
+    def get_skills_from_class(self, cls) -> list["AbstractSkill"]:
+        """Extract all AbstractSkill subclasses from a class.
+        
+        Args:
+            cls: The class to scan for skills
+            
+        Returns:
+            List of skill classes found within the class
+        """
+        skills = []
+        
+        # Loop through all attributes of the class
+        for attr_name in dir(cls):
+            # Skip special/dunder attributes
+            if attr_name.startswith('__'):
+                continue
+                
+            try:
+                attr = getattr(cls, attr_name)
+                
+                # Check if it's a class and inherits from AbstractSkill
+                if isinstance(attr, type) and issubclass(attr, AbstractSkill) and attr is not AbstractSkill:
+                    skills.append(attr)
+            except (AttributeError, TypeError):
+                # Skip attributes that can't be accessed or aren't classes
+                continue
+                
+        return skills
+    
+    @classmethod
+    def add_skills(cls, skill_classes: Union['AbstractSkill', list['AbstractSkill']]):
+        """Add multiple skill classes as class attributes.
+        
+        Args:
+            skill_classes: List of skill classes to add
+        """
+        if isinstance(skill_classes, list):
+            for skill_class in skill_classes:
+                setattr(cls, skill_class.__name__, skill_class)
+        else:
+            setattr(cls, skill_classes.__name__, skill_classes)
+
+    def __iter__(self):
+        """Make the skill group iterable.
+        
+        Returns:
+            Iterator over the skills
+        """
+        self.skills = self.get_skills_from_class(self.parent_class)
+        return iter(self.skills)
+        
+    def __len__(self) -> int:
+        """Get the number of skills in the group.
+        
+        Returns:
+            Number of skills
+        """
+        self.skills = self.get_skills_from_class(self.parent_class)
+        return len(self.skills)
+        
+    def __getitem__(self, index):
+        """Get a skill by index.
+        
+        Args:
+            index: Index of the skill to get
+            
+        Returns:
+            The skill at the specified index
+        """
+        self.skills = self.get_skills_from_class(self.parent_class)
+        return self.skills[index]
+        
+    def __contains__(self, skill) -> bool:
+        """Check if a skill is in the group.
+        
+        Args:
+            skill: The skill to check for
+            
+        Returns:
+            True if the skill is in the group, False otherwise
+        """
+        self.skills = self.get_skills_from_class(self.parent_class)
+        return skill in self.skills
+
 
 # endregion SkillLibrary
 

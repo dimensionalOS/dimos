@@ -56,19 +56,18 @@ class TestSkillLibrary:
 
             # Call the skill using the skill library
             print(f"{Colors.GREEN_PRINT_COLOR}Calling skill using skill library: {skill.__name__}{Colors.RESET_COLOR}")
-            skill_group.skill_library.call(skill.__name__)
+            skill_group.call(skill.__name__)
             print("Done.")
 
 class TestSkillWithAgent:
     def __init__(self):
         # Create a skill library and initialize with mock robot
-        self.skill_library = SkillLibrary()
         self.robot = MockRobot()
-        self.skill_group = MyUnitreeSkills(robot=self.robot)
+        self.skill_library = MyUnitreeSkills(robot=self.robot)
         
         # Initialize the skills
         print(f"\n{Colors.BLUE_PRINT_COLOR}Initializing skills for agent test{Colors.RESET_COLOR}")
-        self.skill_group.initialize_skills()
+        self.skill_library.initialize_skills()
         
         # Add a new skill to the library
         class TestSkill(AbstractSkill):
@@ -77,9 +76,9 @@ class TestSkillWithAgent:
             def __call__(self):
                 print("Some sample skill was called.")
 
-        self.skill_group.add(TestSkill)
-        for skill in self.skill_group:
-            self.skill_group.add(skill)
+        self.skill_library.add(TestSkill)
+        for skill in self.skill_library:
+            self.skill_library.add(skill)
             print(f"- Registered: {skill.__name__}")
         
         # Create an OpenAIAgent with the skills
@@ -87,7 +86,7 @@ class TestSkillWithAgent:
         self.agent = OpenAIAgent(
             dev_name="SkillTestAgent",
             system_query="You are a skill testing agent. When prompted to perform an action, use the appropriate skill.",
-            skills=self.skill_group
+            skills=self.skill_library
         )
         
         # Test the agent with a query that should trigger a skill

@@ -209,122 +209,9 @@ UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
 
 # endregion Decorator
 
-# region SkillGroup
-
-class SkillGroup():
-    """A group of skills."""
-
-    def __init__(self, skills: Optional[List[AbstractSkill]] = None, parent_class = None):
-        """Initialize a skill group.
-        
-        Args:
-            skills: Explicit list of skills to include in this group.
-            parent_class: A class to scan for nested AbstractSkill classes.
-                          If provided, automatically extracts skills from this class.
-                          If None, uses the class of this instance.
-        """
-        # By default, use this instance's class
-        self.parent_class = parent_class or self.__class__
-        
-        # Initialize skills collection
-        if skills is not None:
-            self.skills = skills
-        else:
-            # Collect all skills from the parent class and update self.skills
-            self.skills = self.get_skills_from_class(self.parent_class)
-
-    def get_skills_from_class(self, cls) -> List[AbstractSkill]:
-        """Extract all AbstractSkill subclasses from a class.
-        
-        Args:
-            cls: The class to scan for skills
-            
-        Returns:
-            List of skill classes found within the class
-        """
-        skills = []
-        
-        # Loop through all attributes of the class
-        for attr_name in dir(cls):
-            # Skip special/dunder attributes
-            if attr_name.startswith('__'):
-                continue
-                
-            try:
-                attr = getattr(cls, attr_name)
-                
-                # Check if it's a class and inherits from AbstractSkill
-                if isinstance(attr, type) and issubclass(attr, AbstractSkill) and attr is not AbstractSkill:
-                    skills.append(attr)
-            except (AttributeError, TypeError):
-                # Skip attributes that can't be accessed or aren't classes
-                continue
-                
-        return skills
-        
-    def __iter__(self):
-        """Make the skill group iterable.
-        
-        Returns:
-            Iterator over the skills
-        """
-        self.skills = self.get_skills_from_class(self.parent_class)
-        return iter(self.skills)
-        
-    def __len__(self) -> int:
-        """Get the number of skills in the group.
-        
-        Returns:
-            Number of skills
-        """
-        self.skills = self.get_skills_from_class(self.parent_class)
-        return len(self.skills)
-        
-    def __getitem__(self, index):
-        """Get a skill by index.
-        
-        Args:
-            index: Index of the skill to get
-            
-        Returns:
-            The skill at the specified index
-        """
-        self.skills = self.get_skills_from_class(self.parent_class)
-        return self.skills[index]
-        
-    def __contains__(self, skill) -> bool:
-        """Check if a skill is in the group.
-        
-        Args:
-            skill: The skill to check for
-            
-        Returns:
-            True if the skill is in the group, False otherwise
-        """
-        self.skills = self.get_skills_from_class(self.parent_class)
-        return skill in self.skills
-
-    @classmethod
-    def add_skills(cls, skill_classes: List[Type[AbstractSkill]]):
-        """Add multiple skill classes as class attributes.
-        
-        Args:
-            skill_classes: List of skill classes to add
-        """
-        for skill_class in skill_classes:
-            setattr(cls, skill_class.__name__, skill_class)
-
-    # ==== Tool Instance Creation ====
-    skill_library: SkillLibrary = SkillLibrary()
-
-    def add(self, skill_class: Type[AbstractSkill]):
-        self.skill_library.add(skill_class)
-
-# endregion SkillGroup
-
 # region MyUnitreeSkills
 
-class MyUnitreeSkills(SkillGroup):
+class MyUnitreeSkills(SkillLibrary):
     """My Unitree Skills."""
 
     _robot: Optional[Robot] = None
@@ -347,7 +234,7 @@ class MyUnitreeSkills(SkillGroup):
         # Provide the robot instance to each skill
         for skill_class in self:
             print(f"{Colors.GREEN_PRINT_COLOR}Creating instance for skill: {skill_class}{Colors.RESET_COLOR}")
-            self.skill_library.create_instance(skill_class.__name__, robot=self._robot)
+            self.create_instance(skill_class.__name__, robot=self._robot)
 
     def create_skills_live(self) -> List[AbstractRobotSkill]:
         # ================================================
