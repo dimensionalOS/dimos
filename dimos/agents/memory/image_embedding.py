@@ -122,6 +122,43 @@ class ImageEmbeddingProvider:
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
             return np.random.randn(self.dimensions).astype(np.float32)
+            
+    def get_text_embedding(self, text: str) -> np.ndarray:
+        """
+        Generate an embedding vector for the provided text.
+        
+        Args:
+            text: The text to embed
+                  
+        Returns:
+            A numpy array containing the embedding vector
+        """
+        if self.model is None or self.processor is None:
+            logger.error("Model not initialized. Using fallback random embedding.")
+            return np.random.randn(self.dimensions).astype(np.float32)
+        
+        if self.model_name != "clip":
+            logger.warning(f"Text embeddings are only supported with CLIP model, not {self.model_name}. Using random embedding.")
+            return np.random.randn(self.dimensions).astype(np.float32)
+        
+        try:
+            import torch
+            
+            inputs = self.processor(text=[text], return_tensors="pt", padding=True)
+            
+            with torch.no_grad():
+                text_features = self.model.get_text_features(**inputs)
+            
+            # Normalize the features
+            text_embedding = text_features / text_features.norm(dim=1, keepdim=True)
+            embedding = text_embedding.numpy()[0]
+            
+            logger.debug(f"Generated text embedding with shape {embedding.shape} for text: '{text}'")
+            return embedding
+            
+        except Exception as e:
+            logger.error(f"Error generating text embedding: {e}")
+            return np.random.randn(self.dimensions).astype(np.float32)
     
     def _prepare_image(self, image: Union[np.ndarray, str, bytes]) -> Image.Image:
         """
