@@ -107,12 +107,40 @@ def main():
     # Query the spatial database for testing
     print("\nQuerying by location (0, 0)...")
     location_results = spatial_perception.query_by_location(0, 0, radius=1.0, limit=3)
-    print(location_results)
     
     for i, result in enumerate(location_results):
         print(f"Result {i+1}: Position ({result['metadata']['x']:.2f}, {result['metadata']['y']:.2f}, {result['metadata'].get('z', 0):.2f}), "
               f"Distance: {result.get('distance', 'N/A')}")
         
+        cv2.imshow(f"Location Result {i+1}", result["image"])
+        cv2.waitKey(0)
+    
+    cv2.destroyAllWindows()
+    
+    print("\nQuerying by text: 'where is the kitchen'...")
+    text_results = spatial_perception.query_by_text("where is the kitchen", limit=3)
+    
+    for i, result in enumerate(text_results):
+        print(f"Text Result {i+1}: Position ({result['metadata']['x']:.2f}, {result['metadata']['y']:.2f}, {result['metadata'].get('z', 0):.2f}), "
+              f"Similarity: {1.0 - result.get('distance', 0):.4f}")
+        
+        cv2.imshow(f"Text Result {i+1}", result["image"])
+        cv2.waitKey(0)
+    
+    cv2.destroyAllWindows()
+    
+    print("\nQuerying by text: 'show me the living room'...")
+    text_results = spatial_perception.query_by_text("show me the living room", limit=3)
+    
+    for i, result in enumerate(text_results):
+        print(f"Text Result {i+1}: Position ({result['metadata']['x']:.2f}, {result['metadata']['y']:.2f}, {result['metadata'].get('z', 0):.2f}), "
+              f"Similarity: {1.0 - result.get('distance', 0):.4f}")
+        
+        cv2.imshow(f"Text Result {i+1}", result["image"])
+        cv2.waitKey(0)
+    
+    cv2.destroyAllWindows()
+    
     # if location_results:
     #     print("\nQuerying by image similarity...")
     #     image_results = spatial_perception.query_by_image(location_results[0]["image"], limit=3)
