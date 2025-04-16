@@ -73,13 +73,21 @@ def generate_image_name(dockerfile: Path, root_dir: Path, registry: str) -> str:
     return f"{registry}/{image_name}"
 
 
-def generate_matrix_json(
-    dockerfiles: List[Path],
-    root_dir: Path,
-    registry: str,
-    include_registry: bool = True,
-) -> str:
-    """Generate GitHub Actions matrix JSON for Docker builds."""
+def main():
+    parser = argparse.ArgumentParser(
+        description="Docker build matrix generator for GitHub Actions"
+    )
+    parser.add_argument(
+        "--registry", default="dimensionalos", help="Docker registry name"
+    )
+    args = parser.parse_args()
+
+    root_dir = get_repo_root()
+    # print(f"{Colors.BLUE}Finding Dockerfiles in {root_dir}...{Colors.ENDC}")
+
+    dockerfiles = find_dockerfiles(root_dir)
+    # print(f"{Colors.GREEN}Found {len(dockerfiles)} Dockerfiles{Colors.ENDC}")
+
     matrix = []
 
     for df in dockerfiles:
@@ -87,16 +95,13 @@ def generate_matrix_json(
         rel_path = str(df.relative_to(root_dir))
 
         # Generate the full image name with registry
-        full_image_name = generate_image_name(df, root_dir, registry)
+        image_name = generate_image_name(df, root_dir, args.registry)
 
         # Extract name part from image name (without registry)
-        name = full_image_name.replace(f"{registry}/", "")
+        name = image_name.replace(f"{args.registry}/", "")
 
-        # Use full image name or just the name part based on flag
-        image_name = full_image_name if include_registry else name
-
-        # Get the context directory (parent directory of the Dockerfile)
-        context_dir = str(df.parent.relative_to(root_dir))
+        # Always use repo root as context directory
+        context_dir = "."
 
         matrix.append(
             {
@@ -107,79 +112,7 @@ def generate_matrix_json(
             }
         )
 
-    return json.dumps(matrix, indent=2)
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Docker build matrix generator for GitHub Actions"
-    )
-    parser.add_argument(
-        "--registry", default="dimensionalos", help="Docker registry name"
-    )
-    parser.add_argument(
-        "--exclude-registry",
-        action="store_true",
-        help="Exclude registry prefix from image names in output",
-    )
-    parser.add_argument(
-        "--output",
-        choices=["stdout", "file"],
-        default="stdout",
-        help="Output to stdout or file",
-    )
-    parser.add_argument(
-        "--file",
-        default="docker-matrix.json",
-        help="Output file name (if --output=file)",
-    )
-    args = parser.parse_args()
-
-    root_dir = get_repo_root()
-    # print(f"{Colors.BLUE}Finding Dockerfiles in {root_dir}...{Colors.ENDC}")
-
-    dockerfiles = find_dockerfiles(root_dir)
-    # print(f"{Colors.GREEN}Found {len(dockerfiles)} Dockerfiles{Colors.ENDC}")
-
-    # Generate the matrix JSON
-    include_registry = not args.exclude_registry
-    matrix = []
-    
-    for df in dockerfiles:
-        # Get path relative to repo root for GitHub Actions
-        rel_path = str(df.relative_to(root_dir))
-        
-        # Generate the full image name with registry
-        full_image_name = generate_image_name(df, root_dir, args.registry)
-        
-        # Extract name part from image name (without registry)
-        name = full_image_name.replace(f"{args.registry}/", "")
-        
-        # Use full image name or just the name part based on flag
-        image_name = full_image_name if include_registry else name
-        
-        # Get the context directory (parent directory of the Dockerfile)
-        context_dir = str(df.parent.relative_to(root_dir))
-        
-        matrix.append({
-            "dockerfile": rel_path,
-            "context": context_dir,
-            "name": name,
-            "image": image_name,
-        })
-    
-    matrix_json = json.dumps(matrix)
-    
-    # Output based on user preference
-    if args.output == "file":
-        output_path = Path(args.file)
-        with open(output_path, "w") as f:
-            f.write(matrix_json)
-        print(f"{Colors.GREEN}Matrix written to {output_path}{Colors.ENDC}")
-    else:
-        # Always use GitHub Actions output format without the matrix= prefix
-        # The workflow will add this to GITHUB_OUTPUT with the correct format
-        print(matrix_json)
+    print(json.dumps(matrix))
 
 
 if __name__ == "__main__":
