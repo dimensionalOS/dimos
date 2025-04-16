@@ -109,7 +109,7 @@ ENV WEBRTC_SERVER_HOST="0.0.0.0"
 ENV WEBRTC_SERVER_PORT="9991"
 
 # Copy entrypoint script
-COPY entrypoint.sh /entrypoint.sh
+COPY docker/unitree/ros/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
