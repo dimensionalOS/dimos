@@ -19,7 +19,7 @@ on:
       push:
         description: 'Push images to registry'
         required: false
-        default: 'false'
+        default: 'true'
         type: choice
         options:
           - 'true'
