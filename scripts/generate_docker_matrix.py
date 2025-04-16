@@ -105,6 +105,9 @@ def main():
     )
     args = parser.parse_args()
 
+    # Hardcoded list of images to ignore
+    ignored_images = ["jetson", "huggingface", "simulation", "transformers"]
+
     root_dir = get_repo_root()
     dockerfiles = find_dockerfiles(root_dir)
 
@@ -121,6 +124,10 @@ def main():
 
         # Extract name part from image name (without registry)
         name = image_name.replace(f"{args.registry}/", "")
+
+        # Skip this image if any ignored substring matches
+        if any(ignored_substr in name for ignored_substr in ignored_images):
+            continue
 
         # Identify direct dependency
         base_image = get_base_image(df, args.registry)
@@ -172,12 +179,14 @@ def main():
         max_level = max(entry["level"] for entry in matrix)
     else:
         max_level = 0
-        
+
     # Group matrix entries by level
     matrix_by_level = {}
     for level in range(max_level + 1):
-        matrix_by_level[f"level_{level}"] = [entry for entry in matrix if entry["level"] == level]
-    
+        matrix_by_level[f"level_{level}"] = [
+            entry for entry in matrix if entry["level"] == level
+        ]
+
     print(json.dumps(matrix_by_level))
 
 
