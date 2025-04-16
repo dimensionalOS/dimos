@@ -1,4 +1,4 @@
-name: Build Docker Images
+name: Docker
 
 on:
   push:
@@ -39,7 +39,7 @@ jobs:
         run: |
           echo "matrix=$(python scripts/generate_docker_matrix.py)" >> $GITHUB_OUTPUT
 
-  build-images:
+  build:
     needs: generate-matrix
     runs-on: ubuntu-latest
     strategy:
