@@ -2,24 +2,24 @@ name: Build Docker Images
 
 on:
   push:
-    branches: [ main, dev, dockerworkflow ]
+    branches: [ dockerworkflow ]
     paths:
       - 'docker/**'
       - 'dimos/**'
       - '.github/workflows/docker-build.yml'
       - 'scripts/generate_docker_matrix.py'
-  pull_request:
-    branches: [ main ]
-    paths:
-      - 'docker/**'
-      - 'dimos/**'
-      - '.github/workflows/docker-build.yml'
+  # pull_request:
+  #   branches: [ main ]
+  #   paths:
+  #     - 'docker/**'
+  #     - 'dimos/**'
+  #     - '.github/workflows/docker-build.yml'
   workflow_dispatch:
     inputs:
       push:
         description: 'Push images to registry'
         required: false
-        default: 'true'
+        default: 'false'
         type: choice
         options:
           - 'true'
@@ -64,11 +64,11 @@ jobs:
             type=ref,event=pr
             type=sha,format=short
       
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # - name: Login to DockerHub
+      #   uses: docker/login-action@v3
+      #   with:
+      #     username: ${{ secrets.DOCKERHUB_USERNAME }}
+      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
           
 
       - name: Build and push
