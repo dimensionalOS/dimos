@@ -2,18 +2,7 @@ name: Docker
 
 on:
   push:
-    branches: [ dockerworkflow ]
-    paths:
-      - 'docker/**'
-      - 'dimos/**'
-      - '.github/workflows/docker-build.yml'
-      - 'scripts/generate_docker_matrix.py'
-  # pull_request:
-  #   branches: [ main ]
-  #   paths:
-  #     - 'docker/**'
-  #     - 'dimos/**'
-  #     - '.github/workflows/docker-build.yml'
+    branches: [ main, dockerworkflowy ]
   workflow_dispatch:
     inputs:
       push:
