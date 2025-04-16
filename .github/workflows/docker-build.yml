@@ -36,7 +36,7 @@ jobs:
 
   # Level 0 images (no dependencies)
   build-images-0:
-    name: Build ${{ matrix.name }}
+    name: Build 0 ${{ matrix.name }}
     needs: [generate-matrix]
     runs-on: ubuntu-latest
     strategy:
@@ -79,7 +79,7 @@ jobs:
 
   # Level 1 images (depend on level 0)
   build-images-1:
-    name: Build ${{ matrix.name }}
+    name: Build 1 ${{ matrix.name }}
     needs: [generate-matrix, build-images-0]
     runs-on: ubuntu-latest
     strategy:
@@ -122,7 +122,7 @@ jobs:
       
   # Level 2 images (depend on level 1)
   build-images-2:
-    name: Build ${{ matrix.name }}
+    name: Build 2 ${{ matrix.name }}
     needs: [generate-matrix, build-images-1]
     runs-on: ubuntu-latest
     strategy:
@@ -165,7 +165,7 @@ jobs:
       
   # Level 3 images (depend on level 2)
   build-images-3:
-    name: Build ${{ matrix.name }}
+    name: Build 3 ${{ matrix.name }}
     needs: [generate-matrix, build-images-2]
     runs-on: ubuntu-latest
     strategy:
@@ -208,7 +208,7 @@ jobs:
       
   # Level 4 images (depend on level 3)
   build-images-4:
-    name: Build ${{ matrix.name }}
+    name: Build 4 ${{ matrix.name }}
     needs: [generate-matrix, build-images-3]
     runs-on: ubuntu-latest
     strategy:
