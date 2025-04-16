@@ -1,0 +1,11 @@
+services:
+  dev-environment:
+    image: dimensionalos/dev-base
+    container_name: dimos-dev
+    volumes:
+      - ../../../:/app
+    environment:
+      - PYTHONPATH=/app
+    stdin_open: true
+    tty: true
+    command: /bin/bash
