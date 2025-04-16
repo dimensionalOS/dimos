@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        include: ${{ fromJson(needs.generate-matrix.outputs.matrix) | where(level, 0) }}
+        include: ${{ fromJson(needs.generate-matrix.outputs.matrix).level_0 }}
       fail-fast: false
     steps:
       - name: Checkout code
@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        include: ${{ fromJson(needs.generate-matrix.outputs.matrix) | where(level, 1) }}
+        include: ${{ fromJson(needs.generate-matrix.outputs.matrix).level_1 }}
       fail-fast: false
     steps:
       - name: Checkout code
@@ -127,7 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        include: ${{ fromJson(needs.generate-matrix.outputs.matrix) | where(level, 2) }}
+        include: ${{ fromJson(needs.generate-matrix.outputs.matrix).level_2 }}
       fail-fast: false
     steps:
       - name: Checkout code
@@ -170,7 +170,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        include: ${{ fromJson(needs.generate-matrix.outputs.matrix) | where(level, 3) }}
+        include: ${{ fromJson(needs.generate-matrix.outputs.matrix).level_3 }}
       fail-fast: false
     steps:
       - name: Checkout code
@@ -213,7 +213,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        include: ${{ fromJson(needs.generate-matrix.outputs.matrix) | where(level, 4) }}
+        include: ${{ fromJson(needs.generate-matrix.outputs.matrix).level_4 }}
       fail-fast: false
     steps:
       - name: Checkout code

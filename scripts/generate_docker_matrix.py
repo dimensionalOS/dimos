@@ -172,8 +172,13 @@ def main():
         max_level = max(entry["level"] for entry in matrix)
     else:
         max_level = 0
-
-    print(json.dumps(matrix))
+        
+    # Group matrix entries by level
+    matrix_by_level = {}
+    for level in range(max_level + 1):
+        matrix_by_level[f"level_{level}"] = [entry for entry in matrix if entry["level"] == level]
+    
+    print(json.dumps(matrix_by_level))
 
 
 if __name__ == "__main__":
