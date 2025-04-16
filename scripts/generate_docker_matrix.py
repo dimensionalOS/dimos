@@ -165,8 +165,8 @@ def main():
                         changes_made = True
 
     # Clean up the entries before output (remove the dependency field)
-    for entry in entries.values():
-        del entry["dependency"]
+    # for entry in entries.values():
+    #    del entry["dependency"]
 
     # Convert to list for output
     matrix = list(entries.values())
@@ -182,6 +182,7 @@ def main():
 
     # Group matrix entries by level
     matrix_by_level = {}
+
     for level in range(max_level + 1):
         matrix_by_level[f"level_{level}"] = [
             entry for entry in matrix if entry["level"] == level

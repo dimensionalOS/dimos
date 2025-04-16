@@ -1,0 +1,13 @@
+services:
+  dev-environment:
+    image: dimensionalos/dev-base
+    container_name: dimos-dev
+    volumes:
+      - ../../../:/app
+    environment:
+      - PYTHONPATH=/app
+    ports:
+      - "8000:8000"  # For web interface
+    stdin_open: true
+    tty: true
+    command: /bin/bash
