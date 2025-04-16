@@ -167,6 +167,12 @@ def main():
     # Sort by level to ensure build order is correct
     matrix.sort(key=lambda x: x["level"])
 
+    # Get the maximum level for the workflow
+    if matrix:
+        max_level = max(entry["level"] for entry in matrix)
+    else:
+        max_level = 0
+
     print(json.dumps(matrix))
 
 
