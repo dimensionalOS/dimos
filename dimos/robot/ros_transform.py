@@ -35,27 +35,79 @@ class ROSTransformAbility:
         child_frame: str,
         parent_frame: str = "base_link",
         timeout: float = 1.0,
+        rate_hz: float = 1.0  # Default to 1 Hz
     ) -> Observable:
         """
-        Creates a simple pull-based Observable stream of transforms between coordinate frames.
-        Transforms are looked up directly from ROS when subscribers request data.
+        Creates an Observable stream of transforms between coordinate frames.
+        
+        This can function in two modes:
+        1. If rate_hz is provided (default is 1 Hz), returns a timer-based stream
+        2. If rate_hz is None, returns a factory function for on-demand transforms
 
         Args:
             child_frame: Child/target coordinate frame
             parent_frame: Parent/source coordinate frame
             timeout: How long to wait for the transform to become available (seconds)
+            rate_hz: Rate at which to emit transform values (default: 1 Hz)
 
         Returns:
-            Observable: A pull-based stream of TransformStamped messages
+            Observable: A stream of TransformStamped messages
         """
-
-        def lookup_on_request(observer, scheduler):
-            # fetch the transform directly from ROS when requested
-            observer.on_next(self.get_transform(parent_frame, child_frame, timeout))
-            return Disposable()
-
-        # Create a cold observable that fetches from ROS each time it's subscribed to
-        return create(lookup_on_request)
+        from reactivex import interval, defer, create
+        from reactivex import operators as ops
+        import time
+        import threading
+        
+        logger.info(f"Creating transform stream from {parent_frame} to {child_frame} at {rate_hz} Hz")
+        
+        # If rate_hz is None, create an on-demand transform observable
+        if rate_hz is None:
+            def lookup_on_subscribe(observer, scheduler):
+                transform = self.get_transform(parent_frame, child_frame, timeout)
+                if transform is not None:
+                    observer.on_next(transform)
+                return lambda: None  # Empty disposable
+                
+            return create(lookup_on_subscribe)
+        
+        # For timer-based streaming, we'll use a more robust approach
+        def emit_transforms(observer, scheduler):
+            # Create and start a daemon thread to periodically emit transforms
+            stop_event = threading.Event()
+            
+            def transform_thread():
+                period = 1.0 / rate_hz  # Period in seconds
+                
+                while not stop_event.is_set():
+                    try:
+                        # Get the transform
+                        transform = self.get_transform(parent_frame, child_frame, timeout)
+                        
+                        # Only emit if transform was found
+                        if transform is not None:
+                            observer.on_next(transform)
+                        else:
+                            logger.debug(f"No transform found from {parent_frame} to {child_frame}")
+                            
+                        # Sleep for the remainder of the period
+                        time.sleep(period)
+                    except Exception as e:
+                        logger.error(f"Error in transform thread: {e}")
+                        # Don't pass the error to the observer - just log it and continue
+                        time.sleep(period)  # Sleep to avoid tight loop
+            
+            # Start the thread
+            thread = threading.Thread(target=transform_thread, daemon=True)
+            thread.start()
+            
+            # Return a disposable that stops the thread
+            def dispose():
+                logger.info(f"Disposing transform stream from {parent_frame} to {child_frame}")
+                stop_event.set()
+                
+            return dispose
+            
+        return create(emit_transforms).pipe(ops.share())
 
     def get_transform(
         self, child_frame: str, parent_frame: str = "base_link", timeout: float = 1.0
