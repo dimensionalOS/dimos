@@ -143,10 +143,33 @@ def main():
 
     # Generate the matrix JSON
     include_registry = not args.exclude_registry
-    matrix_json = generate_matrix_json(
-        dockerfiles, root_dir, args.registry, include_registry
-    )
-
+    matrix = []
+    
+    for df in dockerfiles:
+        # Get path relative to repo root for GitHub Actions
+        rel_path = str(df.relative_to(root_dir))
+        
+        # Generate the full image name with registry
+        full_image_name = generate_image_name(df, root_dir, args.registry)
+        
+        # Extract name part from image name (without registry)
+        name = full_image_name.replace(f"{args.registry}/", "")
+        
+        # Use full image name or just the name part based on flag
+        image_name = full_image_name if include_registry else name
+        
+        # Get the context directory (parent directory of the Dockerfile)
+        context_dir = str(df.parent.relative_to(root_dir))
+        
+        matrix.append({
+            "dockerfile": rel_path,
+            "context": context_dir,
+            "name": name,
+            "image": image_name,
+        })
+    
+    matrix_json = json.dumps(matrix)
+    
     # Output based on user preference
     if args.output == "file":
         output_path = Path(args.file)
@@ -154,6 +177,8 @@ def main():
             f.write(matrix_json)
         print(f"{Colors.GREEN}Matrix written to {output_path}{Colors.ENDC}")
     else:
+        # Always use GitHub Actions output format without the matrix= prefix
+        # The workflow will add this to GITHUB_OUTPUT with the correct format
         print(matrix_json)
 
 
