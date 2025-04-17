@@ -12,16 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-
 import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import time
 from dotenv import load_dotenv
 from dimos.agents.claude_agent import ClaudeAgent
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
-import time
+from dimos.skills.monitor_skill import MonitorSkill
+from dimos.skills.kill_skill import KillSkill
 import reactivex as rx
 import reactivex.operators as ops
 # Load API key from environment
@@ -63,9 +66,24 @@ Example: If the user asks to move forward 1 meter, call the Move function with d
     thinking_budget_tokens=10000
 )
 
+robot_skills = robot.get_skills()
+robot_skills.add_skill(MonitorSkill)
+robot_skills.add_skill(KillSkill)
+
+robot_skills.create_instance("MonitorSkill", robot=robot, claude_agent=agent)
+robot_skills.create_instance("KillSkill")
+
 # Subscribe to agent responses and send them to the subject
 agent.get_response_observable().subscribe(
     lambda x: agent_response_subject.on_next(x)
 )
+
+# Create a memory.txt file to indicate the test was run
+with open("memory.txt", "w") as f:
+    f.write(f"Test run at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    f.write("Monitor and Kill skills registered and ready for use\n")
+
+print("Monitor and Kill skills registered and ready for use")
+print("Created memory.txt file")
 
 web_interface.run()
