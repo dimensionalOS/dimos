@@ -41,6 +41,8 @@ class Drawer:
                 "grid_color": "black",
                 "grid_alpha": 0.3,
                 "unknown_color": "lightgray",
+                "transparent_unknown": True,
+                "transparent_empty": False,
             },
             "path": {
                 "color": "#1f77b4",
@@ -90,15 +92,22 @@ class Drawer:
             costmap.origin.y + costmap.height * costmap.resolution,
         ]
 
-        # Create a masked array to handle unknown (-1) cells separately
+        # Create a masked array to handle unknown (-1) cells and optionally empty (0) cells separately
         grid_copy = costmap.grid.copy()
         unknown_mask = grid_copy == -1
+
+        # Additionally mask empty cells if requested
+        if merged_style.get("transparent_empty", False):
+            empty_mask = grid_copy == 0
+            combined_mask = unknown_mask | empty_mask
+        else:
+            combined_mask = unknown_mask
 
         # Create a custom colormap with a specific color for unknown cells
         norm = plt.Normalize(vmin=0, vmax=100)
 
         # Plot the known costs
-        masked_grid = np.ma.array(grid_copy, mask=unknown_mask)
+        masked_grid = np.ma.array(grid_copy, mask=combined_mask)
         im = self.ax.imshow(
             masked_grid,
             cmap=merged_style["cmap"],
@@ -109,18 +118,23 @@ class Drawer:
             alpha=merged_style.get("alpha", 1.0),
         )
 
-        # Plot the unknown cells with a different color
+        # Plot the unknown cells as transparent if requested or with a different color
         if np.any(unknown_mask):
-            unknown_grid = np.ma.array(np.zeros_like(grid_copy), mask=~unknown_mask)
-            self.ax.imshow(
-                unknown_grid,
-                cmap=plt.matplotlib.colors.ListedColormap(
-                    [merged_style["unknown_color"]]
-                ),
-                origin="lower",
-                extent=extent,
-                interpolation="none",
-            )
+            if merged_style.get("transparent_unknown", True):
+                # Don't draw unknown cells (they will be transparent)
+                pass
+            else:
+                # Draw unknown cells with the specified color
+                unknown_grid = np.ma.array(np.zeros_like(grid_copy), mask=~unknown_mask)
+                self.ax.imshow(
+                    unknown_grid,
+                    cmap=plt.matplotlib.colors.ListedColormap(
+                        [merged_style["unknown_color"]]
+                    ),
+                    origin="lower",
+                    extent=extent,
+                    interpolation="none",
+                )
 
         # Add meter grid overlay
         if merged_style["show_grid"]:
@@ -459,30 +473,38 @@ def draw(
 
 
 if __name__ == "__main__":
-    # Example usage
     from costmap import Costmap
-    from vector import Vector
-    from path import Path
+    from astar import astar
 
-    # Load a costmap
+    # Load the costmap
     costmap = Costmap.from_pickle("costmapMsg.pickle")
 
-    # Create a vector
-    vec = Vector(1, 1)
-
-    # Create a path
-    path = Path([(0, 0), (0.5, 0.5), (1, 1), (1.5, 0.5), (2, 0)])
-
-    # Example 1: Draw with styling
-    print("Drawing with custom styling...")
-    draw(
-        (costmap, {"cmap": "YlOrRd"}),
-        (path, {"color": "blue", "show_endpoints": True}),
-        (vec, {"color": "red"}),
-        title="Example with Custom Styling",
-        figsize=(12, 10),
+    # Create a smudged version of the costmap for better planning
+    smudged_costmap = costmap.smudge(
+        kernel_size=10, iterations=10, threshold=80, preserve_unknown=False
     )
 
-    # Example 2: Draw using defaults
-    print("Drawing with default styling...")
-    draw(costmap, path, vec, title="Example with Default Styling", figsize=(12, 10))
+    # Test different types of inputs for goal position
+    start = Vector(0.0, 0.0)  # Define a single position
+    goal = Vector(5.0, -7.0)  # Define a single position
+
+    # Try each type of input
+    path = astar(
+        smudged_costmap,
+        start=start,
+        goal=goal,
+        cost_threshold=50,
+    )
+
+    print(
+        "draw:\n",
+        "\n".join(map(lambda x: str(x), [start, goal, path, smudged_costmap])),
+    )
+
+    draw(
+        (smudged_costmap, {"cmap": "turbo_r"}),
+        (costmap, {"transparent_empty": True, "cmap": "Greys"}),
+        path,
+        (start, {"color": "green"}),
+        goal,
+    )

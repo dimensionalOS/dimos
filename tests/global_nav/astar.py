@@ -1,11 +1,9 @@
 import math
-import numpy as np
 import heapq
-from typing import List, Tuple, Optional
+from typing import Optional
 from path import Path
 from vector import Vector
-from vectortypes import VectorLike, to_numpy, to_vector, x, y
-from draw import draw
+from vectortypes import VectorLike
 
 
 def astar(
@@ -189,5 +187,3 @@ if __name__ == "__main__":
     path = astar(smudged_costmap, start=start, goal=goal, cost_threshold=50)
 
     print("result\n", path)
-
-    draw(smudged_costmap, path, (start, {"color": "green"}), goal)
