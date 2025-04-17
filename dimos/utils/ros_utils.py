@@ -60,16 +60,20 @@ def normalize_angle(angle: float) -> float:
     """Normalize angle to [-pi, pi] range"""
     return np.arctan2(np.sin(angle), np.cos(angle))
 
+def distance_angle_to_goal_xy(distance: float, angle: float) -> Tuple[float, float]:
+    """Convert distance and angle to goal x, y in robot frame"""
+    return distance * np.cos(angle), distance * np.sin(angle)
+
 def visualize_local_planner_state(
     occupancy_grid: np.ndarray, 
     grid_resolution: float, 
     grid_origin: Tuple[float, float, float], 
     robot_pose: Tuple[float, float, float], 
-    goal_xy: Tuple[float, float], 
     visualization_size: int, 
     robot_width: float, 
     robot_length: float,
     map_size_meters: float = 10.0,
+    goal_xy: Optional[Tuple[float, float]] = None, 
     histogram: Optional[np.ndarray] = None,
     selected_direction: Optional[float] = None
 ) -> np.ndarray:
@@ -79,7 +83,6 @@ def visualize_local_planner_state(
     
     robot_x, robot_y, robot_theta = robot_pose
     grid_origin_x, grid_origin_y, _ = grid_origin
-    goal_x, goal_y = goal_xy
     vis_size = visualization_size
     scale = vis_size / map_size_meters
     
@@ -186,13 +189,15 @@ def visualize_local_planner_state(
         cv2.line(vis_img, (center_x, center_y), (sel_end_x, sel_end_y), (0, 165, 255), 2) # BGR for Orange
 
     # Draw goal
-    goal_rel_x_map = goal_x - robot_x
-    goal_rel_y_map = goal_y - robot_y
-    goal_img_x = int(center_x + goal_rel_x_map * scale)
-    goal_img_y = int(center_y - goal_rel_y_map * scale)  # Flip y-axis
-    if 0 <= goal_img_x < vis_size and 0 <= goal_img_y < vis_size:
-        cv2.circle(vis_img, (goal_img_x, goal_img_y), 5, (0, 255, 0), -1)  # Green circle
-        cv2.circle(vis_img, (goal_img_x, goal_img_y), 8, (0, 0, 0), 1)      # Black outline
+    if goal_xy is not None:
+        goal_x, goal_y = goal_xy
+        goal_rel_x_map = goal_x - robot_x
+        goal_rel_y_map = goal_y - robot_y
+        goal_img_x = int(center_x + goal_rel_x_map * scale)
+        goal_img_y = int(center_y - goal_rel_y_map * scale)  # Flip y-axis
+        if 0 <= goal_img_x < vis_size and 0 <= goal_img_y < vis_size:
+            cv2.circle(vis_img, (goal_img_x, goal_img_y), 5, (0, 255, 0), -1)  # Green circle
+            cv2.circle(vis_img, (goal_img_x, goal_img_y), 8, (0, 0, 0), 1)      # Black outline
 
     # Add scale bar
     scale_bar_length_px = int(1.0 * scale)

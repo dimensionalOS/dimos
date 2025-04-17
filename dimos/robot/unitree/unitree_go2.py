@@ -265,55 +265,60 @@ class UnitreeGo2(Robot):
             
         return goal_reached
 
-    def test_goal_following(self, goal_distance: float = 3.0, runtime_seconds: float = 60.0):
+    def navigate_to_goal_local(self, goal_xy_robot: Tuple[float, float], timeout: float = 60.0) -> bool:
         """
-        Sets a single goal ahead of the robot and navigates towards it for a duration.
+        Navigates the robot to a goal specified in the robot's local frame 
+        using the VFHPurePursuitPlanner.
 
         Args:
-            goal_distance: Distance (in meters) to set the goal ahead of the robot.
-            runtime_seconds: How long (in seconds) the test should run.
+            goal_xy_robot: Tuple (x, y) representing the goal position relative 
+                           to the robot's current position and orientation.
+            timeout: Maximum time (in seconds) allowed to reach the goal.
+
+        Returns:
+            bool: True if the goal was reached within the timeout, False otherwise.
         """
-        if not hasattr(self, 'local_planner'):
-            logger.error("Local planner not initialized. Cannot run goal following test.")
-            return
+        logger.info(f"Starting navigation to local goal {goal_xy_robot} with timeout {timeout}s.")
 
-        logger.info(f"Starting single goal navigation test for {runtime_seconds} seconds.")
+        # Set the single goal in the robot's frame. Adjustment will happen internally.
+        self.local_planner.set_goal(goal_xy_robot, is_robot_frame=True)
 
-        time.sleep(6.0)
-        
-        # Set the single goal goal_distance meters ahead in the robot's frame
-        logger.info(f"Setting goal {goal_distance}m ahead.")
-        self.local_planner.set_goal((goal_distance, 0.0), is_robot_frame=True)
-        
         start_time = time.time()
+        goal_reached = False
 
         try:
-            while time.time() - start_time < runtime_seconds:
-                # Get planned velocity towards the single goal
+            while time.time() - start_time < timeout:
+                # Check if goal has been reached
+                if self.local_planner.is_goal_reached():
+                    logger.info("Goal reached successfully.")
+                    goal_reached = True
+                    break 
+
+                # Get planned velocity towards the goal
                 vel_command = self.local_planner.plan()
                 x_vel = vel_command.get('x_vel', 0.0)
                 angular_vel = vel_command.get('angular_vel', 0.0)
-                
-                # logger.debug(f"Planner output: x_vel={x_vel:.2f}, angular_vel={angular_vel:.2f}")
 
                 # Send velocity command
                 self.ros_control.move_vel_control(x=x_vel, y=0, yaw=angular_vel)
 
-                # Check if goal has been reached (optional logging)
-                if self.local_planner.is_goal_reached():
-                    logger.info("Goal has been reached according to tolerance.")
-                    break 
-
                 # Control loop frequency
                 time.sleep(0.1)
+            
+            if not goal_reached:
+                logger.warning(f"Navigation timed out after {timeout} seconds before reaching goal.")
 
         except KeyboardInterrupt:
-            logger.info("Goal following test interrupted by user.")
+            logger.info("Navigation to local goal interrupted by user.")
+            goal_reached = False # Consider interruption as failure
         except Exception as e:
-            logger.error(f"Error during goal following test: {e}")
+            logger.error(f"Error during navigation to local goal: {e}")
+            goal_reached = False # Consider error as failure
         finally:
-            logger.info("Stopping robot after goal following test.")
+            logger.info("Stopping robot after navigation attempt.")
             self.ros_control.stop()
+            
+        return goal_reached
 
     def do(self, *args, **kwargs):
         pass

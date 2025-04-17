@@ -33,7 +33,7 @@ class VFHPurePursuitPlanner:
                  max_linear_vel: float = 0.5,
                  max_angular_vel: float = 1.0,
                  lookahead_distance: float = 1.0,
-                 goal_tolerance: float = 0.2,
+                 goal_tolerance: float = 1.0,
                  robot_width: float = 0.5,
                  robot_length: float = 0.7,
                  visualization_size: int = 400):
@@ -69,11 +69,11 @@ class VFHPurePursuitPlanner:
         
         # VFH parameters
         self.alpha = 0.1  # Histogram smoothing factor
-        self.obstacle_weight = 3.0
+        self.obstacle_weight = 1.5
         self.goal_weight = 1.0
-        self.prev_direction_weight = 0.1
+        self.prev_direction_weight = 0.5
         self.prev_selected_angle = 0.0
-        self.goal_xy = (0, 0)  # Default goal position (odom frame)
+        self.goal_xy = None  # Default goal position (odom frame)
     
     def set_goal(self, goal_xy: Tuple[float, float], is_robot_frame: bool = True):
         """Set the goal position, converting to odom frame if necessary."""
@@ -83,16 +83,22 @@ class VFHPurePursuitPlanner:
             robot_x, robot_y, robot_theta = robot_pose
             goal_x_robot, goal_y_robot = goal_xy
             
-            # Transform to odom frame
-            goal_x_odom = robot_x + goal_x_robot * math.cos(robot_theta) - goal_y_robot * math.sin(robot_theta)
-            goal_y_odom = robot_y + goal_x_robot * math.sin(robot_theta) + goal_y_robot * math.cos(robot_theta)
+            # Transform to odom frame using numpy functions
+            goal_x_odom = robot_x + goal_x_robot * np.cos(robot_theta) - goal_y_robot * np.sin(robot_theta)
+            goal_y_odom = robot_y + goal_x_robot * np.sin(robot_theta) + goal_y_robot * np.cos(robot_theta)
             
             self.goal_xy = (goal_x_odom, goal_y_odom)
+            goal_safe = self.adjust_goal_for_collision()
             logger.info(f"Goal set in robot frame ({goal_x_robot:.2f}, {goal_y_robot:.2f}), "
                         f"transformed to odom frame: ({self.goal_xy[0]:.2f}, {self.goal_xy[1]:.2f})")
+            if not goal_safe:
+                logger.warning("Goal is in collision. Adjusted goal to safe position.")
         else:
             self.goal_xy = goal_xy
+            goal_safe = self.adjust_goal_for_collision()
             logger.info(f"Goal set directly in odom frame: ({self.goal_xy[0]:.2f}, {self.goal_xy[1]:.2f})")
+            if not goal_safe:
+                logger.warning("Goal is in collision. Adjusted goal to safe position.")
 
     def plan(self) -> Dict[str, float]:
         """
@@ -105,6 +111,7 @@ class VFHPurePursuitPlanner:
         robot_pose = ros_msg_to_pose_tuple(odom)  # Use imported function
         
         goal_xy = self.goal_xy
+        self.adjust_goal_for_collision()
         robot_x, robot_y, robot_theta = robot_pose
         goal_x, goal_y = goal_xy
         
@@ -224,17 +231,17 @@ class VFHPurePursuitPlanner:
                 # Calculate distance and angle relative to robot in grid frame
                 dx_cell = x - robot_cell_x
                 dy_cell = y - robot_cell_y
-                distance = math.sqrt(dx_cell**2 + dy_cell**2) * grid_resolution
+                distance = np.linalg.norm([dx_cell, dy_cell]) * grid_resolution
                 
                 if distance > 5.0: continue # Skip if beyond sensor range
                 
                 # Angle relative to grid origin
-                angle_grid = math.atan2(dy_cell, dx_cell) 
+                angle_grid = np.arctan2(dy_cell, dx_cell)
                 # Angle relative to robot's orientation
-                angle_robot = normalize_angle(angle_grid - robot_theta) 
+                angle_robot = normalize_angle(angle_grid - robot_theta)
                 
                 # Convert angle to bin index
-                bin_index = int(((angle_robot + math.pi) / (2 * math.pi)) * self.histogram_bins) % self.histogram_bins
+                bin_index = int(((angle_robot + np.pi) / (2 * np.pi)) * self.histogram_bins) % self.histogram_bins
                 
                 # Update histogram
                 obstacle_value = occupancy_grid[y, x] / 100.0  # Normalize
@@ -258,7 +265,7 @@ class VFHPurePursuitPlanner:
             histogram = histogram / np.max(histogram)
         cost = np.zeros(self.histogram_bins)
         for i in range(self.histogram_bins):
-            angle = (i / self.histogram_bins) * 2 * math.pi - math.pi
+            angle = (i / self.histogram_bins) * 2 * np.pi - np.pi
             obstacle_cost = self.obstacle_weight * histogram[i]
             angle_diff = abs(normalize_angle(angle - goal_direction))
             goal_cost = self.goal_weight * angle_diff
@@ -266,7 +273,7 @@ class VFHPurePursuitPlanner:
             prev_direction_cost = self.prev_direction_weight * prev_diff
             cost[i] = obstacle_cost + goal_cost + prev_direction_cost
         min_cost_idx = np.argmin(cost)
-        selected_angle = (min_cost_idx / self.histogram_bins) * 2 * math.pi - math.pi
+        selected_angle = (min_cost_idx / self.histogram_bins) * 2 * np.pi - np.pi
         self.prev_selected_angle = selected_angle
         return selected_angle
 
@@ -276,17 +283,148 @@ class VFHPurePursuitPlanner:
             return 0.0, 0.0
         lookahead = min(self.lookahead_distance, goal_distance)
         linear_vel = min(self.max_linear_vel, goal_distance)
-        angular_vel = 2.0 * math.sin(goal_direction) / lookahead
+        angular_vel = 2.0 * np.sin(goal_direction) / lookahead
         angular_vel = max(-self.max_angular_vel, min(angular_vel, self.max_angular_vel))
         return linear_vel, angular_vel
 
     def is_goal_reached(self) -> bool:
         """Check if the robot is within the goal tolerance distance."""
+        # Return False immediately if goal is not set
+        if self.goal_xy is None:
+            return False
+            
         odom = self.robot.ros_control.get_odometry()
+        if odom is None: return False # Cannot check if no odometry
         robot_pose = ros_msg_to_pose_tuple(odom)
         robot_x, robot_y, _ = robot_pose
         goal_x, goal_y = self.goal_xy
-        
         distance_to_goal = np.linalg.norm([goal_x - robot_x, goal_y - robot_y])
-        #logger.debug(f"Checking goal: Dist={distance_to_goal:.2f}m, Tol={self.goal_tolerance:.2f}m")
         return distance_to_goal < self.goal_tolerance
+
+    def adjust_goal_for_collision(self,
+                                       collision_threshold: int = 99,
+                                       search_steps: int = 50,
+                                       buffer_distance_meters: float = 0.5,
+                                       neighbor_search_radius_meters: float = 1.0) -> bool:
+        """Checks if the current goal is in collision. If so, searches backwards
+           along the line from the goal towards the robot to find the closest cell
+           that is both collision-free and at least `buffer_distance_meters` away
+           from any colliding cell. Updates self.goal_xy if found.
+
+        Args:
+            collision_threshold: Occupancy value (0-100) considered an obstacle.
+            search_steps: Max steps to check along the line segment.
+            buffer_distance_meters: Required minimum distance from the candidate cell
+                                    center to the nearest colliding cell center.
+            neighbor_search_radius_meters: How far around a candidate cell to search
+                                           for colliding neighbors.
+
+        Returns:
+            bool: True if the original goal was safe or check failed/no suitable adjustment found,
+                  False if the original goal was in collision and a suitable buffered goal was found and set.
+        """
+        if self.goal_xy is None:
+            logger.warning("Goal not set, cannot adjust.")
+            return True
+
+        costmap_msg = self.robot.ros_control.get_costmap()
+        odom_msg = self.robot.ros_control.get_odometry()
+        if costmap_msg is None or odom_msg is None:
+            logger.warning("Cannot adjust goal: Costmap or Odometry data unavailable.")
+            return True
+
+        occupancy_grid, grid_resolution, grid_origin = ros_msg_to_numpy_grid(costmap_msg)
+        if grid_resolution <= 1e-6: # Use a small epsilon for float comparison
+             logger.error("Invalid grid resolution (<= 0) for collision check.")
+             return True
+        grid_origin_x, grid_origin_y, _ = grid_origin
+        height, width = occupancy_grid.shape
+        robot_pose = ros_msg_to_pose_tuple(odom_msg)
+        robot_x, robot_y, _ = robot_pose
+
+        original_goal_x_odom, original_goal_y_odom = self.goal_xy
+
+        # Transform original goal to grid cell coordinates
+        goal_rel_x = original_goal_x_odom - grid_origin_x
+        goal_rel_y = original_goal_y_odom - grid_origin_y
+        goal_cell_x = int(goal_rel_x / grid_resolution)
+        goal_cell_y = int(goal_rel_y / grid_resolution)
+
+        if not (0 <= goal_cell_x < width and 0 <= goal_cell_y < height):
+            logger.warning("Original goal is outside costmap. No adjustment needed.")
+            return True
+
+        # Check if original goal needs adjustment
+        original_cell_value = occupancy_grid[goal_cell_y, goal_cell_x]
+        if original_cell_value < collision_threshold:
+            logger.debug("Original goal cell is safe. No adjustment needed.")
+            return True
+
+        logger.warning(f"Original goal ({goal_cell_x}, {goal_cell_y}) colliding (val: {original_cell_value}). Searching for buffered safe cell...")
+
+        # Transform robot pose to grid cell coordinates
+        robot_rel_x = robot_x - grid_origin_x
+        robot_rel_y = robot_y - grid_origin_y
+        robot_cell_x = int(robot_rel_x / grid_resolution)
+        robot_cell_y = int(robot_rel_y / grid_resolution)
+
+        found_buffered_goal = False
+        search_radius_cells = max(1, int(neighbor_search_radius_meters / grid_resolution))
+
+        # Iterate backwards from goal towards robot
+        for i in range(search_steps - 1, -1, -1):
+            t = i / max(1, search_steps - 1)
+            check_cell_x = int(robot_cell_x + t * (goal_cell_x - robot_cell_x))
+            check_cell_y = int(robot_cell_y + t * (goal_cell_y - robot_cell_y))
+
+            if not (0 <= check_cell_x < width and 0 <= check_cell_y < height):
+                continue # Skip cells outside map
+
+            # 1. Check if the candidate cell itself is safe
+            cell_value = occupancy_grid[check_cell_y, check_cell_x]
+            if cell_value < collision_threshold:
+                # 2. Find min distance to nearest colliding cell within radius
+                min_dist_sq_to_collision = float('inf')
+                collision_found_nearby = False
+                for dx in range(-search_radius_cells, search_radius_cells + 1):
+                    for dy in range(-search_radius_cells, search_radius_cells + 1):
+                        if dx == 0 and dy == 0: continue # Skip self check
+
+                        nx, ny = check_cell_x + dx, check_cell_y + dy
+                        if 0 <= nx < width and 0 <= ny < height:
+                            neighbor_value = occupancy_grid[ny, nx]
+                            if neighbor_value >= collision_threshold:
+                                collision_found_nearby = True
+                                dist_sq = float(dx*dx + dy*dy) # Ensure float for sqrt
+                                min_dist_sq_to_collision = min(min_dist_sq_to_collision, dist_sq)
+
+                # Calculate distance only if collision was found nearby
+                min_dist_to_collision = float('inf')
+                if collision_found_nearby:
+                     # Avoid sqrt of infinity if no collision found, though logic prevents this case here
+                     if min_dist_sq_to_collision != float('inf'):
+                           min_dist_to_collision = np.sqrt(min_dist_sq_to_collision) * grid_resolution
+
+                # 3. Check if buffer distance is met (either no collision nearby or closest is far enough)
+                if min_dist_to_collision >= buffer_distance_meters:
+                    # Found a suitable cell
+                    new_goal_cell_x = check_cell_x
+                    new_goal_cell_y = check_cell_y
+
+                    # Convert safe cell center back to odom coordinates
+                    new_goal_x_odom = grid_origin_x + (new_goal_cell_x + 0.5) * grid_resolution
+                    new_goal_y_odom = grid_origin_y + (new_goal_cell_y + 0.5) * grid_resolution
+
+                    self.goal_xy = (new_goal_x_odom, new_goal_y_odom)
+                    logger.warning(f"Adjusted goal to buffered safe cell ({new_goal_cell_x}, {new_goal_cell_y}) "
+                                   f"at odom ({new_goal_x_odom:.2f}, {new_goal_y_odom:.2f}). "
+                                   f"Min dist to collision: {min_dist_to_collision:.2f}m >= {buffer_distance_meters:.2f}m.")
+                    found_buffered_goal = True
+                    break # Stop searching
+
+        if not found_buffered_goal:
+            logger.error(f"Could not find a safe cell with {buffer_distance_meters}m buffer. Goal remains unchanged at colliding position.")
+            return True # No suitable adjustment found
+
+        # Return False because original goal was colliding and we made an adjustment
+        return False

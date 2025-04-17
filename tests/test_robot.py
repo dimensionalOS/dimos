@@ -49,10 +49,13 @@ def main():
         time.sleep(2)
 
         # Start the goal following test in a separate thread
-        print("Starting goal following test in a separate thread...")
+        print("Starting navigation to local goal (2m ahead) in a separate thread...")
         goal_following_thread = threading.Thread(
-            target=robot.test_goal_following,
-            kwargs={'runtime_seconds': 300},
+            target=robot.navigate_to_goal_local,
+            kwargs={
+                'goal_xy_robot': (2.0, 0.0),
+                'timeout': 300
+            },
             daemon=True
         )
         goal_following_thread.start()
