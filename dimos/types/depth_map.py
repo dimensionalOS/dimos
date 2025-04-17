@@ -15,6 +15,7 @@
 from typing import Any
 import numpy as np
 
+
 class DepthMapType:
     def __init__(self, depth_data: np.ndarray, metadata: Any = None):
         """
@@ -35,4 +36,4 @@ class DepthMapType:
 
     def save_to_file(self, filepath: str):
         """Save the depth map to a file."""
-        np.save(filepath, self.depth_data) 
+        np.save(filepath, self.depth_data)

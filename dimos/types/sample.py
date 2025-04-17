@@ -31,7 +31,9 @@ from typing_extensions import Annotated
 from mbodied.data.utils import to_features
 from mbodied.utils.import_utils import smart_import
 
-Flattenable = Annotated[Literal["dict", "np", "pt", "list"], "Numpy, PyTorch, list, or dict"]
+Flattenable = Annotated[
+    Literal["dict", "np", "pt", "list"], "Numpy, PyTorch, list, or dict"
+]
 
 
 class Sample(BaseModel):
@@ -71,7 +73,9 @@ class Sample(BaseModel):
         Sample(x=1, y=2, z={'a': 3, 'b': 4}, extra_field=5)
     """
 
-    __doc__ = "A base model class for serializing, recording, and manipulating arbitray data."
+    __doc__ = (
+        "A base model class for serializing, recording, and manipulating arbitray data."
+    )
 
     model_config: ConfigDict = ConfigDict(
         use_enum_values=False,
@@ -186,7 +190,9 @@ class Sample(BaseModel):
                 else:
                     accumulator.extend(flat_list)
             else:
-                if non_numerical == "ignore" and not isinstance(obj, int | float | bool):
+                if non_numerical == "ignore" and not isinstance(
+                    obj, int | float | bool
+                ):
                     return
                 final_key = path[:-1]  # Remove trailing slash
                 if output_type == "dict":
@@ -196,7 +202,9 @@ class Sample(BaseModel):
 
         flatten_recursive(self)
         accumulator = accumulator.values() if output_type == "dict" else accumulator
-        if non_numerical == "forbid" and any(not isinstance(v, int | float | bool) for v in accumulator):
+        if non_numerical == "forbid" and any(
+            not isinstance(v, int | float | bool) for v in accumulator
+        ):
             raise ValueError("Non-numerical values found in flattened data.")
         if output_type == "np":
             return np.array(accumulator)
@@ -216,7 +224,10 @@ class Sample(BaseModel):
             dict: A simplified JSON schema representing the structure of the dictionary.
         """
         if isinstance(value, dict):
-            return {"type": "object", "properties": {k: Sample.obj_to_schema(v) for k, v in value.items()}}
+            return {
+                "type": "object",
+                "properties": {k: Sample.obj_to_schema(v) for k, v in value.items()},
+            }
         if isinstance(value, list | tuple | np.ndarray):
             if len(value) > 0:
                 return {"type": "array", "items": Sample.obj_to_schema(value[0])}
@@ -260,7 +271,9 @@ class Sample(BaseModel):
             if key not in properties:
                 properties[key] = Sample.obj_to_schema(value)
             if isinstance(value, Sample):
-                properties[key] = value.schema(resolve_refs=resolve_refs, include_descriptions=include_descriptions)
+                properties[key] = value.schema(
+                    resolve_refs=resolve_refs, include_descriptions=include_descriptions
+                )
             else:
                 properties[key] = Sample.obj_to_schema(value)
         return schema
@@ -358,7 +371,10 @@ class Sample(BaseModel):
             if isinstance(value, Sample):
                 value = value.dict()
             return spaces.Dict(
-                {k: Sample.space_for(v, max_text_length, info) for k, v in value.items()},
+                {
+                    k: Sample.space_for(v, max_text_length, info)
+                    for k, v in value.items()
+                },
             )
         if isinstance(value, str):
             return spaces.Text(max_length=max_text_length)
@@ -391,12 +407,20 @@ class Sample(BaseModel):
                 logging.info(f"Could not convert value {value} to numpy array: {e}")
                 if len(value) > 0 and isinstance(value[0], dict | Sample):
                     return spaces.Tuple(
-                        [spaces.Dict(cls.space_for(v, max_text_length, info)) for v in value],
+                        [
+                            spaces.Dict(cls.space_for(v, max_text_length, info))
+                            for v in value
+                        ],
                     )
                 return spaces.Tuple(
-                    [cls.space_for(value[0], max_text_length, info) for value in value[:1]],
+                    [
+                        cls.space_for(value[0], max_text_length, info)
+                        for value in value[:1]
+                    ],
                 )
-        raise ValueError(f"Unsupported object {value} of type: {type(value)} for space generation")
+        raise ValueError(
+            f"Unsupported object {value} of type: {type(value)} for space generation"
+        )
 
     @classmethod
     def init_from(cls, d: Any, pack=False) -> "Sample":
@@ -410,12 +434,16 @@ class Sample(BaseModel):
             try:
                 return cls.model_validate(d)
             except ValidationError as e:
-                logging.info(f" Unable to validate {d} as {cls} {e}. Attempting to unflatten.")
+                logging.info(
+                    f" Unable to validate {d} as {cls} {e}. Attempting to unflatten."
+                )
 
                 try:
                     return cls.unflatten(d)
                 except Exception as e:
-                    logging.info(f" Unable to unflatten {d} as {cls} {e}. Attempting to read.")
+                    logging.info(
+                        f" Unable to unflatten {d} as {cls} {e}. Attempting to read."
+                    )
                     return cls.read(d)
         return cls(d)
 
@@ -497,15 +525,25 @@ class Sample(BaseModel):
             return []
 
         # Ensure all attributes are lists and have the same length
-        list_sizes = {len(getattr(self, attr)) for attr in attributes if isinstance(getattr(self, attr), list)}
+        list_sizes = {
+            len(getattr(self, attr))
+            for attr in attributes
+            if isinstance(getattr(self, attr), list)
+        }
         if len(list_sizes) != 1:
             raise ValueError("Not all attribute lists have the same length.")
         list_size = list_sizes.pop()
 
         if to_dicts:
-            return [{key: getattr(self, key)[i] for key in attributes} for i in range(list_size)]
+            return [
+                {key: getattr(self, key)[i] for key in attributes}
+                for i in range(list_size)
+            ]
 
-        return [self.__class__(**{key: getattr(self, key)[i] for key in attributes}) for i in range(list_size)]
+        return [
+            self.__class__(**{key: getattr(self, key)[i] for key in attributes})
+            for i in range(list_size)
+        ]
 
     @classmethod
     def default_space(cls) -> spaces.Dict:
@@ -543,7 +581,11 @@ class Sample(BaseModel):
             logging.debug("Generating space for key: '%s', value: %s", key, value)
             info = self.model_field_info(key)
             value = getattr(self, key) if hasattr(self, key) else value  # noqa: PLW2901
-            space_dict[key] = value.space() if isinstance(value, Sample) else self.space_for(value, info=info)
+            space_dict[key] = (
+                value.space()
+                if isinstance(value, Sample)
+                else self.space_for(value, info=info)
+            )
         return spaces.Dict(space_dict)
 
     def random_sample(self) -> "Sample":

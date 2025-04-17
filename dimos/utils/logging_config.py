@@ -24,9 +24,7 @@ from typing import Optional
 
 
 def setup_logger(
-    name: str, 
-    level: Optional[int] = None,
-    log_format: Optional[str] = None
+    name: str, level: Optional[int] = None, log_format: Optional[str] = None
 ) -> logging.Logger:
     """Set up a logger with color output.
 
@@ -41,26 +39,26 @@ def setup_logger(
     """
     if level is None:
         # Get level from environment variable or default to INFO
-        level_name = os.getenv('DIMOS_LOG_LEVEL', 'INFO')
+        level_name = os.getenv("DIMOS_LOG_LEVEL", "INFO")
         level = getattr(logging, level_name)
-        
+
     if log_format is None:
         log_format = "%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
     try:
         # Get or create logger
         logger = logging.getLogger(name)
-        
+
         # Remove any existing handlers to avoid duplicates
         if logger.hasHandlers():
             logger.handlers.clear()
-            
+
         # Set logger level first
         logger.setLevel(level)
-        
+
         # Ensure we're not blocked by parent loggers
         logger.propagate = False
-        
+
         # Create and configure handler
         handler = colorlog.StreamHandler()
         handler.setLevel(level)  # Explicitly set handler level

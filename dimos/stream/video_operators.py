@@ -26,15 +26,16 @@ from enum import Enum
 
 from dimos.stream.frame_processor import FrameProcessor
 
+
 class VideoOperators:
     """Collection of video processing operators for reactive video streams."""
-    
+
     @staticmethod
     def with_fps_sampling(
         fps: int = 25,
         *,
         sample_interval: Optional[timedelta] = None,
-        use_latest: bool = True
+        use_latest: bool = True,
     ) -> Callable[[Observable], Observable]:
         """Creates an operator that samples frames at a specified rate.
 
@@ -51,7 +52,7 @@ class VideoOperators:
                 If False, uses the first frame. Defaults to True.
 
         Returns:
-            A function that transforms an Observable[np.ndarray] stream to a sampled 
+            A function that transforms an Observable[np.ndarray] stream to a sampled
             Observable[np.ndarray] stream with controlled frame rate.
 
         Raises:
@@ -74,7 +75,7 @@ class VideoOperators:
 
         Note:
             This operator helps manage high-speed video streams through time-based
-            frame selection. It reduces the frame rate by selecting frames at 
+            frame selection. It reduces the frame rate by selecting frames at
             specified intervals.
 
             When use_latest=True:
@@ -99,16 +100,19 @@ class VideoOperators:
 
         def _operator(source: Observable) -> Observable:
             return source.pipe(
-                ops.sample(sample_interval) if use_latest else ops.throttle_first(sample_interval)
+                ops.sample(sample_interval)
+                if use_latest
+                else ops.throttle_first(sample_interval)
             )
+
         return _operator
 
     @staticmethod
     def with_jpeg_export(
-        frame_processor: 'FrameProcessor',
+        frame_processor: "FrameProcessor",
         save_limit: int = 100,
         suffix: str = "",
-        loop: bool = False
+        loop: bool = False,
     ) -> Callable[[Observable], Observable]:
         """Creates an operator that saves video frames as JPEG files.
 
@@ -123,7 +127,7 @@ class VideoOperators:
             suffix: Optional string to append to filename before index.
                 Example: "raw" creates "1_raw.jpg".
                 Defaults to empty string.
-            loop: If True, when save_limit is reached, the files saved are 
+            loop: If True, when save_limit is reached, the files saved are
                 loopbacked and overwritten with the most recent frame.
                 Defaults to False.
         Returns:
@@ -139,15 +143,21 @@ class VideoOperators:
             ...     VideoOperators.with_jpeg_export(processor, suffix="raw")
             ... )
         """
+
         def _operator(source: Observable) -> Observable:
             return source.pipe(
-                ops.map(lambda frame: frame_processor.export_to_jpeg(frame, save_limit, loop, suffix))
+                ops.map(
+                    lambda frame: frame_processor.export_to_jpeg(
+                        frame, save_limit, loop, suffix
+                    )
+                )
             )
+
         return _operator
-    
+
     @staticmethod
     def with_optical_flow_filtering(
-        threshold: float = 1.0
+        threshold: float = 1.0,
     ) -> Callable[[Observable], Observable]:
         """Creates an operator that filters optical flow frames by relevancy score.
 
@@ -185,12 +195,12 @@ class VideoOperators:
         return lambda source: source.pipe(
             ops.filter(lambda result: result[1] is not None),
             ops.filter(lambda result: result[1] > threshold),
-            ops.map(lambda result: result[0])
+            ops.map(lambda result: result[0]),
         )
 
     @staticmethod
     def with_edge_detection(
-        frame_processor: 'FrameProcessor',
+        frame_processor: "FrameProcessor",
     ) -> Callable[[Observable], Observable]:
         return lambda source: source.pipe(
             ops.map(lambda frame: frame_processor.edge_detection(frame))
@@ -198,12 +208,14 @@ class VideoOperators:
 
     @staticmethod
     def with_optical_flow(
-        frame_processor: 'FrameProcessor',
+        frame_processor: "FrameProcessor",
     ) -> Callable[[Observable], Observable]:
         return lambda source: source.pipe(
             ops.scan(
-                lambda acc, frame: frame_processor.compute_optical_flow(acc, frame, compute_relevancy=False),
-                (None, None, None)
+                lambda acc, frame: frame_processor.compute_optical_flow(
+                    acc, frame, compute_relevancy=False
+                ),
+                (None, None, None),
             ),
             ops.map(lambda result: result[1]),  # Extract flow component
             ops.filter(lambda flow: flow is not None),
@@ -212,17 +224,17 @@ class VideoOperators:
 
     @staticmethod
     def with_zmq_socket(
-        socket: zmq.Socket,
-        scheduler: Optional[Any] = None
+        socket: zmq.Socket, scheduler: Optional[Any] = None
     ) -> Callable[[Observable], Observable]:
         def send_frame(frame, socket):
-            _, img_encoded = cv2.imencode('.jpg', frame)
+            _, img_encoded = cv2.imencode(".jpg", frame)
             socket.send(img_encoded.tobytes())
             # print(f"Frame received: {frame.shape}")
 
         # Use a default scheduler if none is provided
         if scheduler is None:
             from reactivex.scheduler import ThreadPoolScheduler
+
             scheduler = ThreadPoolScheduler(1)  # Single-threaded pool for isolation
 
         return lambda source: source.pipe(
@@ -239,30 +251,30 @@ class VideoOperators:
             A function that transforms an Observable of images into an Observable
             of tuples containing the Base64 string of the encoded image and its dimensions.
         """
+
         def _operator(source: Observable) -> Observable:
             def _encode_image(image: np.ndarray) -> Tuple[str, Tuple[int, int]]:
                 try:
                     width, height = image.shape[:2]
-                    _, buffer = cv2.imencode('.jpg', image)
+                    _, buffer = cv2.imencode(".jpg", image)
                     if buffer is None:
                         raise ValueError("Failed to encode image")
-                    base64_image = base64.b64encode(buffer).decode('utf-8')
+                    base64_image = base64.b64encode(buffer).decode("utf-8")
                     return base64_image, (width, height)
                 except Exception as e:
                     raise e
 
-            return source.pipe(
-                ops.map(_encode_image)
-            )
+            return source.pipe(ops.map(_encode_image))
 
         return _operator
+
 
 from reactivex.disposable import Disposable
 from reactivex import Observable, create
 from threading import Lock
 
-class Operators:
 
+class Operators:
     @staticmethod
     def exhaust_lock(process_item):
         """
@@ -270,6 +282,7 @@ class Operators:
         - If we're busy processing the previous one, skip new items.
         - Use a lock to ensure concurrency safety across threads.
         """
+
         def _exhaust_lock(source: Observable) -> Observable:
             def _subscribe(observer, scheduler=None):
                 in_flight = False
@@ -327,7 +340,7 @@ class Operators:
                         on_next=inner_on_next,
                         on_error=inner_on_error,
                         on_completed=inner_on_completed,
-                        scheduler=scheduler
+                        scheduler=scheduler,
                     )
 
                 def on_error(err):
@@ -343,16 +356,14 @@ class Operators:
                             observer.on_completed()
 
                 upstream_disp = source.subscribe(
-                    on_next,
-                    on_error,
-                    on_completed,
-                    scheduler=scheduler
+                    on_next, on_error, on_completed, scheduler=scheduler
                 )
                 return dispose_all
 
             return create(_subscribe)
+
         return _exhaust_lock
-    
+
     @staticmethod
     def exhaust_lock_per_instance(process_item, lock: Lock):
         """
@@ -360,6 +371,7 @@ class Operators:
         - If a frame arrives while one is "in flight", discard it.
         - 'lock' ensures we safely check/modify the 'in_flight' state in a multithreaded environment.
         """
+
         def _exhaust_lock(source: Observable) -> Observable:
             def _subscribe(observer, scheduler=None):
                 in_flight = False
@@ -417,7 +429,7 @@ class Operators:
                         on_next=inner_on_next,
                         on_error=inner_on_error,
                         on_completed=inner_on_completed,
-                        scheduler=scheduler
+                        scheduler=scheduler,
                     )
 
                 def on_error(e):
@@ -436,12 +448,13 @@ class Operators:
                     on_next=on_next,
                     on_error=on_error,
                     on_completed=on_completed,
-                    scheduler=scheduler
+                    scheduler=scheduler,
                 )
 
                 return Disposable(dispose_all)
 
             return create(_subscribe)
+
         return _exhaust_lock
 
     @staticmethod
@@ -456,45 +469,47 @@ class Operators:
                         is_processing = True
                         print(f"\033[35mProcessing item.\033[0m")
                         try:
-                            inner_observable = project(item)  # Create the inner observable
+                            inner_observable = project(
+                                item
+                            )  # Create the inner observable
                             inner_observable.subscribe(
                                 on_next=observer.on_next,
                                 on_error=observer.on_error,
                                 on_completed=lambda: set_not_processing(),
-                                scheduler=scheduler
+                                scheduler=scheduler,
                             )
                         except Exception as e:
                             observer.on_error(e)
                     else:
                         print(f"\033[35mSkipping item, already processing.\033[0m")
-                
+
                 def set_not_processing():
                     nonlocal is_processing
                     is_processing = False
                     print(f"\033[35mItem processed.\033[0m")
 
                 return source.subscribe(
-                    on_next=on_next, 
-                    on_error=observer.on_error, 
-                    on_completed=observer.on_completed, 
-                    scheduler=scheduler
+                    on_next=on_next,
+                    on_error=observer.on_error,
+                    on_completed=observer.on_completed,
+                    scheduler=scheduler,
                 )
 
             return create(subscribe)
 
         return _exhaust_map
-    
+
     @staticmethod
     def with_lock(lock: Lock):
         def operator(source: Observable):
             def subscribe(observer, scheduler=None):
                 def on_next(item):
                     if not lock.locked():  # Check if the lock is free
-                        if lock.acquire(blocking=False): # Non-blocking acquire
+                        if lock.acquire(blocking=False):  # Non-blocking acquire
                             try:
                                 print(f"\033[32mAcquired lock, processing item.\033[0m")
                                 observer.on_next(item)
-                            finally: # Ensure lock release even if observer.on_next throws
+                            finally:  # Ensure lock release even if observer.on_next throws
                                 lock.release()
                         else:
                             print(f"\033[34mLock busy, skipping item.\033[0m")
@@ -508,13 +523,16 @@ class Operators:
                     observer.on_completed()
 
                 return source.subscribe(
-                    on_next=on_next, on_error=on_error, on_completed=on_completed, scheduler=scheduler
+                    on_next=on_next,
+                    on_error=on_error,
+                    on_completed=on_completed,
+                    scheduler=scheduler,
                 )
 
             return Observable(subscribe)
 
         return operator
-    
+
     @staticmethod
     def with_lock_check(lock: Lock):  # Renamed for clarity
         def operator(source: Observable):
@@ -534,7 +552,10 @@ class Operators:
                     observer.on_completed()
 
                 return source.subscribe(
-                    on_next=on_next, on_error=on_error, on_completed=on_completed, scheduler=scheduler
+                    on_next=on_next,
+                    on_error=on_error,
+                    on_completed=on_completed,
+                    scheduler=scheduler,
                 )
 
             return Observable(subscribe)
@@ -553,14 +574,16 @@ class Operators:
         RESET = "\033[0m"
 
     @staticmethod
-    def print_emission(id: str, 
-                       dev_name: str = "NA", 
-                       counts: dict = None, 
-                       color: 'Operators.PrintColor' = None, 
-                       enabled: bool = True):
+    def print_emission(
+        id: str,
+        dev_name: str = "NA",
+        counts: dict = None,
+        color: "Operators.PrintColor" = None,
+        enabled: bool = True,
+    ):
         """
         Creates an operator that prints the emission with optional counts for debugging.
-        
+
         Args:
             id: Identifier for the emission point (e.g., 'A', 'B')
             dev_name: Device or component name for context
@@ -573,7 +596,7 @@ class Operators:
         # If enabled is false, return the source unchanged
         if not enabled:
             return lambda source: source
-        
+
         # Use RED as default if no color provided
         if color is None:
             color = Operators.PrintColor.RED
@@ -585,24 +608,27 @@ class Operators:
                         # Initialize count if necessary
                         if id not in counts:
                             counts[id] = 0
-                    
+
                         # Increment and print
                         counts[id] += 1
-                        print(f"{color.value}({dev_name} - {id}) Emission Count - {counts[id]} {datetime.now()}{Operators.PrintColor.RESET.value}")
-                    else: 
-                        print(f"{color.value}({dev_name} - {id}) Emitted - {datetime.now()}{Operators.PrintColor.RESET.value}")
+                        print(
+                            f"{color.value}({dev_name} - {id}) Emission Count - {counts[id]} {datetime.now()}{Operators.PrintColor.RESET.value}"
+                        )
+                    else:
+                        print(
+                            f"{color.value}({dev_name} - {id}) Emitted - {datetime.now()}{Operators.PrintColor.RESET.value}"
+                        )
 
                     # Pass value through unchanged
                     observer.on_next(value)
-                    
+
                 return source.subscribe(
                     on_next=on_next,
                     on_error=observer.on_error,
                     on_completed=observer.on_completed,
-                    scheduler=scheduler
+                    scheduler=scheduler,
                 )
-            
+
             return create(_subscribe)
-        
+
         return _operator
-    

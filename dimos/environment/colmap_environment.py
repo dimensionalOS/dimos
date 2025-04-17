@@ -19,6 +19,7 @@ import pycolmap
 from pathlib import Path
 from dimos.environment.environment import Environment
 
+
 class COLMAPEnvironment(Environment):
     def initialize_from_images(self, image_dir):
         """Initialize the environment from a set of image frames or video."""

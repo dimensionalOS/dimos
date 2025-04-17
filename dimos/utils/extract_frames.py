@@ -17,6 +17,7 @@ import os
 import argparse
 from pathlib import Path
 
+
 def extract_frames(video_path, output_dir, frame_rate):
     """
     Extract frames from a video file at a specified frame rate.
@@ -63,11 +64,24 @@ def extract_frames(video_path, output_dir, frame_rate):
     cap.release()
     print(f"Extracted {saved_frame_count} frames to {output_dir}")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract frames from a video file.")
-    parser.add_argument("video_path", type=str, help="Path to the input .mov or .mp4 video file.")
-    parser.add_argument("--output_dir", type=str, default="frames", help="Directory to save extracted frames.")
-    parser.add_argument("--frame_rate", type=float, default=1.0, help="Frame rate at which to extract frames (frames per second).")
+    parser.add_argument(
+        "video_path", type=str, help="Path to the input .mov or .mp4 video file."
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="frames",
+        help="Directory to save extracted frames.",
+    )
+    parser.add_argument(
+        "--frame_rate",
+        type=float,
+        default=1.0,
+        help="Frame rate at which to extract frames (frames per second).",
+    )
 
     args = parser.parse_args()
 

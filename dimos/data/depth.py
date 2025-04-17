@@ -32,6 +32,7 @@ import csv
 import numpy as np
 from dimos.types.depth_map import DepthMapType
 
+
 class DepthProcessor:
     def __init__(self, debug=False):
         self.debug = debug
@@ -47,14 +48,13 @@ class DepthProcessor:
             print("Running in debug mode")
             self.logger.info("Running in debug mode")
 
-
     def process(self, frame: Image.Image, intrinsics=None):
         """Process a frame to generate a depth map.
-        
+
         Args:
             frame: PIL Image to process
             intrinsics: Optional camera intrinsics parameters
-        
+
         Returns:
             DepthMapType containing the depth map
         """
@@ -65,11 +65,13 @@ class DepthProcessor:
 
         # Convert frame to numpy array suitable for processing
         if isinstance(frame, Image.Image):
-            image = frame.convert('RGB')
+            image = frame.convert("RGB")
         elif isinstance(frame, np.ndarray):
             image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         else:
-            raise ValueError("Unsupported frame format. Must be PIL Image or numpy array.")
+            raise ValueError(
+                "Unsupported frame format. Must be PIL Image or numpy array."
+            )
 
         image_np = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
         image_np = resize_image_for_vit(image_np)
@@ -93,7 +95,9 @@ class DepthProcessor:
                 # Save depth map locally or to S3 as needed
                 pass  # Implement saving logic if required
 
-            return DepthMapType(depth_data=depth_map, metadata={"intrinsics": intrinsics})
+            return DepthMapType(
+                depth_data=depth_map, metadata={"intrinsics": intrinsics}
+            )
 
         except Exception as e:
             self.logger.error(f"Error processing frame: {e}")

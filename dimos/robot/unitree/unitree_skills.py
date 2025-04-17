@@ -21,8 +21,8 @@ from pydantic import Field
 if TYPE_CHECKING:
     from dimos.robot.robot import Robot, MockRobot
 else:
-    Robot = 'Robot'
-    MockRobot = 'MockRobot'
+    Robot = "Robot"
+    MockRobot = "MockRobot"
 
 from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
 from dimos.types.constants import Colors
@@ -31,134 +31,174 @@ from typing import Callable, Any, get_type_hints
 
 # Module-level constant for Unitree ROS control definitions
 UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
-    ("Damp", 1001,
-     "Lowers the robot to the ground fully."
+    ("Damp", 1001, "Lowers the robot to the ground fully."),
+    (
+        "BalanceStand",
+        1002,
+        "Activates a mode that maintains the robot in a balanced standing position.",
     ),
-    ("BalanceStand", 1002,
-     "Activates a mode that maintains the robot in a balanced standing position."
+    (
+        "StopMove",
+        1003,
+        "Immediately stops all ongoing movement commands to the robot, bringing it to a stationary position.",
     ),
-    ("StopMove", 1003,
-     "Immediately stops all ongoing movement commands to the robot, bringing it to a stationary position."
+    (
+        "StandUp",
+        1004,
+        "Commands the robot to transition from a sitting or prone position to a standing posture.",
     ),
-    ("StandUp", 1004,
-     "Commands the robot to transition from a sitting or prone position to a standing posture."
+    (
+        "StandDown",
+        1005,
+        "Instructs the robot to move from a standing position to a sitting or prone posture.",
     ),
-    ("StandDown", 1005,
-     "Instructs the robot to move from a standing position to a sitting or prone posture."
+    (
+        "RecoveryStand",
+        1006,
+        "Recovers the robot to a state from which it can take more commands. Useful to run after multiple dynamic commands like front flips.",
     ),
-    ("RecoveryStand", 1006,
-     "Recovers the robot to a state from which it can take more commands. Useful to run after multiple dynamic commands like front flips."
-    ),
-    ("Euler", 1007,
-     "Adjusts the robot's orientation using Euler angles, providing precise control over its rotation."
+    (
+        "Euler",
+        1007,
+        "Adjusts the robot's orientation using Euler angles, providing precise control over its rotation.",
     ),
     # ("Move", 1008, "Move the robot using velocity commands."),  # Intentionally omitted
-    ("Sit", 1009,
-     "Commands the robot to sit down from a standing or moving stance."),
-    ("RiseSit", 1010,
-     "Commands the robot to rise back to a standing position from a sitting posture."
+    ("Sit", 1009, "Commands the robot to sit down from a standing or moving stance."),
+    (
+        "RiseSit",
+        1010,
+        "Commands the robot to rise back to a standing position from a sitting posture.",
     ),
-    ("SwitchGait", 1011,
-     "Switches the robot's walking pattern or style dynamically, suitable for different terrains or speeds."
+    (
+        "SwitchGait",
+        1011,
+        "Switches the robot's walking pattern or style dynamically, suitable for different terrains or speeds.",
     ),
-    ("Trigger", 1012,
-     "Triggers a specific action or custom routine programmed into the robot."),
-    ("BodyHeight", 1013,
-     "Adjusts the height of the robot's body from the ground, useful for navigating various obstacles."
+    (
+        "Trigger",
+        1012,
+        "Triggers a specific action or custom routine programmed into the robot.",
     ),
-    ("FootRaiseHeight", 1014,
-     "Controls how high the robot lifts its feet during movement, which can be adjusted for different surfaces."
+    (
+        "BodyHeight",
+        1013,
+        "Adjusts the height of the robot's body from the ground, useful for navigating various obstacles.",
     ),
-    ("SpeedLevel", 1015,
-     "Sets or adjusts the speed at which the robot moves, with various levels available for different operational needs."
+    (
+        "FootRaiseHeight",
+        1014,
+        "Controls how high the robot lifts its feet during movement, which can be adjusted for different surfaces.",
     ),
-    ("Hello", 1016,
-     "Performs a greeting action, which could involve a wave or other friendly gesture."
+    (
+        "SpeedLevel",
+        1015,
+        "Sets or adjusts the speed at which the robot moves, with various levels available for different operational needs.",
     ),
-    ("Stretch", 1017,
-     "Engages the robot in a stretching routine."
+    (
+        "Hello",
+        1016,
+        "Performs a greeting action, which could involve a wave or other friendly gesture.",
     ),
-    ("TrajectoryFollow", 1018,
-     "Directs the robot to follow a predefined trajectory, which could involve complex paths or maneuvers."
+    ("Stretch", 1017, "Engages the robot in a stretching routine."),
+    (
+        "TrajectoryFollow",
+        1018,
+        "Directs the robot to follow a predefined trajectory, which could involve complex paths or maneuvers.",
     ),
-    ("ContinuousGait", 1019,
-     "Enables a mode for continuous walking or running, ideal for long-distance travel."
+    (
+        "ContinuousGait",
+        1019,
+        "Enables a mode for continuous walking or running, ideal for long-distance travel.",
     ),
-    ("Content", 1020,
-     "To display or trigger when the robot is happy."
+    ("Content", 1020, "To display or trigger when the robot is happy."),
+    ("Wallow", 1021, "The robot falls onto its back and rolls around."),
+    (
+        "Dance1",
+        1022,
+        "Performs a predefined dance routine 1, programmed for entertainment or demonstration.",
     ),
-    ("Wallow", 1021,
-     "The robot falls onto its back and rolls around."
+    ("Dance2", 1023, "Performs another variant of a predefined dance routine 2."),
+    (
+        "GetBodyHeight",
+        1024,
+        "Retrieves the current height of the robot's body from the ground.",
     ),
-    ("Dance1", 1022,
-     "Performs a predefined dance routine 1, programmed for entertainment or demonstration."
+    (
+        "GetFootRaiseHeight",
+        1025,
+        "Retrieves the current height at which the robot's feet are being raised during movement.",
     ),
-    ("Dance2", 1023,
-     "Performs another variant of a predefined dance routine 2."),
-    ("GetBodyHeight", 1024,
-     "Retrieves the current height of the robot's body from the ground."),
-    ("GetFootRaiseHeight", 1025,
-     "Retrieves the current height at which the robot's feet are being raised during movement."
+    (
+        "GetSpeedLevel",
+        1026,
+        "Returns the current speed level at which the robot is operating.",
     ),
-    ("GetSpeedLevel", 1026,
-     "Returns the current speed level at which the robot is operating."),
-    ("SwitchJoystick", 1027,
-     "Toggles the control mode to joystick input, allowing for manual direction of the robot's movements."
+    (
+        "SwitchJoystick",
+        1027,
+        "Toggles the control mode to joystick input, allowing for manual direction of the robot's movements.",
     ),
-    ("Pose", 1028,
-     "Directs the robot to take a specific pose or stance, which could be used for tasks or performances."
+    (
+        "Pose",
+        1028,
+        "Directs the robot to take a specific pose or stance, which could be used for tasks or performances.",
     ),
-    ("Scrape", 1029,
-     "Robot falls to its hind legs and makes scraping motions with its front legs."
+    (
+        "Scrape",
+        1029,
+        "Robot falls to its hind legs and makes scraping motions with its front legs.",
     ),
-    ("FrontFlip", 1030,
-     "Executes a front flip, a complex and dynamic maneuver."
+    ("FrontFlip", 1030, "Executes a front flip, a complex and dynamic maneuver."),
+    ("FrontJump", 1031, "Commands the robot to perform a forward jump."),
+    (
+        "FrontPounce",
+        1032,
+        "Initiates a pouncing movement forward, mimicking animal-like pouncing behavior.",
     ),
-    ("FrontJump", 1031,
-     "Commands the robot to perform a forward jump."
+    ("WiggleHips", 1033, "Causes the robot to wiggle its hips."),
+    (
+        "GetState",
+        1034,
+        "Retrieves the current operational state of the robot, including status reports or diagnostic information.",
     ),
-    ("FrontPounce", 1032,
-     "Initiates a pouncing movement forward, mimicking animal-like pouncing behavior."
+    (
+        "EconomicGait",
+        1035,
+        "Engages a more energy-efficient walking or running mode to conserve battery life.",
     ),
-    ("WiggleHips", 1033,
-     "Causes the robot to wiggle its hips."
+    ("FingerHeart", 1036, "Performs a finger heart gesture while on its hind legs."),
+    (
+        "Handstand",
+        1301,
+        "Commands the robot to perform a handstand, demonstrating balance and control.",
     ),
-    ("GetState", 1034,
-     "Retrieves the current operational state of the robot, including status reports or diagnostic information."
+    (
+        "CrossStep",
+        1302,
+        "Engages the robot in a cross-stepping routine, useful for complex locomotion or dance moves.",
     ),
-    ("EconomicGait", 1035,
-     "Engages a more energy-efficient walking or running mode to conserve battery life."
+    (
+        "OnesidedStep",
+        1303,
+        "Commands the robot to perform a stepping motion that predominantly uses one side.",
     ),
-    ("FingerHeart", 1036,
-     "Performs a finger heart gesture while on its hind legs."
+    (
+        "Bound",
+        1304,
+        "Initiates a bounding motion, similar to a light, repetitive hopping or leaping.",
     ),
-    ("Handstand", 1301,
-     "Commands the robot to perform a handstand, demonstrating balance and control."
+    (
+        "LeadFollow",
+        1045,
+        "Engages follow-the-leader behavior, where the robot follows a designated leader or follows a signal.",
     ),
-    ("CrossStep", 1302,
-     "Engages the robot in a cross-stepping routine, useful for complex locomotion or dance moves."
-    ),
-    ("OnesidedStep", 1303,
-     "Commands the robot to perform a stepping motion that predominantly uses one side."
-    ),
-    ("Bound", 1304,
-     "Initiates a bounding motion, similar to a light, repetitive hopping or leaping."
-    ),
-    ("LeadFollow", 1045,
-     "Engages follow-the-leader behavior, where the robot follows a designated leader or follows a signal."
-    ),
-    ("LeftFlip", 1042,
-     "Executes a flip towards the left side."
-    ),
-    ("RightFlip", 1043,
-     "Performs a flip towards the right side."
-    ),
-    ("Backflip", 1044,
-     "Executes a backflip, a complex and dynamic maneuver."
-    )
+    ("LeftFlip", 1042, "Executes a flip towards the left side."),
+    ("RightFlip", 1043, "Performs a flip towards the right side."),
+    ("Backflip", 1044, "Executes a backflip, a complex and dynamic maneuver."),
 ]
 
 # region MyUnitreeSkills
+
 
 class MyUnitreeSkills(SkillLibrary):
     """My Unitree Skills."""
@@ -166,9 +206,11 @@ class MyUnitreeSkills(SkillLibrary):
     _robot: Optional[Robot] = None
 
     @classmethod
-    def register_skills(cls, skill_classes: Union['AbstractSkill', list['AbstractSkill']]):
+    def register_skills(
+        cls, skill_classes: Union["AbstractSkill", list["AbstractSkill"]]
+    ):
         """Add multiple skill classes as class attributes.
-        
+
         Args:
             skill_classes: List of skill classes to add
         """
@@ -195,9 +237,11 @@ class MyUnitreeSkills(SkillLibrary):
 
         # Provide the robot instance to each skill
         for skill_class in self:
-            print(f"{Colors.GREEN_PRINT_COLOR}Creating instance for skill: {skill_class}{Colors.RESET_COLOR}")
+            print(
+                f"{Colors.GREEN_PRINT_COLOR}Creating instance for skill: {skill_class}{Colors.RESET_COLOR}"
+            )
             self.create_instance(skill_class.__name__, robot=self._robot)
-        
+
         # Refresh the class skills
         self.refresh_class_skills()
 
@@ -216,7 +260,8 @@ class MyUnitreeSkills(SkillLibrary):
                     raise RuntimeError(
                         f"{Colors.RED_PRINT_COLOR}"
                         f"No App ID provided to {self.__class__.__name__} Skill"
-                        f"{Colors.RESET_COLOR}")
+                        f"{Colors.RESET_COLOR}"
+                    )
                 else:
                     self._robot.webrtc_req(api_id=self._app_id)
                     string = f"{Colors.GREEN_PRINT_COLOR}{self.__class__.__name__} was successful: id={self._app_id}{Colors.RESET_COLOR}"
@@ -228,16 +273,14 @@ class MyUnitreeSkills(SkillLibrary):
             skill_class = type(
                 name,  # Name of the class
                 (BaseUnitreeSkill,),  # Base classes
-                {
-                    '__doc__': description,
-                    '_app_id': app_id
-                })
+                {"__doc__": description, "_app_id": app_id},
+            )
             skills_classes.append(skill_class)
 
         return skills_classes
 
     # region Class-based Skills
-    
+
     class Move(AbstractRobotSkill):
         """Move the robot forward using distance commands."""
 
@@ -251,7 +294,7 @@ class MyUnitreeSkills(SkillLibrary):
         """Reverse the robot using distance commands."""
 
         distance: float = Field(..., description="Distance to reverse in meters")
-        
+
         def __call__(self):
             super().__call__()
             return self._robot.reverse(distance=self.distance)
@@ -263,7 +306,9 @@ class MyUnitreeSkills(SkillLibrary):
 
         def __call__(self):
             super().__call__()
-            return self._robot.spin(degrees=self.degrees)  # Spinning left is positive degrees
+            return self._robot.spin(
+                degrees=self.degrees
+            )  # Spinning left is positive degrees
 
     class SpinRight(AbstractRobotSkill):
         """Spin the robot right using degree commands."""
@@ -272,7 +317,9 @@ class MyUnitreeSkills(SkillLibrary):
 
         def __call__(self):
             super().__call__()
-            return self._robot.spin(degrees=-self.degrees)  # Spinning right is negative degrees
+            return self._robot.spin(
+                degrees=-self.degrees
+            )  # Spinning right is negative degrees
 
     class MoveVel(AbstractRobotSkill):
         """Move the robot using direct velocity commands."""
@@ -280,11 +327,15 @@ class MyUnitreeSkills(SkillLibrary):
         x: float = Field(..., description="Forward/backward velocity (m/s)")
         y: float = Field(..., description="Left/right velocity (m/s)")
         yaw: float = Field(..., description="Rotational velocity (rad/s)")
-        duration: float = Field(..., description="How long to move (seconds). If 0, command is continuous")
+        duration: float = Field(
+            ..., description="How long to move (seconds). If 0, command is continuous"
+        )
 
         def __call__(self):
             super().__call__()
-            return self._robot.move_vel(x=self.x, y=self.y, yaw=self.yaw, duration=self.duration)
+            return self._robot.move_vel(
+                x=self.x, y=self.y, yaw=self.yaw, duration=self.duration
+            )
 
     class Wait(AbstractRobotSkill):
         """Wait for a specified amount of time."""
@@ -301,13 +352,15 @@ class MyUnitreeSkills(SkillLibrary):
         def __call__(self):
             super().__call__()
             return self._robot.follow_human()
-        
+
     class HelloAndStuff(AbstractRobotSkill):
         """Prints a hello message."""
 
         def __call__(self):
             print("Hi there!")
-            print(f"{Colors.MAGENTA_PRINT_COLOR}self._robot: {self._robot}{Colors.RESET_COLOR}")
+            print(
+                f"{Colors.MAGENTA_PRINT_COLOR}self._robot: {self._robot}{Colors.RESET_COLOR}"
+            )
             super().__call__()
             self._robot.my_print()
 

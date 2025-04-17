@@ -22,7 +22,6 @@ from dimos.utils.logging_config import setup_logger
 
 
 class AbstractTokenizer(ABC):
-
     @abstractmethod
     def tokenize_text(self, text):
         pass

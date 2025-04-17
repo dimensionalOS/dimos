@@ -19,7 +19,7 @@ import time
 from queue import Queue
 from typing import Any, Callable, Literal
 
-#from dimos.data.recording import Recorder
+# from dimos.data.recording import Recorder
 
 
 class RobotRecorder:
@@ -125,7 +125,11 @@ class RobotRecorder:
         """Processes the recording queue asynchronously."""
         while True:
             image, instruction, action, state = self.recording_queue.get()
-            self.recorder.record(observation={"image": image, "instruction": instruction}, action=action, state=state)
+            self.recorder.record(
+                observation={"image": image, "instruction": instruction},
+                action=action,
+                state=state,
+            )
             self.recording_queue.task_done()
 
     def record_current_state(self) -> None:

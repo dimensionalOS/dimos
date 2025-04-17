@@ -36,6 +36,7 @@ load_dotenv()
 # Initialize logger for the Claude agent
 logger = setup_logger("dimos.agents.claude")
 
+
 class ClaudeAgent(LLMAgent):
     """Claude agent implementation that uses Anthropic's API for processing.
 
@@ -43,28 +44,30 @@ class ClaudeAgent(LLMAgent):
     and overrides _build_prompt to create Claude-formatted messages directly.
     """
 
-    def __init__(self,
-                 dev_name: str,
-                 agent_type: str = "Vision",
-                 query: str = "What do you see?",
-                 input_query_stream: Optional[Observable] = None,
-                 input_video_stream: Optional[Observable] = None,
-                 output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
-                 agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-                 system_query: Optional[str] = None,
-                 max_input_tokens_per_request: int = 128000,
-                 max_output_tokens_per_request: int = 16384,
-                 model_name: str = "claude-3-7-sonnet-20250219",
-                 prompt_builder: Optional[PromptBuilder] = None,
-                 rag_query_n: int = 4,
-                 rag_similarity_threshold: float = 0.45,
-                 skills: Optional[AbstractSkill] = None,
-                 response_model: Optional[BaseModel] = None,
-                 frame_processor: Optional[FrameProcessor] = None,
-                 image_detail: str = "low",
-                 pool_scheduler: Optional[ThreadPoolScheduler] = None,
-                 process_all_inputs: Optional[bool] = None,
-                 thinking_budget_tokens: Optional[int] = None):
+    def __init__(
+        self,
+        dev_name: str,
+        agent_type: str = "Vision",
+        query: str = "What do you see?",
+        input_query_stream: Optional[Observable] = None,
+        input_video_stream: Optional[Observable] = None,
+        output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
+        agent_memory: Optional[AbstractAgentSemanticMemory] = None,
+        system_query: Optional[str] = None,
+        max_input_tokens_per_request: int = 128000,
+        max_output_tokens_per_request: int = 16384,
+        model_name: str = "claude-3-7-sonnet-20250219",
+        prompt_builder: Optional[PromptBuilder] = None,
+        rag_query_n: int = 4,
+        rag_similarity_threshold: float = 0.45,
+        skills: Optional[AbstractSkill] = None,
+        response_model: Optional[BaseModel] = None,
+        frame_processor: Optional[FrameProcessor] = None,
+        image_detail: str = "low",
+        pool_scheduler: Optional[ThreadPoolScheduler] = None,
+        process_all_inputs: Optional[bool] = None,
+        thinking_budget_tokens: Optional[int] = None,
+    ):
         """
         Initializes a new instance of the ClaudeAgent.
 
@@ -98,16 +101,16 @@ class ClaudeAgent(LLMAgent):
                 process_all_inputs = True
             else:
                 process_all_inputs = False
-                
+
         super().__init__(
             dev_name=dev_name,
             agent_type=agent_type,
             agent_memory=agent_memory,
             pool_scheduler=pool_scheduler,
             process_all_inputs=process_all_inputs,
-            system_query=system_query
+            system_query=system_query,
         )
-        
+
         self.client = anthropic.Anthropic()
         self.query = query
         self.output_dir = output_dir
@@ -116,10 +119,10 @@ class ClaudeAgent(LLMAgent):
         # Claude-specific parameters
         self.thinking_budget_tokens = thinking_budget_tokens
         self.claude_api_params = {}  # Will store params for Claude API calls
-        
+
         # Configure skills
         self.skills = skills
-        
+
         self.response_model = response_model
         self.model_name = model_name
         self.rag_query_n = rag_query_n
@@ -127,7 +130,9 @@ class ClaudeAgent(LLMAgent):
         self.image_detail = image_detail
         self.max_output_tokens_per_request = max_output_tokens_per_request
         self.max_input_tokens_per_request = max_input_tokens_per_request
-        self.max_tokens_per_request = max_input_tokens_per_request + max_output_tokens_per_request
+        self.max_tokens_per_request = (
+            max_input_tokens_per_request + max_output_tokens_per_request
+        )
 
         # Add static context to memory.
         self._add_context_to_memory()
@@ -145,78 +150,88 @@ class ClaudeAgent(LLMAgent):
         if self.input_video_stream is not None:
             logger.info("Subscribing to input video stream...")
             self.disposables.add(
-                self.subscribe_to_image_processing(self.input_video_stream))
+                self.subscribe_to_image_processing(self.input_video_stream)
+            )
         if self.input_query_stream is not None:
             logger.info("Subscribing to input query stream...")
             self.disposables.add(
-                self.subscribe_to_query_processing(self.input_query_stream))
+                self.subscribe_to_query_processing(self.input_query_stream)
+            )
 
         logger.info("Claude Agent Initialized.")
 
     def _add_context_to_memory(self):
         """Adds initial context to the agent's memory."""
         context_data = [
-            ("id0",
-             "Optical Flow is a technique used to track the movement of objects in a video sequence."
-             ),
-            ("id1",
-             "Edge Detection is a technique used to identify the boundaries of objects in an image."
-             ),
-            ("id2",
-             "Video is a sequence of frames captured at regular intervals."),
-            ("id3",
-             "Colors in Optical Flow are determined by the movement of light, and can be used to track the movement of objects."
-             ),
-            ("id4",
-             "Json is a data interchange format that is easy for humans to read and write, and easy for machines to parse and generate."
-             ),
+            (
+                "id0",
+                "Optical Flow is a technique used to track the movement of objects in a video sequence.",
+            ),
+            (
+                "id1",
+                "Edge Detection is a technique used to identify the boundaries of objects in an image.",
+            ),
+            ("id2", "Video is a sequence of frames captured at regular intervals."),
+            (
+                "id3",
+                "Colors in Optical Flow are determined by the movement of light, and can be used to track the movement of objects.",
+            ),
+            (
+                "id4",
+                "Json is a data interchange format that is easy for humans to read and write, and easy for machines to parse and generate.",
+            ),
         ]
         for doc_id, text in context_data:
             self.agent_memory.add_vector(doc_id, text)
 
-    def _convert_tools_to_claude_format(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_tools_to_claude_format(
+        self, tools: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """
         Converts DIMOS tools to Claude format.
-        
+
         Args:
             tools: List of tools in DIMOS format.
-            
+
         Returns:
             List of tools in Claude format.
         """
         if not tools:
             return []
-            
+
         claude_tools = []
-        
+
         for tool in tools:
             # Skip if not a function
-            if tool.get('type') != 'function':
+            if tool.get("type") != "function":
                 continue
-                
-            function = tool.get('function', {})
-            name = function.get('name')
-            description = function.get('description', '')
-            parameters = function.get('parameters', {})
-            
+
+            function = tool.get("function", {})
+            name = function.get("name")
+            description = function.get("description", "")
+            parameters = function.get("parameters", {})
+
             claude_tool = {
                 "name": name,
                 "description": description,
                 "input_schema": {
                     "type": "object",
-                    "properties": parameters.get('properties', {}),
-                    "required": parameters.get('required', []),
-                }
+                    "properties": parameters.get("properties", {}),
+                    "required": parameters.get("required", []),
+                },
             }
-            
+
             claude_tools.append(claude_tool)
-            
+
         return claude_tools
 
-    def _build_prompt(self, base64_image: Optional[str],
-                      dimensions: Optional[Tuple[int, int]],
-                      override_token_limit: bool,
-                      condensed_results: str) -> dict:
+    def _build_prompt(
+        self,
+        base64_image: Optional[str],
+        dimensions: Optional[Tuple[int, int]],
+        override_token_limit: bool,
+        condensed_results: str,
+    ) -> dict:
         """Builds a prompt message specifically for Claude API.
 
         This method creates messages in Claude's format directly, without using
@@ -233,63 +248,65 @@ class ClaudeAgent(LLMAgent):
         """
         # Build Claude message content
         claude_content = []
-        
+
         # Add RAG context and query as text
         text_content = ""
         if condensed_results:
             text_content += f"{condensed_results}\n\n"
         text_content += self.query
-        
+
         claude_content.append({"type": "text", "text": text_content})
-        
+
         # Add image if present
         if base64_image:
-            claude_content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": base64_image
+            claude_content.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": base64_image,
+                    },
                 }
-            })
-        
+            )
+
         # Create Claude messages
         claude_messages = [{"role": "user", "content": claude_content}]
-        
+
         # Build complete Claude parameters
         claude_params = {
             "messages": claude_messages,
             "model": self.model_name,
             "max_tokens": self.max_output_tokens_per_request,
-            "temperature": 0  # Add temperature to make responses more deterministic
+            "temperature": 0,  # Add temperature to make responses more deterministic
         }
-        
+
         # Add system prompt if present
         if self.system_query:
             claude_params["system"] = self.system_query
-            
+
         # Add tools if skills are available
         if self.skills and self.skills.get_tools():
             tools = self._convert_tools_to_claude_format(self.skills.get_tools())
             if tools:  # Only add if we have valid tools
                 claude_params["tools"] = tools
                 # Enable tool calling with proper format
-                claude_params["tool_choice"] = {
-                    "type": "auto"
-                }
-            
+                claude_params["tool_choice"] = {"type": "auto"}
+
         # Add thinking if enabled and hard code required temperature = 1
         if self.thinking_budget_tokens is not None:
             claude_params["thinking"] = {
                 "type": "enabled",
-                "budget_tokens": self.thinking_budget_tokens
+                "budget_tokens": self.thinking_budget_tokens,
             }
-            claude_params["temperature"] = 1  # Required to be 1 when thinking is enabled # Default to 0 for deterministic responses
-            
+            claude_params["temperature"] = (
+                1  # Required to be 1 when thinking is enabled # Default to 0 for deterministic responses
+            )
+
         # Store the parameters for use in _send_query
         self.claude_api_params = claude_params
-            
-        return {'claude_prompt': claude_params}
+
+        return {"claude_prompt": claude_params}
 
     def _send_query(self, messages: dict) -> Any:
         """Sends the query to Anthropic's API.
@@ -302,41 +319,54 @@ class ClaudeAgent(LLMAgent):
         """
         try:
             # Get Claude parameters
-            claude_params = (messages.get('claude_prompt', None) or 
-                           self.claude_api_params)
-            
+            claude_params = (
+                messages.get("claude_prompt", None) or self.claude_api_params
+            )
+
             # Make the API call
             logger.info(f"Sending request to Claude API")
-            logger.debug(f"Sending request to Claude API with params: {json.dumps(claude_params, indent=2)}")
+            logger.debug(
+                f"Sending request to Claude API with params: {json.dumps(claude_params, indent=2)}"
+            )
             response = self.client.messages.create(**claude_params)
-            
+
             # Response object compatible with LLMAgent TODO: Fix OpenAI specific format
             class ResponseMessage:
                 def __init__(self, content, tool_calls=None):
                     self.content = content
                     self.tool_calls = tool_calls
                     self.parsed = None
-            
+
             # Extract text content and tool calls from response content array
             text_content = ""
             tool_calls = []
-            
+
             for content_block in response.content:
-                if content_block.type == 'text':
+                if content_block.type == "text":
                     text_content += content_block.text
-                elif content_block.type == 'tool_use':
+                elif content_block.type == "tool_use":
                     # Create a tool call object that matches OpenAI's format
-                    tool_call_obj = type('ToolCall', (), {
-                        'id': content_block.id,
-                        'function': type('Function', (), {
-                            'name': content_block.name,
-                            'arguments': json.dumps(content_block.input)
-                        })
-                    })
+                    tool_call_obj = type(
+                        "ToolCall",
+                        (),
+                        {
+                            "id": content_block.id,
+                            "function": type(
+                                "Function",
+                                (),
+                                {
+                                    "name": content_block.name,
+                                    "arguments": json.dumps(content_block.input),
+                                },
+                            ),
+                        },
+                    )
                     tool_calls.append(tool_call_obj)
-            
-            return ResponseMessage(content=text_content, tool_calls=tool_calls if tool_calls else None)
-            
+
+            return ResponseMessage(
+                content=text_content, tool_calls=tool_calls if tool_calls else None
+            )
+
         except ConnectionError as ce:
             logger.error(f"Connection error with Anthropic API: {ce}")
             raise
@@ -347,24 +377,28 @@ class ClaudeAgent(LLMAgent):
             logger.error(f"Unexpected error in Anthropic API call: {e}")
             logger.exception(e)  # This will print the full traceback
             raise
+
     def _handle_tooling(self, response_message, messages):
         """Override of LLMAgent._handle_tooling to handle Claude's message format.
-        
+
         Args:
             response_message: The response message containing tool calls
             messages: Dict containing Claude API parameters
-            
+
         Returns:
             The final response after handling tools, or None if no further processing needed
         """
-        
-        if not hasattr(response_message, 'tool_calls') or not response_message.tool_calls:
+
+        if (
+            not hasattr(response_message, "tool_calls")
+            or not response_message.tool_calls
+        ):
             logger.info("No tool calls found in response message")
             return None
-            
+
         has_called_tools = False
         tool_results = []
-        
+
         # First collect all tool results
         for tool_call in response_message.tool_calls:
             has_called_tools = True
@@ -373,21 +407,31 @@ class ClaudeAgent(LLMAgent):
             result = self.skills.call(name, **args)
             logger.debug(f"Function Call Results: {result}")
             tool_results.append(f"Tool '{name}' returned: {result}")
-        
+
         if has_called_tools:
             # Only append non-empty messages
             if response_message.content.strip():
-                messages['claude_prompt']['messages'].append({
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": response_message.content}]
-                })
-            
+                messages["claude_prompt"]["messages"].append(
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": response_message.content}],
+                    }
+                )
+
             # Add tool results
-            messages['claude_prompt']['messages'].append({
-                "role": "user",
-                "content": [{"type": "text", "text": "Tool execution results:\n" + "\n".join(tool_results)}]
-            })
-            
+            messages["claude_prompt"]["messages"].append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Tool execution results:\n"
+                            + "\n".join(tool_results),
+                        }
+                    ],
+                }
+            )
+
             return self._send_query(messages)
-        
+
         return None
