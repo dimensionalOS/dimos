@@ -2,7 +2,7 @@ import pickle
 import math
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, List, Union
 from scipy import ndimage
 
 
@@ -363,7 +363,7 @@ class Costmap:
         # Show the plot
         if show:
             plt.tight_layout()
-            plt.show()
+            plt.show(block=False)
 
         return fig
 
@@ -377,3 +377,7 @@ if __name__ == "__main__":
     # Plot the costmap with special handling for unknown (-1) cells and meter grid
     costmap.plot()
     costmap.smudge(kernel_size=5, iterations=10).plot()
+
+    # block, wait for input and exit
+
+    input("press any key")
