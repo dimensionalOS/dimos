@@ -130,6 +130,19 @@ class ROSTransformAbility:
         try:
             # Look up transform
             transform = self._tf_buffer.lookup_transform(
+                parent_frame,
+                child_frame,
+                rclpy.time.Time(),
+                rclpy.duration.Duration(seconds=timeout),
+            )
+            return transform
+        except (
+            tf2_ros.LookupException,
+            tf2_ros.ConnectivityException,
+            tf2_ros.ExtrapolationException,
+        ) as e:
+            logger.error(f"Transform lookup failed: {e}")
+            return None
 
 
 class ROSTransformRXAbility:

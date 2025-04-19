@@ -261,6 +261,7 @@ class ROSControl(ROSTransformAbility, ROSTransformRXAbility, ABC):
             # Start the queue processing thread
             self._command_queue.start()
         else:
+            logger.warning("No WebRTC topic provided - WebRTC commands will be unavailable")
 
         # Initialize TF Buffer and Listener for transform abilities
         self._tf_buffer = tf2_ros.Buffer()
