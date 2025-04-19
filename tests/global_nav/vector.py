@@ -30,6 +30,11 @@ class Vector:
         return self.x
 
     @property
+    def tuple(self) -> Tuple[float, ...]:
+        """Tuple representation of the vector."""
+        return tuple(self._data)
+
+    @property
     def x(self) -> float:
         """X component of the vector."""
         return self._data[0] if len(self._data) > 0 else 0.0
