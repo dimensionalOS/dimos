@@ -10,9 +10,6 @@ Usage:
 
   # Skip build and just query:
   python simple_navigation_test.py --skip-build --query "kitchen"
-
-  # Specify a different query:
-  python simple_navigation_test.py --query "office"
 """
 
 import os
