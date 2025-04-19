@@ -24,13 +24,12 @@ RUN wget https://raw.githubusercontent.com/oh-my-fish/oh-my-fish/master/bin/inst
     fish install --noninteractive && \
     rm install
     
+RUN fish -c "omf install fzf-autojump" 
+RUN fish -c "omf install boxfish" 
 
 RUN mkdir /app/.shell && mkdir -p ./.local/share/autojump/
 RUN touch /app/.shell/.autojump.txt; ln -s /app/.shell/.autojump.txt ./.local/share/autojump/autojump.txt
 RUN touch /app/.shell/fish_history; ln -s /app/.shell/fish_history ~/.local/share/fish/fish_history
-
-RUN fish -c "omf install fzf-autojump" 
-RUN fish -c "omf install boxfish" 
 
 COPY init.fish /root/.config/omf/init.fish
 
@@ -44,5 +43,3 @@ RUN echo "echo -e '\033[34m$(cat /etc/motd)\033[0m\n'" >> /root/.bashrc
 RUN git config --global --add safe.directory /app
 
 RUN echo "source /root/.bash.sh" >> /root/.bashrc
-
-

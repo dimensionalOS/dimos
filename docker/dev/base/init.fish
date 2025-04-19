@@ -16,9 +16,10 @@ alias pdn 'p dns'
 alias s 'sudo -iu root'
 alias ccze 'ccze -o nolookups -A'
 
-function fish_greeting
-    cat /etc/motd
-    echo ""
-end
-
 bind \cj __fzf_autojump
+
+function fish_greeting
+    echo -e "\033[34m"
+    cat /etc/motd
+    echo -e "\033[0m"
+end
