@@ -68,11 +68,12 @@ class VFHPurePursuitPlanner:
         self.selected_direction = None
         
         # VFH parameters
-        self.alpha = 0.25  # Histogram smoothing factor
-        self.obstacle_weight = 3.0
+        self.alpha = 0.2  # Histogram smoothing factor
+        self.obstacle_weight = 2.0
         self.goal_weight = 1.0
         self.prev_direction_weight = 0.5
         self.prev_selected_angle = 0.0
+        self.goal_distance_scale_factor = 3.0
         self.goal_xy = None  # Default goal position (odom frame)
     
     def set_goal(self, goal_xy: Tuple[float, float], is_robot_frame: bool = True):
@@ -121,10 +122,14 @@ class VFHPurePursuitPlanner:
         
         if goal_distance < self.goal_tolerance:
             return {'x_vel': 0.0, 'angular_vel': 0.0}
-        
+
+        goal_distance_scale = 1.0
+        if goal_distance < self.goal_tolerance * self.goal_distance_scale_factor:
+            goal_distance_scale = 1.0 / (goal_distance / (self.goal_tolerance * self.goal_distance_scale_factor))
+
         self.histogram = self.build_polar_histogram(occupancy_grid, grid_info, robot_pose)
         self.selected_direction = self.select_direction(
-            self.goal_weight,
+            self.goal_weight * goal_distance_scale,
             self.obstacle_weight,
             self.prev_direction_weight,
             self.histogram, 
@@ -426,7 +431,7 @@ class VFHPurePursuitPlanner:
             return False  # Can't determine collision if outside bounds
 
     def adjust_goal_to_valid_position(self, goal_xy: Tuple[float, float], minimum_distance: float = None) -> Tuple[float, float]:
-        """Find a valid (non-colliding) goal position using ray casting from robot to goal.
+        """Find a valid (non-colliding) goal position by moving it towards the robot.
         
         Args:
             goal_xy: Original goal position (x, y) in odom frame
@@ -436,119 +441,58 @@ class VFHPurePursuitPlanner:
         Returns:
             Tuple[float, float]: A valid goal position, or the original goal if already valid
         """
-        # Use class safety threshold if no specific distance provided
-        if minimum_distance is None:
-            minimum_distance = self.safety_threshold
             
-        # Check if goal is already valid
-        if not self.check_goal_collision():
-            return goal_xy
-            
-        # Get required data
-        costmap_msg = self.robot.ros_control.get_costmap()
+        # Get robot position
         odom = self.robot.ros_control.get_odometry()
-        if costmap_msg is None or odom is None:
+        if odom is None:
             return goal_xy
             
-        # Set up costmap grid and coordinates
-        grid, grid_info, origin = ros_msg_to_numpy_grid(costmap_msg)
-        _, _, resolution = grid_info
-        origin_x, origin_y, _ = origin
-        height, width = grid.shape
-        collision_threshold = 80
-        
-        # Calculate minimum distance in grid cells
-        minimum_cells = max(1, int(minimum_distance / resolution))
-        
-        # Get robot and goal positions in both coordinate systems
         robot_pose = ros_msg_to_pose_tuple(odom)
         robot_x, robot_y = robot_pose[0], robot_pose[1]
+        
+        # Original goal
         goal_x, goal_y = goal_xy
         
-        # Convert to grid coordinates
-        robot_cell_x = int((robot_x - origin_x) / resolution)
-        robot_cell_y = int((robot_y - origin_y) / resolution)
-        goal_cell_x = int((goal_x - origin_x) / resolution)
-        goal_cell_y = int((goal_y - origin_y) / resolution)
+        # Calculate vector from goal to robot
+        dx = robot_x - goal_x
+        dy = robot_y - goal_y
+        distance = np.sqrt(dx*dx + dy*dy)
         
-        # Check bounds and clip if needed
-        if not (0 <= robot_cell_x < width and 0 <= robot_cell_y < height):
+        if distance < 0.001:  # Goal is at robot position
             return goal_xy
             
-        goal_cell_x = max(0, min(goal_cell_x, width - 1))
-        goal_cell_y = max(0, min(goal_cell_y, height - 1))
+        # Normalize direction vector
+        dx /= distance
+        dy /= distance
         
-        # Use Bresenham's line algorithm for ray casting
-        points = self.bresenham_line(robot_cell_x, robot_cell_y, goal_cell_x, goal_cell_y)
+        # Step size
+        step_size = 0.25  # meters
         
-        # Find last safe point with minimum distance from obstacles
-        last_safe_x, last_safe_y = robot_cell_x, robot_cell_y
-        for i, (px, py) in enumerate(points):
-            # Skip checking first point (robot position)
-            if i == 0:
-                continue
-                
-            if not (0 <= px < width and 0 <= py < height):
-                continue
-                
-            # Check for collision at current point
-            if grid[py, px] >= collision_threshold:
-                # We hit an obstacle, stop searching
-                break
-                
-            # Check nearby cells for minimum distance requirement
-            meets_min_distance = True
+        # Move goal towards robot step by step
+        current_x, current_y = goal_x, goal_y
+        steps = 0
+        max_steps = 50  # Safety limit
+        
+        while steps < max_steps:
+            # Move towards robot
+            current_x += dx * step_size
+            current_y += dy * step_size
+            steps += 1
             
-            # Scan a square area around the point
-            for dx in range(-minimum_cells, minimum_cells + 1):
-                for dy in range(-minimum_cells, minimum_cells + 1):
-                    nx, ny = px + dx, py + dy
-                    # Skip checking out of bounds points
-                    if not (0 <= nx < width and 0 <= ny < height):
-                        continue
-                        
-                    # Calculate actual distance in cells
-                    cell_dist = np.sqrt(dx**2 + dy**2)
-                    if cell_dist <= minimum_cells and grid[ny, nx] >= collision_threshold:
-                        meets_min_distance = False
-                        break
-                        
-                if not meets_min_distance:
-                    break
-                    
-            if meets_min_distance:
-                # This point is safe and has minimum distance from obstacles
-                last_safe_x, last_safe_y = px, py
-            else:
-                # Found a point too close to obstacles, stop here
+            # Check if we've reached or passed the robot
+            new_distance = np.sqrt((current_x - robot_x)**2 + (current_y - robot_y)**2)
+            if new_distance < step_size:
+                # We've reached the robot without finding a valid point
+                # Move back one step from robot to avoid self-collision
+                current_x = robot_x - dx * step_size
+                current_y = robot_y - dy * step_size
                 break
-        
-        # Convert back to odom coordinates
-        safe_odom_x = origin_x + (last_safe_x + 0.5) * resolution
-        safe_odom_y = origin_y + (last_safe_y + 0.5) * resolution
-        
-        logger.info(f"Adjusted goal to ({safe_odom_x:.2f}, {safe_odom_y:.2f}) with min distance {minimum_distance}m from obstacles")
-        return (safe_odom_x, safe_odom_y)
-        
-    def bresenham_line(self, x0: int, y0: int, x1: int, y1: int) -> list:
-        """Bresenham's line algorithm to find points along a line between (x0,y0) and (x1,y1)."""
-        points = []
-        dx = abs(x1 - x0)
-        dy = abs(y1 - y0)
-        sx = 1 if x0 < x1 else -1
-        sy = 1 if y0 < y1 else -1
-        err = dx - dy
-        
-        while True:
-            points.append((x0, y0))
-            if x0 == x1 and y0 == y1:
-                break
-            e2 = 2 * err
-            if e2 > -dy:
-                err -= dy
-                x0 += sx
-            if e2 < dx:
-                err += dx
-                y0 += sy
                 
-        return points
+            # Check if this position is valid
+            self.goal_xy = (current_x, current_y)
+            if not self.check_goal_collision():
+                logger.info(f"Found valid goal at ({current_x:.2f}, {current_y:.2f})")
+                return (current_x, current_y)
+                
+        logger.warning(f"Could not find valid goal after {steps} steps, using closest point to robot")
+        return (current_x, current_y)
