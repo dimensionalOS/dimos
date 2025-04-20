@@ -2,7 +2,6 @@ import functools
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
-from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 from rxpy_backpressure import BackPressure
 
@@ -38,12 +37,11 @@ class ROSObservableTopicAbility:
         topic_name: str,
         msg_type: msg,
         qos=sensor_qos,
-        *,
         scheduler: ThreadPoolScheduler | None = None,
         drop_unprocessed: bool = True,
     ) -> rx.Observable:
         if scheduler is None:
-            scheduler = ThreadPoolScheduler()  # reuse the pool
+            scheduler = get_scheduler()
 
         # upstream ROS callback
         def _on_subscribe(obs, _):
