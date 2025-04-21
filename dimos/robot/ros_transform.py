@@ -13,20 +13,27 @@
 # limitations under the License.
 
 import rclpy
-import time
 from typing import Optional
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import Buffer
 import tf2_ros
 from dimos.utils.logging_config import setup_logger
-from reactivex import operators as ops, Observable
-import reactivex as rx
-from dimos.utils.threadpool import get_scheduler
+from dimos.robot.global_planner.vector import Vector
+from scipy.spatial.transform import Rotation as R
 
 
 logger = setup_logger("dimos.robot.ros_transform")
 
 __all__ = ["ROSTransformAbility"]
+
+
+def transform_to_euler(msg: TransformStamped) -> [Vector, Vector]:
+    q = msg.transform.rotation
+    rotation = R.from_quat([q.x, q.y, q.z, q.w])
+    return [
+        Vector(msg.transform.translation).to_2d(),
+        Vector(rotation.as_euler("zyx", degrees=False)),
+    ]
 
 
 class ROSTransformAbility:
@@ -41,26 +48,10 @@ class ROSTransformAbility:
 
         return self._tf_buffer
 
+    def euler_transform(self, child_frame: str, parent_frame: str = "map", timeout: float = 1.0):
+        return transform_to_euler(self.transform(child_frame, parent_frame, timeout))
+
     def transform(
-        self, child_frame: str, frequency=10, parent_frame="map", timeout=1.0
-    ) -> Observable:
-        # sometimes it takes time for the transform to become available
-        # so we ignore errors
-        def get_transform():
-            try:
-                return self.get_transform(child_frame, parent_frame, timeout)
-            except:
-                time.sleep(0.1)
-                return None
-
-        return rx.interval(1 / frequency, scheduler=get_scheduler()).pipe(
-            ops.flat_map_latest(lambda _: rx.from_callable(get_transform)),
-            ops.filter(lambda x: x is not None),
-            ops.replay(buffer_size=1),
-            ops.ref_count(),
-        )
-
-    def get_transform(
         self, child_frame: str, parent_frame: str = "map", timeout: float = 1.0
     ) -> Optional[TransformStamped]:
         try:
