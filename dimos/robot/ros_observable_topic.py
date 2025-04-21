@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import asyncio
 import functools
 import reactivex as rx
 from reactivex import operators as ops
@@ -99,41 +99,38 @@ class ROSObservableTopicAbility:
         # each `.subscribe()` call gets its own async backpressure chain
         return rx.defer(lambda *_: per_sub())
 
-    # Returns an async function that let's you fetch the latest value from the topic.
+    # if you are not interested in processing streams, just want to fetch the latest stream
+    # value in a sync fashion, use this function.
     #
-    # usage:
-    #    costmap = robot.ros_control.topic_value("map", msg.OccupancyGrid, timeout=10)
-    #    await costmap()
-    #    costmap.dispose()  # clean up the subscription
+    # odom = await robot.topic_latest("/odom", msg.Odometry)
     #
-    # TODO: we could have a diff approach. topic_value is async, it awaits for the first value in the stream.
-    # but follow up calls to topic_value would not be async, they would just return the latest value.
+    # any time you'd like you can call:
+    # print(f"Latest odom: {odom()}")
+    # odom.dispose()  # clean up the subscription
     #
-    # also we can ensure that it's using self.topic correctly and when all topic_values are disposed sub should
-    # stop, and given that first topic_value is initialized (got the first message), second one should be immediate
-    # since self.topic if caching the last message.
-    #
-    # (test if we basically get this behaviour by doing:
-    #
-    # bla = topic_value()
-    # await bla()
-    # (follow up awaits should take no time)
-    #
-    def topic_value(self, topic_name: str, msg_type: msg, qos=sensor_qos, timeout: float | None = None):
-        source = self.topic(topic_name, msg_type, qos, latest_only=False)
+    # see test_ros_observable_topic.py test_topic_latest for more details
+    async def topic_latest(self, topic_name: str, msg_type: msg, qos=sensor_qos, timeout: float = 10.0):
+        loop = asyncio.get_running_loop()
+        first = loop.create_future()
+        cache = {"val": None}
 
-        # Cache exactly one element and start the ROS subscription immediately.
-        connectable = source.pipe(ops.replay(buffer_size=1))
-        connection = connectable.connect()  # returns a Disposable
+        core = self.topic(topic_name, msg_type)  # single ROS callback
 
-        # Helper that picks off the latest element.
-        async def read_value():
-            obs = connectable.pipe(ops.take(1))
-            if timeout is not None:
-                obs = obs.pipe(ops.timeout(timeout))
-            return await obs.to_future()
+        def _on_next(v):
+            cache["val"] = v
+            if not first.done():
+                loop.call_soon_threadsafe(first.set_result, v)
 
-        # Ensure the caller can clean up after itself.
-        read_value.dispose = lambda: connection.dispose()
+        subscription = core.subscribe(_on_next)
 
-        return read_value
+        try:
+            await asyncio.wait_for(first, timeout)
+        except Exception:
+            subscription.dispose()
+            raise
+
+        def reader():
+            return cache["val"]
+
+        reader.dispose = subscription.dispose
+        return reader

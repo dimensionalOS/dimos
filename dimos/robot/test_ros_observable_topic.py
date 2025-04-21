@@ -2,9 +2,10 @@
 import threading
 import time
 from nav_msgs import msg
-
+import pytest
 from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
 from dimos.utils.logging_config import setup_logger
+import asyncio
 
 
 class MockROSNode:
@@ -85,14 +86,10 @@ def test_parallel_and_cleanup():
     #        [2, 3, 5, 2, 3, 5]
     #        =
     for i in [3, 4, 6, 4, 5, 7]:
-        assert i in received_messages, (
-            f"Expected {i} in received messages, got {received_messages}"
-        )
+        assert i in received_messages, f"Expected {i} in received messages, got {received_messages}"
 
     # ensure that ROS end has only a single subscription
-    assert len(robot._node.subs) == 1, (
-        f"Expected 1 subscription, got {len(robot._node.subs)}: {robot._node.subs}"
-    )
+    assert len(robot._node.subs) == 1, f"Expected 1 subscription, got {len(robot._node.subs)}: {robot._node.subs}"
 
     subscription1.dispose()
     subscription2.dispose()
@@ -144,12 +141,8 @@ def test_parallel_and_hog():
     subscriber3_messages = []
 
     subscription1 = obs1.subscribe(lambda x: subscriber1_messages.append(x))
-    subscription2 = obs1.subscribe(
-        lambda x: time.sleep(0.15) or subscriber2_messages.append(x)
-    )
-    subscription3 = obs2.subscribe(
-        lambda x: time.sleep(0.25) or subscriber3_messages.append(x)
-    )
+    subscription2 = obs1.subscribe(lambda x: time.sleep(0.15) or subscriber2_messages.append(x))
+    subscription3 = obs2.subscribe(lambda x: time.sleep(0.25) or subscriber3_messages.append(x))
 
     assert len(robot._node.subs) == 1
 
@@ -175,6 +168,20 @@ def test_parallel_and_hog():
     assert robot._node.subs == {}
 
 
+@pytest.mark.asyncio
+async def test_topic_latest():
+    robot = MockRobot()
+
+    odom = await robot.topic_latest("/odom", msg.Odometry)
+    assert odom() == 1
+    await asyncio.sleep(0.45)
+    assert odom() == 5
+    odom.dispose()
+    await asyncio.sleep(0.1)
+    assert robot._node.subs == {}
+
+
 if __name__ == "__main__":
     test_parallel_and_cleanup()
     test_parallel_and_hog()
+    asyncio.run(test_topic_latest())

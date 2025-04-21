@@ -75,8 +75,7 @@ class AstarPlanner(Planner):
         self.start()
 
     async def start(self):
-        self.costmap = self.robot.ros_control.topic_value("map", msg.OccupancyGrid, timeout=10)
-        await self.costmap()  # ensure we are receiving costmap updates before returning
+        self.costmap = await self.robot.ros_control.topic_latest("map", msg.OccupancyGrid, timeout=10)
 
     def stop(self):
         if hasattr(self, "costmap"):
@@ -84,6 +83,5 @@ class AstarPlanner(Planner):
             del self.costmap
 
     async def plan(self, goal: VectorLike) -> Path:
-        costmap = await self.costmap()
         [pos, rot] = self.robot.ros_control.euler_transform("base_link")
-        return astar(costmap, goal, pos, **self.algo_opts)
+        return astar(self.costmap(), goal, pos, **self.algo_opts)

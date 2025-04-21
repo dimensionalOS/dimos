@@ -9,3 +9,7 @@ description = "Powering agentive generalist robotics"
 [tool.ruff]
 # Allow lines to be as long as 120.
 line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["dimos/robot"]
+norecursedirs = ["dimos/robot/unitree/external"]
