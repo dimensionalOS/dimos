@@ -105,7 +105,8 @@ def query_map(robot, args):
         similarity = result.get('similarity', 0)
         logger.info(f"Found '{args.query}' at position: ({position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f})")
         logger.info(f"Similarity score: {similarity:.4f}")
-        return True
+        return position
+
     else:
         logger.error(f"Navigation query failed: {result}")
         return False
@@ -128,7 +129,15 @@ def main():
             build_map(robot, args)
         
         # Query the map
-        query_map(robot, args)
+        target = query_map(robot, args)
+
+        if not target:
+            logger.error("No target found for navigation.")
+            return
+
+        # Nav
+        robot.global_planner.set_goal(target)
+
         
     finally:
         # Clean up

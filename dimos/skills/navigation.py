@@ -21,11 +21,15 @@ This module provides two skills:
 """
 
 import os
+
+import threading
+
 import sys
 import time
 import threading
 import logging
 from typing import Optional, Dict, Tuple, Any
+
 import chromadb
 import reactivex
 from reactivex import operators as ops
@@ -133,17 +137,17 @@ class BuildSemanticMap(AbstractRobotSkill):
         
         # Create transform stream at 1 Hz
         logger.info("Setting up transform stream...")
-        transform_stream = ros_control.get_transform_stream(
-            child_frame="map",
-            parent_frame="base_link",
-            rate_hz=1.0  # 1 transform per second
-        )
+
+        transform_stream = ros_control.transform(
+            "base_link",
+            frequency=1)
         
         # Combine video and transform streams
         combined_stream = reactivex.combine_latest(video_stream, transform_stream).pipe(
-            ops.map(lambda pair: {
-                "frame": pair[0],  # First element is the frame
-                "position": self._extract_position(pair[1])  # Second element is the transform
+            ops.starmap(lambda video_frame, position: {
+                "frame": video_frame,
+                "position": position
+
             })
         )
         

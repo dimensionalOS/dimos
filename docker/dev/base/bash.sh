@@ -192,6 +192,7 @@ export PATH="/app/bin:${PATH}"
 # we store history in the container so rebuilding doesn't lose it
 export HISTFILE=/app/.bash_history
 
+source /usr/share/autojump/autojump.bash
 # export all .env variables
 set -a
 source /app/.env
