@@ -169,7 +169,12 @@ class UnitreeGo2(Robot):
             visualization_size=500  # 500x500 pixel visualization
         )
 
-        self.global_planner = AstarPlanner(robot=self).start()
+        pos_transform = lambda: self.ros_control.transform_euler('base_link')
+        self.global_planner = AstarPlanner(
+                local_planner=self.local_planner,
+                global_costmap=self.ros_control.topic_latest('map'),
+                pos_transform=pos_transform
+            ).start()
 
         # Create the visualization stream at 5Hz
         # self.local_planner_viz_stream = self.local_planner.create_stream(frequency_hz=5.0)

@@ -17,20 +17,18 @@ import logging
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 
-from dimos.robot.robot import Robot
 from dimos.utils.logging_config import setup_logger
 from dimos.robot.global_planner.vector import VectorLike, to_vector
 from dimos.robot.global_planner.path import Path
 from dimos.robot.global_planner.algo import astar
-
-from nav_msgs import msg
+from dimos.robot.local_planner import VFHPurePursuitPlanner
 
 logger = setup_logger("dimos.robot.unitree.global_planner", level=logging.DEBUG)
 
 
 @dataclass
 class Planner(ABC):
-    robot: Robot
+    local_planner: VFHPurePursuitPlanner
 
     @abstractmethod
     def plan(self, goal: VectorLike) -> Path: ...
@@ -69,16 +67,13 @@ class Planner(ABC):
 
 
 class AstarPlanner(Planner):
-    def __init__(self, robot, costmap_latest=None, algo_opts={}):
-        super().__init__(robot)
-        self.algo_opts = algo_opts
-        self.costmap_latest = costmap_latest
+    def __init__(self, local_planner, global_costmap, pos_transform):
+        super().__init__(local_planner)
+        self.costmap = global_costmap
+        self.pos_transform = pos_transform
 
     def start(self):
-        if not self.costmap_latest:
-            # in the future we'll have a different way to specify deps, in which planner can
-            # depend on global_costmap, which will be provided by a robot spec
-            self.costmap_latest = self.robot.ros_control.topic_latest("map", msg.OccupancyGrid, timeout=10)
+        return self
 
     def stop(self):
         if hasattr(self, "costmap"):
@@ -86,5 +81,5 @@ class AstarPlanner(Planner):
             del self.costmap
 
     def plan(self, goal: VectorLike) -> Path:
-        [pos, rot] = self.robot.ros_control.euler_transform("base_link")
-        return astar(self.costmap(), goal, pos, **self.algo_opts)
+        [pos, rot] = self.pos_position()
+        return astar(self.costmap(), goal, pos)
