@@ -10,6 +10,7 @@ const buildOptions: BuildOptions = {
     conditions: ["browser", "deno", "node"],
     entryPoints: [
         "./clientside/init.ts",
+        // vs2.tsx is imported by init.ts, so we don't need to add it here
     ],
     outfile: "./static/js/clientside.js",
     bundle: true,
@@ -18,7 +19,18 @@ const buildOptions: BuildOptions = {
     define: {
         "import.meta.url": '""',
         "import.meta": "false",
+        "process.env.NODE_ENV": '"production"',
     },
+    loader: {
+        ".tsx": "tsx",
+        ".ts": "ts",
+    },
+    jsx: "transform",  // Use transform instead of automatic
+    jsxFactory: "React.createElement",
+    jsxFragment: "React.Fragment",
+    platform: "browser",
+    // Generate source maps
+    sourcemap: true,
 }
 
 async function build() {

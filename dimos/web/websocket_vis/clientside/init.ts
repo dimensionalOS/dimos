@@ -1,7 +1,7 @@
 import { io } from "npm:socket.io-client"
 import { decode } from "./decoder.ts"
 import { Drawable, EncodedSomething } from "./types.ts"
-import { RobotStateVisualizer } from "./vis.ts"
+import { Visualizer as ReactVisualizer } from "./vis2.tsx"
 
 // Store server state locally
 let serverState = {
@@ -11,8 +11,7 @@ let serverState = {
     draw: {},
 }
 
-// Visualization instance
-let visualizer: RobotStateVisualizer | null = null
+let reactVisualizer: ReactVisualizer | null = null
 
 const socket = io()
 
@@ -96,18 +95,19 @@ function sendData(data: any) {
 // Function to update UI based on state
 function updateUI() {
     console.log("Current state:", serverState)
-    if (
-        visualizer && serverState.draw &&
-        Object.keys(serverState.draw).length > 0
-    ) {
-        visualizer.visualizeState(serverState.draw)
+
+    // Update both visualizers if they exist and there's data to display
+    if (serverState.draw && Object.keys(serverState.draw).length > 0) {
+        if (reactVisualizer) {
+            reactVisualizer.visualizeState(serverState.draw)
+        }
     }
 }
 
 // Initialize the application
 function initializeApp() {
     console.log("DOM loaded, initializing UI")
-    visualizer = new RobotStateVisualizer("#vis")
+    reactVisualizer = new ReactVisualizer("#vis")
     updateUI()
 }
 

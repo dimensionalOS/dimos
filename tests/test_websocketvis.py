@@ -20,7 +20,7 @@ def main():
 
     time.sleep(1)  # Allow time for the server to start
     planner.plan(Vector([5, 5, 0]))
-    planner.vis("testvector", Vector([3, 4, 1]))
+    planner.vis("testvector", Vector([0, 0, 0]))
 
     print(f"WebSocket server started on port {websocket_vis.port}")
     try:
