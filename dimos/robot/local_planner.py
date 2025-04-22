@@ -17,7 +17,7 @@ from dimos.utils.ros_utils import (
     normalize_angle,
     visualize_local_planner_state
 )
-from dimos.robot.global_planner.vector import Vector, VectorLike, to_vector, to_tuple
+from dimos.types.vector import Vector, VectorLike, to_vector, to_tuple
 from nav_msgs.msg import OccupancyGrid
 
 logger = setup_logger("dimos.robot.unitree.local_planner", level=logging.DEBUG)
