@@ -3952,14 +3952,54 @@ Object.assign(lookup2, {
 });
 
 // clientside/init.ts
+var serverState = {
+  status: "disconnected",
+  connected_clients: 0,
+  data: {}
+};
 var socket = lookup2();
 socket.on("connect", () => {
   console.log("Connected to server");
+  serverState.status = "connected";
 });
 socket.on("disconnect", () => {
   console.log("Disconnected from server");
+  serverState.status = "disconnected";
 });
 socket.on("message", (data) => {
   console.log("Received message:", data);
 });
+function deepMerge(source, destination) {
+  for (const key in source) {
+    if (key in destination && typeof source[key] === "object" && source[key] !== null && typeof destination[key] === "object" && destination[key] !== null && !Array.isArray(source[key]) && !Array.isArray(destination[key])) {
+      deepMerge(source[key], destination[key]);
+    } else {
+      destination[key] = source[key];
+    }
+  }
+  return destination;
+}
+socket.on("full_state", (fullState) => {
+  console.log("Received full state:", fullState);
+  serverState = fullState;
+  updateUI();
+});
+socket.on("state_update", (partialState) => {
+  console.log("Received partial state update:", partialState);
+  serverState = deepMerge(partialState, { ...serverState });
+  updateUI();
+});
+function updateUI() {
+  console.log("Current state:", serverState);
+  const jsonElement = document.getElementById("json");
+  if (jsonElement) {
+    jsonElement.textContent = JSON.stringify(serverState, null, 2);
+  } else {
+    console.warn("Element with id='json' not found in the DOM");
+  }
+}
 console.log("Socket.IO client initialized");
+document.addEventListener("DOMContentLoaded", () => {
+  console.log("DOM loaded, initializing UI");
+  updateUI();
+});

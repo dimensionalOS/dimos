@@ -303,3 +303,12 @@ svg {
     padding: 5px;
     z-index: 1000;
 }
+
+#json {
+    font-family: var(--font-family);
+    color: var(--text-color);
+    background-color: var(--background-color-alt);
+    padding: 10px;
+    white-space: pre;
+    overflow: auto;
+}
