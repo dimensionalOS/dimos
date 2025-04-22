@@ -38,19 +38,14 @@ main_state = {"status": "idle", "connected_clients": 0, "data": {}}
 @sio.event
 async def connect(sid, environ):
     print(f"Client connected: {sid}")
-    # Increment connected clients count
-    main_state["connected_clients"] += 1
-    # Send the full state to the newly connected client
-    # Use a different event name for full state updates
+    await update_state({"connected_clients": main_state["connected_clients"] + 1})
     await sio.emit("full_state", main_state, room=sid)
 
 
 @sio.event
 async def disconnect(sid):
     print(f"Client disconnected: {sid}")
-    # Decrement connected clients count
-    if main_state["connected_clients"] > 0:
-        main_state["connected_clients"] -= 1
+    await update_state({"connected_clients": main_state["connected_clients"] - 1})
 
 
 @sio.event
@@ -169,23 +164,3 @@ if __name__ == "__main__":
     use_reload = "--reload" in sys.argv
     server = WebsocketVis(port=7778, use_reload=use_reload)
     server_instance = server.start()
-
-    # Only start the timer if we're running in background thread mode
-    # (In reload mode, this would be problematic due to the way uvicorn restarts the process)
-    if not use_reload:
-        # Start the time counter in a background task
-        print("Starting time counter background task")
-
-        @sio.event
-        async def connect(sid, environ):
-            # We need to create a background task for the timer
-            # but only once, not for every connection
-            if not hasattr(start_time_counter, "started"):
-                sio.start_background_task(start_time_counter, server_instance)
-                setattr(start_time_counter, "started", True)
-
-            print(f"Client connected: {sid}")
-            # Increment connected clients count
-            main_state["connected_clients"] += 1
-            # Send the full state to the newly connected client
-            await sio.emit("full_state", main_state, room=sid)
