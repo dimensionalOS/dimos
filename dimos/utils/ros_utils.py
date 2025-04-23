@@ -72,16 +72,33 @@ def visualize_local_planner_state(
     grid_resolution: float, 
     grid_origin: Tuple[float, float, float], 
     robot_pose: Tuple[float, float, float], 
-    visualization_size: int, 
-    robot_width: float, 
-    robot_length: float,
+    visualization_size: int = 400, 
+    robot_width: float = 0.5, 
+    robot_length: float = 0.7,
     map_size_meters: float = 10.0,
     goal_xy: Optional[Tuple[float, float]] = None, 
     histogram: Optional[np.ndarray] = None,
-    selected_direction: Optional[float] = None
+    selected_direction: Optional[float] = None,
+    waypoints: Optional['Path'] = None,
+    current_waypoint_index: Optional[int] = None
 ) -> np.ndarray:
     """Generate a bird's eye view visualization of the local costmap.
-    Optionally includes VFH histogram and selected direction.
+    Optionally includes VFH histogram, selected direction, and waypoints path.
+    
+    Args:
+        occupancy_grid: 2D numpy array of the occupancy grid
+        grid_resolution: Resolution of the grid in meters/cell
+        grid_origin: Tuple (x, y, theta) of the grid origin in the odom frame
+        robot_pose: Tuple (x, y, theta) of the robot pose in the odom frame
+        visualization_size: Size of the visualization image in pixels
+        robot_width: Width of the robot in meters
+        robot_length: Length of the robot in meters
+        map_size_meters: Size of the map to visualize in meters
+        goal_xy: Optional tuple (x, y) of the goal position in the odom frame
+        histogram: Optional numpy array of the VFH histogram
+        selected_direction: Optional selected direction angle in radians
+        waypoints: Optional Path object containing waypoints to visualize
+        current_waypoint_index: Optional index of the current target waypoint
     """
     
     robot_x, robot_y, robot_theta = robot_pose
@@ -131,6 +148,36 @@ def visualize_local_planner_state(
                               (img_x + cell_size_px//2, img_y + cell_size_px//2),
                               color, -1)
 
+    # Draw waypoints path if provided
+    if waypoints is not None and len(waypoints) > 0:
+        try:
+            path_points = []
+            for i, waypoint in enumerate(waypoints):
+                # Convert waypoint from odom frame to visualization frame
+                wp_x, wp_y = waypoint[0], waypoint[1]
+                wp_rel_x = wp_x - robot_x
+                wp_rel_y = wp_y - robot_y
+                
+                wp_img_x = int(center_x + wp_rel_x * scale)
+                wp_img_y = int(center_y - wp_rel_y * scale)  # Flip y-axis
+                
+                if 0 <= wp_img_x < vis_size and 0 <= wp_img_y < vis_size:
+                    path_points.append((wp_img_x, wp_img_y))
+                    
+                    # Draw each waypoint as a small circle
+                    cv2.circle(vis_img, (wp_img_x, wp_img_y), 3, (0, 128, 0), -1)  # Dark green dots
+                    
+                    # Highlight current target waypoint
+                    if current_waypoint_index is not None and i == current_waypoint_index:
+                        cv2.circle(vis_img, (wp_img_x, wp_img_y), 6, (0, 0, 255), 2)  # Red circle
+            
+            # Connect waypoints with lines to show the path
+            if len(path_points) > 1:
+                for i in range(len(path_points) - 1):
+                    cv2.line(vis_img, path_points[i], path_points[i + 1], (0, 200, 0), 1)  # Green line
+        except Exception as e:
+            logger.error(f"Error drawing waypoints: {e}")
+
     # Draw histogram
     if histogram is not None:
         num_bins = len(histogram)
@@ -150,9 +197,10 @@ def visualize_local_planner_state(
             end_x = int(center_x + line_length * math.cos(vis_angle))
             end_y = int(center_y - line_length * math.sin(vis_angle)) # Flipped Y
             
-            # Color based on value (e.g., grayscale: darker = higher density)
-            intensity = 200 - int(normalized_val * 200) # Darker for higher values
-            color = (intensity, intensity, intensity)
+            # Color based on value (blue to red gradient based on obstacle density)
+            blue = max(0, 255 - int(normalized_val * 255))
+            red = min(255, int(normalized_val * 255))
+            color = (blue, 0, red)  # BGR format: obstacles are redder, clear areas are bluer
             
             cv2.line(vis_img, (center_x, center_y), (end_x, end_y), color, 1)
 
@@ -210,5 +258,19 @@ def visualize_local_planner_state(
              (scale_bar_x + scale_bar_length_px, scale_bar_y), (0, 0, 0), 2)
     cv2.putText(vis_img, "1m", (scale_bar_x, scale_bar_y - 5), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+                
+    # Add status info
+    status_text = []
+    if waypoints is not None:
+        if current_waypoint_index is not None:
+            status_text.append(f"WP: {current_waypoint_index}/{len(waypoints)}")
+        else:
+            status_text.append(f"WPs: {len(waypoints)}")
+    
+    y_pos = 20
+    for text in status_text:
+        cv2.putText(vis_img, text, (10, y_pos), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+        y_pos += 20
 
     return vis_img

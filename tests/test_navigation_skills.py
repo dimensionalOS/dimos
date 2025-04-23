@@ -30,13 +30,17 @@ import sys
 import time
 import logging
 import argparse
+import threading
+from reactivex import Subject, operators as RxOps
 
 import tests.test_header
 
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
+from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.skills.navigation import BuildSemanticMap, Navigate
 from dimos.utils.logging_config import setup_logger
+from dimos.web.robot_web_interface import RobotWebInterface
 
 # Setup logging
 logger = setup_logger("simple_navigation_test")
@@ -61,6 +65,9 @@ def parse_args():
     )
     parser.add_argument(
         "--visual-memory-file", type=str, default="visual_memory.pkl", help="Filename for visual memory"
+    )
+    parser.add_argument(
+        "--port", type=int, default=5555, help="Port for web visualization interface"
     )
     return parser.parse_args()
 
@@ -120,36 +127,125 @@ def query_map(robot, args):
         return False
 
 
+def setup_visualization(robot, port=5555):
+    """Set up visualization streams for the web interface"""
+    logger.info(f"Setting up visualization streams on port {port}")
+    
+    # Get video stream from robot
+    video_stream = robot.video_stream_ros.pipe(
+        RxOps.share(),
+        RxOps.map(lambda frame: frame),
+        RxOps.filter(lambda frame: frame is not None),
+    )
+    
+    # Get local planner visualization stream
+    local_planner_stream = robot.local_planner_viz_stream.pipe(
+        RxOps.share(),
+        RxOps.map(lambda frame: frame),
+        RxOps.filter(lambda frame: frame is not None),
+    )
+    
+    # Create web interface with streams
+    streams = {
+        "robot_video": video_stream,
+        "local_planner": local_planner_stream
+    }
+    
+    web_interface = RobotWebInterface(
+        port=port,
+        **streams
+    )
+    
+    return web_interface
+
+
+def run_navigation(robot, target):
+    """Run navigation in a separate thread"""
+    logger.info(f"Starting navigation to target: {target}")
+    return robot.global_planner.set_goal(target)
+
+
 def main():
     args = parse_args()
 
     # Ensure directories exist
-    os.makedirs(args.db_path, exist_ok=True)
-    os.makedirs(args.visual_memory_dir, exist_ok=True)
+    if not args.justgo:
+        os.makedirs(args.db_path, exist_ok=True)
+        os.makedirs(args.visual_memory_dir, exist_ok=True)
 
     # Initialize robot
     logger.info("Initializing robot...")
     ros_control = UnitreeROSControl(node_name="simple_nav_test", mock_connection=False)
-    robot = UnitreeGo2(ros_control=ros_control, ip=os.getenv("ROBOT_IP"))
+    robot = UnitreeGo2(ros_control=ros_control, ip=os.getenv("ROBOT_IP"), skills=MyUnitreeSkills())
 
+    # Set up visualization
+    web_interface = None
     try:
+        # Set up visualization first if the robot has video capabilities
+        if hasattr(robot, 'video_stream_ros') and robot.video_stream_ros is not None:
+            web_interface = setup_visualization(robot, port=args.port)
+            # Start web interface in a separate thread
+            viz_thread = threading.Thread(target=web_interface.run, daemon=True)
+            viz_thread.start()
+            logger.info(f"Web visualization available at http://localhost:{args.port}")
+            # Wait a moment for the web interface to initialize
+            time.sleep(2)
+        
         if args.justgo:
             # Just go to the specified location
-            return robot.global_planner.set_goal(list(map(float, args.justgo.split(","))))
-        # Build map if not skipped
-        if not args.skip_build:
-            build_map(robot, args)
+            coords = list(map(float, args.justgo.split(",")))
+            logger.info(f"Navigating to coordinates: {coords}")
+            
+            # Run navigation
+            navigate_thread = threading.Thread(
+                target=lambda: run_navigation(robot, coords),
+                daemon=True
+            )
+            navigate_thread.start()
+            
+            # Wait for navigation to complete or user to interrupt
+            try:
+                while navigate_thread.is_alive():
+                    time.sleep(0.5)
+                logger.info("Navigation completed")
+            except KeyboardInterrupt:
+                logger.info("Navigation interrupted by user")
+        else:
+            # Build map if not skipped
+            if not args.skip_build:
+                build_map(robot, args)
 
-        # Query the map
-        target = query_map(robot, args)
+            # Query the map
+            target = query_map(robot, args)
 
-        if not target:
-            logger.error("No target found for navigation.")
-            return
+            if not target:
+                logger.error("No target found for navigation.")
+                return
+            
+            # Run navigation
+            navigate_thread = threading.Thread(
+                target=lambda: run_navigation(robot, target),
+                daemon=True
+            )
+            navigate_thread.start()
+            
+            # Wait for navigation to complete or user to interrupt
+            try:
+                while navigate_thread.is_alive():
+                    time.sleep(0.5)
+                logger.info("Navigation completed")
+            except KeyboardInterrupt:
+                logger.info("Navigation interrupted by user")
 
-        # Nav
-        robot.global_planner.set_goal(target)
-
+        # If web interface is running, keep the main thread alive
+        if web_interface:
+            logger.info("Navigation completed. Visualization still available. Press Ctrl+C to exit.")
+            try:
+                while True:
+                    time.sleep(0.5)
+            except KeyboardInterrupt:
+                logger.info("Exiting...")
+                
     finally:
         # Clean up
         logger.info("Cleaning up resources...")

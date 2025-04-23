@@ -35,30 +35,43 @@ class Planner(ABC):
     @abstractmethod
     def plan(self, goal: VectorLike) -> Path: ...
 
-    # actually we might want to rewrite this into rxpy
     def walk_loop(self, path: Path) -> bool:
-        # pop the next goal from the path
-        local_goal = path.head()
-        print("path head", local_goal)
-        result = self.robot.navigate_to_goal_local(local_goal.to_list(), is_robot_frame=False)
-
-        if not result:
-            # do we need to re-plan here?
-            logger.warning("Failed to navigate to the local goal.")
+        """Navigate through a path of waypoints.
+        
+        This method now passes the entire path to the local planner at once,
+        utilizing the waypoint following capabilities.
+        
+        Args:
+            path: Path object containing waypoints
+            
+        Returns:
+            bool: True if successfully reached the goal, False otherwise
+        """
+        if not path or len(path) == 0:
+            logger.warning("Cannot follow empty path")
             return False
-
-        # get the rest of the path (btw here we can globally replan also)
-        tail = path.tail()
-        print("path tail", tail)
-        if not tail:
-            logger.info("Reached the goal.")
-            return True
-
-        # continue walking down the rest of the path
-        # does python support tail calling haha?
-        self.walk_loop(tail)
+            
+        logger.info(f"Following path with {len(path)} waypoints")
+        
+        # Use the robot's waypoint navigation capability
+        result = self.robot.navigate_path_local(path)
+        
+        if not result:
+            logger.warning("Failed to navigate the path")
+            return False
+            
+        logger.info("Successfully reached the goal")
+        return True
 
     def set_goal(self, goal: VectorLike):
+        """Plan and navigate to a goal position.
+        
+        Args:
+            goal: Goal position as a vector-like object
+            
+        Returns:
+            bool: True if planning and navigation succeeded, False otherwise
+        """
         goal = to_vector(goal).to_2d()
         path = self.plan(goal)
         if not path:
@@ -83,4 +96,4 @@ class AstarPlanner(Planner):
 
     def plan(self, goal: VectorLike) -> Path:
         [pos, rot] = self.robot.ros_control.transform_euler("base_link")
-        return astar(Costmap.from_msg(self.costmap()).smudge(), goal, pos)
+        return astar(Costmap.from_msg(self.costmap()), goal, pos)
