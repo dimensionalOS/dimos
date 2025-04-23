@@ -38,6 +38,7 @@ const VisualizerComponent: React.FC<{ state: Record<string, Drawable> }> = ({
             .scaleLinear()
             .domain([origin.coords[0], origin.coords[0] + cols * resolution])
             .range([offsetX, offsetX + gridW])
+
         const yScale = d3
             .scaleLinear()
             .domain([origin.coords[1], origin.coords[1] + rows * resolution])
@@ -138,7 +139,11 @@ const VisualizerComponent: React.FC<{ state: Record<string, Drawable> }> = ({
                 height="100%"
                 viewBox={`0 0 ${width} ${height}`}
                 preserveAspectRatio="xMidYMid meet"
-                style={{ backgroundColor: "#f8f9fa" }}
+                style={{
+                    backgroundColor: "#14151a",
+                    borderRadius: "8px",
+                    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+                }}
             />
         </div>
     )
@@ -169,11 +174,11 @@ function visualiseCostmap(
 
     // Custom color interpolation function that maps 0 to white and other values to Inferno scale
     const customColorScale = (t: number) => {
-        // If value is 0 (or very close to it), return white
+        // If value is 0 (or very close to it), return dark bg color
         if (t < 0.1) return "#ffffff"
         if (t > 0.9) return "#000000"
-        // Otherwise use the Inferno color scale
-        return d3.interpolateGreys(t)
+        // Use a cool cyberpunk-style color scale
+        return d3.interpolateGreys(t * 0.5)
     }
 
     const colour = d3.scaleSequential(customColorScale).domain([
@@ -275,8 +280,8 @@ function addCoordinateSystem(
             .attr("x2", xScale(x))
             .attr("y2", height)
             .attr("stroke", gridColour)
-            .attr("stroke-width", 0.25)
-            .attr("opacity", 0.7)
+            .attr("stroke-width", 0.5)
+            .attr("opacity", 0.5)
     }
     for (
         const y of d3.range(
@@ -292,32 +297,46 @@ function addCoordinateSystem(
             .attr("x2", width)
             .attr("y2", yScale(y))
             .attr("stroke", gridColour)
-            .attr("stroke-width", 0.25)
-            .attr("opacity", 0.7)
+            .attr("stroke-width", 0.5)
+            .attr("opacity", 0.5)
     }
 
     const stylise = (
         sel: d3.Selection<SVGGElement, unknown, null, undefined>,
-    ) => sel.selectAll("line,path").attr("stroke", "black").attr(
-        "stroke-width",
-        1,
-    )
+    ) => {
+        sel.selectAll("line,path")
+            .attr("stroke", "#ffffff")
+            .attr("stroke-width", 1)
+
+        sel.selectAll("text")
+            .attr("fill", "#ffffff") // Change the color here
+    }
 
     group
         .append("g")
         .attr("transform", `translate(0, ${height})`)
-        .call(d3.axisBottom(xScale).ticks(5))
+        .call(d3.axisBottom(xScale).ticks(7))
         .call(stylise)
-    group.append("g").call(d3.axisLeft(yScale).ticks(5)).call(stylise)
+    group.append("g").call(d3.axisLeft(yScale).ticks(7)).call(stylise)
 
     if (minX <= 0 && 0 <= maxX && minY <= 0 && 0 <= maxY) {
-        group
-            .append("circle")
-            .attr("cx", xScale(0))
-            .attr("cy", yScale(0))
-            .attr("r", 3)
-            .attr("fill", "green")
-            .attr("opacity", 0.7)
+        const originPoint = group.append("g")
+            .attr("class", "origin-marker")
+            .attr("transform", `translate(${xScale(0)}, ${yScale(0)})`)
+
+        // Add outer ring
+        originPoint.append("circle")
+            .attr("r", 8)
+            .attr("fill", "none")
+            .attr("stroke", "#00e676")
+            .attr("stroke-width", 1)
+            .attr("opacity", 0.5)
+
+        // Add center point
+        originPoint.append("circle")
+            .attr("r", 4)
+            .attr("fill", "#00e676")
+            .attr("opacity", 0.9)
             .append("title")
             .text("World Origin (0,0)")
     }
@@ -336,10 +355,8 @@ function visualisePath(
 ): void {
     if (path.coords.length < 2) return
 
-    const points = path.coords.map((vector) => {
-        return wp
-            ? wp(vector.coords[0], vector.coords[1])
-            : [width / 2 + vector.coords[0], height / 2 - vector.coords[1]]
+    const points = path.coords.map(([x, y]) => {
+        return wp ? wp(x, y) : [width / 2 + x, height / 2 - y]
     })
 
     const colour = d3.scaleOrdinal(d3.schemeCategory10)(label)
@@ -347,19 +364,40 @@ function visualisePath(
     // Create a path line
     const line = d3.line()
 
-    svg.append("path")
+    // Create a gradient for the path
+    const pathId = `path-gradient-${label.replace(/\s+/g, "-")}`
+
+    svg.append("defs")
+        .append("linearGradient")
+        .attr("id", pathId)
+        .attr("gradientUnits", "userSpaceOnUse")
+        .attr("x1", points[0][0])
+        .attr("y1", points[0][1])
+        .attr("x2", points[points.length - 1][0])
+        .attr("y2", points[points.length - 1][1])
+        .selectAll("stop")
+        .data([
+            { offset: "0%", color: "#4fc3f7" },
+            { offset: "100%", color: "#f06292" },
+        ])
+        .enter().append("stop")
+        .attr("offset", (d) => d.offset)
+        .attr("stop-color", (d) => d.color)
+
+    // Create the path with gradient and animation
+    const pathElement = svg.append("path")
         .datum(points)
         .attr("fill", "none")
-        .attr("stroke", "red")
-        .attr("stroke-width", 1)
-        .attr("stroke-dasharray", "5,5") // Dashed line
+        .attr("stroke", `url(#${pathId})`)
+        .attr("stroke-width", 3)
+        .attr("stroke-linecap", "round")
+        .attr("filter", "url(#glow)")
+        .attr("opacity", 0.9)
         .attr("d", line)
-        .append("title")
-        .text(label)
 
     // Add label near the middle point of the path
     //const midIdx = Math.floor(points.length / 2)
-    const [mx, my] = points[points.length - 1]
+    const [mx, my] = points[Math.floor(points.length / 2)]
 
     // Create a group for the text and background
     const textGroup = svg.append("g")
@@ -370,8 +408,8 @@ function visualisePath(
     // Add text element
     const textElement = textGroup
         .append("text")
-        .attr("x", mx + 7)
-        .attr("y", my - 7)
+        .attr("x", mx + 10)
+        .attr("y", my - 10)
         .attr("font-size", "10px")
         .attr("fill", "white")
         .text(text)
@@ -408,12 +446,25 @@ function visualiseVector(
 
     const colour = d3.scaleOrdinal(d3.schemeCategory10)(label)
 
-    svg
-        .append("circle")
-        .attr("cx", cx)
-        .attr("cy", cy)
+    // Create a vector marker group
+    const vectorGroup = svg.append("g")
+        .attr("class", "vector-marker")
+        .attr("transform", `translate(${cx}, ${cy})`)
+
+    // Add a glowing outer ring
+    vectorGroup.append("circle")
+        .attr("r", 8)
+        .attr("fill", "none")
+        .attr("stroke", "#4fc3f7")
+        .attr("stroke-width", 1)
+        .attr("opacity", 0.9)
+        .attr("filter", "url(#glow)")
+
+    // Add inner dot
+    vectorGroup.append("circle")
         .attr("r", 4)
-        .attr("fill", colour)
+        .attr("fill", "#4fc3f7")
+        .attr("filter", "url(#glow)")
 
     // Add text with background
     const text = `${label} (${vector.coords[0].toFixed(2)}, ${
@@ -426,8 +477,8 @@ function visualiseVector(
     // Add text element
     const textElement = textGroup
         .append("text")
-        .attr("x", cx + 7)
-        .attr("y", cy - 7)
+        .attr("x", cx + 10)
+        .attr("y", cy - 10)
         .attr("font-size", "10px")
         .attr("fill", "white")
         .text(text)
