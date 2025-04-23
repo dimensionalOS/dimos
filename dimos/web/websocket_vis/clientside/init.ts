@@ -79,7 +79,8 @@ function state_update(state: { [key: string]: any }) {
     }
 
     console.log("Decoded state update:", state)
-    serverState = deepMerge(state, { ...serverState })
+    // Create a fresh copy of the server state to trigger rerenders properly
+    serverState = { ...deepMerge(state, { ...serverState }) }
 
     updateUI()
 }

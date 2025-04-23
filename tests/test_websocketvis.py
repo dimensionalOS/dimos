@@ -7,6 +7,7 @@ from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector
 import argparse
+import pickle
 
 
 def parse_args():
@@ -21,7 +22,6 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Start the WebSocket server
     websocket_vis = WebsocketVis()
     websocket_vis.start()
 
@@ -30,9 +30,11 @@ def main():
         robot = UnitreeGo2(ros_control=ros_control, ip=os.getenv("ROBOT_IP"))
         planner = robot.global_planner
     else:
+        pickle_path = f"{__file__.rsplit('/', 1)[0]}/mockdata/costmap.pickle"
+        print(f"Loading costmap from {pickle_path}")
         planner = AstarPlanner(
-            costmap=lambda: Costmap.from_pickle(f"{__file__.rsplit('/', 1)[0]}/mockdata/costmap.pickle"),
-            base_link=lambda: [Vector(1, 1), Vector(1, 1, 1)],
+            costmap=lambda: pickle.load(open(pickle_path, "rb")),
+            base_link=lambda: [Vector(6.0, -1.5), Vector(1, 1, 1)],
             local_nav=lambda x: time.sleep(1) and True,
         )
 
@@ -42,7 +44,7 @@ def main():
     time.sleep(1)
     while True:
         planner.plan(Vector(0, 0))
-        time.sleep(5)
+        time.sleep(1)
 
     try:
         # Keep the server running

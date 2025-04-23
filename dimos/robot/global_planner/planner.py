@@ -60,7 +60,6 @@ class Planner(Visualizable):
 
     # actually we might want to rewrite this into rxpy
     def walk_loop(self, path: Path) -> bool:
-        self.vis("planner_path", path)
         # pop the next goal from the path
         local_goal = path.head()
         print("path head", local_goal)
@@ -105,7 +104,12 @@ class AstarPlanner(Planner):
 
     def plan(self, goal: VectorLike) -> Path:
         [pos, rot] = self.base_link()
-        costmap = Costmap.from_msg(self.costmap()).smudge()
-        self.vis("global_costmap", costmap)
+        costmap = self.costmap()
+        costmap.save_pickle("costmap3.pickle")
+        smudge = costmap.smudge()
+        self.vis("global_costmap", smudge)
         self.vis("pos", pos)
-        return astar(costmap, goal, pos)
+        path = astar(smudge, goal, pos)
+        if path:
+            self.vis("planner_path", path)
+        return path

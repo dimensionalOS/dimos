@@ -1,7 +1,7 @@
 import * as d3 from "npm:d3"
 import * as React from "npm:react"
 import * as ReactDOMClient from "npm:react-dom/client"
-import { Costmap, Drawable, Vector } from "./types.ts"
+import { Costmap, Drawable, Path, Vector } from "./types.ts"
 
 // ───────────────────────────────────────────────────────────────────────────────
 // React component
@@ -60,7 +60,14 @@ const VisualizerComponent: React.FC<{ state: Record<string, Drawable> }> = ({
             if (d instanceof Costmap) visualiseCostmap(svg, d, width, height)
         })
 
-        // 2. vectors (top layer)
+        // 2. paths (middle layer)
+        Object.entries(state).forEach(([key, d]) => {
+            if (d instanceof Path) {
+                visualisePath(svg, d, key, worldToPx, width, height)
+            }
+        })
+
+        // 3. vectors (top layer)
         Object.entries(state).forEach(([key, d]) => {
             if (d instanceof Vector) {
                 visualiseVector(svg, d, key, worldToPx, width, height)
@@ -144,12 +151,15 @@ function visualiseCostmap(
         for (let i = 0; i < data.length; i++) {
             const row = Math.floor(i / cols)
             const col = i % cols
-            const srcIdx = row * cols + col // invert Y
 
-            const value = data[srcIdx]
+            // Flip Y coordinate (invert row) to put origin at bottom-left
+            const invertedRow = rows - 1 - row
+            const srcIdx = invertedRow * cols + col
+
+            const value = data[i] // Get value from original index
             const c = d3.color(colour(value))
             if (!c) continue
-            const o = i * 4
+            const o = srcIdx * 4 // Write to flipped position
             img.data[o] = c.r ?? 0
             img.data[o + 1] = c.g ?? 0
             img.data[o + 2] = c.b ?? 0
@@ -173,11 +183,19 @@ function addCoordinateSystem(
 ): void {
     const minX = origin.coords[0]
     const minY = origin.coords[1]
-    const maxX = minX + width * resolution
-    const maxY = minY + height * resolution
 
-    const xScale = d3.scaleLinear().domain([minX, maxX]).range([0, width])
-    const yScale = d3.scaleLinear().domain([minY, maxY]).range([height, 0])
+    const maxX = minX + (width * resolution)
+    const maxY = minY + (height * resolution)
+    console.log(group, width, origin, maxX)
+
+    const xScale = d3.scaleLinear().domain([
+        minX,
+        maxX,
+    ]).range([0, width])
+    const yScale = d3.scaleLinear().domain([
+        minY,
+        maxY,
+    ]).range([height, 0])
 
     const gridSize = 1.0
     const gridColour = "#555"
@@ -246,6 +264,53 @@ function addCoordinateSystem(
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
+// Helper: path
+// ───────────────────────────────────────────────────────────────────────────────
+function visualisePath(
+    svg: d3.Selection<SVGSVGElement, unknown, null, undefined>,
+    path: Path,
+    label: string,
+    wp: ((x: number, y: number) => [number, number]) | undefined,
+    width: number,
+    height: number,
+): void {
+    if (path.coords.length < 2) return
+
+    const points = path.coords.map((vector) => {
+        return wp
+            ? wp(vector.coords[0], vector.coords[1])
+            : [width / 2 + vector.coords[0], height / 2 - vector.coords[1]]
+    })
+
+    const colour = d3.scaleOrdinal(d3.schemeCategory10)(label)
+
+    // Create a path line
+    const line = d3.line()
+
+    svg.append("path")
+        .datum(points)
+        .attr("fill", "none")
+        .attr("stroke", "red")
+        .attr("stroke-width", 1)
+        .attr("stroke-dasharray", "5,5") // Dashed line
+        .attr("d", line)
+        .append("title")
+        .text(label)
+
+    // Add label near the middle point of the path
+    const midIdx = Math.floor(points.length / 2)
+    const [mx, my] = points[midIdx]
+
+    svg
+        .append("text")
+        .attr("x", mx + 7)
+        .attr("y", my - 7)
+        .attr("font-size", "10px")
+        .attr("fill", colour)
+        .text(label)
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
 // Helper: vector
 // ───────────────────────────────────────────────────────────────────────────────
 function visualiseVector(
@@ -310,7 +375,7 @@ export class Visualizer {
 
     /** Push a new application‑state snapshot to the visualiser */
     public visualizeState(state: Record<string, Drawable>): void {
-        this.state = state
+        this.state = { ...state }
         this.render()
     }
 

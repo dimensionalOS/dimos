@@ -54,6 +54,13 @@ class Path:
                     converted.append(p)
             self._points = np.array(converted, dtype=float)
 
+    def serialize(self) -> Tuple:
+        """Serialize the vector to a tuple."""
+        return {
+            "type": "path",
+            "points": self._points.tolist(),
+        }
+
     @property
     def points(self) -> np.ndarray:
         """Get the path points as a numpy array."""

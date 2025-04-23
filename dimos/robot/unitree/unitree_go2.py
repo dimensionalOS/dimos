@@ -171,7 +171,7 @@ class UnitreeGo2(Robot):
         )
 
         self.global_planner = AstarPlanner(
-            costmap=self.ros_control.topic_latest("map", msg.OccupancyGrid),
+            costmap=lambda: Costmap.from_msg(self.ros_control.topic_latest("map", msg.OccupancyGrid)()),
             base_link=lambda: self.ros_control.transform_euler("base_link"),
             local_nav=lambda x: True,
         )
