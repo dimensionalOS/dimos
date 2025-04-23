@@ -16,6 +16,7 @@ from dimos.utils.ros_utils import (
     normalize_angle,
     visualize_local_planner_state
 )
+
 from dimos.types.vector import VectorLike, to_tuple
 from dimos.types.path import Path
 from nav_msgs.msg import OccupancyGrid
@@ -76,20 +77,26 @@ class VFHPurePursuitPlanner:
         self.prev_direction_weight = 0.5
         self.prev_selected_angle = 0.0
         self.goal_distance_scale_factor = 3.0
-        self.low_speed_nudge = 0.1
+        self.low_speed_nudge = 0.15
         
         # Goal and Waypoint Tracking
         self.goal_xy: Optional[Tuple[float, float]] = None  # Current target for VFH/PurePursuit
         self.waypoints: Optional[Path] = None             # Full path if following waypoints
+        self.waypoints_in_odom: Optional[Path] = None     # Full path in odom frame
+        self.waypoint_frame: Optional[str] = None         # Frame of the waypoints
         self.current_waypoint_index: int = 0              # Index of the next waypoint to reach
         self.final_goal_reached: bool = False             # Flag indicating if the final waypoint is reached
 
         # topics
         self.local_costmap = self.robot.ros_control.topic_latest("/local_costmap/costmap", OccupancyGrid)
 
-    def set_goal(self, goal_xy: VectorLike, is_robot_frame: bool = True):
+    def set_goal(self, goal_xy: VectorLike, frame: str = "odom"):
         """Set a single goal position, converting to odom frame if necessary.
            This clears any existing waypoints being followed.
+
+        Args:
+            goal_xy: The goal position to set.
+            frame: The frame of the goal position.
         """
         # Clear waypoint following state
         self.waypoints = None
@@ -98,21 +105,10 @@ class VFHPurePursuitPlanner:
         self.goal_xy = None # Clear previous goal
 
         target_goal_xy: Optional[Tuple[float, float]] = None
-        if is_robot_frame:
-            [pos, rot] = self.robot.ros_control.transform_euler("base_link", "odom")
-            robot_x, robot_y, robot_theta = pos[0], pos[1], rot[2]
-            goal_x_robot, goal_y_robot = to_tuple(goal_xy)
-            
-            # Transform to odom frame using numpy functions
-            goal_x_odom = robot_x + goal_x_robot * np.cos(robot_theta) - goal_y_robot * np.sin(robot_theta)
-            goal_y_odom = robot_y + goal_x_robot * np.sin(robot_theta) + goal_y_robot * np.cos(robot_theta)
-            
-            target_goal_xy = (goal_x_odom, goal_y_odom)
-            logger.info(f"Goal set in robot frame ({goal_x_robot:.2f}, {goal_y_robot:.2f}), "
-                        f"transformed to odom frame: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})")
-        else:
-            target_goal_xy = to_tuple(goal_xy)
-            logger.info(f"Goal set directly in odom frame: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})")
+
+        target_goal_xy = self.robot.ros_control.transform_point(goal_xy, source_frame=frame, target_frame="odom").to_tuple()
+
+        logger.info(f"Goal set directly in odom frame: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})")
         
         # Check if goal is valid (in bounds and not colliding)
         if not self.is_goal_in_costmap_bounds(target_goal_xy) or self.check_goal_collision(target_goal_xy):
@@ -121,11 +117,17 @@ class VFHPurePursuitPlanner:
         else:
             self.goal_xy = target_goal_xy # Set the adjusted or original valid goal
 
-    def set_goal_waypoints(self, waypoints: Path):
-        """Sets a path of waypoints for the robot to follow."""
+    def set_goal_waypoints(self, waypoints: Path, frame: str = "odom"):
+        """Sets a path of waypoints for the robot to follow. 
+
+        Args:
+            waypoints: A list of waypoints to follow. Each waypoint is a tuple of (x, y) coordinates in odom frame.
+        """
+
         if not isinstance(waypoints, Path) or len(waypoints) == 0:
             logger.warning("Invalid or empty path provided to set_goal_waypoints. Ignoring.")
             self.waypoints = None
+            self.waypoint_frame = None
             self.goal_xy = None
             self.current_waypoint_index = 0
             self.final_goal_reached = False
@@ -133,11 +135,15 @@ class VFHPurePursuitPlanner:
 
         logger.info(f"Setting goal waypoints with {len(waypoints)} points.")
         self.waypoints = waypoints
+        self.waypoint_frame = frame
         self.current_waypoint_index = 0
         self.final_goal_reached = False
+
+        # Transform waypoints to odom frame
+        self.waypoints_in_odom = self.robot.ros_control.transform_path(self.waypoints, source_frame=frame, target_frame="odom")
         
         # Set the initial target to the first waypoint, adjusting if necessary
-        first_waypoint = self.waypoints[0]
+        first_waypoint = self.waypoints_in_odom[0]
         if not self.is_goal_in_costmap_bounds(first_waypoint) or self.check_goal_collision(first_waypoint):
             logger.warning("First waypoint is invalid. Adjusting...")
             self.goal_xy = self.adjust_goal_to_valid_position(first_waypoint)
@@ -155,9 +161,11 @@ class VFHPurePursuitPlanner:
         """
         if self.waypoints is None or len(self.waypoints) == 0:
             return False  # Not in waypoint mode or empty path
+        
+        self.waypoints_in_odom = self.robot.ros_control.transform_path(self.waypoints, source_frame=self.waypoint_frame, target_frame="odom")
 
         # Check if final goal is reached
-        final_waypoint = self.waypoints[-1]
+        final_waypoint = self.waypoints_in_odom[-1]
         dist_to_final = np.linalg.norm(robot_pos_np - final_waypoint)
         
         if dist_to_final < self.goal_tolerance:
@@ -168,8 +176,8 @@ class VFHPurePursuitPlanner:
             
         # Always find the lookahead point
         lookahead_point = None
-        for i in range(self.current_waypoint_index, len(self.waypoints)):
-            wp = self.waypoints[i]
+        for i in range(self.current_waypoint_index, len(self.waypoints_in_odom)):
+            wp = self.waypoints_in_odom[i]
             dist_to_wp = np.linalg.norm(robot_pos_np - wp)
             if dist_to_wp >= self.lookahead_distance:
                 lookahead_point = wp
@@ -179,8 +187,8 @@ class VFHPurePursuitPlanner:
         
         # If no point is far enough, target the final waypoint
         if lookahead_point is None:
-            lookahead_point = self.waypoints[-1]
-            self.current_waypoint_index = len(self.waypoints) - 1
+            lookahead_point = self.waypoints_in_odom[-1]
+            self.current_waypoint_index = len(self.waypoints_in_odom) - 1
         
         # Set the lookahead point as the immediate target, adjusting if needed
         if not self.is_goal_in_costmap_bounds(lookahead_point) or self.check_goal_collision(lookahead_point):
@@ -307,8 +315,8 @@ class VFHPurePursuitPlanner:
             selected_direction = getattr(self, 'selected_direction', None)
             
             # Get waypoint data if in waypoint mode
-            waypoints_to_draw = self.waypoints
-            current_wp_index_to_draw = self.current_waypoint_index if self.waypoints is not None else None
+            waypoints_to_draw = self.waypoints_in_odom
+            current_wp_index_to_draw = self.current_waypoint_index if self.waypoints_in_odom is not None else None
             # Ensure index is valid before passing
             if waypoints_to_draw is not None and current_wp_index_to_draw is not None: 
                 if not (0 <= current_wp_index_to_draw < len(waypoints_to_draw)):
