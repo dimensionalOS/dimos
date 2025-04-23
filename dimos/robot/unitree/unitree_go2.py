@@ -247,7 +247,7 @@ class UnitreeGo2(Robot):
         goal_reached = False
         tracking_started = False
         last_update_time = 0
-        min_update_interval = 0.5  # Update goal at max 5Hz
+        min_update_interval = 0.2  # Update goal at max 5Hz
         
         while time.time() - start_time < timeout:
             # Get latest tracking data
@@ -268,7 +268,7 @@ class UnitreeGo2(Robot):
                     )
                     
                     # Update the goal in the local planner
-                    self.local_planner.set_goal((goal_x_robot, goal_y_robot), is_robot_frame=True)
+                    self.local_planner.set_goal((goal_x_robot, goal_y_robot), frame="base_link")
                     last_update_time = current_time
                     tracking_started = True
             

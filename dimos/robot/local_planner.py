@@ -117,7 +117,7 @@ class VFHPurePursuitPlanner:
         else:
             self.goal_xy = target_goal_xy # Set the adjusted or original valid goal
 
-    def set_goal_waypoints(self, waypoints: Path, frame: str = "odom"):
+    def set_goal_waypoints(self, waypoints: Path, frame: str = "map"):
         """Sets a path of waypoints for the robot to follow. 
 
         Args:

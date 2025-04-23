@@ -96,4 +96,4 @@ class AstarPlanner(Planner):
 
     def plan(self, goal: VectorLike) -> Path:
         [pos, rot] = self.robot.ros_control.transform_euler("base_link")
-        return astar(Costmap.from_msg(self.costmap()), goal, pos)
+        return astar(Costmap.from_msg(self.costmap()).smudge(kernel_size=3), goal, pos)
