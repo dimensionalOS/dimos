@@ -15,3 +15,5 @@ venv*
 /assets/output/
 /assets/model-cache/
 assets/agent/memory.txt
+
+.bash_history

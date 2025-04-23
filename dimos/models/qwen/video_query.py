@@ -1,6 +1,8 @@
 """Utility functions for one-off video frame queries using Qwen model."""
 
 import os
+import threading
+import numpy as np
 from typing import Optional
 from openai import OpenAI
 from reactivex import Observable, operators as ops
@@ -12,7 +14,7 @@ from dimos.utils.threadpool import get_scheduler
 import json
 
 
-def query_single_frame(
+def query_single_frame_observable(
     video_observable: Observable,
     query: str,
     api_key: Optional[str] = None,
@@ -33,7 +35,7 @@ def query_single_frame(
         ```python
         video_obs = video_provider.capture_video_as_observable()
         single_frame = video_obs.pipe(ops.take(1))
-        response = query_single_frame(single_frame, "What objects do you see?")
+        response = query_single_frame_observable(single_frame, "What objects do you see?")
         response.subscribe(print)
         ```
     """
@@ -85,6 +87,79 @@ def query_single_frame(
     return response_subject 
 
 
+def query_single_frame(
+    image: 'PIL.Image',
+    query: str = 'Return the center coordinates of the fridge handle as a tuple (x,y)',
+    api_key: Optional[str] = None,
+    model_name: str = "qwen2.5-vl-72b-instruct"
+) -> str:
+    """Process a single PIL image with Qwen model.
+    
+    Args:
+        image: A PIL Image to process
+        query: The query to ask about the image
+        api_key: Alibaba API key. If None, will try to get from ALIBABA_API_KEY env var
+        model_name: The Qwen model to use. Defaults to qwen2.5-vl-72b-instruct
+        
+    Returns:
+        str: The model's response
+        
+    Example:
+        ```python
+        from PIL import Image
+        image = Image.open('image.jpg')
+        response = query_single_frame(image, "Return the center coordinates of the object _____ as a tuple (x,y)")
+        print(response)
+        ```
+    """
+    # Get API key from env if not provided
+    api_key = api_key or os.getenv('ALIBABA_API_KEY')
+    if not api_key:
+        raise ValueError("Alibaba API key must be provided or set in ALIBABA_API_KEY environment variable")
+
+    # Create Qwen client
+    qwen_client = OpenAI(
+        base_url='https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+        api_key=api_key,
+    )
+
+    # Create temporary agent for processing
+    agent = OpenAIAgent(
+        dev_name="QwenSingleFrameAgent",
+        openai_client=qwen_client,
+        model_name=model_name,
+        tokenizer=HuggingFaceTokenizer(model_name=f"Qwen/{model_name}"),
+        max_output_tokens_per_request=100,
+        system_query=query,
+        pool_scheduler=get_scheduler(),
+    )
+
+    # Convert PIL image to numpy array
+    frame = np.array(image)
+    
+    # Create a Subject that will emit the image once
+    frame_subject = Subject()
+    
+    # Subscribe to frame processing
+    agent.subscribe_to_image_processing(frame_subject)
+    
+    # Create response observable
+    response_observable = agent.get_response_observable()
+    
+    # Emit the image
+    frame_subject.on_next(frame)
+    frame_subject.on_completed()
+    
+    # Take first response and run synchronously
+    response = response_observable.pipe(
+        ops.take(1)
+    ).run()
+    
+    # Clean up
+    agent.dispose_all()
+    
+    return response
+
 def get_bbox_from_qwen(
     video_stream: Observable,
     object_name: Optional[str] = None
@@ -104,7 +179,7 @@ def get_bbox_from_qwen(
         "where x1,y1 is the top-left and x2,y2 is the bottom-right corner of the bounding box. If not found, return None."
     )
 
-    response = query_single_frame(video_stream, prompt).pipe(ops.take(1)).run()
+    response = query_single_frame_observable(video_stream, prompt).pipe(ops.take(1)).run()
 
     try:
         # Extract JSON from response

@@ -9,7 +9,7 @@ from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.utils.logging_config import logger
-from dimos.models.qwen.video_query import query_single_frame
+from dimos.models.qwen.video_query import query_single_frame_observable
 
 
 def main():
@@ -57,7 +57,7 @@ def main():
         
         for attempt in range(max_retries):
             try:
-                qwen_point = eval(query_single_frame(
+                qwen_point = eval(query_single_frame_observable(
                     video_stream,
                     "Look at this frame and point to the person shirt. Return ONLY their center coordinates as a tuple (x,y)."
                 ).pipe(RxOps.take(1)).run())  # Get first response and convert string tuple to actual tuple

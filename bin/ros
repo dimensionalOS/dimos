@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+ros2 launch go2_robot_sdk robot.launch.py

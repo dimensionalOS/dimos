@@ -15,7 +15,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Navigate to an object using Qwen vision.')
     parser.add_argument('--object', type=str, default="chair",
                         help='Name of the object to navigate to (default: chair)')
-    parser.add_argument('--distance', type=float, default=0.8,
+    parser.add_argument('--distance', type=float, default=1.5,
                         help='Desired distance to maintain from object in meters (default: 0.8)')
     parser.add_argument('--timeout', type=float, default=60.0,
                         help='Maximum navigation time in seconds (default: 30.0)')
@@ -44,14 +44,23 @@ def main():
         RxOps.map(lambda x: x["viz_frame"] if x is not None else None),
         RxOps.filter(lambda x: x is not None),
     )
-    # video_stream = robot.get_ros_video_stream()
+
+    # The local planner visualization stream is created during robot initialization
+    local_planner_stream = robot.local_planner_viz_stream
+
+    local_planner_stream = local_planner_stream.pipe(
+        RxOps.share(),
+        RxOps.map(lambda x: x if x is not None else None),
+        RxOps.filter(lambda x: x is not None),
+    )
     
     try:
         # Set up web interface
         logger.info("Initializing web interface")
         streams = {
             # "robot_video": video_stream,
-            "object_tracking": viz_stream
+            "object_tracking": viz_stream,
+            "local_planner": local_planner_stream
         }
         
         web_interface = RobotWebInterface(

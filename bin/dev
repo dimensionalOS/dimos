@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+build_image() {
+    
+    docker build \
+        --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) \
+        --build-arg GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD) \
+        -t dimensionalos/dev-base docker/dev/base/
+}
+
+remove_image() {
+    docker rm -f dimos-dev
+}
+
+if [ "$1" == "remove" ]; then
+    remove_image
+    exit 0
+fi
+    
+if [ "$1" == "build" ]; then
+    remove_image
+    build_image
+else
+    # Check if image exists
+    if ! docker image inspect dimensionalos/dev-base &>/dev/null; then
+        echo "Image dimensionalos/dev-base not found. Building..."
+        build_image
+    fi
+fi
+
+# Get current directory relative to repo root
+REPO_ROOT=$(git rev-parse --show-toplevel)
+REL_PATH=$(realpath --relative-to="$REPO_ROOT" "$(pwd)")
+
+docker compose -f $REPO_ROOT/docker/dev/base/docker-compose.yaml up -d && docker exec -it dimos-dev bash -c "cd $REL_PATH; exec bash"
