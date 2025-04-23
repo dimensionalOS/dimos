@@ -13,10 +13,10 @@
 # limitations under the License.
 
 """
-Observer skill for Claude agent.
+Observer skill for an agent.
 
 This module provides a skill that periodically sends images from any 
-Robot Data Stream to a Claude agent for inference.
+Robot Data Stream to an agent for inference.
 """
 
 import logging
@@ -30,7 +30,6 @@ from reactivex import operators as ops
 from pydantic import Field
 
 from dimos.skills.skills import AbstractRobotSkill
-from dimos.agents.claude_agent import ClaudeAgent
 from dimos.agents.agent import LLMAgent
 from dimos.utils.threadpool import get_scheduler
 from dimos.utils.logging_config import setup_logger
@@ -39,7 +38,7 @@ logger = setup_logger("dimos.skills.observe_stream")
 
 class ObserveStream(AbstractRobotSkill):
     """
-    A skill that periodically Observes a Robot Video Stream and sends images to current instance of Claude agent for context.
+    A skill that periodically Observes a Robot Video Stream and sends images to current instance of an agent for context.
     
     This skill runs in a non-halting manner, allowing other skills to run concurrently.
     It can be used for continuous perception and passive monitoring, such as waiting for a person to enter a room 
@@ -48,7 +47,7 @@ class ObserveStream(AbstractRobotSkill):
     
     timestep: float = Field(60.0, description="Time interval in seconds between observation queries")
     query_text: str = Field("What do you see in this image? Alert me if you see any people or important changes.", 
-                           description="Query text to send to Claude agent with each image")
+                           description="Query text to send to agent with each image")
     max_duration: float = Field(0.0, description="Maximum duration to run the observer in seconds (0 for indefinite)")
     
     def __init__(self, robot=None, agent: Optional[LLMAgent] = None, video_stream = None, **data):
@@ -83,8 +82,8 @@ class ObserveStream(AbstractRobotSkill):
         """
         super().__call__()
         
-        if self._claude_agent is None:
-            error_msg = "No Claude agent provided to ObserveStream"
+        if self._agent is None:
+            error_msg = "No agent provided to ObserveStream"
             logger.error(error_msg)
             return error_msg
             
@@ -195,15 +194,22 @@ class ObserveStream(AbstractRobotSkill):
             _, buffer = cv2.imencode('.jpg', frame)
             base64_image = base64.b64encode(buffer).decode('utf-8')
             
-            response = self._claude_agent.direct_query(
+            observable = self._agent.run_observable_query(
                 f"{self.query_text}\n\nHere is the current camera view from the robot:",
                 base64_image=base64_image,
+                thinking_budget_tokens=0,
             )
             
-            logger.info(f"Claude response: {response}")
+            # Simple subscription to make sure the query executes
+            # The actual response content isn't important
+            observable.subscribe(
+                on_next=lambda x: logger.info(f"Got response from _observable_query: {x}"),
+                on_error=lambda e: logger.error(f"Error: {e}"),
+                on_completed=lambda: logger.info("ObserveStream query completed")
+            )
             
         except Exception as e:
-            logger.error(f"Error processing frame with Claude agent: {e}")
+            logger.error(f"Error processing frame with agent: {e}")
     
     def stop(self):
         """
