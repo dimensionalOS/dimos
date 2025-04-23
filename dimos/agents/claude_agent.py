@@ -261,11 +261,12 @@ class ClaudeAgent(LLMAgent):
             
         return claude_tools
 
-    def _build_prompt(self, base64_image: Optional[Union[str, List[str]]] = None,
+    def _build_prompt(self, messages: list, base64_image: Optional[Union[str, List[str]]] = None,
                       dimensions: Optional[Tuple[int, int]] = None,
                       override_token_limit: bool = False,
                       rag_results: str = "",
-                      thinking_budget_tokens: int = None) -> dict:
+                      thinking_budget_tokens: int = None) -> list:
+        """Builds a prompt message specifically for Claude API, using local messages copy."""
         """Builds a prompt message specifically for Claude API.
 
         This method creates messages in Claude's format directly, without using
@@ -284,11 +285,11 @@ class ClaudeAgent(LLMAgent):
         
         # Append user query to conversation history while handling RAG
         if rag_results:
-            self.conversation_history.append({"role": "user", "content": f"{rag_results}\n\n{self.query}"})
-            logger.info(f"Added new user message to conversation history with RAG context (now has {len(self.conversation_history)} messages)")
+            messages.append({"role": "user", "content": f"{rag_results}\n\n{self.query}"})
+            logger.info(f"Added new user message to conversation history with RAG context (now has {len(messages)} messages)")
         else:   
-            self.conversation_history.append({"role": "user", "content": self.query})
-            logger.info(f"Added new user message to conversation history (now has {len(self.conversation_history)} messages)")
+            messages.append({"role": "user", "content": self.query})
+            logger.info(f"Added new user message to conversation history (now has {len(messages)} messages)")
         
         if base64_image is not None:
             # Handle both single image (str) and multiple images (List[str])
@@ -306,7 +307,7 @@ class ClaudeAgent(LLMAgent):
                         }
                     }
                 ]
-                self.conversation_history.append({"role": "user", "content": img_content})
+                messages.append({"role": "user", "content": img_content})
             
             if images:
                 logger.info(f"Added {len(images)} image(s) as separate entries to conversation history")
@@ -316,7 +317,7 @@ class ClaudeAgent(LLMAgent):
             "model": self.model_name,
             "max_tokens": self.max_output_tokens_per_request,
             "temperature": 0,  # Add temperature to make responses more deterministic
-            "messages": self.conversation_history
+            "messages": messages
         }
         
         # Add system prompt as a top-level parameter (not as a message)
@@ -346,9 +347,9 @@ class ClaudeAgent(LLMAgent):
             
         # Store the parameters for use in _send_query and return them
         self.claude_api_params = claude_params.copy()
-        return {'claude_prompt': claude_params}
+        return messages, claude_params
         
-    def _send_query(self, messages: dict) -> Any:
+    def _send_query(self, messages: list, claude_params: dict) -> Any:
         """Sends the query to Anthropic's API using streaming for better thinking visualization.
         
         Args:
@@ -361,7 +362,7 @@ class ClaudeAgent(LLMAgent):
             # Get Claude parameters
             print("\n\n==== CLAUDE API PARAMETERS ====")
             # print(json.dumps(messages, indent=2, default=str))
-            claude_params = (messages.get('claude_prompt', None) or self.claude_api_params)
+            claude_params = (claude_params.get('claude_prompt', None) or self.claude_api_params)
             
             # Log request parameters with truncated base64 data
             print("\n\n==== CLAUDE API REQUEST ====\n")
@@ -567,28 +568,25 @@ class ClaudeAgent(LLMAgent):
         
         try:
             logger.info("_observable_query called in claude")
+            import copy
             # Reset conversation history if requested
             if reset_conversation:
                 self.conversation_history = []
-                    
+            # Create a local copy of conversation history
+            messages = copy.deepcopy(self.conversation_history)
             # Update query and get context
             self._update_query(incoming_query)
             _, rag_results = self._get_rag_context()
-        
             # Build prompt and get Claude parameters
             budget = thinking_budget_tokens if thinking_budget_tokens is not None else self.thinking_budget_tokens
-            messages = self._build_prompt(base64_image, dimensions, override_token_limit, rag_results, budget)
-            claude_params = messages.get('claude_prompt', {}).copy()
-            
+            messages, claude_params = self._build_prompt(messages, base64_image, dimensions, override_token_limit, rag_results, budget)
             # Send query and get response
-            response_message = self._send_query({'claude_prompt': claude_params})
-            
+            response_message = self._send_query(messages, claude_params)
             if response_message is None:
                 logger.error("Received None response from Claude API")
                 observer.on_next("")
                 observer.on_completed()
                 return
-                
             # Add thinking blocks and text content to conversation history
             content_blocks = []
             if response_message.thinking_blocks:
@@ -599,21 +597,27 @@ class ClaudeAgent(LLMAgent):
                     "text": response_message.content
                 })
             if content_blocks:
-                self.conversation_history.append({
+                messages.append({
                     "role": "assistant",
                     "content": content_blocks
                 })
+            
+            # At the end, update the global conversation history under a lock
+            import threading
+            if not hasattr(self, '_history_lock'):
+                self._history_lock = threading.Lock()
+            with self._history_lock:
+                self.conversation_history = messages
 
             # Handle tool calls if present
             if response_message.tool_calls:
                 self._handle_tooling(response_message, messages)
-            
+
             # Send response to observers
             result = response_message.content or ""
             observer.on_next(result)
             self.response_subject.on_next(result)
             observer.on_completed()
-            
         except Exception as e:
             logger.error(f"Query failed in {self.dev_name}: {e}")
             observer.on_error(e)
@@ -651,7 +655,7 @@ class ClaudeAgent(LLMAgent):
                 "name": tool_call.function.name,
                 "input": json.loads(tool_call.function.arguments)
             }
-            self.conversation_history.append({
+            messages.append({
                 "role": "assistant",
                 "content": [tool_use_block]
             })
@@ -662,7 +666,7 @@ class ClaudeAgent(LLMAgent):
             
             # Add tool result to conversation history
             if tool_result:
-                self.conversation_history.append({
+                messages.append({
                     "role": "user",
                     "content": [{
                         "type": "tool_result",
