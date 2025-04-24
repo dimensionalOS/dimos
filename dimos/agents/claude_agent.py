@@ -572,17 +572,22 @@ class ClaudeAgent(LLMAgent):
             # Reset conversation history if requested
             if reset_conversation:
                 self.conversation_history = []
+
             # Create a local copy of conversation history and record its length
             messages = copy.deepcopy(self.conversation_history)
             base_len = len(messages)
+
             # Update query and get context
             self._update_query(incoming_query)
             _, rag_results = self._get_rag_context()
+
             # Build prompt and get Claude parameters
             budget = thinking_budget_tokens if thinking_budget_tokens is not None else self.thinking_budget_tokens
             messages, claude_params = self._build_prompt(messages, base64_image, dimensions, override_token_limit, rag_results, budget)
+            
             # Send query and get response
             response_message = self._send_query(messages, claude_params)
+            
             if response_message is None:
                 logger.error("Received None response from Claude API")
                 observer.on_next("")
@@ -603,7 +608,11 @@ class ClaudeAgent(LLMAgent):
                     "content": content_blocks
                 })
             
-            # At the end, append only new messages to the global conversation history under a lock
+            # Handle tool calls if present
+            if response_message.tool_calls:
+                self._handle_tooling(response_message, messages)
+
+            # At the end, append only new messages (including tool-use/results) to the global conversation history under a lock
             import threading
             if not hasattr(self, '_history_lock'):
                 self._history_lock = threading.Lock()
@@ -611,9 +620,9 @@ class ClaudeAgent(LLMAgent):
                 for msg in messages[base_len:]:
                     self.conversation_history.append(msg)
 
-            # Handle tool calls if present
+            # After merging, run tooling callback (outside lock)
             if response_message.tool_calls:
-                self._handle_tooling(response_message, messages)
+                self._tooling_callback(response_message)
 
             # Send response to observers
             result = response_message.content or ""
@@ -626,31 +635,17 @@ class ClaudeAgent(LLMAgent):
             self.response_subject.on_error(e)
         
     def _handle_tooling(self, response_message, messages):
-        """Override of LLMAgent._handle_tooling to handle Claude's message format.
-        
-        This method processes tool calls from Claude sequentially, preserving the
-        multi-turn dialogue context including thinking blocks. For each tool call,
-        it executes the tool, formats the result, and continues the conversation
-        with Claude to get the next instructions.
-        
-        Args:
-            response_message: The response message containing tool calls
-            messages: Dict containing Claude API parameters
-            
-        Returns:
-            The final response after handling all tools, or None if no further processing needed
-        """
+        """Executes tools and appends tool-use/result blocks to messages."""
         if not hasattr(response_message, 'tool_calls') or not response_message.tool_calls:
             logger.info("No tool calls found in response message")
             return None
             
         if len(response_message.tool_calls) > 1:
             logger.warning("Multiple tool calls detected in response message. Not a tested feature.")
+
         # Execute all tools first and collect their results
         for tool_call in response_message.tool_calls:
             logger.info(f"Processing tool call: {tool_call.function.name}")
-            
-            # Add tool call to conversation history
             tool_use_block = {
                 "type": "tool_use",
                 "id": tool_call.id,
@@ -676,12 +671,18 @@ class ClaudeAgent(LLMAgent):
                         "content": f"{tool_result}"
                     }]
                 })
-        
-        # Get final response from Claude with all tool results in context
-        self.run_observable_query(
-            query_text=f"Tool {tool_call.function.name} execution complete. Please summarize the results and continue.",
-            thinking_budget_tokens=0
-        ).run()
+
+    def _tooling_callback(self, response_message):
+        """Runs the observable query for each tool call in the current response_message"""
+        if not hasattr(response_message, 'tool_calls') or not response_message.tool_calls:
+            return
+        for tool_call in response_message.tool_calls:
+            tool_name = tool_call.function.name
+            tool_id = tool_call.id
+            self.run_observable_query(
+                query_text=f"Tool {tool_name}, ID: {tool_id} execution complete. Please summarize the results and continue.",
+                thinking_budget_tokens=0
+            ).run()
 
     def _debug_api_call(self, claude_params: dict):
         """Debugging function to log API calls with truncated base64 data."""
