@@ -70,8 +70,6 @@ def test_parallel_and_cleanup():
 
     obs1 = robot.topic("/odom", msg.Odometry)
 
-    robot.topic("map").subscribe(...)
-
     print(f"Created subscription: {obs1}")
 
     subscription1 = obs1.subscribe(lambda x: received_messages.append(x + 2))

@@ -133,7 +133,7 @@ class ROSObservableTopicAbility:
     # odom.dispose()  # clean up the subscription
     #
     # see test_ros_observable_topic.py test_topic_latest for more details
-    def topic_latest(self, topic_name: str, msg_type: msg, timeout: float | None = 10.0, qos=QOS.SENSOR):
+    def topic_latest(self, topic_name: str, msg_type: msg, timeout: float | None = 30.0, qos=QOS.SENSOR):
         """
         Blocks the current thread until the first message is received, then
         returns `reader()` (sync) and keeps one ROS subscription alive
@@ -148,12 +148,12 @@ class ROSObservableTopicAbility:
         conn = core.connect()  # starts the ROS subscription immediately
 
         try:
-            first_val = core.pipe(
-                ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])
-            ).run()  # ← blocks here
+            first_val = core.pipe(ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])).run()
         except Exception:
             conn.dispose()
-            raise
+            msg = f"{topic_name} message not received after {timeout} seconds. Is robot connected?"
+            logger.error(msg)
+            raise Exception(msg)
 
         cache = {"val": first_val}
         sub = core.subscribe(lambda v: cache.__setitem__("val", v))
@@ -179,7 +179,7 @@ class ROSObservableTopicAbility:
     # odom.dispose()  # clean up the subscription
     #
     # see test_ros_observable_topic.py test_topic_latest for more details
-    async def topic_latest_async(self, topic_name: str, msg_type: msg, qos=QOS.SENSOR, timeout: float = 10.0):
+    async def topic_latest_async(self, topic_name: str, msg_type: msg, qos=QOS.SENSOR, timeout: float = 30.0):
         loop = asyncio.get_running_loop()
         first = loop.create_future()
         cache = {"val": None}

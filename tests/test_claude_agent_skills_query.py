@@ -13,15 +13,17 @@
 # limitations under the License.
 
 import tests.test_header
-
 import os
+
+import time
 from dotenv import load_dotenv
 from dimos.agents.claude_agent import ClaudeAgent
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
-import time
+from dimos.skills.observe_stream import ObserveStream
+from dimos.skills.kill_skill import KillSkill
 import reactivex as rx
 import reactivex.operators as ops
 # Load API key from environment
@@ -29,31 +31,51 @@ load_dotenv()
 
 robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
                     ros_control=UnitreeROSControl(),
-                    skills=MyUnitreeSkills())
+                    skills=MyUnitreeSkills(),
+                    mock_connection=False)
 
 # Create a subject for agent responses
 agent_response_subject = rx.subject.Subject()
 agent_response_stream = agent_response_subject.pipe(ops.share())
 
+streams = {"unitree_video": robot.get_ros_video_stream()}
 text_streams = {
     "agent_responses": agent_response_stream,
 }
 
-web_interface = RobotWebInterface(port=5555, text_streams=text_streams)
+web_interface = RobotWebInterface(port=5555, text_streams=text_streams, **streams)
 
 # Create a ClaudeAgent instance
 agent = ClaudeAgent(
     dev_name="test_agent",
     input_query_stream=web_interface.query_stream,
     skills=robot.get_skills(),
-    system_query="You are a one-off agent sending commands to a virtual robot given a simple input query. EXECUTE TOOL CALLS TO THE BEST OF YOUR ABILITY AND ONLY RESPOND WITH TOOL CALLS. YOU CANNOT RECEIVE FOLLOW UP QUERIES.",
+    system_query="""You are an agent controlling a virtual robot. When given a query, respond by using the appropriate tool calls if needed to execute commands on the robot.
+
+IMPORTANT INSTRUCTIONS:
+1. Each tool call must include the exact function name and appropriate parameters
+2. If a function needs parameters like 'distance' or 'angle', be sure to include them
+3. If you're unsure which tool to use, choose the most appropriate one based on the user's query
+4. Parse the user's instructions carefully to determine correct parameter values
+
+Example: If the user asks to move forward 1 meter, call the Move function with distance=1""",
     model_name="claude-3-7-sonnet-latest",
-    #thinking_budget_tokens=500
+    thinking_budget_tokens=2000
 )
+
+robot_skills = robot.get_skills()
+robot_skills.add(ObserveStream)
+robot_skills.add(KillSkill)
+
+robot_skills.create_instance("ObserveStream", robot=robot, agent=agent)
+robot_skills.create_instance("KillSkill", robot=robot, skill_library=robot_skills)
 
 # Subscribe to agent responses and send them to the subject
 agent.get_response_observable().subscribe(
     lambda x: agent_response_subject.on_next(x)
 )
+
+print("ObserveStream and Kill skills registered and ready for use")
+print("Created memory.txt file")
 
 web_interface.run()

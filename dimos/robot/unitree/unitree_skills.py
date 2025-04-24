@@ -277,7 +277,7 @@ class MyUnitreeSkills(SkillLibrary):
     class MoveVel(AbstractRobotSkill):
         """Move the robot using direct velocity commands."""
 
-        x: float = Field(..., description="Forward/backward velocity (m/s)")
+        x: float = Field(..., description="Forward/backward velocity (m/s). Negative for reverse, positive for forward")
         y: float = Field(..., description="Left/right velocity (m/s)")
         yaw: float = Field(..., description="Rotational velocity (rad/s)")
         duration: float = Field(..., description="How long to move (seconds). If 0, command is continuous")
@@ -301,15 +301,6 @@ class MyUnitreeSkills(SkillLibrary):
         def __call__(self):
             super().__call__()
             return self._robot.follow_human()
-        
-    class HelloAndStuff(AbstractRobotSkill):
-        """Prints a hello message."""
-
-        def __call__(self):
-            print("Hi there!")
-            print(f"{Colors.MAGENTA_PRINT_COLOR}self._robot: {self._robot}{Colors.RESET_COLOR}")
-            super().__call__()
-            self._robot.my_print()
 
     class NavigateToObject(AbstractRobotSkill):
         """Navigate to an object using a camera."""

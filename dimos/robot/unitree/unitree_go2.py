@@ -43,6 +43,7 @@ from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.utils.ros_utils import distance_angle_to_goal_xy
 from dimos.utils.generic_subscriber import GenericSubscriber
 from nav_msgs import msg
+from dimos.types.path import Path
 from dimos.types.costmap import Costmap
 
 # Set up logging
@@ -167,17 +168,19 @@ class UnitreeGo2(Robot):
             robot=self,
             robot_width=0.36,  # Unitree Go2 width in meters
             robot_length=0.6,  # Unitree Go2 length in meters
-            visualization_size=500,  # 500x500 pixel visualization
+            max_linear_vel=0.5,
+            lookahead_distance=1.0,
+            visualization_size=500  # 500x500 pixel visualization
         )
 
         self.global_planner = AstarPlanner(
             costmap=lambda: Costmap.from_msg(self.ros_control.topic_latest("map", msg.OccupancyGrid)()),
             base_link=lambda: self.ros_control.transform_euler("base_link"),
-            local_nav=lambda target: self.navigate_to_goal_local([target.x, target.y], is_robot_frame=False),
+            local_nav=self.navigate_path_local
         )
 
         # Create the visualization stream at 5Hz
-        # self.local_planner_viz_stream = self.local_planner.create_stream(frequency_hz=5.0)
+        self.local_planner_viz_stream = self.local_planner.create_stream(frequency_hz=5.0)
 
     def follow_human(self, distance: int = 1.5, timeout: float = 20.0, point: Tuple[int, int] = None):
         person_visual_servoing = VisualServoing(tracking_stream=self.person_tracking_stream)
@@ -248,8 +251,8 @@ class UnitreeGo2(Robot):
         goal_reached = False
         tracking_started = False
         last_update_time = 0
-        min_update_interval = 0.5  # Update goal at max 5Hz
-
+        min_update_interval = 0.2  # Update goal at max 5Hz
+        
         while time.time() - start_time < timeout:
             # Get latest tracking data
             tracking_data = tracking_subscriber.get_data()
@@ -273,7 +276,7 @@ class UnitreeGo2(Robot):
                     )
 
                     # Update the goal in the local planner
-                    self.local_planner.set_goal((goal_x_robot, goal_y_robot), is_robot_frame=True)
+                    self.local_planner.set_goal((goal_x_robot, goal_y_robot), frame="base_link")
                     last_update_time = current_time
                     tracking_started = True
 
@@ -364,6 +367,60 @@ class UnitreeGo2(Robot):
             self.ros_control.stop()
 
         return goal_reached
+
+    def navigate_path_local(self, path: Path, timeout: float = 120.0) -> bool:
+        """
+        Navigates the robot along a path of waypoints using the waypoint following capability
+        of the VFHPurePursuitPlanner.
+
+        Args:
+            path: Path object containing waypoints in odom/map frame
+            timeout: Maximum time (in seconds) allowed to follow the complete path
+
+        Returns:
+            bool: True if the entire path was successfully followed, False otherwise
+        """
+        logger.info(f"Starting navigation along path with {len(path)} waypoints and timeout {timeout}s.")
+
+        # Set the path in the local planner
+        self.local_planner.set_goal_waypoints(path)
+
+        start_time = time.time()
+        path_completed = False
+
+        try:
+            while time.time() - start_time < timeout:
+                # Check if the entire path has been traversed
+                if self.local_planner.is_goal_reached():
+                    logger.info("Path traversed successfully.")
+                    path_completed = True
+                    break 
+
+                # Get planned velocity towards the current waypoint target
+                vel_command = self.local_planner.plan()
+                x_vel = vel_command.get('x_vel', 0.0)
+                angular_vel = vel_command.get('angular_vel', 0.0)
+
+                # Send velocity command
+                self.ros_control.move_vel_control(x=x_vel, y=0, yaw=angular_vel)
+
+                # Control loop frequency
+                time.sleep(0.1)
+            
+            if not path_completed:
+                logger.warning(f"Path following timed out after {timeout} seconds before completing the path.")
+
+        except KeyboardInterrupt:
+            logger.info("Path navigation interrupted by user.")
+            path_completed = False
+        except Exception as e:
+            logger.error(f"Error during path navigation: {e}")
+            path_completed = False
+        finally:
+            logger.info("Stopping robot after path navigation attempt.")
+            self.ros_control.stop()
+            
+        return path_completed
 
     def get_skills(self) -> Optional[SkillLibrary]:
         return self.skill_library

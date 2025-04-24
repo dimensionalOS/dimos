@@ -181,6 +181,9 @@ class LLMAgent(Agent):
         
         # Subject for emitting responses
         self.response_subject = Subject()
+        
+        # Conversation history for maintaining context between calls
+        self.conversation_history = []
 
     def _update_query(self, incoming_query: Optional[str]) -> None:
         """Updates the query if an incoming query is provided.
@@ -575,7 +578,7 @@ class LLMAgent(Agent):
             RxOps.subscribe_on(self.pool_scheduler),
             RxOps.share())
 
-    def run_observable_query(self, query_text: str) -> Observable:
+    def run_observable_query(self, query_text: str, **kwargs) -> Observable:
         """Creates an observable that processes a one-off text query to Agent and emits the response.
         
         This method provides a simple way to send a text query and get an observable
@@ -584,12 +587,15 @@ class LLMAgent(Agent):
         
         Args:
             query_text (str): The query text to process.
+            **kwargs: Additional arguments to pass to _observable_query. Supported args vary by agent type.
+                     For example, ClaudeAgent supports: base64_image, dimensions, override_token_limit,
+                     reset_conversation, thinking_budget_tokens
             
         Returns:
             Observable: An observable that emits the response as a string.
         """
         return create(lambda observer, _: self._observable_query(
-            observer, incoming_query=query_text)) 
+            observer, incoming_query=query_text, **kwargs)) 
 
     def dispose_all(self):
         """Disposes of all active subscriptions managed by this agent."""
