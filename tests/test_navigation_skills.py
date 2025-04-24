@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Simple test script for semantic map skills.
+Simple test script for semantic / spatial memory skills.
 
 This script is a simplified version that focuses only on making the workflow work.
 
@@ -32,6 +32,7 @@ import logging
 import argparse
 import threading
 from reactivex import Subject, operators as RxOps
+import os
 
 import tests.test_header
 
@@ -47,20 +48,23 @@ logger = setup_logger("simple_navigation_test")
 
 
 def parse_args():
+
+    spatial_memory_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../assets/spatial_memory"))
+    
     parser = argparse.ArgumentParser(description="Simple test for semantic map skills.")
-    parser.add_argument("--skip-build", action="store_true", help="Skip building the map and only run navigation")
+    parser.add_argument("--skip-build", action="store_true", help="Skip building the map and run navigation with existing semantic and visual memory")
     parser.add_argument("--query", type=str, default="kitchen", help="Text query for navigation (default: kitchen)")
     parser.add_argument(
         "--db-path",
         type=str,
-        default="/home/stash/dimensional/dimos/assets/semantic_map/chromadb_data",
+        default=os.path.join(spatial_memory_dir, "chromadb_data"),
         help="Path to ChromaDB database",
     )
     parser.add_argument("--justgo", type=str, help="Globally navigate to location")
     parser.add_argument(
         "--visual-memory-dir",
         type=str,
-        default="/home/stash/dimensional/dimos/assets/semantic_map",
+        default=spatial_memory_dir,
         help="Directory for visual memory",
     )
     parser.add_argument(
@@ -73,7 +77,7 @@ def parse_args():
 
 
 def build_map(robot, args):
-    logger.info("Starting to build semantic map...")
+    logger.info("Starting to build spatial memory...")
 
     # Create the BuildSemanticMap skill
     build_skill = BuildSemanticMap(
@@ -101,7 +105,7 @@ def build_map(robot, args):
 
 
 def query_map(robot, args):
-    logger.info(f"Querying semantic map for: '{args.query}'")
+    logger.info(f"Querying spatial memory for: '{args.query}'")
 
     # Create the Navigate skill
     nav_skill = Navigate(
