@@ -158,7 +158,9 @@ class ROSObservableTopicAbility:
             first_val = core.pipe(ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])).run()
         except Exception:
             conn.dispose()
-            raise Exception(f"{topic_name} message not received after {timeout} seconds. Is robot connected?")
+            msg = f"{topic_name} message not received after {timeout} seconds. Is robot connected?"
+            logger.error(msg)
+            raise Exception(msg)
 
         cache = {"val": first_val}
         sub = core.subscribe(lambda v: cache.__setitem__("val", v))
