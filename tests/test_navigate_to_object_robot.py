@@ -15,7 +15,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Navigate to an object using Qwen vision.')
     parser.add_argument('--object', type=str, default="chair",
                         help='Name of the object to navigate to (default: chair)')
-    parser.add_argument('--distance', type=float, default=1.5,
+    parser.add_argument('--distance', type=float, default=1.0,
                         help='Desired distance to maintain from object in meters (default: 0.8)')
     parser.add_argument('--timeout', type=float, default=60.0,
                         help='Maximum navigation time in seconds (default: 30.0)')
