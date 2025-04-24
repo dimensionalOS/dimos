@@ -57,15 +57,16 @@ class AstarPlanner(Planner):
     def plan(self, goal: VectorLike) -> Path:
         [pos, rot] = self.base_link()
         costmap = self.costmap()
-        costmap.save_pickle("costmap3.pickle")
         smudge = costmap.smudge()
 
-        self.vis("global_costmap", smudge)
-        self.vis("pos", pos)
+        self.vis("planner_costmap", smudge)
         self.vis("target", goal)
 
-        path = astar(smudge, goal, pos).resample(0.5)
+        path = astar(smudge, goal, pos)
 
         if path:
+            path = path.resample(0.5)
             self.vis("a*", path)
-        return path
+            return path
+
+        logger.warning("No path found to the goal.")
