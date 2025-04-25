@@ -71,13 +71,15 @@ class VFHPurePursuitPlanner:
         self.selected_direction = None
         
         # VFH parameters
-        self.alpha = 0.2  # Histogram smoothing factor
-        self.obstacle_weight = 2.0
+        self.alpha = 0.25  # Histogram smoothing factor
+        self.obstacle_weight = 1.5
         self.goal_weight = 1.0
-        self.prev_direction_weight = 0.5
+        self.prev_direction_weight = 1.0
         self.prev_selected_angle = 0.0
         self.goal_distance_scale_factor = 3.0
-        self.low_speed_nudge = 0.15
+        self.prev_linear_vel = 0.0
+        self.linear_vel_filter_factor = 0.4
+        self.low_speed_nudge = 0.1
         
         # Goal and Waypoint Tracking
         self.goal_xy: Optional[Tuple[float, float]] = None  # Current target for VFH/PurePursuit
@@ -273,9 +275,19 @@ class VFHPurePursuitPlanner:
         # Calculate Pure Pursuit Velocities
         linear_vel, angular_vel = self.compute_pure_pursuit(goal_distance, self.selected_direction)
 
+        # Slow down when turning sharply
+        
+        # Apply speed reduction factor based on angle change (larger angle = slower speed)
+        # Only apply significant reduction when angle change is substantial (> 15 degrees)
+        if abs(self.selected_direction) > 0.25:  # ~15 degrees
+            # Scale from 1.0 (small turn) to 0.5 (sharp turn at 90 degrees or more)
+            turn_factor = max(0.25, 1.0 - (abs(self.selected_direction) / (np.pi/2)))
+            logger.debug(f"Slowing for turn: factor={turn_factor:.2f}")
+            linear_vel *= turn_factor
+        
         # Apply Collision Avoidance Stop
         if self.check_collision(self.selected_direction):
-            logger.debug("Collision detected ahead. Stopping linear motion.")
+            logger.debug("Collision detected ahead. Slowing down.")
             # Re-select direction prioritizing obstacle avoidance if colliding
             self.selected_direction = self.select_direction(
                 0.0,
@@ -286,8 +298,11 @@ class VFHPurePursuitPlanner:
             )
             _, angular_vel = self.compute_pure_pursuit(goal_distance, self.selected_direction)
             linear_vel = self.low_speed_nudge
-        
-        return {'x_vel': linear_vel, 'angular_vel': angular_vel}
+
+        self.prev_linear_vel = linear_vel
+        filtered_linear_vel = self.prev_linear_vel * self.linear_vel_filter_factor + linear_vel * (1 - self.linear_vel_filter_factor)
+
+        return {'x_vel': filtered_linear_vel, 'angular_vel': angular_vel}
     
     def update_visualization(self) -> np.ndarray:
         """
