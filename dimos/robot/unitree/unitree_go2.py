@@ -46,6 +46,7 @@ from dimos.utils.generic_subscriber import GenericSubscriber
 from nav_msgs import msg
 from dimos.types.path import Path
 from dimos.types.costmap import Costmap
+from dimos.skills.visual_navigation_skills import FollowHuman, NavigateToObject
 
 # Set up logging
 logger = setup_logger("dimos.robot.unitree.unitree_go2", level=logging.DEBUG)
@@ -182,23 +183,45 @@ class UnitreeGo2(Robot):
 
         # Create the visualization stream at 5Hz
         self.local_planner_viz_stream = self.local_planner.create_stream(frequency_hz=5.0)
+        
+        # Add visual navigation skills if the skill library exists
+        if self.skill_library is not None:
+            self.skill_library.add(FollowHuman)
+            self.skill_library.add(NavigateToObject)
+            
+            # Create instances of the skills
+            self.skill_library.create_instance("FollowHuman", robot=self)
+            self.skill_library.create_instance("NavigateToObject", robot=self)
 
     def follow_human(self, distance: int = 1.5, timeout: float = 20.0, point: Tuple[int, int] = None):
-        person_visual_servoing = VisualServoing(tracking_stream=self.person_tracking_stream)
-
-        logger.warning(f"Following human for {timeout} seconds...")
-        start_time = time.time()
-        success = person_visual_servoing.start_tracking(point=point, desired_distance=distance)
-        while person_visual_servoing.running and time.time() - start_time < timeout:
-            output = person_visual_servoing.updateTracking()
-            x_vel = output.get("linear_vel")
-            z_vel = output.get("angular_vel")
-            logger.debug(f"Following human: x_vel: {x_vel}, z_vel: {z_vel}")
-            self.ros_control.move_vel_control(x=x_vel, y=0, yaw=z_vel)
-            time.sleep(0.05)
-        person_visual_servoing.stop_tracking()
-        del person_visual_servoing
-        return success
+        """
+        Follow a human using visual servoing.
+        
+        Args:
+            distance: Desired distance to maintain from person in meters
+            timeout: Maximum time to follow in seconds
+            point: Optional starting point for tracking (x,y pixel coordinates)
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if self.skill_library is None:
+            logger.error("Skill library is None, cannot call FollowHuman skill")
+            return False
+            
+        try:
+            # Call the skill with the appropriate parameters
+            result = self.skill_library.call("FollowHuman", 
+                                            robot=self, 
+                                            distance=distance,
+                                            timeout=timeout,
+                                            point=point)
+            
+            # For backward compatibility, return a boolean success indicator
+            return "Failed" not in result if isinstance(result, str) else False
+        except Exception as e:
+            logger.error(f"Error calling FollowHuman skill: {e}")
+            return False
 
     def navigate_to(self, object_name: str, distance: float = 1.0, timeout: float = 40.0, max_retries: int = 3):
         """
@@ -213,103 +236,24 @@ class UnitreeGo2(Robot):
         Returns:
             bool: True if navigation was successful, False otherwise
         """
-        logger.warning(f"Navigating to {object_name} with desired distance {distance}m, timeout {timeout} seconds...")
-
-        # Try to get a bounding box from Qwen with retries
-        bbox = None
-        retry_count = 0
-
-        while bbox is None and retry_count < max_retries:
-            if retry_count > 0:
-                logger.info(f"Retry {retry_count}/{max_retries} to get bounding box for {object_name}")
-                # Wait a moment before retry to let the camera feed update
-                time.sleep(1.0)
-
-            try:
-                bbox, object_size = get_bbox_from_qwen(self.video_stream_ros, object_name=object_name)
-            except Exception as e:
-                logger.error(f"Error querying Qwen: {e}")
-
-            retry_count += 1
-
-        if bbox is None:
-            logger.error(f"Failed to get bounding box for {object_name} after {max_retries} attempts")
+        if self.skill_library is None:
+            logger.error("Skill library is None, cannot call NavigateToObject skill")
             return False
-
-        logger.info(f"Found {object_name} at {bbox} with size {object_size}")
-
-        # Start the object tracker with the detected bbox
-        self.object_tracker.track(bbox, size=object_size)
-
-        # Create object tracking stream
-        object_tracking_stream = self.object_tracking_stream
-
-        # Create a GenericSubscriber to get latest tracking data
-        tracking_subscriber = GenericSubscriber(object_tracking_stream)
-
-        # Main navigation loop
-        start_time = time.time()
-        goal_reached = False
-        tracking_started = False
-        last_update_time = 0
-        min_update_interval = 0.2  # Update goal at max 5Hz
-        
-        while time.time() - start_time < timeout:
-            # Get latest tracking data
-            tracking_data = tracking_subscriber.get_data()
-
-            # Check if we have valid tracking data with targets
-            if tracking_data and tracking_data.get("targets") and tracking_data["targets"] and not tracking_started:
-                target = tracking_data["targets"][0]
-
-                # Only update goal position if we have distance and angle data
-                current_time = time.time()
-                if (
-                    "distance" in target
-                    and "angle" in target
-                    and current_time - last_update_time >= min_update_interval
-                ):
-                    # Convert target distance and angle to xy coordinates in robot frame
-                    logger.info(f"Target distance: {target['distance'] - distance}, Target angle: {target['angle']}")
-                    goal_x_robot, goal_y_robot = distance_angle_to_goal_xy(
-                        target["distance"] - distance,  # Subtract desired distance to stop short
-                        -target["angle"],
-                    )
-
-                    # Update the goal in the local planner
-                    self.local_planner.set_goal((goal_x_robot, goal_y_robot), frame="base_link")
-                    last_update_time = current_time
-                    tracking_started = True
-
-            # Check if goal has been reached (near to object at desired distance)
-            if self.local_planner.is_goal_reached():
-                goal_reached = True
-                logger.info(f"Goal reached! Arrived at {object_name} at desired distance.")
-                break
-
-            # Get planned velocity from local planner
-            vel_command = self.local_planner.plan()
-            x_vel = vel_command.get("x_vel", 0.0)
-            angular_vel = vel_command.get("angular_vel", 0.0)
-
-            # Send velocity command to robot
-            self.ros_control.move_vel_control(x=x_vel, y=0, yaw=angular_vel)
-
-            # Control rate
-            time.sleep(0.05)
-
-        self.ros_control.stop()
-
-        # Clean up tracking subscriber
-        if tracking_subscriber:
-            tracking_subscriber.dispose()
-
-        if goal_reached:
-            logger.info(f"Successfully navigated to {object_name}")
-        else:
-            logger.warning(f"Failed to reach {object_name} within timeout")
-
-        return goal_reached
+            
+        try:
+            # Call the skill with the appropriate parameters
+            result = self.skill_library.call("NavigateToObject",
+                                            robot=self,
+                                            object_name=object_name,
+                                            distance=distance,
+                                            timeout=timeout,
+                                            max_retries=max_retries)
+            
+            # For backward compatibility, return a boolean success indicator
+            return "Failed" not in result if isinstance(result, str) else False
+        except Exception as e:
+            logger.error(f"Error calling NavigateToObject skill: {e}")
+            return False
 
     def navigate_to_goal_local(
         self, goal_xy_robot: Tuple[float, float], is_robot_frame=True, timeout: float = 60.0
