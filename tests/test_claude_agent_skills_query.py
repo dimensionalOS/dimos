@@ -24,6 +24,7 @@ from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.skills.observe_stream import ObserveStream
 from dimos.skills.kill_skill import KillSkill
+from dimos.skills.navigation import Navigate, BuildSemanticMap
 import reactivex as rx
 import reactivex.operators as ops
 # Load API key from environment
@@ -66,9 +67,13 @@ Example: If the user asks to move forward 1 meter, call the Move function with d
 robot_skills = robot.get_skills()
 robot_skills.add(ObserveStream)
 robot_skills.add(KillSkill)
+robot_skills.add(Navigate)
+robot_skills.add(BuildSemanticMap)
 
 robot_skills.create_instance("ObserveStream", robot=robot, agent=agent)
 robot_skills.create_instance("KillSkill", robot=robot, skill_library=robot_skills)
+robot_skills.create_instance("Navigate", robot=robot)
+robot_skills.create_instance("BuildSemanticMap", robot=robot)
 
 # Subscribe to agent responses and send them to the subject
 agent.get_response_observable().subscribe(

@@ -223,9 +223,6 @@ class ObserveStream(AbstractRobotSkill):
             self._stop_event.set()
             self._subscription.dispose()
             self._subscription = None
-            
-            skill_library = self._robot.get_skills()
-            self.unregister_as_running("ObserveStream", skill_library)
-            
+                        
             return "Observer stopped"
         return "Observer was not running"

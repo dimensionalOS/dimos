@@ -34,6 +34,7 @@ from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_dr
 import os
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from reactivex.scheduler import ThreadPoolScheduler
+import threading
 from dimos.utils.logging_config import setup_logger
 from dimos.perception.visual_servoing import VisualServoing
 from dimos.perception.person_tracker import PersonTrackingStream
@@ -368,7 +369,7 @@ class UnitreeGo2(Robot):
 
         return goal_reached
 
-    def navigate_path_local(self, path: Path, timeout: float = 120.0) -> bool:
+    def navigate_path_local(self, path: Path, timeout: float = 120.0, stop_event: Optional[threading.Event] = None) -> bool:
         """
         Navigates the robot along a path of waypoints using the waypoint following capability
         of the VFHPurePursuitPlanner.
@@ -376,6 +377,7 @@ class UnitreeGo2(Robot):
         Args:
             path: Path object containing waypoints in odom/map frame
             timeout: Maximum time (in seconds) allowed to follow the complete path
+            stop_event: Optional threading.Event to signal when navigation should stop
 
         Returns:
             bool: True if the entire path was successfully followed, False otherwise
@@ -389,7 +391,7 @@ class UnitreeGo2(Robot):
         path_completed = False
 
         try:
-            while time.time() - start_time < timeout:
+            while time.time() - start_time < timeout and not (stop_event and stop_event.is_set()):
                 # Check if the entire path has been traversed
                 if self.local_planner.is_goal_reached():
                     logger.info("Path traversed successfully.")

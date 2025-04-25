@@ -204,29 +204,31 @@ class SkillLibrary:
         if name in self._running_skills:
             instance, subscription = self._running_skills[name]
             
-            if hasattr(instance, 'stop') and callable(instance.stop):
-                try:
+            try:
+                # Call the stop method if it exists
+                if hasattr(instance, 'stop') and callable(instance.stop):
                     result = instance.stop()
                     logger.info(f"Stopped skill: {name}")
-                    return f"Successfully terminated skill: {name}"
-                except Exception as e:
-                    error_msg = f"Error stopping skill {name}: {e}"
-                    logger.error(error_msg)
-                    return error_msg
-            
-            elif subscription is not None:
-                try:
-                    if hasattr(subscription, 'dispose') and callable(subscription.dispose):
-                        subscription.dispose()
-                        logger.info(f"Disposed subscription for skill: {name}")
-                        self.unregister_running_skill(name)
-                        return f"Successfully terminated skill: {name}"
-                except Exception as e:
-                    error_msg = f"Error disposing subscription for skill {name}: {e}"
-                    logger.error(error_msg)
-                    return error_msg
+                else:
+                    logger.warning(f"Skill {name} does not have a stop method")
                     
-            return f"Skill {name} does not have a stop method or disposable subscription"
+                # Also dispose the subscription if it exists
+                if subscription is not None and hasattr(subscription, 'dispose') and callable(subscription.dispose):
+                    subscription.dispose()
+                    logger.info(f"Disposed subscription for skill: {name}")
+                elif subscription is not None:
+                    logger.warning(f"Skill {name} has a subscription but it's not disposable")
+                
+                # unregister the skill
+                self.unregister_running_skill(name)
+                return f"Successfully terminated skill: {name}"
+                
+            except Exception as e:
+                error_msg = f"Error terminating skill {name}: {e}"
+                logger.error(error_msg)
+                # Even on error, try to unregister the skill
+                self.unregister_running_skill(name)
+                return error_msg
         else:
             return f"No running skill found with name: {name}"
 

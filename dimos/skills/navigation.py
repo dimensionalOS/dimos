@@ -21,14 +21,14 @@ This module provides two skills:
 """
 
 import os
-
-import threading
-
 import sys
 import time
 import threading
 import logging
+import numpy as np
+import json
 from typing import Optional, Dict, Tuple, Any
+from dimos.utils.threadpool import get_scheduler
 
 import chromadb
 import reactivex
@@ -64,6 +64,8 @@ class BuildSemanticMap(AbstractRobotSkill):
                                  description="Directory to store visual memory data")
     visual_memory_file: str = Field("visual_memory.pkl", 
                                    description="Filename for visual memory storage")
+    new_map: bool = Field(False,
+                        description="If True, creates new spatial and visual memory from scratch instead of using existing.")
 
     def __init__(self, robot=None, **data):
         """
@@ -103,8 +105,11 @@ class BuildSemanticMap(AbstractRobotSkill):
         # Setup persistent storage path for visual memory
         visual_memory_path = os.path.join(self.visual_memory_dir, self.visual_memory_file)
         
-        # Try to load existing visual memory if it exists
-        if os.path.exists(visual_memory_path):
+        # Create a new visual memory or try to load existing one
+        if self.new_map:
+            logger.info("Creating new visual memory as requested (new_map=True)")
+            visual_memory = VisualMemory(output_dir=self.visual_memory_dir)
+        elif os.path.exists(visual_memory_path):
             try:
                 logger.info(f"Loading existing visual memory from {visual_memory_path}...")
                 visual_memory = VisualMemory.load(visual_memory_path, output_dir=self.visual_memory_dir)
@@ -117,7 +122,7 @@ class BuildSemanticMap(AbstractRobotSkill):
             visual_memory = VisualMemory(output_dir=self.visual_memory_dir)
         
         # Setup a persistent database for ChromaDB
-        db_client = self._setup_persistent_chroma_db()
+        db_client = self._setup_persistent_chroma_db(new_map=self.new_map)
         
         # Get the ros_control instance from the robot
         ros_control = self._robot.ros_control
@@ -162,17 +167,20 @@ class BuildSemanticMap(AbstractRobotSkill):
         self._visual_memory = visual_memory
         
         skill_library = self._robot.get_skills()
-        # self.register_as_running("build_semantic_map", skill_library, self._subscription) # TODO: add back once merged with process management changes
+        self.register_as_running("BuildSemanticMap", skill_library, self._subscription)
         
         logger.info(f"BuildSemanticMap started with min_distance={self.min_distance_threshold}m, "
                  f"min_time={self.min_time_threshold}s")
         return (f"BuildSemanticMap started. Recording frames with min_distance={self.min_distance_threshold}m, "
                 f"min_time={self.min_time_threshold}s. Press Ctrl+C to stop.")
     
-    def _setup_persistent_chroma_db(self):
+    def _setup_persistent_chroma_db(self, new_map=False):
         """
         Set up a persistent ChromaDB database at the specified path.
         
+        Args:
+            new_map: If True, deletes existing database and creates a new one
+            
         Returns:
             The ChromaDB client instance
         """
@@ -181,8 +189,24 @@ class BuildSemanticMap(AbstractRobotSkill):
         # Ensure the directory exists
         os.makedirs(self.db_path, exist_ok=True)
         
+        # If new_map is True, remove the existing ChromaDB files
+        if new_map:
+            try:
+                logger.info(f"Creating new ChromaDB database (new_map=True)")
+                # Try to delete any existing database files
+                import shutil
+                for item in os.listdir(self.db_path):
+                    item_path = os.path.join(self.db_path, item)
+                    if os.path.isfile(item_path):
+                        os.unlink(item_path)
+                    elif os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                logger.info(f"Removed existing ChromaDB files from {self.db_path}")
+            except Exception as e:
+                logger.error(f"Error clearing ChromaDB directory: {e}")
+        
         return chromadb.PersistentClient(path=self.db_path)
-    
+
     def _extract_position(self, transform):
         """
         Extract position coordinates from a transform message.
@@ -229,14 +253,13 @@ class BuildSemanticMap(AbstractRobotSkill):
             if hasattr(self, '_visual_memory') and self._visual_memory is not None:
                 saved_path = self._visual_memory.save(self.visual_memory_file)
                 logger.info(f"Saved {self._visual_memory.count()} images to disk at {saved_path}")
+                self._visual_memory = None
             
             # Clean up spatial memory
             if hasattr(self, '_spatial_memory') and self._spatial_memory is not None:
                 self._spatial_memory.cleanup()
-            
-            # skill_library = self._robot.get_skills()
-            # self.unregister_as_running("build_semantic_map", skill_library) # TODO: add back once merged with process management changes
-            
+                self._spatial_memory = None
+                        
             return f"BuildSemanticMap stopped. Stored {self._stored_count} frames."
         return "BuildSemanticMap was not running."
 
@@ -268,6 +291,10 @@ class Navigate(AbstractRobotSkill):
             **data: Additional data for configuration
         """
         super().__init__(robot=robot, **data)
+        self._stop_event = threading.Event()
+        self._spatial_memory = None
+        self._scheduler = get_scheduler()  # Use the shared DiMOS thread pool
+        self._navigation_disposable = None  # Disposable returned by scheduler.schedule()
     
     def __call__(self):
         """
@@ -336,6 +363,46 @@ class Navigate(AbstractRobotSkill):
             
             logger.info(f"Found match for '{self.query}' at ({x:.2f}, {y:.2f}, {z:.2f}) with similarity: {similarity:.4f}")
             
+
+            logger.info(f"Starting navigation to position: ({x:.2f}, {y:.2f})")
+
+            # Reset the stop event before starting navigation
+            self._stop_event.clear()
+            
+            # The scheduler approach isn't working, switch to direct threading
+            # Define a navigation function that will run on a separate thread
+            def run_navigation():
+                try:
+                    logger.info(f"Starting navigation to ({x:.2f}, {y:.2f})")
+                    # Pass our stop_event to allow cancellation
+                    result = False
+                    try:
+                        result = self._robot.global_planner.set_goal((x, y), stop_event=self._stop_event)
+                    except Exception as e:
+                        logger.error(f"Error calling global_planner.set_goal: {e}")
+                        
+                    if result:
+                        logger.info("Navigation completed successfully")
+                    else:
+                        logger.error("Navigation did not complete successfully")
+                    return result
+                except Exception as e:
+                    logger.error(f"Unexpected error in navigation thread: {e}")
+                    return False
+            
+            # Cancel any existing navigation before starting a new one
+            # Signal stop to any running navigation
+            self._stop_event.set()
+            # Clear stop event for new navigation
+            self._stop_event.clear()
+            
+            # Create and start direct thread instead of using scheduler
+            logger.info("Creating direct navigation thread")
+            nav_thread = threading.Thread(target=run_navigation, daemon=True)
+            logger.info("Starting direct navigation thread")
+            nav_thread.start()
+            logger.info("Direct navigation thread started successfully")
+
             return {
                 "success": True,
                 "query": self.query,
@@ -354,7 +421,7 @@ class Navigate(AbstractRobotSkill):
     def _setup_persistent_chroma_db(self):
         """
         Set up a persistent ChromaDB database at the specified path.
-        
+            
         Returns:
             The ChromaDB client instance
         """
@@ -364,3 +431,32 @@ class Navigate(AbstractRobotSkill):
         os.makedirs(self.db_path, exist_ok=True)
         
         return chromadb.PersistentClient(path=self.db_path)
+
+    def stop(self):
+        """
+        Stop the navigation skill and clean up resources.
+        
+        Returns:
+            A message indicating whether the navigation was stopped successfully
+        """
+        logger.info("Stopping Navigate skill")
+        
+        # Signal any running processes to stop via the shared event
+        self._stop_event.set()
+        
+        # Dispose of any existing navigation task
+        if hasattr(self, '_navigation_disposable') and self._navigation_disposable:
+            logger.info("Disposing navigation task")
+            try:
+                self._navigation_disposable.dispose()
+            except Exception as e:
+                logger.error(f"Error disposing navigation task: {e}")
+            self._navigation_disposable = None
+        
+        # Clean up spatial memory if it exists
+        if hasattr(self, '_spatial_memory') and self._spatial_memory is not None:
+            logger.info("Cleaning up spatial memory")
+            self._spatial_memory.cleanup()
+            self._spatial_memory = None
+        
+        return "Navigate skill stopped successfully."

@@ -14,7 +14,8 @@
 
 from dataclasses import dataclass
 from abc import abstractmethod
-from typing import Tuple, Callable
+from typing import Tuple, Callable, Optional
+import threading
 
 from dimos.types.vector import VectorLike, to_vector, Vector
 from dimos.types.path import Path
@@ -28,19 +29,19 @@ logger = setup_logger("dimos.robot.unitree.global_planner")
 
 @dataclass
 class Planner(Visualizable):
-    local_nav: Callable[[Path], bool]
+    local_nav: Callable[[Path, Optional[threading.Event]], bool]
 
     @abstractmethod
     def plan(self, goal: VectorLike) -> Path: ...
 
-    def set_goal(self, goal: VectorLike):
+    def set_goal(self, goal: VectorLike, stop_event: Optional[threading.Event] = None):
         goal = to_vector(goal).to_2d()
         path = self.plan(goal)
         if not path:
             logger.warning("No path found to the goal.")
             return False
 
-        return self.local_nav(path.resample(1.0))
+        return self.local_nav(path.resample(1.0), stop_event=stop_event)
 
 
 class AstarPlanner(Planner):
