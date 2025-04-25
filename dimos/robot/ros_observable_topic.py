@@ -37,8 +37,6 @@ from rclpy.qos import (
 
 __all__ = ["ROSObservableTopicAbility", "QOS"]
 
-print(msg)
-
 ConversionType = Costmap
 TopicType = Union[ConversionType, msg.OccupancyGrid, msg.Odometry]
 
