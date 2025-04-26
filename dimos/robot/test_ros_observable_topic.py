@@ -5,7 +5,6 @@ from nav_msgs import msg
 import pytest
 from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
 from dimos.utils.logging_config import setup_logger
-from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector
 import asyncio
 
@@ -13,7 +12,6 @@ import asyncio
 class MockROSNode:
     def __init__(self):
         self.logger = setup_logger("ROS")
-
         self.sub_id_cnt = 0
         self.subs = {}
 
@@ -38,8 +36,12 @@ class MockROSNode:
                 time.sleep(0.1)  # 20Hz default publication rate
                 if topic_name == "/vector":
                     callback([message_count, message_count])
+                elif topic_name == "/slowmobile":
+                    time.sleep(0.3)
+                    callback(f"slowmobile_{message_count}")
                 else:
                     callback(message_count)
+
             # cleanup
             self.subs.pop(sub_id)
 
@@ -209,7 +211,6 @@ def test_topic_latest_sync():
 
 def test_topic_latest_sync_benchmark():
     robot = MockRobot()
-
     odom = robot.topic_latest("/odom", msg.Odometry)
 
     start_time = time.time()
@@ -229,8 +230,31 @@ def test_topic_latest_sync_benchmark():
     assert robot._node.subs == {}
 
 
-if __name__ == "__main__":
-    test_parallel_and_cleanup()
-    test_parallel_and_hog()
-    test_topic_latest_sync()
-    asyncio.run(test_topic_latest_async())
+def measure_time(func):
+    start_time = time.time()
+    ret = func()
+    end_time = time.time()
+    return [end_time - start_time, ret]
+
+
+def test_topic_sub_blocking():
+    robot = MockRobot()
+    [b_subtime, b_subres] = measure_time(lambda: robot.topic_latest("/slowmobile", msg.Odometry))
+
+    assert b_subtime > 0.3, f"Expected delay > 0.3s, got {b_subtime}"
+
+    [b_time, b_res] = measure_time(b_subres)
+
+    assert b_time < 0.3
+    assert b_res == "slowmobile_1", f"Expected slowmobile_1, got {b_res}"
+
+
+def test_topic_sub_nonblocking():
+    robot = MockRobot()
+
+    [nb_subtime, nb_subres] = measure_time(lambda: robot.topic_latest("/slowmobile", msg.Odometry, blocking=False))
+    assert nb_subtime < 0.3, f"Expected delay < 0.3s, got {nb_subtime}"
+
+    [nb_time, nb_res] = measure_time(nb_subres)
+    assert nb_time > 0.3
+    assert nb_res == "slowmobile_1", f"Expected slowmobile_1, got {nb_res}"

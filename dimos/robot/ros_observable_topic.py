@@ -15,6 +15,8 @@ import asyncio
 import functools
 import enum
 import reactivex as rx
+import threading
+
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.scheduler import ThreadPoolScheduler
@@ -158,32 +160,58 @@ class ROSObservableTopicAbility:
     # odom.dispose()  # clean up the subscription
     #
     # see test_ros_observable_topic.py test_topic_latest for more details
-    def topic_latest(self, topic_name: str, msg_type: TopicType, timeout: float | None = 30.0, qos=QOS.SENSOR):
+    def topic_latest(
+        self,
+        topic_name: str,
+        msg_type: TopicType,
+        *,
+        timeout: float | None = 30.0,
+        qos: QOS = QOS.SENSOR,
+        # If we should block, waiting for the first message
+        # ensuring that getter calls are immediate. (that downstream stuff is initialized)
+        #
+        # Otherwise first getter call might block waiting for the first message
+        blocking: bool = True,
+    ):
         """
-        Blocks the current thread until the first message is received, then
-        returns `reader()` (sync) and keeps one ROS subscription alive
-        in the background.
+        Returns a synchronous `reader()` that always gives the most-recent
+        message on `topic_name`.
 
-            latest_scan = robot.ros_control.topic_latest_blocking("scan", LaserScan)
-            do_something(latest_scan())       # instant
-            latest_scan.dispose()             # clean up
+        When `noblock=False`   – blocks here until the first message arrives.
+        When `noblock=True`    – returns immediately; the *first* call to
+                                 `reader()` will block if the cache is still empty.
         """
-        # one shared observable with a 1-element replay buffer
+
+        # Shared observable with 1-element replay
         core = self.topic(topic_name, msg_type, qos=qos).pipe(ops.replay(buffer_size=1))
-        conn = core.connect()  # starts the ROS subscription immediately
+        conn = core.connect()  # start ROS subscription
 
-        try:
-            first_val = core.pipe(ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])).run()
-        except Exception:
-            conn.dispose()
-            msg = f"{topic_name} message not received after {timeout} seconds. Is robot connected?"
-            logger.error(msg)
-            raise Exception(msg)
+        cache: dict[str, Any] = {"val": None}
+        ready = threading.Event()  # signals that at least one msg arrived
 
-        cache = {"val": first_val}
-        sub = core.subscribe(lambda v: cache.__setitem__("val", v))
+        def _update(v):
+            cache["val"] = v
+            ready.set()
 
-        def reader():
+        sub = core.subscribe(_update)
+
+        # if we are blocking, wait for the first message
+        if blocking:
+            try:
+                first_val = core.pipe(ops.first(), *([ops.timeout(timeout)] if timeout else [])).run()
+                cache["val"] = first_val
+                ready.set()
+            except Exception:
+                sub.dispose()
+                conn.dispose()
+                msg = f"{topic_name!r} message not received after {timeout}s"
+                raise RuntimeError(msg)
+
+        def reader() -> msg_type:
+            # if we are not blocking, wait for the first message now
+            if not ready.is_set():
+                if timeout is not None and not ready.wait(timeout):
+                    raise TimeoutError(f"{topic_name!r} message not received after {timeout}s")
             return cache["val"]
 
         reader.dispose = lambda: (sub.dispose(), conn.dispose())
