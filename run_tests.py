@@ -43,6 +43,12 @@ def main():
         action="store_true"
     )
     
+    parser.add_argument(
+        "--no-capture", "-s",
+        help="Disable capture of stdout/stderr (needed for tests using input())",
+        action="store_true"
+    )
+    
     args = parser.parse_args()
     
     cmd = ["python", "-m", "pytest"]
@@ -58,6 +64,9 @@ def main():
         cmd.append("--cov=dimos")
         cmd.append("--cov-report=term")
         cmd.append("--cov-report=html")
+        
+    if args.no_capture:
+        cmd.append("-s")
     
     if args.module:
         cmd.append(f"tests/{args.module}")
