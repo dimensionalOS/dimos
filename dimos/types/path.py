@@ -381,13 +381,13 @@ class Path:
 
     def iclip_tail(self, max_len: int) -> "Path":
         """Return a new Path containing only the last `max_len` points."""
-        if max_len < 0:
-            raise ValueError("max_len must be ≥ 0")
+        if max_len < 1:
+            raise ValueError("max_len must be > 0")
         return self.__class__(self._points[-max_len:])
 
     def __add__(self, point):
-        """path + vec  ->  path.pushed(vec)"""
-        return self.pushed(point)
+        """path + vec  ->  path.ipush(vec)"""
+        return self.ipush(point)
 
 
 if __name__ == "__main__":
