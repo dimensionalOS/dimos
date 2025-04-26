@@ -75,7 +75,8 @@ def main():
         print(vec)
         return vec
 
-    websocket_vis.connect(rx.interval(0.05).pipe(ops.map(lambda _: ["fakepos", fakepos()])))
+    if not args.live:
+        websocket_vis.connect(rx.interval(0.05).pipe(ops.map(lambda _: ["fakepos", fakepos()])))
 
     try:
         # Keep the server running
