@@ -362,9 +362,10 @@ class Navigate(AbstractRobotSkill):
         
         # Extract coordinates from metadata
         if isinstance(metadata, dict) and 'x' in metadata and 'y' in metadata:
-            x = metadata.get('x', 0)
-            y = metadata.get('y', 0)
-            z = metadata.get('z', 0)
+            pos = metadata.get('position', (0, 0, 0))
+            rot = metadata.get('rotation', (0, 0, 0))
+            x, y, _ = pos
+            theta = rot[2]
             
             # Calculate similarity score (distance is inverse of similarity)
             similarity = 1.0 - (best_match.get('distance', 0) if best_match.get('distance') is not None else 0)
@@ -385,7 +386,7 @@ class Navigate(AbstractRobotSkill):
                     # Pass our stop_event to allow cancellation
                     result = False
                     try:
-                        result = self._robot.global_planner.set_goal((x, y), stop_event=self._stop_event)
+                        result = self._robot.global_planner.set_goal((x, y), goal_theta = theta, stop_event=self._stop_event)
                     except Exception as e:
                         logger.error(f"Error calling global_planner.set_goal: {e}")
                         
