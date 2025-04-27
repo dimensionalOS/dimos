@@ -34,7 +34,7 @@ class Planner(Visualizable):
     @abstractmethod
     def plan(self, goal: VectorLike) -> Path: ...
 
-    def set_goal(self, goal: VectorLike, goal_theta: float, stop_event: Optional[threading.Event] = None):
+    def set_goal(self, goal: VectorLike, goal_theta: float = 0.0, stop_event: Optional[threading.Event] = None):
         goal = to_vector(goal).to_2d()
         path = self.plan(goal)
         if not path:

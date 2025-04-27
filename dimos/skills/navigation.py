@@ -361,20 +361,16 @@ class Navigate(AbstractRobotSkill):
             metadata = metadata[0]
         
         # Extract coordinates from metadata
-        if isinstance(metadata, dict) and 'x' in metadata and 'y' in metadata:
-            pos = metadata.get('position', (0, 0, 0))
-            rot = metadata.get('rotation', (0, 0, 0))
-            x, y, _ = pos
-            theta = rot[2]
+        if isinstance(metadata, dict) and 'pos_x' in metadata and 'pos_y' in metadata and 'rot_z' in metadata:
+            pos_x = metadata.get('pos_x', 0)
+            pos_y = metadata.get('pos_y', 0)
+            theta = metadata.get('rot_z', 0)
             
             # Calculate similarity score (distance is inverse of similarity)
             similarity = 1.0 - (best_match.get('distance', 0) if best_match.get('distance') is not None else 0)
             
-            logger.info(f"Found match for '{self.query}' at ({x:.2f}, {y:.2f}, {z:.2f}) with similarity: {similarity:.4f}")
+            logger.info(f"Found match for '{self.query}' at ({pos_x:.2f}, {pos_y:.2f}, rotation {theta:.2f}) with similarity: {similarity:.4f}")
             
-
-            logger.info(f"Starting navigation to position: ({x:.2f}, {y:.2f})")
-
             # Reset the stop event before starting navigation
             self._stop_event.clear()
             
@@ -386,7 +382,7 @@ class Navigate(AbstractRobotSkill):
                     # Pass our stop_event to allow cancellation
                     result = False
                     try:
-                        result = self._robot.global_planner.set_goal((x, y), goal_theta = theta, stop_event=self._stop_event)
+                        result = self._robot.global_planner.set_goal((pos_x, pos_y), goal_theta = theta, stop_event=self._stop_event)
                     except Exception as e:
                         logger.error(f"Error calling global_planner.set_goal: {e}")
                         
