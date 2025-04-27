@@ -1,3 +1,4 @@
+import math
 import os
 import time
 import threading
@@ -11,6 +12,7 @@ from dimos.types.vector import Vector
 from reactivex import operators as ops
 import argparse
 import pickle
+import reactivex as rx
 
 
 def parse_args():
@@ -29,7 +31,7 @@ def main():
     websocket_vis.start()
 
     if args.live:
-        ros_control = UnitreeROSControl(node_name="simple_nav_test", mock_connection=False)
+        ros_control = UnitreeROSControl(node_name="web_nav_test", mock_connection=False)
         robot = UnitreeGo2(ros_control=ros_control, ip=os.getenv("ROBOT_IP"))
         planner = robot.global_planner
 
@@ -40,9 +42,9 @@ def main():
         pickle_path = f"{__file__.rsplit('/', 1)[0]}/mockdata/costmap.pickle"
         print(f"Loading costmap from {pickle_path}")
         planner = AstarPlanner(
-            costmap=lambda: pickle.load(open(pickle_path, "rb")),
-            base_link=lambda: [Vector(6.0, -1.5), Vector(1, 1, 1)],
-            local_nav=lambda x: time.sleep(1) and True,
+            get_costmap=lambda: pickle.load(open(pickle_path, "rb")),
+            get_robot_pos=lambda: Vector(6.0, -1.5),
+            set_local_nav=lambda x: time.sleep(1) and True,
         )
 
     def msg_handler(msgtype, data):
@@ -63,7 +65,18 @@ def main():
     websocket_vis.msg_handler = threaded_msg_handler
 
     print(f"WebSocket server started on port {websocket_vis.port}")
-    planner.plan(Vector(0, 0))
+    print(planner.get_costmap())
+
+    planner.plan(Vector(0, 0))  # plan a path to the origin
+
+    def fakepos():
+        # Simulate a fake vector position change (to test realtime rendering)
+        vec = Vector(math.sin(time.time()) * 2, math.cos(time.time()) * 2, 0)
+        print(vec)
+        return vec
+
+    if not args.live:
+        websocket_vis.connect(rx.interval(0.05).pipe(ops.map(lambda _: ["fakepos", fakepos()])))
 
     try:
         # Keep the server running

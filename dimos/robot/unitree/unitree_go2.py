@@ -172,13 +172,14 @@ class UnitreeGo2(Robot):
             robot_length=0.6,  # Unitree Go2 length in meters
             max_linear_vel=0.5,
             lookahead_distance=1.0,
-            visualization_size=500  # 500x500 pixel visualization
+            visualization_size=500,  # 500x500 pixel visualization
         )
 
         self.global_planner = AstarPlanner(
-            costmap=lambda: Costmap.from_msg(self.ros_control.topic_latest("map", msg.OccupancyGrid)()),
-            base_link=lambda: self.ros_control.transform_euler("base_link"),
-            local_nav=self.navigate_path_local
+            conservativism=3,  # how close to obstacles robot is allowed to path plan
+            set_local_nav=self.navigate_path_local,
+            get_costmap=self.ros_control.topic_latest("map", Costmap),
+            get_robot_pos=lambda: self.ros_control.transform_euler_pos("base_link"),
         )
 
         # Create the visualization stream at 5Hz
@@ -268,19 +269,19 @@ class UnitreeGo2(Robot):
                 if self.local_planner.is_goal_reached():
                     logger.info("Path traversed successfully.")
                     path_completed = True
-                    break 
+                    break
 
                 # Get planned velocity towards the current waypoint target
                 vel_command = self.local_planner.plan()
-                x_vel = vel_command.get('x_vel', 0.0)
-                angular_vel = vel_command.get('angular_vel', 0.0)
+                x_vel = vel_command.get("x_vel", 0.0)
+                angular_vel = vel_command.get("angular_vel", 0.0)
 
                 # Send velocity command
                 self.ros_control.move_vel_control(x=x_vel, y=0, yaw=angular_vel)
 
                 # Control loop frequency
                 time.sleep(0.1)
-            
+
             if not path_completed:
                 logger.warning(f"Path following timed out after {timeout} seconds before completing the path.")
 
@@ -293,7 +294,7 @@ class UnitreeGo2(Robot):
         finally:
             logger.info("Stopping robot after path navigation attempt.")
             self.ros_control.stop()
-            
+
         return path_completed
 
     def get_skills(self) -> Optional[SkillLibrary]:

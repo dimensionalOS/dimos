@@ -14,12 +14,12 @@
 
 from dataclasses import dataclass
 from abc import abstractmethod
-from typing import Tuple, Callable, Optional
+from typing import Callable, Optional
 import threading
 
-from dimos.types.vector import VectorLike, to_vector, Vector
 from dimos.types.path import Path
 from dimos.types.costmap import Costmap
+from dimos.types.vector import VectorLike, to_vector, Vector
 from dimos.robot.global_planner.algo import astar
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.helpers import Visualizable
@@ -29,7 +29,7 @@ logger = setup_logger("dimos.robot.unitree.global_planner")
 
 @dataclass
 class Planner(Visualizable):
-    local_nav: Callable[[Path, Optional[threading.Event]], bool]
+    set_local_nav: Callable[[Path, Optional[threading.Event]], bool]
 
     @abstractmethod
     def plan(self, goal: VectorLike) -> Path: ...
@@ -40,30 +40,23 @@ class Planner(Visualizable):
         if not path:
             logger.warning("No path found to the goal.")
             return False
+        return self.set_local_nav(path, stop_event=stop_event, goal_theta = goal_theta)
 
-        return self.local_nav(path, goal_theta = goal_theta, stop_event=stop_event)
-
-
+@dataclass
 class AstarPlanner(Planner):
-    def __init__(
-        self,
-        costmap: Callable[[], Costmap],
-        base_link: Callable[[], Tuple[Vector, Vector]],
-        local_nav: Callable[[Vector], bool],
-    ):
-        super().__init__(local_nav)
-        self.base_link = base_link
-        self.costmap = costmap
+    get_costmap: Callable[[], Costmap]
+    get_robot_pos: Callable[[], Vector]
+    set_local_nav: Callable[[Path], bool]
+    conservativism: int = 3
 
     def plan(self, goal: VectorLike) -> Path:
-        [pos, rot] = self.base_link()
-        costmap = self.costmap()
-        smudge = costmap.smudge(iterations=3)
+        pos = self.get_robot_pos()
+        costmap = self.get_costmap().smudge(iterations=self.conservativism)
 
-        self.vis("planner_costmap", smudge)
+        self.vis("planner_costmap", costmap)
         self.vis("target", goal)
 
-        path = astar(smudge, goal, pos)
+        path = astar(costmap, goal, pos)
 
         if path:
             path = path.resample(0.5)
