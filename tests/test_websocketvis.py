@@ -39,11 +39,11 @@ def main():
         websocket_vis.connect(robot.ros_control.topic("map", Costmap).pipe(ops.map(lambda x: ["costmap", x])))
 
     else:
-        pickle_path = f"{__file__.rsplit('/', 1)[0]}/mockdata/costmap.pickle"
+        pickle_path = f"{__file__.rsplit('/', 1)[0]}/mockdata/vegas.pickle"
         print(f"Loading costmap from {pickle_path}")
         planner = AstarPlanner(
             get_costmap=lambda: pickle.load(open(pickle_path, "rb")),
-            get_robot_pos=lambda: Vector(6.0, -1.5),
+            get_robot_pos=lambda: Vector(5.0, 5.0),
             set_local_nav=lambda x: time.sleep(1) and True,
         )
 
@@ -67,7 +67,7 @@ def main():
     print(f"WebSocket server started on port {websocket_vis.port}")
     print(planner.get_costmap())
 
-    planner.plan(Vector(0, 0))  # plan a path to the origin
+    planner.plan(Vector(-2.0, 1.0))  # plan a path to the origin
 
     def fakepos():
         # Simulate a fake vector position change (to test realtime rendering)
@@ -75,8 +75,8 @@ def main():
         print(vec)
         return vec
 
-    if not args.live:
-        websocket_vis.connect(rx.interval(0.05).pipe(ops.map(lambda _: ["fakepos", fakepos()])))
+    #    if not args.live:
+    #        websocket_vis.connect(rx.interval(0.05).pipe(ops.map(lambda _: ["fakepos", fakepos()])))
 
     try:
         # Keep the server running

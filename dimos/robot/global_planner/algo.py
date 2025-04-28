@@ -10,7 +10,7 @@ def astar(
     costmap: Costmap,
     goal: VectorLike,
     start: VectorLike = (0.0, 0.0),
-    cost_threshold: int = 60,
+    cost_threshold: int = 80,
     allow_diagonal: bool = True,
 ) -> Optional[Path]:
     """
@@ -32,19 +32,18 @@ def astar(
 
     print("RUNNING ASTAR", costmap, "\n", goal, "\n", start)
     # Check if start or goal is out of bounds or in an obstacle
-    if not (0 <= start_vector.x < costmap.width and 0 <= start_vector.y < costmap.height) or not (
-        0 <= goal_vector.x < costmap.width and 0 <= goal_vector.y < costmap.height
-    ):
-        print("Start or goal position is out of bounds")
-        return None
+    if 0 <= start_vector.x < costmap.width and 0 <= start_vector.y < costmap.height:
+        print("Start position is out of bounds, continuing")
+
+    if 0 <= goal_vector.x < costmap.width and 0 <= goal_vector.y < costmap.height:
+        print("Goal position is out of bounds")
 
     # Check if start or goal is in an obstacle
-    if (
-        costmap.grid[int(start_vector.y), int(start_vector.x)] >= cost_threshold
-        or costmap.grid[int(goal_vector.y), int(goal_vector.x)] >= cost_threshold
-    ):
-        print("Start or goal position is in an obstacle")
-        return None
+    if costmap.grid[int(start_vector.y), int(start_vector.x)] >= cost_threshold:
+        print("Start position is in an obstacle, continuing")
+
+    if costmap.grid[int(goal_vector.y), int(goal_vector.x)] >= cost_threshold:
+        print("Goal position is in an obstacle")
 
     # Define possible movements (8-connected grid)
     if allow_diagonal:
@@ -135,8 +134,8 @@ def astar(
             if costmap.grid[neighbor_y, neighbor_x] >= cost_threshold:
                 continue
 
-            # Calculate g_score for the neighbor
-            tentative_g_score = g_score[current] + movement_costs[i]
+            obstacle_proximity_penalty = (costmap.grid[neighbor_y, neighbor_x] / cost_threshold) * 3
+            tentative_g_score = g_score[current] + movement_costs[i] + obstacle_proximity_penalty
 
             # Get the current g_score for the neighbor or set to infinity if not yet explored
             neighbor_g_score = g_score.get(neighbor, float("inf"))
@@ -153,24 +152,3 @@ def astar(
 
     # If we get here, no path was found
     return None
-
-
-if __name__ == "__main__":
-    from costmap import Costmap
-
-    # Load the costmap
-    costmap = Costmap.from_pickle("costmapMsg.pickle")
-
-    # Create a smudged version of the costmap for better planning
-    smudged_costmap = costmap.smudge()
-
-    # Test different types of inputs for goal position
-    start = Vector(0.0, 0.0)  # Define a single position
-    goal = Vector(5.0, -7.0)  # Define a single position
-
-    print("A* navigating\nfrom\n", start, "\nto\n", goal, "\non\n", smudged_costmap)
-
-    # Try each type of input
-    path = astar(smudged_costmap, start=start, goal=goal, cost_threshold=50)
-
-    print("result\n", path)

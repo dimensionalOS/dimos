@@ -50,7 +50,7 @@ class AstarPlanner(Planner):
     get_costmap: Callable[[], Costmap]
     get_robot_pos: Callable[[], Vector]
     set_local_nav: Callable[[Path], bool]
-    conservativism: int = 20
+    conservativism: int = 70
 
     def plan(self, goal: VectorLike) -> Path:
         pos = self.get_robot_pos()
