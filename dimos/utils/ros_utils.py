@@ -253,7 +253,7 @@ def visualize_local_planner_state(
             cv2.circle(vis_img, (goal_img_x, goal_img_y), 8, (0, 0, 0), 1)      # Black outline
 
     # Draw goal orientation
-    if goal_theta is not None and goal_xy is not None and current_waypoint_index == len(waypoints) - 1:
+    if goal_theta is not None and goal_xy is not None:
         goal_x, goal_y = goal_xy
         goal_rel_x_map = goal_x - robot_x
         goal_rel_y_map = goal_y - robot_y
