@@ -42,9 +42,10 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
     def __init__(
         self,
         api_key: Optional[str] = None,
-        voice: Voice = Voice.ONYX,
+        voice: Voice = Voice.ECHO,
         model: str = "tts-1",
         buffer_size: int = 1024,
+        speed: float = 1.0,
     ):
         """
         Initialize OpenAITTSNode.
@@ -102,9 +103,7 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
         logger.info("Starting OpenAITTSNode")
 
         # Start the processing thread
-        self.processing_thread = threading.Thread(
-            target=self._process_queue, daemon=True
-        )
+        self.processing_thread = threading.Thread(target=self._process_queue, daemon=True)
         self.processing_thread.start()
 
         # Subscribe to the text observable
@@ -153,7 +152,7 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
         try:
             # Call OpenAI TTS API
             response = self.client.audio.speech.create(
-                model=self.model, voice=self.voice.value, input=text
+                model=self.model, voice=self.voice.value, input=text, speed=self.speed
             )
             self.text_subject.on_next(text)
 
