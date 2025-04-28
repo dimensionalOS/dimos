@@ -245,8 +245,16 @@ class NavigateToObject(AbstractRobotSkill):
     
                         # Update the goal in the local planner
                         self._robot.local_planner.set_goal((goal_x_robot, goal_y_robot), frame="base_link", goal_theta=-target["angle"])
+                        logger.info(f"Goal set in local planner: {goal_x_robot}, {goal_y_robot}, {target['angle']}")
                         last_update_time = current_time
                         tracking_started = True
+                    else:
+                        logger.warning("No distance or angle data in tracking data")
+                        continue
+                else:
+                    logger.warning("No tracking data available")
+                    continue
+                
     
                 # Check if goal has been reached (near to object at desired distance)
                 if self._robot.local_planner.is_goal_reached():
@@ -280,6 +288,7 @@ class NavigateToObject(AbstractRobotSkill):
         finally:
             # Clean up
             self._robot.ros_control.stop()
+            self._robot.object_tracker.cleanup()
             
             # Clean up tracking subscriber
             if self._tracking_subscriber:
@@ -299,6 +308,7 @@ class NavigateToObject(AbstractRobotSkill):
             
             # Stop the robot
             self._robot.ros_control.stop()
+            self._robot.object_tracker.cleanup()
             
             # Clean up tracking subscriber if it exists
             self._tracking_subscriber.dispose()
