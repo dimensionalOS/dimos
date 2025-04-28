@@ -63,7 +63,7 @@ def astar(
         directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
 
     # Cost for each movement (straight vs diagonal)
-    movement_costs = [1.0, 1.0, 1.0, 1.0, 1.414, 1.414, 1.414, 1.414] if allow_diagonal else [1.0, 1.0, 1.0, 1.0]
+    movement_costs = [1.0, 1.0, 1.0, 1.0, 3.5, 3.5, 3.5, 3.5] if allow_diagonal else [1.0, 1.0, 1.0, 1.0]
 
     # A* algorithm implementation
     open_set = []  # Priority queue for nodes to explore
