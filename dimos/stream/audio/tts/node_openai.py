@@ -58,6 +58,7 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
         """
         self.voice = voice
         self.model = model
+        self.speed = speed
         self.buffer_size = buffer_size
 
         # Initialize OpenAI client
