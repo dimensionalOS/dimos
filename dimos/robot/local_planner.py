@@ -36,7 +36,7 @@ class VFHPurePursuitPlanner:
                  max_linear_vel: float = 0.8,
                  max_angular_vel: float = 1.0,
                  lookahead_distance: float = 1.0,
-                 goal_tolerance: float = 0.5,
+                 goal_tolerance: float = 0.2,
                  angle_tolerance: float = 0.1,  # ~5.7 degrees
                  robot_width: float = 0.5,
                  robot_length: float = 0.7,
@@ -74,8 +74,8 @@ class VFHPurePursuitPlanner:
         self.selected_direction = None
         
         # VFH parameters
-        self.alpha = 0.25  # Histogram smoothing factor
-        self.obstacle_weight = 1.5
+        self.alpha = 0.15  # Histogram smoothing factor
+        self.obstacle_weight = 2.0
         self.goal_weight = 1.0
         self.prev_direction_weight = 0.7
         self.prev_selected_angle = 0.0
@@ -355,14 +355,14 @@ class VFHPurePursuitPlanner:
             logger.debug("Collision detected ahead. Slowing down.")
             # Re-select direction prioritizing obstacle avoidance if colliding
             self.selected_direction = self.select_direction(
-                0.0,
+                self.goal_weight * 0.5,
                 self.obstacle_weight,
                 0.0, # Zero prev direction weight
                 self.histogram,
                 goal_direction
             )
             _, angular_vel = self.compute_pure_pursuit(goal_distance, self.selected_direction)
-            linear_vel = self.low_speed_nudge
+            linear_vel = 0.0
 
         self.prev_linear_vel = linear_vel
         filtered_linear_vel = self.prev_linear_vel * self.linear_vel_filter_factor + linear_vel * (1 - self.linear_vel_filter_factor)

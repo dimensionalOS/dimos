@@ -171,7 +171,7 @@ class UnitreeGo2(Robot):
             robot_width=0.36,  # Unitree Go2 width in meters
             robot_length=0.6,  # Unitree Go2 length in meters
             max_linear_vel=0.5,
-            lookahead_distance=1.0,
+            lookahead_distance=0.6,
             visualization_size=500,  # 500x500 pixel visualization
         )
 
