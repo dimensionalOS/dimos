@@ -377,6 +377,9 @@ class Navigate(AbstractRobotSkill):
             # The scheduler approach isn't working, switch to direct threading
             # Define a navigation function that will run on a separate thread
             def run_navigation():
+                skill_library = self._robot.get_skills()
+                self.register_as_running("Navigate", skill_library)
+                
                 try:
                     logger.info(f"Starting navigation to ({pos_x:.2f}, {pos_y:.2f}) with rotation {theta:.2f}")
                     # Pass our stop_event to allow cancellation
@@ -394,6 +397,8 @@ class Navigate(AbstractRobotSkill):
                 except Exception as e:
                     logger.error(f"Unexpected error in navigation thread: {e}")
                     return False
+                finally:
+                    self.stop()
             
             # Cancel any existing navigation before starting a new one
             # Signal stop to any running navigation
@@ -449,6 +454,9 @@ class Navigate(AbstractRobotSkill):
         
         # Signal any running processes to stop via the shared event
         self._stop_event.set()
+        
+        skill_library = self._robot.get_skills()
+        self.unregister_as_running("Navigate", skill_library)
         
         # Dispose of any existing navigation task
         if hasattr(self, '_navigation_disposable') and self._navigation_disposable:
@@ -569,6 +577,9 @@ class NavigateToGoal(AbstractRobotSkill):
         
         # Reset stop event to make sure we don't immediately abort
         self._stop_event.clear()
+
+        skill_library = self._robot.get_skills()
+        self.register_as_running("NavigateToGoal", skill_library)
         
         logger.info(f"Starting navigation to position=({self.position[0]:.2f}, {self.position[1]:.2f}) "
                     f"with rotation={self.rotation if self.rotation is not None else 'None'} "
@@ -608,6 +619,9 @@ class NavigateToGoal(AbstractRobotSkill):
                 "rotation": self.rotation,
                 "error": error_msg
             }
+        finally:
+            self.stop()
+            
     
     def stop(self):
         """
@@ -617,5 +631,7 @@ class NavigateToGoal(AbstractRobotSkill):
             A message indicating that the navigation was stopped
         """
         logger.info("Stopping NavigateToGoal")
+        skill_library = self._robot.get_skills()
+        self.unregister_as_running("NavigateToGoal", skill_library)
         self._stop_event.set()
         return "Navigation stopped"
