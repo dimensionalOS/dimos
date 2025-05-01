@@ -54,7 +54,7 @@ class AstarPlanner(Planner):
 
     def plan(self, goal: VectorLike) -> Path:
         pos = self.get_robot_pos()
-        costmap = self.get_costmap().smudge(preserve_unknown=True)
+        costmap = self.get_costmap().smudge(preserve_unknown=False)
 
         self.vis("planner_costmap", costmap)
         self.vis("target", goal)
