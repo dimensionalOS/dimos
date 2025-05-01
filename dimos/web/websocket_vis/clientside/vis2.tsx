@@ -409,8 +409,8 @@ function visualisePath(
         .data([
             //{ offset: "0%", color: "#4fc3f7" },
             //{ offset: "100%", color: "#f06292" },
-            { offset: "0%", color: "#000000" },
-            { offset: "100%", color: "#000000" },
+            { offset: "0%", color: "#ff3333" },
+            { offset: "100%", color: "#ff3333" },
         ])
         .enter().append("stop")
         .attr("offset", (d) => d.offset)
@@ -421,7 +421,7 @@ function visualisePath(
         .datum(points)
         .attr("fill", "none")
         .attr("stroke", `url(#${pathId})`)
-        .attr("stroke-width", 2)
+        .attr("stroke-width", 5)
         .attr("stroke-linecap", "round")
         .attr("filter", "url(#glow)")
         .attr("opacity", 0.9)
