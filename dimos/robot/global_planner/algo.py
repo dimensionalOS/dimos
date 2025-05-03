@@ -10,7 +10,7 @@ def astar(
     costmap: Costmap,
     goal: VectorLike,
     start: VectorLike = (0.0, 0.0),
-    cost_threshold: int = 80,
+    cost_threshold: int = 90,
     allow_diagonal: bool = True,
 ) -> Optional[Path]:
     """
@@ -30,7 +30,6 @@ def astar(
     start_vector = costmap.world_to_grid(start)
     goal_vector = costmap.world_to_grid(goal)
 
-    print("RUNNING ASTAR", costmap, "\n", goal, "\n", start)
     # Check if start or goal is out of bounds or in an obstacle
     if not (0 <= start_vector.x < costmap.width and 0 <= start_vector.y < costmap.height):
         print("Start position is out of bounds, cannot proceed")
@@ -61,11 +60,13 @@ def astar(
             (-1, -1),
         ]
     else:
-        # 4-connected grid: only horizontal and vertical movements
+        # 4-connected grid: only horizontal and vertical ts
         directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
 
     # Cost for each movement (straight vs diagonal)
-    movement_costs = [1.0, 1.0, 1.0, 1.0, 3.5, 3.5, 3.5, 3.5] if allow_diagonal else [1.0, 1.0, 1.0, 1.0]
+    sc = 1.0
+    dc = 1.42
+    movement_costs = [sc, sc, sc, sc, dc, dc, dc, dc] if allow_diagonal else [sc, sc, sc, sc]
 
     # A* algorithm implementation
     open_set = []  # Priority queue for nodes to explore
@@ -133,11 +134,12 @@ def astar(
                 continue
 
             # Check if the neighbor is an obstacle
-            if costmap.grid[neighbor_y, neighbor_x] >= cost_threshold:
+            neighbor_val = costmap.grid[neighbor_y, neighbor_x]
+            if neighbor_val >= cost_threshold:  # or neighbor_val < 0:
                 continue
 
-            obstacle_proximity_penalty = (costmap.grid[neighbor_y, neighbor_x] / cost_threshold) * 3
-            tentative_g_score = g_score[current] + movement_costs[i] + obstacle_proximity_penalty
+            obstacle_proximity_penalty = costmap.grid[neighbor_y, neighbor_x] / 25
+            tentative_g_score = g_score[current] + movement_costs[i] + (obstacle_proximity_penalty * movement_costs[i])
 
             # Get the current g_score for the neighbor or set to infinity if not yet explored
             neighbor_g_score = g_score.get(neighbor, float("inf"))

@@ -67,7 +67,7 @@ def main():
     print(f"WebSocket server started on port {websocket_vis.port}")
     print(planner.get_costmap())
 
-    planner.plan(Vector(-2.0, 1.0))  # plan a path to the origin
+    planner.plan(Vector(-4.8, -1.0))  # plan a path to the origin
 
     def fakepos():
         # Simulate a fake vector position change (to test realtime rendering)

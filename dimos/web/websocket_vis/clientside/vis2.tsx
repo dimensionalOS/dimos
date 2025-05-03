@@ -10,8 +10,32 @@ const VisualizerComponent: React.FC<{ state: Record<string, Drawable> }> = ({
     state,
 }) => {
     const svgRef = React.useRef<SVGSVGElement>(null)
-    const width = 800
-    const height = 600
+    const [dimensions, setDimensions] = React.useState({
+        width: 800,
+        height: 600,
+    })
+    const { width, height } = dimensions
+
+    // Update dimensions when container size changes
+    React.useEffect(() => {
+        if (!svgRef.current) return
+
+        const updateDimensions = () => {
+            const rect = svgRef.current?.parentElement?.getBoundingClientRect()
+            if (rect) {
+                setDimensions({ width: rect.width, height: rect.height })
+            }
+        }
+
+        // Initial update
+        updateDimensions()
+
+        // Create resize observer
+        const observer = new ResizeObserver(updateDimensions)
+        observer.observe(svgRef.current.parentElement as Element)
+
+        return () => observer.disconnect()
+    }, [])
 
     /** Build a world→pixel transformer from the *first* cost‑map we see. */
     const { worldToPx, pxToWorld } = React.useMemo(() => {
@@ -140,7 +164,7 @@ const VisualizerComponent: React.FC<{ state: Record<string, Drawable> }> = ({
                 viewBox={`0 0 ${width} ${height}`}
                 preserveAspectRatio="xMidYMid meet"
                 style={{
-                    backgroundColor: "#14151a",
+                    backgroundColor: "black",
                     borderRadius: "8px",
                     boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
                 }}
@@ -150,7 +174,7 @@ const VisualizerComponent: React.FC<{ state: Record<string, Drawable> }> = ({
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
-// Helper: cost‑map
+// Helper: costmap
 // ───────────────────────────────────────────────────────────────────────────────
 function visualiseCostmap(
     svg: d3.Selection<SVGSVGElement, unknown, null, undefined>,
@@ -175,14 +199,19 @@ function visualiseCostmap(
     // Custom color interpolation function that maps 0 to white and other values to Inferno scale
     const customColorScale = (t: number) => {
         // If value is 0 (or very close to it), return dark bg color
-        if (t < 0.1) return "#ffffff"
-        if (t > 0.9) return "#000000"
-        // Use a cool cyberpunk-style color scale
-        return d3.interpolateGreys(t * 0.5)
+        // bluest #2d2136
+        if (t == 0) return "white"
+        if (t < 0) return "#2d2136"
+        if (t > 0.95) return "#000000"
+
+        const color = d3.interpolateTurbo((t * 2) - 1)
+        const hsl = d3.hsl(color)
+        hsl.s *= 0.75
+        return hsl.toString()
     }
 
     const colour = d3.scaleSequential(customColorScale).domain([
-        0,
+        -1,
         100,
     ])
 
@@ -190,6 +219,7 @@ function visualiseCostmap(
         "height",
         gridH,
     )
+
     const canvas = document.createElement("canvas")
     canvas.width = cols
     canvas.height = rows
@@ -197,7 +227,9 @@ function visualiseCostmap(
         width: "100%",
         height: "100%",
         objectFit: "contain",
+        backgroundColor: "black",
     })
+
     fo.append("xhtml:div")
         .style("width", "100%")
         .style("height", "100%")
@@ -263,7 +295,7 @@ function addCoordinateSystem(
     ]).range([height, 0])
 
     const gridSize = 1.0
-    const gridColour = "#555"
+    const gridColour = "#000"
     const gridGroup = group.append("g").attr("class", "grid")
 
     for (
@@ -281,8 +313,9 @@ function addCoordinateSystem(
             .attr("y2", height)
             .attr("stroke", gridColour)
             .attr("stroke-width", 0.5)
-            .attr("opacity", 0.5)
+            .attr("opacity", 0.25)
     }
+
     for (
         const y of d3.range(
             Math.ceil(minY / gridSize) * gridSize,
@@ -298,7 +331,7 @@ function addCoordinateSystem(
             .attr("y2", yScale(y))
             .attr("stroke", gridColour)
             .attr("stroke-width", 0.5)
-            .attr("opacity", 0.5)
+            .attr("opacity", 0.25)
     }
 
     const stylise = (
@@ -307,7 +340,6 @@ function addCoordinateSystem(
         sel.selectAll("line,path")
             .attr("stroke", "#ffffff")
             .attr("stroke-width", 1)
-
         sel.selectAll("text")
             .attr("fill", "#ffffff") // Change the color here
     }
@@ -359,8 +391,6 @@ function visualisePath(
         return wp ? wp(x, y) : [width / 2 + x, height / 2 - y]
     })
 
-    const colour = d3.scaleOrdinal(d3.schemeCategory10)(label)
-
     // Create a path line
     const line = d3.line()
 
@@ -377,56 +407,25 @@ function visualisePath(
         .attr("y2", points[points.length - 1][1])
         .selectAll("stop")
         .data([
-            { offset: "0%", color: "#4fc3f7" },
-            { offset: "100%", color: "#f06292" },
+            //{ offset: "0%", color: "#4fc3f7" },
+            //{ offset: "100%", color: "#f06292" },
+            { offset: "0%", color: "#ff3333" },
+            { offset: "100%", color: "#ff3333" },
         ])
         .enter().append("stop")
         .attr("offset", (d) => d.offset)
         .attr("stop-color", (d) => d.color)
 
     // Create the path with gradient and animation
-    const pathElement = svg.append("path")
+    svg.append("path")
         .datum(points)
         .attr("fill", "none")
         .attr("stroke", `url(#${pathId})`)
-        .attr("stroke-width", 3)
+        .attr("stroke-width", 5)
         .attr("stroke-linecap", "round")
         .attr("filter", "url(#glow)")
         .attr("opacity", 0.9)
         .attr("d", line)
-
-    // Add label near the middle point of the path
-    //const midIdx = Math.floor(points.length / 2)
-    const [mx, my] = points[Math.floor(points.length / 2)]
-
-    // Create a group for the text and background
-    const textGroup = svg.append("g")
-
-    // Add text with background
-    const text = `${label} (${path.coords.length})`
-
-    // Add text element
-    const textElement = textGroup
-        .append("text")
-        .attr("x", mx + 10)
-        .attr("y", my - 10)
-        .attr("font-size", "10px")
-        .attr("fill", "white")
-        .text(text)
-
-    // Add background rect
-    const bbox = textElement.node()?.getBBox()
-    if (bbox) {
-        textGroup
-            .insert("rect", "text")
-            .attr("x", bbox.x - 1)
-            .attr("y", bbox.y - 1)
-            .attr("width", bbox.width + 2)
-            .attr("height", bbox.height + 2)
-            .attr("fill", "black")
-            .attr("stroke", "black")
-            .attr("opacity", 0.7)
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -444,8 +443,6 @@ function visualiseVector(
         ? wp(vector.coords[0], vector.coords[1])
         : [width / 2 + vector.coords[0], height / 2 - vector.coords[1]]
 
-    const colour = d3.scaleOrdinal(d3.schemeCategory10)(label)
-
     // Create a vector marker group
     const vectorGroup = svg.append("g")
         .attr("class", "vector-marker")
@@ -453,18 +450,18 @@ function visualiseVector(
 
     // Add a glowing outer ring
     vectorGroup.append("circle")
-        .attr("r", 8)
+        .attr("r", ".7em")
         .attr("fill", "none")
-        .attr("stroke", "#4fc3f7")
-        .attr("stroke-width", 1)
+        //                           .attr("stroke", "#4fc3f7")
+        .attr("stroke", "red")
+        .attr("stroke-width", "1")
         .attr("opacity", 0.9)
-        .attr("filter", "url(#glow)")
 
     // Add inner dot
     vectorGroup.append("circle")
-        .attr("r", 4)
-        .attr("fill", "#4fc3f7")
-        .attr("filter", "url(#glow)")
+        .attr("r", ".4em")
+        //                           .attr("fill", "#4fc3f7")
+        .attr("fill", "red")
 
     // Add text with background
     const text = `${label} (${vector.coords[0].toFixed(2)}, ${
@@ -477,9 +474,9 @@ function visualiseVector(
     // Add text element
     const textElement = textGroup
         .append("text")
-        .attr("x", cx + 10)
-        .attr("y", cy - 10)
-        .attr("font-size", "10px")
+        .attr("x", cx + 25)
+        .attr("y", cy + 25)
+        .attr("font-size", "1em")
         .attr("fill", "white")
         .text(text)
 
@@ -494,7 +491,7 @@ function visualiseVector(
             .attr("height", bbox.height + 2)
             .attr("fill", "black")
             .attr("stroke", "black")
-            .attr("opacity", 0.7)
+            .attr("opacity", 0.75)
     }
 }
 
@@ -577,8 +574,9 @@ export class Visualizer {
             resolution,
         } = costmap
         const [rows, cols] = shape
-        const width = 800
-        const height = 600
+        // Use the current SVG dimensions instead of hardcoded values
+        const width = svgRect.width
+        const height = svgRect.height
 
         // Calculate scales (same logic as in the component)
         const cell = Math.min(width / cols, height / rows)

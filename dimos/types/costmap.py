@@ -181,7 +181,7 @@ class Costmap:
 
     def smudge(
         self,
-        kernel_size: int = 5,
+        kernel_size: int = 6,
         iterations: int = 20,
         decay_factor: float = 0.9,
         threshold: int = 90,
@@ -263,12 +263,10 @@ class Costmap:
         # Preserve original obstacles
         smudged_map[obstacle_mask] = grid_copy[obstacle_mask]
 
-        # When preserve_unknown is true, only restore unknown cells that haven't been smudged
-        # This allows smudging to extend over unknown areas
+        # When preserve_unknown is true, restore all original unknown cells
+        # This overlays unknown cells on top of the smudged map
         if preserve_unknown and unknown_mask is not None:
-            # Only keep unknown value in cells that weren't affected by obstacle dilation
-            unsmudged_unknown = unknown_mask & (smudged_map == 0)
-            smudged_map[unsmudged_unknown] = -1
+            smudged_map[unknown_mask] = -1
 
         # Ensure cost values are in valid range (0-100) except for unknown (-1)
         if preserve_unknown:

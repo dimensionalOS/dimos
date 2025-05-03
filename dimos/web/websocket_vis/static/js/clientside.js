@@ -16322,48 +16322,6 @@ var bisectLeft = ascendingBisect.left;
 var bisectCenter = bisector(number).center;
 var bisect_default = bisectRight;
 
-// node_modules/.deno/internmap@2.0.3/node_modules/internmap/src/index.js
-var InternMap = class extends Map {
-  constructor(entries, key = keyof) {
-    super();
-    Object.defineProperties(this, { _intern: { value: /* @__PURE__ */ new Map() }, _key: { value: key } });
-    if (entries != null) for (const [key2, value2] of entries) this.set(key2, value2);
-  }
-  get(key) {
-    return super.get(intern_get(this, key));
-  }
-  has(key) {
-    return super.has(intern_get(this, key));
-  }
-  set(key, value2) {
-    return super.set(intern_set(this, key), value2);
-  }
-  delete(key) {
-    return super.delete(intern_delete(this, key));
-  }
-};
-function intern_get({ _intern, _key }, value2) {
-  const key = _key(value2);
-  return _intern.has(key) ? _intern.get(key) : value2;
-}
-function intern_set({ _intern, _key }, value2) {
-  const key = _key(value2);
-  if (_intern.has(key)) return _intern.get(key);
-  _intern.set(key, value2);
-  return value2;
-}
-function intern_delete({ _intern, _key }, value2) {
-  const key = _key(value2);
-  if (_intern.has(key)) {
-    value2 = _intern.get(key);
-    _intern.delete(key);
-  }
-  return value2;
-}
-function keyof(value2) {
-  return value2 !== null && typeof value2 === "object" ? value2.valueOf() : value2;
-}
-
 // node_modules/.deno/d3-array@3.2.4/node_modules/d3-array/src/ticks.js
 var e10 = Math.sqrt(50);
 var e5 = Math.sqrt(10);
@@ -19238,40 +19196,6 @@ function initInterpolator(domain, interpolator) {
   return this;
 }
 
-// node_modules/.deno/d3-scale@4.0.2/node_modules/d3-scale/src/ordinal.js
-var implicit = Symbol("implicit");
-function ordinal() {
-  var index = new InternMap(), domain = [], range2 = [], unknown = implicit;
-  function scale(d) {
-    let i = index.get(d);
-    if (i === void 0) {
-      if (unknown !== implicit) return unknown;
-      index.set(d, i = domain.push(d) - 1);
-    }
-    return range2[i % range2.length];
-  }
-  scale.domain = function(_) {
-    if (!arguments.length) return domain.slice();
-    domain = [], index = new InternMap();
-    for (const value2 of _) {
-      if (index.has(value2)) continue;
-      index.set(value2, domain.push(value2) - 1);
-    }
-    return scale;
-  };
-  scale.range = function(_) {
-    return arguments.length ? (range2 = Array.from(_), scale) : range2.slice();
-  };
-  scale.unknown = function(_) {
-    return arguments.length ? (unknown = _, scale) : unknown;
-  };
-  scale.copy = function() {
-    return ordinal(domain, range2).unknown(unknown);
-  };
-  initRange.apply(scale, arguments);
-  return scale;
-}
-
 // node_modules/.deno/d3-scale@4.0.2/node_modules/d3-scale/src/constant.js
 function constants(x2) {
   return function() {
@@ -19493,30 +19417,11 @@ function sequential() {
   return initInterpolator.apply(scale, arguments);
 }
 
-// node_modules/.deno/d3-scale-chromatic@3.1.0/node_modules/d3-scale-chromatic/src/colors.js
-function colors_default(specifier) {
-  var n = specifier.length / 6 | 0, colors = new Array(n), i = 0;
-  while (i < n) colors[i] = "#" + specifier.slice(i * 6, ++i * 6);
-  return colors;
+// node_modules/.deno/d3-scale-chromatic@3.1.0/node_modules/d3-scale-chromatic/src/sequential-multi/turbo.js
+function turbo_default(t) {
+  t = Math.max(0, Math.min(1, t));
+  return "rgb(" + Math.max(0, Math.min(255, Math.round(34.61 + t * (1172.33 - t * (10793.56 - t * (33300.12 - t * (38394.49 - t * 14825.05))))))) + ", " + Math.max(0, Math.min(255, Math.round(23.31 + t * (557.33 + t * (1225.33 - t * (3574.96 - t * (1073.77 + t * 707.56))))))) + ", " + Math.max(0, Math.min(255, Math.round(27.2 + t * (3211.1 - t * (15327.97 - t * (27814 - t * (22569.18 - t * 6838.66))))))) + ")";
 }
-
-// node_modules/.deno/d3-scale-chromatic@3.1.0/node_modules/d3-scale-chromatic/src/categorical/category10.js
-var category10_default = colors_default("1f77b4ff7f0e2ca02cd627289467bd8c564be377c27f7f7fbcbd2217becf");
-
-// node_modules/.deno/d3-scale-chromatic@3.1.0/node_modules/d3-scale-chromatic/src/ramp.js
-var ramp_default = (scheme2) => rgbBasis(scheme2[scheme2.length - 1]);
-
-// node_modules/.deno/d3-scale-chromatic@3.1.0/node_modules/d3-scale-chromatic/src/sequential-single/Greys.js
-var scheme = new Array(3).concat(
-  "f0f0f0bdbdbd636363",
-  "f7f7f7cccccc969696525252",
-  "f7f7f7cccccc969696636363252525",
-  "f7f7f7d9d9d9bdbdbd969696636363252525",
-  "f7f7f7d9d9d9bdbdbd969696737373525252252525",
-  "fffffff0f0f0d9d9d9bdbdbd969696737373525252252525",
-  "fffffff0f0f0d9d9d9bdbdbd969696737373525252252525000000"
-).map(colors_default);
-var Greys_default = ramp_default(scheme);
 
 // node_modules/.deno/d3-shape@3.2.0/node_modules/d3-shape/src/constant.js
 function constant_default4(x2) {
@@ -19685,8 +19590,24 @@ var VisualizerComponent = ({
   state
 }) => {
   const svgRef = React.useRef(null);
-  const width = 800;
-  const height = 600;
+  const [dimensions, setDimensions] = React.useState({
+    width: 800,
+    height: 600
+  });
+  const { width, height } = dimensions;
+  React.useEffect(() => {
+    if (!svgRef.current) return;
+    const updateDimensions = () => {
+      const rect = svgRef.current?.parentElement?.getBoundingClientRect();
+      if (rect) {
+        setDimensions({ width: rect.width, height: rect.height });
+      }
+    };
+    updateDimensions();
+    const observer = new ResizeObserver(updateDimensions);
+    observer.observe(svgRef.current.parentElement);
+    return () => observer.disconnect();
+  }, []);
   const { worldToPx, pxToWorld } = React.useMemo(() => {
     const ref = Object.values(state).find(
       (d) => d instanceof Costmap
@@ -19772,7 +19693,7 @@ var VisualizerComponent = ({
         viewBox: `0 0 ${width} ${height}`,
         preserveAspectRatio: "xMidYMid meet",
         style: {
-          backgroundColor: "#14151a",
+          backgroundColor: "black",
           borderRadius: "8px",
           boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)"
         }
@@ -19791,12 +19712,16 @@ function visualiseCostmap(svg, costmap, width, height) {
     `translate(${(width - gridW) / 2}, ${(height - gridH) / 2})`
   );
   const customColorScale = (t) => {
-    if (t < 0.1) return "#ffffff";
-    if (t > 0.9) return "#000000";
-    return Greys_default(t * 0.5);
+    if (t == 0) return "white";
+    if (t < 0) return "#2d2136";
+    if (t > 0.95) return "#000000";
+    const color2 = turbo_default(t * 2 - 1);
+    const hsl2 = hsl(color2);
+    hsl2.s *= 0.75;
+    return hsl2.toString();
   };
   const colour = sequential(customColorScale).domain([
-    0,
+    -1,
     100
   ]);
   const fo = group.append("foreignObject").attr("width", gridW).attr(
@@ -19809,7 +19734,8 @@ function visualiseCostmap(svg, costmap, width, height) {
   Object.assign(canvas.style, {
     width: "100%",
     height: "100%",
-    objectFit: "contain"
+    objectFit: "contain",
+    backgroundColor: "black"
   });
   fo.append("xhtml:div").style("width", "100%").style("height", "100%").style("display", "flex").style("alignItems", "center").style("justifyContent", "center").node()?.appendChild(canvas);
   const ctx = canvas.getContext("2d");
@@ -19849,21 +19775,21 @@ function addCoordinateSystem(group, width, height, origin, resolution) {
     maxY
   ]).range([height, 0]);
   const gridSize = 1;
-  const gridColour = "#555";
+  const gridColour = "#000";
   const gridGroup = group.append("g").attr("class", "grid");
   for (const x2 of range(
     Math.ceil(minX / gridSize) * gridSize,
     maxX,
     gridSize
   )) {
-    gridGroup.append("line").attr("x1", xScale(x2)).attr("y1", 0).attr("x2", xScale(x2)).attr("y2", height).attr("stroke", gridColour).attr("stroke-width", 0.5).attr("opacity", 0.5);
+    gridGroup.append("line").attr("x1", xScale(x2)).attr("y1", 0).attr("x2", xScale(x2)).attr("y2", height).attr("stroke", gridColour).attr("stroke-width", 0.5).attr("opacity", 0.25);
   }
   for (const y2 of range(
     Math.ceil(minY / gridSize) * gridSize,
     maxY,
     gridSize
   )) {
-    gridGroup.append("line").attr("x1", 0).attr("y1", yScale(y2)).attr("x2", width).attr("y2", yScale(y2)).attr("stroke", gridColour).attr("stroke-width", 0.5).attr("opacity", 0.5);
+    gridGroup.append("line").attr("x1", 0).attr("y1", yScale(y2)).attr("x2", width).attr("y2", yScale(y2)).attr("stroke", gridColour).attr("stroke-width", 0.5).attr("opacity", 0.25);
   }
   const stylise = (sel) => {
     sel.selectAll("line,path").attr("stroke", "#ffffff").attr("stroke-width", 1);
@@ -19882,35 +19808,27 @@ function visualisePath(svg, path2, label, wp, width, height) {
   const points = path2.coords.map(([x2, y2]) => {
     return wp ? wp(x2, y2) : [width / 2 + x2, height / 2 - y2];
   });
-  const colour = ordinal(category10_default)(label);
   const line = line_default();
   const pathId = `path-gradient-${label.replace(/\s+/g, "-")}`;
   svg.append("defs").append("linearGradient").attr("id", pathId).attr("gradientUnits", "userSpaceOnUse").attr("x1", points[0][0]).attr("y1", points[0][1]).attr("x2", points[points.length - 1][0]).attr("y2", points[points.length - 1][1]).selectAll("stop").data([
-    { offset: "0%", color: "#4fc3f7" },
-    { offset: "100%", color: "#f06292" }
+    //{ offset: "0%", color: "#4fc3f7" },
+    //{ offset: "100%", color: "#f06292" },
+    { offset: "0%", color: "#ff3333" },
+    { offset: "100%", color: "#ff3333" }
   ]).enter().append("stop").attr("offset", (d) => d.offset).attr("stop-color", (d) => d.color);
-  const pathElement = svg.append("path").datum(points).attr("fill", "none").attr("stroke", `url(#${pathId})`).attr("stroke-width", 3).attr("stroke-linecap", "round").attr("filter", "url(#glow)").attr("opacity", 0.9).attr("d", line);
-  const [mx, my] = points[Math.floor(points.length / 2)];
-  const textGroup = svg.append("g");
-  const text = `${label} (${path2.coords.length})`;
-  const textElement = textGroup.append("text").attr("x", mx + 10).attr("y", my - 10).attr("font-size", "10px").attr("fill", "white").text(text);
-  const bbox = textElement.node()?.getBBox();
-  if (bbox) {
-    textGroup.insert("rect", "text").attr("x", bbox.x - 1).attr("y", bbox.y - 1).attr("width", bbox.width + 2).attr("height", bbox.height + 2).attr("fill", "black").attr("stroke", "black").attr("opacity", 0.7);
-  }
+  svg.append("path").datum(points).attr("fill", "none").attr("stroke", `url(#${pathId})`).attr("stroke-width", 5).attr("stroke-linecap", "round").attr("filter", "url(#glow)").attr("opacity", 0.9).attr("d", line);
 }
 function visualiseVector(svg, vector, label, wp, width, height) {
   const [cx, cy] = wp ? wp(vector.coords[0], vector.coords[1]) : [width / 2 + vector.coords[0], height / 2 - vector.coords[1]];
-  const colour = ordinal(category10_default)(label);
   const vectorGroup = svg.append("g").attr("class", "vector-marker").attr("transform", `translate(${cx}, ${cy})`);
-  vectorGroup.append("circle").attr("r", 8).attr("fill", "none").attr("stroke", "#4fc3f7").attr("stroke-width", 1).attr("opacity", 0.9).attr("filter", "url(#glow)");
-  vectorGroup.append("circle").attr("r", 4).attr("fill", "#4fc3f7").attr("filter", "url(#glow)");
+  vectorGroup.append("circle").attr("r", ".7em").attr("fill", "none").attr("stroke", "red").attr("stroke-width", "1").attr("opacity", 0.9);
+  vectorGroup.append("circle").attr("r", ".4em").attr("fill", "red");
   const text = `${label} (${vector.coords[0].toFixed(2)}, ${vector.coords[1].toFixed(2)})`;
   const textGroup = svg.append("g");
-  const textElement = textGroup.append("text").attr("x", cx + 10).attr("y", cy - 10).attr("font-size", "10px").attr("fill", "white").text(text);
+  const textElement = textGroup.append("text").attr("x", cx + 25).attr("y", cy + 25).attr("font-size", "1em").attr("fill", "white").text(text);
   const bbox = textElement.node()?.getBBox();
   if (bbox) {
-    textGroup.insert("rect", "text").attr("x", bbox.x - 1).attr("y", bbox.y - 1).attr("width", bbox.width + 2).attr("height", bbox.height + 2).attr("fill", "black").attr("stroke", "black").attr("opacity", 0.7);
+    textGroup.insert("rect", "text").attr("x", bbox.x - 1).attr("y", bbox.y - 1).attr("width", bbox.width + 2).attr("height", bbox.height + 2).attr("fill", "black").attr("stroke", "black").attr("opacity", 0.75);
   }
 }
 var Visualizer = class {
@@ -19960,8 +19878,8 @@ var Visualizer = class {
       resolution
     } = costmap;
     const [rows, cols] = shape;
-    const width = 800;
-    const height = 600;
+    const width = svgRect.width;
+    const height = svgRect.height;
     const cell = Math.min(width / cols, height / rows);
     const gridW = cols * cell;
     const gridH = rows * cell;
