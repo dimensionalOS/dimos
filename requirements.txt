@@ -2,7 +2,7 @@ opencv-python
 python-dotenv
 openai
 anthropic>=0.19.0
-numpy
+numpy<2
 colorlog==6.9.0
 yapf==0.40.2
 typeguard
@@ -66,15 +66,13 @@ filterpy>=1.4.5
 scipy>=1.15.1
 opencv-python==4.10.0.84
 opencv-contrib-python==4.10.0.84
-torch>=2.0.1
-torchvision>=0.15.2
 scikit-learn
 Pillow
 mmengine>=0.10.3
 mmcv>=2.1.0
 timm>=1.0.15
 lap>=0.5.12 
-xformers>=0.0.23.post1
+xformers==0.0.20
 
 # Detic
 opencv-python
