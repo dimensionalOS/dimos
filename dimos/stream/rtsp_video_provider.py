@@ -28,6 +28,7 @@ from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
+from dimos.utils.reactive import backpressure
 from dimos.utils.logging_config import setup_logger
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.video_operators import VideoOperators as vops
@@ -307,11 +308,11 @@ class RtspVideoProvider(AbstractVideoProvider):
 
 
         # Create the observable using rx.create, applying scheduling and sharing
-        return rx.create(emit_frames).pipe(
+        return backpressure(rx.create(emit_frames).pipe(
             ops.subscribe_on(self.pool_scheduler), # Run the emit_frames logic on the pool
             # ops.observe_on(self.pool_scheduler), # Optional: Switch thread for downstream operators
             ops.share() # Ensure multiple subscribers share the same ffmpeg process
-        )
+        ))
 
     def dispose_all(self) -> None:
         """Disposes of all managed resources, including terminating the ffmpeg process."""
