@@ -171,5 +171,39 @@ def test_getter_ondemand_timeout():
 
 
 def test_callback_to_observable():
-    # TODO: Ivan
-    callback_to_observable()
+    # Test converting a callback-based API to an Observable
+    received = []
+    callback = None
+    
+    # Mock start function that captures the callback
+    def start_fn(cb):
+        nonlocal callback
+        callback = cb
+        return "start_result"
+    
+    # Mock stop function
+    stop_called = False
+    def stop_fn(cb):
+        nonlocal stop_called
+        stop_called = True
+    
+    # Create observable from callback
+    observable = callback_to_observable(start_fn, stop_fn)
+    
+    # Subscribe to the observable
+    subscription = observable.subscribe(lambda x: received.append(x))
+    
+    # Verify start was called and we have access to the callback
+    assert callback is not None
+    
+    # Simulate callback being triggered with different messages
+    callback("message1")
+    callback(42)
+    callback({"key": "value"})
+    
+    # Check that all messages were received
+    assert received == ["message1", 42, {"key": "value"}]
+    
+    # Dispose subscription and check that stop was called
+    subscription.dispose()
+    assert stop_called, "Stop function should be called on dispose"

@@ -135,13 +135,16 @@ T = TypeVar("T")
 CB = Callable[[T], Any]
 
 
-def callback_to_observable(start: Callable[[CB[T]], Any], stop: Callable[[CB[T]], Any] = None) -> Observable[T]:
-    subject: Subject[T] = Subject()
+def callback_to_observable(
+    start: Callable[[CB[T]], Any],
+    stop: Callable[[CB[T]], Any],
+) -> Observable[T]:
+    def _subscribe(observer, _scheduler=None):
+        def _on_msg(value: T):
+            observer.on_next(value)
 
-    def on_msg(msg):
-        if not subject.is_disposed:
-            subject.on_next(msg)
+        start(_on_msg)  # begin emitting
 
-    subject.add_disposable(Disposable(stop))
-    start(on_msg)
-    return subject
+        return Disposable(lambda: stop(_on_msg))
+
+    return rx.create(_subscribe)
