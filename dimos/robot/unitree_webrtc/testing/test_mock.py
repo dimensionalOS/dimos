@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import time
-from dimos.robot.unitree_standalone.type.lidar import LidarMessage
-from dimos.robot.unitree_standalone.testing.mock import Mock
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.testing.mock import Mock
 
 
 def test_mock_load_cast():
