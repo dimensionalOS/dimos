@@ -82,21 +82,32 @@ class Connection:
             self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]).pipe(ops.map(lambda msg: position_from_odom(msg)))
         )
 
+    def publish_request(self, topic: str, data: dict):
+        future = asyncio.run_coroutine_threadsafe(
+            self.conn.datachannel.pub_sub.publish_request_new(topic, data), self.loop
+        )
+        return future.result()
+
     def lowstate_stream(self) -> Subject[LowStateMsg]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
-    async def standup(self):
-        await self.conn.datachannel.pub_sub.publish_request_new(
-            RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]}
-        )
+    def standup_ai(self):
+        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
 
-    async def liedown(self):
-        await self.conn.datachannel.pub_sub.publish_request_new(
-            RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]}
-        )
+    def standup_normal(self):
+        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]})
+
+    def standup(self):
+        if self.mode == "ai":
+            return self.standup_ai()
+        else:
+            return self.standup_normal()
+
+    def liedown(self):
+        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
 
     async def handstand(self):
-        await self.conn.datachannel.pub_sub.publish_request_new(
+        return self.publish_request(
             RTC_TOPIC["SPORT_MOD"],
             {"api_id": SPORT_CMD["Standup"], "parameter": {"data": True}},
         )
