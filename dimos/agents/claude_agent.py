@@ -193,15 +193,6 @@ class ClaudeAgent(LLMAgent):
                 "More than one input stream provided. Please provide only one input stream."
             )
 
-        if self.input_video_stream is not None:
-            logger.info("Subscribing to input video stream...")
-            self.disposables.add(
-                self.subscribe_to_image_processing(self.input_video_stream))
-        if self.input_query_stream is not None:
-            logger.info("Subscribing to input query stream...")
-            self.disposables.add(
-                self.subscribe_to_query_processing(self.input_query_stream))
-
         logger.info("Claude Agent Initialized.")
 
     def _add_context_to_memory(self):
