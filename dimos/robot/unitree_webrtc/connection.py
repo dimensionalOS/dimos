@@ -5,29 +5,17 @@ from dataclasses import dataclass, field
 from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.types.vector import Vector
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.odometry import RawOdometryMessage, OdometryMessage
 from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
 from go2_webrtc_driver.constants import RTC_TOPIC, VUI_COLOR, SPORT_CMD
 from reactivex.subject import Subject
-from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 import numpy as np
 from reactivex import operators as ops
 from aiortc import MediaStreamTrack
+from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
-
-
-class RawOdometryMessage: ...
-
-
-@dataclass
-class OdometryMessage:
-    pos: Vector
-    rot: Vector
-
-    @classmethod
-    def from_msg(cls, raw_message: RawOdometryMessage):
-        return cls(pos=Vector(0, 0, 0), rot=Vector(0, 0, 0))
 
 
 class Connection:
@@ -91,10 +79,11 @@ class Connection:
 
     def odom_stream(self) -> Subject[OdometryMessage]:
         return backpressure(
-            self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]).pipe(
-                ops.map(lambda raw_frame: OdometryMessage.from_msg(raw_frame))
-            )
+            self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]).pipe(ops.map(lambda msg: OdometryMessage.from_msg(msg)))
         )
+
+    def lowstate_stream(self) -> Subject[LowStateMsg]:
+        return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
     async def standup(self):
         await self.conn.datachannel.pub_sub.publish_request_new(

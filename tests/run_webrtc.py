@@ -30,11 +30,17 @@ async def main():
     load_dotenv()
     robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="normal")
 
+    print("standing up")
+    # await robot.standup()
+    print("robot is up")
+
     # show3d_stream(robot.lidar_stream())
 
     # def parse_frame(frame):
     #    return o3d.geometry.Image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     # show3d_stream(robot.video_stream().pipe(ops.map(parse_frame)), clearframe=True)
+
+    robot.odom_stream().subscribe(print)
 
     try:
         while True:
