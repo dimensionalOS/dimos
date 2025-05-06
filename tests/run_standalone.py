@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
 import os
-import time
 from dotenv import load_dotenv
 from dimos.robot.unitree_standalone.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree_standalone.testing.helpers import show3d_stream
 
 load_dotenv()
 
-robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"))
-print("CALLING SUB")
-time.sleep(2)
-robot.lidar_stream().subscribe(lambda x: print(x))
+robot = UnitreeGo2(mode="ai", ip=os.getenv("ROBOT_IP"))
+# show3d_stream(robot.lidar_stream())
+show3d_stream(robot.map_stream())
