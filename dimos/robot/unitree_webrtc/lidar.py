@@ -3,7 +3,7 @@ import threading
 import asyncio
 from reactivex.subject import Subject
 from reactivex.disposable import Disposable, CompositeDisposable
-from dimos.robot.unitree_standalone.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import (
     Go2WebRTCConnection,
     WebRTCConnectionMethod,

@@ -1,9 +1,9 @@
 import pytest
-from dimos.robot.unitree_standalone.testing.mock import Mock
-from dimos.robot.unitree_standalone.testing.helpers import show3d_stream, show3d
-from dimos.robot.unitree_standalone.utils.reactive import backpressure
-from dimos.robot.unitree_standalone.type.map import splice_sphere, Map
-from dimos.robot.unitree_standalone.lidar import lidar
+from dimos.robot.unitree_webrtc.testing.mock import Mock
+from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream, show3d
+from dimos.robot.unitree_webrtc.utils.reactive import backpressure
+from dimos.robot.unitree_webrtc.type.map import splice_sphere, Map
+from dimos.robot.unitree_webrtc.lidar import lidar
 
 
 @pytest.mark.vis
