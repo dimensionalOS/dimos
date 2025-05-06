@@ -1,3 +1,4 @@
+import functools
 import asyncio
 import threading
 from typing import TypeAlias, Literal
@@ -125,6 +126,7 @@ class Connection:
             },
         )
 
+    @functools.lru_cache(maxsize=None)
     def video_stream(self) -> Observable[VideoMessage]:
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
