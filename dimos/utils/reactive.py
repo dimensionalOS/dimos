@@ -1,15 +1,18 @@
 import threading
-from typing import Optional, TypeVar, Generic
+from typing import Optional, TypeVar, Generic, Any, Callable
 
 import reactivex as rx
 from reactivex import operators as ops
+from reactivex.subject import Subject
 from reactivex.scheduler import ThreadPoolScheduler
+from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from rxpy_backpressure import BackPressure
 
 from dimos.utils.threadpool import get_scheduler
 
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 # Observable ─► ReplaySubject─► observe_on(pool) ─► backpressure.latest ─► sub1 (fast)
 #                           ├──► observe_on(pool) ─► backpressure.latest ─► sub2 (slow)
@@ -64,21 +67,18 @@ class LatestReader(Generic[T]):
         if self._connection:
             self._connection.dispose()
 
-def getter_ondemand(
-    observable: Observable[T],
-    timeout: Optional[float] = 30.0
-) -> T:
+
+def getter_ondemand(observable: Observable[T], timeout: Optional[float] = 30.0) -> T:
     def getter():
         try:
             # Wait for first value with optional timeout
-            value = observable.pipe(
-                ops.first(),
-                *([ops.timeout(timeout)] if timeout is not None else [])
-            ).run()
+            value = observable.pipe(ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])).run()
             return value
         except Exception as e:
             raise Exception(f"No value received after {timeout} seconds") from e
+
     return getter
+
 
 T = TypeVar("T")
 
@@ -91,7 +91,7 @@ def getter_streaming(
 ) -> LatestReader[T]:
     shared = source.pipe(
         ops.replay(buffer_size=1),
-        ops.ref_count(),            # auto-connect & auto-disconnect
+        ops.ref_count(),  # auto-connect & auto-disconnect
     )
 
     _val_lock = threading.Lock()
@@ -112,19 +112,36 @@ def getter_streaming(
             sub.dispose()
             raise TimeoutError(f"No value received after {timeout} s")
         else:
-            _ready.wait()           # wait indefinitely if timeout is None
+            _ready.wait()  # wait indefinitely if timeout is None
 
     def reader() -> T:
-        if not _ready.is_set():                 # first call in non-blocking mode
+        if not _ready.is_set():  # first call in non-blocking mode
             if timeout is not None and not _ready.wait(timeout):
                 raise TimeoutError(f"No value received after {timeout} s")
             else:
                 _ready.wait()
         with _val_lock:
-            return _val    # type: ignore[return-value]
+            return _val  # type: ignore[return-value]
 
     def _dispose() -> None:
         sub.dispose()
 
-    reader.dispose = _dispose          # type: ignore[attr-defined]
+    reader.dispose = _dispose  # type: ignore[attr-defined]
     return reader
+
+
+T = TypeVar("T")
+
+CB = Callable[[T], Any]
+
+
+def callback_to_observable(start: Callable[[CB[T]], Any], stop: Callable[[CB[T]], Any] = None) -> Observable[T]:
+    subject: Subject[T] = Subject()
+
+    def on_msg(msg):
+        if not subject.is_disposed:
+            subject.on_next(msg)
+
+    subject.add_disposable(Disposable(stop))
+    start(on_msg)
+    return subject

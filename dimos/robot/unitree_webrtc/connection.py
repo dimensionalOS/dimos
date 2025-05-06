@@ -1,21 +1,37 @@
 import asyncio
 import threading
-
+from av import VideoFrame
+from typing import TypeVar, Callable, Any
 from dataclasses import dataclass
+from dimos.utils.reactive import backpressure, callback_to_observable
+from dimos.types.vector import Vector
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
 from go2_webrtc_driver.constants import RTC_TOPIC
 
-from dimos.robot.unitree_webrtc.type.map import Map
-from dimos.robot.global_planner.planner import AstarPlanner
 
+from reactivex.operators import ops
 from reactivex.subject import Subject
-from reactivex.observable import Observable
 from reactivex.disposable import Disposable, CompositeDisposable
+
+MSG = TypeVar("MSG")
+
+
+class RawOdometryMessage: ...
 
 
 @dataclass
-class UnitreeGo2:
+class OdometryMessage:
+    pos: Vector
+    rot: Vector
+
+    @classmethod
+    def from_msg(cls, raw_message: RawOdometryMessage):
+        return cls(pos=Vector(0, 0, 0), rot=Vector(0, 0, 0))
+
+
+@dataclass
+class Go2WebRTConnection:
     ip: str
     mode: str = "ai"
 
@@ -26,12 +42,6 @@ class UnitreeGo2:
         super().__init__()
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
         self.connect()
-
-        self.global_planner = AstarPlanner(
-            set_local_nav=self.navigate_path_local,  # needs implementation
-            get_costmap=self.ros_control.topic_latest("map", self.map.costmap),
-            get_robot_pos=lambda: [0, 0, 0],
-        )  # self.ros_control.transform_euler_pos("base_link"),
 
     def connect(self):
         self.loop = asyncio.new_event_loop()
@@ -67,24 +77,37 @@ class UnitreeGo2:
         # Wait for connection to be established before returning
         self.connection_ready.wait()
 
+    # generic conversion from unitree
+    def unitree_sub_stream(self, topic_name: str, callback: Callable[[MSG], Any]):
+        return callback_to_observable(
+            start=lambda cb: self.conn.datachannel.pub_sub.subscribe(topic_name, cb),
+            stop=lambda: self.conn.datachannel.pub_sub.unsubscribe(topic_name),
+        )
+
     def lidar_stream(self) -> Subject[LidarMessage]:
-        subject: Subject[LidarMessage] = Subject()
-        dispose = CompositeDisposable()
+        return backpressure(
+            self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]).pipe(
+                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame))
+            )
+        )
 
-        def on_lidar_data(frame):
-            if not subject.is_disposed:
-                subject.on_next(LidarMessage.from_msg(frame))
+    def odom_stream(self) -> Subject[OdometryMessage]:
+        return backpressure(
+            self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]).pipe(
+                ops.map(lambda raw_frame: OdometryMessage.from_msg(raw_frame))
+            )
+        )
 
-        def cleanup():
-            self.conn.datachannel.pub_sub.publish_without_callback("rt/utlidar/switch", "off")
+    def video_stream(self) -> Subject[Any]:
+        def start(cb):
+            self.conn.video.add_track_callback(cb)
+            self.conn.video.switchVideoChannel(True)
 
-        dispose.add(Disposable(cleanup))
-        self.conn.datachannel.pub_sub.subscribe("rt/utlidar/voxel_map_compressed", on_lidar_data)
-        return subject
+        def stop(cb):
+            self.conn.video.track_callbacks.remove(cb)
+            self.conn.video.switchVideoChannel(False)
 
-    def map_stream(self) -> Observable[Map]:
-        self.map = Map()
-        return self.map.consume(self.lidar_stream())
+        return backpressure(callback_to_observable(start, stop))
 
     def stop(self):
         if hasattr(self, "task") and self.task:

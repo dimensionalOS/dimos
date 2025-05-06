@@ -1,7 +1,7 @@
 from dimos.robot.unitree_webrtc.testing.helpers import color
 from dimos.types.vector import Vector
 from dataclasses import dataclass
-from typing import List, Optional, TypedDict, Union
+from typing import List, TypedDict
 import numpy as np
 import open3d as o3d
 from copy import copy
