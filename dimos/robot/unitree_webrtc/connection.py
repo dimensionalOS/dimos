@@ -1,18 +1,20 @@
 import asyncio
 import threading
-from av import VideoFrame
 from typing import TypeAlias, Literal
 from dataclasses import dataclass, field
 from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.types.vector import Vector
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
-from go2_webrtc_driver.constants import RTC_TOPIC, VUI_COLOR
-from reactivex.operators import ops
+from go2_webrtc_driver.constants import RTC_TOPIC, VUI_COLOR, SPORT_CMD
 from reactivex.subject import Subject
+from reactivex.disposable import Disposable
+from reactivex.observable import Observable
 import numpy as np
+from reactivex import operators as ops
+from aiortc import MediaStreamTrack
 
-VideoMessage: TypeAlias = np.NDArray[tuple[int, int, Literal[3]], np.uint8]
+VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
 
 class RawOdometryMessage: ...
@@ -28,13 +30,10 @@ class OdometryMessage:
         return cls(pos=Vector(0, 0, 0), rot=Vector(0, 0, 0))
 
 
-@dataclass
-class Go2WebRTConnection:
-    ip: str
-    mode: str = "ai"
-    conn: Go2WebRTCConnection = field(init=False, default=None, repr=False)
-
-    def __post_init__(self):
+class Connection:
+    def __init__(self, ip: str, mode: str = "ai"):
+        self.ip = ip
+        self.mode = mode
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
         self.connect()
 
@@ -97,10 +96,20 @@ class Go2WebRTConnection:
             )
         )
 
-    def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 10) -> bool:
-        self.conn.datachannel.publish_request_new(
+    async def standup(self):
+        await self.conn.datachannel.pub_sub.publish_request_new(
+            RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]}
+        )
+
+    async def liedown(self):
+        await self.conn.datachannel.pub_sub.publish_request_new(
+            RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]}
+        )
+
+    async def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 10) -> bool:
+        return await self.conn.datachannel.pub_sub.publish_request_new(
             RTC_TOPIC["VUI"],
-            options={
+            {
                 "api_id": 1001,
                 "parameter": {
                     "color": color,
@@ -109,19 +118,26 @@ class Go2WebRTConnection:
             },
         )
 
-    def video_stream(self) -> Subject[VideoMessage]:
-        def start(cb):
-            self.conn.video.add_track_callback(cb)
-            self.conn.video.switchVideoChannel(True)
+    def video_stream(self) -> Observable[VideoMessage]:
+        subject: Subject[VideoMessage] = Subject()
+        stop_event = threading.Event()
+
+        async def accept_track(track: MediaStreamTrack) -> VideoMessage:
+            while True:
+                if stop_event.is_set():
+                    return
+                frame = await track.recv()
+                subject.on_next(frame.to_ndarray(format="bgr24"))
+
+        self.conn.video.add_track_callback(accept_track)
+        self.conn.video.switchVideoChannel(True)
 
         def stop(cb):
-            self.conn.video.track_callbacks.remove(cb)
+            stop_event.set()  # Signal the loop to stop
+            self.conn.video.track_callbacks.remove(accept_track)
             self.conn.video.switchVideoChannel(False)
 
-        def parse(frame: VideoFrame) -> VideoMessage:
-            return frame.to_ndarray(format="bgr24")
-
-        return backpressure(callback_to_observable(start, stop).pipe(parse))
+        return backpressure(subject.pipe(ops.finally_action(stop)))
 
     def stop(self):
         if hasattr(self, "task") and self.task:

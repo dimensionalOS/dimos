@@ -3,7 +3,6 @@ from typing import Optional, TypeVar, Generic, Any, Callable
 
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.subject import Subject
 from reactivex.scheduler import ThreadPoolScheduler
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
@@ -131,7 +130,6 @@ def getter_streaming(
 
 
 T = TypeVar("T")
-
 CB = Callable[[T], Any]
 
 
@@ -143,8 +141,7 @@ def callback_to_observable(
         def _on_msg(value: T):
             observer.on_next(value)
 
-        start(_on_msg)  # begin emitting
-
+        start(_on_msg)
         return Disposable(lambda: stop(_on_msg))
 
     return rx.create(_subscribe)
