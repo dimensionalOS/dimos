@@ -70,6 +70,13 @@ class Connection:
             stop=lambda: self.conn.datachannel.pub_sub.unsubscribe(topic_name),
         )
 
+    # Generic sync API call (we jump into the client thread)
+    def publish_request(self, topic: str, data: dict):
+        future = asyncio.run_coroutine_threadsafe(
+            self.conn.datachannel.pub_sub.publish_request_new(topic, data), self.loop
+        )
+        return future.result()
+
     def lidar_stream(self) -> Subject[LidarMessage]:
         return backpressure(
             self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]).pipe(
@@ -81,12 +88,6 @@ class Connection:
         return backpressure(
             self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]).pipe(ops.map(lambda msg: position_from_odom(msg)))
         )
-
-    def publish_request(self, topic: str, data: dict):
-        future = asyncio.run_coroutine_threadsafe(
-            self.conn.datachannel.pub_sub.publish_request_new(topic, data), self.loop
-        )
-        return future.result()
 
     def lowstate_stream(self) -> Subject[LowStateMsg]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
@@ -112,8 +113,8 @@ class Connection:
             {"api_id": SPORT_CMD["Standup"], "parameter": {"data": True}},
         )
 
-    async def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 10) -> bool:
-        return await self.conn.datachannel.pub_sub.publish_request_new(
+    def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 60) -> bool:
+        return self.publish_request(
             RTC_TOPIC["VUI"],
             {
                 "api_id": 1001,

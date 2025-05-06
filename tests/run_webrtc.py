@@ -15,8 +15,9 @@ import cv2
 import os
 import asyncio
 from dotenv import load_dotenv
-from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2, Color
 from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
+from dimos.web.websocket_vis.server import WebsocketVis
 from dimos.types.vector import Vector
 import logging
 import open3d as o3d
@@ -30,12 +31,15 @@ import time
 load_dotenv()
 robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="normal")
 
+websocket_vis = WebsocketVis()
+websocket_vis.start()
+websocket_vis.connect(robot.global_planner.vis_stream())
+
 print("standing up")
 robot.standup()
 print("robot is up")
 
 # show3d_stream(robot.lidar_stream())
-
 # def parse_frame(frame):
 #    return o3d.geometry.Image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 # show3d_stream(robot.video_stream().pipe(ops.map(parse_frame)), clearframe=True)
