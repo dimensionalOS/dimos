@@ -22,35 +22,31 @@ import logging
 import open3d as o3d
 import reactivex.operators as ops
 import numpy as np
+import time
 
 # logging.basicConfig(level=logging.DEBUG)
 
 
-async def main():
-    load_dotenv()
-    robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="normal")
+load_dotenv()
+robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="normal")
 
-    print("standing up")
-    # await robot.standup()
-    print("robot is up")
+print("standing up")
+robot.standup()
+print("robot is up")
 
-    # show3d_stream(robot.lidar_stream())
+# show3d_stream(robot.lidar_stream())
 
-    # def parse_frame(frame):
-    #    return o3d.geometry.Image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    # show3d_stream(robot.video_stream().pipe(ops.map(parse_frame)), clearframe=True)
+# def parse_frame(frame):
+#    return o3d.geometry.Image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+# show3d_stream(robot.video_stream().pipe(ops.map(parse_frame)), clearframe=True)
 
-    robot.odom_stream().subscribe(print)
+robot.odom_stream().subscribe(print)
 
-    try:
-        while True:
-            robot.move_vel(Vector(0.1, 0.1, 0.1))
-            await asyncio.sleep(0.01)
+try:
+    while True:
+        robot.move_vel(Vector(0.1, 0.1, 0.1))
+        time.sleep(0.01)
 
-    except KeyboardInterrupt:
-        print("Stopping robot")
-        await robot.liedown()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+except KeyboardInterrupt:
+    print("Stopping robot")
+    robot.liedown()
