@@ -95,6 +95,12 @@ class Connection:
             RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]}
         )
 
+    async def handstand(self):
+        await self.conn.datachannel.pub_sub.publish_request_new(
+            RTC_TOPIC["SPORT_MOD"],
+            {"api_id": SPORT_CMD["Standup"], "parameter": {"data": True}},
+        )
+
     async def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 10) -> bool:
         return await self.conn.datachannel.pub_sub.publish_request_new(
             RTC_TOPIC["VUI"],
