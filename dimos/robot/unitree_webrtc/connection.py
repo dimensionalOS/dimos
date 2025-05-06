@@ -7,7 +7,7 @@ from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.types.vector import Vector
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
-from go2_webrtc_driver.constants import RTC_TOPIC
+from go2_webrtc_driver.constants import RTC_TOPIC, VUI_COLOR
 from reactivex.operators import ops
 from reactivex.subject import Subject
 import numpy as np
@@ -95,6 +95,18 @@ class Go2WebRTConnection:
             self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]).pipe(
                 ops.map(lambda raw_frame: OdometryMessage.from_msg(raw_frame))
             )
+        )
+
+    def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 10) -> bool:
+        self.conn.datachannel.publish_request_new(
+            RTC_TOPIC["VUI"],
+            options={
+                "api_id": 1001,
+                "parameter": {
+                    "color": color,
+                    "time": colortime,
+                },
+            },
         )
 
     def video_stream(self) -> Subject[VideoMessage]:

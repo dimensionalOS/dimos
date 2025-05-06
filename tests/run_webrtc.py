@@ -14,11 +14,15 @@
 
 import os
 from dotenv import load_dotenv
-from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2, Color
 from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
+from dimos.types.vector import Vector
 
 load_dotenv()
 
 robot = UnitreeGo2(mode="ai", ip=os.getenv("ROBOT_IP"))
-# show3d_stream(robot.lidar_stream())
-show3d_stream(robot.map_stream())
+robot.color(Color.RED)
+robot.move_vel(Vector(0.5, 0.5, 0.5))
+
+show3d_stream(robot.lidar_stream())
+# show3d_stream(robot.map_stream())
