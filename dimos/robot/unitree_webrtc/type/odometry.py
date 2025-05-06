@@ -1,6 +1,7 @@
 from typing import TypedDict, List, Literal
 from dataclasses import dataclass, field
 from dimos.types.vector import Vector
+from dimos.types.position import Position
 
 raw_odometry_msg_sample = {
     "type": "msg",
@@ -25,7 +26,7 @@ class Header(TypedDict):
     frame_id: str
 
 
-class Position(TypedDict):
+class RawPosition(TypedDict):
     x: float
     y: float
     z: float
@@ -39,7 +40,7 @@ class Orientation(TypedDict):
 
 
 class Pose(TypedDict):
-    position: Position
+    position: RawPosition
     orientation: Orientation
 
 
@@ -54,15 +55,10 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-@dataclass
-class OdometryMessage:
-    pos: Vector
-    rot: Vector
-
-    @classmethod
-    def from_msg(cls, raw_message: RawOdometryMessage):
-        pose = raw_message["data"]["pose"]
-        orientation = pose["orientation"]
-        pos = Vector(pose["position"])
-        rot = Vector(orientation.get("x"), orientation.get("y"), orientation.get("z"))
-        return cls(pos=pos, rot=rot)
+def position_from_odom(msg: RawOdometryMessage) -> Position:
+    pose = msg["data"]["pose"]
+    orientation = pose["orientation"]
+    position = pose["position"]
+    pos = Vector(position.get("x"), position.get("y"), position.get("z"))
+    rot = Vector(orientation.get("x"), orientation.get("y"), orientation.get("z"))
+    return Position(pos=pos, rot=rot)
