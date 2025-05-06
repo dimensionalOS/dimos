@@ -1,20 +1,18 @@
 import asyncio
 import threading
 from av import VideoFrame
-from typing import TypeVar, Callable, Any
-from dataclasses import dataclass
+from typing import TypeAlias, Literal
+from dataclasses import dataclass, field
 from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.types.vector import Vector
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
 from go2_webrtc_driver.constants import RTC_TOPIC
-
-
 from reactivex.operators import ops
 from reactivex.subject import Subject
-from reactivex.disposable import Disposable, CompositeDisposable
+import numpy as np
 
-MSG = TypeVar("MSG")
+VideoMessage: TypeAlias = np.NDArray[tuple[int, int, Literal[3]], np.uint8]
 
 
 class RawOdometryMessage: ...
@@ -34,12 +32,9 @@ class OdometryMessage:
 class Go2WebRTConnection:
     ip: str
     mode: str = "ai"
+    conn: Go2WebRTCConnection = field(init=False, default=None, repr=False)
 
-    conn: Go2WebRTCConnection
-
-    # mode = "ai" or "normal"
-    def __init__(self):
-        super().__init__()
+    def __post_init__(self):
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
         self.connect()
 
@@ -73,12 +68,16 @@ class Go2WebRTConnection:
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=start_background_loop, daemon=True)
         self.thread.start()
-
-        # Wait for connection to be established before returning
         self.connection_ready.wait()
 
-    # generic conversion from unitree
-    def unitree_sub_stream(self, topic_name: str, callback: Callable[[MSG], Any]):
+    def move_vel(self, vector: Vector):
+        self.conn.datachannel.pub_sub.publish_without_callback(
+            RTC_TOPIC["WIRELESS_CONTROLLER"],
+            data={"lx": vector.x, "ly": vector.y, "rx": vector.z, "ry": 0},
+        )
+
+    # Generic conversion of unitree subscription to Subject (used for all subs)
+    def unitree_sub_stream(self, topic_name: str):
         return callback_to_observable(
             start=lambda cb: self.conn.datachannel.pub_sub.subscribe(topic_name, cb),
             stop=lambda: self.conn.datachannel.pub_sub.unsubscribe(topic_name),
@@ -98,7 +97,7 @@ class Go2WebRTConnection:
             )
         )
 
-    def video_stream(self) -> Subject[Any]:
+    def video_stream(self) -> Subject[VideoMessage]:
         def start(cb):
             self.conn.video.add_track_callback(cb)
             self.conn.video.switchVideoChannel(True)
@@ -107,7 +106,10 @@ class Go2WebRTConnection:
             self.conn.video.track_callbacks.remove(cb)
             self.conn.video.switchVideoChannel(False)
 
-        return backpressure(callback_to_observable(start, stop))
+        def parse(frame: VideoFrame) -> VideoMessage:
+            return frame.to_ndarray(format="bgr24")
+
+        return backpressure(callback_to_observable(start, stop).pipe(parse))
 
     def stop(self):
         if hasattr(self, "task") and self.task:
