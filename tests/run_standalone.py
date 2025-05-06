@@ -14,11 +14,13 @@
 
 import tests.test_header
 import os
-
+import time
 from dotenv import load_dotenv
 from dimos.robot.unitree_standalone.unitree_go2 import UnitreeGo2
 
 load_dotenv()
 
 robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"))
-robot.lidar_stream.subscribe(print)
+print("CALLING SUB")
+time.sleep(2)
+robot.lidar_stream().subscribe(lambda x: print(x))
