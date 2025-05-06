@@ -7,6 +7,7 @@ from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectio
 from go2_webrtc_driver.constants import RTC_TOPIC
 
 from dimos.robot.unitree_standalone.type.map import Map
+from dimos.robot.global_planner.planner import AstarPlanner
 
 from reactivex.subject import Subject
 from reactivex.observable import Observable
@@ -24,6 +25,12 @@ class UnitreeGo2:
         super().__init__()
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=ip)
         self.connect()
+
+        self.global_planner = AstarPlanner(
+            set_local_nav=self.navigate_path_local,  # needs implementation
+            get_costmap=self.ros_control.topic_latest("map", self.map.costmap),
+            get_robot_pos=lambda: [0, 0, 0],  # self.ros_control.transform_euler_pos("base_link"),
+        )
 
     def connect(self):
         self.loop = asyncio.new_event_loop()
