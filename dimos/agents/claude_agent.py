@@ -87,6 +87,7 @@ class ClaudeAgent(LLMAgent):
                  query: str = "What do you see?",
                  input_query_stream: Optional[Observable] = None,
                  input_video_stream: Optional[Observable] = None,
+                 input_data_stream: Optional[Observable] = None,
                  output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
                  agent_memory: Optional[AbstractAgentSemanticMemory] = None,
                  system_query: Optional[str] = None,
@@ -143,7 +144,10 @@ class ClaudeAgent(LLMAgent):
             agent_memory=agent_memory,
             pool_scheduler=pool_scheduler,
             process_all_inputs=process_all_inputs,
-            system_query=system_query
+            system_query=system_query,
+            input_query_stream=input_query_stream,
+            input_video_stream=input_video_stream,
+            input_data_stream=input_data_stream
         )
         
         self.client = anthropic.Anthropic()
@@ -181,8 +185,7 @@ class ClaudeAgent(LLMAgent):
         self._add_context_to_memory()
 
         self.frame_processor = frame_processor or FrameProcessor(delete_on_init=True)
-        self.input_video_stream = input_video_stream
-        self.input_query_stream = input_query_stream
+
 
         # Ensure only one input stream is provided.
         if self.input_video_stream is not None and self.input_query_stream is not None:

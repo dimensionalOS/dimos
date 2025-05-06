@@ -150,7 +150,10 @@ class LLMAgent(Agent):
                  process_all_inputs: bool = False,
                  system_query: Optional[str] = None,
                  max_output_tokens_per_request: int = 16384,
-                 max_input_tokens_per_request: int = 128000):
+                 max_input_tokens_per_request: int = 128000,
+                 input_query_stream: Optional[Observable] = None,
+                 input_data_stream: Optional[Observable] = None,
+                 input_video_stream: Optional[Observable] = None):
         """
         Initializes a new instance of the LLMAgent.
 
@@ -185,6 +188,46 @@ class LLMAgent(Agent):
         
         # Conversation history for maintaining context between calls
         self.conversation_history = []
+
+        # Initialize input streams
+        self.input_video_stream = input_video_stream
+        self.input_query_stream = input_query_stream if (input_data_stream is None) else (input_query_stream.pipe(
+            RxOps.with_latest_from(input_data_stream),
+            RxOps.map(lambda combined: {
+                "query": combined[0],
+                "objects": combined[1] if len(combined) > 1 else "No object data available"
+            }),
+            RxOps.map(lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"),
+            RxOps.do_action(lambda x: print(f"\033[34mEnriched query: {x.split(chr(10))[0]}\033[0m") or 
+                                    [print(f"\033[34m{line}\033[0m") for line in x.split(chr(10))[1:]]),
+        ))
+
+        # Setup stream subscriptions based on inputs provided
+        if (self.input_video_stream is not None) and (self.input_query_stream is not None):
+            self.merged_stream = create_stream_merger(
+                data_input_stream=self.input_video_stream,
+                text_query_stream=self.input_query_stream
+            )
+            
+            logger.info("Subscribing to merged input stream...")
+            # Define a query extractor for the merged stream
+            query_extractor = lambda emission: (emission[0], emission[1][0])
+            self.disposables.add(
+                self.subscribe_to_image_processing(
+                    self.merged_stream, 
+                    query_extractor=query_extractor
+                )
+            )
+        else:
+            # If no merged stream, fall back to individual streams
+            if self.input_video_stream is not None:
+                logger.info("Subscribing to input video stream...")
+                self.disposables.add(
+                    self.subscribe_to_image_processing(self.input_video_stream))
+            if self.input_query_stream is not None:
+                logger.info("Subscribing to input query stream...")
+                self.disposables.add(
+                    self.subscribe_to_query_processing(self.input_query_stream))
 
     def _update_query(self, incoming_query: Optional[str]) -> None:
         """Updates the query if an incoming query is provided.
@@ -691,7 +734,10 @@ class OpenAIAgent(LLMAgent):
             agent_memory=agent_memory,
             pool_scheduler=pool_scheduler,
             process_all_inputs=process_all_inputs,
-            system_query=system_query
+            system_query=system_query,
+            input_query_stream=input_query_stream,
+            input_data_stream=input_data_stream,
+            input_video_stream=input_video_stream
         )
         self.client = openai_client or OpenAI()
         self.query = query
@@ -729,45 +775,6 @@ class OpenAIAgent(LLMAgent):
 
         self.frame_processor = frame_processor or FrameProcessor(
             delete_on_init=True)
-        self.input_video_stream = input_video_stream
-        self.input_query_stream = input_query_stream if (input_data_stream is None) else (input_query_stream.pipe(
-            RxOps.with_latest_from(input_data_stream),
-            RxOps.map(lambda combined: {
-                "query": combined[0],
-                "objects": combined[1] if len(combined) > 1 else "No object data available"
-            }),
-            RxOps.map(lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"),
-            RxOps.do_action(lambda x: print(f"\033[34mEnriched query: {x.split(chr(10))[0]}\033[0m") or 
-                                    [print(f"\033[34m{line}\033[0m") for line in x.split(chr(10))[1:]]),
-        ))
-
-        # Setup stream subscriptions based on inputs provided
-        if (self.input_video_stream is not None) and (self.input_query_stream is not None):
-
-            self.merged_stream = create_stream_merger(
-                data_input_stream=self.input_video_stream,
-                text_query_stream=self.input_query_stream
-            )
-            
-            logger.info("Subscribing to merged input stream...")
-            # Define a query extractor for the merged stream
-            query_extractor = lambda emission: (emission[0], emission[1][0])
-            self.disposables.add(
-                self.subscribe_to_image_processing(
-                    self.merged_stream, 
-                    query_extractor=query_extractor
-                )
-            )
-        else:
-            # If no merged stream, fall back to individual streams
-            if self.input_video_stream is not None:
-                logger.info("Subscribing to input video stream...")
-                self.disposables.add(
-                    self.subscribe_to_image_processing(self.input_video_stream))
-            if self.input_query_stream is not None:
-                logger.info("Subscribing to input query stream...")
-                self.disposables.add(
-                    self.subscribe_to_query_processing(self.input_query_stream))
 
         logger.info("OpenAI Agent Initialized.")
 
