@@ -24,32 +24,52 @@ import open3d as o3d
 import reactivex.operators as ops
 import numpy as np
 import time
+import threading
 
 # logging.basicConfig(level=logging.DEBUG)
 
-
 load_dotenv()
-robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="normal")
+robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
 
 websocket_vis = WebsocketVis()
 websocket_vis.start()
 websocket_vis.connect(robot.global_planner.vis_stream())
 
+
+def msg_handler(msgtype, data):
+    print("MSG HANDLER RUN", data)
+    if msgtype == "click":
+        try:
+            robot.global_planner.set_goal(robot.costmap.grid_to_world(data["position"]))
+        except Exception as e:
+            print(f"Error setting goal: {e}")
+            return
+
+
+def threaded_msg_handler(msgtype, data):
+    thread = threading.Thread(target=msg_handler, args=(msgtype, data))
+    thread.daemon = True
+    thread.start()
+
+
+websocket_vis.msg_handler = threaded_msg_handler
+
 print("standing up")
 robot.standup()
 print("robot is up")
 
-# show3d_stream(robot.lidar_stream())
-# def parse_frame(frame):
-#    return o3d.geometry.Image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-# show3d_stream(robot.video_stream().pipe(ops.map(parse_frame)), clearframe=True)
 
-robot.odom_stream().subscribe(print)
+def newmap(msg):
+    return ["costmap", robot.map.costmap.smudge()]
+
+
+websocket_vis.connect(robot.map_stream.pipe(ops.map(newmap)))
+websocket_vis.connect(robot.odom_stream().pipe(ops.map(lambda pos: ["robot_pos", pos.pos.to_2d()])))
 
 try:
     while True:
-        robot.move_vel(Vector(0.1, 0.1, 0.1))
-        time.sleep(0.01)
+        #        robot.move_vel(Vector(0.1, 0.1, 0.1))
+        time.sleep(0.1)
 
 except KeyboardInterrupt:
     print("Stopping robot")

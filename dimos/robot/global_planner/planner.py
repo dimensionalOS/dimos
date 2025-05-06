@@ -37,11 +37,11 @@ class Planner(Visualizable):
     def set_goal(
         self, goal: VectorLike, goal_theta: Optional[float] = None, stop_event: Optional[threading.Event] = None
     ):
-        goal = to_vector(goal).to_2d()
         path = self.plan(goal)
         if not path:
             logger.warning("No path found to the goal.")
             return False
+        print("pathing success", path)
         return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
 
 
@@ -53,12 +53,14 @@ class AstarPlanner(Planner):
     conservativism: int = 8
 
     def plan(self, goal: VectorLike) -> Path:
-        pos = self.get_robot_pos()
+        goal = to_vector(goal).to_2d()
+        pos = self.get_robot_pos().to_2d()
         costmap = self.get_costmap().smudge(preserve_unknown=False)
 
-        self.vis("planner_costmap", costmap)
+        # self.vis("costmap", costmap)
         self.vis("target", goal)
 
+        print("ASTAR ", costmap, goal, pos)
         path = astar(costmap, goal, pos)
 
         if path:
