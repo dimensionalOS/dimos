@@ -330,3 +330,7 @@ class Costmap:
         pcd.colors = o3d.utility.Vector3dVector(rgb)
 
         return pcd
+
+    @property
+    def o3d_geometry(self):
+        return self.pointcloud
