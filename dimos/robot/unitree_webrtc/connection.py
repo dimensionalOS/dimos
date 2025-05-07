@@ -1,17 +1,21 @@
 import functools
 import asyncio
 import threading
+import numpy as np
 from typing import TypeAlias, Literal
-from dimos.utils.reactive import backpressure, callback_to_observable
+
 from dimos.types.vector import Vector
 from dimos.types.position import Position
+from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import position_from_odom
+
 from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
 from go2_webrtc_driver.constants import RTC_TOPIC, VUI_COLOR, SPORT_CMD
+
 from reactivex.subject import Subject
 from reactivex.observable import Observable
-import numpy as np
+
 from reactivex import operators as ops
 from aiortc import MediaStreamTrack
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
@@ -78,6 +82,7 @@ class Connection:
         )
         return future.result()
 
+    @functools.lru_cache(maxsize=None)
     def lidar_stream(self) -> Subject[LidarMessage]:
         return backpressure(
             self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]).pipe(
@@ -85,11 +90,13 @@ class Connection:
             )
         )
 
+    @functools.lru_cache(maxsize=None)
     def odom_stream(self) -> Subject[Position]:
         return backpressure(
             self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]).pipe(ops.map(lambda msg: position_from_odom(msg)))
         )
 
+    @functools.lru_cache(maxsize=None)
     def lowstate_stream(self) -> Subject[LowStateMsg]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
