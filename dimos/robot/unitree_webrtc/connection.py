@@ -13,8 +13,8 @@ from dimos.robot.unitree_webrtc.type.odometry import position_from_odom
 from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
 from go2_webrtc_driver.constants import RTC_TOPIC, VUI_COLOR, SPORT_CMD
 
-from reactivex.subject import Subject
 from reactivex.observable import Observable
+from reactivex.subject import Subject
 
 from reactivex import operators as ops
 from aiortc import MediaStreamTrack
@@ -113,9 +113,12 @@ class Connection:
             return self.standup_normal()
 
     def liedown(self):
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
+        return self.publish_request(
+            RTC_TOPIC["SPORT_MOD"],
+            {"api_id": SPORT_CMD["StandDown"]},
+        )
 
-    async def handstand(self):
+    def handstand(self):
         return self.publish_request(
             RTC_TOPIC["SPORT_MOD"],
             {"api_id": SPORT_CMD["Standup"], "parameter": {"data": True}},
@@ -124,13 +127,7 @@ class Connection:
     def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 60) -> bool:
         return self.publish_request(
             RTC_TOPIC["VUI"],
-            {
-                "api_id": 1001,
-                "parameter": {
-                    "color": color,
-                    "time": colortime,
-                },
-            },
+            {"api_id": 1001, "parameter": {"color": color, "time": colortime}},
         )
 
     @functools.lru_cache(maxsize=None)

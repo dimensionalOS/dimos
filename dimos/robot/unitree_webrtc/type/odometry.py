@@ -59,6 +59,6 @@ def position_from_odom(msg: RawOdometryMessage) -> Position:
     pose = msg["data"]["pose"]
     orientation = pose["orientation"]
     position = pose["position"]
-    pos = Vector(position.get("x"), position.get("y"), position.get("z"))
+    coords = Vector(position.get("x"), position.get("y"), position.get("z"))
     rot = Vector(orientation.get("x"), orientation.get("y"), orientation.get("z"))
-    return Position(pos=pos, rot=rot)
+    return Position(coords=coords, rot=rot)

@@ -5,17 +5,19 @@ from dimos.robot.unitree_webrtc.type.costmap import Costmap
 from dataclasses import dataclass
 from reactivex.observable import Observable
 import reactivex.operators as ops
+from typing import Callable
+from dimos.types.vector import Vector
 
 
 @dataclass
 class Map:
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
     voxel_size: float = 0.25
+    pos: Callable[[], Vector] = None
 
     def add_frame(self, frame: LidarMessage) -> "Map":
         new_pct = frame.pointcloud = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
-
         return self
 
     def consume(self, observable: Observable[LidarMessage]) -> Observable["Map"]:
@@ -27,10 +29,10 @@ class Map:
 
     @property
     def costmap(self) -> Costmap:
-        grid = pointcloud_to_costmap(self.pointcloud)
+        grid = pointcloud_to_costmap(self.pointcloud, resolution=self.voxel_size)
         return Costmap(
             grid=grid,
-            origin=[0, 0, 0],
+            origin=self.pos(),
             origin_theta=0.0,
             resolution=self.voxel_size,
         )

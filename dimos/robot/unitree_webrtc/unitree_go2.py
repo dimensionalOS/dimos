@@ -17,15 +17,18 @@ class UnitreeGo2(Connection):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        self.map = Map()
+        self.map = Map(pos=lambda: self.coords)
 
         self._odom_getter = getter_streaming(self.odom_stream())
 
         self.global_planner = AstarPlanner(
-            set_local_nav=lambda: self.navigate_path_local,
+            set_local_nav=lambda path, stop_event, goal_theta: self.navigate_path_local(path),
             get_costmap=lambda: self.costmap,
-            get_robot_pos=lambda: self.odom().pos.to_2d(),
+            get_robot_pos=lambda: self.odom.coords.to_2d(),
         )
+
+    def navigate_path_local(self, path, stop_event=None, goal_theta=None):
+        print("NAV", path)
 
     @functools.lru_cache(maxsize=None)
     def map_stream(self):
@@ -36,8 +39,8 @@ class UnitreeGo2(Connection):
         return self.map.costmap
 
     @property
-    def pos(self) -> Vector:
-        return self._odom_getter().pos
+    def coords(self) -> Vector:
+        return self._odom_getter().coords
 
     @property
     def rot(self) -> Vector:

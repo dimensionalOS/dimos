@@ -37,12 +37,12 @@ websocket_vis.connect(robot.global_planner.vis_stream())
 
 
 def msg_handler(msgtype, data):
-    print("MSG HANDLER RUN", data)
     if msgtype == "click":
         try:
             robot.global_planner.set_goal(robot.costmap.grid_to_world(data["position"]))
         except Exception as e:
             print(f"Error setting goal: {e}")
+            print(e)
             return
 
 
@@ -54,17 +54,15 @@ def threaded_msg_handler(msgtype, data):
 
 websocket_vis.msg_handler = threaded_msg_handler
 
-print("standing up")
 robot.standup()
-print("robot is up")
 
 
 def newmap(msg):
     return ["costmap", robot.map.costmap.smudge()]
 
 
-websocket_vis.connect(robot.map_stream.pipe(ops.map(newmap)))
-websocket_vis.connect(robot.odom_stream().pipe(ops.map(lambda pos: ["robot_pos", pos.pos.to_2d()])))
+websocket_vis.connect(robot.map_stream().pipe(ops.map(newmap)))
+websocket_vis.connect(robot.odom_stream().pipe(ops.map(lambda pos: ["robot_pos", pos.coords])))
 
 try:
     while True:
