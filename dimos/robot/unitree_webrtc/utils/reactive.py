@@ -1,14 +1,11 @@
 import threading
-from typing import Optional, TypeVar, Generic, Any, Callable
+from typing import Optional, TypeVar, Generic, Callable
 
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
-from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from rxpy_backpressure import BackPressure
-
-from dimos.utils.threadpool import get_scheduler
 
 T = TypeVar("T")
 
@@ -22,8 +19,7 @@ def backpressure(
     drop_unprocessed: bool = True,
 ) -> Observable[T]:
     if scheduler is None:
-        scheduler = get_scheduler()
-
+        scheduler = rx.scheduler.ThreadPoolScheduler()
     # hot, latest-cached core (similar to replay subject)
     core = observable.pipe(
         ops.replay(buffer_size=1),
@@ -67,19 +63,20 @@ class LatestReader(Generic[T]):
             self._connection.dispose()
 
 
-def getter_ondemand(observable: Observable[T], timeout: Optional[float] = 30.0) -> T:
-    def getter():
+def getter_ondemand(
+    observable: Observable[T], timeout: Optional[float] = 30.0
+) -> "Callable[[], T]":
+    def getter() -> T:
         try:
             # Wait for first value with optional timeout
-            value = observable.pipe(ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])).run()
+            value: T = observable.pipe(
+                ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])
+            ).run()
             return value
         except Exception as e:
             raise Exception(f"No value received after {timeout} seconds") from e
 
     return getter
-
-
-T = TypeVar("T")
 
 
 def getter_streaming(
@@ -126,22 +123,4 @@ def getter_streaming(
         sub.dispose()
 
     reader.dispose = _dispose  # type: ignore[attr-defined]
-    return reader
-
-
-T = TypeVar("T")
-CB = Callable[[T], Any]
-
-
-def callback_to_observable(
-    start: Callable[[CB[T]], Any],
-    stop: Callable[[CB[T]], Any],
-) -> Observable[T]:
-    def _subscribe(observer, _scheduler=None):
-        def _on_msg(value: T):
-            observer.on_next(value)
-
-        start(_on_msg)
-        return Disposable(lambda: stop(_on_msg))
-
-    return rx.create(_subscribe)
+    return reader  # type: ignore[return-value]
