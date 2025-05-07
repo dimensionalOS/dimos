@@ -1,3 +1,4 @@
+import time
 import functools
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.connection import Connection
@@ -5,7 +6,6 @@ from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.utils.reactive import backpressure, getter_streaming
 from dimos.types.vector import Vector
 from dimos.types.position import Position
-
 
 from go2_webrtc_driver.constants import VUI_COLOR
 
@@ -18,7 +18,6 @@ class UnitreeGo2(Connection):
         super().__init__(**kwargs)
 
         self.map = Map(pos=lambda: self.coords)
-
         self._odom_getter = getter_streaming(self.odom_stream())
 
         self.global_planner = AstarPlanner(
@@ -28,7 +27,20 @@ class UnitreeGo2(Connection):
         )
 
     def navigate_path_local(self, path, stop_event=None, goal_theta=None):
-        print("NAV", path)
+        print("NAVIGATING PATH", path)
+        for point in path:
+            self.goto_point(point)
+
+    def goto_point(self, point: Vector):
+        print("GOTO", point)
+        while True:
+            vel = (self.coords.to_2d() - point).normalize() * 1
+            print("move", vel)
+            self.move_vel(vel)
+            time.sleep(0.05)
+            if self.coords.to_2d().distance(point) < 0.3:
+                print("point reached")
+                return True
 
     @functools.lru_cache(maxsize=None)
     def map_stream(self):

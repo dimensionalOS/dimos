@@ -12,9 +12,8 @@ from dimos.robot.unitree_webrtc.type.odometry import position_from_odom
 
 from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
 from go2_webrtc_driver.constants import RTC_TOPIC, VUI_COLOR, SPORT_CMD
-
-from reactivex.observable import Observable
 from reactivex.subject import Subject
+from reactivex.observable import Observable
 
 from reactivex import operators as ops
 from aiortc import MediaStreamTrack
@@ -63,7 +62,7 @@ class Connection:
         self.connection_ready.wait()
 
     def move_vel(self, vector: Vector):
-        self.conn.datachannel.pub_sub.publish_without_callback(
+        self.publish_without_callback(
             RTC_TOPIC["WIRELESS_CONTROLLER"],
             data={"lx": vector.x, "ly": vector.y, "rx": vector.z, "ry": 0},
         )
@@ -74,6 +73,9 @@ class Connection:
             start=lambda cb: self.conn.datachannel.pub_sub.subscribe(topic_name, cb),
             stop=lambda: self.conn.datachannel.pub_sub.unsubscribe(topic_name),
         )
+
+    def publish_without_callback(self, topic: str, data: dict):
+        self.conn.datachannel.pub_sub.publish_without_callback(topic, data)
 
     # Generic sync API call (we jump into the client thread)
     def publish_request(self, topic: str, data: dict):
