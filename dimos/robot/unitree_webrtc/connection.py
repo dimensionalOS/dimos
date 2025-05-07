@@ -63,7 +63,7 @@ class Connection:
 
     def move_vel(self, vector: Vector):
         asyncio.run_coroutine_threadsafe(
-            lambda: self.async_publish_without_callback(
+            self.async_publish_without_callback(
                 RTC_TOPIC["WIRELESS_CONTROLLER"],
                 data={"lx": vector.x, "ly": vector.y, "rx": vector.z, "ry": 0},
             )
