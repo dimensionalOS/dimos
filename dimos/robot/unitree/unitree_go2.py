@@ -30,7 +30,7 @@ import threading
 from dimos.utils.logging_config import setup_logger
 from dimos.perception.person_tracker import PersonTrackingStream
 from dimos.perception.object_tracker import ObjectTrackingStream
-from dimos.robot.local_planner import VFHPurePursuitPlanner
+from dimos.robot.local_planner import VFHPurePursuitPlanner, navigate_path_local
 from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.types.path import Path
 from dimos.types.costmap import Costmap
@@ -159,132 +159,19 @@ class UnitreeGo2(Robot):
             robot_width=0.36,  # Unitree Go2 width in meters
             robot_length=0.6,  # Unitree Go2 length in meters
             max_linear_vel=0.5,
-            lookahead_distance=0.6,
+            lookahead_distance=2.0,
             visualization_size=500,  # 500x500 pixel visualization
         )
 
         self.global_planner = AstarPlanner(
             conservativism=20,  # how close to obstacles robot is allowed to path plan
-            set_local_nav=self.navigate_path_local,
+            set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event),
             get_costmap=self.ros_control.topic_latest("map", Costmap),
             get_robot_pos=lambda: self.ros_control.transform_euler_pos("base_link"),
         )
 
         # Create the visualization stream at 5Hz
         self.local_planner_viz_stream = self.local_planner.create_stream(frequency_hz=5.0)
-
-    def navigate_to_goal_local(
-        self, goal_xy_robot: Tuple[float, float], is_robot_frame=True, timeout: float = 60.0
-    ) -> bool:
-        """
-        Navigates the robot to a goal specified in the robot's local frame
-        using the VFHPurePursuitPlanner.
-
-        Args:
-            goal_xy_robot: Tuple (x, y) representing the goal position relative
-                           to the robot's current position and orientation.
-            is_robot_frame: Whether the goal is specified in robot frame (True) or odom frame (False)
-            timeout: Maximum time (in seconds) allowed to reach the goal.
-
-        Returns:
-            bool: True if the goal was reached within the timeout, False otherwise.
-        """
-        logger.info(f"Starting navigation to local goal {goal_xy_robot} with timeout {timeout}s.")
-
-        # Set the single goal in the robot's frame. Adjustment will happen internally.
-        self.local_planner.set_goal(goal_xy_robot, frame="base_link" if is_robot_frame else "odom")
-
-        start_time = time.time()
-        goal_reached = False
-
-        try:
-            while time.time() - start_time < timeout:
-                # Check if goal has been reached
-                if self.local_planner.is_goal_reached():
-                    logger.info("Goal reached successfully.")
-                    goal_reached = True
-                    break
-
-                # Get planned velocity towards the goal
-                vel_command = self.local_planner.plan()
-                x_vel = vel_command.get("x_vel", 0.0)
-                angular_vel = vel_command.get("angular_vel", 0.0)
-
-                # Send velocity command
-                self.ros_control.move_vel_control(x=x_vel, y=0, yaw=angular_vel)
-
-                # Control loop frequency
-                time.sleep(0.1)
-
-            if not goal_reached:
-                logger.warning(f"Navigation timed out after {timeout} seconds before reaching goal.")
-
-        except KeyboardInterrupt:
-            logger.info("Navigation to local goal interrupted by user.")
-            goal_reached = False  # Consider interruption as failure
-        except Exception as e:
-            logger.error(f"Error during navigation to local goal: {e}")
-            goal_reached = False  # Consider error as failure
-        finally:
-            logger.info("Stopping robot after navigation attempt.")
-            self.ros_control.stop()
-
-        return goal_reached
-
-    def navigate_path_local(self, path: Path, timeout: float = 120.0, goal_theta: Optional[float] = None, stop_event: Optional[threading.Event] = None) -> bool:
-        """
-        Navigates the robot along a path of waypoints using the waypoint following capability
-        of the VFHPurePursuitPlanner.
-
-        Args:
-            path: Path object containing waypoints in odom/map frame
-            timeout: Maximum time (in seconds) allowed to follow the complete path
-            stop_event: Optional threading.Event to signal when navigation should stop
-
-        Returns:
-            bool: True if the entire path was successfully followed, False otherwise
-        """
-        logger.info(f"Starting navigation along path with {len(path)} waypoints and timeout {timeout}s.")
-
-        # Set the path in the local planner
-        self.local_planner.set_goal_waypoints(path, goal_theta=goal_theta)
-
-        start_time = time.time()
-        path_completed = False
-
-        try:
-            while time.time() - start_time < timeout and not (stop_event and stop_event.is_set()):
-                # Check if the entire path has been traversed
-                if self.local_planner.is_goal_reached():
-                    logger.info("Path traversed successfully.")
-                    path_completed = True
-                    break
-
-                # Get planned velocity towards the current waypoint target
-                vel_command = self.local_planner.plan()
-                x_vel = vel_command.get("x_vel", 0.0)
-                angular_vel = vel_command.get("angular_vel", 0.0)
-
-                # Send velocity command
-                self.ros_control.move_vel_control(x=x_vel, y=0, yaw=angular_vel)
-
-                # Control loop frequency
-                time.sleep(0.1)
-
-            if not path_completed:
-                logger.warning(f"Path following timed out after {timeout} seconds before completing the path.")
-
-        except KeyboardInterrupt:
-            logger.info("Path navigation interrupted by user.")
-            path_completed = False
-        except Exception as e:
-            logger.error(f"Error during path navigation: {e}")
-            path_completed = False
-        finally:
-            logger.info("Stopping robot after path navigation attempt.")
-            self.ros_control.stop()
-
-        return path_completed
 
     def get_skills(self) -> Optional[SkillLibrary]:
         return self.skill_library

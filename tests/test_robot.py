@@ -4,6 +4,7 @@ import threading
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
+from dimos.robot.local_planner import navigate_to_goal_local
 from dimos.web.robot_web_interface import RobotWebInterface
 from reactivex import operators as RxOps
 import tests.test_header
@@ -51,9 +52,11 @@ def main():
         # Start the goal following test in a separate thread
         print("Starting navigation to local goal (2m ahead) in a separate thread...")
         goal_following_thread = threading.Thread(
-            target=robot.navigate_to_goal_local,
+            target=navigate_to_goal_local,
             kwargs={
+                'robot': robot,
                 'goal_xy_robot': (3.0, 0.0),
+                'distance': 0.0,
                 'timeout': 300
             },
             daemon=True

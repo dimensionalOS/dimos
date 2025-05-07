@@ -13,6 +13,7 @@ from reactivex import operators as ops
 import argparse
 import pickle
 import reactivex as rx
+from dimos.web.robot_web_interface import RobotWebInterface
 
 
 def parse_args():
@@ -21,7 +22,38 @@ def parse_args():
         "--live",
         action="store_true",
     )
+    parser.add_argument(
+        "--port", type=int, default=5555, help="Port for web visualization interface"
+    )
     return parser.parse_args()
+
+
+def setup_web_interface(robot, port=5555):
+    """Set up web interface with robot video and local planner visualization"""
+    print(f"Setting up web interface on port {port}")
+    
+    # Get video stream from robot
+    video_stream = robot.video_stream_ros.pipe(
+        ops.share(),
+        ops.map(lambda frame: frame),
+        ops.filter(lambda frame: frame is not None),
+    )
+    
+    # Get local planner visualization stream
+    local_planner_stream = robot.local_planner_viz_stream.pipe(
+        ops.share(),
+        ops.map(lambda frame: frame),
+        ops.filter(lambda frame: frame is not None),
+    )
+    
+    # Create web interface with streams
+    web_interface = RobotWebInterface(
+        port=port,
+        robot_video=video_stream,
+        local_planner=local_planner_stream
+    )
+    
+    return web_interface
 
 
 def main():
@@ -29,6 +61,8 @@ def main():
 
     websocket_vis = WebsocketVis()
     websocket_vis.start()
+    
+    web_interface = None
 
     if args.live:
         ros_control = UnitreeROSControl(node_name="web_nav_test", mock_connection=False)
@@ -37,6 +71,15 @@ def main():
 
         websocket_vis.connect(vector_stream("robot", lambda: robot.ros_control.transform_euler_pos("base_link")))
         websocket_vis.connect(robot.ros_control.topic("map", Costmap).pipe(ops.map(lambda x: ["costmap", x])))
+        
+        # Also set up the web interface with both streams
+        if hasattr(robot, 'video_stream_ros') and hasattr(robot, 'local_planner_viz_stream'):
+            web_interface = setup_web_interface(robot, port=args.port)
+            
+            # Start web interface in a separate thread
+            viz_thread = threading.Thread(target=web_interface.run, daemon=True)
+            viz_thread.start()
+            print(f"Web interface available at http://localhost:{args.port}")
 
     else:
         pickle_path = f"{__file__.rsplit('/', 1)[0]}/mockdata/vegas.pickle"
