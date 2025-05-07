@@ -18,7 +18,7 @@ import os
 import time
 from dotenv import load_dotenv
 from dimos.agents.claude_agent import ClaudeAgent
-from dimos.robot.unitree.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
@@ -38,9 +38,8 @@ from dimos.skills.speak import Speak
 load_dotenv()
 
 robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
-                    ros_control=UnitreeROSControl(),
                     skills=MyUnitreeSkills(),
-                    mock_connection=False)
+                    mode = "ai")
 
 # Create a subject for agent responses
 agent_response_subject = rx.subject.Subject()
@@ -58,16 +57,16 @@ web_interface = RobotWebInterface(port=5555, text_streams=text_streams, **stream
 stt_node = stt()
 
 # Read system query from prompt.txt file
-with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'agent', 'prompt.txt'), 'r') as f:
-    system_query = f.read()
+# with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'prompt.txt'), 'r') as f:
+#     system_query = f.read()
 
 # Create a ClaudeAgent instance
 agent = ClaudeAgent(
     dev_name="test_agent",
-    input_query_stream=stt_node.emit_text(),
-    # input_query_stream=web_interface.query_stream,
+    # input_query_stream=stt_node.emit_text(),
+    input_query_stream=web_interface.query_stream,
     skills=robot.get_skills(),
-    system_query=system_query,
+    system_query="What do you see",
     model_name="claude-3-7-sonnet-latest",
     thinking_budget_tokens=2000
 )
@@ -84,7 +83,7 @@ robot_skills.add(BuildSemanticMap)
 robot_skills.add(FollowHuman)
 robot_skills.add(GetPose)
 robot_skills.add(Speak)
-robot_skills.add(NavigateToGoal)
+# robot_skills.add(NavigateToGoal)
 robot_skills.create_instance("ObserveStream", robot=robot, agent=agent)
 robot_skills.create_instance("KillSkill", robot=robot, skill_library=robot_skills)
 robot_skills.create_instance("Navigate", robot=robot)
@@ -92,7 +91,7 @@ robot_skills.create_instance("BuildSemanticMap", robot=robot)
 # robot_skills.create_instance("NavigateToObject", robot=robot)
 robot_skills.create_instance("FollowHuman", robot=robot)
 robot_skills.create_instance("GetPose", robot=robot)
-robot_skills.create_instance("NavigateToGoal", robot=robot)
+# robot_skills.create_instance("NavigateToGoal", robot=robot)
 robot_skills.create_instance("Speak", tts_node=tts_node)
 
 # Subscribe to agent responses and send them to the subject
