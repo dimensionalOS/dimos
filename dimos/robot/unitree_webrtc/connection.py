@@ -15,11 +15,11 @@ import numpy as np
 from reactivex import operators as ops
 from aiortc import MediaStreamTrack
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
-
+from dimos.robot.abstract_robot import AbstractRobot
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
 
-class Connection:
+class WebRTCRobot(AbstractRobot):
     def __init__(self, ip: str, mode: str = "ai"):
         self.ip = ip
         self.mode = mode
@@ -58,7 +58,7 @@ class Connection:
         self.thread.start()
         self.connection_ready.wait()
 
-    def move_vel(self, vector: Vector):
+    def move(self, vector: Vector):
         self.conn.datachannel.pub_sub.publish_without_callback(
             RTC_TOPIC["WIRELESS_CONTROLLER"],
             data={"lx": vector.x, "ly": vector.y, "rx": vector.z, "ry": 0},
@@ -147,6 +147,28 @@ class Connection:
             self.conn.video.switchVideoChannel(False)
 
         return backpressure(subject.pipe(ops.finally_action(stop)))
+
+    def get_video_stream(self, fps: int = 30) -> Observable[VideoMessage]:
+        """Get the video stream from the robot's camera.
+        
+        Implements the AbstractRobot interface method.
+        
+        Args:
+            fps: Frames per second. This parameter is included for API compatibility,
+                 but doesn't affect the actual frame rate which is determined by the camera.
+                 
+        Returns:
+            Observable: An observable stream of video frames or None if video is not available.
+        """
+        try:
+            print(f"Starting WebRTC video stream...")
+            stream = self.video_stream()
+            if stream is None:
+                print("Warning: Video stream is not available")
+            return stream
+        except Exception as e:
+            print(f"Error getting video stream: {e}")
+            return None
 
     def stop(self):
         if hasattr(self, "task") and self.task:
