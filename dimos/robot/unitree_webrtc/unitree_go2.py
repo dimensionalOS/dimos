@@ -14,6 +14,7 @@ from go2_webrtc_driver.constants import VUI_COLOR
 from dimos.perception.person_tracker import PersonTrackingStream
 from dimos.perception.object_tracker import ObjectTrackingStream
 from dimos.robot.local_planner import VFHPurePursuitPlanner, navigate_path_local
+import numpy as np
 
 class Color(VUI_COLOR): ...
 
@@ -26,7 +27,7 @@ class UnitreeGo2(WebRTCRobot):
                 skill_library: SkillLibrary = None,
                 output_dir: str = os.path.join(os.getcwd(), "assets", "output"),
                 ):
-        super().__init__(ip=ip, mode=mode, **kwargs)
+        super().__init__(ip=ip, mode=mode)
 
         self.odom = getter_streaming(self.odom_stream())
         self.output_dir = output_dir
@@ -43,7 +44,7 @@ class UnitreeGo2(WebRTCRobot):
         if skills is None:
             skills = MyUnitreeSkills(robot=self)
         
-        self.skill_library = skill_library if skill_library else SkillLibrary()
+        self.skill_library = skills if skills else SkillLibrary()
 
         if self.skill_library is not None:
             for skill in self.skill_library:
@@ -101,7 +102,10 @@ class UnitreeGo2(WebRTCRobot):
         
     def move(self, vector: Vector):
         super().move(vector)
-
+        
+    def get_skills(self) -> Optional[SkillLibrary]:
+        return self.skill_library
+    
     @property
     def costmap(self):
         return self.map.costmap
