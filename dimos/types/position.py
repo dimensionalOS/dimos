@@ -7,6 +7,10 @@ class Position:
         self.pos = pos
         self.rot = rot
 
+    @property
+    def theta(self) -> float:
+        return self.rot.z
+
     def __repr__(self) -> str:
         return f"pos({self.pos}), rot({self.rot})"
 
