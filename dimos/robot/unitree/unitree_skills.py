@@ -251,27 +251,33 @@ class MyUnitreeSkills(SkillLibrary):
             super().__call__()
             
             from dimos.types.vector import Vector
-            vector = Vector(x=self.x, y=self.y, z=self.yaw)
+            vector = Vector(self.x, self.y, self.yaw)
             
             # Handle duration for continuous movement
             if self.duration > 0:
                 import time
                 import threading
+                import asyncio
                 
                 # Create a stop event
                 stop_event = threading.Event()
                 
                 # Function to continuously send movement commands
-                def continuous_move():
+                async def continuous_move():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
                     start_time = time.time()
-                    while not stop_event.is_set() and (time.time() - start_time) < self.duration:
-                        self._robot.move(vector)
-                        time.sleep(0.1)  # Send commands at 10Hz
-                    # Always stop at the end
-                    self._robot.move(Vector(x=0, y=0, z=0))
+                    try:
+                        while not stop_event.is_set() and (time.time() - start_time) < self.duration:
+                            self._robot.move(vector)
+                            await asyncio.sleep(0.001)  # Send commands at 1000Hz
+                        # Always stop at the end
+                        self._robot.move(Vector(0, 0, 0))
+                    finally:
+                        loop.close()
                 
-                # Run movement in a separate thread to not block
-                move_thread = threading.Thread(target=continuous_move)
+                # Run movement in a separate thread with asyncio event loop
+                move_thread = threading.Thread(target=lambda: asyncio.run(continuous_move()))
                 move_thread.daemon = True
                 move_thread.start()
                 
@@ -299,27 +305,33 @@ class MyUnitreeSkills(SkillLibrary):
             super().__call__()
             from dimos.types.vector import Vector
             # Use negative x for backward movement
-            vector = Vector(x=-self.x, y=self.y, z=self.yaw)
+            vector = Vector(-self.x, self.y, self.yaw)
             
             # Handle duration for continuous movement
             if self.duration > 0:
                 import time
                 import threading
+                import asyncio
                 
                 # Create a stop event
                 stop_event = threading.Event()
                 
                 # Function to continuously send movement commands
-                def continuous_move():
+                async def continuous_move():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
                     start_time = time.time()
-                    while not stop_event.is_set() and (time.time() - start_time) < self.duration:
-                        self._robot.move(vector)
-                        time.sleep(0.1)  # Send commands at 10Hz
-                    # Always stop at the end
-                    self._robot.move(Vector(x=0, y=0, z=0))
+                    try:
+                        while not stop_event.is_set() and (time.time() - start_time) < self.duration:
+                            self._robot.move(vector)
+                            await asyncio.sleep(0.001)  # Send commands at 1000Hz
+                        # Always stop at the end
+                        self._robot.move(Vector(0, 0, 0))
+                    finally:
+                        loop.close()
                 
-                # Run movement in a separate thread to not block
-                move_thread = threading.Thread(target=continuous_move)
+                # Run movement in a separate thread with asyncio event loop
+                move_thread = threading.Thread(target=lambda: asyncio.run(continuous_move()))
                 move_thread.daemon = True
                 move_thread.start()
                 
