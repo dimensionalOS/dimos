@@ -62,9 +62,11 @@ class Connection:
         self.connection_ready.wait()
 
     def move_vel(self, vector: Vector):
-        self.publish_without_callback(
-            RTC_TOPIC["WIRELESS_CONTROLLER"],
-            data={"lx": vector.x, "ly": vector.y, "rx": vector.z, "ry": 0},
+        asyncio.run_coroutine_threadsafe(
+            lambda: self.async_publish_without_callback(
+                RTC_TOPIC["WIRELESS_CONTROLLER"],
+                data={"lx": vector.x, "ly": vector.y, "rx": vector.z, "ry": 0},
+            )
         )
 
     # Generic conversion of unitree subscription to Subject (used for all subs)
@@ -73,6 +75,9 @@ class Connection:
             start=lambda cb: self.conn.datachannel.pub_sub.subscribe(topic_name, cb),
             stop=lambda: self.conn.datachannel.pub_sub.unsubscribe(topic_name),
         )
+
+    async def async_publish_without_callback(self, topic: str, data: dict):
+        self.conn.datachannel.pub_sub.publish_without_callback(topic, data)
 
     def publish_without_callback(self, topic: str, data: dict):
         self.conn.datachannel.pub_sub.publish_without_callback(topic, data)
