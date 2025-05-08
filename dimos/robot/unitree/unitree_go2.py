@@ -51,7 +51,7 @@ class UnitreeGo2(Robot):
         ip=None,
         connection_method: WebRTCConnectionMethod = WebRTCConnectionMethod.LocalSTA,
         serial_number: str = None,
-        output_dir: str = os.getcwd(),  # TODO: Pull from ENV variable to handle docker and local development
+        output_dir: str = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "assets", "output"),
         use_ros: bool = True,
         use_webrtc: bool = False,
         disable_video_stream: bool = False,
