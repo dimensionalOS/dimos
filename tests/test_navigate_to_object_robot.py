@@ -10,7 +10,7 @@ from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.utils.logging_config import logger
-from dimos.skills.visual_navigation_skills import NavigateToObject
+from dimos.skills.navigation import Navigate
 import tests.test_header
 
 def parse_args():
@@ -41,8 +41,8 @@ def main():
 
     # Add and create instance of NavigateToObject skill
     robot_skills = robot.get_skills()
-    robot_skills.add(NavigateToObject)
-    robot_skills.create_instance("NavigateToObject", robot=robot)
+    robot_skills.add(Navigate)
+    robot_skills.create_instance("Navigate", robot=robot)
 
     # Set up tracking and visualization streams
     object_tracking_stream = robot.object_tracking_stream
@@ -81,10 +81,9 @@ def main():
         
         def navigate_to_object():
             try:
-                result = robot_skills.call("NavigateToObject", 
+                result = robot_skills.call("Navigate", 
                                           robot=robot,
-                                          object_name=object_name,
-                                          distance=distance,
+                                          query=object_name,
                                           timeout=timeout)
                 print(f"Navigation result: {result}")
             except Exception as e:

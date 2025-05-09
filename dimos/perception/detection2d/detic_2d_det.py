@@ -7,7 +7,6 @@ from pathlib import Path
 
 # Add Detic to Python path
 detic_path = os.path.join(os.path.dirname(__file__), '..', '..', 'models', 'Detic')
-print("detic path", detic_path)
 if detic_path not in sys.path:
     sys.path.append(detic_path)
     sys.path.append(os.path.join(detic_path, 'third_party/CenterNet2'))

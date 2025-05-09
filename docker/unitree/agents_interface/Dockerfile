@@ -98,7 +98,12 @@ RUN mkdir -p /app/dimos /app/docker
 
 COPY requirements.txt /app/
 
+COPY base-requirements.txt /app/
+
 WORKDIR /app
+
+# Install torch and torchvision first due to builds in requirements.txt
+RUN pip install --no-cache-dir -r base-requirements.txt
 
 # Install dimos requirements
 RUN pip install --no-cache-dir -r requirements.txt

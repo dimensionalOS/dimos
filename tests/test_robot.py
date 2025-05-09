@@ -4,7 +4,7 @@ import threading
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.robot.local_planner import navigate_to_goal_local
+from dimos.robot.local_planner.local_planner import navigate_to_goal_local
 from dimos.web.robot_web_interface import RobotWebInterface
 from reactivex import operators as RxOps
 import tests.test_header

@@ -157,11 +157,12 @@ class Costmap:
         Returns:
             True if position is occupied or out of bounds, False otherwise
         """
-        grid_x, grid_y = self.world_to_grid(point)
+        grid_point = self.world_to_grid(point)
+        grid_x, grid_y = int(grid_point.x), int(grid_point.y)
         if 0 <= grid_x < self.width and 0 <= grid_y < self.height:
             # Consider unknown (-1) as unoccupied for navigation purposes
             value = self.grid[grid_y, grid_x]
-            return value > 0 and value >= threshold
+            return value >= threshold
         return True  # Consider out-of-bounds as occupied
 
     def get_value(self, point: VectorLike) -> Optional[int]:
