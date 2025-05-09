@@ -269,13 +269,48 @@ robot.webrtc_req(api_id=1016) # "Hello" command
 robot.move(distance=1.0, speed=0.5)
 ```
 
+### Skill Library Support
+
+Agents accept both `Skill` **and** `SkillLibrary` types. 
+
+- **Accepted Types**  
+  - `Skill`: Pass skill class directly when no external dependencies are required.  
+  - `SkillLibrary`: Use when you need multiple skills with managed dependencies or shared parameters.
+
+- **Private Skill Instantiation**  
+  You can still define your own library by inheriting from `SkillLibrary` and then calling:  
+  ```python
+  instance = MySkillLibrary.create_instance(...)
+
+### How to Register with Your Agent
+
+#### No-deps skills
+
+```python
+agent = OpenAIAgent(
+    ...,
+    skills=FreeSkill,  # Skill requires no extra setup
+    ...
+)
+```
+
+#### Deps skills
+
+```python
+agent = OpenAIAgent(
+    ...,
+    skills=MySkillLibrary,  # SkillLibrary handles construction
+    ...
+)
+```
+
 ### Creating Custom Skills (non-unitree specific)
 
 #### Create basic custom skills by inheriting from ```AbstractRobotSkill``` and implementing the ```__call__``` method.
 
 ```python
 class Move(AbstractRobotSkill):
-    distance: float = Field(...,description="Distance to reverse in meters")
+    distance: float = Field(..., description="Distance to reverse in meters")
     def __init__(self, robot: Optional[Robot] = None, **data):
         super().__init__(robot=robot, **data)
     def __call__(self):
