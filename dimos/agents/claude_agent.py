@@ -354,16 +354,11 @@ class ClaudeAgent(LLMAgent):
         """
         try:
             # Get Claude parameters
-            print("\n\n==== CLAUDE API PARAMETERS ====")
-            # print(json.dumps(messages, indent=2, default=str))
             claude_params = (claude_params.get('claude_prompt', None) or self.claude_api_params)
             
             # Log request parameters with truncated base64 data
-            print("\n\n==== CLAUDE API REQUEST ====\n")
             logger.debug(self._debug_api_call(claude_params))
-            
-            print("==== END REQUEST ====\n")
-            
+                        
             # Initialize response containers
             text_content = ""
             tool_calls = []
