@@ -89,7 +89,7 @@ docker compose -f docker/unitree/agents_interface/docker-compose.yml up --build
 
 - A Unitree Go2 robot accessible on your network
 - The robot's IP address
-- OpenAI API Key
+- OpenAI/Claude/Alibaba API Key
 
 ### Python Installation (Ubuntu 22.04)
 
@@ -113,6 +113,23 @@ pip install -r requirements.txt
 cp default.env .env
 ```
 
+### Agent API keys
+
+Full functionality will require API keys for the following:
+
+Requirements: 
+- OpenAI API key (required for OpenAIAgent)
+- Claude API key (optional for ClaudeAgent)
+- Alibaba API key (optional for QwenAgent)
+
+These keys can be added to your .env file or exported as environment variables.
+```
+export OPENAI_API_KEY=<your private key>
+export CLAUDE_API_KEY=<your private key>
+export ALIBABA_API_KEY=<your private key>
+```
+
+
 ### ROS2 Unitree Go2 SDK Installation 
 
 #### System Requirements
@@ -124,7 +141,7 @@ See [Unitree Go2 ROS2 SDK](https://github.com/abizovnuralem/go2_ros2_sdk) for ad
 ```bash
 mkdir -p ros2_ws
 cd ros2_ws
-git clone --recurse-submodules https://github.com/abizovnuralem/go2_ros2_sdk.git src
+git clone --recurse-submodules https://github.com/dimensionalOS/go2_ros2_sdk.git src
 sudo apt install ros-$ROS_DISTRO-image-tools
 sudo apt install ros-$ROS_DISTRO-vision-msgs
 
@@ -157,7 +174,7 @@ ros2 launch go2_robot_sdk robot.launch.py
 ```bash
 # Change path to your Go2 ROS2 SDK installation
 source /ros2_ws/install/setup.bash
-python test/test_planning_agent_web_interface.py
+python tests/run.py
 ```
 
 #### DimOS Interface:
@@ -173,17 +190,24 @@ Non-production directories excluded
 ```
 .
 ├── dimos/
-│   ├── agents/      # Agent implementation and behaviors
-│   ├── robot/       # Robot control and hardware interface
-│   │   └── unitree/ # Unitree Go2 specific control and skills implementations
-│   ├── stream/      # WebRTC and data streaming
-│   ├── web/         # DimOS development interface and API
-│   │   └── dimos_interface/  # DimOS web interface 
-│   ├── simulation/  # Robot simulation environments
-│   ├── utils/       # Utility functions and helpers
-│   └── types/       # Type definitions and interfaces
-├── tests/           # Test files
-└── docker/          # Docker configuration files and compose definitions
+│   ├── agents/               # Agent implementations
+│   │   ├── planning/         # Planning-specific agents
+│   │   └── execution/        # Execution-specific agents
+│   ├── robot/
+│   │   ├── skills/           # AbstractRobotSkill
+│   │   ├── control/          # Robot control interfaces
+│   │   └── unitree/          # Unitree Go2 specific code
+│   │   ├── global_planner/   # Global planners
+│   │   └── local_planner/    # Local navigation planners
+│   ├── stream/               # Reactive data streams
+│   │   ├── video/            # Video streaming
+│   │   └── commands/         # Command streaming
+│   ├── simulation/           # Simulation environments
+│   ├── types/                # Type definitions
+│   ├── utils/                # Utility functions
+│   └── web/                  # Web interface
+├── tests/                    # Examples
+└── docker/                   # Docker configs
 ```
 
 ## Building
@@ -434,3 +458,4 @@ Huge thanks to!
 ## Known Issues
 - Agent() failure to execute Nav2 action primitives (move, reverse, spinLeft, spinRight) is almost always due to the internal ROS2 collision avoidance, which will sometimes incorrectly display obstacles or be overly sensitive. Look for ```[behavior_server]: Collision Ahead - Exiting DriveOnHeading``` in the ROS logs. Reccomend restarting ROS2 or moving robot from objects to resolve. 
 - ```docker-compose up --build``` does not fully initialize the ROS2 environment due to ```std::bad_alloc``` errors. This will occur during continuous docker development if the ```docker-compose down``` is not run consistently before rebuilding and/or you are on a machine with less RAM, as ROS is very memory intensive. Reccomend running to clear your docker cache/images/containers with ```docker system prune``` and rebuild.
+
