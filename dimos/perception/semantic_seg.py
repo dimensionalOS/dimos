@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from vector_perception.segmentation import Sam2DSegmenter
+from dimos.perception.segmentation import Sam2DSegmenter
 from dimos.models.depth.metric3d import Metric3D
 from dimos.hardware.camera import Camera
 from reactivex import Observable

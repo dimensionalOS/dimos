@@ -1,0 +1,3 @@
+_BASE_: "Base-DeformDETR_L_R50_4x.yaml"
+SOLVER:
+  IMS_PER_BATCH: 16

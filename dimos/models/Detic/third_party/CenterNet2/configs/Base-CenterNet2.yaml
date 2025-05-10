@@ -1,0 +1,56 @@
+MODEL:
+  META_ARCHITECTURE: "GeneralizedRCNN"
+  PROPOSAL_GENERATOR:
+    NAME: "CenterNet"
+  BACKBONE:
+    NAME: "build_p67_resnet_fpn_backbone"
+  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  RESNETS:
+    DEPTH: 50
+    OUT_FEATURES: ["res3", "res4", "res5"]
+  FPN:
+    IN_FEATURES: ["res3", "res4", "res5"]
+  ROI_HEADS:
+    NAME: CustomCascadeROIHeads
+    IN_FEATURES: ["p3", "p4", "p5", "p6", "p7"]
+    IOU_THRESHOLDS: [0.6]
+    NMS_THRESH_TEST: 0.7
+  ROI_BOX_CASCADE_HEAD:
+    IOUS: [0.6, 0.7, 0.8]
+  ROI_BOX_HEAD:
+    NAME: "FastRCNNConvFCHead"
+    NUM_FC: 2
+    POOLER_RESOLUTION: 7
+    CLS_AGNOSTIC_BBOX_REG: True
+    MULT_PROPOSAL_SCORE: True
+  CENTERNET:
+    REG_WEIGHT: 1.
+    NOT_NORM_REG: True
+    ONLY_PROPOSAL: True
+    WITH_AGN_HM: True
+    INFERENCE_TH: 0.0001
+    PRE_NMS_TOPK_TRAIN: 4000
+    POST_NMS_TOPK_TRAIN: 2000
+    PRE_NMS_TOPK_TEST: 1000
+    POST_NMS_TOPK_TEST: 256
+    NMS_TH_TRAIN: 0.9
+    NMS_TH_TEST: 0.9
+    POS_WEIGHT: 0.5
+    NEG_WEIGHT: 0.5
+    IGNORE_HIGH_FP: 0.85
+DATASETS:
+  TRAIN: ("coco_2017_train",)
+  TEST: ("coco_2017_val",)
+SOLVER:
+  IMS_PER_BATCH: 16
+  BASE_LR: 0.02
+  STEPS: (60000, 80000)
+  MAX_ITER: 90000
+  CHECKPOINT_PERIOD: 1000000000
+  WARMUP_ITERS: 4000
+  WARMUP_FACTOR: 0.00025
+  CLIP_GRADIENTS:
+    ENABLED: True
+INPUT:
+  MIN_SIZE_TRAIN: (640, 672, 704, 736, 768, 800)
+OUTPUT_DIR: "./output/CenterNet2/auto"

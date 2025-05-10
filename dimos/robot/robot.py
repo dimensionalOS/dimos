@@ -19,27 +19,33 @@ and simulated implementations, with common functionality for movement, control,
 and video streaming.
 """
 
-from abc import ABC, abstractmethod
-from typing import Optional, Type, TYPE_CHECKING
-from pydantic import Field
+from abc import ABC
+import os
+import logging
+from typing import TYPE_CHECKING, Optional, Dict, Tuple, Any
+
+import chromadb
 from dimos.hardware.interface import HardwareInterface
-from dimos.robot.ros_control import ROSControl
+from dimos.perception.spatial_perception import SpatialMemory
+from dimos.agents.memory.visual_memory import VisualMemory
+from dimos.types.robot_location import RobotLocation
+from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.robot.ros_control import ROSControl
+else:
+    ROSControl = 'ROSControl'
+
+from dimos.skills.skills import SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.video_operators import VideoOperators as vops
 from reactivex import Observable, operators as ops
-import os
 from reactivex.disposable import CompositeDisposable
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.utils.threadpool import get_scheduler
 
-# Use TYPE_CHECKING to avoid circular imports
-if TYPE_CHECKING:
-    from dimos.robot.skills import AbstractSkill
-else:
-    # Use a forward reference for runtime
-    AbstractSkill = 'AbstractSkill'
-
+logger = setup_logger("dimos.robot.robot")
 
 class Robot(ABC):
     """Base class for all DIMOS robots.
@@ -55,7 +61,6 @@ class Robot(ABC):
         output_dir: Directory for storing output files.
         disposables: Collection of disposable resources for cleanup.
         pool_scheduler: Thread pool scheduler for managing concurrent operations.
-        skills: Robot skills instance for executing various robot actions.
     """
 
     def __init__(self,
@@ -63,7 +68,10 @@ class Robot(ABC):
                  ros_control: ROSControl = None,
                  output_dir: str = os.path.join(os.getcwd(), "assets", "output"),
                  pool_scheduler: ThreadPoolScheduler = None,
-                 skills: Optional[AbstractSkill] = None):
+                 skill_library: SkillLibrary = None,
+                 spatial_memory_dir: str = None,
+                 spatial_memory_collection: str = "spatial_memory",
+                 new_memory: bool = False,):
         """Initialize a Robot instance.
         
         Args:
@@ -71,28 +79,69 @@ class Robot(ABC):
             ros_control: ROS-based control system. Defaults to None.
             output_dir: Directory for storing output files. Defaults to "./assets/output".
             pool_scheduler: Thread pool scheduler. If None, one will be created.
-            skills: Robot skills instance. Defaults to None.
+            skill_library: Skill library instance. If None, one will be created.
+            spatial_memory_dir: Directory for storing spatial memory data. If None, uses output_dir/spatial_memory.
+            spatial_memory_collection: Name of the collection in the ChromaDB database.
+            new_memory: If True, creates a new spatial memory from scratch. Defaults to False.
         """
         self.hardware_interface = hardware_interface
         self.ros_control = ros_control
         self.output_dir = output_dir
         self.disposables = CompositeDisposable()
         self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
-        self.skills = None
+        self.skill_library = skill_library if skill_library else SkillLibrary()
 
         # Create output directory if it doesn't exist
         os.makedirs(self.output_dir, exist_ok=True)
 
-        # Handles skills initialization in Robot(..., skills=AbstractSkill()) AND standalone 
-        # via skills_instance = AbstractSkill(robot=robot)
-        if skills is not None:
-            if hasattr(skills, '_robot') and skills._robot is not None:
-                # Skills already initialized with robot reference in AbstractSkill constructor
-                pass
-            else:
-                # New skills instance needs robot reference
-                self.skills = skills
-                self.skills.set_robot(self)
+        # Create output directory if it doesn't exist
+        logger.info(f"Robot outputs will be saved to: {self.output_dir}")
+        
+        # Initialize spatial memory properties
+        self.spatial_memory_dir = spatial_memory_dir or os.path.join(self.output_dir, "spatial_memory")
+        self.spatial_memory_collection = spatial_memory_collection
+        self.db_path = os.path.join(self.spatial_memory_dir, "chromadb_data")
+        self.visual_memory_path = os.path.join(self.spatial_memory_dir, "visual_memory.pkl")
+        
+        # Create spatial memory directory
+        os.makedirs(self.spatial_memory_dir, exist_ok=True)
+        os.makedirs(self.db_path, exist_ok=True)
+        
+        # Import SpatialMemory here to avoid circular imports
+        from dimos.perception.spatial_perception import SpatialMemory
+        
+        # Initialize spatial memory - this will be handled by SpatialMemory class
+        video_stream = None
+        transform_provider = None
+        
+        # Only create video stream if ROS control is available
+        if self.ros_control is not None and self.ros_control.video_provider is not None:
+            # Get video stream
+            video_stream = self.get_ros_video_stream(fps=10)  # Lower FPS for processing
+            
+            # Define transform provider
+            def transform_provider():
+                position, rotation = self.ros_control.transform_euler("base_link")
+                if position is None or rotation is None:
+                    return {
+                        "position": None,
+                        "rotation": None
+                    }
+                return {
+                    "position": position,
+                    "rotation": rotation
+                }
+        
+        # Create SpatialMemory instance - it will handle all initialization internally
+        self._spatial_memory = SpatialMemory(
+            collection_name=self.spatial_memory_collection,
+            db_path=self.db_path,
+            visual_memory_path=self.visual_memory_path,
+            new_memory=new_memory,
+            output_dir=self.spatial_memory_dir,
+            video_stream=video_stream,
+            transform_provider=transform_provider
+        )
 
     def get_ros_video_stream(self, fps: int = 30) -> Observable:
         """Get the ROS video stream with rate limiting and frame processing.
@@ -127,6 +176,8 @@ class Robot(ABC):
     def move(self, distance: float, speed: float = 0.5) -> bool:
         """Move the robot using velocity commands.
         
+        DEPRECATED: Use move_vel instead for direct velocity control.
+        
         Args:
             distance: Distance to move forward in meters (must be positive).
             speed: Speed to move at in m/s. Defaults to 0.5.
@@ -137,13 +188,12 @@ class Robot(ABC):
         Raises:
             RuntimeError: If no ROS control interface is available.
         """
-        if self.ros_control is None:
-            raise RuntimeError(
-                "No ROS control interface available for movement")
-        return self.ros_control.move(distance, speed)
+        pass
 
     def reverse(self, distance: float, speed: float = 0.5) -> bool:
         """Move the robot backward by a specified distance.
+        
+        DEPRECATED: Use move_vel with negative x value instead for direct velocity control.
         
         Args:
             distance: Distance to move backward in meters (must be positive).
@@ -155,10 +205,7 @@ class Robot(ABC):
         Raises:
             RuntimeError: If no ROS control interface is available.
         """
-        if self.ros_control is None:
-            raise RuntimeError(
-                "No ROS control interface available for movement")
-        return self.ros_control.reverse(distance, speed)
+        pass
 
     def spin(self, degrees: float, speed: float = 45.0) -> bool:
         """Rotate the robot by a specified angle.
@@ -247,22 +294,6 @@ class Robot(ABC):
             raise RuntimeError("No ROS control interface available for pose commands")
         return self.ros_control.pose_command(roll, pitch, yaw)
 
-    @abstractmethod
-    def do(self, *args, **kwargs):
-        """Executes motion on the robot.
-        
-        This abstract method must be implemented by concrete robot subclasses
-        to provide robot-specific motion functionality.
-        
-        Args:
-            *args: Variable length argument list.
-            **kwargs: Arbitrary keyword arguments.
-            
-        Returns:
-            Implementation-dependent.
-        """
-        pass
-
     def update_hardware_interface(self,
                                   new_hardware_interface: HardwareInterface):
         """Update the hardware interface with a new configuration.
@@ -283,26 +314,6 @@ class Robot(ABC):
         """
         return self.hardware_interface.get_configuration()
 
-    def initialize_skills(self, skills: Optional[AbstractSkill]):
-        """Initialize the robot's skills instance.
-        
-        Args:
-            skills: Skills instance to initialize for this robot.
-            
-        Returns:
-            The initialized skills instance.
-        """
-        if skills is not None:
-            skills.initialize_skills()
-    
-    def get_skills(self) -> Optional[AbstractSkill]:
-        """Get the robot's skills instance.
-        
-        Returns:
-            The robot's skills instance if one is set, None otherwise.
-        """
-        return None if self.skills is None else self.skills
-
     def set_hardware_configuration(self, configuration):
         """Set a new hardware configuration.
         
@@ -314,6 +325,20 @@ class Robot(ABC):
         """
         self.hardware_interface.set_configuration(configuration)
 
+
+    
+
+    
+    def get_spatial_memory(self) -> Optional[SpatialMemory]:
+        """Simple getter for the spatial memory instance.
+        
+        Returns:
+            The spatial memory instance or None if not set.
+        """
+        return self._spatial_memory if self._spatial_memory else None
+    
+
+        
     def cleanup(self):
         """Clean up resources used by the robot.
         
@@ -321,6 +346,20 @@ class Robot(ABC):
         ensure proper release of resources such as ROS connections and
         subscriptions.
         """
+        # Dispose of resources
+        if self.disposables:
+            self.disposables.dispose()
+        
         if self.ros_control:
             self.ros_control.cleanup()
         self.disposables.dispose()
+
+class MockRobot(Robot):
+    def __init__(self):
+        super().__init__()
+        self.ros_control = None
+        self.hardware_interface = None
+        self.skill_library = SkillLibrary()
+
+    def my_print(self):
+        print("Hello, world!")

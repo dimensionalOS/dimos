@@ -10,22 +10,25 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - ROS_OUTPUT_DIR=/app/assets/output/ros  # Change output directory
+      - NVIDIA_VISIBLE_DEVICES=all
+      - DISPLAY=$DISPLAY
       # DIMOS_MAX_WORKERS: ${DIMOS_MAX_WORKERS}
       # TODO: ipc: host
     volumes:
       - ../../../assets:/app/assets
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ~/.Xauthority:/root/.Xauthority:ro
+      # Persist model caches in host filesystem
+      - ../../../assets/model-cache/torch-hub:/root/.cache/torch/hub
+      - ../../../assets/model-cache/iopath-cache:/root/.torch/iopath_cache
+      - ../../../assets/model-cache/ultralytics:/root/.config/Ultralytics
     network_mode: "host"
     ports:
       - "5555:5555"
     mem_limit: 8048m
+    runtime: nvidia
     stdin_open: true
     tty: true
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5555/unitree/status"]
-      interval: 10s
-      timeout: 30s
-      retries: 5
-      start_period: 10s
   
   dimos-web-interface:
     build:
@@ -37,10 +40,4 @@ services:
     volumes:
       - ../../../dimos/web/dimos_interface:/app
     depends_on:
-      dimos-unitree-agents-interface:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      - dimos-unitree-agents-interface

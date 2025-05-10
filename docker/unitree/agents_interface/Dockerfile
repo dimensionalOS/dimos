@@ -54,6 +54,7 @@ RUN apt-get update && apt-get install -y \
     ros-${ROS_DISTRO}-desktop \
     ros-${ROS_DISTRO}-ros-base \
     ros-${ROS_DISTRO}-image-tools \
+    ros-${ROS_DISTRO}-compressed-image-transport \
     ros-${ROS_DISTRO}-vision-msgs \
     ros-${ROS_DISTRO}-rviz2 \
     ros-${ROS_DISTRO}-rqt \
@@ -97,11 +98,15 @@ RUN mkdir -p /app/dimos /app/docker
 
 COPY requirements.txt /app/
 
+COPY base-requirements.txt /app/
+
 WORKDIR /app
 
-COPY ./dimos/perception/external ./dimos/perception/external
+# Install torch and torchvision first due to builds in requirements.txt
+RUN pip install --no-cache-dir -r base-requirements.txt
+
 # Install dimos requirements
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Set PYTHONPATH permanently
 ENV PYTHONPATH=/app:${PYTHONPATH}

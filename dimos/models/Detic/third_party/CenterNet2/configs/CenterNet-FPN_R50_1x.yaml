@@ -1,0 +1,4 @@
+_BASE_: "Base-CenterNet-FPN.yaml"
+MODEL:
+  CENTERNET:
+    MORE_POS: True

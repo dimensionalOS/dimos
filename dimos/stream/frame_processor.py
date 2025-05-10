@@ -268,23 +268,29 @@ class FrameProcessor:
     def process_stream_with_jpeg_export(
         self, 
         frame_stream: Observable,
-        suffix: str = ""
+        suffix: str = "",
+        loop: bool = False
     ) -> Observable:
         """Processes stream by saving frames as JPEGs while passing them through.
 
         Saves each frame from the stream as a JPEG file and passes the frame
         downstream unmodified. Files are saved sequentially with optional suffix
-        in the configured output directory (self.output_dir).
+        in the configured output directory (self.output_dir). If loop is True,
+        it will cycle back and overwrite images starting from the first one
+        after reaching the save_limit.
 
         Args:
             frame_stream: An Observable emitting video frames as numpy arrays.
                 Each frame should be in BGR format with shape (height, width, 3).
             suffix: Optional string to append to filename before index.
-                Defaults to empty string. Example: "optical" -> "optical_image_1.jpg"
+                Defaults to empty string. Example: "optical" -> "optical_1.jpg"
+            loop: If True, reset the image counter to 1 after reaching
+                save_limit, effectively looping the saves. Defaults to False.
 
         Returns:
             An Observable emitting the same frames that were saved. Returns None
-            for frames that could not be saved due to format issues or save_limit.
+            for frames that could not be saved due to format issues or save_limit
+            (unless loop is True).
 
         Raises:
             TypeError: If frame_stream is not an Observable.
@@ -293,10 +299,10 @@ class FrameProcessor:
             OSError: If there are file system permission issues.
 
         Note:
-            Frames are saved as '{suffix}_image_{index}.jpg' where index
+            Frames are saved as '{suffix}_{index}.jpg' where index
             increments for each saved frame. Saving stops after reaching
-            the configured save_limit (default: 100).
+            the configured save_limit (default: 100) unless loop is True.
         """
         return frame_stream.pipe(
-            ops.map(lambda frame: self.export_to_jpeg(frame, suffix=suffix)),
+            ops.map(lambda frame: self.export_to_jpeg(frame, suffix=suffix, loop=loop)),
         )

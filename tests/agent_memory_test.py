@@ -6,9 +6,11 @@ import os
 from dotenv import load_dotenv
 import os
 
-from dimos.agents.memory.chroma_impl import AgentSemanticMemory 
+load_dotenv()
 
-agent_memory = AgentSemanticMemory()
+from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
+
+agent_memory = OpenAISemanticMemory()
 print("Initialization done.")
 
 agent_memory.add_vector("id0", "Food")

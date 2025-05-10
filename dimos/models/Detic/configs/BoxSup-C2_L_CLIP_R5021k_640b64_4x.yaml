@@ -1,0 +1,4 @@
+_BASE_: "Base-C2_L_R5021k_640b64_4x.yaml"
+MODEL:
+  ROI_BOX_HEAD:
+    USE_ZEROSHOT_CLS: True
