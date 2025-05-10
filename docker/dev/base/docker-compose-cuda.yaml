@@ -1,0 +1,32 @@
+services:
+  dev-environment:
+    image: dimensionalos/dev-base
+    container_name: dimos-dev
+    network_mode: "host"
+    volumes:
+      - ../../../:/app
+
+      # X11 forwarding
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${HOME}/.Xauthority:/root/.Xauthority:rw
+
+    runtime: nvidia
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - DISPLAY=${DISPLAY:-}
+
+      # NVIDIA
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+
+      # X11 and XDG runtime
+      - XAUTHORITY=/root/.Xauthority
+      - XDG_RUNTIME_DIR=/tmp/xdg-runtime
+
+    ports:
+      - "5555:5555"
+      - "3000:3000"
+    stdin_open: true
+    tty: true
+    command: /bin/bash

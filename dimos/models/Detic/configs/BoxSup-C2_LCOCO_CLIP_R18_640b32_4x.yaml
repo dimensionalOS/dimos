@@ -1,0 +1,14 @@
+_BASE_: "Base-C2_L_R5021k_640b64_4x.yaml"
+MODEL:
+  ROI_BOX_HEAD:
+    USE_ZEROSHOT_CLS: True
+  WEIGHTS: ''
+  TIMM:
+    BASE_NAME: resnet18
+    PRETRAINED: True
+SOLVER:
+  MAX_ITER: 180000
+  IMS_PER_BATCH: 32
+  BASE_LR: 0.0001
+DATASETS:
+  TRAIN: ("lvis_v1_train+coco",)

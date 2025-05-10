@@ -1,0 +1,22 @@
+_BASE_: "Base-DeformDETR_L_R50_4x.yaml"
+MODEL:
+  WEIGHTS: "models/BoxSup-DeformDETR_L_R50_4x.pth"
+INPUT:
+  CUSTOM_AUG: ResizeShortestEdge
+  MIN_SIZE_TRAIN_SAMPLING: range
+  MIN_SIZE_TRAIN: [480, 800]
+DATASETS:
+  TRAIN: ("lvis_v1_train","imagenet_lvis_v1")
+  TEST: ("lvis_v1_val",)
+DATALOADER:
+  SAMPLER_TRAIN: "MultiDatasetSampler"
+  DATASET_RATIO: [1, 4]
+  USE_DIFF_BS_SIZE: True
+  DATASET_BS: [4, 16]
+  USE_RFS: [True, False]
+  DATASET_MIN_SIZES: [[480, 800], [240, 400]]
+  DATASET_MAX_SIZES: [1333, 667]
+  FILTER_EMPTY_ANNOTATIONS: False
+  MULTI_DATASET_GROUPING: True
+  DATASET_ANN: ['box', 'image']
+WITH_IMAGE_LABELS: True

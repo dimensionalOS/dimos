@@ -1,0 +1,30 @@
+_BASE_: "Base-CenterNet2.yaml"
+MODEL:
+  BACKBONE:
+    NAME: "build_p37_fcos_dla_bifpn_backbone"
+  BIFPN:
+    OUT_CHANNELS: 160
+    NUM_LEVELS: 5
+    NUM_BIFPN: 3
+  CENTERNET:
+    POST_NMS_TOPK_TEST: 128
+  WEIGHTS: ''
+  PIXEL_MEAN: [123.675, 116.280, 103.530]
+  PIXEL_STD: [58.395, 57.12, 57.375]
+  FPN:
+    IN_FEATURES: ["dla3", "dla4", "dla5"]
+TEST:
+  EVAL_PERIOD: 7500
+SOLVER:
+  LR_SCHEDULER_NAME: "WarmupCosineLR"
+  MAX_ITER: 360000
+  BASE_LR: 0.08
+  IMS_PER_BATCH: 64
+INPUT:
+  FORMAT: RGB
+  CUSTOM_AUG: EfficientDetResizeCrop
+  TRAIN_SIZE: 640
+  MIN_SIZE_TEST: 608
+  MAX_SIZE_TEST: 900
+DATASETS:
+  TRAIN: ("coco_2017_train","coco_un_yolov4_55_0.5",)

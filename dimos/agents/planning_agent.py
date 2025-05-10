@@ -19,7 +19,7 @@ from reactivex import Subject, Observable, disposable, create
 from reactivex import operators as ops
 from openai import OpenAI, NOT_GIVEN
 import time
-from dimos.robot.skills import AbstractSkill
+from dimos.skills.skills import AbstractSkill
 from dimos.agents.agent import OpenAIAgent
 from dimos.utils.logging_config import setup_logger
 from textwrap import dedent
@@ -188,7 +188,6 @@ class PlanningAgent(OpenAIAgent):
         Returns:
             PlanningAgentResponse: Validated response with type, content, and needs_confirmation
         """
-        
         try:
             return super()._send_query(messages)
         except Exception as e:

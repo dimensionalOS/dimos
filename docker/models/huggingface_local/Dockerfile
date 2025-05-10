@@ -21,8 +21,6 @@ WORKDIR /app
 
 COPY requirements.txt ./
 
-COPY ./dimos/perception/external ./dimos/perception/external
-
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ./dimos ./dimos

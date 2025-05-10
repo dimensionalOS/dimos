@@ -4,9 +4,8 @@ import os
 import sys
 import queue
 import threading
+import tests.test_header
 
-# Add the parent directory to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dimos.stream.video_provider import VideoProvider
 from dimos.perception.person_tracker import PersonTrackingStream
@@ -133,7 +132,7 @@ def main():
                 if selected_point is not None:
                     # If not actively tracking, try to start tracking
                     if not tracking_active:
-                        tracking_active = visual_servoing.start_tracking(selected_point)
+                        tracking_active = visual_servoing.start_tracking(point=selected_point)
                         if not tracking_active:
                             print("Failed to start tracking")
                             selected_point = None

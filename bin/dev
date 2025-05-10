@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+build_image() {
+    
+    docker build \
+        --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) \
+        --build-arg GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD) \
+        -t dimensionalos/dev-base docker/dev/base/
+}
+
+remove_image() {
+    docker rm -f dimos-dev
+}
+
+COMPOSE_FILE="docker/dev/base/docker-compose.yaml"
+
+# Parse flags and commands
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -c|--cuda)
+            COMPOSE_FILE="docker/dev/base/docker-compose-cuda.yaml"
+            shift
+            ;;
+        remove)
+            remove_image
+            exit 0
+            ;;
+        build)
+            remove_image
+            build_image
+            shift
+            ;;
+        *)
+            # Skip unrecognized args
+            shift
+            ;;
+    esac
+done
+
+if ! docker image inspect dimensionalos/dev-base &>/dev/null; then
+    echo "Image dimensionalos/dev-base not found. Building..."
+    build_image
+fi
+
+# Get current directory relative to repo root
+REPO_ROOT=$(git rev-parse --show-toplevel)
+REL_PATH=$(realpath --relative-to="$REPO_ROOT" "$(pwd)")
+
+docker compose -f "$REPO_ROOT/$COMPOSE_FILE" up -d \
+  && docker exec -it dimos-dev bash -c "cd $REL_PATH; exec bash"

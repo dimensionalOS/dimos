@@ -1,0 +1,4 @@
+_BASE_: "Base-CenterNet2.yaml"
+MODEL:
+  ROI_HEADS:
+    NAME: CustomROIHeads
