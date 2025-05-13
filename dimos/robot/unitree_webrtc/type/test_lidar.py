@@ -95,8 +95,26 @@ def test_benchmark_icp():
     print(f"ICP takes {ms:.2f} ms")
 
 
-# @pytest.mark.vis
-# def test_lidar_fov():
-#     mock = Mock("static")
-#     frame = mock.load(100)
-#     show3d(frame)
+@pytest.mark.vis
+def test_downsample():
+    mock = Mock("test")
+    [framea, frameb] = mock.load("a", "b")
+
+    # framea.pointcloud = framea.pointcloud.voxel_down_sample(voxel_size=0.1)
+    # frameb.pointcloud = frameb.pointcloud.voxel_down_sample(voxel_size=0.1)
+
+    # framea.color(0)
+    # frameb.color(1)
+
+    # Normally this is a mutating operation (for efficiency)
+    # but here we need an original frame A for the visualizer
+    # framea_icp = framea.copy().icptransform(frameb)
+    pcd = framea.copy().pointcloud
+    newpcd, _, _ = pcd.voxel_down_sample_and_trace(
+        voxel_size=0.25, min_bound=pcd.get_min_bound(), max_bound=pcd.get_max_bound(), approximate_class=False
+    )
+
+    multivis(
+        show3d(framea, title="frame a"),
+        show3d(newpcd, title="frame a downsample"),
+    )

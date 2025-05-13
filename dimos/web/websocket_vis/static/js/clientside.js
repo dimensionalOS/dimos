@@ -16240,7 +16240,6 @@ var Grid = class _Grid {
 
 // clientside/decoder.ts
 function decode3(data) {
-  console.log("decoding", data);
   if (data.type == "costmap") {
     return Costmap.decode(data);
   }
@@ -19636,25 +19635,6 @@ var VisualizerComponent = ({
       pxToWorld: pxToWorldFn
     };
   }, [state]);
-  const handleClick = React.useCallback((event) => {
-    if (!svgRef.current || !pxToWorld) return;
-    const svgRect = svgRef.current.getBoundingClientRect();
-    const viewportX = event.clientX - svgRect.left;
-    const viewportY = event.clientY - svgRect.top;
-    const svgPoint = new DOMPoint(viewportX, viewportY);
-    const transformedPoint = svgPoint.matrixTransform(
-      svgRef.current.getScreenCTM()?.inverse()
-    );
-    const [worldX, worldY] = pxToWorld(
-      transformedPoint.x,
-      transformedPoint.y
-    );
-    console.log(
-      "Click at world coordinates:",
-      worldX.toFixed(2),
-      worldY.toFixed(2)
-    );
-  }, [pxToWorld]);
   React.useEffect(() => {
     if (!svgRef.current) return;
     const svg = select_default2(svgRef.current);
@@ -19672,12 +19652,7 @@ var VisualizerComponent = ({
         visualiseVector(svg, d, key, worldToPx, width, height);
       }
     });
-    const svgElement = svgRef.current;
-    svgElement.addEventListener("click", handleClick);
-    return () => {
-      svgElement.removeEventListener("click", handleClick);
-    };
-  }, [state, worldToPx, handleClick]);
+  }, [state, worldToPx]);
   return /* @__PURE__ */ React.createElement(
     "div",
     {
@@ -19695,7 +19670,9 @@ var VisualizerComponent = ({
         style: {
           backgroundColor: "black",
           borderRadius: "8px",
-          boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)"
+          boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+          pointerEvents: "none"
+          // Make SVG transparent to pointer events
         }
       }
     )
@@ -19765,7 +19742,6 @@ function addCoordinateSystem(group, width, height, origin, resolution) {
   const minY = origin.coords[1];
   const maxX = minX + width * resolution;
   const maxY = minY + height * resolution;
-  console.log(group, width, origin, maxX);
   const xScale = linear2().domain([
     minX,
     maxX
@@ -19774,7 +19750,7 @@ function addCoordinateSystem(group, width, height, origin, resolution) {
     minY,
     maxY
   ]).range([height, 0]);
-  const gridSize = 1;
+  const gridSize = 1 / resolution;
   const gridColour = "#000";
   const gridGroup = group.append("g").attr("class", "grid");
   for (const x2 of range(
@@ -19832,21 +19808,29 @@ function visualiseVector(svg, vector, label, wp, width, height) {
   }
 }
 var Visualizer = class {
+  // Minimum ms between processed clicks
   constructor(selector) {
     __publicField(this, "container");
     __publicField(this, "state", {});
     __publicField(this, "resizeObserver", null);
     __publicField(this, "root");
     __publicField(this, "onClickCallback", null);
+    __publicField(this, "lastClickTime", 0);
+    __publicField(this, "clickThrottleMs", 150);
     this.container = document.querySelector(selector);
-    if (!this.container) throw new Error(`Container not found: ${selector}`);
+    if (!this.container) {
+      throw new Error(`Container not found: ${selector}`);
+    }
     this.root = ReactDOMClient.createRoot(this.container);
     this.render();
     if (window.ResizeObserver) {
       this.resizeObserver = new ResizeObserver(() => this.render());
       this.resizeObserver.observe(this.container);
     }
-    document.addEventListener("click", this.handleGlobalClick.bind(this));
+    this.handleGlobalClick = this.handleGlobalClick.bind(this);
+    if (this.container) {
+      this.container.addEventListener("click", this.handleGlobalClick, true);
+    }
   }
   /** Register a callback for when user clicks on the visualization */
   onWorldClick(callback) {
@@ -19855,10 +19839,14 @@ var Visualizer = class {
   /** Handle global click events, filtering for clicks within our SVG */
   handleGlobalClick(event) {
     if (!this.onClickCallback || !this.container) return;
-    const containerRect = this.container.getBoundingClientRect();
-    if (event.clientX < containerRect.left || event.clientX > containerRect.right || event.clientY < containerRect.top || event.clientY > containerRect.bottom) {
+    event.stopPropagation();
+    const now2 = Date.now();
+    if (now2 - this.lastClickTime < this.clickThrottleMs) {
+      console.log("Click throttled");
       return;
     }
+    this.lastClickTime = now2;
+    console.log("Processing click at", event.clientX, event.clientY);
     const svgElement = this.container.querySelector("svg");
     if (!svgElement) return;
     const svgRect = svgElement.getBoundingClientRect();
@@ -19889,11 +19877,18 @@ var Visualizer = class {
     const yScale = linear2().domain([offsetY + gridH, offsetY]).range([origin.coords[1], origin.coords[1] + rows * resolution]);
     const worldX = xScale(transformedPoint.x);
     const worldY = yScale(transformedPoint.y);
+    console.log("Calling callback with world coords:", worldX.toFixed(2), worldY.toFixed(2));
     this.onClickCallback(worldX, worldY);
   }
   /** Push a new application‑state snapshot to the visualiser */
   visualizeState(state) {
+    const prevState = this.state;
     this.state = { ...state };
+    const timeSinceLastClick = Date.now() - this.lastClickTime;
+    if (timeSinceLastClick < this.clickThrottleMs) {
+      console.log("Skipping render during click processing");
+      return;
+    }
     this.render();
   }
   /** React‑render the component tree */
@@ -19906,7 +19901,9 @@ var Visualizer = class {
       this.resizeObserver.unobserve(this.container);
       this.resizeObserver.disconnect();
     }
-    document.removeEventListener("click", this.handleGlobalClick.bind(this));
+    if (this.container) {
+      this.container.removeEventListener("click", this.handleGlobalClick, true);
+    }
   }
 };
 
@@ -19928,7 +19925,6 @@ socket.on("disconnect", () => {
   serverState.status = "disconnected";
 });
 socket.on("message", (data) => {
-  console.log("Received message:", data);
 });
 function deepMerge(source, destination) {
   for (const key in source) {
@@ -19948,11 +19944,9 @@ function decodeDrawables(encoded) {
   return drawables;
 }
 function state_update(state) {
-  console.log("Received state update:", state);
   if (state.draw) {
     state.draw = decodeDrawables(state.draw);
   }
-  console.log("Decoded state update:", state);
   serverState = { ...deepMerge(state, { ...serverState }) };
   updateUI();
 }
@@ -19962,7 +19956,6 @@ function emitMessage(data) {
   socket.emit("message", data);
 }
 function updateUI() {
-  console.log("Current state:", serverState);
   if (serverState.draw && Object.keys(serverState.draw).length > 0) {
     if (reactVisualizer) {
       reactVisualizer.visualizeState(serverState.draw);

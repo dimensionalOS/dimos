@@ -36,7 +36,6 @@ class Costmap:
     def __init__(
         self,
         grid: np.ndarray,
-        origin_theta: float,
         origin: VectorLike,
         resolution: float = 0.05,
     ):
@@ -44,7 +43,6 @@ class Costmap:
         self.grid = grid
         self.resolution = resolution
         self.origin = to_vector(origin).to_2d()
-        self.origin_theta = origin_theta
         self.width = self.grid.shape[1]
         self.height = self.grid.shape[0]
 
@@ -55,7 +53,6 @@ class Costmap:
             "grid": encode_ndarray(self.grid),
             "origin": self.origin.serialize(),
             "resolution": self.resolution,
-            "origin_theta": self.origin_theta,
         }
 
     def save_pickle(self, pickle_path: str):
@@ -74,7 +71,6 @@ class Costmap:
             grid=np.zeros((height, width), dtype=np.int8),
             resolution=resolution,
             origin=(0.0, 0.0),
-            origin_theta=0.0,
         )
 
     def world_to_grid(self, point: VectorLike) -> Vector:
@@ -130,7 +126,7 @@ class Costmap:
 
     def smudge(
         self,
-        kernel_size: int = 6,
+        kernel_size: int = 3,
         iterations: int = 20,
         decay_factor: float = 0.9,
         threshold: int = 90,
@@ -229,7 +225,6 @@ class Costmap:
             grid=smudged_map.astype(np.int8),
             resolution=self.resolution,
             origin=self.origin,
-            origin_theta=self.origin_theta,
         )
 
     def __str__(self) -> str:

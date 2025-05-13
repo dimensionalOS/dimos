@@ -37,10 +37,9 @@ websocket_vis.connect(robot.global_planner.vis_stream())
 
 
 def msg_handler(msgtype, data):
-    print("MSG HANDLER RUN", data)
     if msgtype == "click":
         try:
-            robot.global_planner.set_goal(robot.costmap.grid_to_world(data["position"]))
+            robot.global_planner.set_goal(Vector(data["position"]))
         except Exception as e:
             print(f"Error setting goal: {e}")
             return
@@ -69,7 +68,7 @@ websocket_vis.connect(robot.odom_stream().pipe(ops.map(lambda pos: ["robot_pos",
 try:
     while True:
         #        robot.move_vel(Vector(0.1, 0.1, 0.1))
-        time.sleep(0.1)
+        time.sleep(0.01)
 
 except KeyboardInterrupt:
     print("Stopping robot")

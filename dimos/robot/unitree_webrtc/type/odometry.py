@@ -1,7 +1,9 @@
-from typing import TypedDict, List, Literal
-from dataclasses import dataclass, field
+from typing import TypedDict, Literal
+from datetime import datetime
+from dataclasses import dataclass
 from dimos.types.vector import Vector
 from dimos.types.position import Position
+from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_human_readable
 
 raw_odometry_msg_sample = {
     "type": "msg",
@@ -55,10 +57,18 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-def position_from_odom(msg: RawOdometryMessage) -> Position:
-    pose = msg["data"]["pose"]
-    orientation = pose["orientation"]
-    position = pose["position"]
-    pos = Vector(position.get("x"), position.get("y"), position.get("z"))
-    rot = Vector(orientation.get("x"), orientation.get("y"), orientation.get("z"))
-    return Position(pos=pos, rot=rot)
+@dataclass
+class Odometry(Timestamped, Position):
+    ts: datetime
+
+    @classmethod
+    def from_msg(cls, msg: RawOdometryMessage) -> "Odometry":
+        pose = msg["data"]["pose"]
+        orientation = pose["orientation"]
+        position = pose["position"]
+        pos = Vector(position.get("x"), position.get("y"), position.get("z"))
+        rot = Vector(orientation.get("x"), orientation.get("y"), orientation.get("z"))
+        return cls(pos=pos, rot=rot, ts=msg["data"]["header"]["stamp"])
+
+    def __repr__(self) -> str:
+        return f"Odom ts({to_human_readable(self.ts)}) pos({self.pos}), rot({self.rot})"

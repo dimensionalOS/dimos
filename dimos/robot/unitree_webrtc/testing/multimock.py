@@ -25,11 +25,12 @@ from reactivex.scheduler import ThreadPoolScheduler
 from reactivex import from_iterable, interval, operators as ops
 from reactivex.observable import Observable
 from dimos.utils.threadpool import get_scheduler
+from dimos.robot.unitree_webrtc.type.timeseries import TEvent, Timeseries
 
 T = TypeVar("T")
 
 
-class Multimock(Generic[T]):
+class Multimock(Generic[T], Timeseries[TEvent[T]]):
     """Persist frames as pickle files and replay them with RxPy."""
 
     def __init__(self, root: str = "office", file_prefix: str = "msg") -> None:
@@ -69,7 +70,7 @@ class Multimock(Generic[T]):
         """Load multiple items by name or index."""
         return list(map(self.load_one, names))
 
-    def load_one(self, name: Union[int, str]) -> Tuple[float, T]:
+    def load_one(self, name: Union[int, str]) -> TEvent[T]:
         """Load a single item by name or index."""
         if isinstance(name, int):
             file_name = f"/{self.file_prefix}_{name:03d}.pickle"
@@ -81,15 +82,18 @@ class Multimock(Generic[T]):
         with open(full_path, "rb") as f:
             timestamp, data = pickle.load(f)
 
-        return timestamp, data
+        return TEvent(timestamp, data)
 
-    def iterate(self) -> Iterator[Tuple[float, T]]:
-        """Yield all persisted (timestamp, data) pairs lazily in order."""
+    def iterate(self) -> Iterator[TEvent[T]]:
+        """Yield all persisted TEvent(timestamp, data) pairs lazily in order."""
         pattern = os.path.join(self.root, f"{self.file_prefix}_*.pickle")
         for file_path in sorted(glob.glob(pattern)):
             with open(file_path, "rb") as f:
                 timestamp, data = pickle.load(f)
-            yield timestamp, data
+                yield TEvent(timestamp, data)
+
+    def list(self) -> List[TEvent[T]]:
+        return list(self.iterate())
 
     def interval_stream(self, rate_hz: float = 10.0) -> Observable[T]:
         """Emit frames at a fixed rate, ignoring recorded timing."""
@@ -106,15 +110,19 @@ class Multimock(Generic[T]):
     ) -> Observable[T]:
         def _generator():
             prev_ts: float | None = None
-            for ts, data in self.iterate():
+            for event in self.iterate():
                 if prev_ts is not None:
-                    delay = (ts - prev_ts) / replay_speed
+                    delay = (event.ts - prev_ts).total_seconds() / replay_speed
                     time.sleep(delay)
-                prev_ts = ts
-                yield data
+                prev_ts = event.ts
+                yield event.data
 
         return from_iterable(_generator(), scheduler=scheduler or get_scheduler())
 
     def consume(self, observable: Observable[Any]) -> Observable[int]:
         """Side-effect: save every frame that passes through."""
         return observable.pipe(ops.map(self.save_one))
+
+    def __iter__(self) -> Iterator[TEvent[T]]:
+        """Allow iteration over the Multimock instance to yield TEvent(timestamp, data) pairs."""
+        return self.iterate()

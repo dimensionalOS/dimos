@@ -25,13 +25,6 @@ def benchmark(calls: int, targetf: Callable[[], Union[int, None]]) -> float:
     return (end - start + timemod) * 1000 / calls
 
 
-def multivis(*vis: o3d.visualization.Visualizer) -> None:
-    while True:
-        for v in vis:
-            v.poll_events()
-            v.update_renderer()
-
-
 O3dDrawable = o3d.geometry.Geometry | o3d.geometry.LineSet | o3d.geometry.TriangleMesh | o3d.geometry.PointCloud
 
 
@@ -58,6 +51,13 @@ def show3d(*components: Iterable[Drawable], title: str = "open3d") -> o3d.visual
     vis.poll_events()
     vis.update_renderer()
     return vis
+
+
+def multivis(*vis: o3d.visualization.Visualizer) -> None:
+    while True:
+        for v in vis:
+            v.poll_events()
+            v.update_renderer()
 
 
 def show3d_stream(
