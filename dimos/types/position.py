@@ -1,11 +1,11 @@
-# from dataclasses import dataclass
+from dataclasses import dataclass
 from dimos.types.vector import Vector
 
 
+@dataclass
 class Position:
-    def __init__(self, pos: Vector, rot: Vector):
-        self.pos = pos
-        self.rot = rot
+    pos: Vector
+    rot: Vector
 
     def __repr__(self) -> str:
         return f"pos({self.pos}), rot({self.rot})"

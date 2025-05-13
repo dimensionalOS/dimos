@@ -55,10 +55,19 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-def position_from_odom(msg: RawOdometryMessage) -> Position:
-    pose = msg["data"]["pose"]
-    orientation = pose["orientation"]
-    position = pose["position"]
-    pos = Vector(position.get("x"), position.get("y"), position.get("z"))
-    rot = Vector(orientation.get("x"), orientation.get("y"), orientation.get("z"))
-    return Position(pos=pos, rot=rot)
+@dataclass
+class Odometry(Position):
+    ts: int
+
+    @classmethod
+    def from_msg(cls, msg: RawOdometryMessage) -> "Odometry":
+        pose = msg["data"]["pose"]
+        orientation = pose["orientation"]
+        position = pose["position"]
+        pos = Vector(position.get("x"), position.get("y"), position.get("z"))
+        rot = Vector(orientation.get("x"), orientation.get("y"), orientation.get("z"))
+        ts = msg["data"]["header"]["stamp"]["sec"]
+        return cls(pos=pos, rot=rot, ts=ts)
+
+    def __repr__(self) -> str:
+        return f"Odom pos({self.pos}), rot({self.rot})"
