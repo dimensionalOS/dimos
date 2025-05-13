@@ -1,6 +1,6 @@
 import pytest
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.odometry import position_from_odom
+from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.testing.multimock import Multimock
 from dimos.utils.reactive import backpressure
 from dimos.robot.unitree_webrtc.type.map import Map
@@ -10,8 +10,7 @@ from reactivex import operators as ops
 
 @pytest.mark.vis
 def test_multimock_stream():
-    backpressure(Multimock("athens_odom").stream().pipe(ops.map(position_from_odom))).subscribe(lambda x: print(x))
-
+    backpressure(Multimock("athens_odom").stream().pipe(ops.map(Odometry.from_msg))).subscribe(lambda x: print(x))
     map = Map()
 
     def lidarmsg(msg):
@@ -21,3 +20,8 @@ def test_multimock_stream():
 
     mapstream = Multimock("athens_lidar").stream().pipe(ops.map(lidarmsg))
     show3d_stream(mapstream.pipe(ops.map(lambda x: x[0])), clearframe=True).run()
+
+
+def test_multimock_timeseries():
+    print(Multimock("athens_odom"))
+

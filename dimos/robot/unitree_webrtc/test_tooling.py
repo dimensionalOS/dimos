@@ -54,3 +54,18 @@ def test_replay_recording():
 
     global_map_stream = Multimock("athens_lidar").stream().pipe(ops.map(lidarmsg))
     show3d_stream(global_map_stream.pipe(ops.map(lambda x: x[0])), clearframe=True).run()
+
+
+@pytest.mark.tool
+def compare_events():
+    odom_events = Multimock("athens_odom").list()
+
+    map = Map()
+
+    def lidarmsg(msg):
+        frame = LidarMessage.from_msg(msg)
+        map.add_frame(frame)
+        return [map, map.costmap.smudge()]
+
+    global_map_stream = Multimock("athens_lidar").stream().pipe(ops.map(lidarmsg))
+    show3d_stream(global_map_stream.pipe(ops.map(lambda x: x[0])), clearframe=True).run()
