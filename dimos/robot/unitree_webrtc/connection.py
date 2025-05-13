@@ -16,6 +16,8 @@ from reactivex import operators as ops
 from aiortc import MediaStreamTrack
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.abstract_robot import AbstractRobot
+
+
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
 
@@ -78,18 +80,23 @@ class WebRTCRobot(AbstractRobot):
         )
         return future.result()
 
+    @functools.cache
+    def raw_lidar_stream(self) -> Subject[LidarMessage]:
+        return backpressure(self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]))
+
+    @functools.cache
+    def raw_odom_stream(self) -> Subject[Position]:
+        return backpressure(self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]))
+
+    @functools.cache
     def lidar_stream(self) -> Subject[LidarMessage]:
-        return backpressure(
-            self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]).pipe(
-                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame))
-            )
-        )
+        return backpressure(self.raw_lidar_stream().pipe(ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame))))
 
+    @functools.cache
     def odom_stream(self) -> Subject[Position]:
-        return backpressure(
-            self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]).pipe(ops.map(lambda msg: position_from_odom(msg)))
-        )
+        return backpressure(self.raw_odom_stream().pipe(ops.map(lambda msg: position_from_odom(msg))))
 
+    @functools.cache
     def lowstate_stream(self) -> Subject[LowStateMsg]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
@@ -150,18 +157,18 @@ class WebRTCRobot(AbstractRobot):
 
     def get_video_stream(self, fps: int = 30) -> Observable[VideoMessage]:
         """Get the video stream from the robot's camera.
-        
+
         Implements the AbstractRobot interface method.
-        
+
         Args:
             fps: Frames per second. This parameter is included for API compatibility,
                  but doesn't affect the actual frame rate which is determined by the camera.
-                 
+
         Returns:
             Observable: An observable stream of video frames or None if video is not available.
         """
         try:
-            print(f"Starting WebRTC video stream...")
+            print("Starting WebRTC video stream...")
             stream = self.video_stream()
             if stream is None:
                 print("Warning: Video stream is not available")

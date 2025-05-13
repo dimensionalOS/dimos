@@ -1,6 +1,6 @@
 from dimos.robot.unitree_webrtc.testing.helpers import color
 from dimos.types.vector import Vector
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, TypedDict
 import numpy as np
 import open3d as o3d
@@ -33,10 +33,11 @@ class RawLidarMsg(TypedDict):
 
 @dataclass
 class LidarMessage:
-    timestamp: float
+    timestamp: float = field(repr=False)
     origin: Vector
     resolution: float
     pointcloud: o3d.geometry.PointCloud
+    raw_msg: RawLidarMsg = field(repr=False, default=None)
 
     @classmethod
     def from_msg(cls, raw_message: RawLidarMsg) -> "LidarMessage":
@@ -50,6 +51,7 @@ class LidarMessage:
             origin=Vector(data["origin"]),
             resolution=data["resolution"],
             pointcloud=point_cloud,
+            raw_msg=raw_message,
         )
 
     def __iadd__(self, other: "LidarMessage") -> "LidarMessage":

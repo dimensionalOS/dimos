@@ -15,7 +15,6 @@ class Map:
     def add_frame(self, frame: LidarMessage) -> "Map":
         new_pct = frame.pointcloud = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
-
         return self
 
     def consume(self, observable: Observable[LidarMessage]) -> Observable["Map"]:
@@ -43,7 +42,6 @@ def splice_sphere(
 ) -> o3d.geometry.PointCloud:
     center = patch_pcd.get_center()
     radius = np.linalg.norm(np.asarray(patch_pcd.points) - center, axis=1).max() * shrink
-
     dists = np.linalg.norm(np.asarray(map_pcd.points) - center, axis=1)
     victims = np.nonzero(dists < radius)[0]
     survivors = map_pcd.select_by_index(victims, invert=True)
@@ -108,8 +106,6 @@ def pointcloud_to_costmap(
     • Returns (costmap[y,x], origin_xy, resolution).
     """
     pts = np.asarray(pcd.points, dtype=np.float32)
-    if pts.size == 0:
-        raise ValueError("empty point-cloud")
 
     # ------------------------------------------------------------------
     # 0. Optional ceiling filter
