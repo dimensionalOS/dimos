@@ -264,6 +264,10 @@ class Costmap:
         return " ".join(cell_info)
 
     @property
+    def o3d_geometry(self):
+        return self.pointcloud
+
+    @property
     def pointcloud(self, *, res: float = 0.25, origin=(0.0, 0.0), show_unknown: bool = False):
         """
         Visualise a 2-D costmap (int8, −1…100) as an Open3D PointCloud.
@@ -324,7 +328,6 @@ class Costmap:
         rgb_valid = cm.turbo(norm)[:, :3]  # type: ignore[attr-defined] # strip alpha
         rgb[:] = rgb_valid  # unknown already set if needed
 
-        # ----------  build Open3D object  ---------------------------------------------
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(xyz)
         pcd.colors = o3d.utility.Vector3dVector(rgb)
