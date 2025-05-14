@@ -1,36 +1,31 @@
 from datetime import timedelta, datetime
-from dimos.robot.unitree_webrtc.type.timeseries import TEvent, Timeseries
 from typing import TypeVar
-
-now = datetime.now().astimezone()
-start = TEvent(now, 1)
-end = TEvent(now + timedelta(seconds=5), 9)
-
-T = TypeVar("T")
+from dimos.robot.unitree_webrtc.type.timeseries import TEvent, TList
 
 
-class TestTimeseries(list[TEvent[T]], Timeseries[TEvent[T]]):
-    """A test class that inherits from both list and Timeseries."""
+fixed_date = datetime(2025, 5, 13, 15, 2, 5).astimezone()
+start_event = TEvent(fixed_date, 1)
+end_event = TEvent(fixed_date + timedelta(seconds=10), 9)
 
-    ...
+sample_list = TList([start_event, TEvent(fixed_date + timedelta(seconds=2), 5), end_event])
 
 
-sample_list: TestTimeseries[TEvent[int]] = TestTimeseries([start, TEvent(now + timedelta(seconds=2), 5), end])
+def test_repr():
+    assert (
+        str(sample_list)
+        == "Timeseries(date=2025-05-13, start=15:02:05, end=15:02:15, duration=0:00:10, events=3, freq=0.30Hz)"
+    )
 
 
 def test_equals():
-    assert start == TEvent(start.ts, 1)
-    assert start != TEvent(start.ts, 2)
-    assert start != TEvent(start.ts + 1, 1)
-
-
-def test_autotz():
-    assert TEvent(datetime.now(), 3) == TEvent(datetime.now().astimezone(), 3)
+    assert start_event == TEvent(start_event.ts, 1)
+    assert start_event != TEvent(start_event.ts, 2)
+    assert start_event != TEvent(start_event.ts + timedelta(seconds=1), 1)
 
 
 def test_range():
-    assert sample_list.time_range() == (start.ts, end.ts)
+    assert sample_list.time_range() == (start_event.ts, end_event.ts)
 
 
 def test_duration():
-    assert sample_list.duration() == timedelta(seconds=5)
+    assert sample_list.duration() == timedelta(seconds=10)
