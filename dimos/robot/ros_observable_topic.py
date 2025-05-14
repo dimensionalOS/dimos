@@ -158,7 +158,7 @@ class ROSObservableTopicAbility:
     # odom.dispose()  # clean up the subscription
     #
     # see test_ros_observable_topic.py test_topic_latest for more details
-    def topic_latest(self, topic_name: str, msg_type: TopicType, timeout: float | None = 30.0, qos=QOS.SENSOR):
+    def topic_latest(self, topic_name: str, msg_type: TopicType, timeout: float | None = 100.0, qos=QOS.SENSOR):
         """
         Blocks the current thread until the first message is received, then
         returns `reader()` (sync) and keeps one ROS subscription alive
