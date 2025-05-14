@@ -163,14 +163,15 @@ class Sam2DSegmenter:
                     tracked_names,
                 )
             else:
-                # Return filtered results directly if tracker is disabled
-                return (
-                    filtered_masks,
-                    filtered_bboxes,
-                    filtered_track_ids,
-                    filtered_probs,
-                    filtered_names,
-                )
+                # When tracker disabled, just use the filtered results directly
+                if self.use_analyzer:
+                    # Add unanalyzed IDs to the analysis queue
+                    for track_id in filtered_track_ids:
+                        if track_id not in self.object_names and track_id not in self.to_be_analyzed:
+                            self.to_be_analyzed.append(track_id)
+                
+                # Simply return filtered results
+                return filtered_masks, filtered_bboxes, filtered_track_ids, filtered_probs, filtered_names
         return [], [], [], [], []
 
     def check_analysis_status(self, tracked_target_ids):
@@ -280,6 +281,9 @@ def main():
 
     # Example 4: Basic segmentation only (both tracker and analyzer disabled)
     # segmenter = Sam2DSegmenter(use_tracker=False, use_analyzer=False)
+    
+    # Example 5: Analyzer without tracker (new capability)
+    # segmenter = Sam2DSegmenter(use_tracker=False, use_analyzer=True)
 
     try:
         while cap.isOpened():
@@ -293,7 +297,7 @@ def main():
             masks, bboxes, target_ids, probs, names = segmenter.process_image(frame)
 
             # Run analysis if enabled
-            if segmenter.use_tracker and segmenter.use_analyzer:
+            if segmenter.use_analyzer:
                 segmenter.run_analysis(frame, bboxes, target_ids)
                 names = segmenter.get_object_names(target_ids, names)
 

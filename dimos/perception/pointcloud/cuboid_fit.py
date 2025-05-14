@@ -18,50 +18,6 @@ import matplotlib.pyplot as plt
 import cv2
 
 
-def depth_to_point_cloud(depth_image, camera_matrix, subsample_factor=4):
-    """
-    Convert depth image to point cloud using camera intrinsics.
-    Subsamples points to reduce density.
-
-    Args:
-        depth_image: HxW depth image in meters
-        camera_matrix: 3x3 camera intrinsic matrix
-        subsample_factor: Factor to subsample points (higher = fewer points)
-
-    Returns:
-        Nx3 array of 3D points
-    """
-    # Get focal length and principal point from camera matrix
-    fx = camera_matrix[0, 0]
-    fy = camera_matrix[1, 1]
-    cx = camera_matrix[0, 2]
-    cy = camera_matrix[1, 2]
-
-    # Create pixel coordinate grid
-    rows, cols = depth_image.shape
-    x_grid, y_grid = np.meshgrid(
-        np.arange(0, cols, subsample_factor), np.arange(0, rows, subsample_factor)
-    )
-
-    # Flatten grid and depth
-    x = x_grid.flatten()
-    y = y_grid.flatten()
-    z = depth_image[y_grid, x_grid].flatten()
-
-    # Remove points with invalid depth
-    valid = z > 0
-    x = x[valid]
-    y = y[valid]
-    z = z[valid]
-
-    # Convert to 3D points
-    X = (x - cx) * z / fx
-    Y = (y - cy) * z / fy
-    Z = z
-
-    return np.column_stack([X, Y, Z])
-
-
 def fit_cuboid(points, n_iterations=5, inlier_thresh=2.0):
     """
     Fit a cuboid to a point cloud using iteratively refined PCA.
@@ -97,11 +53,16 @@ def fit_cuboid(points, n_iterations=5, inlier_thresh=2.0):
         pca.fit(current_points)
 
         # Get rotation matrix from PCA
-        rotation = pca.components_
-
+        # Open3D expects eigenvectors as columns, but PCA.components_ gives rows
+        rotation = pca.components_.T
+        
+        # Ensure rotation matrix is right-handed
+        if np.linalg.det(rotation) < 0:
+            rotation[:, 2] = -rotation[:, 2]  # Flip the third column to make right-handed
+        
         # Transform points to PCA space
-        local_points = current_points @ rotation.T
-
+        local_points = current_points @ rotation
+        
         # Initialize mask for this iteration
         inlier_mask = np.ones(len(current_points), dtype=bool)
         dimensions = np.zeros(3)
