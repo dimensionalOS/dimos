@@ -9,7 +9,6 @@ from dimos.perception.pointcloud.utils import (
     load_camera_matrix_from_yaml,
     create_masked_point_cloud,
     o3d_point_cloud_to_numpy,
-    rotation_to_o3d
 )
 from dimos.perception.pointcloud.cuboid_fit import fit_cuboid, visualize_fit
 import torch
@@ -288,7 +287,7 @@ def main():
                 # Create oriented bounding box using the rotation matrix instead of axis-aligned box
                 center = cuboid['center']
                 dimensions = cuboid['dimensions']
-                rotation = rotation_to_o3d(cuboid['rotation'])
+                rotation = cuboid['rotation']
                 
                 # Create oriented bounding box
                 obb = o3d.geometry.OrientedBoundingBox(

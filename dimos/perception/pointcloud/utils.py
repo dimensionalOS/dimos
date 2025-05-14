@@ -219,42 +219,6 @@ def numpy_to_o3d_point_cloud(points_rgb):
     
     return pcd
 
-def rotation_to_o3d(rotation_matrix):
-    """
-    Convert a rotation matrix to proper Open3D format.
-    
-    Args:
-        rotation_matrix: 3x3 rotation matrix
-    
-    Returns:
-        3x3 rotation matrix compatible with Open3D conventions
-    """
-    # Ensure input is numpy array
-    R = np.array(rotation_matrix, dtype=np.float64)
-    
-    # If rotation matrix comes from PCA, it might have eigenvectors as rows
-    # Open3D expects eigenvectors as columns, so we might need to transpose
-    # We can determine this by checking the determinant
-    det = np.linalg.det(R)
-    
-    # If determinant is negative, rotation is improper (reflection included)
-    if abs(det) < 0.9:
-        # Not a valid rotation matrix, try transposing
-        R = R.T
-        det = np.linalg.det(R)
-    
-    # Ensure right-handed coordinate system (det > 0)
-    if det < 0:
-        # Flip the last column to make right-handed
-        R[:, 2] = -R[:, 2]
-    
-    # Ensure it's a proper rotation matrix (orthogonal)
-    # We use SVD to find the closest orthogonal matrix
-    U, _, Vt = np.linalg.svd(R)
-    R = U @ Vt
-    
-    return R
-
 def create_masked_point_cloud(color_img, depth_img, mask, intrinsic, depth_scale=1.0):
     """
     Create a point cloud for a masked region of RGBD data using Open3D.
