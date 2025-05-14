@@ -1,4 +1,6 @@
 from dimos.robot.unitree_webrtc.testing.helpers import color
+from datetime import datetime
+from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_datetime, to_human_readable
 from dimos.types.vector import Vector
 from dataclasses import dataclass, field
 from typing import List, TypedDict
@@ -32,8 +34,8 @@ class RawLidarMsg(TypedDict):
 
 
 @dataclass
-class LidarMessage:
-    timestamp: float = field(repr=False)
+class LidarMessage(Timestamped):
+    ts: datetime
     origin: Vector
     resolution: float
     pointcloud: o3d.geometry.PointCloud
@@ -45,14 +47,17 @@ class LidarMessage:
         points = data["data"]["points"]
         point_cloud = o3d.geometry.PointCloud()
         point_cloud.points = o3d.utility.Vector3dVector(points)
-
+        print(f"data['stamp']: {data['stamp']}")
         return cls(
-            timestamp=data["stamp"],
+            ts=to_datetime(data["stamp"]),
             origin=Vector(data["origin"]),
             resolution=data["resolution"],
             pointcloud=point_cloud,
             raw_msg=raw_message,
         )
+
+    def __repr__(self):
+        return f"LidarMessage(ts={to_human_readable(self.ts)}, origin={self.origin}, resolution={self.resolution}, {self.pointcloud})"
 
     def __iadd__(self, other: "LidarMessage") -> "LidarMessage":
         self.pointcloud += other.pointcloud
