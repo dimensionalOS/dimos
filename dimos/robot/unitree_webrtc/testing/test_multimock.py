@@ -1,20 +1,21 @@
 import time
 import pytest
+
+from reactivex import operators as ops
+
+from dimos.utils.reactive import backpressure
+from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
+from dimos.web.websocket_vis.server import WebsocketVis
+from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.type.timeseries import to_datetime
 from dimos.robot.unitree_webrtc.testing.multimock import Multimock
-from dimos.utils.reactive import backpressure
-from dimos.robot.unitree_webrtc.type.map import Map
-from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
-from reactivex import operators as ops
-from dimos.web.websocket_vis.server import WebsocketVis
 
 
 @pytest.mark.vis
 def test_multimock_stream():
     backpressure(Multimock("athens_odom").stream().pipe(ops.map(Odometry.from_msg))).subscribe(lambda x: print(x))
-
     map = Map()
 
     def lidarmsg(msg):
@@ -70,14 +71,14 @@ def test_webui_multistream():
     websocket_vis.start()
 
     odom_stream = Multimock("athens_odom").stream().pipe(ops.map(Odometry.from_msg))
-    lidar_stream = Multimock("athens_lidar").stream().pipe(ops.map(LidarMessage.from_msg))
+    lidar_stream = backpressure(Multimock("athens_lidar").stream().pipe(ops.map(LidarMessage.from_msg)))
 
     map = Map()
     map_stream = map.consume(lidar_stream)
 
-    costmap_stream = map_stream.pipe(ops.map(lambda x: ["costmap", map.costmap.smudge()]))
+    costmap_stream = map_stream.pipe(ops.map(lambda x: ["costmap", map.costmap.smudge(preserve_unknown=False)]))
 
     websocket_vis.connect(costmap_stream)
     websocket_vis.connect(odom_stream.pipe(ops.map(lambda pos: ["robot_pos", pos.pos.to_2d()])))
 
-    time.sleep(1000)
+    show3d_stream(lidar_stream, clearframe=True).run()
