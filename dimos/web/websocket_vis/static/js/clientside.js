@@ -19607,6 +19607,15 @@ var VisualizerComponent = ({
     observer.observe(svgRef.current.parentElement);
     return () => observer.disconnect();
   }, []);
+  React.useEffect(() => {
+    const costmap = Object.values(state).find(
+      (d) => d instanceof Costmap
+    );
+    if (costmap) {
+      const [rows, cols] = costmap.grid.shape;
+      setDimensions((prev) => ({ ...prev }));
+    }
+  }, [state]);
   const { worldToPx, pxToWorld } = React.useMemo(() => {
     const ref = Object.values(state).find(
       (d) => d instanceof Costmap
@@ -19701,10 +19710,7 @@ function visualiseCostmap(svg, costmap, width, height) {
     -1,
     100
   ]);
-  const fo = group.append("foreignObject").attr("width", gridW).attr(
-    "height",
-    gridH
-  );
+  const fo = group.append("foreignObject").attr("width", gridW).attr("height", gridH).attr("id", "costmap-container");
   const canvas = document.createElement("canvas");
   canvas.width = cols;
   canvas.height = rows;
@@ -19712,11 +19718,22 @@ function visualiseCostmap(svg, costmap, width, height) {
     width: "100%",
     height: "100%",
     objectFit: "contain",
-    backgroundColor: "black"
+    backgroundColor: "black",
+    imageRendering: "pixelated",
+    // Better scaling quality
+    display: "block"
+    // Prevent layout issues
   });
-  fo.append("xhtml:div").style("width", "100%").style("height", "100%").style("display", "flex").style("alignItems", "center").style("justifyContent", "center").node()?.appendChild(canvas);
-  const ctx = canvas.getContext("2d");
+  const container = fo.append("xhtml:div").style("width", "100%").style("height", "100%").style("display", "flex").style("alignItems", "center").style("justifyContent", "center").node();
+  if (container) {
+    while (container.firstChild) {
+      container.removeChild(container.firstChild);
+    }
+    container.appendChild(canvas);
+  }
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (ctx) {
+    ctx.clearRect(0, 0, cols, rows);
     const img = ctx.createImageData(cols, rows);
     const data = grid.data;
     for (let i = 0; i < data.length; i++) {
@@ -19884,10 +19901,25 @@ var Visualizer = class {
   visualizeState(state) {
     const prevState = this.state;
     this.state = { ...state };
+    const prevCostmap = Object.values(prevState).find(
+      (d) => d instanceof Costmap
+    );
+    const currentCostmap = Object.values(this.state).find(
+      (d) => d instanceof Costmap
+    );
+    const costmapResized = prevCostmap && currentCostmap && (prevCostmap.grid.shape[0] !== currentCostmap.grid.shape[0] || prevCostmap.grid.shape[1] !== currentCostmap.grid.shape[1]);
     const timeSinceLastClick = Date.now() - this.lastClickTime;
-    if (timeSinceLastClick < this.clickThrottleMs) {
+    if (timeSinceLastClick < this.clickThrottleMs && !costmapResized) {
       console.log("Skipping render during click processing");
       return;
+    }
+    if (costmapResized) {
+      console.log(
+        "Costmap size changed, forcing re-render",
+        prevCostmap?.grid.shape,
+        "->",
+        currentCostmap?.grid.shape
+      );
     }
     this.render();
   }

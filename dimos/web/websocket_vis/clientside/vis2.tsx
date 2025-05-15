@@ -16,7 +16,7 @@ const VisualizerComponent: React.FC<{ state: Record<string, Drawable> }> = ({
     });
     const { width, height } = dimensions;
 
-    // Update dimensions when container size changes
+    // Update dimensions when container size changes or costmap changes size
     React.useEffect(() => {
         if (!svgRef.current) return;
 
@@ -36,6 +36,18 @@ const VisualizerComponent: React.FC<{ state: Record<string, Drawable> }> = ({
 
         return () => observer.disconnect();
     }, []);
+    
+    // Force re-render when costmap dimensions change
+    React.useEffect(() => {
+        const costmap = Object.values(state).find(
+            (d): d is Costmap => d instanceof Costmap,
+        );
+        if (costmap) {
+            const [rows, cols] = costmap.grid.shape;
+            // Force render when costmap dimensions change
+            setDimensions(prev => ({...prev}));
+        }
+    }, [state]);
 
     /** Build a world→pixel transformer from the *first* cost‑map we see. */
     const { worldToPx, pxToWorld } = React.useMemo(() => {
@@ -152,6 +164,7 @@ function visualiseCostmap(
     const { grid, origin, resolution } = costmap;
     const [rows, cols] = grid.shape;
 
+    // Calculate scale to fit the grid within the viewport
     const cell = Math.min(width / cols, height / rows);
     const gridW = cols * cell;
     const gridH = rows * cell;
@@ -182,32 +195,53 @@ function visualiseCostmap(
         100,
     ]);
 
-    const fo = group.append("foreignObject").attr("width", gridW).attr(
-        "height",
-        gridH,
-    );
+    // Ensure the foreignObject fits the entire grid area
+    const fo = group
+        .append("foreignObject")
+        .attr("width", gridW)
+        .attr("height", gridH)
+        .attr("id", "costmap-container"); // Add an ID for debugging
 
+    // Create canvas with exact pixel dimensions
     const canvas = document.createElement("canvas");
+    // Set the canvas pixel dimensions to match the costmap grid
     canvas.width = cols;
     canvas.height = rows;
+    
+    // Style the canvas to fill its container and ensure proper scaling
     Object.assign(canvas.style, {
         width: "100%",
         height: "100%",
         objectFit: "contain",
         backgroundColor: "black",
+        imageRendering: "pixelated", // Better scaling quality
+        display: "block", // Prevent layout issues
     });
 
-    fo.append("xhtml:div")
+    // Clear previous content and append the new canvas
+    const container = fo.append("xhtml:div")
         .style("width", "100%")
         .style("height", "100%")
         .style("display", "flex")
         .style("alignItems", "center")
         .style("justifyContent", "center")
-        .node()
-        ?.appendChild(canvas);
+        .node();
+        
+    if (container) {
+        // Remove any existing children
+        while (container.firstChild) {
+            container.removeChild(container.firstChild);
+        }
+        container.appendChild(canvas);
+    }
 
-    const ctx = canvas.getContext("2d");
+    // Get the drawing context and render the costmap
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (ctx) {
+        // Clear any previous data
+        ctx.clearRect(0, 0, cols, rows);
+        
+        // Create a new ImageData object with the exact costmap dimensions
         const img = ctx.createImageData(cols, rows);
         const data = grid.data; // row‑major, (0,0) = world south‑west
 
@@ -229,6 +263,8 @@ function visualiseCostmap(
             img.data[o + 2] = c.b ?? 0;
             img.data[o + 3] = 255;
         }
+        
+        // Put the image data on the canvas
         ctx.putImageData(img, 0, 0);
     }
 
@@ -591,11 +627,30 @@ export class Visualizer {
         const prevState = this.state;
         this.state = { ...state };
         
-        // Don't re-render if we're currently processing a click
+        // Check if costmap dimensions have changed
+        const prevCostmap = Object.values(prevState).find(
+            (d): d is Costmap => d instanceof Costmap
+        );
+        const currentCostmap = Object.values(this.state).find(
+            (d): d is Costmap => d instanceof Costmap
+        );
+        
+        const costmapResized = prevCostmap && currentCostmap && (
+            prevCostmap.grid.shape[0] !== currentCostmap.grid.shape[0] ||
+            prevCostmap.grid.shape[1] !== currentCostmap.grid.shape[1]
+        );
+        
+        // Don't re-render if we're currently processing a click (unless costmap resized)
         const timeSinceLastClick = Date.now() - this.lastClickTime;
-        if (timeSinceLastClick < this.clickThrottleMs) {
+        if (timeSinceLastClick < this.clickThrottleMs && !costmapResized) {
             console.log("Skipping render during click processing");
             return;
+        }
+        
+        // Always render when costmap size has changed
+        if (costmapResized) {
+            console.log("Costmap size changed, forcing re-render", 
+                prevCostmap?.grid.shape, "->", currentCostmap?.grid.shape);
         }
         
         this.render();
