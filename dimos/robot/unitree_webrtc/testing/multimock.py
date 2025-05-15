@@ -90,7 +90,7 @@ class Multimock(Generic[T], Timeseries[TEvent[T]]):
         for file_path in sorted(glob.glob(pattern)):
             with open(file_path, "rb") as f:
                 timestamp, data = pickle.load(f)
-            yield TEvent(timestamp, data)
+                yield TEvent(timestamp, data)
 
     def list(self) -> List[TEvent[T]]:
         return list(self.iterate())
@@ -110,13 +110,14 @@ class Multimock(Generic[T], Timeseries[TEvent[T]]):
     ) -> Observable[T]:
         def _generator():
             prev_ts: float | None = None
-            for ts, data in self.iterate():
+            for event in self.iterate():
                 if prev_ts is not None:
-                    delay = (ts - prev_ts) / replay_speed
+                    delay = (event.ts - prev_ts).total_seconds() / replay_speed
                     time.sleep(delay)
-                prev_ts = ts
-                yield data
+                prev_ts = event.ts
+                yield event.data
 
+        print("STREAM CALLED")
         return from_iterable(_generator(), scheduler=scheduler or get_scheduler())
 
     def consume(self, observable: Observable[Any]) -> Observable[int]:
@@ -126,3 +127,6 @@ class Multimock(Generic[T], Timeseries[TEvent[T]]):
     def __iter__(self) -> Iterator[TEvent[T]]:
         """Allow iteration over the Multimock instance to yield TEvent(timestamp, data) pairs."""
         return self.iterate()
+
+
+# najblaza stvar bi bila da ga pitam gdje zivi i onda pratim malo, doslovno sto on radi.

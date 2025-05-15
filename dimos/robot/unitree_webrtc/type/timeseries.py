@@ -27,8 +27,8 @@ def to_human_readable(ts: EpochLike) -> str:
 
 def to_datetime(ts: EpochLike, tz: timezone = None) -> datetime:
     if isinstance(ts, datetime):
-        if ts.tzinfo is None:
-            ts = ts.astimezone(tz)
+        # if ts.tzinfo is None:
+        #    ts = ts.astimezone(tz)
         return ts
     if isinstance(ts, (int, float)):
         return datetime.fromtimestamp(ts, tz=tz)
@@ -94,7 +94,9 @@ class Timeseries(ABC, Generic[EVENT]):
 
     def closest_to(self, timestamp: EpochLike) -> EVENT:
         """Return the event closest to the given timestamp. Assumes timeseries is sorted."""
+        print("closest to", timestamp)
         target = to_datetime(timestamp)
+        print("converted to", target)
         target_ts = target.timestamp()
 
         closest = None
@@ -102,11 +104,12 @@ class Timeseries(ABC, Generic[EVENT]):
 
         for event in self:
             dist = abs(event.ts.timestamp() - target_ts)
-            print(f"dist: {dist}, min_dist: {min_dist}")
             if dist > min_dist:
                 break
+
             min_dist = dist
             closest = event
+
         print(f"closest: {closest}")
         return closest
 

@@ -47,7 +47,6 @@ class LidarMessage(Timestamped):
         points = data["data"]["points"]
         point_cloud = o3d.geometry.PointCloud()
         point_cloud.points = o3d.utility.Vector3dVector(points)
-        print(f"data['stamp']: {data['stamp']}")
         return cls(
             ts=to_datetime(data["stamp"]),
             origin=Vector(data["origin"]),
@@ -112,7 +111,7 @@ class LidarMessage(Timestamped):
 
     def copy(self) -> "LidarMessage":
         return LidarMessage(
-            timestamp=self.timestamp,
+            ts=self.ts,
             origin=copy(self.origin),
             resolution=self.resolution,
             # TODO: seems to work, but will it cause issues because of the shallow copy?

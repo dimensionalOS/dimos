@@ -6,7 +6,7 @@ from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.types.vector import Vector
 from dimos.types.position import Position
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.odometry import position_from_odom
+from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
 from go2_webrtc_driver.constants import RTC_TOPIC, VUI_COLOR, SPORT_CMD
 from reactivex.subject import Subject
@@ -94,7 +94,7 @@ class WebRTCRobot(AbstractRobot):
 
     @functools.cache
     def odom_stream(self) -> Subject[Position]:
-        return backpressure(self.raw_odom_stream().pipe(ops.map(lambda msg: position_from_odom(msg))))
+        return backpressure(self.raw_odom_stream().pipe(ops.map(Odometry.from_msg)))
 
     @functools.cache
     def lowstate_stream(self) -> Subject[LowStateMsg]:
