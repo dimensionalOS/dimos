@@ -6,24 +6,36 @@ permissions:
 
 on:
   push:
-    paths: ["flake.*", ".github/workflows/build-devcontainer.yml"]
+    paths:
+      - "flake.*"
+      - ".github/workflows/build-devcontainer.yml"
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: cachix/install-nix-action@v25
+
+      - uses: nix-community/cache-nix-action@v3
+        with:
+          primary-key: ${{ runner.os }}-dimos-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-dimos-
+
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Docker pull cache
+
+      - name: Pull docker layer cache
         run: docker pull ghcr.io/dimensionalos/dimos-dev:latest || true
+
       - run: nix build .#devcontainer
+
       - run: |
           docker load < result
-          docker tag dimensionalos/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
-          
-      - run: docker push ghcr.io/dimensionalos/dimos-dev:latest
+          docker tag dimensional/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
+          docker push ghcr.io/dimensionalos/dimos-dev:latest
