@@ -34,7 +34,7 @@ jobs:
 
       - name: Docker build and push
         run: |
-          nix build .#devcontainer)
+          nix build .#devcontainer
           docker load < result
           docker tag dimensionalos/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
           docker push ghcr.io/dimensionalos/dimos-dev:latest
