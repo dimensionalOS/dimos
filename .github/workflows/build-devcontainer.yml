@@ -19,16 +19,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # pull to load the cache
+      # ensure we have cache before the build
       - run: docker pull ghcr.io/dimensionalos/dimos-dev:latest || true
       - run: nix build .#devcontainer
-      - run: docker load < result
       - run: |
+          docker load < result
           docker tag dimensionalos/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
-          #echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          #docker push ghcr.io/dimensionalos/dimos-dev:latest
-      - uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/dimensionalos/dimos-dev:latest
+          docker push ghcr.io/dimensionalos/dimos-dev:latest
