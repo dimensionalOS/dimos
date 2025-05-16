@@ -1,5 +1,4 @@
 name: build-devcontainer
-
 permissions:
   contents: read
   packages: write
@@ -12,7 +11,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: dimos-runner-ubuntu-2204
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +35,6 @@ jobs:
       - run: nix build .#devcontainer
 
       - run: |
-          ls
           docker load < result
           docker tag dimensionalos/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
           docker push ghcr.io/dimensionalos/dimos-dev:latest
