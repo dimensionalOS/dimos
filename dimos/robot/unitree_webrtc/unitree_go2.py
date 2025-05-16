@@ -21,17 +21,15 @@ from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.connection import WebRTCRobot
 from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.utils.reactive import getter_streaming
-from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
+from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
+from dimos.skills.skills import AbstractSkill, SkillLibrary
+import os
+import numpy as np
 from go2_webrtc_driver.constants import VUI_COLOR
-from go2_webrtc_driver.webrtc_driver import WebRTCConnectionMethod
 from dimos.perception.person_tracker import PersonTrackingStream
 from dimos.perception.object_tracker import ObjectTrackingStream
 from dimos.robot.local_planner.local_planner import navigate_path_local
 from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
-from dimos.types.robot_capabilities import RobotCapability
-from dimos.types.vector import Vector
-from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.frontier_exploration.qwen_frontier_predictor import QwenFrontierPredictor
 
 
 class Color(VUI_COLOR): ...
@@ -42,16 +40,10 @@ class UnitreeGo2(Robot):
         self,
         ip: str,
         mode: str = "ai",
-        output_dir: str = os.path.join(os.getcwd(), "assets", "output"),
-        skill_library: SkillLibrary = None,
-        robot_capabilities: List[RobotCapability] = None,
-        spatial_memory_collection: str = "spatial_memory",
-        new_memory: bool = True,
-        enable_perception: bool = True,
-        save_costmaps: bool = False,
-        costmap_save_dir: str = os.path.join(os.getcwd(), "assets", "saved_maps"),
+        skills: Optional[Union[MyUnitreeSkills, AbstractSkill]] = None,
     ):
-        """Initialize Unitree Go2 robot with WebRTC control interface.
+
+        super().__init__(ip=ip, mode=mode)
 
         Args:
             ip: IP address of the robot
@@ -156,6 +148,56 @@ class UnitreeGo2(Robot):
         # Create costmap save directory if saving is enabled
         if save_costmaps and not os.path.exists(costmap_save_dir):
             os.makedirs(costmap_save_dir)
+
+        # Initialize skills
+        if skills is None:
+            skills = MyUnitreeSkills(robot=self)
+
+        self.skill_library = skills if skills else SkillLibrary()
+
+        if self.skill_library is not None:
+            for skill in self.skill_library:
+                if isinstance(skill, AbstractRobotSkill):
+                    self.skill_library.create_instance(skill.__name__, robot=self)
+            if isinstance(self.skill_library, MyUnitreeSkills):
+                self.skill_library._robot = self
+                self.skill_library.init()
+                self.skill_library.initialize_skills()
+
+        # Camera stuff
+        self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
+        self.camera_pitch = np.deg2rad(0)  # negative for downward pitch
+        self.camera_height = 0.44  # meters
+
+        # Initialize visual servoing if enabled
+        if self.get_video_stream() is not None:
+            self.person_tracker = PersonTrackingStream(
+                camera_intrinsics=self.camera_intrinsics,
+                camera_pitch=self.camera_pitch,
+                camera_height=self.camera_height,
+            )
+            self.object_tracker = ObjectTrackingStream(
+                camera_intrinsics=self.camera_intrinsics,
+                camera_pitch=self.camera_pitch,
+                camera_height=self.camera_height,
+            )
+            person_tracking_stream = self.person_tracker.create_stream(self.get_video_stream())
+            object_tracking_stream = self.object_tracker.create_stream(self.get_video_stream())
+
+            self.person_tracking_stream = person_tracking_stream
+            self.object_tracking_stream = object_tracking_stream
+
+        # Initialize the local planner and create BEV visualization stream
+        self.local_planner = VFHPurePursuitPlanner(
+            get_costmap=lambda: self.map.costmap,
+            get_robot_pose=lambda: self.odom(),
+            move=self.move,
+            robot_width=0.36,  # Unitree Go2 width in meters
+            robot_length=0.6,  # Unitree Go2 length in meters
+            max_linear_vel=0.5,
+            lookahead_distance=2.0,
+            visualization_size=500,  # 500x500 pixel visualization
+        )
 
         self.global_planner = AstarPlanner(
             set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(

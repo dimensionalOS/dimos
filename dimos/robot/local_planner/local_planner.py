@@ -42,25 +42,22 @@ class BaseLocalPlanner(ABC):
     This class defines the common interface and shared functionality that all local planners
     must implement, regardless of the specific algorithm used.
     """
-
-    def __init__(
-        self,
-        get_costmap: Callable[[], Optional[OccupancyGrid]],
-        get_robot_pose: Callable[[], Any],
-        move: Callable[[Vector], None],
-        safety_threshold: float = 0.5,
-        max_linear_vel: float = 0.8,
-        max_angular_vel: float = 1.0,
-        lookahead_distance: float = 1.0,
-        goal_tolerance: float = 0.75,
-        angle_tolerance: float = 0.5,
-        robot_width: float = 0.5,
-        robot_length: float = 0.7,
-        visualization_size: int = 400,
-        control_frequency: float = 10.0,
-        safe_goal_distance: float = 1.5,
-        max_recovery_attempts: int = 3,
-    ):  # Control frequency in Hz
+    
+    def __init__(self, 
+                 get_costmap: Callable[[], Optional[OccupancyGrid]],
+                 get_robot_pose: Callable[[], Any],
+                 move: Callable[[Vector], None],
+                 safety_threshold: float = 0.5,
+                 max_linear_vel: float = 0.8,
+                 max_angular_vel: float = 1.0,
+                 lookahead_distance: float = 1.0,
+                 goal_tolerance: float = 0.75,
+                 angle_tolerance: float = 0.15,
+                 robot_width: float = 0.5,
+                 robot_length: float = 0.7,
+                 visualization_size: int = 400,
+                 control_frequency: float = 10.0,
+                 safe_goal_distance: float = 1.5):  # Control frequency in Hz
         """
         Initialize the base local planner.
 
@@ -86,7 +83,7 @@ class BaseLocalPlanner(ABC):
         self.get_costmap = get_costmap
         self.get_robot_pose = get_robot_pose
         self.move = move
-
+        
         # Store parameters
         self.safety_threshold = safety_threshold
         self.max_linear_vel = max_linear_vel
@@ -108,11 +105,11 @@ class BaseLocalPlanner(ABC):
         self.goal_xy: Optional[Tuple[float, float]] = None  # Current target for planning
         self.goal_theta: Optional[float] = None  # Goal orientation in odom frame
         self.position_reached: bool = False  # Flag indicating if position goal is reached
-        self.waypoints: Optional[Path] = None  # Full path if following waypoints
-        self.waypoints_in_absolute: Optional[Path] = None  # Full path in absolute frame
-        self.waypoint_is_relative: bool = False  # Whether waypoints are in relative frame
-        self.current_waypoint_index: int = 0  # Index of the next waypoint to reach
-        self.final_goal_reached: bool = False  # Flag indicating if the final waypoint is reached
+        self.waypoints: Optional[Path] = None             # Full path if following waypoints
+        self.waypoints_in_absolute: Optional[Path] = None     # Full path in absolute frame
+        self.waypoint_is_relative: bool = False         # Whether waypoints are in relative frame
+        self.current_waypoint_index: int = 0              # Index of the next waypoint to reach
+        self.final_goal_reached: bool = False             # Flag indicating if the final waypoint is reached
 
         # Stuck detection
         self.stuck_detection_window_seconds = 8.0  # Time window for stuck detection (seconds)
@@ -181,8 +178,17 @@ class BaseLocalPlanner(ABC):
         self.last_recovery_end_time = 0.0
         self.pre_recovery_position = None
 
-        # Reset recovery attempts
-        self.recovery_attempts = 0
+    def set_goal(self, goal_xy: VectorLike, is_relative: bool = False, goal_theta: Optional[float] = None):
+        """Set a single goal position, converting to absolute frame if necessary.
+           This clears any existing waypoints being followed.
+
+        Args:
+            goal_xy: The goal position to set.
+            is_relative: Whether the goal is in the robot's relative frame.
+            goal_theta: Optional goal orientation in radians
+        """
+        # Reset all state variables
+        self.reset()
 
         # Clear waypoint following state
         self.waypoints = None
@@ -234,16 +240,13 @@ class BaseLocalPlanner(ABC):
         # Transform goal to absolute frame if it's relative
         if is_relative:
             # Get current robot pose
-            odom = self._robot_pose
-            if odom is None:
-                logger.warning("Robot pose not yet available, cannot set relative goal")
-                return
+            odom = self.get_robot_pose()
             robot_pos, robot_rot = odom.pos, odom.rot
-
+            
             # Extract current position and orientation
             robot_x, robot_y = robot_pos.x, robot_pos.y
             robot_theta = robot_rot.z  # Assuming rotation is euler angles
-
+            
             # Transform the relative goal into absolute coordinates
             goal_x, goal_y = to_tuple(goal_xy)
             # Rotate
@@ -251,16 +254,12 @@ class BaseLocalPlanner(ABC):
             abs_y = goal_x * math.sin(robot_theta) + goal_y * math.cos(robot_theta)
             # Translate
             target_goal_xy = (robot_x + abs_x, robot_y + abs_y)
-
-            logger.info(
-                f"Goal set in relative frame, converted to absolute: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})"
-            )
+            
+            logger.info(f"Goal set in relative frame, converted to absolute: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})")
         else:
             target_goal_xy = to_tuple(goal_xy)
-            logger.info(
-                f"Goal set directly in absolute frame: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})"
-            )
-
+            logger.info(f"Goal set directly in absolute frame: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})")
+        
         # Check if goal is valid (in bounds and not colliding)
         if not self.is_goal_in_costmap_bounds(target_goal_xy) or self.check_goal_collision(
             target_goal_xy
@@ -276,19 +275,14 @@ class BaseLocalPlanner(ABC):
         if goal_theta is not None:
             if is_relative:
                 # Transform the orientation to absolute frame
-                odom = self._robot_pose
-                if odom is None:
-                    logger.warning(
-                        "Robot pose not yet available, cannot set relative goal orientation"
-                    )
-                    return
+                odom = self.get_robot_pose()
                 robot_theta = odom.rot.z
                 self.goal_theta = normalize_angle(goal_theta + robot_theta)
             else:
                 self.goal_theta = goal_theta
 
     def set_goal_waypoints(self, waypoints: Path, goal_theta: Optional[float] = None):
-        """Sets a path of waypoints for the robot to follow.
+        """Sets a path of waypoints for the robot to follow. 
 
         Args:
             waypoints: A list of waypoints to follow. Each waypoint is a tuple of (x, y) coordinates in absolute frame.
@@ -313,12 +307,10 @@ class BaseLocalPlanner(ABC):
 
         # Waypoints are always in absolute frame
         self.waypoints_in_absolute = waypoints
-
+        
         # Set the initial target to the first waypoint, adjusting if necessary
         first_waypoint = self.waypoints_in_absolute[0]
-        if not self.is_goal_in_costmap_bounds(first_waypoint) or self.check_goal_collision(
-            first_waypoint
-        ):
+        if not self.is_goal_in_costmap_bounds(first_waypoint) or self.check_goal_collision(first_waypoint):
             logger.warning("First waypoint is invalid. Adjusting...")
             self.goal_xy = self.adjust_goal_to_valid_position(first_waypoint)
         else:
@@ -328,6 +320,19 @@ class BaseLocalPlanner(ABC):
         if goal_theta is not None:
             self.goal_theta = goal_theta
 
+    def _get_robot_pose(self) -> Tuple[Tuple[float, float], float]:
+        """
+        Get the current robot position and orientation.
+
+        Returns:
+            Tuple containing:
+            - position as (x, y) tuple
+            - orientation (theta) in radians
+        """
+        odom = self.get_robot_pose()
+        pos, rot = odom.pos, odom.rot
+        return (pos.x, pos.y), rot.z
+        
     def _get_final_goal_position(self) -> Optional[Tuple[float, float]]:
         """
         Get the final goal position (either last waypoint or direct goal).
@@ -536,7 +541,7 @@ class BaseLocalPlanner(ABC):
         """
         if self.waypoints is None or len(self.waypoints) == 0:
             return False  # Not in waypoint mode or empty path
-
+        
         # Waypoints are always in absolute frame
         self.waypoints_in_absolute = self.waypoints
 
@@ -572,7 +577,7 @@ class BaseLocalPlanner(ABC):
         if lookahead_point is None:
             lookahead_point = self.waypoints_in_absolute[-1]
             self.current_waypoint_index = len(self.waypoints_in_absolute) - 1
-
+        
         # Set the lookahead point as the immediate target, adjusting if needed
         if not self.is_goal_in_costmap_bounds(lookahead_point) or self.check_goal_collision(
             lookahead_point
@@ -716,9 +721,9 @@ class BaseLocalPlanner(ABC):
 
         Returns:
             Tuple[float, float]: A valid goal position, or the original goal if already valid
-        """
+        """    
         [pos, rot] = self._get_robot_pose()
-
+        
         robot_x, robot_y = pos[0], pos[1]
 
         # Original goal
@@ -1028,7 +1033,7 @@ def navigate_to_goal_local(
 
     # Set the goal in the robot's frame with orientation to face the original target
     robot.local_planner.set_goal((goal_x, goal_y), is_relative=True, goal_theta=goal_theta)
-
+    
     # Get control period from robot's local planner for consistent timing
     control_period = 1.0 / robot.local_planner.control_frequency
 
@@ -1055,7 +1060,7 @@ def navigate_to_goal_local(
             angular_vel = vel_command.get("angular_vel", 0.0)
 
             # Send velocity command
-            robot.local_planner.move(x=x_vel, y=0, yaw=angular_vel)
+            robot.local_planner.move(Vector(x_vel, 0, angular_vel))
 
             # Control loop frequency - use robot's control frequency
             time.sleep(control_period)
@@ -1071,7 +1076,7 @@ def navigate_to_goal_local(
         goal_reached = False  # Consider error as failure
     finally:
         logger.info("Stopping robot after navigation attempt.")
-        robot.local_planner.move(x=0, y=0, yaw=0)  # Stop the robot
+        robot.local_planner.move(Vector(0, 0, 0))  # Stop the robot
 
     return goal_reached
 
@@ -1132,7 +1137,7 @@ def navigate_path_local(
             angular_vel = vel_command.get("angular_vel", 0.0)
 
             # Send velocity command
-            robot.local_planner.move(x=x_vel, y=0, yaw=angular_vel)
+            robot.local_planner.move(Vector(x_vel, 0, angular_vel))
 
             # Control loop frequency - use robot's control frequency
             time.sleep(control_period)
@@ -1150,18 +1155,18 @@ def navigate_path_local(
         path_completed = False
     finally:
         logger.info("Stopping robot after path navigation attempt.")
-        robot.local_planner.move(x=0, y=0, yaw=0)  # Stop the robot
+        robot.local_planner.move(Vector(0, 0, 0))  # Stop the robot
 
     return path_completed
 
 
 def visualize_local_planner_state(
-    occupancy_grid: np.ndarray,
-    grid_resolution: float,
-    grid_origin: Tuple[float, float],
-    robot_pose: Tuple[float, float, float],
-    visualization_size: int = 400,
-    robot_width: float = 0.5,
+    occupancy_grid: np.ndarray, 
+    grid_resolution: float, 
+    grid_origin: Tuple[float, float], 
+    robot_pose: Tuple[float, float, float], 
+    visualization_size: int = 400, 
+    robot_width: float = 0.5, 
     robot_length: float = 0.7,
     map_size_meters: float = 10.0,
     goal_xy: Optional[Tuple[float, float]] = None,
