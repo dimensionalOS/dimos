@@ -12,11 +12,12 @@
         pkgs = import nixpkgs { inherit system; };
 
         # ------------------------------------------------------------
-        # 1. Shared package list (tool‑chain + project deps)
+        # 1. Shared package list (tool-chain + project deps)
         # ------------------------------------------------------------
         devPackages = with pkgs; [
           ### Core shell & utils
-          bashInteractive coreutils stdenv.cc.cc.lib
+          bashInteractive coreutils gh
+          stdenv.cc.cc.lib
 
           ### Python + static analysis
           python312 python312Packages.pip python312Packages.setuptools
@@ -36,7 +37,7 @@
           ### GTK / OpenCV helpers
           glib gtk3 gdk-pixbuf gobject-introspection
 
-          ### Open3D & build‑time
+          ### Open3D & build-time
           eigen cmake ninja jsoncpp libjpeg libpng
         ];
 
@@ -73,7 +74,6 @@
         imageRoot = pkgs.buildEnv {
           name = "dimos-image-root";
           paths = devPackages;
-          # expose executables so /bin/<tool> just works
           pathsToLink = [ "/bin" ];
         };
 
@@ -81,14 +81,14 @@
         ## Local dev shell
         devShells.default = devShell;
 
-        ## Layered docker image with maximum cache re‑use
+        ## Layered docker image with DockerTools
         packages.devcontainer = pkgs.dockerTools.buildLayeredImage {
-          name      = "dimensionalos/dimos-dev";
+          name      = "dimensional/dimos-dev";
           tag       = "latest";
-          contents  = [ imageRoot ];  # each path becomes its own layer
+          contents  = [ imageRoot ];
           config = {
             WorkingDir = "/workspace";
-            Cmd        = [ "bash" ];  # bashInteractive included above
+            Cmd        = [ "bash" ];
           };
         };
       });

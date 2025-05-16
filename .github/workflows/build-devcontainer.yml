@@ -17,11 +17,11 @@ jobs:
 
       - uses: cachix/install-nix-action@v25
 
-      - uses: nix-community/cache-nix-action@v3
-        with:
-          key: ${{ runner.os }}-dimos-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-dimos-
+      # - uses: nix-community/cache-nix-action@v3
+      #   with:
+      #     key: ${{ runner.os }}-dimos-${{ hashFiles('flake.nix', 'flake.lock') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-dimos-
 
       - uses: docker/login-action@v3
         with:
@@ -34,8 +34,8 @@ jobs:
 
       - name: Docker build and push
         run: |
-          IMAGE_PATH=$(nix build --no-link --print-out-paths .#devcontainer)
-          docker load < "$IMAGE_PATH"
+          nix build .#devcontainer)
+          docker load < result
           docker tag dimensionalos/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
           docker push ghcr.io/dimensionalos/dimos-dev:latest
 
