@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2, Color
 from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
 from dimos.web.websocket_vis.server import WebsocketVis
+from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.types.vector import Vector
 import logging
 import open3d as o3d
@@ -25,7 +26,6 @@ import reactivex.operators as ops
 import numpy as np
 import time
 import threading
-
 # logging.basicConfig(level=logging.DEBUG)
 
 load_dotenv()
@@ -64,6 +64,13 @@ def newmap(msg):
 
 websocket_vis.connect(robot.map_stream.pipe(ops.map(newmap)))
 websocket_vis.connect(robot.odom_stream().pipe(ops.map(lambda pos: ["robot_pos", pos.pos.to_2d()])))
+
+local_planner_viz_stream = robot.local_planner_viz_stream.pipe(ops.share())
+
+# Add RobotWebInterface with video stream
+streams = {"unitree_video": robot.get_video_stream(), "local_planner_viz": local_planner_viz_stream}
+web_interface = RobotWebInterface(port=5555, **streams)
+web_interface.run()
 
 try:
     while True:

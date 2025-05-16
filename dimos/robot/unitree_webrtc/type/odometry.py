@@ -22,7 +22,8 @@ from dimos.robot.unitree_webrtc.type.timeseries import (
     to_human_readable,
 )
 from dimos.types.position import Position
-from dimos.types.vector import VectorLike
+from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_human_readable
+from scipy.spatial.transform import Rotation as R
 
 raw_odometry_msg_sample = {
     "type": "msg",
@@ -95,22 +96,10 @@ class Odometry(Position):
         pose = msg["data"]["pose"]
         orientation = pose["orientation"]
         position = pose["position"]
-
-        # Extract position
-        pos = [position.get("x"), position.get("y"), position.get("z")]
-
-        # Extract quaternion components
-        qx = orientation.get("x")
-        qy = orientation.get("y")
-        qz = orientation.get("z")
-        qw = orientation.get("w")
-
-        # Convert quaternion to yaw angle and store in rot.z
-        # Keep x,y as quaternion components for now, but z becomes the actual yaw angle
-        yaw_radians = cls.quaternion_to_yaw(qx, qy, qz, qw)
-        rot = [qx, qy, yaw_radians]
-
-        return cls(pos, rot, msg["data"]["header"]["stamp"])
+        pos = Vector(position.get("x"), position.get("y"), position.get("z"))
+        rotation = R.from_quat([orientation.get("x"), orientation.get("y"), orientation.get("z"), orientation.get("w")])
+        rot = Vector(rotation.as_euler("xyz", degrees=False))
+        return cls(pos=pos, rot=rot, ts=msg["data"]["header"]["stamp"])
 
     def __repr__(self) -> str:
         return f"Odom ts({to_human_readable(self.ts)}) pos({self.pos}), rot({self.rot}) yaw({math.degrees(self.rot.z):.1f}°)"

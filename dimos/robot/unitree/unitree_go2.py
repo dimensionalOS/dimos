@@ -28,7 +28,8 @@ from reactivex.scheduler import ThreadPoolScheduler
 from dimos.utils.logging_config import setup_logger
 from dimos.perception.person_tracker import PersonTrackingStream
 from dimos.perception.object_tracker import ObjectTrackingStream
-from dimos.robot.local_planner import VFHPurePursuitPlanner, navigate_path_local
+from dimos.robot.local_planner.local_planner import navigate_path_local
+from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
 from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.types.costmap import Costmap
 
