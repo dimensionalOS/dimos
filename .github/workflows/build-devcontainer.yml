@@ -1,4 +1,9 @@
 name: build-devcontainer
+
+permissions:
+  contents: read
+  packages: write
+
 on:
   push:
     paths: ["flake.*", ".github/workflows/build-devcontainer.yml"]
