@@ -83,7 +83,7 @@
 
         ## Layered docker image with DockerTools
         packages.devcontainer = pkgs.dockerTools.buildLayeredImage {
-          name      = "dimensional/dimos-dev";
+          name      = "dimensionalos/dimos-dev";
           tag       = "latest";
           contents  = [ imageRoot ];
           config = {
