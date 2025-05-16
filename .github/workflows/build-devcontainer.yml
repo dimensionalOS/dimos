@@ -38,5 +38,5 @@ jobs:
       - run: |
           ls
           docker load < result
-          docker tag dimensional/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
+          docker tag dimensionalos/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
           docker push ghcr.io/dimensionalos/dimos-dev:latest
