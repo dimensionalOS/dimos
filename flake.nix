@@ -13,13 +13,17 @@
         pkgs = import nixpkgs { inherit system; };
 
         # ------------------------------------------------------------
-        # All runtime / build‑time packages live here so we can share
-        # them between the dev‑shell **and** the OCI image.
+        # All runtime / build-time packages live here so we can share
+        # them between the dev-shell **and** the OCI image.
         # ------------------------------------------------------------
         devPackages = with pkgs; [
+          # Core shell and utils
+          bashInteractive           # ensure /bin/bash exists for docker run
+          coreutils
+
           stdenv.cc.cc.lib
 
-          # — Python tool‑chain & unified checks —
+          # — Python tool-chain & unified checks —
           python312
           python312Packages.pip
           python312Packages.setuptools
@@ -48,7 +52,7 @@
         ];
 
         # ------------------------------------------------------------
-        # Host‑side interactive shell  →  `nix develop` / direnv
+        # Host-side interactive shell  →  `nix develop` / direnv
         # ------------------------------------------------------------
         devShell = pkgs.mkShell {
           packages  = devPackages;
@@ -71,7 +75,7 @@
 
             export DISPLAY=:0
 
-            # Detect repo root and auto‑activate local venv if present
+            # Detect repo root and auto-activate local venv if present
             PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
             if [ -f "$PROJECT_ROOT/env/bin/activate" ]; then
               . "$PROJECT_ROOT/env/bin/activate"
@@ -80,7 +84,7 @@
             # Optional MOTD banner
             [ -f "$PROJECT_ROOT/motd" ] && cat "$PROJECT_ROOT/motd"
 
-            # Ensure git hooks match the flake‑pinned tool versions
+            # Ensure git hooks match the flake-pinned tool versions
             if [ -f "$PROJECT_ROOT/.pre-commit-config.yaml" ]; then
               pre-commit install --install-hooks
             fi
@@ -89,6 +93,7 @@
 
         # ------------------------------------------------------------
         # Turn the *exact same* closure into an OCI image layer
+        # Note: "contents" is deprecated; use copyToRoot instead
         # ------------------------------------------------------------
         envClosure = pkgs.buildEnv {
           name  = "dimos-env";
@@ -101,11 +106,11 @@
 
         # `nix build .#devcontainer` — or built by CI and pushed to GHCR
         packages.devcontainer = nix2container.packages.${system}.nix2container.buildImage {
-          name      = "dimensional/dimos-dev";
+          name      = "dimensionalos/dimos-dev";
           tag       = "latest";
-          contents  = [ envClosure ];
-          config.WorkingDir = "/workspace";  # aligns with Dev‑Container default
-          config.Cmd        = [ "bash" ];
+          copyToRoot = envClosure;                 # <-- replaces deprecated "contents"
+          config.WorkingDir = "/workspace";      # aligns with Dev-Container default
+          config.Cmd        = [ "bash" ];        # now bash exists
         };
 
         # You can optionally expose the image as the default build output:

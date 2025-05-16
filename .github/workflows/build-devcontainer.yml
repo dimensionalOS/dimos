@@ -12,7 +12,7 @@ jobs:
       - run: nix build .#devcontainer
       - run: |
           nix run .#devcontainer.copyToDockerDaemon
-          docker tag dimensionalOS/dimos-dev:latest ghcr.io/dimensionalOS/dimos-dev:latest
+          docker tag dimensionalos/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
           echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker push ghcr.io/dimensionalOS/dimos-dev:latest
+          docker push ghcr.io/dimensionalos/dimos-dev:latest
           
