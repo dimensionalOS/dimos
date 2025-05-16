@@ -11,7 +11,7 @@ jobs:
       - uses: cachix/install-nix-action@v25
       - run: nix build .#devcontainer
       - run: |
-          docker load < result
+          nix run .#devcontainer.copyToDockerDaemon
           docker tag dimensional/dimos-dev:latest ghcr.io/dimensional/dimos-dev:latest
           echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           docker push ghcr.io/dimensional/dimos-dev:latest
