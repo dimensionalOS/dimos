@@ -1,0 +1,18 @@
+name: build-devcontainer
+on:
+  push:
+    paths: ["flake.*", ".github/workflows/build-devcontainer.yml"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v25
+      - run: nix build .#devcontainer
+      - run: |
+          docker load < result
+          docker tag dimensional/dimos-dev:latest ghcr.io/dimensional/dimos-dev:latest
+          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker push ghcr.io/dimensional/dimos-dev:latest
+          
