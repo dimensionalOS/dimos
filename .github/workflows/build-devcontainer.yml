@@ -20,7 +20,7 @@ jobs:
 
       - uses: nix-community/cache-nix-action@v3
         with:
-          primary-key: ${{ runner.os }}-dimos-${{ hashFiles('flake.nix', 'flake.lock') }}
+          key: ${{ runner.os }}-dimos-${{ hashFiles('flake.nix', 'flake.lock') }}
           restore-keys: |
             ${{ runner.os }}-dimos-
 
@@ -39,3 +39,6 @@ jobs:
           docker load < result
           docker tag dimensional/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
           docker push ghcr.io/dimensionalos/dimos-dev:latest
+
+
+          
