@@ -32,10 +32,16 @@ jobs:
       - name: Pull docker layer cache
         run: docker pull ghcr.io/dimensionalos/dimos-dev:latest || true
 
-      - name: Docker build and push
-        run: |
-          nix build .#devcontainer
+      - run: nix build .#devcontainer
+
+        # run: |
+        #   IMAGE_PATH=$(nix build --no-link --print-out-paths .#devcontainer)
+        #   docker load < "$IMAGE_PATH"
+        #   docker tag dimensionalos/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
+        #   docker push ghcr.io/dimensionalos/dimos-dev:latest
+
+      - name: Docker push
+      - run: |
           docker load < result
           docker tag dimensionalos/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
           docker push ghcr.io/dimensionalos/dimos-dev:latest
-
