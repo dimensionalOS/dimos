@@ -36,7 +36,6 @@ jobs:
         run: |
           IMAGE_PATH=$(nix build --no-link --print-out-paths .#devcontainer)
           docker load < "$IMAGE_PATH"
-          rm result
           docker tag dimensionalos/dimos-dev:latest ghcr.io/dimensionalos/dimos-dev:latest
           docker push ghcr.io/dimensionalos/dimos-dev:latest
 
