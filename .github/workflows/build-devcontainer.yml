@@ -22,8 +22,6 @@ jobs:
           key: ${{ runner.os }}-dimos-${{ hashFiles('flake.nix', 'flake.lock') }}
           restore-keys: |
             ${{ runner.os }}-dimos-
-          extra-exclude-paths: |
-            /nix/*
 
       - uses: docker/login-action@v3
         with:
