@@ -20,12 +20,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       # pull to load the cache
-      - run: |
-          docker pull ghcr.io/dimensionalos/dimos-dev:latest || true
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: docker pull ghcr.io/dimensionalos/dimos-dev:latest || true
       - run: nix build .#devcontainer
       - run: docker load < result
       - run: |
