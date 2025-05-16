@@ -1,6 +1,6 @@
 {
   "name": "dimos-dev",
-  "image": "ghcr.io/dimensional/dimos-dev:latest",
+  "image": "ghcr.io/dimensionalOS/dimos-dev:latest",
   "postCreateCommand": "pre-commit install",
   "customizations": {
     "vscode": {
