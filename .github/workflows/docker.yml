@@ -75,7 +75,7 @@ jobs:
   run-tests:
     runs-on: dimos-runner-ubuntu-2204
     needs: [changes, build-dev]
-    if: ${{ (needs.changes.outputs.tests == 'true' && needs.build-dev.result == 'skipped') || needs.build-dev.result == 'success' }}
+    if: ${{ always() && ((needs.changes.outputs.tests == 'true' && needs.build-dev.result == 'skipped') || needs.build-dev.result == 'success') }}
     container:
       image: ghcr.io/dimensionalos/dev:latest
     steps:
