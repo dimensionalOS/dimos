@@ -3,6 +3,10 @@ on:
   push:
     branches: [ env/devcontainer2 ]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   detect-changes:            # single job that figures out WHAT changed
     runs-on: dimos-runner-ubuntu-2204
