@@ -1,0 +1,33 @@
+name: build-ros-base
+permissions:
+  contents: read
+  packages: write
+
+on:
+  push:
+    paths:
+      - ".github/workflows/build-docker.yml"
+      - "requirements.txt"
+      - "docker/*"
+jobs:
+  docker:
+    runs-on: dimos-runner-ubuntu-2204
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          context: .
+          file: docker/base-ros/Dockerfile
+          tags: dimensionalos/base-ros:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
