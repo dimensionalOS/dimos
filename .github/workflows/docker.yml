@@ -66,6 +66,7 @@ jobs:
       cache-scope: dev
 
   run-tests:
+    runs-on: dimos-runner-ubuntu-2204
     needs: [detect-changes, build-dev]
     if: |
       needs.build-dev.result == 'success'
