@@ -20,7 +20,12 @@ jobs:
         with:
           filters: |
             ros:    docker/base-ros/**
-            python: docker/base-python/**
+
+            python:
+              - docker/base-python/**
+              - requirements*.txt
+
+            dev: dimos/**
 
   build-ros:
     needs: detect-changes
@@ -76,5 +81,34 @@ jobs:
           context: .
           file: docker/base-ros-python/Dockerfile
           tags: ghcr.io/dimensionalos/base-ros-python:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-dev:
+    needs: [detect-changes, build-python]
+    if: |
+      needs.detect-changes.outputs.dev == 'true' ||
+      needs.build-python.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          context: .
+          file: docker/dev/Dockerfile
+          tags: ghcr.io/dimensionalos/dev:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
