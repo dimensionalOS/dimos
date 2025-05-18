@@ -37,6 +37,6 @@ jobs:
           push: true
           context: .
           file: docker/base-ros-python/Dockerfile
-          tags: dimensionalos/base-ros-python:latest
+          tags: ghcr.io/dimensionalos/base-ros-python:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
