@@ -49,9 +49,7 @@ jobs:
 
   build-python:
     needs: [detect-changes, build-ros]
-    if: |
-      needs.detect-changes.outputs.python == 'true' ||
-      needs.build-ros.result == 'success'
+    if: needs.detect-changes.outputs.python == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       image-tag:   ghcr.io/dimensionalos/base-ros-python:latest
@@ -60,9 +58,7 @@ jobs:
 
   build-dev:
     needs: [detect-changes, build-python]
-    if: |
-      needs.detect-changes.outputs.dev == 'true' ||
-      needs.build-python.result == 'success'
+    if: needs.detect-changes.outputs.dev == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       image-tag:   ghcr.io/dimensionalos/dev:latest
@@ -72,8 +68,7 @@ jobs:
   run-tests:
     runs-on: dimos-runner-ubuntu-2204
     needs: [detect-changes, build-dev]
-    if: |
-      needs.detect-changes.outputs.tests == 'true'
+    if: needs.detect-changes.outputs.tests == 'true'
     container:
       image: ghcr.io/dimensionalos/dev:latest
     steps:
