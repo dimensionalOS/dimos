@@ -85,3 +85,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run tests
         run: pytest-3 -sv dimos/
+
+  debug-vars:
+    runs-on: dimos-runner-ubuntu-2204
+    needs: [changes, build-dev]     # keep the links so we can read their data
+    # The extra test on result makes the job “eligible” even if build-dev was skipped
+    if: ${{ always() && (needs.build-dev.result == 'success' ||
+                         needs.build-dev.result == 'skipped') }}
+    steps:
+      - name: Show the values the test job uses
+        env:
+          TESTS_FLAG:       ${{ needs.changes.outputs.tests }}
+          BUILD_DEV_RESULT: ${{ needs.build-dev.result }}
+        run: |
+          echo "needs.changes.outputs.tests    = '${TESTS_FLAG}'"
+          echo "needs.build-dev.result         = '${BUILD_DEV_RESULT}'"
