@@ -14,6 +14,7 @@ jobs:
       ros:    ${{ steps.filter.outputs.ros }}
       python: ${{ steps.filter.outputs.python }}
       dev:    ${{ steps.filter.outputs.dev }}
+      tests:    ${{ steps.filter.outputs.tests }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
