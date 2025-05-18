@@ -64,3 +64,14 @@ jobs:
       image-tag:   ghcr.io/dimensionalos/dev:latest
       dockerfile:  docker/dev/Dockerfile
       cache-scope: dev
+
+  run-tests:
+    needs: [detect-changes, build-dev]
+    if: |
+      needs.build-dev.result == 'success'
+    container:
+      image: ghcr.io/dimensionalos/dev:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: pytest-3 -sv dimos/
