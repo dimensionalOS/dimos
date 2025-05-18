@@ -13,6 +13,9 @@ jobs:
   docker:
     runs-on: dimos-runner-ubuntu-2204
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
