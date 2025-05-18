@@ -20,11 +20,16 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           filters: |
-            ros:    docker/base-ros/**
-            python:
+            all:
+              - .github/workflows/_docker-build-template.yml
+              - .github/workflows/docker.yml
+            ros: &all
+              - docker/base-ros/**
+            python: &all
               - docker/base-python/**
               - requirements*.txt
-            dev: dimos/**
+            dev: &all
+              - dimos/**
 
   build-ros:
     needs: detect-changes

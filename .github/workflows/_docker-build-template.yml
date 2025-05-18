@@ -23,7 +23,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: crazy-max/ghaction-github-runtime@v3<
+      - uses: crazy-max/ghaction-github-runtime@v3
 
       - uses: docker/setup-buildx-action@v3
 
