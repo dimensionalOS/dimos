@@ -33,6 +33,9 @@ jobs:
               - requirements*.txt
 
             dev: &all
+              - docker/dev/**
+
+            tests:
               - dimos/**
 
   build-ros:
@@ -70,7 +73,7 @@ jobs:
     runs-on: dimos-runner-ubuntu-2204
     needs: [detect-changes, build-dev]
     if: |
-      needs.build-dev.result == 'success'
+      needs.detect-changes.outputs.tests == 'true'
     container:
       image: ghcr.io/dimensionalos/dev:latest
     steps:
