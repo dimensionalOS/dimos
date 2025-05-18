@@ -41,8 +41,7 @@ jobs:
 
   build-ros:
     needs: changes
-    if: |
-      needs.changes.outputs.ros == 'true'
+    if: needs.changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       image-tag:   ghcr.io/dimensionalos/base-ros:latest
@@ -51,9 +50,10 @@ jobs:
 
   build-python:
     needs: [changes, build-ros]
-    if: ${{ always() && needs.changes.outputs.python == 'true' &&
-            (needs.build-ros.result == 'success' ||
-             needs.build-ros.result == 'skipped') }}
+    if: |
+      ${{ always()
+      && ((needs.changes.outputs.python == 'true' && needs.build-ros.result == 'skipped')
+      || needs.build-ros.result == 'success') }}
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
@@ -63,9 +63,11 @@ jobs:
 
   build-dev:
     needs: [changes, build-python]
-    if: ${{ always() && needs.changes.outputs.dev == 'true' &&
-            (needs.build-python.result == 'success' ||
-             needs.build-python.result == 'skipped') }}
+    if: |
+      ${{ always()
+      && ((needs.changes.outputs.dev == 'true' && needs.build-python.result == 'skipped')
+      || needs.build-python.result == 'success') }}
+
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       image-tag:   ghcr.io/dimensionalos/dev:latest
@@ -75,7 +77,11 @@ jobs:
   run-tests:
     runs-on: dimos-runner-ubuntu-2204
     needs: [changes, build-dev]
-    if: ${{ always() && ((needs.changes.outputs.tests == 'true' && needs.build-dev.result == 'skipped') || needs.build-dev.result == 'success') }}
+    if: |
+      ${{ always()
+      && ((needs.changes.outputs.tests == 'true' && needs.build-dev.result == 'skipped')
+      || needs.build-dev.result == 'success') }}
+
     container:
       image: ghcr.io/dimensionalos/dev:latest
     steps:
