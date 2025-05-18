@@ -23,3 +23,5 @@ RUN echo "  v_${GIT_BRANCH}:${GIT_COMMIT} | $(date)" >> /etc/motd
 RUN echo "echo -e '\033[34m$(cat /etc/motd)\033[0m\n'" >> /root/.bashrc
 
 RUN echo "source /root/.bash.sh" >> /root/.bashrc
+
+ENTRYPOINT ["/entrypoint.sh"]
