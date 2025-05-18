@@ -40,7 +40,10 @@ jobs:
 
   build-ros:
     needs: detect-changes
-    if: needs.detect-changes.outputs.ros == 'true'
+    if: |
+      needs.detect-changes.outputs.ros == 'true' &&
+      (needs.skipped.result == 'skipped' || needs.skipped.result == 'success') &&
+      (needs.build.result == 'skipped' || needs.build.result == 'success')
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       image-tag:   ghcr.io/dimensionalos/base-ros:latest
@@ -49,7 +52,10 @@ jobs:
 
   build-python:
     needs: [detect-changes, build-ros]
-    if: needs.detect-changes.outputs.python == 'true'
+    if: |
+      needs.detect-changes.outputs.python == 'true' &&
+      (needs.skipped.result == 'skipped' || needs.skipped.result == 'success') &&
+      (needs.build.result == 'skipped' || needs.build.result == 'success')
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       image-tag:   ghcr.io/dimensionalos/base-ros-python:latest
@@ -58,7 +64,10 @@ jobs:
 
   build-dev:
     needs: [detect-changes, build-python]
-    if: needs.detect-changes.outputs.dev == 'true'
+    if: |
+      needs.detect-changes.outputs.dev == 'true' &&
+      (needs.skipped.result == 'skipped' || needs.skipped.result == 'success') &&
+      (needs.build.result == 'skipped' || needs.build.result == 'success')
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       image-tag:   ghcr.io/dimensionalos/dev:latest
@@ -68,7 +77,10 @@ jobs:
   run-tests:
     runs-on: dimos-runner-ubuntu-2204
     needs: [detect-changes, build-dev]
-    if: needs.detect-changes.outputs.tests == 'true'
+    if: |
+      needs.detect-changes.outputs.tests == 'true' &&
+      (needs.skipped.result == 'skipped' || needs.skipped.result == 'success') &&
+      (needs.build.result == 'skipped' || needs.build.result == 'success')
     container:
       image: ghcr.io/dimensionalos/dev:latest
     steps:
