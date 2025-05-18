@@ -1,4 +1,4 @@
-name: build-ros-base
+name: build-base-ros
 permissions:
   contents: read
   packages: write
@@ -6,11 +6,10 @@ permissions:
 on:
   push:
     paths:
-      - ".github/workflows/build-docker.yml"
-      - "requirements.txt"
-      - "docker/*"
+      - ".github/workflows/docker-base-ros.yml"
+      - "docker/base-ros/**"
 jobs:
-  docker:
+  build:
     runs-on: dimos-runner-ubuntu-2204
     steps:
       - name: Checkout
