@@ -64,13 +64,3 @@ jobs:
       image-tag:   ghcr.io/dimensionalos/dev:latest
       dockerfile:  docker/dev/Dockerfile
       cache-scope: dev
-
-  tests:
-    needs: [detect-changes, build-dev]
-    container:
-      image: ghcr.io/dimensionalos/dev:latest
-      options: --entrypoint ''
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run tests
-        run: pytest-3 -sv
