@@ -3,6 +3,10 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: docker-base-ros
+  cancel-in-progress: true
+
 on:
   push:
     paths:
@@ -33,3 +37,4 @@ jobs:
           tags: ghcr.io/dimensionalos/base-ros:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+

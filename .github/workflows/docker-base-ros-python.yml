@@ -3,6 +3,10 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: docker-base-ros-python
+  cancel-in-progress: true
+
 on:
   workflow_run:
     workflows: ["build-base-ros"]
