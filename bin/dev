@@ -12,13 +12,13 @@ remove_image() {
     docker rm -f dimos-dev
 }
 
-COMPOSE_FILE="docker/dev/base/docker-compose.yaml"
+COMPOSE_FILE="docker/dev/docker-compose.yaml"
 
 # Parse flags and commands
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -c|--cuda)
-            COMPOSE_FILE="docker/dev/base/docker-compose-cuda.yaml"
+            COMPOSE_FILE="docker/dev/docker-compose-cuda.yaml"
             shift
             ;;
         remove)
