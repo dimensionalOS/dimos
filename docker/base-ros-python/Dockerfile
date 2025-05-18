@@ -1,4 +1,4 @@
-FROM dimensionalos/base-ros
+FROM ghcr.io/dimensionalos/base-ros
 
 RUN mkdir -p /app/dimos
 
