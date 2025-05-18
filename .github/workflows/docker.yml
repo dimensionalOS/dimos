@@ -8,7 +8,7 @@ permissions:
   packages: write
 
 jobs:
-  detect-changes:
+  changes:
     runs-on: dimos-runner-ubuntu-2204
     outputs:
       ros:    ${{ steps.filter.outputs.ros }}
@@ -39,9 +39,9 @@ jobs:
               - dimos/**
 
   build-ros:
-    needs: detect-changes
+    needs: changes
     if: |
-      needs.detect-changes.outputs.ros == 'true'
+      needs.changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       image-tag:   ghcr.io/dimensionalos/base-ros:latest
@@ -49,8 +49,8 @@ jobs:
       cache-scope: base-ros
 
   build-python:
-    needs: [detect-changes, build-ros]
-    if: ${{ needs.detect-changes.outputs.python == 'true' &&
+    needs: [changes, build-ros]
+    if: ${{ needs.changes.outputs.python == 'true' &&
             (needs.build-ros.result == 'success' ||
              needs.build-ros.result == 'skipped') }}
 
@@ -61,8 +61,8 @@ jobs:
       cache-scope: base-python
 
   build-dev:
-    needs: [detect-changes, build-python]
-    if: ${{ needs.detect-changes.outputs.dev == 'true' &&
+    needs: [changes, build-python]
+    if: ${{ needs.changes.outputs.dev == 'true' &&
             (needs.build-python.result == 'success' ||
              needs.build-python.result == 'skipped') }}
     uses: ./.github/workflows/_docker-build-template.yml
@@ -73,8 +73,10 @@ jobs:
 
   run-tests:
     runs-on: dimos-runner-ubuntu-2204
-    needs: [detect-changes, build-dev]
-    if: ${{ always() && needs.detect-changes.outputs.tests == 'true' }}
+    needs:
+      - changes
+      - build-dev
+    if: ${{ always() && needs.changes.outputs.tests == 'true' }}
     container:
       image: ghcr.io/dimensionalos/dev:latest
     steps:
