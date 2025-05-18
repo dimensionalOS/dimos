@@ -71,6 +71,14 @@ jobs:
       dockerfile:  docker/dev/Dockerfile
       cache-scope: dev
 
+  experiment:
+    needs: detect-changes
+    runs-on: dimos-runner-ubuntu-2204
+    steps:
+      - name: check result
+        run: |
+         echo 'needs.build-dev.result'
+
   run-tests:
     runs-on: dimos-runner-ubuntu-2204
     needs: [detect-changes, build-dev]
