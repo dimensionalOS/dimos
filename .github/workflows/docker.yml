@@ -70,9 +70,10 @@ jobs:
     needs: [changes, build-ros]
     if: |
       ${{
-      (needs.build-ros.result == 'success') ||
+      always() && !cancelled() &&
+      ((needs.build-ros.result == 'success') ||
       (needs.build-ros.result == 'skipped' &&
-      needs.changes.outputs.python == 'true')
+      needs.changes.outputs.python == 'true'))
       }}
 
     uses: ./.github/workflows/_docker-build-template.yml
@@ -85,7 +86,8 @@ jobs:
     needs: [changes, build-python]
     if: |
       ${{
-      always() && ((needs.build-python.result == 'success') ||
+      always() && !cancelled() &&
+      ((needs.build-python.result == 'success') ||
       (needs.build-python.result == 'skipped' &&
       needs.changes.outputs.dev == 'true'))
       }}
@@ -101,9 +103,10 @@ jobs:
     needs: [changes, build-dev]
     if: |
       ${{
-      (needs.build-python.result == 'success') ||
+      always() && !cancelled() &&
+      ((needs.build-python.result == 'success') ||
       (needs.build-python.result == 'skipped' &&
-      needs.changes.outputs.tests == 'true')
+      needs.changes.outputs.tests == 'true'))
       }}
 
     container:
