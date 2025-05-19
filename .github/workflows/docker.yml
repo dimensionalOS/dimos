@@ -118,4 +118,4 @@ jobs:
         run: |
           pwd
           ls
-          pytest-3 -sv .
+          pytest-3 -sv dimos/
