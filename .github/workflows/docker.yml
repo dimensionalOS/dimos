@@ -7,10 +7,10 @@ permissions:
   contents: read
   packages: write
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  # cancel previous workflows within the same branch or PR
-  cancel-in-progress: true
+# concurrency:
+#   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+#   # cancel previous workflows within the same branch or PR
+#   cancel-in-progress: true
 
 jobs:
   changes:
