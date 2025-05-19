@@ -1,3 +1,4 @@
+# trigger rebuild: 1
 FROM ubuntu:22.04
 
 # Avoid prompts from apt
