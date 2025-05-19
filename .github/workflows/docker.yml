@@ -115,4 +115,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run tests
-        run: pytest-3 -sv dimos/
+        run: |
+          pwd
+          ls
+          pytest-3 -sv .
