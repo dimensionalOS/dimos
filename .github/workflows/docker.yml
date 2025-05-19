@@ -118,5 +118,7 @@ jobs:
         run: |
           pwd
           ls
-          echo $PYTHONPATH
+          echo "python path:" $PYTHONPATH
+          echo "ros distro" $ROS_DISTRO
+          ls /opt/ros
           pytest-3 -sv dimos/
