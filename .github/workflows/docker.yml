@@ -1,10 +1,12 @@
 name: docker-tree
-on:
-  pull_request:
-    branches:
-      - dev
-      - main
-      - master
+
+on: push
+
+#  pull_request:
+#    branches:
+#      - dev
+#      - main
+#      - master
 
 permissions:
   contents: read
@@ -28,7 +30,7 @@ jobs:
       - id: filter
         uses: dorny/paths-filter@v3
         with:
-#          base: ${{ github.event.before }}
+          base: ${{ github.event.before }}
           filters: |
             ros:
               # ros rebuild will cascade to full rebuild
