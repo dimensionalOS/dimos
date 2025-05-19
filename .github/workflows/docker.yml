@@ -74,6 +74,7 @@ jobs:
 
   inspect-needs:
     needs: [check-changes, set-tag, build-ros]
+    runs-on: dimos-runner-ubuntu-2204
     if: always()
     steps:
       - run: |
