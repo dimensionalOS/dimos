@@ -7,6 +7,11 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # cancel previous workflows within the same branch or PR
+  cancel-in-progress: true
+
 jobs:
   changes:
     runs-on: dimos-runner-ubuntu-2204
@@ -14,7 +19,7 @@ jobs:
       ros:    ${{ steps.filter.outputs.ros }}
       python: ${{ steps.filter.outputs.python }}
       dev:    ${{ steps.filter.outputs.dev }}
-      tests:    ${{ steps.filter.outputs.tests }}
+      tests:  ${{ steps.filter.outputs.tests }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -51,9 +56,11 @@ jobs:
   build-python:
     needs: [changes, build-ros]
     if: |
-      ${{ always()
-      && ((needs.changes.outputs.python == 'true' && needs.build-ros.result == 'skipped')
-      || needs.build-ros.result == 'success') }}
+      ${({
+      (needs.build-ros.result == 'success') ||
+      (needs.build-ros.result == 'skipped' &&
+      needs.changes.outputs.python == 'true')
+      })}
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
@@ -64,9 +71,11 @@ jobs:
   build-dev:
     needs: [changes, build-python]
     if: |
-      ${{ always()
-      && ((needs.changes.outputs.dev == 'true' && needs.build-python.result == 'skipped')
-      || needs.build-python.result == 'success') }}
+      ${({
+      (needs.build-python.result == 'success') ||
+      (needs.build-python.result == 'skipped' &&
+      needs.changes.outputs.dev == 'true')
+      })}
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
@@ -78,9 +87,11 @@ jobs:
     runs-on: dimos-runner-ubuntu-2204
     needs: [changes, build-dev]
     if: |
-      ${{ always()
-      && ((needs.changes.outputs.tests == 'true' && needs.build-dev.result == 'skipped')
-      || needs.build-dev.result == 'success') }}
+      ${({
+      (needs.build-python.result == 'success') ||
+      (needs.build-python.result == 'skipped' &&
+      needs.changes.outputs.tests == 'true')
+      })}
 
     container:
       image: ghcr.io/dimensionalos/dev:latest

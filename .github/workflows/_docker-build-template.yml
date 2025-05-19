@@ -4,8 +4,8 @@ on:
     inputs:
       image-tag:   { type: string, required: true }
       dockerfile:  { type: string, required: true }
-      context:     { type: string, default: '.' }
       cache-scope: { type: string, required: true }
+      context:     { type: string, default: '.' }
 
 jobs:
   build:
@@ -23,12 +23,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # required for github cache of docker layers
       - uses: crazy-max/ghaction-github-runtime@v3
 
-      - name: Show active builder
-        run: docker buildx ls
-
       - uses: docker/setup-buildx-action@v3
+        # required for github cache of docker layers
         with:
           driver: docker-container
           install: true
