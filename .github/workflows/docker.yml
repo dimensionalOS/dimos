@@ -68,10 +68,10 @@ jobs:
                            | sed -E 's#[^a-z0-9_.-]+#-#g'       # illegal → -
                            | sed -E 's#^-+|-+$##g')             # trim edge dashes
               image_tag="${image_tag:0:128}" ;;                 # hard 128-char cap
-
               esac
 
-echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+              echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+
   build-ros:
     needs: [check-changes, set-tag]
     if: needs.check-changes.outputs.ros == 'true'
