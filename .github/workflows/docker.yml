@@ -21,7 +21,7 @@ jobs:
       - id: filter
         uses: dorny/paths-filter@v3
         with:
-          base: ${{ github.event.before }}
+          # base: ${{ github.event.before }}
           filters: |
             ros:
               # ros rebuild will cascade to full rebuild
