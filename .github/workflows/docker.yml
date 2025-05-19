@@ -116,10 +116,4 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run tests
         run: |
-          pwd
-          ls
-          echo "python path:" $PYTHONPATH
-          export PYTHONPATH=$(pwd):$PYTHONPATH
-          source /opt/ros/${ROS_DISTRO}/setup.bash
-          echo "python path post source:" $PYTHONPATH
-          pytest-3 -sv dimos/
+          /entrypoint.sh "pytest-3 -sv dimos/"
