@@ -27,18 +27,18 @@ jobs:
         with:
           base: ${{ github.event.before }}
           filters: |
-            all:
+            ros:
+              # ros rebuild will cascade to full rebuild
+              # this is why changes to this workflow trigger ros
               - .github/workflows/_docker-build-template.yml
               - .github/workflows/docker.yml
-
-            ros: &all
               - docker/base-ros/**
 
-            python: &all
+            python:
               - docker/base-python/**
               - requirements*.txt
 
-            dev: &all
+            dev:
               - docker/dev/**
 
             tests:
