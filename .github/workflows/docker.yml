@@ -58,14 +58,20 @@ jobs:
       - name: Determine Image Tag
         id: set-tag
         run: |
-          if [ "${GITHUB_REF_NAME}" == "master" ]; then
-            echo "image_tag=latest" >> "$GITHUB_OUTPUT"
-          elif [ "${GITHUB_REF_NAME}" == "dev" ]; then
-            echo "image_tag=dev" >> "$GITHUB_OUTPUT"
-          else
-            echo "image_tag=PR${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
-          fi
+          case "${GITHUB_REF_NAME}" in
+            master) image_tag="latest" ;;
+            dev)    image_tag="dev"    ;;
+            *)
+              # 2 — Make any branch/PR name RFC-3986-ish and Docker-safe
+              image_tag=$(echo "${GITHUB_REF_NAME}" \
+                           | tr '[:upper:]' '[:lower:]'         # normalise case
+                           | sed -E 's#[^a-z0-9_.-]+#-#g'       # illegal → -
+                           | sed -E 's#^-+|-+$##g')             # trim edge dashes
+              image_tag="${image_tag:0:128}" ;;                 # hard 128-char cap
 
+              esac
+
+echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
   build-ros:
     needs: [check-changes, set-tag]
     if: needs.check-changes.outputs.ros == 'true'
