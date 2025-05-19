@@ -190,28 +190,45 @@ yarn dev # you may need to run sudo if previously built via Docker
 
 ### Project Structure 
 
-Non-production directories excluded 
 ```
 .
 ├── dimos/
-│   ├── agents/               # Agent implementations
-│   │   ├── planning/         # Planning-specific agents
-│   │   └── execution/        # Execution-specific agents
-│   ├── robot/
-│   │   ├── skills/           # AbstractRobotSkill
-│   │   ├── control/          # Robot control interfaces
-│   │   └── unitree/          # Unitree Go2 specific code
-│   │   ├── global_planner/   # Global planners
-│   │   └── local_planner/    # Local navigation planners
-│   ├── stream/               # Reactive data streams
-│   │   ├── video/            # Video streaming
-│   │   └── commands/         # Command streaming
-│   ├── simulation/           # Simulation environments
-│   ├── types/                # Type definitions
-│   ├── utils/                # Utility functions
-│   └── web/                  # Web interface
-├── tests/                    # Examples
-└── docker/                   # Docker configs
+│   ├── agents/       # Agent implementations
+│   │   └── memory/   # Memory systems for agents, including semantic memory
+│   ├── environment/  # Environment context and sensing
+│   ├── hardware/     # Hardware abstraction and interfaces
+│   ├── models/       # ML model definitions and implementations
+│   │   ├── Detic/    # Detic object detection model
+│   │   ├── depth/    # Depth estimation models
+│   │   ├── segmentation/ # Image segmentation models
+│   ├── perception/   # Computer vision and sensing
+│   │   ├── detection2d/ # 2D object detection
+│   │   └── segmentation/ # Image segmentation pipelines
+│   ├── robot/        # Robot control and hardware interface
+│   │   ├── global_planner/ # Path planning at global scale
+│   │   ├── local_planner/  # Local navigation planning
+│   │   └── unitree/   # Unitree Go2 specific implementations
+│   ├── simulation/   # Robot simulation environments
+│   │   ├── genesis/  # Genesis simulation integration
+│   │   └── isaac/    # NVIDIA Isaac Sim integration
+│   ├── skills/       # Task-specific robot capabilities
+│   │   └── rest/     # REST API based skills
+│   ├── stream/       # WebRTC and data streaming
+│   │   ├── audio/    # Audio streaming components
+│   │   └── video_providers/ # Video streaming components
+│   ├── types/        # Type definitions and interfaces
+│   ├── utils/        # Utility functions and helpers
+│   └── web/          # DimOS development interface and API
+│       ├── dimos_interface/ # DimOS web interface 
+│       └── websocket_vis/   # Websocket visualizations
+├── tests/            # Test files
+│   ├── genesissim/   # Genesis simulator tests
+│   └── isaacsim/     # Isaac Sim tests
+└── docker/           # Docker configuration files
+    ├── agent/        # Agent service containers
+    ├── interface/    # Interface containers
+    ├── simulation/   # Simulation environment containers
+    └── unitree/      # Unitree robot specific containers
 ```
 
 ## Building
