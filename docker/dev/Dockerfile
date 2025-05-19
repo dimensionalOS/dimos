@@ -1,4 +1,4 @@
-# trigger rebuild: 4
+# trigger rebuild: 5
 FROM ghcr.io/dimensionalos/base-ros-python
 
 ARG GIT_COMMIT=unknown
