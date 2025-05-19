@@ -1,17 +1,19 @@
-# ubuntu Jammy (22.04)
-FROM ros:humble
+FROM ubuntu:22.04
 
+# Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
-ENV ROS_DISTRO=humble
 
-RUN apt-get update
-
-RUN apt-get install -y locales && \
+# Set locale
+RUN apt-get update && apt-get install -y locales && \
     locale-gen en_US en_US.UTF-8 && \
     update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
 ENV LANG=en_US.UTF-8
 
+# Set ROS distro
+ENV ROS_DISTRO=humble
+
 # Install basic requirements
+RUN apt-get update
 RUN apt-get install -y \
     curl \
     gnupg2 \
@@ -40,8 +42,15 @@ RUN apt-get install -y \
     qtbase5-dev-tools \
     supervisor
 
-# install ros stuff
-RUN apt-get install -y \
+# Install specific numpy version first
+RUN pip install 'numpy<2.0.0'
+
+# Add ROS2 apt repository
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null
+
+# Install ROS2 packages and dependencies
+RUN apt-get update && apt-get install -y \
     ros-${ROS_DISTRO}-desktop \
     ros-${ROS_DISTRO}-ros-base \
     ros-${ROS_DISTRO}-image-tools \
@@ -67,6 +76,10 @@ RUN apt-get install -y \
     python3-wstool \
     python3-colcon-common-extensions \
     python3-vcstool \
-    build-essential
+    build-essential \
+    screen \
+    tmux
 
+# Initialize rosdep
+RUN rosdep init
 RUN rosdep update
