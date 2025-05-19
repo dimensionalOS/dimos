@@ -25,6 +25,6 @@ RUN echo "echo -e '\033[34m$(cat /etc/motd)\033[0m\n'" >> /root/.bashrc
 
 RUN echo "source /root/.bash.sh" >> /root/.bashrc
 
-WORKDIR /app
+COPY entrypoint.sh /app
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/app/entrypoint.sh"]
