@@ -118,4 +118,5 @@ jobs:
         run: |
           pwd
           ls
+          echo $PYTHONPATH
           pytest-3 -sv dimos/
