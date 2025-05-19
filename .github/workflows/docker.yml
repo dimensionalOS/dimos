@@ -116,7 +116,7 @@ jobs:
       cache-scope: dev
 
   run-tests:
-    needs: [check-changes, build-dev]
+    needs: [check-changes, set-tag, build-dev]
     if: |
       ${{
       always() && !cancelled() &&

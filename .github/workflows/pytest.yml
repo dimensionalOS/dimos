@@ -4,6 +4,7 @@ on:
  workflow_call:
    inputs:
      imagetag:
+       required: true
        type: string
        default: "latest"
 
