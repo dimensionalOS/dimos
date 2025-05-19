@@ -5,8 +5,6 @@ on:
       - dev
       - main
       - master
-#  push:
-#    branches: [ env/devcontainer2 ]
 
 permissions:
   contents: read
@@ -30,7 +28,7 @@ jobs:
       - id: filter
         uses: dorny/paths-filter@v3
         with:
-          base: ${{ github.event.before }}
+#          base: ${{ github.event.before }}
           filters: |
             ros:
               # ros rebuild will cascade to full rebuild
@@ -91,6 +89,7 @@ jobs:
       ((needs.build-ros.result == 'success') ||
       (needs.build-ros.result == 'skipped' &&
       needs.check-changes.outputs.python == 'true'))
+
       }}
 
     uses: ./.github/workflows/_docker-build-template.yml
@@ -127,3 +126,5 @@ jobs:
       needs.check-changes.outputs.tests == 'true'))
       }}
     uses: ./.github/workflows/pytest.yml
+    with:
+      imagetag: ${{ needs.set-tag.outputs.image-tag }}

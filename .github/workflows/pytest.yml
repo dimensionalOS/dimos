@@ -2,6 +2,10 @@ name: testing
 
 on:
  workflow_call:
+   inputs:
+     imagetag:
+       type: string
+       default: "latest"
 
 permissions:
   contents: read
@@ -12,7 +16,7 @@ jobs:
     runs-on: dimos-runner-ubuntu-2204
 
     container:
-      image: ghcr.io/dimensionalos/dev:latest
+      image: ghcr.io/dimensionalos/dev:${{ inputs.imagetag }}
 
     steps:
       - uses: actions/checkout@v4
