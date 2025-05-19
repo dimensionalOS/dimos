@@ -1,7 +1,8 @@
 name: docker-tree
 on:
-  push:
-    branches: [ env/devcontainer2 ]
+  pull_request:
+    branches:
+      - '*'
 
 permissions:
   contents: read
