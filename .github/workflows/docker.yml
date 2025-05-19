@@ -60,7 +60,7 @@ jobs:
           if [ "${GITHUB_REF_NAME}" == "master" ]; then
             echo "image_tag=latest" >> "$GITHUB_OUTPUT"
           else
-            echo "image_tag=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+            echo "image_tag=PR${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
           fi
 
   build-ros:
