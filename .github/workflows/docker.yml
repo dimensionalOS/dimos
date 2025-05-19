@@ -7,11 +7,6 @@ permissions:
   contents: read
   packages: write
 
-# concurrency:
-#   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-#   # cancel previous workflows within the same branch or PR
-#   cancel-in-progress: true
-
 jobs:
   changes:
     runs-on: dimos-runner-ubuntu-2204
@@ -97,3 +92,13 @@ jobs:
       image-tag:   ghcr.io/dimensionalos/dev:latest
       dockerfile:  docker/dev/Dockerfile
       cache-scope: dev
+
+  run-tests:
+    if: |
+      ${{
+      always() && !cancelled() &&
+      ((needs.build-dev.result == 'success') ||
+      (needs.build-dev.result == 'skipped' &&
+      needs.changes.outputs.tests == 'true'))
+      }}
+    uses: ./.github/workflows/pytest.yml

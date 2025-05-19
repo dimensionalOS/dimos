@@ -1,11 +1,10 @@
-name: docker-tree
+name: testing
+
 on:
-  push:
-    branches: [ env/devcontainer2 ]
+ workflow_call:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   run-tests:
