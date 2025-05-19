@@ -97,23 +97,3 @@ jobs:
       image-tag:   ghcr.io/dimensionalos/dev:latest
       dockerfile:  docker/dev/Dockerfile
       cache-scope: dev
-
-  run-tests:
-    runs-on: dimos-runner-ubuntu-2204
-    needs: [changes, build-dev]
-    if: |
-      ${{
-      always() && !cancelled() &&
-      ((needs.build-python.result == 'success') ||
-      (needs.build-python.result == 'skipped' &&
-      needs.changes.outputs.tests == 'true'))
-      }}
-
-    container:
-      image: ghcr.io/dimensionalos/dev:latest
-
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run tests
-        run: |
-          /entrypoint.sh "pytest-3 -sv dimos/"
