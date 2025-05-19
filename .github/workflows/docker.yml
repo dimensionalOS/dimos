@@ -76,9 +76,10 @@ jobs:
     needs: [check-changes, set-tag, build-ros]
     # use always() so it runs even when earlier steps skip / fail
     if: always()
-    run: |
-      echo '=== needs context ==='
-      echo '${{ toJSON(needs) }}'
+    steps:
+      run: |
+        echo '=== needs context ==='
+        echo '${{ toJSON(needs) }}'
 
   build-python:
     needs: [check-changes, set-tag, build-ros]
