@@ -48,30 +48,46 @@ jobs:
             tests:
               - dimos/**
 
+  set-tag:
+    runs-on: dimos-runner-ubuntu-2204
+    outputs:
+      image-tag: ${{ steps.set-tag.outputs.image_tag }}
+    steps:
+      - name: Determine Image Tag
+        id: set-tag
+        run: |
+          if [ "${GITHUB_REF_NAME}" == "master" ]; then
+            echo "image_tag=latest" >> $GITHUB_ENV
+          else
+            echo "image_tag=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+          fi
+
   debug-vars:
     runs-on: dimos-runner-ubuntu-2204
-    needs: [changes]     # keep the links so we can read their data
+    needs: [set-tag, changes]     # keep the links so we can read their data
     # The extra test on result makes the job “eligible” even if build-dev was skipped
     steps:
       - name: Show the values the test job uses
         env:
           TESTS_FLAG:       ${{ needs.changes.outputs.tests }}
+          TAG:       ${{ needs.set-tag.outputs.image-tag }}
           BUILD_DEV_RESULT: ${{ needs.build-dev.result }}
         run: |
           echo "needs.changes.outputs.tests    = '${TESTS_FLAG}'"
           echo "needs.build-dev.result         = '${BUILD_DEV_RESULT}'"
+          echo "docker tag         = '${TAG}'"
 
   build-ros:
-    needs: changes
+    needs: [changes, set-tag]
     if: needs.changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      image-tag:   ghcr.io/dimensionalos/base-ros:${{ env.IMAGE_TAG }}
+      image-tag:   ghcr.io/dimensionalos/base-ros:${{ needs.set-tag.outputs.image-tag }}
       dockerfile:  docker/base-ros/Dockerfile
       cache-scope: base-ros
 
   build-python:
-    needs: [changes, build-ros]
+    needs: [changes, set-tag, build-ros]
     if: |
       ${{
       always() && !cancelled() &&
@@ -82,12 +98,12 @@ jobs:
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      image-tag:   ghcr.io/dimensionalos/base-ros-python:${{ env.IMAGE_TAG }}
+      image-tag:   ghcr.io/dimensionalos/base-ros-python:${{ needs.set-tag.outputs.image-tag }}
       dockerfile:  docker/base-ros-python/Dockerfile
       cache-scope: base-python
 
   build-dev:
-    needs: [changes, build-python]
+    needs: [changes, set-tag, build-python]
     if: |
       ${{
       always() && !cancelled() &&
@@ -98,7 +114,7 @@ jobs:
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      image-tag:   ghcr.io/dimensionalos/dev:${{ env.IMAGE_TAG }}
+      image-tag:   ghcr.io/dimensionalos/dev:${{ needs.set-tag.outputs.image-tag }}
       dockerfile:  docker/dev/Dockerfile
       cache-scope: dev
 
