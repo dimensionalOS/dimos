@@ -69,7 +69,7 @@ jobs:
     if: needs.changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      image-tag:   ghcr.io/dimensionalos/base-ros:${{ env.IMAGE_TAG}}
+      image-tag:   ghcr.io/dimensionalos/base-ros:${{ env.IMAGE_TAG }}
       dockerfile:  docker/base-ros/Dockerfile
       cache-scope: base-ros
 
@@ -85,7 +85,7 @@ jobs:
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      image-tag:   ghcr.io/dimensionalos/base-ros-python:${{ env.IMAGE_TAG}}
+      image-tag:   ghcr.io/dimensionalos/base-ros-python:${{ env.IMAGE_TAG }}
       dockerfile:  docker/base-ros-python/Dockerfile
       cache-scope: base-python
 
@@ -101,7 +101,7 @@ jobs:
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      image-tag:   ghcr.io/dimensionalos/dev:${{ env.IMAGE_TAG}}
+      image-tag:   ghcr.io/dimensionalos/dev:${{ env.IMAGE_TAG }}
       dockerfile:  docker/dev/Dockerfile
       cache-scope: dev
 
