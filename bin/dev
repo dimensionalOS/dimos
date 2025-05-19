@@ -5,7 +5,7 @@ build_image() {
     docker build \
         --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) \
         --build-arg GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD) \
-        -t dimensionalos/dev-base docker/dev/base/
+        -t ghcr.io/dimensionalos/dev -f docker/dev/Dockerfile .
 }
 
 remove_image() {
@@ -37,8 +37,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if ! docker image inspect dimensionalos/dev-base &>/dev/null; then
-    echo "Image dimensionalos/dev-base not found. Building..."
+if ! docker image inspect ghcr.io/dimensionalos/dev &>/dev/null; then
+    echo "Image ghcr.io/dimensionalos/dev not found. Building..."
     build_image
 fi
 
