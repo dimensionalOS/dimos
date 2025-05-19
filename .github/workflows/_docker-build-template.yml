@@ -3,8 +3,7 @@ on:
   workflow_call:
     inputs:
       image-tag:   { type: string, required: true }
-      dockerfile:  { type: string, required: true }
-      cache-scope: { type: string, required: true }
+      target:      { type: string, required: true }
       context:     { type: string, default: '.' }
 
 # you can run this locally as well via
@@ -36,12 +35,13 @@ jobs:
           use: true
 
       - uses: docker/build-push-action@v6
+
         with:
           push: true
           context: ${{ inputs.context }}
-          file:   ${{ inputs.dockerfile }}
-          tags:   ${{ inputs.image-tag }}
-          cache-from: type=gha,scope=${{ inputs.cache-scope }}
-          cache-to:   type=gha,mode=max,scope=${{ inputs.cache-scope }}
+          file:   docker/${{ inputs.target }}/Dockerfile
+          tags:   ghcr.io/dimensionalos/${{ inputs.target }}:${{ inputs.image-tag }}
+          cache-from: type=gha,scope=${{ inputs.target }}
+          cache-to:   type=gha,mode=max,scope=${{ inputs.target }}
           build-args: |
             FROM_TAG=${{ inputs.image-tag }}

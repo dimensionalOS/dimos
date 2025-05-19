@@ -76,9 +76,8 @@ jobs:
     if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      image-tag:   ghcr.io/dimensionalos/base-ros:${{ needs.set-tag.outputs.image-tag }}
-      dockerfile:  docker/base-ros/Dockerfile
-      cache-scope: base-ros
+      image-tag: ${{ needs.set-tag.outputs.image-tag }}
+      target:  base-ros
 
   inspect-needs:
     needs: [check-changes, set-tag, build-ros]
@@ -86,7 +85,6 @@ jobs:
     if: always()
     steps:
       - run: |
-          echo '=== needs context ==='
           echo '${{ toJSON(needs) }}'
 
   build-python:
@@ -103,9 +101,8 @@ jobs:
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      image-tag:   ghcr.io/dimensionalos/base-ros-python:${{ needs.set-tag.outputs.image-tag }}
-      dockerfile:  docker/base-ros-python/Dockerfile
-      cache-scope: base-python
+      image-tag:   ${{ needs.set-tag.outputs.image-tag }}
+      target:  base-ros-python
 
   build-dev:
     needs: [check-changes, set-tag, build-python]
@@ -120,9 +117,8 @@ jobs:
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      image-tag:   ghcr.io/dimensionalos/dev:${{ needs.set-tag.outputs.image-tag }}
-      dockerfile:  docker/dev/Dockerfile
-      cache-scope: dev
+      image-tag:   ${{ needs.set-tag.outputs.image-tag }}
+      target: dev
 
   run-tests:
     needs: [check-changes, set-tag, build-dev]
