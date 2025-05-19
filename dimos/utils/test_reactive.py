@@ -4,8 +4,8 @@ import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
 from typing import Callable, TypeVar, Any
-from dimos.utils.reactive import backpressure, getter_streaming, getter_ondemand
 from reactivex.disposable import Disposable
+from dimos.utils.reactive import backpressure, getter_streaming, getter_ondemand, callback_to_observable
 
 
 def measure_time(func: Callable[[], Any], iterations: int = 1) -> float:
@@ -15,18 +15,23 @@ def measure_time(func: Callable[[], Any], iterations: int = 1) -> float:
     total_time = end_time - start_time
     return result, total_time
 
+
 def assert_time(func: Callable[[], Any], assertion: Callable[[int], bool], assert_fail_msg=None) -> None:
-    [result, total_time ] = measure_time(func)
+    [result, total_time] = measure_time(func)
     assert assertion(total_time), assert_fail_msg + f", took {round(total_time, 2)}s"
     return result
+
 
 def min_time(func: Callable[[], Any], min_t: int, assert_fail_msg="Function returned too fast"):
     return assert_time(func, (lambda t: t > min_t), assert_fail_msg + f", min: {min_t} seconds")
 
+
 def max_time(func: Callable[[], Any], max_t: int, assert_fail_msg="Function took too long"):
     return assert_time(func, (lambda t: t < max_t), assert_fail_msg + f", max: {max_t} seconds")
 
-T = TypeVar('T')
+
+T = TypeVar("T")
+
 
 def dispose_spy(source: rx.Observable[T]) -> rx.Observable[T]:
     state = {"active": 0}
@@ -34,9 +39,11 @@ def dispose_spy(source: rx.Observable[T]) -> rx.Observable[T]:
     def factory(observer, scheduler=None):
         state["active"] += 1
         upstream = source.subscribe(observer, scheduler=scheduler)
+
         def _dispose():
             upstream.dispose()
             state["active"] -= 1
+
         return Disposable(_dispose)
 
     proxy = rx.create(factory)
@@ -45,16 +52,11 @@ def dispose_spy(source: rx.Observable[T]) -> rx.Observable[T]:
     return proxy
 
 
-
-
 def test_backpressure_handling():
     received_fast = []
     received_slow = []
     # Create an observable that emits numpy arrays instead of integers
-    source = dispose_spy(rx.interval(0.1).pipe(
-        ops.map(lambda i: np.array([i, i+1, i+2])),
-        ops.take(50)
-    ))
+    source = dispose_spy(rx.interval(0.1).pipe(ops.map(lambda i: np.array([i, i + 1, i + 2])), ops.take(50)))
 
     # Wrap with backpressure handling
     safe_source = backpressure(source)
@@ -64,9 +66,9 @@ def test_backpressure_handling():
 
     # Slow sub (shouldn't block above)
     subscription2 = safe_source.subscribe(lambda x: (time.sleep(0.25), received_slow.append(x)))
-    
+
     time.sleep(2.5)
-    
+
     subscription1.dispose()
     assert not source.is_disposed(), "Observable should not be disposed yet"
     subscription2.dispose()
@@ -76,30 +78,27 @@ def test_backpressure_handling():
     # Check results
     print("Fast observer received:", len(received_fast), [arr[0] for arr in received_fast])
     print("Slow observer received:", len(received_slow), [arr[0] for arr in received_slow])
-    
+
     # Fast observer should get all or nearly all items
     assert len(received_fast) > 15, f"Expected fast observer to receive most items, got {len(received_fast)}"
-    
+
     # Slow observer should get fewer items due to backpressure handling
     assert len(received_slow) < len(received_fast), "Slow observer should receive fewer items than fast observer"
     # Specifically, processing at 0.25s means ~4 items per second, so expect 8-10 items
     assert 7 <= len(received_slow) <= 11, f"Expected 7-11 items, got {len(received_slow)}"
-    
+
     # The slow observer should skip items (not process them in sequence)
     # We test this by checking that the difference between consecutive arrays is sometimes > 1
     has_skips = False
     for i in range(1, len(received_slow)):
-        if received_slow[i][0] - received_slow[i-1][0] > 1:
+        if received_slow[i][0] - received_slow[i - 1][0] > 1:
             has_skips = True
             break
     assert has_skips, "Slow observer should skip items due to backpressure"
 
 
 def test_getter_streaming_blocking():
-    source = dispose_spy(rx.interval(0.2).pipe(
-        ops.map(lambda i: np.array([i, i+1, i+2])),
-        ops.take(50)
-    ))
+    source = dispose_spy(rx.interval(0.2).pipe(ops.map(lambda i: np.array([i, i + 1, i + 2])), ops.take(50)))
     assert source.is_disposed()
 
     getter = min_time(lambda: getter_streaming(source), 0.2, "Latest getter needs to block until first msg is ready")
@@ -113,6 +112,7 @@ def test_getter_streaming_blocking():
     getter.dispose()
     assert source.is_disposed(), "Observable should be disposed"
 
+
 def test_getter_streaming_blocking_timeout():
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
     with pytest.raises(Exception):
@@ -120,10 +120,13 @@ def test_getter_streaming_blocking_timeout():
         getter.dispose()
     assert source.is_disposed()
 
+
 def test_getter_streaming_nonblocking():
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
 
-    getter = max_time(lambda: getter_streaming(source, nonblocking=True), 0.1, "nonblocking getter init shouldn't block")
+    getter = max_time(
+        lambda: getter_streaming(source, nonblocking=True), 0.1, "nonblocking getter init shouldn't block"
+    )
     min_time(getter, 0.2, "Expected for first value call to block if cache is empty")
     assert getter() == 0
 
@@ -136,9 +139,9 @@ def test_getter_streaming_nonblocking():
     time.sleep(0.5)
     assert getter() >= 4, f"Expected value >= 4, got {getter()}"
 
-
     getter.dispose()
     assert source.is_disposed(), "Observable should be disposed"
+
 
 def test_getter_streaming_nonblocking_timeout():
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
@@ -147,6 +150,7 @@ def test_getter_streaming_nonblocking_timeout():
         getter()
 
     assert not source.is_disposed(), "is not disposed, this is a job of the caller"
+
 
 def test_getter_ondemand():
     source = dispose_spy(rx.interval(0.1).pipe(ops.take(50)))
@@ -157,9 +161,50 @@ def test_getter_ondemand():
     assert getter() == 0, f"Expected to get the first value of 0, got {getter()}"
     assert source.is_disposed(), "Observable should be disposed"
 
+
 def test_getter_ondemand_timeout():
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
     getter = getter_ondemand(source, timeout=0.1)
     with pytest.raises(Exception):
         getter()
     assert source.is_disposed(), "Observable should be disposed"
+
+
+def test_callback_to_observable():
+    # Test converting a callback-based API to an Observable
+    received = []
+    callback = None
+
+    # Mock start function that captures the callback
+    def start_fn(cb):
+        nonlocal callback
+        callback = cb
+        return "start_result"
+
+    # Mock stop function
+    stop_called = False
+
+    def stop_fn(cb):
+        nonlocal stop_called
+        stop_called = True
+
+    # Create observable from callback
+    observable = callback_to_observable(start_fn, stop_fn)
+
+    # Subscribe to the observable
+    subscription = observable.subscribe(lambda x: received.append(x))
+
+    # Verify start was called and we have access to the callback
+    assert callback is not None
+
+    # Simulate callback being triggered with different messages
+    callback("message1")
+    callback(42)
+    callback({"key": "value"})
+
+    # Check that all messages were received
+    assert received == ["message1", 42, {"key": "value"}]
+
+    # Dispose subscription and check that stop was called
+    subscription.dispose()
+    assert stop_called, "Stop function should be called on dispose"

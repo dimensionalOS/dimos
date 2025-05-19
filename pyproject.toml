@@ -7,9 +7,15 @@ version = "0.0.2"
 description = "Powering agentive generalist robotics"
 
 [tool.ruff]
-# Allow lines to be as long as 120.
 line-length = 120
 
 [tool.pytest.ini_options]
 testpaths = ["dimos/robot"]
 norecursedirs = ["dimos/robot/unitree/external"]
+markers = [
+    "vis: marks tests that run visuals and require a visual check by dev",
+    "benchmark: benchmark, executes something multiple times, calculates avg, prints to console",
+    "exclude: arbitrary exclusion from CI and default test exec",
+    "tool: dev tooling"
+]
+addopts = "-m 'not vis and not benchmark and not exclude and not tool'"

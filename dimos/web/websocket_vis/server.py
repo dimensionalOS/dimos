@@ -148,8 +148,6 @@ class WebsocketVis:
 
     def connect(self, obs: Observable[Tuple[str, Drawable]], window_name: str = "main"):
         """Connect to an Observable stream and update state on new data"""
-        # Subscribe to the stream
-        print("Subing to", obs)
 
         def new_update(data):
             [name, drawable] = data
