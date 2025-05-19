@@ -87,6 +87,14 @@ jobs:
       dockerfile:  docker/base-ros/Dockerfile
       cache-scope: base-ros
 
+  inspect-needs:
+    needs: [check-changes, set-tag, build-ros]
+    # use always() so it runs even when earlier steps skip / fail
+    if: always()
+    run: |
+      echo '=== needs context ==='
+      echo '${{ toJSON(needs) }}'
+
   build-python:
     needs: [check-changes, set-tag, build-ros]
     if: |
@@ -97,10 +105,6 @@ jobs:
       (needs.build-ros.result == 'skipped' &&
       needs.check-changes.outputs.python == 'true'))
       }}
-
-    run: |
-      echo '=== needs context ==='
-      echo '${{ toJSON(needs) }}'
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
