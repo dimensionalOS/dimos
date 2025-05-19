@@ -63,21 +63,6 @@ jobs:
             echo "image_tag=latest" >> $GITHUB_ENV
           fi
 
-  debug-vars:
-    runs-on: dimos-runner-ubuntu-2204
-    needs: [set-tag, check-changes]     # keep the links so we can read their data
-    # The extra test on result makes the job “eligible” even if build-dev was skipped
-    steps:
-      - name: Show the values the test job uses
-        env:
-          TESTS_FLAG:       ${{ needs.check-changes.outputs.tests }}
-          TAG:       ${{ needs.set-tag.outputs.image-tag }}
-          BUILD_DEV_RESULT: ${{ needs.build-dev.result }}
-        run: |
-          echo "needs.check-changes.outputs.tests    = '${TESTS_FLAG}'"
-          echo "needs.build-dev.result         = '${BUILD_DEV_RESULT}'"
-          echo "docker tag         = '${TAG}'"
-
   build-ros:
     needs: [check-changes, set-tag]
     if: needs.check-changes.outputs.ros == 'true'
