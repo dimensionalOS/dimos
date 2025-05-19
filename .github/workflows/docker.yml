@@ -119,6 +119,7 @@ jobs:
           pwd
           ls
           echo "python path:" $PYTHONPATH
+          export PYTHONPATH=$(pwd):$PYTHONPATH
           source /opt/ros/${ROS_DISTRO}/setup.bash
           echo "python path post source:" $PYTHONPATH
           pytest-3 -sv dimos/
