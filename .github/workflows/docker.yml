@@ -56,11 +56,11 @@ jobs:
   build-python:
     needs: [changes, build-ros]
     if: |
-      ${({
+      ${{
       (needs.build-ros.result == 'success') ||
       (needs.build-ros.result == 'skipped' &&
       needs.changes.outputs.python == 'true')
-      })}
+      }}
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
@@ -71,11 +71,11 @@ jobs:
   build-dev:
     needs: [changes, build-python]
     if: |
-      ${({
+      ${{
       (needs.build-python.result == 'success') ||
       (needs.build-python.result == 'skipped' &&
       needs.changes.outputs.dev == 'true')
-      })}
+      }}
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
@@ -87,11 +87,11 @@ jobs:
     runs-on: dimos-runner-ubuntu-2204
     needs: [changes, build-dev]
     if: |
-      ${({
+      ${{
       (needs.build-python.result == 'success') ||
       (needs.build-python.result == 'skipped' &&
       needs.changes.outputs.tests == 'true')
-      })}
+      }}
 
     container:
       image: ghcr.io/dimensionalos/dev:latest
