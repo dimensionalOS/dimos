@@ -17,7 +17,7 @@ env:
 
 
 jobs:
-  changes:
+  check-changes:
     runs-on: dimos-runner-ubuntu-2204
     outputs:
       ros:    ${{ steps.filter.outputs.ros }}
@@ -33,7 +33,7 @@ jobs:
           filters: |
             ros:
               # ros rebuild will cascade to full rebuild
-              # this is why changes to this workflow trigger ros
+              # this is why check-changes to this workflow trigger ros
               - .github/workflows/_docker-build-template.yml
               - .github/workflows/docker.yml
               - docker/base-ros/**
@@ -48,6 +48,7 @@ jobs:
             tests:
               - dimos/**
 
+  # this needs a fix, for now it's always "latest"
   set-tag:
     runs-on: dimos-runner-ubuntu-2204
     outputs:
@@ -59,27 +60,27 @@ jobs:
           if [ "${GITHUB_REF_NAME}" == "master" ]; then
             echo "image_tag=latest" >> $GITHUB_ENV
           else
-            echo "image_tag=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+            echo "image_tag=latest" >> $GITHUB_ENV
           fi
 
   debug-vars:
     runs-on: dimos-runner-ubuntu-2204
-    needs: [set-tag, changes]     # keep the links so we can read their data
+    needs: [set-tag, check-changes]     # keep the links so we can read their data
     # The extra test on result makes the job “eligible” even if build-dev was skipped
     steps:
       - name: Show the values the test job uses
         env:
-          TESTS_FLAG:       ${{ needs.changes.outputs.tests }}
+          TESTS_FLAG:       ${{ needs.check-changes.outputs.tests }}
           TAG:       ${{ needs.set-tag.outputs.image-tag }}
           BUILD_DEV_RESULT: ${{ needs.build-dev.result }}
         run: |
-          echo "needs.changes.outputs.tests    = '${TESTS_FLAG}'"
+          echo "needs.check-changes.outputs.tests    = '${TESTS_FLAG}'"
           echo "needs.build-dev.result         = '${BUILD_DEV_RESULT}'"
           echo "docker tag         = '${TAG}'"
 
   build-ros:
-    needs: [changes, set-tag]
-    if: needs.changes.outputs.ros == 'true'
+    needs: [check-changes, set-tag]
+    if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       image-tag:   ghcr.io/dimensionalos/base-ros:${{ needs.set-tag.outputs.image-tag }}
@@ -87,14 +88,19 @@ jobs:
       cache-scope: base-ros
 
   build-python:
-    needs: [changes, set-tag, build-ros]
+    needs: [check-changes, set-tag, build-ros]
     if: |
       ${{
       always() && !cancelled() &&
+      needs.check-changes.result == 'success' &&
       ((needs.build-ros.result == 'success') ||
       (needs.build-ros.result == 'skipped' &&
-      needs.changes.outputs.python == 'true'))
+      needs.check-changes.outputs.python == 'true'))
       }}
+
+    run: |
+      echo '=== needs context ==='
+      echo '${{ toJSON(needs) }}'
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
@@ -103,13 +109,14 @@ jobs:
       cache-scope: base-python
 
   build-dev:
-    needs: [changes, set-tag, build-python]
+    needs: [check-changes, set-tag, build-python]
     if: |
       ${{
       always() && !cancelled() &&
+      needs.check-changes.result == 'success' &&
       ((needs.build-python.result == 'success') ||
       (needs.build-python.result == 'skipped' &&
-      needs.changes.outputs.dev == 'true'))
+      needs.check-changes.outputs.dev == 'true'))
       }}
 
     uses: ./.github/workflows/_docker-build-template.yml
@@ -119,12 +126,13 @@ jobs:
       cache-scope: dev
 
   run-tests:
-    needs: [changes, build-dev]
+    needs: [check-changes, build-dev]
     if: |
       ${{
       always() && !cancelled() &&
+      needs.check-changes.result == 'success' &&
       ((needs.build-dev.result == 'success') ||
       (needs.build-dev.result == 'skipped' &&
-      needs.changes.outputs.tests == 'true'))
+      needs.check-changes.outputs.tests == 'true'))
       }}
     uses: ./.github/workflows/pytest.yml
