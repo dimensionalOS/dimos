@@ -7,6 +7,8 @@ on:
       cache-scope: { type: string, required: true }
       context:     { type: string, default: '.' }
 
+# you can run this locally as well via
+# ./bin/dockerbuild [image-name]
 jobs:
   build:
     runs-on: dimos-runner-ubuntu-2204

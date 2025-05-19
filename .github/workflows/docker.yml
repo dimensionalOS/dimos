@@ -71,14 +71,14 @@ jobs:
       dockerfile:  docker/base-ros/Dockerfile
       cache-scope: base-ros
 
-  inspect-needs:
-    needs: [check-changes, set-tag, build-ros]
-    runs-on: dimos-runner-ubuntu-2204
-    if: always()
-    steps:
-      - run: |
-          echo '=== needs context ==='
-          echo '${{ toJSON(needs) }}'
+  # inspect-needs:
+  #   needs: [check-changes, set-tag, build-ros]
+  #   runs-on: dimos-runner-ubuntu-2204
+  #   if: always()
+  #   steps:
+  #     - run: |
+  #         echo '=== needs context ==='
+  #         echo '${{ toJSON(needs) }}'
 
   build-python:
     needs: [check-changes, set-tag, build-ros]
