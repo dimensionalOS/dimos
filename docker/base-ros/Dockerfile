@@ -83,3 +83,6 @@ RUN apt-get update && apt-get install -y \
 # Initialize rosdep
 RUN rosdep init
 RUN rosdep update
+
+# Source ROS2 and workspace in bashrc
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /root/.bashrc
