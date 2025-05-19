@@ -64,9 +64,8 @@ jobs:
             *)
               image_tag=$(echo "${GITHUB_REF_NAME}" \
                   | tr '[:upper:]' '[:lower:]' \
-                  | sed -E 's#[^a-z0-9_.-]+#-#g' \
+                  | sed -E 's#[^a-z0-9_.-]+#_#g' \
                   | sed -E 's#^-+|-+$##g')
-              image_tag="${image_tag:0:128}"
               ;;
           esac
           echo "image tag determined: ${image_tag}"

@@ -1,5 +1,5 @@
-# trigger rebuild: 5
-FROM ghcr.io/dimensionalos/base-ros-python
+ARG FROM_TAG=latest
+FROM ghcr.io/dimensionalos/base-ros-python:${FROM_TAG}
 
 ARG GIT_COMMIT=unknown
 ARG GIT_BRANCH=unknown

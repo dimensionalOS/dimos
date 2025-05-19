@@ -43,3 +43,5 @@ jobs:
           tags:   ${{ inputs.image-tag }}
           cache-from: type=gha,scope=${{ inputs.cache-scope }}
           cache-to:   type=gha,mode=max,scope=${{ inputs.cache-scope }}
+          build-args: |
+            FROM_TAG=${{ inputs.image-tag }}

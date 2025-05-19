@@ -1,4 +1,5 @@
-FROM ghcr.io/dimensionalos/base-ros
+ARG FROM_TAG=latest
+FROM ghcr.io/dimensionalos/base-ros:${FROM_TAG}
 
 RUN mkdir -p /app/dimos
 
