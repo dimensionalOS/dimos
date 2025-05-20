@@ -2,7 +2,8 @@ name: docker-build-template
 on:
   workflow_call:
     inputs:
-      image-tag:   { type: string, required: true }
+      input-tag:   { type: string, required: true }
+      output-tag:   { type: string, required: true }
       target:      { type: string, required: true }
       freespace:   { type: boolean, default: false }
       context:     { type: string, default: '.' }
@@ -52,8 +53,12 @@ jobs:
           push: true
           context: ${{ inputs.context }}
           file:   docker/${{ inputs.target }}/Dockerfile
-          tags:   ghcr.io/dimensionalos/${{ inputs.target }}:${{ inputs.image-tag }}
+          tags:   ghcr.io/dimensionalos/${{ inputs.target }}:${{ inputs.output-tag }}
           cache-from: type=gha,scope=${{ inputs.target }}
           cache-to:   type=gha,mode=max,scope=${{ inputs.target }}
           build-args: |
-            FROM_TAG=${{ inputs.image-tag }}
+            FROM_TAG=${{ inputs.input-tag }}
+
+      - id: output-tag
+        run: |
+          echo image-tag=${{ inputs.output-tag }}" >> $GITHUB_OUTPUT

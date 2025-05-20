@@ -1,6 +1,12 @@
 name: docker-tree
 on: push
 
+#  pull_request:
+#    branches:
+#      - dev
+#      - main
+#      - master
+
 permissions:
   contents: read
   packages: write
@@ -8,6 +14,7 @@ permissions:
 
 env:
   IMAGE_TAG: ${{ github.ref_name == 'master' && 'latest' || github.ref_name }}
+
 
 jobs:
   check-changes:
@@ -25,6 +32,8 @@ jobs:
           base: ${{ github.event.before }}
           filters: |
             ros:
+              # ros rebuild will cascade to full rebuild
+              # this is why check-changes to this workflow trigger ros
               - .github/workflows/_docker-build-template.yml
               - .github/workflows/docker.yml
               - docker/base-ros/**
@@ -39,14 +48,14 @@ jobs:
             tests:
               - dimos/**
 
+  # this needs a fix, for now it's always "latest"
   set-tag:
     runs-on: dimos-runner-ubuntu-2204
     outputs:
-      image-tag: ${{ steps.set-tag.outputs.image_tag }}
+      output-tag: ${{ steps.set-tag.outputs.image_tag }}
     steps:
       - name: Determine Image Tag
         id: set-tag
-        shell: bash
         run: |
           case "${GITHUB_REF_NAME}" in
             master) image_tag="latest" ;;
@@ -61,44 +70,68 @@ jobs:
           echo "image tag determined: ${image_tag}"
           echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
 
-  build:
-    runs-on: dimos-runner-ubuntu-2204
+  build-ros:
     needs: [check-changes, set-tag]
-    if: needs.check-changes.result == 'success'
+    if: needs.check-changes.outputs.ros == 'true'
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      output-tag: ${{ needs.set-tag.outputs.image-tag }}
+      target:  base-ros
+
+  inspect-needs:
+    needs: [check-changes, set-tag, build-ros]
+    runs-on: dimos-runner-ubuntu-2204
+    if: always()
     steps:
-      - uses: actions/checkout@v4
+      - run: |
+          echo '${{ toJSON(needs) }}'
 
-      - name: Build base‑ros
-        if: needs.check-changes.outputs.ros == 'true'
-        uses: ./.github/actions/docker-build
-        with:
-          target: base-ros
-          tag:    ${{ needs.set-tag.outputs.image-tag }}
+  build-python:
+    needs: [check-changes, set-tag, build-ros]
+    if: |
+      ${{
+      always() && !cancelled() &&
+      needs.check-changes.result == 'success' &&
+      ((needs.build-ros.result == 'success') ||
+      (needs.build-ros.result == 'skipped' &&
+      needs.check-changes.outputs.python == 'true'))
 
-      - name: Build base‑ros‑python
-        if: needs.check-changes.outputs.python == 'true'
-        uses: ./.github/actions/docker-build
-        with:
-          target: base-ros-python
-          tag:    ${{ needs.set-tag.outputs.image-tag }}
-          freespace: true
+      }}
 
-      - name: Build dev
-        if: needs.check-changes.outputs.dev == 'true'
-        uses: ./.github/actions/docker-build
-        with:
-          target: dev
-          tag:    ${{ needs.set-tag.outputs.image-tag }}
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      input-tag:   ${{ needs.build-ros.outputs.image-tag != '' needs.build-ros.outputs.image-tag || 'dev' }}
+      output-tag:   ${{ needs.set-tag.outputs.image-tag }}
+      target:  base-ros-python
+      freespace: true
 
-  # run-tests:
-  #   runs-on: dimos-runner-ubuntu-2204
-  #   needs: [check-changes, set-tag, build]
-  #   if: |
-  #     ${{
-  #       needs.check-changes.result == 'success' &&
-  #       needs.check-changes.outputs.tests == 'true' &&
-  #       needs.build.result == 'success'
-  #     }}
-  #   uses: ./.github/workflows/pytest.yml
-  #   with:
-  #     imagetag: ${{ needs.set-tag.outputs.image-tag }}
+  build-dev:
+    needs: [check-changes, set-tag, build-python]
+    if: |
+      ${{
+      always() && !cancelled() &&
+      needs.check-changes.result == 'success' &&
+      ((needs.build-python.result == 'success') ||
+      (needs.build-python.result == 'skipped' &&
+      needs.check-changes.outputs.dev == 'true'))
+      }}
+
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      input-tag:   ${{ needs.build-python.outputs.image-tag != '' needs.build-python.outputs.image-tag || 'dev' }}
+      output-tag:   ${{ needs.set-tag.outputs.image-tag }}
+      target: dev
+
+  run-tests:
+    needs: [check-changes, set-tag, build-dev]
+    if: |
+      ${{
+      always() && !cancelled() &&
+      needs.check-changes.result == 'success' &&
+      ((needs.build-dev.result == 'success') ||
+      (needs.build-dev.result == 'skipped' &&
+      needs.check-changes.outputs.tests == 'true'))
+      }}
+    uses: ./.github/workflows/pytest.yml
+    with:
+      imagetag: ${{ needs.set-tag.outputs.image-tag }}
