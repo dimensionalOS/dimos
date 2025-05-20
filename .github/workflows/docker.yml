@@ -52,7 +52,7 @@ jobs:
   set-tag:
     runs-on: dimos-runner-ubuntu-2204
     outputs:
-      output-tag: ${{ steps.set-tag.outputs.image_tag }}
+      image-tag: ${{ steps.set-tag.outputs.image_tag }}
     steps:
       - name: Determine Image Tag
         id: set-tag
