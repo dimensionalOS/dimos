@@ -11,7 +11,7 @@ env:
 
 jobs:
   check-changes:
-#    runs-on: dimos-runner-ubuntu-2204
+    runs-on: dimos-runner-ubuntu-2204
     outputs:
       ros:    ${{ steps.filter.outputs.ros }}
       python: ${{ steps.filter.outputs.python }}
@@ -40,7 +40,7 @@ jobs:
               - dimos/**
 
   set-tag:
-#    runs-on: dimos-runner-ubuntu-2204
+    runs-on: dimos-runner-ubuntu-2204
     outputs:
       image-tag: ${{ steps.set-tag.outputs.image_tag }}
     steps:
