@@ -68,7 +68,7 @@ jobs:
               ;;
           esac
           echo "image tag determined: ${image_tag}"
-          echo "image-tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
 
   build-ros:
     needs: [check-changes, set-tag]
