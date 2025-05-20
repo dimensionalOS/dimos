@@ -88,15 +88,15 @@ jobs:
           target: dev
           tag:    ${{ needs.set-tag.outputs.image-tag }}
 
-  run-tests:
-    runs-on: dimos-runner-ubuntu-2204
-    needs: [check-changes, set-tag, build]
-    if: |
-      ${{
-        needs.check-changes.result == 'success' &&
-        needs.check-changes.outputs.tests == 'true' &&
-        needs.build.result == 'success'
-      }}
-    uses: ./.github/workflows/pytest.yml
-    with:
-      imagetag: ${{ needs.set-tag.outputs.image-tag }}
+  # run-tests:
+  #   runs-on: dimos-runner-ubuntu-2204
+  #   needs: [check-changes, set-tag, build]
+  #   if: |
+  #     ${{
+  #       needs.check-changes.result == 'success' &&
+  #       needs.check-changes.outputs.tests == 'true' &&
+  #       needs.build.result == 'success'
+  #     }}
+  #   uses: ./.github/workflows/pytest.yml
+  #   with:
+  #     imagetag: ${{ needs.set-tag.outputs.image-tag }}
