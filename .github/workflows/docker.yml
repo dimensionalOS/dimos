@@ -24,6 +24,7 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       dev:    ${{ steps.filter.outputs.dev }}
       tests:  ${{ steps.filter.outputs.tests }}
+      image-tag: ${{ steps.set-tag.outputs.image_tag }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -47,13 +48,6 @@ jobs:
 
             tests:
               - dimos/**
-
-  # this needs a fix, for now it's always "latest"
-  set-tag:
-    runs-on: dimos-runner-ubuntu-2204
-    outputs:
-      image-tag: ${{ steps.set-tag.outputs.image_tag }}
-    steps:
       - name: Determine Image Tag
         id: set-tag
         run: |
@@ -71,24 +65,25 @@ jobs:
           echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
 
   build-ros:
-    needs: [check-changes, set-tag]
+    needs: [check-changes]
     if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       input-tag: 'latest'
-      output-tag: ${{ needs.set-tag.outputs.image-tag }}
+      output-tag: ${{ needs.check-changes.outputs.image-tag }}
       target:  base-ros
 
-  inspect-needs:
-    needs: [check-changes, set-tag, build-ros]
-    runs-on: dimos-runner-ubuntu-2204
-    if: always()
-    steps:
-      - run: |
-          echo '${{ toJSON(needs) }}'
+  # just a debugger
+  # inspect-needs:
+  #   needs: [check-changes, set-tag, build-ros]
+  #   runs-on: dimos-runner-ubuntu-2204
+  #   if: always()
+  #   steps:
+  #     - run: |
+  #         echo '${{ toJSON(needs) }}'
 
   build-python:
-    needs: [check-changes, set-tag, build-ros]
+    needs: [check-changes, build-ros]
     if: |
       ${{
       always() && !cancelled() &&
@@ -101,13 +96,13 @@ jobs:
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      input-tag:   ${{ needs.build-ros.result != 'success' && 'dev' || needs.set-tag.outputs.image-tag }}
-      output-tag:   ${{ needs.set-tag.outputs.image-tag }}
+      input-tag:   ${{ needs.build-ros.result != 'success' && 'dev' || needs.check-changes.outputs.image-tag }}
+      output-tag:   ${{ needs.check-changes.outputs.image-tag }}
       target:  base-ros-python
       freespace: true
 
   build-dev:
-    needs: [check-changes, set-tag, build-python]
+    needs: [check-changes, build-python]
     if: |
       ${{
       always() && !cancelled() &&
@@ -119,12 +114,12 @@ jobs:
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      input-tag:    ${{ needs.build-python.result != 'success' && 'dev' || needs.set-tag.outputs.image-tag }}
-      output-tag:   ${{ needs.set-tag.outputs.image-tag }}
+      input-tag:    ${{ needs.build-python.result != 'success' && 'dev' || needs.check-changes.outputs.image-tag }}
+      output-tag:   ${{ needs.check-changes.outputs.image-tag }}
       target: dev
 
   run-tests:
-    needs: [check-changes, set-tag, build-dev]
+    needs: [check-changes, build-dev]
     if: |
       ${{
       always() && !cancelled() &&
@@ -135,4 +130,4 @@ jobs:
       }}
     uses: ./.github/workflows/pytest.yml
     with:
-      imagetag: ${{ needs.build-dev.result != 'success' && 'dev' || needs.set-tag.outputs.image-tag }}
+      imagetag: ${{ needs.build-dev.result != 'success' && 'dev' || needs.check-changes.outputs.image-tag }}
