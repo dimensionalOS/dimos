@@ -66,6 +66,8 @@ jobs:
     needs: [check-changes, set-tag]
     if: needs.check-changes.result == 'success'
     steps:
+      - uses: actions/checkout@v4
+
       - name: Build base‑ros
         if: needs.check-changes.outputs.ros == 'true'
         uses: ./.github/actions/docker-build
