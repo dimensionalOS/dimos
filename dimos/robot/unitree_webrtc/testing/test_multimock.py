@@ -12,7 +12,7 @@ from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.type.timeseries import to_datetime
 from dimos.robot.unitree_webrtc.testing.multimock import Multimock
 
-
+@pytest.mark.needsdata
 @pytest.mark.vis
 def test_multimock_stream():
     backpressure(Multimock("athens_odom").stream().pipe(ops.map(Odometry.from_msg))).subscribe(lambda x: print(x))
@@ -28,6 +28,7 @@ def test_multimock_stream():
     time.sleep(5)
 
 
+@pytest.mark.needsdata
 def test_clock_mismatch():
     for odometry_raw in Multimock("athens_odom").iterate():
         print(
@@ -36,11 +37,13 @@ def test_clock_mismatch():
         )
 
 
+@pytest.mark.needsdata
 def test_odom_stream():
     for odometry_raw in Multimock("athens_odom").iterate():
         print(Odometry.from_msg(odometry_raw.data))
 
 
+@pytest.mark.needsdata
 def test_lidar_stream():
     for lidar_raw in Multimock("athens_lidar").iterate():
         lidarmsg = LidarMessage.from_msg(lidar_raw.data)
@@ -48,6 +51,7 @@ def test_lidar_stream():
         print(lidar_raw)
 
 
+@pytest.mark.needsdata
 def test_multimock_timeseries():
     odom = Odometry.from_msg(Multimock("athens_odom").load_one(1).data)
     lidar_raw = Multimock("athens_lidar").load_one(1).data
@@ -60,11 +64,13 @@ def test_multimock_timeseries():
     print(map.costmap)
 
 
+@pytest.mark.needsdata
 def test_origin_changes():
     for lidar_raw in Multimock("athens_lidar").iterate():
         print(LidarMessage.from_msg(lidar_raw.data).origin)
 
 
+@pytest.mark.needsdata
 @pytest.mark.vis
 def test_webui_multistream():
     websocket_vis = WebsocketVis()
