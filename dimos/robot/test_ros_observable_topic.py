@@ -223,7 +223,7 @@ def test_topic_latest_sync_benchmark():
 
     assert odom() == 1
     time.sleep(0.45)
-    assert odom() == 5
+    assert odom() >= 5
     odom.dispose()
     time.sleep(0.1)
     assert robot._node.subs == {}

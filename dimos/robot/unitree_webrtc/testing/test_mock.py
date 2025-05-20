@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 import time
+import pytest
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.testing.mock import Mock
 
-
+@pytest.mark.needsdata
 def test_mock_load_cast():
     mock = Mock("test")
 
@@ -22,6 +23,7 @@ def test_mock_load_cast():
     assert len(frame.pointcloud.points) > 0
 
 
+@pytest.mark.needsdata
 def test_mock_iterate():
     """Test the iterate method of the Mock class."""
     mock = Mock("office")
@@ -34,6 +36,7 @@ def test_mock_iterate():
         assert frame.pointcloud.has_points()
 
 
+@pytest.mark.needsdata
 def test_mock_stream():
     frames = []
     sub1 = Mock("office").stream(rate_hz=30.0).subscribe(on_next=frames.append)

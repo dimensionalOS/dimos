@@ -40,8 +40,8 @@ jobs:
       # required for github cache of docker layers
       - uses: crazy-max/ghaction-github-runtime@v3
 
+      # required for github cache of docker layers
       - uses: docker/setup-buildx-action@v3
-        # required for github cache of docker layers
         with:
           driver: docker-container
           install: true
