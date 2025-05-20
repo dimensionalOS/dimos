@@ -75,6 +75,7 @@ jobs:
     if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
+      input-tag: 'latest'
       output-tag: ${{ needs.set-tag.outputs.image-tag }}
       target:  base-ros
 
