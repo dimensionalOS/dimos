@@ -4,6 +4,7 @@ on:
     inputs:
       image-tag:   { type: string, required: true }
       target:      { type: string, required: true }
+      freespace:   { type: boolean, default: false }
       context:     { type: string, default: '.' }
 
 # you can run this locally as well via
@@ -17,13 +18,16 @@ jobs:
 
     steps:
       - name: free up disk space
+        # takes a bit of time, so disabled by default
+        # explicitly enable this for large builds
+        if: ${{ inputs.freespace }}
         run: |
-          echo "pre cleanup space:\n $(df -h)"
+          echo -e "pre cleanup space:\n $(df -h)"
           sudo rm -rf /opt/ghc
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/share/boost
           sudo rm -rf /usr/local/lib/android
-          echo "post cleanup space:\n $(df -h)"
+          echo -e "post cleanup space:\n $(df -h)"
 
       - uses: actions/checkout@v4
 

@@ -119,6 +119,7 @@ jobs:
     with:
       image-tag:   ${{ needs.set-tag.outputs.image-tag }}
       target: dev
+      freespace: true
 
   run-tests:
     needs: [check-changes, set-tag, build-dev]
