@@ -1,12 +1,6 @@
 name: docker-tree
 on: push
 
-#  pull_request:
-#    branches:
-#      - dev
-#      - main
-#      - master
-
 permissions:
   contents: read
   packages: write
@@ -14,7 +8,6 @@ permissions:
 
 env:
   IMAGE_TAG: ${{ github.ref_name == 'master' && 'latest' || github.ref_name }}
-
 
 jobs:
   check-changes:
@@ -32,8 +25,6 @@ jobs:
           base: ${{ github.event.before }}
           filters: |
             ros:
-              # ros rebuild will cascade to full rebuild
-              # this is why check-changes to this workflow trigger ros
               - .github/workflows/_docker-build-template.yml
               - .github/workflows/docker.yml
               - docker/base-ros/**
@@ -48,7 +39,6 @@ jobs:
             tests:
               - dimos/**
 
-  # this needs a fix, for now it's always "latest"
   set-tag:
     runs-on: dimos-runner-ubuntu-2204
     outputs:
@@ -56,6 +46,7 @@ jobs:
     steps:
       - name: Determine Image Tag
         id: set-tag
+        shell: bash
         run: |
           case "${GITHUB_REF_NAME}" in
             master) image_tag="latest" ;;
@@ -70,65 +61,41 @@ jobs:
           echo "image tag determined: ${image_tag}"
           echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
 
-  build-ros:
-    needs: [check-changes, set-tag]
-    if: needs.check-changes.outputs.ros == 'true'
-    uses: ./.github/workflows/_docker-build-template.yml
-    with:
-      image-tag: ${{ needs.set-tag.outputs.image-tag }}
-      target:  base-ros
-
-  inspect-needs:
-    needs: [check-changes, set-tag, build-ros]
+  build:
     runs-on: dimos-runner-ubuntu-2204
-    if: always()
+    needs: [check-changes, set-tag]
+    if: needs.check-changes.result == 'success'
     steps:
-      - run: |
-          echo '${{ toJSON(needs) }}'
+      - name: Build base‑ros
+        if: needs.check-changes.outputs.ros == 'true'
+        uses: ./.github/actions/docker-build
+        with:
+          target: base-ros
+          tag:    ${{ needs.set-tag.outputs.image-tag }}
 
-  build-python:
-    needs: [check-changes, set-tag, build-ros]
-    if: |
-      ${{
-      always() && !cancelled() &&
-      needs.check-changes.result == 'success' &&
-      ((needs.build-ros.result == 'success') ||
-      (needs.build-ros.result == 'skipped' &&
-      needs.check-changes.outputs.python == 'true'))
+      - name: Build base‑ros‑python
+        if: needs.check-changes.outputs.python == 'true'
+        uses: ./.github/actions/docker-build
+        with:
+          target: base-ros-python
+          tag:    ${{ needs.set-tag.outputs.image-tag }}
+          freespace: true
 
-      }}
-
-    uses: ./.github/workflows/_docker-build-template.yml
-    with:
-      image-tag:   ${{ needs.set-tag.outputs.image-tag }}
-      target:  base-ros-python
-      freespace: true
-
-  build-dev:
-    needs: [check-changes, set-tag, build-python]
-    if: |
-      ${{
-      always() && !cancelled() &&
-      needs.check-changes.result == 'success' &&
-      ((needs.build-python.result == 'success') ||
-      (needs.build-python.result == 'skipped' &&
-      needs.check-changes.outputs.dev == 'true'))
-      }}
-
-    uses: ./.github/workflows/_docker-build-template.yml
-    with:
-      image-tag:   ${{ needs.set-tag.outputs.image-tag }}
-      target: dev
+      - name: Build dev
+        if: needs.check-changes.outputs.dev == 'true'
+        uses: ./.github/actions/docker-build
+        with:
+          target: dev
+          tag:    ${{ needs.set-tag.outputs.image-tag }}
 
   run-tests:
-    needs: [check-changes, set-tag, build-dev]
+    runs-on: dimos-runner-ubuntu-2204
+    needs: [check-changes, set-tag, build]
     if: |
       ${{
-      always() && !cancelled() &&
-      needs.check-changes.result == 'success' &&
-      ((needs.build-dev.result == 'success') ||
-      (needs.build-dev.result == 'skipped' &&
-      needs.check-changes.outputs.tests == 'true'))
+        needs.check-changes.result == 'success' &&
+        needs.check-changes.outputs.tests == 'true' &&
+        needs.build.result == 'success'
       }}
     uses: ./.github/workflows/pytest.yml
     with:
