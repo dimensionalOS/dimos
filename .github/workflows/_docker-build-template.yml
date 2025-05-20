@@ -23,7 +23,6 @@ jobs:
           sudo rm -rf /opt/ghc
           sudo rm -rf "/usr/local/share/boost"
           sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/hostedtoolcache
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
           df -h
 
@@ -46,7 +45,6 @@ jobs:
           use: true
 
       - uses: docker/build-push-action@v6
-
         with:
           push: true
           context: ${{ inputs.context }}
