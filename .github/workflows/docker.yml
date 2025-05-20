@@ -101,7 +101,7 @@ jobs:
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      input-tag:   ${{ needs.build-ros.outputs.image-tag != '' && needs.build-ros.outputs.image-tag || 'dev' }}
+      input-tag:   ${{ needs.build-ros.result != 'success' && 'dev' || needs.set-tag.outputs.image-tag }}
       output-tag:   ${{ needs.set-tag.outputs.image-tag }}
       target:  base-ros-python
       freespace: true
@@ -119,7 +119,7 @@ jobs:
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      input-tag:   ${{ needs.build-python.outputs.image-tag != '' && needs.build-python.outputs.image-tag || 'dev' }}
+      input-tag:    ${{ needs.build-python.result != 'success' && 'dev' || needs.set-tag.outputs.image-tag }}
       output-tag:   ${{ needs.set-tag.outputs.image-tag }}
       target: dev
 
@@ -135,4 +135,4 @@ jobs:
       }}
     uses: ./.github/workflows/pytest.yml
     with:
-      imagetag: ${{ needs.set-tag.outputs.image-tag }}
+      imagetag: ${{ needs.build-dev.result != 'success' && 'dev' || needs.set-tag.outputs.image-tag }}

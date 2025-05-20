@@ -13,8 +13,6 @@ on:
 jobs:
   build:
     runs-on: dimos-runner-ubuntu-2204
-    outputs:
-      image-tag: ${{ steps.set-tag.outputs.image_tag }}
     permissions:
       contents: read
       packages: write
@@ -61,6 +59,3 @@ jobs:
           build-args: |
             FROM_TAG=${{ inputs.input-tag }}
 
-      - id: set-tag
-        run: |
-          echo image_tag="${{ inputs.output-tag }}" >> $GITHUB_OUTPUT
