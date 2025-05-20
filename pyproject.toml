@@ -18,4 +18,4 @@ markers = [
     "exclude: arbitrary exclusion from CI and default test exec",
     "tool: dev tooling"
 ]
-addopts = "-m 'not vis and not benchmark and not exclude and not tool'"
+addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool'"
