@@ -9,6 +9,8 @@ from dimos.perception.pointcloud.utils import (
     load_camera_matrix_from_yaml,
     create_masked_point_cloud,
     o3d_point_cloud_to_numpy,
+    create_o3d_point_cloud_from_rgbd,
+    segment_and_remove_plane
 )
 from dimos.perception.pointcloud.cuboid_fit import fit_cuboid, visualize_fit
 import torch
@@ -82,6 +84,8 @@ class PointcloudSegmentation:
                     - point_cloud_numpy: Nx6 array of XYZRGB points (for compatibility)
                     - color: RGB color for visualization
                     - cuboid_params: Cuboid parameters (if fit_3d_cuboids=True)
+                - raw_point_cloud: Open3D point cloud object
+                - plane_removed_point_cloud: Open3D point cloud object with dominant plane removed
         """
         if self.depth_camera_matrix is None:
             raise ValueError("Depth camera matrix must be provided to process images")
@@ -173,6 +177,9 @@ class PointcloudSegmentation:
             except Exception as e:
                 print(f"Error processing object {i+1}: {e}")
                 continue
+
+        raw_point_cloud = create_o3d_point_cloud_from_rgbd(color_img, depth_img, self.depth_camera_matrix)
+        plane_removed_point_cloud = segment_and_remove_plane(raw_point_cloud)
         
         # Clean up GPU memory if using CUDA
         if torch.cuda.is_available():
@@ -180,7 +187,9 @@ class PointcloudSegmentation:
         
         return {
             "viz_image": viz_img,
-            "objects": objects
+            "objects": objects,
+            "raw_point_cloud": raw_point_cloud,
+            "plane_removed_point_cloud": plane_removed_point_cloud
         }
     
     def cleanup(self):
@@ -322,7 +331,22 @@ def main():
                                              top=50)
         else:
             print("No objects with valid point clouds found.")
-    
+
+        # Show raw point cloud
+        o3d.visualization.draw_geometries([results['raw_point_cloud']],
+                                         window_name="Raw Point Cloud",
+                                         width=1280,
+                                         height=720,
+                                         left=50,
+                                         top=50)
+
+        # Show plane removed point cloud
+        o3d.visualization.draw_geometries([results['plane_removed_point_cloud']],
+                                         window_name="Plane Removed Point Cloud",
+                                         width=1280,
+                                         height=720,
+                                         left=50,
+                                         top=50)
     except Exception as e:
         print(f"Error during processing: {str(e)}")
         import traceback
