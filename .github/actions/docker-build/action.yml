@@ -36,7 +36,7 @@ runs:
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+        password: ${{ github.token }}
 
     - uses: crazy-max/ghaction-github-runtime@v3
 
