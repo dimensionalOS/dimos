@@ -23,4 +23,4 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run tests
         run: |
-          /entrypoint.sh bash -c "pytest-3 -sv dimos/"
+          /entrypoint.sh bash -c "pytest"
