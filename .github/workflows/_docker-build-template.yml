@@ -61,4 +61,4 @@ jobs:
 
       - id: set-tag
         run: |
-          echo image-tag=${{ inputs.output-tag }}" >> $GITHUB_OUTPUT
+          echo image-tag="${{ inputs.output-tag }}" >> $GITHUB_OUTPUT
