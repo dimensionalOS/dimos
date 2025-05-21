@@ -64,7 +64,7 @@ jobs:
               fi
           fi
 
-          echo "from_tag=$FROM_TAG"
+          echo "from_tag=$FROM_TAG" >> "$GITHUB_OUTPUT"
 
 
 
