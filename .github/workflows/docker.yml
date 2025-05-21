@@ -1,6 +1,12 @@
 name: docker-tree
 on: push
 
+#  pull_request:
+#    branches:
+#      - dev
+#      - main
+#      - master
+
 permissions:
   contents: read
   packages: write
@@ -66,6 +72,15 @@ jobs:
     with:
       branch-tag: ${{ needs.check-changes.outputs.branch-tag }}
       target:  base-ros
+
+  # just a debugger
+  # inspect-needs:
+  #   needs: [check-changes, set-tag, build-ros]
+  #   runs-on: dimos-runner-ubuntu-2204
+  #   if: always()
+  #   steps:
+  #     - run: |
+  #         echo '${{ toJSON(needs) }}'
 
   build-python:
     needs: [check-changes, build-ros]
