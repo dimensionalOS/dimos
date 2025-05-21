@@ -77,8 +77,6 @@ jobs:
       (needs.build-ros.result == 'skipped' &&
       needs.check-changes.outputs.python == 'true'))
       }}
-
-
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       branch-tag:   ${{ needs.check-changes.outputs.branch-tag }}

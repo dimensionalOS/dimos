@@ -44,7 +44,7 @@ jobs:
           fi
 
           # Set the output for use in later steps
-          echo "::set-output name=tag::$SELECTED_TAG"
+          echo "tag=$SELECTED_TAG" >> $GITHUB_OUTPUT
 
 
       - uses: actions/checkout@v4
@@ -74,4 +74,4 @@ jobs:
           cache-from: type=gha,scope=${{ inputs.target }}
           cache-to:   type=gha,mode=max,scope=${{ inputs.target }}
           build-args: |
-            FROM_TAG=${{ ${{ steps.determine-tag.outputs.tag }} }}
+            FROM_TAG=${{ steps.determine-tag.outputs.tag }}
