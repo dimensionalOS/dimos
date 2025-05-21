@@ -2,7 +2,7 @@ opencv-python
 python-dotenv
 openai
 anthropic>=0.19.0
-numpy<2
+numpy>=1.26.4,<2.0.0
 colorlog==6.9.0
 yapf==0.40.2
 typeguard
@@ -23,7 +23,7 @@ git+https://github.com/dimensionalOS/rxpy-backpressure.git
 pytest-asyncio==0.26.0
 asyncio==3.4.3
 -e git+https://github.com/legion1581/go2_webrtc_connect.git@fe64abb5987594e8c048427a98445799f6f6a9cc#egg=go2_webrtc_connect
--e git+https://github.com/legion1581/aioice.git@ff5755a1e37127411b5fc797c105804db8437445#egg=aioice
+#-e git+https://github.com/legion1581/aioice.git@ff5755a1e37127411b5fc797c105804db8437445#egg=aioice
 
 # Web Extensions
 fastapi>=0.115.6
@@ -89,3 +89,6 @@ lvis
 nltk
 git+https://github.com/openai/CLIP.git
 git+https://github.com/facebookresearch/detectron2.git@v0.6
+
+# Mapping
+open3d

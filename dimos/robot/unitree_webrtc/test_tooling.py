@@ -6,16 +6,15 @@ import pytest
 from dotenv import load_dotenv
 import reactivex.operators as ops
 
-from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.testing.multimock import Multimock
 from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.odometry import position_from_odom
 
 
 @pytest.mark.tool
 def test_record_lidar():
+    from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
     load_dotenv()
     robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
 
@@ -42,6 +41,7 @@ def test_record_lidar():
 
 @pytest.mark.tool
 def test_replay_recording():
+    from dimos.robot.unitree_webrtc.type.odometry import position_from_odom
     odom_stream = Multimock("athens_odom").stream().pipe(ops.map(position_from_odom))
     odom_stream.subscribe(lambda x: print(x))
 

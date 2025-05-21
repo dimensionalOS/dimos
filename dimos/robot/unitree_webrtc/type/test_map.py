@@ -1,9 +1,8 @@
 import pytest
 from dimos.robot.unitree_webrtc.testing.mock import Mock
 from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream, show3d
-from dimos.robot.unitree_webrtc.utils.reactive import backpressure
+from dimos.utils.reactive import backpressure
 from dimos.robot.unitree_webrtc.type.map import splice_sphere, Map
-from dimos.robot.unitree_webrtc.lidar import lidar
 
 
 @pytest.mark.vis
@@ -33,7 +32,7 @@ def test_splice_vis():
 @pytest.mark.vis
 def test_robot_vis():
     show3d_stream(
-        Map().consume(backpressure(lidar())),
+        Map().consume(backpressure(Mock("office").stream())),
         clearframe=True,
         title="gloal dynamic map test",
     )

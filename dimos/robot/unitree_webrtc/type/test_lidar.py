@@ -9,6 +9,7 @@ from dimos.robot.unitree_webrtc.testing.mock import Mock
 from dimos.robot.unitree_webrtc.testing.helpers import show3d, multivis, benchmark
 
 
+@pytest.mark.needsdata
 def test_load():
     mock = Mock("test")
     frame = mock.load("a")
@@ -22,6 +23,7 @@ def test_load():
     assert len(frame.pointcloud.points) > 0
 
 
+@pytest.mark.needsdata
 def test_add():
     mock = Mock("test")
     [frame_a, frame_b] = mock.load("a", "b")
@@ -48,6 +50,7 @@ def test_add():
 
 
 @pytest.mark.vis
+@pytest.mark.needsdata
 def test_icp_vis():
     mock = Mock("test")
     [framea, frameb] = mock.load("a", "b")
@@ -71,6 +74,7 @@ def test_icp_vis():
 
 
 @pytest.mark.benchmark
+@pytest.mark.needsdata
 def test_benchmark_icp():
     frames = Mock("dynamic_house").iterate()
 
@@ -96,6 +100,7 @@ def test_benchmark_icp():
 
 
 @pytest.mark.vis
+@pytest.mark.needsdata
 def test_downsample():
     mock = Mock("test")
     [framea, frameb] = mock.load("a", "b")

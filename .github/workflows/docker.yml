@@ -1,0 +1,119 @@
+name: docker-tree
+on: push
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+
+
+jobs:
+  check-changes:
+    runs-on: dimos-runner-ubuntu-2204
+    outputs:
+      ros:    ${{ steps.filter.outputs.ros }}
+      python: ${{ steps.filter.outputs.python }}
+      dev:    ${{ steps.filter.outputs.dev }}
+      tests:  ${{ steps.filter.outputs.tests }}
+      branch-tag: ${{ steps.set-tag.outputs.branch_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          base: ${{ github.event.before }}
+          filters: |
+            ros:
+              # ros rebuild will cascade to full rebuild
+              # this is why check-changes to this workflow trigger ros
+              - .github/workflows/_docker-build-template.yml
+              - .github/workflows/docker.yml
+              - docker/base-ros/**
+
+            python:
+              - docker/base-python/**
+              - requirements*.txt
+
+            dev:
+              - docker/dev/**
+
+            tests:
+              - dimos/**
+
+      - name: Determine Branch Tag
+        id: set-tag
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            master) branch_tag="latest" ;;
+            dev)    branch_tag="dev"    ;;
+            *)
+              branch_tag=$(echo "${GITHUB_REF_NAME}" \
+                  | tr '[:upper:]' '[:lower:]' \
+                  | sed -E 's#[^a-z0-9_.-]+#_#g' \
+                  | sed -E 's#^-+|-+$##g')
+              ;;
+          esac
+          echo "branch tag determined: ${branch_tag}"
+          echo branch_tag="${branch_tag}" >> "$GITHUB_OUTPUT"
+
+  build-ros:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.ros == 'true'
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      branch-tag: ${{ needs.check-changes.outputs.branch-tag }}
+      target:  base-ros
+
+  # just a debugger
+  inspect-needs:
+    needs: [check-changes, build-ros]
+    runs-on: dimos-runner-ubuntu-2204
+    if: always()
+    steps:
+      - run: |
+          echo '${{ toJSON(needs) }}'
+
+  build-python:
+    needs: [check-changes, build-ros]
+    if: |
+      ${{
+      always() && !cancelled() &&
+      needs.check-changes.result == 'success' &&
+      ((needs.build-ros.result == 'success') ||
+      (needs.build-ros.result == 'skipped' &&
+      needs.check-changes.outputs.python == 'true'))
+      }}
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      branch-tag:   ${{ needs.check-changes.outputs.branch-tag }}
+      target:  base-ros-python
+      freespace: true
+
+  build-dev:
+    needs: [check-changes, build-python]
+    if: |
+      ${{
+      always() && !cancelled() &&
+      needs.check-changes.result == 'success' &&
+      ((needs.build-python.result == 'success') ||
+      (needs.build-python.result == 'skipped' &&
+      needs.check-changes.outputs.dev == 'true'))
+      }}
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      branch-tag:   ${{ needs.check-changes.outputs.branch-tag }}
+      target: dev
+
+  run-tests:
+    needs: [check-changes, build-dev]
+    if: |
+      ${{
+      always() && !cancelled() &&
+      needs.check-changes.result == 'success' &&
+      ((needs.build-dev.result == 'success') ||
+      (needs.build-dev.result == 'skipped' &&
+      needs.check-changes.outputs.tests == 'true'))
+      }}
+    uses: ./.github/workflows/pytest.yml
+    with:
+      branch-tag: ${{ needs.build-dev.result != 'success' && 'dev' || needs.check-changes.outputs.branch-tag }}

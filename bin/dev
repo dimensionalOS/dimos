@@ -1,24 +1,50 @@
 #!/usr/bin/env bash
 
+
+get_tag() {
+    local branch_name
+    branch_name=$(git rev-parse --abbrev-ref HEAD)
+
+    case "${branch_name}" in
+      master) image_tag="latest" ;;
+      main)   image_tag="latest" ;;
+      dev)    image_tag="dev"    ;;
+      *)
+        image_tag=$(echo "${branch_name}" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's#[^a-z0-9_.-]+#_#g' \
+            | sed -E 's#^-+|-+$##g')
+        ;;
+    esac
+#    echo "image tag determined: '${image_tag}'"
+    
+    # Return the image tag value
+    echo "${image_tag}"
+}
+
+
 build_image() {
+    local image_tag
+    image_tag=$(get_tag)
     
     docker build \
         --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) \
         --build-arg GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD) \
-        -t dimensionalos/dev-base docker/dev/base/
+        -t "ghcr.io/dimensionalos/dev:${image_tag}" -f docker/dev/Dockerfile .
 }
 
 remove_image() {
-    docker rm -f dimos-dev
+    local tag=$(get_tag)
+    docker rm -f "dimos-dev-${tag}" 2>/dev/null || true
 }
 
-COMPOSE_FILE="docker/dev/base/docker-compose.yaml"
+COMPOSE_FILE="docker/dev/docker-compose.yaml"
 
 # Parse flags and commands
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -c|--cuda)
-            COMPOSE_FILE="docker/dev/base/docker-compose-cuda.yaml"
+            COMPOSE_FILE="docker/dev/docker-compose-cuda.yaml"
             shift
             ;;
         remove)
@@ -37,8 +63,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if ! docker image inspect dimensionalos/dev-base &>/dev/null; then
-    echo "Image dimensionalos/dev-base not found. Building..."
+image_tag=$(get_tag)
+image_name="ghcr.io/dimensionalos/dev:${image_tag}"
+
+if ! docker image inspect "${image_name}" &>/dev/null; then
+    echo "Image ${image_name} not found. Building..."
     build_image
 fi
 
@@ -46,5 +75,10 @@ fi
 REPO_ROOT=$(git rev-parse --show-toplevel)
 REL_PATH=$(realpath --relative-to="$REPO_ROOT" "$(pwd)")
 
-docker compose -f "$REPO_ROOT/$COMPOSE_FILE" up -d \
-  && docker exec -it dimos-dev bash -c "cd $REL_PATH; exec bash"
+export DEV_IMAGE_TAG="${image_tag}"
+echo "Starting container with image: ghcr.io/dimensionalos/dev:${image_tag}"
+docker compose -f "$REPO_ROOT/$COMPOSE_FILE" up -d
+
+container_name="dimos-dev-${image_tag}"
+echo "Entering container $container_name"
+docker exec -it "$container_name" bash -c "cd $REL_PATH; exec bash"

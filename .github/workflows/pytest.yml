@@ -1,0 +1,26 @@
+name: testing
+
+on:
+ workflow_call:
+   inputs:
+     branch-tag:
+       required: true
+       type: string
+       default: "latest"
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  run-tests:
+    runs-on: dimos-runner-ubuntu-2204
+
+    container:
+      image: ghcr.io/dimensionalos/dev:${{ inputs.branch-tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: |
+          /entrypoint.sh bash -c "pytest"

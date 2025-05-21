@@ -1,0 +1,87 @@
+name: docker-build-template
+on:
+  workflow_call:
+    inputs:
+      branch-tag:  { type: string, required: true }
+      target:      { type: string, required: true }
+      freespace:   { type: boolean, default: false }
+      context:     { type: string, default: '.' }
+
+# you can run this locally as well via
+# ./bin/dockerbuild [image-name]
+jobs:
+  build:
+    runs-on: dimos-runner-ubuntu-2204
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: free up disk space
+        # takes a bit of time, so disabled by default
+        # explicitly enable this for large builds
+        if: ${{ inputs.freespace }}
+        run: |
+          echo -e "pre cleanup space:\n $(df -h)"
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
+          echo -e "post cleanup space:\n $(df -h)"
+
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check base image tag
+        id: tagcheck
+        env:
+          BRANCH_TAG: ${{ inputs.branch-tag }}
+          DOCKERFILE_PATH: docker/${{ inputs.target }}/Dockerfile
+          DOCKER_CLI_EXPERIMENTAL: enabled  # required for `docker buildx imagetools`
+        run: |
+          BASE_REPO=$(grep -Eo '^FROM[[:space:]]+ghcr\.io/dimensionalos/[a-zA-Z0-9._-]+' "$DOCKERFILE_PATH" | head -n1 | awk -F/ '{print $NF}')
+
+          if [[ -z "$BASE_REPO" ]]; then
+            echo "Could not determine base repo from $DOCKERFILE_PATH, reverting to 'dev'"
+            FROM_TAG="dev"
+          else
+            IMAGE="ghcr.io/dimensionalos/${BASE_REPO}:${BRANCH_TAG}"
+            echo "Checking if $IMAGE exists…"
+            if docker buildx imagetools inspect "$IMAGE" > /dev/null 2>&1; then
+              echo "Found $IMAGE"
+              FROM_TAG="$BRANCH_TAG"
+            else
+              echo "Tag '$BRANCH_TAG' not found for $BASE_REPO; falling back to 'dev'"
+              FROM_TAG="dev"
+            fi
+          fi
+
+          echo "from_tag=$FROM_TAG" >> "$GITHUB_OUTPUT"
+
+
+
+      # required for github cache of docker layers
+      - uses: crazy-max/ghaction-github-runtime@v3
+
+      # required for github cache of docker layers
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          install: true
+          use: true
+
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          context: ${{ inputs.context }}
+          file:   docker/${{ inputs.target }}/Dockerfile
+          tags:   ghcr.io/dimensionalos/${{ inputs.target }}:${{ inputs.branch-tag }}
+          cache-from: type=gha,scope=${{ inputs.target }}
+          cache-to:   type=gha,mode=max,scope=${{ inputs.target }}
+          build-args: |
+            FROM_TAG=${{ steps.tagcheck.outputs.from_tag }}

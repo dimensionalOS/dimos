@@ -1,0 +1,13 @@
+{
+  "name": "dimos-dev",
+  "image": "ghcr.io/dimensionalos/dimos-dev:latest",
+  "postCreateCommand": "pre-commit install",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  }
+}

@@ -1,10 +1,10 @@
 services:
   dev-environment:
-    image: dimensionalos/dev-base
-    container_name: dimos-dev
+    image: ghcr.io/dimensionalos/dev:${DEV_IMAGE_TAG:-latest}
+    container_name: dimos-dev-${DEV_IMAGE_TAG:-latest}
     network_mode: "host"
     volumes:
-      - ../../../:/app
+      - ../../:/app
 
       # X11 forwarding
       - /tmp/.X11-unix:/tmp/.X11-unix

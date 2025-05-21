@@ -16,6 +16,7 @@ markers = [
     "vis: marks tests that run visuals and require a visual check by dev",
     "benchmark: benchmark, executes something multiple times, calculates avg, prints to console",
     "exclude: arbitrary exclusion from CI and default test exec",
-    "tool: dev tooling"
-]
-addopts = "-m 'not vis and not benchmark and not exclude and not tool'"
+    "tool: dev tooling",
+    "needsdata: needs test data to be downloaded"]
+
+addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata'"

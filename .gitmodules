@@ -6,4 +6,4 @@
 	url = https://github.com/microsoft/vcpkg.git
 [submodule "dimos/robot/unitree/external/go2_ros2_sdk"]
 	path = dimos/robot/unitree/external/go2_ros2_sdk
-	url = https://github.com/dimensionalOS/go2_ros2_sdk
+	url = https://github.com/dimensionalOS/go2_ros2_sdk.git
