@@ -2,7 +2,7 @@ name: docker-build-template
 on:
   workflow_call:
     inputs:
-      branch-tag:   { type: string, required: true }
+      branch-tag:  { type: string, required: true }
       target:      { type: string, required: true }
       freespace:   { type: boolean, default: false }
       context:     { type: string, default: '.' }
@@ -37,6 +37,35 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check base image tag
+        id: tagcheck
+        env:
+          BRANCH_TAG: ${{ inputs.branch-tag }}
+          DOCKERFILE_PATH: docker/${{ inputs.target }}/Dockerfile
+          DOCKER_CLI_EXPERIMENTAL: enabled  # required for `docker buildx imagetools`
+        run: |
+          set -euo pipefail
+
+          # Extract the first FROM line pointing at ghcr.io/dimensionalos/<repo>
+          BASE_REPO=$(grep -Eo '^FROM[[:space:]]+ghcr\.io/dimensionalos/[a-zA-Z0-9._-]+' "$DOCKERFILE_PATH" | head -n1 | awk -F/ '{print $NF}')
+          if [[ -z "$BASE_REPO" ]]; then
+            echo "::error::Could not determine base repo from $DOCKERFILE_PATH"
+            exit 1
+          fi
+
+          IMAGE="ghcr.io/dimensionalos/${BASE_REPO}:${BRANCH_TAG}"
+          echo "🔍 Checking if $IMAGE exists…"
+          if docker buildx imagetools inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "✅ Found $IMAGE"
+            FROM_TAG="$BRANCH_TAG"
+          else
+            echo "⚠️  Tag '$BRANCH_TAG' not found for $BASE_REPO; falling back to 'dev'"
+            FROM_TAG="dev"
+          fi
+
+          echo "from_tag=$FROM_TAG" >> "$GITHUB_OUTPUT"
+
+
       # required for github cache of docker layers
       - uses: crazy-max/ghaction-github-runtime@v3
 
@@ -56,4 +85,4 @@ jobs:
           cache-from: type=gha,scope=${{ inputs.target }}
           cache-to:   type=gha,mode=max,scope=${{ inputs.target }}
           build-args: |
-            FROM_TAG=${{ inputs.branch-tag }}
+            FROM_TAG=${{ steps.tagcheck.outputs.from_tag }}
