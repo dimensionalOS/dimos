@@ -1,3 +1,4 @@
+# trigger rebuild: 1
 ARG FROM_TAG=latest
 FROM ghcr.io/dimensionalos/base-ros:${FROM_TAG}
 

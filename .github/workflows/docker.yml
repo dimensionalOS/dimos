@@ -42,6 +42,7 @@ jobs:
 
             tests:
               - dimos/**
+
       - name: Determine Image Tag
         id: set-tag
         run: |
@@ -63,7 +64,6 @@ jobs:
     if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      input-tag: 'latest'
       output-tag: ${{ needs.check-changes.outputs.image-tag }}
       target:  base-ros
 
@@ -76,12 +76,10 @@ jobs:
       ((needs.build-ros.result == 'success') ||
       (needs.build-ros.result == 'skipped' &&
       needs.check-changes.outputs.python == 'true'))
-
       }}
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      input-tag:   ${{ needs.build-ros.result != 'success' && 'dev' || needs.check-changes.outputs.image-tag }}
       output-tag:   ${{ needs.check-changes.outputs.image-tag }}
       target:  base-ros-python
       freespace: true
@@ -96,10 +94,8 @@ jobs:
       (needs.build-python.result == 'skipped' &&
       needs.check-changes.outputs.dev == 'true'))
       }}
-
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      input-tag:    ${{ needs.build-python.result != 'success' && 'dev' || needs.check-changes.outputs.image-tag }}
       output-tag:   ${{ needs.check-changes.outputs.image-tag }}
       target: dev
 

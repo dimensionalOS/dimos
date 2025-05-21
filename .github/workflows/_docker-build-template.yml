@@ -2,7 +2,6 @@ name: docker-build-template
 on:
   workflow_call:
     inputs:
-      input-tag:   { type: string, required: true }
       output-tag:   { type: string, required: true }
       target:      { type: string, required: true }
       freespace:   { type: boolean, default: false }
