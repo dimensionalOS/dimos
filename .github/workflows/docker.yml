@@ -57,7 +57,7 @@ jobs:
               ;;
           esac
           echo "branch tag determined: ${branch_tag}"
-          echo branch_tag=${branch_tag}" >> "$GITHUB_OUTPUT"
+          echo branch_tag="${branch_tag}" >> "$GITHUB_OUTPUT"
 
   build-ros:
     needs: [check-changes]
