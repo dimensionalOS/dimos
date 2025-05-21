@@ -3,7 +3,7 @@ name: testing
 on:
  workflow_call:
    inputs:
-     imagetag:
+     branch-tag:
        required: true
        type: string
        default: "latest"
@@ -17,7 +17,7 @@ jobs:
     runs-on: dimos-runner-ubuntu-2204
 
     container:
-      image: ghcr.io/dimensionalos/dev:${{ inputs.imagetag }}
+      image: ghcr.io/dimensionalos/dev:${{ inputs.branch-tag }}
 
     steps:
       - uses: actions/checkout@v4

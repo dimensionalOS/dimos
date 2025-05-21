@@ -2,7 +2,7 @@ name: docker-build-template
 on:
   workflow_call:
     inputs:
-      output-tag:   { type: string, required: true }
+      branch-tag:   { type: string, required: true }
       target:      { type: string, required: true }
       freespace:   { type: boolean, default: false }
       context:     { type: string, default: '.' }
@@ -29,6 +29,24 @@ jobs:
           sudo rm -rf /usr/local/lib/android
           echo -e "post cleanup space:\n $(df -h)"
 
+      - name: Determine Parent Docker Tag
+        id: determine-tag
+        run: |
+          IMAGE_NAME="ghcr.io/dimensionalos/${{ inputs.target }}"
+          TAG_TO_CHECK="{{ inputs.branch-tag }}"
+          IMAGE_URL="https://ghcr.io/v2/dimensionalos/dev/tags/list"
+
+          # Check if the tag exists using the Docker Registry HTTP API
+          if curl -sSL $IMAGE_URL | grep -q "\"$TAG_TO_CHECK\""; then
+            SELECTED_TAG=$TAG_TO_CHECK
+          else
+            SELECTED_TAG="dev"
+          fi
+
+          # Set the output for use in later steps
+          echo "::set-output name=tag::$SELECTED_TAG"
+
+
       - uses: actions/checkout@v4
 
       - uses: docker/login-action@v3
@@ -52,9 +70,8 @@ jobs:
           push: true
           context: ${{ inputs.context }}
           file:   docker/${{ inputs.target }}/Dockerfile
-          tags:   ghcr.io/dimensionalos/${{ inputs.target }}:${{ inputs.output-tag }}
+          tags:   ghcr.io/dimensionalos/${{ inputs.target }}:${{ inputs.branch-tag }}
           cache-from: type=gha,scope=${{ inputs.target }}
           cache-to:   type=gha,mode=max,scope=${{ inputs.target }}
           build-args: |
-            FROM_TAG=${{ inputs.input-tag }}
-
+            FROM_TAG=${{ ${{ steps.determine-tag.outputs.tag }} }}

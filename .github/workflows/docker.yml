@@ -18,7 +18,7 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       dev:    ${{ steps.filter.outputs.dev }}
       tests:  ${{ steps.filter.outputs.tests }}
-      image-tag: ${{ steps.set-tag.outputs.image_tag }}
+      branch-tag: ${{ steps.set-tag.outputs.branch_tag }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -43,28 +43,28 @@ jobs:
             tests:
               - dimos/**
 
-      - name: Determine Image Tag
+      - name: Determine Branch Tag
         id: set-tag
         run: |
           case "${GITHUB_REF_NAME}" in
-            master) image_tag="latest" ;;
-            dev)    image_tag="dev"    ;;
+            master) branch_tag="latest" ;;
+            dev)    branch_tag="dev"    ;;
             *)
-              image_tag=$(echo "${GITHUB_REF_NAME}" \
+              branch_tag=$(echo "${GITHUB_REF_NAME}" \
                   | tr '[:upper:]' '[:lower:]' \
                   | sed -E 's#[^a-z0-9_.-]+#_#g' \
                   | sed -E 's#^-+|-+$##g')
               ;;
           esac
-          echo "image tag determined: ${image_tag}"
-          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "branch tag determined: ${branch_tag}"
+          echo branch_tag=${branch_tag}" >> "$GITHUB_OUTPUT"
 
   build-ros:
     needs: [check-changes]
     if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      output-tag: ${{ needs.check-changes.outputs.image-tag }}
+      branch-tag: ${{ needs.check-changes.outputs.branch-tag }}
       target:  base-ros
 
   build-python:
@@ -78,9 +78,10 @@ jobs:
       needs.check-changes.outputs.python == 'true'))
       }}
 
+
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      output-tag:   ${{ needs.check-changes.outputs.image-tag }}
+      branch-tag:   ${{ needs.check-changes.outputs.branch-tag }}
       target:  base-ros-python
       freespace: true
 
@@ -96,7 +97,7 @@ jobs:
       }}
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      output-tag:   ${{ needs.check-changes.outputs.image-tag }}
+      branch-tag:   ${{ needs.check-changes.outputs.branch-tag }}
       target: dev
 
   run-tests:
@@ -111,4 +112,4 @@ jobs:
       }}
     uses: ./.github/workflows/pytest.yml
     with:
-      imagetag: ${{ needs.build-dev.result != 'success' && 'dev' || needs.check-changes.outputs.image-tag }}
+      branch-tag: ${{ needs.build-dev.result != 'success' && 'dev' || needs.check-changes.outputs.branch-tag }}
