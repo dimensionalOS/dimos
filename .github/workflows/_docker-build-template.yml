@@ -44,8 +44,6 @@ jobs:
           DOCKERFILE_PATH: docker/${{ inputs.target }}/Dockerfile
           DOCKER_CLI_EXPERIMENTAL: enabled  # required for `docker buildx imagetools`
         run: |
-          set -euxo pipefail
-
           BASE_REPO=$(grep -Eo '^FROM[[:space:]]+ghcr\.io/dimensionalos/[a-zA-Z0-9._-]+' "$DOCKERFILE_PATH" | head -n1 | awk -F/ '{print $NF}')
 
           if [[ -z "$BASE_REPO" ]]; then
