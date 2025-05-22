@@ -46,20 +46,20 @@ logger = logging.getLogger(__name__)
 # Specific exception classes
 class VideoSourceError(Exception):
     """Raised when there's an issue with the video source."""
+
     pass
 
 
 class VideoFrameError(Exception):
     """Raised when there's an issue with frame acquisition."""
+
     pass
 
 
 class AbstractVideoProvider(ABC):
     """Abstract base class for video providers managing video capture resources."""
 
-    def __init__(self,
-                 dev_name: str = "NA",
-                 pool_scheduler: Optional[ThreadPoolScheduler] = None) -> None:
+    def __init__(self, dev_name: str = "NA", pool_scheduler: Optional[ThreadPoolScheduler] = None) -> None:
         """Initializes the video provider with a device name.
 
         Args:
@@ -68,20 +68,19 @@ class AbstractVideoProvider(ABC):
                 If None, the global scheduler from get_scheduler() will be used.
         """
         self.dev_name = dev_name
-        self.pool_scheduler = (pool_scheduler
-                               if pool_scheduler else get_scheduler())
+        self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
         self.disposables = CompositeDisposable()
 
     @abstractmethod
     def capture_video_as_observable(self, fps: int = 30) -> Observable:
         """Create an observable from video capture.
-        
+
         Args:
             fps: Frames per second to emit. Defaults to 30fps.
-                
+
         Returns:
             Observable: An observable emitting frames at the specified rate.
-            
+
         Raises:
             VideoSourceError: If the video source cannot be opened.
             VideoFrameError: If frames cannot be read properly.
@@ -103,10 +102,12 @@ class AbstractVideoProvider(ABC):
 class VideoProvider(AbstractVideoProvider):
     """Video provider implementation for capturing video as an observable."""
 
-    def __init__(self,
-                 dev_name: str,
-                 video_source: str = f"{os.getcwd()}/assets/video-f30-480p.mp4",
-                 pool_scheduler: Optional[ThreadPoolScheduler] = None) -> None:
+    def __init__(
+        self,
+        dev_name: str,
+        video_source: str = f"{os.getcwd()}/assets/video-f30-480p.mp4",
+        pool_scheduler: Optional[ThreadPoolScheduler] = None,
+    ) -> None:
         """Initializes the video provider with a device name and video source.
 
         Args:
@@ -122,7 +123,7 @@ class VideoProvider(AbstractVideoProvider):
 
     def _initialize_capture(self) -> None:
         """Initializes the video capture object if not already initialized.
-        
+
         Raises:
             VideoSourceError: If the video source cannot be opened.
         """
@@ -141,22 +142,20 @@ class VideoProvider(AbstractVideoProvider):
 
             logger.info(f"Opened new capture: {self.video_source}")
 
-    def capture_video_as_observable(self,
-                                    realtime: bool = True,
-                                    fps: int = 30) -> Observable:
+    def capture_video_as_observable(self, realtime: bool = True, fps: int = 30) -> Observable:
         """Creates an observable from video capture.
 
-        Creates an observable that emits frames at specified FPS or the video's 
+        Creates an observable that emits frames at specified FPS or the video's
         native FPS, with proper resource management and error handling.
 
         Args:
             realtime: If True, use the video's native FPS. Defaults to True.
-            fps: Frames per second to emit. Defaults to 30fps. Only used if 
+            fps: Frames per second to emit. Defaults to 30fps. Only used if
                 realtime is False or the video's native FPS is not available.
 
         Returns:
             Observable: An observable emitting frames at the configured rate.
-            
+
         Raises:
             VideoSourceError: If the video source cannot be opened.
             VideoFrameError: If frames cannot be read properly.
@@ -173,9 +172,7 @@ class VideoProvider(AbstractVideoProvider):
                     if native_fps > 0:
                         local_fps = native_fps
                     else:
-                        logger.warning(
-                            "Native FPS not available, defaulting to specified FPS"
-                        )
+                        logger.warning("Native FPS not available, defaulting to specified FPS")
 
                 frame_interval: float = 1.0 / local_fps
                 frame_time: float = time.monotonic()
@@ -187,8 +184,7 @@ class VideoProvider(AbstractVideoProvider):
 
                     if not ret:
                         # Loop video when we reach the end
-                        logger.warning(
-                            "End of video reached, restarting playback")
+                        logger.warning("End of video reached, restarting playback")
                         with self.lock:
                             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         continue
@@ -209,8 +205,7 @@ class VideoProvider(AbstractVideoProvider):
                 observer.on_error(e)
             except Exception as e:
                 logger.error(f"Unexpected error during frame emission: {e}")
-                observer.on_error(
-                    VideoFrameError(f"Frame acquisition failed: {e}"))
+                observer.on_error(VideoFrameError(f"Frame acquisition failed: {e}"))
             finally:
                 # Clean up resources regardless of success or failure
                 with self.lock:

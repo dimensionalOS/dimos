@@ -40,29 +40,30 @@ load_dotenv()
 # Initialize logger for the agent module
 logger = setup_logger("dimos.agents", level=logging.DEBUG)
 
+
 # HuggingFaceLLMAgent Class
 class HuggingFaceRemoteAgent(LLMAgent):
-    def __init__(self,
-                 dev_name: str,
-                 agent_type: str = "HF-LLM",
-                 model_name: str = "Qwen/QwQ-32B",
-                 query: str = "How many r's are in the word 'strawberry'?",
-                 input_query_stream: Optional[Observable] = None,
-                 input_video_stream: Optional[Observable] = None,
-                 output_dir: str = os.path.join(os.getcwd(), "assets",
-                                                "agent"),
-                 agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-                 system_query: Optional[str] = None,
-                 max_output_tokens_per_request: int = 16384,
-                 prompt_builder: Optional[PromptBuilder] = None,
-                 tokenizer: Optional[AbstractTokenizer] = None,
-                 image_detail: str = "low",
-                 pool_scheduler: Optional[ThreadPoolScheduler] = None,
-                 process_all_inputs: Optional[bool] = None,
-                 api_key: Optional[str] = None,
-                 hf_provider: Optional[str] = None,
-                 hf_base_url: Optional[str] = None):
-
+    def __init__(
+        self,
+        dev_name: str,
+        agent_type: str = "HF-LLM",
+        model_name: str = "Qwen/QwQ-32B",
+        query: str = "How many r's are in the word 'strawberry'?",
+        input_query_stream: Optional[Observable] = None,
+        input_video_stream: Optional[Observable] = None,
+        output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
+        agent_memory: Optional[AbstractAgentSemanticMemory] = None,
+        system_query: Optional[str] = None,
+        max_output_tokens_per_request: int = 16384,
+        prompt_builder: Optional[PromptBuilder] = None,
+        tokenizer: Optional[AbstractTokenizer] = None,
+        image_detail: str = "low",
+        pool_scheduler: Optional[ThreadPoolScheduler] = None,
+        process_all_inputs: Optional[bool] = None,
+        api_key: Optional[str] = None,
+        hf_provider: Optional[str] = None,
+        hf_base_url: Optional[str] = None,
+    ):
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
             # Default to True for text queries, False for video streams
@@ -77,7 +78,7 @@ class HuggingFaceRemoteAgent(LLMAgent):
             agent_memory=agent_memory,
             pool_scheduler=pool_scheduler,
             process_all_inputs=process_all_inputs,
-            system_query=system_query
+            system_query=system_query,
         )
 
         self.query = query
@@ -86,17 +87,16 @@ class HuggingFaceRemoteAgent(LLMAgent):
 
         self.model_name = model_name
         self.prompt_builder = prompt_builder or PromptBuilder(
-            self.model_name,
-            tokenizer=tokenizer or HuggingFaceTokenizer(self.model_name)
+            self.model_name, tokenizer=tokenizer or HuggingFaceTokenizer(self.model_name)
         )
 
         self.model_name = model_name
 
         self.max_output_tokens_per_request = max_output_tokens_per_request
 
-        self.api_key = api_key or os.getenv('HF_TOKEN')
+        self.api_key = api_key or os.getenv("HF_TOKEN")
         self.provider = hf_provider or "hf-inference"
-        self.base_url = hf_base_url or os.getenv('HUGGINGFACE_PRV_ENDPOINT')
+        self.base_url = hf_base_url or os.getenv("HUGGINGFACE_PRV_ENDPOINT")
         self.client = InferenceClient(
             provider=self.provider,
             base_url=self.base_url,
@@ -110,19 +110,14 @@ class HuggingFaceRemoteAgent(LLMAgent):
 
         # Ensure only one input stream is provided.
         if self.input_video_stream is not None and self.input_query_stream is not None:
-            raise ValueError(
-                "More than one input stream provided. Please provide only one input stream."
-            )
+            raise ValueError("More than one input stream provided. Please provide only one input stream.")
 
         if self.input_video_stream is not None:
             logger.info("Subscribing to input video stream...")
-            self.disposables.add(
-                self.subscribe_to_image_processing(self.input_video_stream))
+            self.disposables.add(self.subscribe_to_image_processing(self.input_video_stream))
         if self.input_query_stream is not None:
             logger.info("Subscribing to input query stream...")
-            self.disposables.add(
-                self.subscribe_to_query_processing(self.input_query_stream))
-
+            self.disposables.add(self.subscribe_to_query_processing(self.input_query_stream))
 
     def _send_query(self, messages: list) -> Any:
         try:
@@ -132,7 +127,7 @@ class HuggingFaceRemoteAgent(LLMAgent):
                 max_tokens=self.max_output_tokens_per_request,
             )
 
-            return (completion.choices[0].message)
+            return completion.choices[0].message
         except Exception as e:
             logger.error(f"Error during HuggingFace query: {e}")
             return "Error processing request."
@@ -141,5 +136,4 @@ class HuggingFaceRemoteAgent(LLMAgent):
         """
         Creates an observable that processes a text query and emits the response.
         """
-        return create(lambda observer, _: self._observable_query(
-            observer, incoming_query=query_text))
+        return create(lambda observer, _: self._observable_query(observer, incoming_query=query_text))

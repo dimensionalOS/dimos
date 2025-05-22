@@ -175,7 +175,9 @@ class UnitreeGo2(Robot):
 
         self.global_planner = AstarPlanner(
             conservativism=20,  # how close to obstacles robot is allowed to path plan
-            set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event),
+            set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(
+                self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event
+            ),
             get_costmap=self.ros_control.topic_latest("map", Costmap),
             get_robot_pos=lambda: self.ros_control.transform_euler_pos("base_link"),
         )
@@ -189,7 +191,7 @@ class UnitreeGo2(Robot):
     def get_pose(self) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
         """
         Get the current pose (position and rotation) of the robot in the map frame.
-        
+
         Returns:
             Tuple containing:
                 - position: Tuple[float, float, float] (x, y, z)

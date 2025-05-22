@@ -10,6 +10,7 @@
 """
 This file provides the definition of the convolutional heads used to predict masks, as well as the losses
 """
+
 import io
 from collections import defaultdict
 
@@ -246,7 +247,7 @@ class PostProcessSegm(nn.Module):
 
 class PostProcessPanoptic(nn.Module):
     """This class converts the output of the model to the final panoptic result, in the format expected by the
-    coco panoptic API """
+    coco panoptic API"""
 
     def __init__(self, is_thing_map, threshold=0.85):
         """
@@ -260,14 +261,14 @@ class PostProcessPanoptic(nn.Module):
         self.is_thing_map = is_thing_map
 
     def forward(self, outputs, processed_sizes, target_sizes=None):
-        """ This function computes the panoptic prediction from the model's predictions.
+        """This function computes the panoptic prediction from the model's predictions.
         Parameters:
             outputs: This is a dict coming directly from the model. See the model doc for the content.
             processed_sizes: This is a list of tuples (or torch tensors) of sizes of the images that were passed to the
                              model, ie the size after data augmentation but before batching.
             target_sizes: This is a list of tuples (or torch tensors) corresponding to the requested final size
                           of each prediction. If left to None, it will default to the processed_sizes
-            """
+        """
         if target_sizes is None:
             target_sizes = processed_sizes
         assert len(processed_sizes) == len(target_sizes)

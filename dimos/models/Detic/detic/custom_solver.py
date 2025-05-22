@@ -8,6 +8,7 @@ from detectron2.config import CfgNode
 
 from detectron2.solver.build import maybe_add_gradient_clipping
 
+
 def match_name_keywords(n, name_keywords):
     out = False
     for b in name_keywords:
@@ -15,6 +16,7 @@ def match_name_keywords(n, name_keywords):
             out = True
             break
     return out
+
 
 def build_custom_optimizer(cfg: CfgNode, model: torch.nn.Module) -> torch.optim.Optimizer:
     """
@@ -37,10 +39,10 @@ def build_custom_optimizer(cfg: CfgNode, model: torch.nn.Module) -> torch.optim.
             lr = lr * cfg.SOLVER.BACKBONE_MULTIPLIER
         if match_name_keywords(key, custom_multiplier_name):
             lr = lr * cfg.SOLVER.CUSTOM_MULTIPLIER
-            print('Costum LR', key, lr)
+            print("Costum LR", key, lr)
         param = {"params": [value], "lr": lr}
-        if optimizer_type != 'ADAMW':
-            param['weight_decay'] = weight_decay
+        if optimizer_type != "ADAMW":
+            param["weight_decay"] = weight_decay
         params += [param]
 
     def maybe_add_full_model_gradient_clipping(optim):  # optim: the optimizer class
@@ -60,16 +62,13 @@ def build_custom_optimizer(cfg: CfgNode, model: torch.nn.Module) -> torch.optim.
 
         return FullModelGradientClippingOptimizer if enable else optim
 
-    
-    if optimizer_type == 'SGD':
+    if optimizer_type == "SGD":
         optimizer = maybe_add_full_model_gradient_clipping(torch.optim.SGD)(
-            params, cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM, 
-            nesterov=cfg.SOLVER.NESTEROV
+            params, cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM, nesterov=cfg.SOLVER.NESTEROV
         )
-    elif optimizer_type == 'ADAMW':
+    elif optimizer_type == "ADAMW":
         optimizer = maybe_add_full_model_gradient_clipping(torch.optim.AdamW)(
-            params, cfg.SOLVER.BASE_LR, 
-            weight_decay=cfg.SOLVER.WEIGHT_DECAY
+            params, cfg.SOLVER.BASE_LR, weight_decay=cfg.SOLVER.WEIGHT_DECAY
         )
     else:
         raise NotImplementedError(f"no optimizer type {optimizer_type}")

@@ -4,6 +4,7 @@
 """
 Implement many useful :class:`Augmentation`.
 """
+
 import numpy as np
 import sys
 from fvcore.transforms.transform import (
@@ -30,9 +31,7 @@ class EfficientDetResizeCrop(Augmentation):
     If `max_size` is reached, then downscale so that the longer edge does not exceed max_size.
     """
 
-    def __init__(
-        self, size, scale, interp=Image.BILINEAR
-    ):
+    def __init__(self, size, scale, interp=Image.BILINEAR):
         """
         Args:
         """
@@ -60,4 +59,5 @@ class EfficientDetResizeCrop(Augmentation):
         offset_y = int(max(0.0, float(offset_y)) * np.random.uniform(0, 1))
         offset_x = int(max(0.0, float(offset_x)) * np.random.uniform(0, 1))
         return EfficientDetResizeCropTransform(
-            scaled_h, scaled_w, offset_y, offset_x, img_scale, self.target_size, self.interp)
+            scaled_h, scaled_w, offset_y, offset_x, img_scale, self.target_size, self.interp
+        )

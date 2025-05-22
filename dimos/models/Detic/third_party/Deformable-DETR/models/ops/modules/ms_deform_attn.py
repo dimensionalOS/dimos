@@ -24,7 +24,7 @@ from ..functions import MSDeformAttnFunction
 def _is_power_of_2(n):
     if (not isinstance(n, int)) or (n < 0):
         raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
-    return (n & (n-1) == 0) and n != 0
+    return (n & (n - 1) == 0) and n != 0
 
 
 class MSDeformAttn(nn.Module):
@@ -38,12 +38,14 @@ class MSDeformAttn(nn.Module):
         """
         super().__init__()
         if d_model % n_heads != 0:
-            raise ValueError('d_model must be divisible by n_heads, but got {} and {}'.format(d_model, n_heads))
+            raise ValueError("d_model must be divisible by n_heads, but got {} and {}".format(d_model, n_heads))
         _d_per_head = d_model // n_heads
         # you'd better set _d_per_head to a power of 2 which is more efficient in our CUDA implementation
         if not _is_power_of_2(_d_per_head):
-            warnings.warn("You'd better set d_model in MSDeformAttn to make the dimension of each attention head a power of 2 "
-                          "which is more efficient in our CUDA implementation.")
+            warnings.warn(
+                "You'd better set d_model in MSDeformAttn to make the dimension of each attention head a power of 2 "
+                "which is more efficient in our CUDA implementation."
+            )
 
         self.im2col_step = 64
 
@@ -60,22 +62,34 @@ class MSDeformAttn(nn.Module):
         self._reset_parameters()
 
     def _reset_parameters(self):
-        constant_(self.sampling_offsets.weight.data, 0.)
+        constant_(self.sampling_offsets.weight.data, 0.0)
         thetas = torch.arange(self.n_heads, dtype=torch.float32) * (2.0 * math.pi / self.n_heads)
         grid_init = torch.stack([thetas.cos(), thetas.sin()], -1)
-        grid_init = (grid_init / grid_init.abs().max(-1, keepdim=True)[0]).view(self.n_heads, 1, 1, 2).repeat(1, self.n_levels, self.n_points, 1)
+        grid_init = (
+            (grid_init / grid_init.abs().max(-1, keepdim=True)[0])
+            .view(self.n_heads, 1, 1, 2)
+            .repeat(1, self.n_levels, self.n_points, 1)
+        )
         for i in range(self.n_points):
             grid_init[:, :, i, :] *= i + 1
         with torch.no_grad():
             self.sampling_offsets.bias = nn.Parameter(grid_init.view(-1))
-        constant_(self.attention_weights.weight.data, 0.)
-        constant_(self.attention_weights.bias.data, 0.)
+        constant_(self.attention_weights.weight.data, 0.0)
+        constant_(self.attention_weights.bias.data, 0.0)
         xavier_uniform_(self.value_proj.weight.data)
-        constant_(self.value_proj.bias.data, 0.)
+        constant_(self.value_proj.bias.data, 0.0)
         xavier_uniform_(self.output_proj.weight.data)
-        constant_(self.output_proj.bias.data, 0.)
+        constant_(self.output_proj.bias.data, 0.0)
 
-    def forward(self, query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index, input_padding_mask=None):
+    def forward(
+        self,
+        query,
+        reference_points,
+        input_flatten,
+        input_spatial_shapes,
+        input_level_start_index,
+        input_padding_mask=None,
+    ):
         """
         :param query                       (N, Length_{query}, C)
         :param reference_points            (N, Length_{query}, n_levels, 2), range in [0, 1], top-left (0,0), bottom-right (1, 1), including padding area
@@ -101,15 +115,26 @@ class MSDeformAttn(nn.Module):
         # N, Len_q, n_heads, n_levels, n_points, 2
         if reference_points.shape[-1] == 2:
             offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
-            sampling_locations = reference_points[:, :, None, :, None, :] \
-                                 + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
+            sampling_locations = (
+                reference_points[:, :, None, :, None, :]
+                + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
+            )
         elif reference_points.shape[-1] == 4:
-            sampling_locations = reference_points[:, :, None, :, None, :2] \
-                                 + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
+            sampling_locations = (
+                reference_points[:, :, None, :, None, :2]
+                + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
+            )
         else:
             raise ValueError(
-                'Last dim of reference_points must be 2 or 4, but get {} instead.'.format(reference_points.shape[-1]))
+                "Last dim of reference_points must be 2 or 4, but get {} instead.".format(reference_points.shape[-1])
+            )
         output = MSDeformAttnFunction.apply(
-            value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
+            value,
+            input_spatial_shapes,
+            input_level_start_index,
+            sampling_locations,
+            attention_weights,
+            self.im2col_step,
+        )
         output = self.output_proj(output)
         return output

@@ -44,9 +44,7 @@ class AbstractAudioTransform(AbstractAudioConsumer, AbstractAudioEmitter):
 class AudioEvent:
     """Class to represent an audio frame event with metadata."""
 
-    def __init__(
-        self, data: np.ndarray, sample_rate: int, timestamp: float, channels: int = 1
-    ):
+    def __init__(self, data: np.ndarray, sample_rate: int, timestamp: float, channels: int = 1):
         """
         Initialize an AudioEvent.
 
