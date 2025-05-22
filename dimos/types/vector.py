@@ -24,11 +24,18 @@ from typing import (
 
 T = TypeVar("T", bound="Vector")
 
+# Protocol approach for static type checking
+@runtime_checkable
+class VectorLike(Protocol):
+    """Protocol for types that can be treated as vectors."""
+
+    def __getitem__(self, key: int) -> float: ...
+    def __len__(self) -> int: ...
 
 class Vector:
     """A wrapper around numpy arrays for vector operations with intuitive syntax."""
 
-    def __init__(self, *args):
+    def __init__(self, *args: VectorLike):
         """Initialize a vector from components or another iterable.
 
         Examples:
@@ -296,14 +303,6 @@ class Vector:
         """
         return not self.is_zero()
 
-
-# Protocol approach for static type checking
-@runtime_checkable
-class VectorLike(Protocol):
-    """Protocol for types that can be treated as vectors."""
-
-    def __getitem__(self, key: int) -> float: ...
-    def __len__(self) -> int: ...
 
 
 def to_numpy(value: VectorLike) -> np.ndarray:
