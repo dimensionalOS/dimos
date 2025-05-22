@@ -1,3 +1,2 @@
-ruff                                     0.11.10
-mypy                                     1.15.0
-mypy_extensions                          1.1.0
+ruff==0.11.10
+mypy==1.15.0
