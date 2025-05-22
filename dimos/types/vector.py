@@ -277,6 +277,25 @@ class Vector:
         """Convert the vector to a numpy array."""
         return self._data
 
+    def is_zero(self) -> bool:
+        """Check if this is a zero vector (all components are zero).
+
+        Returns:
+            True if all components are zero, False otherwise
+        """
+        return np.allclose(self._data, 0.0)
+
+    def __bool__(self) -> bool:
+        """Boolean conversion for Vector.
+
+        A Vector is considered False if it's a zero vector (all components are zero),
+        and True otherwise.
+
+        Returns:
+            False if vector is zero, True otherwise
+        """
+        return not self.is_zero()
+
 
 # Protocol approach for static type checking
 @runtime_checkable
