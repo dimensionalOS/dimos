@@ -11,19 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import cv2
 import os
-import asyncio
 from dotenv import load_dotenv
-from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2, Color
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
 from dimos.web.websocket_vis.server import WebsocketVis
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.types.vector import Vector
-import logging
-import open3d as o3d
 import reactivex.operators as ops
-import numpy as np
 import time
 import threading
 # logging.basicConfig(level=logging.DEBUG)
