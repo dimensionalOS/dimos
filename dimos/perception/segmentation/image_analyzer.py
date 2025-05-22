@@ -1,8 +1,6 @@
 import base64
-import requests
 from openai import OpenAI
 import cv2
-import numpy as np
 import os
 
 NORMAL_PROMPT = "What are in these images? Give a short word answer with at most two words, \

@@ -406,7 +406,7 @@ class OIDEval:
                 Na = area_idx * num_imgs
                 E = [self.eval_imgs[Nk + Na + img_idx] for img_idx in range(num_imgs)]
                 # Remove elements which are None
-                E = [e for e in E if not e is None]
+                E = [e for e in E if e is not None]
                 if len(E) == 0:
                     continue
 

@@ -1,10 +1,4 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-import logging
-import numpy as np
-import pycocotools.mask as mask_util
-import torch
-from fvcore.common.file_io import PathManager
-from PIL import Image
 
 
 from detectron2.data import transforms as T

@@ -7,11 +7,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from fvcore.transforms.transform import (
-    CropTransform,
-    HFlipTransform,
-    NoOpTransform,
     Transform,
-    TransformList,
 )
 from PIL import Image
 

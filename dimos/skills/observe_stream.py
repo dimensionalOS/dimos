@@ -19,10 +19,9 @@ This module provides a skill that periodically sends images from any
 Robot Data Stream to an agent for inference.
 """
 
-import logging
 import time
 import threading
-from typing import Optional, Any, Dict
+from typing import Optional
 import base64
 import cv2
 import reactivex as rx

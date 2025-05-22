@@ -1,13 +1,7 @@
-import cv2
 import torch
-from torch import nn
 from detectron2.utils.comm import get_world_size
-from detectron2.structures import pairwise_iou, Boxes
 
 # from .data import CenterNetCrop
-import torch.nn.functional as F
-import numpy as np
-from detectron2.structures import Boxes, ImageList, Instances
 
 __all__ = ["reduce_sum", "_transpose"]
 

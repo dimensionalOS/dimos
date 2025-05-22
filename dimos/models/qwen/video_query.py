@@ -1,7 +1,6 @@
 """Utility functions for one-off video frame queries using Qwen model."""
 
 import os
-import threading
 import numpy as np
 from typing import Optional
 from openai import OpenAI

@@ -14,7 +14,6 @@
 
 """RTSP video provider using ffmpeg for robust stream handling."""
 
-import logging
 import subprocess
 import threading
 import time
@@ -29,11 +28,9 @@ from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.utils.logging_config import setup_logger
-from dimos.stream.frame_processor import FrameProcessor
-from dimos.stream.video_operators import VideoOperators as vops
 
 # Assuming AbstractVideoProvider and exceptions are in the sibling file
-from .video_provider import AbstractVideoProvider, VideoFrameError, VideoSourceError, get_scheduler
+from .video_provider import AbstractVideoProvider, VideoFrameError, VideoSourceError
 
 logger = setup_logger("dimos.stream.rtsp_video_provider")
 

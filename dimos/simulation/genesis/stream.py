@@ -1,8 +1,7 @@
 import cv2
 import numpy as np
 import time
-import subprocess
-from typing import Literal, Optional, Union
+from typing import Optional, Union
 from pathlib import Path
 from ..base.stream_base import StreamBase, AnnotatorType, TransportType
 

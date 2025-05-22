@@ -1,4 +1,4 @@
-from typing import List, TypeVar, Tuple, Any
+from typing import List, TypeVar, Tuple
 from reactivex import Observable
 from reactivex import operators as ops
 

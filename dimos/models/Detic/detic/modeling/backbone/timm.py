@@ -1,21 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # Copyright (c) Facebook, Inc. and its affiliates.
-import math
-from os.path import join
-import numpy as np
 import copy
-from functools import partial
 
 import torch
 from torch import nn
-import torch.utils.model_zoo as model_zoo
 import torch.nn.functional as F
 import fvcore.nn.weight_init as weight_init
 
 from detectron2.modeling.backbone import FPN
 from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
-from detectron2.layers.batch_norm import get_norm, FrozenBatchNorm2d
+from detectron2.layers.batch_norm import FrozenBatchNorm2d
 from detectron2.modeling.backbone import Backbone
 
 from timm import create_model

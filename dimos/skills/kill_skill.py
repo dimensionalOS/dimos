@@ -19,8 +19,7 @@ This module provides a skill that can terminate other running skills,
 particularly those running in separate threads like the monitor skill.
 """
 
-import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional
 from pydantic import Field
 
 from dimos.skills.skills import AbstractSkill, SkillLibrary

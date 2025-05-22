@@ -21,28 +21,18 @@ This module provides two skills:
 """
 
 import os
-import sys
 import time
 import threading
-import logging
-import numpy as np
-import json
-from typing import Optional, Dict, Tuple, Any
+from typing import Optional, Tuple
 from dimos.utils.threadpool import get_scheduler
 
-import chromadb
 from reactivex import operators as ops
-from reactivex.subject import Subject
 from pydantic import Field
 
 from dimos.skills.skills import AbstractRobotSkill
-from dimos.perception.spatial_perception import SpatialMemory
-from dimos.agents.memory.visual_memory import VisualMemory
 from dimos.types.robot_location import RobotLocation
-from dimos.utils.threadpool import get_scheduler
 from dimos.utils.logging_config import setup_logger
 from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
-from dimos.utils.generic_subscriber import GenericSubscriber
 from dimos.utils.ros_utils import distance_angle_to_goal_xy
 from dimos.robot.local_planner.local_planner import navigate_to_goal_local
 

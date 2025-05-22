@@ -13,22 +13,10 @@
 # limitations under the License.
 
 from dimos.models.depth.metric3d import Metric3D
-import os
-import pickle
-import argparse
-import pandas as pd
 from PIL import Image
-from io import BytesIO
 import torch
-import sys
 import cv2
-import tarfile
 import logging
-import time
-import tempfile
-import gc
-import io
-import csv
 import numpy as np
 from dimos.types.depth_map import DepthMapType
 
@@ -85,7 +73,7 @@ class DepthProcessor:
             if is_depth_map_valid(np.array(depth_map)):
                 self.valid_depth_count += 1
             else:
-                self.logger.error(f"Invalid depth map for the provided frame.")
+                self.logger.error("Invalid depth map for the provided frame.")
                 print("Invalid depth map for the provided frame.")
                 return None
 

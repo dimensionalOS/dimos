@@ -1,9 +1,6 @@
-import cv2
 import numpy as np
 import os
-import torch
 import sys
-from pathlib import Path
 
 # Add Detic to Python path
 detic_path = os.path.join(os.path.dirname(__file__), "..", "..", "models", "Detic")
@@ -19,7 +16,6 @@ if not hasattr(PIL.Image, "LINEAR") and hasattr(PIL.Image, "BILINEAR"):
 
 # Detectron2 imports
 from detectron2.config import get_cfg
-from detectron2.utils.visualizer import Visualizer
 from detectron2.data import MetadataCatalog
 
 

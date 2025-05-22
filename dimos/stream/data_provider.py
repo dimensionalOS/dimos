@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from reactivex import Subject, Observable
 from reactivex.subject import Subject
 from reactivex.scheduler import ThreadPoolScheduler

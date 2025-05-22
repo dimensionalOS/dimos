@@ -25,9 +25,8 @@ import time
 import uuid
 from enum import Enum, auto
 from queue import PriorityQueue, Empty
-from typing import Callable, Optional, NamedTuple, Dict, Any, Tuple, List
+from typing import Callable, Optional, NamedTuple, Dict, Any
 from dimos.utils.logging_config import setup_logger
-import logging
 
 # Initialize logger for the ros command queue module
 logger = setup_logger("dimos.robot.ros_command_queue")

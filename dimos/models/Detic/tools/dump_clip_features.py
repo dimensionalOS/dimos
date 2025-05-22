@@ -5,7 +5,6 @@ import torch
 import numpy as np
 import itertools
 from nltk.corpus import wordnet
-import sys
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

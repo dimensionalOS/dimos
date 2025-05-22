@@ -1,6 +1,5 @@
 from typing import Optional, Union, List, Dict
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 
 class SimulatorBase(ABC):

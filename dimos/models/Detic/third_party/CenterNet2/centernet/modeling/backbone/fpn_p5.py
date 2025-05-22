@@ -1,12 +1,10 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-import math
 import fvcore.nn.weight_init as weight_init
 import torch.nn.functional as F
 from torch import nn
 
-from detectron2.layers import Conv2d, ShapeSpec, get_norm
+from detectron2.layers import ShapeSpec
 
-from detectron2.modeling.backbone import Backbone
 from detectron2.modeling.backbone.fpn import FPN
 from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
 from detectron2.modeling.backbone.resnet import build_resnet_backbone

@@ -15,7 +15,7 @@
 from dimos.hardware.end_effector import EndEffector
 from dimos.hardware.camera import Camera
 from dimos.hardware.stereo_camera import StereoCamera
-from dimos.hardware.ufactory import UFactoryEndEffector, UFactory7DOFArm
+from dimos.hardware.ufactory import UFactory7DOFArm
 
 
 class HardwareInterface:

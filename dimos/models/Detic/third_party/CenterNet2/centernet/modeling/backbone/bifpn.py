@@ -1,16 +1,10 @@
 # Modified from https://github.com/rwightman/efficientdet-pytorch/blob/master/effdet/efficientdet.py
 # The original file is under Apache-2.0 License
 import math
-from os.path import join
-import numpy as np
 from collections import OrderedDict
-from typing import List
 
 import torch
 from torch import nn
-import torch.utils.model_zoo as model_zoo
-import torch.nn.functional as F
-import fvcore.nn.weight_init as weight_init
 
 from detectron2.layers import ShapeSpec, Conv2d
 from detectron2.modeling.backbone.resnet import build_resnet_backbone

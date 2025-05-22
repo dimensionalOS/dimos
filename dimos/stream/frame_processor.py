@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import timedelta
 import cv2
 import numpy as np
 import os
 from reactivex import Observable
 from reactivex import operators as ops
-from typing import Callable, Tuple, Optional
+from typing import Tuple, Optional
 
 
 # TODO: Reorganize, filenaming - Consider merger with VideoOperators class

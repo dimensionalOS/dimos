@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import cv2
-import os
 import argparse
 from pathlib import Path
 

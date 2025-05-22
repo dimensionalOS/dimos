@@ -2,15 +2,13 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-import math
 
 from detectron2.modeling import META_ARCH_REGISTRY, build_backbone
 from detectron2.structures import Boxes, Instances
 from ..utils import load_class_freq, get_fed_loss_inds
 
 from models.backbone import Joiner
-from models.deformable_detr import DeformableDETR, SetCriterion, MLP
-from models.deformable_detr import _get_clones
+from models.deformable_detr import DeformableDETR, SetCriterion
 from models.matcher import HungarianMatcher
 from models.position_encoding import PositionEmbeddingSine
 from models.deformable_transformer import DeformableTransformer

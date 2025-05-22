@@ -2,7 +2,7 @@
 
 import math
 import numpy as np
-from typing import Dict, Tuple, Optional, List, Any, Callable, Protocol
+from typing import Dict, Tuple, Optional, Callable
 from abc import ABC, abstractmethod
 import cv2
 from reactivex import Observable
@@ -14,11 +14,8 @@ from collections import deque
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.ros_utils import normalize_angle, distance_angle_to_goal_xy
 
-from dimos.robot.robot import Robot
 from dimos.types.vector import VectorLike, Vector, to_tuple
 from dimos.types.path import Path
-from dimos.types.costmap import Costmap
-from dimos.robot.global_planner.algo import astar
 from nav_msgs.msg import OccupancyGrid
 
 logger = setup_logger("dimos.robot.unitree.local_planner", level=logging.DEBUG)
@@ -311,7 +308,7 @@ class BaseLocalPlanner(ABC):
                     new_waypoints.append(adjusted_goal)  # Append the adjusted goal
                     self.waypoints_in_odom = new_waypoints
                     self.ignore_obstacles = True
-                    logger.debug(f"Within safe distance of final waypoint. Ignoring obstacles.")
+                    logger.debug("Within safe distance of final waypoint. Ignoring obstacles.")
 
             # Update the target goal based on waypoint progression
             just_reached_final = self._update_waypoint_target(robot_pos_np)
@@ -340,7 +337,7 @@ class BaseLocalPlanner(ABC):
             if goal_distance < self.safe_goal_distance:
                 self.goal_xy = self.adjust_goal_to_valid_position(self.goal_xy)
                 self.ignore_obstacles = True
-                logger.debug(f"Within safe distance of goal. Ignoring obstacles.")
+                logger.debug("Within safe distance of goal. Ignoring obstacles.")
 
             # First check position
             if goal_distance < self.goal_tolerance or self.position_reached:

@@ -1,5 +1,4 @@
 import cv2
-import numpy as np
 from ultralytics import YOLO
 from dimos.perception.detection2d.utils import extract_detection_results, plot_results, filter_detections
 import os

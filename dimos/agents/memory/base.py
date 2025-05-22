@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod
-import logging
+from abc import abstractmethod
 from dimos.exceptions.agent_memory_exceptions import UnknownConnectionTypeError, AgentMemoryConnectionError
 from dimos.utils.logging_config import setup_logger
 

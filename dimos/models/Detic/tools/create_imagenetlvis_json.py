@@ -2,7 +2,6 @@
 import argparse
 import json
 import os
-import cv2
 from nltk.corpus import wordnet
 from detectron2.data.detection_utils import read_image
 

@@ -19,11 +19,10 @@ Visual memory storage for managing image data persistence and retrieval
 import os
 import pickle
 import base64
-import logging
 import numpy as np
 import cv2
 
-from typing import Dict, Optional, Tuple, Any, List
+from typing import Optional
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.agents.memory.visual_memory")

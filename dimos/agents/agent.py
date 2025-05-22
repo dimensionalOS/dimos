@@ -27,19 +27,16 @@ like OpenAIAgent that connect to specific LLM providers.
 from __future__ import annotations
 
 # Standard library imports
-import ast
 import json
 import os
 import threading
-import logging
-from typing import Any, Dict, List, Tuple, Optional, Union
+from typing import Any, Tuple, Optional, Union
 
 # Third-party imports
 from dotenv import load_dotenv
 from openai import NOT_GIVEN, OpenAI
 from pydantic import BaseModel
-import reactivex
-from reactivex import Observer, create, Observable, empty, operators as RxOps, throw, just
+from reactivex import Observer, create, Observable, empty, operators as RxOps, just
 from reactivex.disposable import CompositeDisposable, Disposable
 from reactivex.scheduler import ThreadPoolScheduler
 from reactivex.subject import Subject
@@ -54,7 +51,6 @@ from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.stream_merger import create_stream_merger
 from dimos.stream.video_operators import Operators as MyOps, VideoOperators as MyVidOps
-from dimos.types.constants import Colors
 from dimos.utils.threadpool import get_scheduler
 from dimos.utils.logging_config import setup_logger
 

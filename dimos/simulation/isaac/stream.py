@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from isaacsim import SimulationApp
 import cv2
-import numpy as np
 import time
-from typing import Literal, Optional, Union
+from typing import Optional, Union
 from pathlib import Path
 from ..base.stream_base import StreamBase, AnnotatorType, TransportType
 

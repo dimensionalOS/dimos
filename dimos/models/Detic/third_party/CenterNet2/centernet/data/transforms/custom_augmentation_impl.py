@@ -6,15 +6,6 @@ Implement many useful :class:`Augmentation`.
 """
 
 import numpy as np
-import sys
-from fvcore.transforms.transform import (
-    BlendTransform,
-    CropTransform,
-    HFlipTransform,
-    NoOpTransform,
-    Transform,
-    VFlipTransform,
-)
 from PIL import Image
 
 from detectron2.data.transforms.augmentation import Augmentation

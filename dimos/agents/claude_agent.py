@@ -23,18 +23,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union, cast
-import logging
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import anthropic
-from anthropic.types import ContentBlock, MessageParam, ToolUseBlock
 from dotenv import load_dotenv
-from httpx._transports import base
 from pydantic import BaseModel
 from reactivex import Observable
-from reactivex.disposable import Disposable
 from reactivex.scheduler import ThreadPoolScheduler
-from reactivex import create
 
 # Local imports
 from dimos.agents.agent import LLMAgent
@@ -43,7 +38,6 @@ from dimos.agents.prompt_builder.impl import PromptBuilder
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.threadpool import get_scheduler
 
 # Initialize environment variables
 load_dotenv()
@@ -359,7 +353,7 @@ class ClaudeAgent(LLMAgent):
             thinking_blocks = []
 
             # Log the start of streaming and the query
-            logger.info(f"Sending streaming request to Claude API")
+            logger.info("Sending streaming request to Claude API")
 
             # Log the query to memory.txt
             with open(os.path.join(self.output_dir, "memory.txt"), "a") as f:
@@ -462,10 +456,10 @@ class ClaudeAgent(LLMAgent):
 
                         elif event.type == "message_delta" and event.delta.stop_reason == "tool_use":
                             # When a tool use is detected
-                            logger.info(f"Tool use stop reason detected in stream")
+                            logger.info("Tool use stop reason detected in stream")
 
                     # Mark the end of the response in memory.txt
-                    memory_file.write(f"\n\nRESPONSE COMPLETE\n\n")
+                    memory_file.write("\n\nRESPONSE COMPLETE\n\n")
                     memory_file.flush()
 
                 print("\n==== CLAUDE API RESPONSE STREAM COMPLETED ====")

@@ -1,9 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-import logging
 import math
-import json
-import numpy as np
-from typing import Dict, Union
 import torch
 from fvcore.nn import giou_loss, smooth_l1_loss
 from torch import nn
@@ -11,15 +7,12 @@ from torch.nn import functional as F
 import fvcore.nn.weight_init as weight_init
 import detectron2.utils.comm as comm
 from detectron2.config import configurable
-from detectron2.layers import ShapeSpec, batched_nms, cat, cross_entropy, nonzero_tuple
-from detectron2.structures import Boxes, Instances
+from detectron2.layers import ShapeSpec, cat, nonzero_tuple
 from detectron2.utils.events import get_event_storage
-from detectron2.modeling.box_regression import Box2BoxTransform
 from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
 from detectron2.modeling.roi_heads.fast_rcnn import fast_rcnn_inference
 from detectron2.modeling.roi_heads.fast_rcnn import _log_classification_stats
 
-from torch.cuda.amp import autocast
 from ..utils import load_class_freq, get_fed_loss_inds
 from .zero_shot_classifier import ZeroShotClassifier
 

@@ -283,7 +283,7 @@ class AbstractSkill(BaseModel):
 
 # region Abstract Robot Skill
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dimos.robot.robot import Robot

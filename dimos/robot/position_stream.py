@@ -19,12 +19,10 @@ This module creates a reactive stream of position updates from ROS odometry or p
 """
 
 import logging
-import numpy as np
-from typing import Tuple, Optional, Callable, Dict, Any
+from typing import Tuple, Optional
 import time
 from reactivex import Subject, Observable
 from reactivex import operators as ops
-import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry

@@ -1,6 +1,4 @@
 from dimos.skills.skills import AbstractSkill
-from dimos.stream.audio.pipelines import tts
-from dimos.stream.audio.node_output import SounddeviceAudioOutput
 from pydantic import Field
 from reactivex import Subject
 from typing import Optional, Any, List

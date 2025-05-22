@@ -1,9 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 from collections import defaultdict
 import torch
-import sys
 import json
-import numpy as np
 
 from detectron2.structures import Boxes, pairwise_iou
 

@@ -20,9 +20,8 @@ using pre-trained models like CLIP, ResNet, etc.
 """
 
 import os
-import logging
 import numpy as np
-from typing import Union, List, Dict, Any
+from typing import Union
 from PIL import Image
 import io
 import cv2

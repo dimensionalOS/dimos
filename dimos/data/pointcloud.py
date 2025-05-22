@@ -16,7 +16,6 @@ import os
 import cv2
 import numpy as np
 import open3d as o3d
-from pathlib import Path
 from PIL import Image
 import logging
 

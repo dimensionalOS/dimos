@@ -21,14 +21,10 @@ and video streaming.
 
 from abc import ABC
 import os
-import logging
-from typing import TYPE_CHECKING, Optional, Dict, Tuple, Any
+from typing import TYPE_CHECKING, Optional
 
-import chromadb
 from dimos.hardware.interface import HardwareInterface
 from dimos.perception.spatial_perception import SpatialMemory
-from dimos.agents.memory.visual_memory import VisualMemory
-from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -37,8 +33,6 @@ else:
     ROSControl = "ROSControl"
 
 from dimos.skills.skills import SkillLibrary
-from dimos.stream.frame_processor import FrameProcessor
-from dimos.stream.video_operators import VideoOperators as vops
 from reactivex import Observable, operators as ops
 from reactivex.disposable import CompositeDisposable
 from reactivex.scheduler import ThreadPoolScheduler

@@ -1,6 +1,5 @@
 import argparse
 from ultralytics import YOLO, FastSAM
-from pathlib import Path
 
 
 def parse_args():

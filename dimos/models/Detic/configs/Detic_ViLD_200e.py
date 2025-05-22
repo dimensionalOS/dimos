@@ -5,7 +5,6 @@ import torch
 import detectron2.data.transforms as T
 from detectron2.config import LazyCall as L
 from detectron2.layers import ShapeSpec
-from detectron2.data.samplers import RepeatFactorTrainingSampler
 from detectron2.evaluation.lvis_evaluation import LVISEvaluator
 from detectron2.layers.batch_norm import NaiveSyncBatchNorm
 from detectron2.solver import WarmupParamScheduler

@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 # Standard library imports
-import json
 import logging
 import os
 from typing import Any, Optional
@@ -26,7 +25,7 @@ from reactivex import Observable, create
 from reactivex.scheduler import ThreadPoolScheduler
 from reactivex.subject import Subject
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM
 
 # Local imports
 from dimos.agents.agent import LLMAgent
@@ -202,7 +201,7 @@ class HuggingFaceLocalAgent(LLMAgent):
         except Exception as e:
             # Catch all other errors
             logger.error(f"Error during query processing: {e}", exc_info=True)
-            return f"Error processing request. Please try again."
+            return "Error processing request. Please try again."
 
     def stream_query(self, query_text: str) -> Subject:
         """

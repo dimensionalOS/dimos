@@ -1,6 +1,5 @@
 from typing import Optional, Union, List, Dict
 import genesis as gs  # type: ignore
-from pathlib import Path
 from ..base.simulator_base import SimulatorBase
 
 

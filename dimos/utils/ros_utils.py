@@ -1,7 +1,5 @@
-import math
 import numpy as np
 from typing import Tuple
-from scipy.spatial.transform import Rotation as R
 import logging
 
 logger = logging.getLogger(__name__)

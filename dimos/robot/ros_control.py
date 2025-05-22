@@ -24,7 +24,7 @@ from cv_bridge import CvBridge
 from enum import Enum, auto
 import threading
 import time
-from typing import Optional, Tuple, Dict, Any, Type
+from typing import Optional, Dict, Any, Type
 from abc import ABC, abstractmethod
 from rclpy.qos import (
     QoSProfile,
@@ -35,7 +35,7 @@ from rclpy.qos import (
 from dimos.stream.ros_video_provider import ROSVideoProvider
 import math
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import Point, Vector3, Twist
+from geometry_msgs.msg import Point, Vector3
 from dimos.robot.ros_command_queue import ROSCommandQueue
 from dimos.utils.logging_config import setup_logger
 
@@ -433,10 +433,10 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             logger.error(f"Action timed out after {time_allowance}s")
             return False
         elif self._action_success:
-            logger.info(f"Action succeeded")
+            logger.info("Action succeeded")
             return True
         else:
-            logger.error(f"Action failed")
+            logger.error("Action failed")
             return False
 
     def move(self, distance: float, speed: float = 0.5, time_allowance: float = 120) -> bool:

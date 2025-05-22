@@ -6,9 +6,7 @@ of the underlying hardware or communication protocol (ROS, WebRTC, etc).
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Union, Optional
 from reactivex.observable import Observable
-import numpy as np
 
 
 class AbstractRobot(ABC):

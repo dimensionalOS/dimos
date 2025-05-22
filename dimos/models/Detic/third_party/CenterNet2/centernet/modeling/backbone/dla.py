@@ -11,7 +11,6 @@ from detectron2.modeling.backbone.resnet import BasicStem, BottleneckBlock, Defo
 from detectron2.layers import (
     Conv2d,
     DeformConv,
-    FrozenBatchNorm2d,
     ModulatedDeformConv,
     ShapeSpec,
     get_norm,

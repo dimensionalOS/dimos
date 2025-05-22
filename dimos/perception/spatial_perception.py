@@ -16,19 +16,14 @@
 Spatial Memory module for creating a semantic map of the environment.
 """
 
-import logging
 import uuid
 import time
 import os
-import math
-from typing import Dict, List, Tuple, Optional, Any, Union
+from typing import Dict, List, Optional, Any
 
 import numpy as np
-import cv2
 from reactivex import Observable, disposable
 from reactivex import operators as ops
-from reactivex.subject import Subject
-from reactivex.disposable import CompositeDisposable
 from datetime import datetime
 
 from dimos.utils.logging_config import setup_logger
@@ -99,7 +94,7 @@ class SpatialMemory:
             # Clean up existing DB if creating new memory
             if new_memory and os.path.exists(db_path):
                 try:
-                    logger.info(f"Creating new ChromaDB database (new_memory=True)")
+                    logger.info("Creating new ChromaDB database (new_memory=True)")
                     # Try to delete any existing database files
                     import shutil
 

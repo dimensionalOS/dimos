@@ -7,8 +7,7 @@ import sys
 
 sys.path.insert(0, "third_party/CenterNet2/")
 sys.path.insert(0, "third_party/Deformable-DETR")
-from detic.data.tar_dataset import _TarDataset, DiskTarDataset
-import pickle
+from detic.data.tar_dataset import _TarDataset
 import io
 import gzip
 import time

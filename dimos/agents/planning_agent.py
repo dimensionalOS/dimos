@@ -13,17 +13,15 @@
 # limitations under the License.
 
 import threading
-from typing import List, Optional, Dict, Union, Literal
-import json
-from reactivex import Subject, Observable, disposable, create
+from typing import List, Optional, Literal
+from reactivex import Observable
 from reactivex import operators as ops
-from openai import OpenAI, NOT_GIVEN
 import time
 from dimos.skills.skills import AbstractSkill
 from dimos.agents.agent import OpenAIAgent
 from dimos.utils.logging_config import setup_logger
 from textwrap import dedent
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 logger = setup_logger("dimos.agents.planning_agent")
 

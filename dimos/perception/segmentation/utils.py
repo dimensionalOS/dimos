@@ -1,7 +1,6 @@
 import numpy as np
 import cv2
 import torch
-import time
 
 
 class SimpleTracker:

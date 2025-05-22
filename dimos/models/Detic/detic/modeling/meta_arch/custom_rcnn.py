@@ -1,21 +1,13 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-import copy
-import logging
-import numpy as np
 from typing import Dict, List, Optional, Tuple
 import torch
-from torch import nn
-import json
 from detectron2.utils.events import get_event_storage
 from detectron2.config import configurable
-from detectron2.structures import ImageList, Instances, Boxes
+from detectron2.structures import Instances
 import detectron2.utils.comm as comm
 
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 from detectron2.modeling.meta_arch.rcnn import GeneralizedRCNN
-from detectron2.modeling.postprocessing import detector_postprocess
-from detectron2.utils.visualizer import Visualizer, _create_text_labels
-from detectron2.data.detection_utils import convert_image_to_rgb
 
 from torch.cuda.amp import autocast
 from ..text.text_encoder import build_text_encoder

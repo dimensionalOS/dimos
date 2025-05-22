@@ -19,17 +19,10 @@ This module extends the ChromaDB implementation to support storing images with
 their XY locations and querying by location or image similarity.
 """
 
-import os
-import logging
 import numpy as np
-import cv2
-import json
-import base64
-from typing import List, Dict, Tuple, Any, Optional, Union
+from typing import List, Dict, Tuple, Any
 import chromadb
-from chromadb.utils import embedding_functions
 
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.memory.visual_memory import VisualMemory
 from dimos.utils.logging_config import setup_logger
 

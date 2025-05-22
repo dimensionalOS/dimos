@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 # Standard library imports
-import json
 import logging
 import os
 from typing import Any, Optional
@@ -26,14 +25,11 @@ from reactivex import Observable, create
 from reactivex.scheduler import ThreadPoolScheduler
 from reactivex.subject import Subject
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Local imports
 from dimos.agents.agent import LLMAgent
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
-from dimos.agents.tokenizer.base import AbstractTokenizer
-from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.utils.logging_config import setup_logger
 
 # Initialize environment variables

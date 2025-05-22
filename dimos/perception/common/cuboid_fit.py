@@ -2,8 +2,6 @@ import numpy as np
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import cv2
-import argparse
-from pathlib import Path
 
 
 def depth_to_point_cloud(depth_image, camera_matrix, subsample_factor=4):

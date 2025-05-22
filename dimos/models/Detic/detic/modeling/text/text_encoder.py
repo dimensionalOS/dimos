@@ -6,7 +6,6 @@ from typing import Union, List
 from collections import OrderedDict
 import torch
 from torch import nn
-import torch
 
 from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
 

@@ -1,5 +1,4 @@
 import cv2
-import numpy as np
 import time
 from ultralytics import FastSAM
 from dimos.perception.segmentation.utils import (

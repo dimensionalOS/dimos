@@ -14,7 +14,6 @@
 
 import requests
 from dimos.skills.skills import AbstractSkill
-from typing import Optional, Dict, Any
 from pydantic import Field
 import logging
 

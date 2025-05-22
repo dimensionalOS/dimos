@@ -15,7 +15,6 @@
 from datetime import datetime, timedelta
 import cv2
 import numpy as np
-import os
 from reactivex import Observable, Observer, create
 from reactivex import operators as ops
 from typing import Any, Callable, Tuple, Optional
@@ -246,7 +245,7 @@ class VideoOperators:
 
 
 from reactivex.disposable import Disposable
-from reactivex import Observable, create
+from reactivex import Observable
 from threading import Lock
 
 
@@ -438,7 +437,7 @@ class Operators:
                     nonlocal is_processing
                     if not is_processing:
                         is_processing = True
-                        print(f"\033[35mProcessing item.\033[0m")
+                        print("\033[35mProcessing item.\033[0m")
                         try:
                             inner_observable = project(item)  # Create the inner observable
                             inner_observable.subscribe(
@@ -450,12 +449,12 @@ class Operators:
                         except Exception as e:
                             observer.on_error(e)
                     else:
-                        print(f"\033[35mSkipping item, already processing.\033[0m")
+                        print("\033[35mSkipping item, already processing.\033[0m")
 
                 def set_not_processing():
                     nonlocal is_processing
                     is_processing = False
-                    print(f"\033[35mItem processed.\033[0m")
+                    print("\033[35mItem processed.\033[0m")
 
                 return source.subscribe(
                     on_next=on_next, on_error=observer.on_error, on_completed=observer.on_completed, scheduler=scheduler
@@ -473,14 +472,14 @@ class Operators:
                     if not lock.locked():  # Check if the lock is free
                         if lock.acquire(blocking=False):  # Non-blocking acquire
                             try:
-                                print(f"\033[32mAcquired lock, processing item.\033[0m")
+                                print("\033[32mAcquired lock, processing item.\033[0m")
                                 observer.on_next(item)
                             finally:  # Ensure lock release even if observer.on_next throws
                                 lock.release()
                         else:
-                            print(f"\033[34mLock busy, skipping item.\033[0m")
+                            print("\033[34mLock busy, skipping item.\033[0m")
                     else:
-                        print(f"\033[34mLock busy, skipping item.\033[0m")
+                        print("\033[34mLock busy, skipping item.\033[0m")
 
                 def on_error(error):
                     observer.on_error(error)

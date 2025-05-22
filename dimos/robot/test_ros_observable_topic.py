@@ -5,7 +5,6 @@ from nav_msgs import msg
 import pytest
 from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
 from dimos.utils.logging_config import setup_logger
-from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector
 import asyncio
 

@@ -14,7 +14,6 @@
 
 import boto3
 import os
-from io import BytesIO
 
 try:
     import open3d as o3d

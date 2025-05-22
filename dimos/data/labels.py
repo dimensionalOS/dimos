@@ -13,8 +13,6 @@
 # limitations under the License.
 
 import os
-from dimos.models.labels.llava_34b import Llava
-from PIL import Image
 from dimos.types.label import LabelType
 
 

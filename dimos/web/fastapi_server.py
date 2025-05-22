@@ -25,7 +25,7 @@
 # Fast Api & Uvicorn
 import cv2
 from dimos.web.edge_io import EdgeIO
-from fastapi import FastAPI, Request, Response, Form, HTTPException
+from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from fastapi.templating import Jinja2Templates

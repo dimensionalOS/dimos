@@ -14,7 +14,6 @@
 
 from transformers import SamModel, SamProcessor
 import torch
-import numpy as np
 
 
 class SAM:

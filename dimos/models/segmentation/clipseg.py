@@ -13,8 +13,6 @@
 # limitations under the License.
 
 from transformers import AutoProcessor, CLIPSegForImageSegmentation
-import torch
-import numpy as np
 
 
 class CLIPSeg:

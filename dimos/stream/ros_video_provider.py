@@ -23,10 +23,9 @@ from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 import logging
 import time
-from typing import Any, Optional
+from typing import Optional
 import numpy as np
 
-from dimos.utils.threadpool import get_scheduler
 from dimos.stream.video_provider import AbstractVideoProvider
 
 logging.basicConfig(level=logging.INFO)

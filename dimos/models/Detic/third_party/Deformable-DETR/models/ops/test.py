@@ -10,9 +10,7 @@ from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import division
 
-import time
 import torch
-import torch.nn as nn
 from torch.autograd import gradcheck
 
 from functions.ms_deform_attn_func import MSDeformAttnFunction, ms_deform_attn_core_pytorch

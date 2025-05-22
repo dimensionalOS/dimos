@@ -16,8 +16,6 @@ from dimos.stream.video_provider import AbstractVideoProvider
 
 from queue import Queue
 from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.constants import (
-    RTC_TOPIC,
-    SPORT_CMD,
     WebRTCConnectionMethod,
 )
 from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection
