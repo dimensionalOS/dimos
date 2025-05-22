@@ -149,43 +149,44 @@ class UnitreeGo2(Robot):
         if save_costmaps and not os.path.exists(costmap_save_dir):
             os.makedirs(costmap_save_dir)
 
-        # Initialize skills
-        if skills is None:
-            skills = MyUnitreeSkills(robot=self)
+        # # Initialize skills
+        # if skills is None:
+        #     skills = MyUnitreeSkills(robot=self)
 
-        self.skill_library = skills if skills else SkillLibrary()
+        # self.skill_library = skills if skills else SkillLibrary()
 
-        if self.skill_library is not None:
-            for skill in self.skill_library:
-                if isinstance(skill, AbstractRobotSkill):
-                    self.skill_library.create_instance(skill.__name__, robot=self)
-            if isinstance(self.skill_library, MyUnitreeSkills):
-                self.skill_library._robot = self
-                self.skill_library.init()
-                self.skill_library.initialize_skills()
+        # if self.skill_library is not None:
+        #     for skill in self.skill_library:
+        #         if isinstance(skill, AbstractRobotSkill):
+        #             self.skill_library.create_instance(skill.__name__, robot=self)
+        #     if isinstance(self.skill_library, MyUnitreeSkills):
+        #         self.skill_library._robot = self
+        #         self.skill_library.init()
+        #         self.skill_library.initialize_skills()
 
-        # Camera stuff
-        self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
-        self.camera_pitch = np.deg2rad(0)  # negative for downward pitch
-        self.camera_height = 0.44  # meters
+        # # Camera stuff
+        # self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
+        # self.camera_pitch = np.deg2rad(0)  # negative for downward pitch
+        # self.camera_height = 0.44  # meters
 
-        # Initialize visual servoing if enabled
-        if self.get_video_stream() is not None:
-            self.person_tracker = PersonTrackingStream(
-                camera_intrinsics=self.camera_intrinsics,
-                camera_pitch=self.camera_pitch,
-                camera_height=self.camera_height,
-            )
-            self.object_tracker = ObjectTrackingStream(
-                camera_intrinsics=self.camera_intrinsics,
-                camera_pitch=self.camera_pitch,
-                camera_height=self.camera_height,
-            )
-            person_tracking_stream = self.person_tracker.create_stream(self.get_video_stream())
-            object_tracking_stream = self.object_tracker.create_stream(self.get_video_stream())
+        # # Initialize visual servoing if enabled
+        # if self.get_video_stream() is not None:
+        #     self.person_tracker = PersonTrackingStream(
+        #         camera_intrinsics=self.camera_intrinsics,
+        #         camera_pitch=self.camera_pitch,
+        #         camera_height=self.camera_height,
+        #     )
+        #     # self.object_tracker = ObjectTrackingStream(
+        #     #     camera_intrinsics=self.camera_intrinsics,
+        #     #     camera_pitch=self.camera_pitch,
+        #     #     camera_height=self.camera_height,
+        #     # )
+        #     person_tracking_stream = self.person_tracker.create_stream(self.get_video_stream())
+        #     #object_tracking_stream = self.object_tracker.create_stream(self.get_video_stream())
 
-            self.person_tracking_stream = person_tracking_stream
-            self.object_tracking_stream = object_tracking_stream
+        #     self.person_tracking_stream = person_tracking_stream
+        #     #self.object_tracking_stream = object_tracking_stream
+
 
         # Initialize the local planner and create BEV visualization stream
         self.local_planner = VFHPurePursuitPlanner(
