@@ -28,7 +28,6 @@ import chromadb
 from dimos.hardware.interface import HardwareInterface
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.agents.memory.visual_memory import VisualMemory
-from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

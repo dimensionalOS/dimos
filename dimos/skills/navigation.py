@@ -36,9 +36,8 @@ from reactivex.subject import Subject
 from pydantic import Field
 
 from dimos.skills.skills import AbstractRobotSkill
-from dimos.perception.spatial_perception import SpatialMemory
+from dimos.perception.spatial_perception import SpatialMemory, RobotLocation
 from dimos.agents.memory.visual_memory import VisualMemory
-from dimos.types.robot_location import RobotLocation
 from dimos.utils.threadpool import get_scheduler
 from dimos.utils.logging_config import setup_logger
 from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
