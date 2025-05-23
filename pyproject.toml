@@ -27,7 +27,7 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["dimos/robot"]
+testpaths = ["dimos"]
 norecursedirs = ["dimos/robot/unitree/external"]
 markers = [
     "vis: marks tests that run visuals and require a visual check by dev",
