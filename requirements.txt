@@ -9,6 +9,7 @@ typeguard
 empy==3.3.4
 catkin_pkg
 lark
+plum-dispatch==2.5.7
 
 # pycolmap
 ffmpeg-python

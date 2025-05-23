@@ -1,6 +1,6 @@
 import numpy as np
 
-from dimos.types.position import Position
+from dimos.types.position import Position, to_position
 from dimos.types.vector import Vector
 
 
@@ -179,6 +179,123 @@ def test_position_initialization_with_arrays():
     tuple_rot = (16.0, 17.0, 18.0)
     pos3 = Position(tuple_pos, tuple_rot)
 
+    assert pos3.x == 13.0
+    assert pos3.y == 14.0
+    assert pos3.z == 15.0
+    assert pos3.rot.x == 16.0
+    assert pos3.rot.y == 17.0
+    assert pos3.rot.z == 18.0
+
+
+def test_to_position_with_position():
+    """Test to_position with Position input."""
+    # Create a position
+    original_pos = Position(Vector(1.0, 2.0, 3.0), Vector(4.0, 5.0, 6.0))
+
+    # Convert using to_position
+    converted_pos = to_position(original_pos)
+
+    # Should return the exact same object
+    assert converted_pos is original_pos
+    assert converted_pos == original_pos
+
+    # Check values
+    assert converted_pos.x == 1.0
+    assert converted_pos.y == 2.0
+    assert converted_pos.z == 3.0
+    assert converted_pos.rot.x == 4.0
+    assert converted_pos.rot.y == 5.0
+    assert converted_pos.rot.z == 6.0
+
+
+def test_to_position_with_vector():
+    """Test to_position with Vector input."""
+    # Create a vector
+    vec = Vector(1.0, 2.0, 3.0)
+
+    # Convert using to_position
+    pos = to_position(vec)
+
+    # Should return a Position with the vector as position and zero rotation
+    assert isinstance(pos, Position)
+    assert pos.pos == vec
+    assert pos.x == 1.0
+    assert pos.y == 2.0
+    assert pos.z == 3.0
+
+    # Rotation should be zero
+    assert isinstance(pos.rot, Vector)
+    assert pos.rot.is_zero()
+    assert pos.rot.x == 0.0
+    assert pos.rot.y == 0.0
+    assert pos.rot.z == 0.0
+
+
+def test_to_position_with_vectorlike():
+    """Test to_position with VectorLike inputs (arrays, lists, tuples)."""
+    # Test with numpy arrays
+    np_arr = np.array([1.0, 2.0, 3.0])
+    pos1 = to_position(np_arr)
+
+    assert isinstance(pos1, Position)
+    assert pos1.x == 1.0
+    assert pos1.y == 2.0
+    assert pos1.z == 3.0
+    assert pos1.rot.is_zero()
+
+    # Test with lists
+    list_val = [4.0, 5.0, 6.0]
+    pos2 = to_position(list_val)
+
+    assert isinstance(pos2, Position)
+    assert pos2.x == 4.0
+    assert pos2.y == 5.0
+    assert pos2.z == 6.0
+    assert pos2.rot.is_zero()
+
+    # Test with tuples
+    tuple_val = (7.0, 8.0, 9.0)
+    pos3 = to_position(tuple_val)
+
+    assert isinstance(pos3, Position)
+    assert pos3.x == 7.0
+    assert pos3.y == 8.0
+    assert pos3.z == 9.0
+    assert pos3.rot.is_zero()
+
+
+def test_to_position_with_sequence():
+    """Test to_position with Sequence of VectorLike inputs."""
+    # Test with sequence of two vectors
+    pos_vec = Vector(1.0, 2.0, 3.0)
+    rot_vec = Vector(4.0, 5.0, 6.0)
+    pos1 = to_position([pos_vec, rot_vec])
+
+    assert isinstance(pos1, Position)
+    assert pos1.pos == pos_vec
+    assert pos1.rot == rot_vec
+    assert pos1.x == 1.0
+    assert pos1.y == 2.0
+    assert pos1.z == 3.0
+    assert pos1.rot.x == 4.0
+    assert pos1.rot.y == 5.0
+    assert pos1.rot.z == 6.0
+
+    # Test with sequence of lists
+    pos2 = to_position([[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]])
+
+    assert isinstance(pos2, Position)
+    assert pos2.x == 7.0
+    assert pos2.y == 8.0
+    assert pos2.z == 9.0
+    assert pos2.rot.x == 10.0
+    assert pos2.rot.y == 11.0
+    assert pos2.rot.z == 12.0
+
+    # Test with mixed sequence (tuple and numpy array)
+    pos3 = to_position([(13.0, 14.0, 15.0), np.array([16.0, 17.0, 18.0])])
+
+    assert isinstance(pos3, Position)
     assert pos3.x == 13.0
     assert pos3.y == 14.0
     assert pos3.z == 15.0

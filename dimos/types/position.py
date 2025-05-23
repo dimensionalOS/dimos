@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TypeVar
+from typing import TypeVar, Union, Sequence
 import numpy as np
 from plum import dispatch
 
@@ -20,6 +20,8 @@ from dimos.types.vector import Vector, to_vector, to_numpy, VectorLike
 
 
 T = TypeVar("T", bound="Position")
+
+PositionLike = Union["Position", VectorLike, Sequence[VectorLike]]
 
 
 class Position(Vector):
@@ -131,3 +133,18 @@ class Position(Vector):
         """
         # Use Vector's multiplication for the position component
         return Position(self.pos * scalar, self.rot)
+
+
+@dispatch
+def to_position(pos: Position) -> Position:
+    return pos
+
+
+@dispatch
+def to_position(pos: VectorLike) -> Position:
+    return Position(pos)
+
+
+@dispatch
+def to_position(pos: Sequence[VectorLike]) -> Position:
+    return Position(*pos)

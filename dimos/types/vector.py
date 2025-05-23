@@ -22,6 +22,7 @@ T = TypeVar("T", bound="Vector")
 # Vector-like types that can be converted to/from Vector
 VectorLike = Union[Sequence[Union[int, float]], Vector3, "Vector", np.ndarray]
 
+
 class Vector:
     """A wrapper around numpy arrays for vector operations with intuitive syntax."""
 
