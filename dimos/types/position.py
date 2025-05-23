@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Tuple, TypeVar, Union, Sequence
+from typing import TypeVar
 import numpy as np
 from plum import dispatch
 
