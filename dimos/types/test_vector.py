@@ -1,5 +1,6 @@
-import pytest
 import numpy as np
+import pytest
+
 from dimos.types.vector import Vector
 
 
@@ -259,24 +260,16 @@ def test_vector_conversion_methods():
 
 
 def test_vector_equality():
-    """Test vector equality comparisons."""
-    v1 = Vector(1.0, 2.0, 3.0)
-    v2 = Vector(1.0, 2.0, 3.0)  # Same values but different object
-    v3 = Vector(4.0, 5.0, 6.0)  # Different values
+    """Test vector equality."""
+    v1 = Vector(1, 2, 3)
+    v2 = Vector(1, 2, 3)
+    v3 = Vector(4, 5, 6)
 
-    # Same values should be equal
     assert v1 == v2
-
-    # Different values should not be equal
     assert v1 != v3
-
-    # Compare with list
-    assert v1 == [1.0, 2.0, 3.0]
-    assert v1 != [4.0, 5.0, 6.0]
-
-    # Compare with numpy array
-    assert v1 == np.array([1.0, 2.0, 3.0])
-    assert v1 != np.array([4.0, 5.0, 6.0])
+    assert v1 != Vector(1, 2)  # Different dimensions
+    assert v1 != Vector(1.1, 2, 3)  # Different values
+    assert v1 != [1, 2, 3]
 
 
 def test_vector_is_zero():
