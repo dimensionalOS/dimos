@@ -35,22 +35,11 @@ class Position(Vector):
 
     @dispatch
     def __init__(self, pos: VectorLike):
-        """Initialize Position with a Vector or a tuple of vectors.
-
-        Args:
-            pos: A Vector or a tuple of (pos, rot) vectors.
-        """
         self._data = to_numpy(pos)
         self._rot = None
 
     @dispatch
     def __init__(self, pos: VectorLike, rot: VectorLike):
-        """Initialize Position with position and rotation vectors.
-
-        Args:
-            pos: The position vector.
-            rot: The rotation vector.
-        """
         self._data = to_numpy(pos)
         self._rot = to_vector(rot)
 
@@ -61,18 +50,9 @@ class Position(Vector):
         return self.__repr__()
 
     def is_zero(self) -> bool:
-        """Check if both position and rotation vectors are zero."""
         return super().is_zero() and self.rot.is_zero()
 
     def __bool__(self) -> bool:
-        """Boolean conversion for Position.
-
-        A Position is considered False if both position and rotation are zero vectors,
-        and True otherwise.
-
-        Returns:
-            False if position is zero, True otherwise
-        """
         return not self.is_zero()
 
     def serialize(self):
@@ -126,12 +106,6 @@ class Position(Vector):
             return super().__sub__(other)
 
     def __mul__(self: T, scalar: float) -> T:
-        """Override Vector's __mul__ to handle scalar multiplication.
-
-        When multiplying a Position by a scalar, only the position component is multiplied.
-        The rotation component remains unchanged.
-        """
-        # Use Vector's multiplication for the position component
         return Position(self.pos * scalar, self.rot)
 
 
