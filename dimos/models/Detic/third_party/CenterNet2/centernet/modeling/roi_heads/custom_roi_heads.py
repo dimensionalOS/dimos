@@ -16,14 +16,24 @@ class CustomROIHeads(StandardROIHeads):
     def _init_box_head(self, cfg, input_shape):
         ret = super()._init_box_head(cfg, input_shape)
         del ret["box_predictor"]
-        ret["box_predictor"] = CustomFastRCNNOutputLayers(cfg, ret["box_head"].output_shape)
+        ret["box_predictor"] = CustomFastRCNNOutputLayers(
+            cfg, ret["box_head"].output_shape
+        )
         self.debug = cfg.DEBUG
         if self.debug:
             self.debug_show_name = cfg.DEBUG_SHOW_NAME
             self.save_debug = cfg.SAVE_DEBUG
             self.vis_thresh = cfg.VIS_THRESH
-            self.pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
-            self.pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            self.pixel_mean = (
+                torch.Tensor(cfg.MODEL.PIXEL_MEAN)
+                .to(torch.device(cfg.MODEL.DEVICE))
+                .view(3, 1, 1)
+            )
+            self.pixel_std = (
+                torch.Tensor(cfg.MODEL.PIXEL_STD)
+                .to(torch.device(cfg.MODEL.DEVICE))
+                .view(3, 1, 1)
+            )
         return ret
 
     def forward(self, images, features, proposals, targets=None):
@@ -67,10 +77,14 @@ class CustomCascadeROIHeads(CascadeROIHeads):
         del ret["box_predictors"]
         cascade_bbox_reg_weights = cfg.MODEL.ROI_BOX_CASCADE_HEAD.BBOX_REG_WEIGHTS
         box_predictors = []
-        for box_head, bbox_reg_weights in zip(ret["box_heads"], cascade_bbox_reg_weights):
+        for box_head, bbox_reg_weights in zip(
+            ret["box_heads"], cascade_bbox_reg_weights
+        ):
             box_predictors.append(
                 CustomFastRCNNOutputLayers(
-                    cfg, box_head.output_shape, box2box_transform=Box2BoxTransform(weights=bbox_reg_weights)
+                    cfg,
+                    box_head.output_shape,
+                    box2box_transform=Box2BoxTransform(weights=bbox_reg_weights),
                 )
             )
         ret["box_predictors"] = box_predictors
@@ -79,8 +93,16 @@ class CustomCascadeROIHeads(CascadeROIHeads):
             self.debug_show_name = cfg.DEBUG_SHOW_NAME
             self.save_debug = cfg.SAVE_DEBUG
             self.vis_thresh = cfg.VIS_THRESH
-            self.pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
-            self.pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            self.pixel_mean = (
+                torch.Tensor(cfg.MODEL.PIXEL_MEAN)
+                .to(torch.device(cfg.MODEL.DEVICE))
+                .view(3, 1, 1)
+            )
+            self.pixel_std = (
+                torch.Tensor(cfg.MODEL.PIXEL_STD)
+                .to(torch.device(cfg.MODEL.DEVICE))
+                .view(3, 1, 1)
+            )
         return ret
 
     def _forward_box(self, features, proposals, targets=None):
@@ -99,11 +121,15 @@ class CustomCascadeROIHeads(CascadeROIHeads):
         image_sizes = [x.image_size for x in proposals]
         for k in range(self.num_cascade_stages):
             if k > 0:
-                proposals = self._create_proposals_from_boxes(prev_pred_boxes, image_sizes)
+                proposals = self._create_proposals_from_boxes(
+                    prev_pred_boxes, image_sizes
+                )
                 if self.training:
                     proposals = self._match_and_label_boxes(proposals, k, targets)
             predictions = self._run_stage(features, proposals, k)
-            prev_pred_boxes = self.box_predictor[k].predict_boxes(predictions, proposals)
+            prev_pred_boxes = self.box_predictor[k].predict_boxes(
+                predictions, proposals
+            )
             head_outputs.append((self.box_predictor[k], predictions, proposals))
 
         if self.training:
@@ -112,7 +138,9 @@ class CustomCascadeROIHeads(CascadeROIHeads):
             for stage, (predictor, predictions, proposals) in enumerate(head_outputs):
                 with storage.name_scope("stage{}".format(stage)):
                     stage_losses = predictor.losses(predictions, proposals)
-                losses.update({k + "_stage{}".format(stage): v for k, v in stage_losses.items()})
+                losses.update(
+                    {k + "_stage{}".format(stage): v for k, v in stage_losses.items()}
+                )
             return losses
         else:
             # Each is a list[Tensor] of length #image. Each tensor is Ri x (K+1)
@@ -123,7 +151,9 @@ class CustomCascadeROIHeads(CascadeROIHeads):
             ]
 
             if self.mult_proposal_score:
-                scores = [(s * ps[:, None]) ** 0.5 for s, ps in zip(scores, proposal_scores)]
+                scores = [
+                    (s * ps[:, None]) ** 0.5 for s, ps in zip(scores, proposal_scores)
+                ]
 
             predictor, predictions, proposals = head_outputs[-1]
             boxes = predictor.predict_boxes(predictions, proposals)

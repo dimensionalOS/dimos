@@ -47,7 +47,9 @@ def start_audio_queue_processor():
 
     if _queue_processor_thread is None or not _queue_processor_thread.is_alive():
         _queue_running = True
-        _queue_processor_thread = threading.Thread(target=_process_audio_queue, daemon=True, name="AudioQueueProcessor")
+        _queue_processor_thread = threading.Thread(
+            target=_process_audio_queue, daemon=True, name="AudioQueueProcessor"
+        )
         _queue_processor_thread.start()
         logger.info("Started audio queue processor thread")
 
@@ -113,7 +115,9 @@ class Speak(AbstractSkill):
                     # Wait for audio playback to complete with a timeout
                     # Using a dynamic timeout based on text length
                     timeout = max(5, len(self.text) * 0.1)
-                    logger.debug(f"Waiting for TTS completion with timeout {timeout:.1f}s")
+                    logger.debug(
+                        f"Waiting for TTS completion with timeout {timeout:.1f}s"
+                    )
 
                     if not self._audio_complete.wait(timeout=timeout):
                         logger.warning(f"TTS timeout reached for: {self.text}")

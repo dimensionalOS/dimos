@@ -42,7 +42,9 @@ class CocoDetection(VisionDataset):
         local_rank=0,
         local_size=1,
     ):
-        super(CocoDetection, self).__init__(root, transforms, transform, target_transform)
+        super(CocoDetection, self).__init__(
+            root, transforms, transform, target_transform
+        )
         from pycocotools.coco import COCO
 
         self.coco = COCO(annFile)

@@ -85,7 +85,9 @@ class VisualMemory:
             The decoded image as a numpy array, or None if not found
         """
         if image_id not in self.images:
-            logger.warning(f"Image not found in storage for ID {image_id}. Incomplete or corrupted image storage.")
+            logger.warning(
+                f"Image not found in storage for ID {image_id}. Incomplete or corrupted image storage."
+            )
             return None
 
         try:
@@ -130,7 +132,9 @@ class VisualMemory:
             The path where the data was saved
         """
         if not self.output_dir:
-            logger.warning("No output directory specified for VisualMemory. Cannot save.")
+            logger.warning(
+                "No output directory specified for VisualMemory. Cannot save."
+            )
             return ""
 
         if not filename:

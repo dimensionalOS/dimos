@@ -24,7 +24,9 @@ if __name__ == "__main__":
         if not args.not_download_image:
             os.system("wget {} -O {}/{}.jpg".format(path, args.save_image_path, i + 1))
         try:
-            img = Image.open(open("{}/{}.jpg".format(args.save_image_path, i + 1), "rb"))
+            img = Image.open(
+                open("{}/{}.jpg".format(args.save_image_path, i + 1), "rb")
+            )
             img = np.asarray(img.convert("RGB"))
             h, w = img.shape[:2]
         except:

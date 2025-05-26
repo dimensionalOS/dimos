@@ -45,7 +45,11 @@ class AgentMemoryConnectionError(AgentMemoryError):
         self.traceback = traceback.format_exc() if cause else None
 
     def __str__(self):
-        return f"{self.message}\nCaused by: {repr(self.cause)}" if self.cause else self.message
+        return (
+            f"{self.message}\nCaused by: {repr(self.cause)}"
+            if self.cause
+            else self.message
+        )
 
 
 class UnknownConnectionTypeError(AgentMemoryConnectionError):
@@ -56,7 +60,9 @@ class UnknownConnectionTypeError(AgentMemoryConnectionError):
         message (str): Human-readable message explaining that an unknown connection type was used.
     """
 
-    def __init__(self, message="Unknown connection type used in AgentMemory connection"):
+    def __init__(
+        self, message="Unknown connection type used in AgentMemory connection"
+    ):
         super().__init__(message)
 
 

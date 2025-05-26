@@ -46,10 +46,14 @@ def do_test(cfg, model):
         mapper = (
             None
             if cfg.INPUT.TEST_INPUT_TYPE == "default"
-            else DatasetMapper(cfg, False, augmentations=build_custom_augmentation(cfg, False))
+            else DatasetMapper(
+                cfg, False, augmentations=build_custom_augmentation(cfg, False)
+            )
         )
         data_loader = build_detection_test_loader(cfg, dataset_name, mapper=mapper)
-        output_folder = os.path.join(cfg.OUTPUT_DIR, "inference_{}".format(dataset_name))
+        output_folder = os.path.join(
+            cfg.OUTPUT_DIR, "inference_{}".format(dataset_name)
+        )
         evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
 
         if evaluator_type == "lvis":
@@ -73,7 +77,9 @@ def do_train(cfg, model, resume=False):
     optimizer = build_optimizer(cfg, model)
     scheduler = build_lr_scheduler(cfg, optimizer)
 
-    checkpointer = DetectionCheckpointer(model, cfg.OUTPUT_DIR, optimizer=optimizer, scheduler=scheduler)
+    checkpointer = DetectionCheckpointer(
+        model, cfg.OUTPUT_DIR, optimizer=optimizer, scheduler=scheduler
+    )
 
     start_iter = (
         checkpointer.resume_or_load(
@@ -85,9 +91,13 @@ def do_train(cfg, model, resume=False):
     if cfg.SOLVER.RESET_ITER:
         logger.info("Reset loaded iteration. Start training from iteration 0.")
         start_iter = 0
-    max_iter = cfg.SOLVER.MAX_ITER if cfg.SOLVER.TRAIN_ITER < 0 else cfg.SOLVER.TRAIN_ITER
+    max_iter = (
+        cfg.SOLVER.MAX_ITER if cfg.SOLVER.TRAIN_ITER < 0 else cfg.SOLVER.TRAIN_ITER
+    )
 
-    periodic_checkpointer = PeriodicCheckpointer(checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD, max_iter=max_iter)
+    periodic_checkpointer = PeriodicCheckpointer(
+        checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD, max_iter=max_iter
+    )
 
     writers = (
         [
@@ -102,9 +112,14 @@ def do_train(cfg, model, resume=False):
     mapper = (
         DatasetMapper(cfg, True)
         if cfg.INPUT.CUSTOM_AUG == ""
-        else DatasetMapper(cfg, True, augmentations=build_custom_augmentation(cfg, True))
+        else DatasetMapper(
+            cfg, True, augmentations=build_custom_augmentation(cfg, True)
+        )
     )
-    if cfg.DATALOADER.SAMPLER_TRAIN in ["TrainingSampler", "RepeatFactorTrainingSampler"]:
+    if cfg.DATALOADER.SAMPLER_TRAIN in [
+        "TrainingSampler",
+        "RepeatFactorTrainingSampler",
+    ]:
         data_loader = build_detection_train_loader(cfg, mapper=mapper)
     else:
         from centernet.data.custom_dataset_dataloader import build_custom_train_loader
@@ -127,7 +142,9 @@ def do_train(cfg, model, resume=False):
             losses = sum(loss for k, loss in loss_dict.items())
             assert torch.isfinite(losses).all(), loss_dict
 
-            loss_dict_reduced = {k: v.item() for k, v in comm.reduce_dict(loss_dict).items()}
+            loss_dict_reduced = {
+                k: v.item() for k, v in comm.reduce_dict(loss_dict).items()
+            }
             losses_reduced = sum(loss for loss in loss_dict_reduced.values())
             if comm.is_main_process():
                 storage.put_scalars(total_loss=losses_reduced, **loss_dict_reduced)
@@ -136,24 +153,36 @@ def do_train(cfg, model, resume=False):
             losses.backward()
             optimizer.step()
 
-            storage.put_scalar("lr", optimizer.param_groups[0]["lr"], smoothing_hint=False)
+            storage.put_scalar(
+                "lr", optimizer.param_groups[0]["lr"], smoothing_hint=False
+            )
 
             step_time = step_timer.seconds()
             storage.put_scalars(time=step_time)
             data_timer.reset()
             scheduler.step()
 
-            if cfg.TEST.EVAL_PERIOD > 0 and iteration % cfg.TEST.EVAL_PERIOD == 0 and iteration != max_iter:
+            if (
+                cfg.TEST.EVAL_PERIOD > 0
+                and iteration % cfg.TEST.EVAL_PERIOD == 0
+                and iteration != max_iter
+            ):
                 do_test(cfg, model)
                 comm.synchronize()
 
-            if iteration - start_iter > 5 and (iteration % 20 == 0 or iteration == max_iter):
+            if iteration - start_iter > 5 and (
+                iteration % 20 == 0 or iteration == max_iter
+            ):
                 for writer in writers:
                     writer.write()
             periodic_checkpointer.step(iteration)
 
         total_time = time.perf_counter() - start_time
-        logger.info("Total training time: {}".format(str(datetime.timedelta(seconds=int(total_time)))))
+        logger.info(
+            "Total training time: {}".format(
+                str(datetime.timedelta(seconds=int(total_time)))
+            )
+        )
 
 
 def setup(args):
@@ -179,7 +208,9 @@ def main(args):
     model = build_model(cfg)
     logger.info("Model:\n{}".format(model))
     if args.eval_only:
-        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(cfg.MODEL.WEIGHTS, resume=args.resume)
+        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
+            cfg.MODEL.WEIGHTS, resume=args.resume
+        )
         if cfg.TEST.AUG.ENABLED:
             logger.info("Running inference with test-time augmentation ...")
             model = GeneralizedRCNNWithTTA(cfg, model, batch_size=1)
@@ -189,7 +220,10 @@ def main(args):
     distributed = comm.get_world_size() > 1
     if distributed:
         model = DistributedDataParallel(
-            model, device_ids=[comm.get_local_rank()], broadcast_buffers=False, find_unused_parameters=True
+            model,
+            device_ids=[comm.get_local_rank()],
+            broadcast_buffers=False,
+            find_unused_parameters=True,
         )
 
     do_train(cfg, model, resume=args.resume)
@@ -202,7 +236,9 @@ if __name__ == "__main__":
     args = args.parse_args()
     if args.manual_device != "":
         os.environ["CUDA_VISIBLE_DEVICES"] = args.manual_device
-    args.dist_url = "tcp://127.0.0.1:{}".format(torch.randint(11111, 60000, (1,))[0].item())
+    args.dist_url = "tcp://127.0.0.1:{}".format(
+        torch.randint(11111, 60000, (1,))[0].item()
+    )
     print("Command Line Args:", args)
     launch(
         main,

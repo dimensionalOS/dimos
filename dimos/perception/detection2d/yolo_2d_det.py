@@ -1,6 +1,10 @@
 import cv2
 from ultralytics import YOLO
-from dimos.perception.detection2d.utils import extract_detection_results, plot_results, filter_detections
+from dimos.perception.detection2d.utils import (
+    extract_detection_results,
+    plot_results,
+    filter_detections,
+)
 import os
 
 
@@ -46,12 +50,16 @@ class Yolo2DDetector:
 
         if len(results) > 0:
             # Extract detection results
-            bboxes, track_ids, class_ids, confidences, names = extract_detection_results(results[0])
+            bboxes, track_ids, class_ids, confidences, names = (
+                extract_detection_results(results[0])
+            )
             return bboxes, track_ids, class_ids, confidences, names
 
         return [], [], [], [], []
 
-    def visualize_results(self, image, bboxes, track_ids, class_ids, confidences, names):
+    def visualize_results(
+        self, image, bboxes, track_ids, class_ids, confidences, names
+    ):
         """
         Generate visualization of detection results.
 
@@ -86,7 +94,9 @@ def main():
                 break
 
             # Process frame
-            bboxes, track_ids, class_ids, confidences, names = detector.process_image(frame)
+            bboxes, track_ids, class_ids, confidences, names = detector.process_image(
+                frame
+            )
 
             # Apply person filtering if enabled
             if enable_person_filter and len(bboxes) > 0:
@@ -103,7 +113,9 @@ def main():
 
             # Visualize results
             if len(bboxes) > 0:
-                frame = detector.visualize_results(frame, bboxes, track_ids, class_ids, confidences, names)
+                frame = detector.visualize_results(
+                    frame, bboxes, track_ids, class_ids, confidences, names
+                )
 
             # Display results
             cv2.imshow("YOLO Detection", frame)

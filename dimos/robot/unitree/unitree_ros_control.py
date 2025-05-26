@@ -96,7 +96,9 @@ class UnitreeROSControl(ROSControl):
         # Select which camera topics to use
         active_camera_topics = None
         if not disable_video_stream:
-            active_camera_topics = {"main": self.CAMERA_TOPICS["raw" if use_raw else "compressed"]}
+            active_camera_topics = {
+                "main": self.CAMERA_TOPICS["raw" if use_raw else "compressed"]
+            }
 
         # Use default values if not provided
         state_topic = state_topic or self.DEFAULT_STATE_TOPIC
@@ -154,4 +156,6 @@ class UnitreeROSControl(ROSControl):
             logger.debug(f"Robot mode set to MOVING (progress={progress}, mode={mode})")
         else:
             self._mode = RobotMode.UNKNOWN
-            logger.debug(f"Robot mode set to UNKNOWN (progress={progress}, mode={mode})")
+            logger.debug(
+                f"Robot mode set to UNKNOWN (progress={progress}, mode={mode})"
+            )

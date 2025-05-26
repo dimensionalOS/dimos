@@ -3,17 +3,21 @@ from openai import OpenAI
 import cv2
 import os
 
-NORMAL_PROMPT = "What are in these images? Give a short word answer with at most two words, \
+NORMAL_PROMPT = (
+    "What are in these images? Give a short word answer with at most two words, \
                 if not sure, give a description of its shape or color like 'small tube', 'blue item'. \" \
                 if does not look like an object, say 'unknown'. Export objects as a list of strings \
                 in this exact format '['object 1', 'object 2', '...']'."
+)
 
-RICH_PROMPT = "What are in these images? Give a detailed description of each item, the first n images will be \
+RICH_PROMPT = (
+    "What are in these images? Give a detailed description of each item, the first n images will be \
                cropped patches of the original image detected by the object detection model. \
                The last image will be the original image. Use the last image only for context, \
                do not describe objects in the last image. \
                Export the objects as a list of strings in this exact format, '['description of object 1', '...', '...']', \
                don't include anything else. "
+)
 
 
 class ImageAnalyzer:
@@ -51,7 +55,10 @@ class ImageAnalyzer:
         image_data = [
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{self.encode_image(img)}", "detail": detail},
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{self.encode_image(img)}",
+                    "detail": detail,
+                },
             }
             for img in images
         ]
@@ -120,14 +127,22 @@ def main():
             text = obj.strip()
 
             # Get text size
-            (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
+            (text_width, text_height), _ = cv2.getTextSize(
+                text, font, font_scale, thickness
+            )
 
             # Position text at top of image
             x = 10
             y = text_height + 10
 
             # Add white background for text
-            cv2.rectangle(img, (x - 5, y - text_height - 5), (x + text_width + 5, y + 5), (255, 255, 255), -1)
+            cv2.rectangle(
+                img,
+                (x - 5, y - text_height - 5),
+                (x + text_width + 5, y + 5),
+                (255, 255, 255),
+                -1,
+            )
             # Add text
             cv2.putText(img, text, (x, y), font, font_scale, (0, 0, 0), thickness)
 

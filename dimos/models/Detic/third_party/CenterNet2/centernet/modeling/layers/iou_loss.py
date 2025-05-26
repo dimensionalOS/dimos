@@ -21,11 +21,19 @@ class IOULoss(nn.Module):
         target_aera = (target_left + target_right) * (target_top + target_bottom)
         pred_aera = (pred_left + pred_right) * (pred_top + pred_bottom)
 
-        w_intersect = torch.min(pred_left, target_left) + torch.min(pred_right, target_right)
-        h_intersect = torch.min(pred_bottom, target_bottom) + torch.min(pred_top, target_top)
+        w_intersect = torch.min(pred_left, target_left) + torch.min(
+            pred_right, target_right
+        )
+        h_intersect = torch.min(pred_bottom, target_bottom) + torch.min(
+            pred_top, target_top
+        )
 
-        g_w_intersect = torch.max(pred_left, target_left) + torch.max(pred_right, target_right)
-        g_h_intersect = torch.max(pred_bottom, target_bottom) + torch.max(pred_top, target_top)
+        g_w_intersect = torch.max(pred_left, target_left) + torch.max(
+            pred_right, target_right
+        )
+        g_h_intersect = torch.max(pred_bottom, target_bottom) + torch.max(
+            pred_top, target_top
+        )
         ac_uion = g_w_intersect * g_h_intersect
 
         area_intersect = w_intersect * h_intersect

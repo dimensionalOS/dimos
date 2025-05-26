@@ -5,7 +5,10 @@ import json
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--imagenet_path", default="datasets/imagenet/annotations/imagenet-21k_image_info.json")
+    parser.add_argument(
+        "--imagenet_path",
+        default="datasets/imagenet/annotations/imagenet-21k_image_info.json",
+    )
     parser.add_argument("--lvis_path", default="datasets/lvis/lvis_v1_train.json")
     parser.add_argument("--save_categories", default="")
     parser.add_argument("--not_save_imagenet", action="store_true")
@@ -43,7 +46,9 @@ if __name__ == "__main__":
     filtered_images = []
     for x in in_data["images"]:
         x["pos_category_ids"] = [in_id_map[xx] for xx in x["pos_category_ids"]]
-        x["pos_category_ids"] = [xx for xx in sorted(set(x["pos_category_ids"])) if xx >= 0]
+        x["pos_category_ids"] = [
+            xx for xx in sorted(set(x["pos_category_ids"])) if xx >= 0
+        ]
         if len(x["pos_category_ids"]) > 0:
             filtered_images.append(x)
 

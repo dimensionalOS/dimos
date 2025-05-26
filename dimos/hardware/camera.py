@@ -16,7 +16,9 @@ from dimos.hardware.sensor import AbstractSensor
 
 
 class Camera(AbstractSensor):
-    def __init__(self, resolution=None, focal_length=None, sensor_size=None, sensor_type="Camera"):
+    def __init__(
+        self, resolution=None, focal_length=None, sensor_size=None, sensor_type="Camera"
+    ):
         super().__init__(sensor_type)
         self.resolution = resolution  # (width, height) in pixels
         self.focal_length = focal_length  # in millimeters
@@ -27,7 +29,9 @@ class Camera(AbstractSensor):
 
     def calculate_intrinsics(self):
         if not self.resolution or not self.focal_length or not self.sensor_size:
-            raise ValueError("Resolution, focal length, and sensor size must be provided")
+            raise ValueError(
+                "Resolution, focal length, and sensor size must be provided"
+            )
 
         # Calculate pixel size
         pixel_size_x = self.sensor_size[0] / self.resolution[0]

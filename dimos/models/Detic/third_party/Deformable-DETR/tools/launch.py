@@ -108,7 +108,6 @@ import os
 from argparse import ArgumentParser, REMAINDER
 
 
-
 def parse_args():
     """
     Helper function parsing the command line options
@@ -121,9 +120,17 @@ def parse_args():
     )
 
     # Optional arguments for the launch helper
-    parser.add_argument("--nnodes", type=int, default=1, help="The number of nodes to use for distributed training")
     parser.add_argument(
-        "--node_rank", type=int, default=0, help="The rank of the node for multi-node distributed training"
+        "--nnodes",
+        type=int,
+        default=1,
+        help="The number of nodes to use for distributed training",
+    )
+    parser.add_argument(
+        "--node_rank",
+        type=int,
+        default=0,
+        help="The rank of the node for multi-node distributed training",
     )
     parser.add_argument(
         "--nproc_per_node",
@@ -193,7 +200,9 @@ def main():
     for process in processes:
         process.wait()
         if process.returncode != 0:
-            raise subprocess.CalledProcessError(returncode=process.returncode, cmd=process.args)
+            raise subprocess.CalledProcessError(
+                returncode=process.returncode, cmd=process.args
+            )
 
 
 if __name__ == "__main__":

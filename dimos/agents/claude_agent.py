@@ -159,9 +159,7 @@ class ClaudeAgent(LLMAgent):
 
         # Configure skills
         self.skills = skills
-        self.skill_library = (
-            None  # Required for error 'ClaudeAgent' object has no attribute 'skill_library' due to skills refactor
-        )
+        self.skill_library = None  # Required for error 'ClaudeAgent' object has no attribute 'skill_library' due to skills refactor
         if isinstance(self.skills, SkillLibrary):
             self.skill_library = self.skills
         elif isinstance(self.skills, list):
@@ -179,7 +177,9 @@ class ClaudeAgent(LLMAgent):
         self.image_detail = image_detail
         self.max_output_tokens_per_request = max_output_tokens_per_request
         self.max_input_tokens_per_request = max_input_tokens_per_request
-        self.max_tokens_per_request = max_input_tokens_per_request + max_output_tokens_per_request
+        self.max_tokens_per_request = (
+            max_input_tokens_per_request + max_output_tokens_per_request
+        )
 
         # Add static context to memory.
         self._add_context_to_memory()
@@ -188,15 +188,23 @@ class ClaudeAgent(LLMAgent):
 
         # Ensure only one input stream is provided.
         if self.input_video_stream is not None and self.input_query_stream is not None:
-            raise ValueError("More than one input stream provided. Please provide only one input stream.")
+            raise ValueError(
+                "More than one input stream provided. Please provide only one input stream."
+            )
 
         logger.info("Claude Agent Initialized.")
 
     def _add_context_to_memory(self):
         """Adds initial context to the agent's memory."""
         context_data = [
-            ("id0", "Optical Flow is a technique used to track the movement of objects in a video sequence."),
-            ("id1", "Edge Detection is a technique used to identify the boundaries of objects in an image."),
+            (
+                "id0",
+                "Optical Flow is a technique used to track the movement of objects in a video sequence.",
+            ),
+            (
+                "id1",
+                "Edge Detection is a technique used to identify the boundaries of objects in an image.",
+            ),
             ("id2", "Video is a sequence of frames captured at regular intervals."),
             (
                 "id3",
@@ -210,7 +218,9 @@ class ClaudeAgent(LLMAgent):
         for doc_id, text in context_data:
             self.agent_memory.add_vector(doc_id, text)
 
-    def _convert_tools_to_claude_format(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_tools_to_claude_format(
+        self, tools: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """
         Converts DIMOS tools to Claude format.
 
@@ -277,13 +287,17 @@ class ClaudeAgent(LLMAgent):
 
         # Append user query to conversation history while handling RAG
         if rag_results:
-            messages.append({"role": "user", "content": f"{rag_results}\n\n{self.query}"})
+            messages.append(
+                {"role": "user", "content": f"{rag_results}\n\n{self.query}"}
+            )
             logger.info(
                 f"Added new user message to conversation history with RAG context (now has {len(messages)} messages)"
             )
         else:
             messages.append({"role": "user", "content": self.query})
-            logger.info(f"Added new user message to conversation history (now has {len(messages)} messages)")
+            logger.info(
+                f"Added new user message to conversation history (now has {len(messages)} messages)"
+            )
 
         if base64_image is not None:
             # Handle both single image (str) and multiple images (List[str])
@@ -291,11 +305,22 @@ class ClaudeAgent(LLMAgent):
 
             # Add each image as a separate entry in conversation history
             for img in images:
-                img_content = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img}}]
+                img_content = [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": img,
+                        },
+                    }
+                ]
                 messages.append({"role": "user", "content": img_content})
 
             if images:
-                logger.info(f"Added {len(images)} image(s) as separate entries to conversation history")
+                logger.info(
+                    f"Added {len(images)} image(s) as separate entries to conversation history"
+                )
 
         # Create Claude parameters with basic settings
         claude_params = {
@@ -322,7 +347,10 @@ class ClaudeAgent(LLMAgent):
 
         # Add thinking if enabled and hard code required temperature = 1
         if thinking_budget_tokens is not None and thinking_budget_tokens != 0:
-            claude_params["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget_tokens}
+            claude_params["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": thinking_budget_tokens,
+            }
             claude_params["temperature"] = (
                 1  # Required to be 1 when thinking is enabled # Default to 0 for deterministic responses
             )
@@ -342,7 +370,9 @@ class ClaudeAgent(LLMAgent):
         """
         try:
             # Get Claude parameters
-            claude_params = claude_params.get("claude_prompt", None) or self.claude_api_params
+            claude_params = (
+                claude_params.get("claude_prompt", None) or self.claude_api_params
+            )
 
             # Log request parameters with truncated base64 data
             logger.debug(self._debug_api_call(claude_params))
@@ -365,9 +395,16 @@ class ClaudeAgent(LLMAgent):
                 print("\n==== CLAUDE API RESPONSE STREAM STARTED ====")
 
                 # Open the memory file once for the entire stream processing
-                with open(os.path.join(self.output_dir, "memory.txt"), "a") as memory_file:
+                with open(
+                    os.path.join(self.output_dir, "memory.txt"), "a"
+                ) as memory_file:
                     # Track the current block being processed
-                    current_block = {"type": None, "id": None, "content": "", "signature": None}
+                    current_block = {
+                        "type": None,
+                        "id": None,
+                        "content": "",
+                        "signature": None,
+                    }
 
                     for event in stream:
                         # Log each event to console
@@ -377,7 +414,12 @@ class ClaudeAgent(LLMAgent):
                         if event.type == "content_block_start":
                             # Initialize a new content block
                             block_type = event.content_block.type
-                            current_block = {"type": block_type, "id": event.index, "content": "", "signature": None}
+                            current_block = {
+                                "type": block_type,
+                                "id": event.index,
+                                "content": "",
+                                "signature": None,
+                            }
                             logger.debug(f"Starting {block_type} block...")
 
                         elif event.type == "content_block_delta":
@@ -397,7 +439,9 @@ class ClaudeAgent(LLMAgent):
                             elif event.delta.type == "signature_delta":
                                 # Store signature for thinking blocks
                                 current_block["signature"] = event.delta.signature
-                                memory_file.write(f"\n[Signature received for block {current_block['id']}]\n")
+                                memory_file.write(
+                                    f"\n[Signature received for block {current_block['id']}]\n"
+                                )
                                 memory_file.flush()
 
                         elif event.type == "content_block_stop":
@@ -407,8 +451,12 @@ class ClaudeAgent(LLMAgent):
                                 # the exact format that Claude expects in subsequent requests
                                 if hasattr(event, "content_block"):
                                     # Use the exact thinking block as provided by Claude
-                                    thinking_blocks.append(event.content_block.model_dump())
-                                    memory_file.write(f"\nTHINKING COMPLETE: block {current_block['id']}\n")
+                                    thinking_blocks.append(
+                                        event.content_block.model_dump()
+                                    )
+                                    memory_file.write(
+                                        f"\nTHINKING COMPLETE: block {current_block['id']}\n"
+                                    )
                                 else:
                                     # Fallback to constructed thinking block if content_block missing
                                     thinking_block = {
@@ -417,12 +465,19 @@ class ClaudeAgent(LLMAgent):
                                         "signature": current_block["signature"],
                                     }
                                     thinking_blocks.append(thinking_block)
-                                memory_file.write(f"\nTHINKING COMPLETE: block {current_block['id']}\n")
+                                memory_file.write(
+                                    f"\nTHINKING COMPLETE: block {current_block['id']}\n"
+                                )
 
                             elif current_block["type"] == "redacted_thinking":
                                 # Handle redacted thinking blocks
-                                if hasattr(event, "content_block") and hasattr(event.content_block, "data"):
-                                    redacted_block = {"type": "redacted_thinking", "data": event.content_block.data}
+                                if hasattr(event, "content_block") and hasattr(
+                                    event.content_block, "data"
+                                ):
+                                    redacted_block = {
+                                        "type": "redacted_thinking",
+                                        "data": event.content_block.data,
+                                    }
                                     thinking_blocks.append(redacted_block)
 
                             elif current_block["type"] == "tool_use":
@@ -440,7 +495,12 @@ class ClaudeAgent(LLMAgent):
                                         {
                                             "id": tool_id,
                                             "function": type(
-                                                "Function", (), {"name": tool_name, "arguments": json.dumps(tool_input)}
+                                                "Function",
+                                                (),
+                                                {
+                                                    "name": tool_name,
+                                                    "arguments": json.dumps(tool_input),
+                                                },
                                             ),
                                         },
                                     )
@@ -448,13 +508,23 @@ class ClaudeAgent(LLMAgent):
 
                                     # Write tool call information to memory.txt
                                     memory_file.write(f"\n\nTOOL CALL: {tool_name}\n")
-                                    memory_file.write(f"ARGUMENTS: {json.dumps(tool_input, indent=2)}\n")
+                                    memory_file.write(
+                                        f"ARGUMENTS: {json.dumps(tool_input, indent=2)}\n"
+                                    )
 
                             # Reset current block
-                            current_block = {"type": None, "id": None, "content": "", "signature": None}
+                            current_block = {
+                                "type": None,
+                                "id": None,
+                                "content": "",
+                                "signature": None,
+                            }
                             memory_file.flush()
 
-                        elif event.type == "message_delta" and event.delta.stop_reason == "tool_use":
+                        elif (
+                            event.type == "message_delta"
+                            and event.delta.stop_reason == "tool_use"
+                        ):
                             # When a tool use is detected
                             logger.info("Tool use stop reason detected in stream")
 
@@ -529,9 +599,18 @@ class ClaudeAgent(LLMAgent):
             _, rag_results = self._get_rag_context()
 
             # Build prompt and get Claude parameters
-            budget = thinking_budget_tokens if thinking_budget_tokens is not None else self.thinking_budget_tokens
+            budget = (
+                thinking_budget_tokens
+                if thinking_budget_tokens is not None
+                else self.thinking_budget_tokens
+            )
             messages, claude_params = self._build_prompt(
-                messages, base64_image, dimensions, override_token_limit, rag_results, budget
+                messages,
+                base64_image,
+                dimensions,
+                override_token_limit,
+                rag_results,
+                budget,
             )
 
             # Send query and get response
@@ -547,7 +626,9 @@ class ClaudeAgent(LLMAgent):
             if response_message.thinking_blocks:
                 content_blocks.extend(response_message.thinking_blocks)
             if response_message.content:
-                content_blocks.append({"type": "text", "text": response_message.content})
+                content_blocks.append(
+                    {"type": "text", "text": response_message.content}
+                )
             if content_blocks:
                 messages.append({"role": "assistant", "content": content_blocks})
 
@@ -580,12 +661,17 @@ class ClaudeAgent(LLMAgent):
 
     def _handle_tooling(self, response_message, messages):
         """Executes tools and appends tool-use/result blocks to messages."""
-        if not hasattr(response_message, "tool_calls") or not response_message.tool_calls:
+        if (
+            not hasattr(response_message, "tool_calls")
+            or not response_message.tool_calls
+        ):
             logger.info("No tool calls found in response message")
             return None
 
         if len(response_message.tool_calls) > 1:
-            logger.warning("Multiple tool calls detected in response message. Not a tested feature.")
+            logger.warning(
+                "Multiple tool calls detected in response message. Not a tested feature."
+            )
 
         # Execute all tools first and collect their results
         for tool_call in response_message.tool_calls:
@@ -607,13 +693,22 @@ class ClaudeAgent(LLMAgent):
                 messages.append(
                     {
                         "role": "user",
-                        "content": [{"type": "tool_result", "tool_use_id": tool_call.id, "content": f"{tool_result}"}],
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_call.id,
+                                "content": f"{tool_result}",
+                            }
+                        ],
                     }
                 )
 
     def _tooling_callback(self, response_message):
         """Runs the observable query for each tool call in the current response_message"""
-        if not hasattr(response_message, "tool_calls") or not response_message.tool_calls:
+        if (
+            not hasattr(response_message, "tool_calls")
+            or not response_message.tool_calls
+        ):
             return
         for tool_call in response_message.tool_calls:
             tool_name = tool_call.function.name

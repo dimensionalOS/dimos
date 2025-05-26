@@ -8,8 +8,12 @@ def add_detic_config(cfg):
     _C.WITH_IMAGE_LABELS = False  # Turn on co-training with classification data
 
     # Open-vocabulary classifier
-    _C.MODEL.ROI_BOX_HEAD.USE_ZEROSHOT_CLS = False  # Use fixed classifier for open-vocabulary detection
-    _C.MODEL.ROI_BOX_HEAD.ZEROSHOT_WEIGHT_PATH = "datasets/metadata/lvis_v1_clip_a+cname.npy"
+    _C.MODEL.ROI_BOX_HEAD.USE_ZEROSHOT_CLS = (
+        False  # Use fixed classifier for open-vocabulary detection
+    )
+    _C.MODEL.ROI_BOX_HEAD.ZEROSHOT_WEIGHT_PATH = (
+        "datasets/metadata/lvis_v1_clip_a+cname.npy"
+    )
     _C.MODEL.ROI_BOX_HEAD.ZEROSHOT_WEIGHT_DIM = 512
     _C.MODEL.ROI_BOX_HEAD.NORM_WEIGHT = True
     _C.MODEL.ROI_BOX_HEAD.NORM_TEMP = 50.0
@@ -20,7 +24,9 @@ def add_detic_config(cfg):
     _C.MODEL.ROI_BOX_HEAD.USE_SIGMOID_CE = False
     _C.MODEL.ROI_BOX_HEAD.PRIOR_PROB = 0.01
     _C.MODEL.ROI_BOX_HEAD.USE_FED_LOSS = False  # Federated Loss
-    _C.MODEL.ROI_BOX_HEAD.CAT_FREQ_PATH = "datasets/metadata/lvis_v1_train_cat_info.json"
+    _C.MODEL.ROI_BOX_HEAD.CAT_FREQ_PATH = (
+        "datasets/metadata/lvis_v1_train_cat_info.json"
+    )
     _C.MODEL.ROI_BOX_HEAD.FED_LOSS_NUM_CAT = 50
     _C.MODEL.ROI_BOX_HEAD.FED_LOSS_FREQ_WEIGHT = 0.5
 
@@ -28,7 +34,9 @@ def add_detic_config(cfg):
     _C.MODEL.ROI_BOX_HEAD.IMAGE_LABEL_LOSS = "max_size"  # max, softmax, sum
     _C.MODEL.ROI_BOX_HEAD.IMAGE_LOSS_WEIGHT = 0.1
     _C.MODEL.ROI_BOX_HEAD.IMAGE_BOX_SIZE = 1.0
-    _C.MODEL.ROI_BOX_HEAD.ADD_IMAGE_BOX = False  # Used for image-box loss and caption loss
+    _C.MODEL.ROI_BOX_HEAD.ADD_IMAGE_BOX = (
+        False  # Used for image-box loss and caption loss
+    )
     _C.MODEL.ROI_BOX_HEAD.WS_NUM_PROPS = 128  # num proposals for image-labeled data
     _C.MODEL.ROI_BOX_HEAD.WITH_SOFTMAX_PROP = False  # Used for WSDDN
     _C.MODEL.ROI_BOX_HEAD.CAPTION_WEIGHT = 1.0  # Caption loss weight
@@ -42,7 +50,9 @@ def add_detic_config(cfg):
     # Caption losses
     _C.MODEL.CAP_BATCH_RATIO = 4  # Ratio between detection data and caption data
     _C.MODEL.WITH_CAPTION = False
-    _C.MODEL.SYNC_CAPTION_BATCH = False  # synchronize across GPUs to enlarge # "classes"
+    _C.MODEL.SYNC_CAPTION_BATCH = (
+        False  # synchronize across GPUs to enlarge # "classes"
+    )
 
     # dynamic class sampling when training with 21K classes
     _C.MODEL.DYNAMIC_CLASSIFIER = False
@@ -70,15 +80,25 @@ def add_detic_config(cfg):
     # Multi-dataset dataloader
     _C.DATALOADER.DATASET_RATIO = [1, 1]  # sample ratio
     _C.DATALOADER.USE_RFS = [False, False]
-    _C.DATALOADER.MULTI_DATASET_GROUPING = False  # Always true when multi-dataset is enabled
+    _C.DATALOADER.MULTI_DATASET_GROUPING = (
+        False  # Always true when multi-dataset is enabled
+    )
     _C.DATALOADER.DATASET_ANN = ["box", "box"]  # Annotation type of each dataset
     _C.DATALOADER.USE_DIFF_BS_SIZE = False  # Use different batchsize for each dataset
     _C.DATALOADER.DATASET_BS = [8, 32]  # Used when USE_DIFF_BS_SIZE is on
     _C.DATALOADER.DATASET_INPUT_SIZE = [896, 384]  # Used when USE_DIFF_BS_SIZE is on
-    _C.DATALOADER.DATASET_INPUT_SCALE = [(0.1, 2.0), (0.5, 1.5)]  # Used when USE_DIFF_BS_SIZE is on
-    _C.DATALOADER.DATASET_MIN_SIZES = [(640, 800), (320, 400)]  # Used when USE_DIFF_BS_SIZE is on
+    _C.DATALOADER.DATASET_INPUT_SCALE = [
+        (0.1, 2.0),
+        (0.5, 1.5),
+    ]  # Used when USE_DIFF_BS_SIZE is on
+    _C.DATALOADER.DATASET_MIN_SIZES = [
+        (640, 800),
+        (320, 400),
+    ]  # Used when USE_DIFF_BS_SIZE is on
     _C.DATALOADER.DATASET_MAX_SIZES = [1333, 667]  # Used when USE_DIFF_BS_SIZE is on
-    _C.DATALOADER.USE_TAR_DATASET = False  # for ImageNet-21K, directly reading from unziped files
+    _C.DATALOADER.USE_TAR_DATASET = (
+        False  # for ImageNet-21K, directly reading from unziped files
+    )
     _C.DATALOADER.TARFILE_PATH = "datasets/imagenet/metadata-22k/tar_files.npy"
     _C.DATALOADER.TAR_INDEX_DIR = "datasets/imagenet/metadata-22k/tarindex_npy"
 

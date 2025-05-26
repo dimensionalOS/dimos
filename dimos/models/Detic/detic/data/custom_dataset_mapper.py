@@ -87,7 +87,9 @@ class CustomDatasetMapper(DatasetMapper):
         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
         # USER: Write your own image loading if it's not from a file
         if "file_name" in dataset_dict:
-            ori_image = utils.read_image(dataset_dict["file_name"], format=self.image_format)
+            ori_image = utils.read_image(
+                dataset_dict["file_name"], format=self.image_format
+            )
         else:
             ori_image, _, _ = self.tar_dataset[dataset_dict["tar_index"]]
             ori_image = utils._apply_exif_orientation(ori_image)
@@ -96,7 +98,9 @@ class CustomDatasetMapper(DatasetMapper):
 
         # USER: Remove if you don't do semantic/panoptic segmentation.
         if "sem_seg_file_name" in dataset_dict:
-            sem_seg_gt = utils.read_image(dataset_dict.pop("sem_seg_file_name"), "L").squeeze(2)
+            sem_seg_gt = utils.read_image(
+                dataset_dict.pop("sem_seg_file_name"), "L"
+            ).squeeze(2)
         else:
             sem_seg_gt = None
 
@@ -117,7 +121,9 @@ class CustomDatasetMapper(DatasetMapper):
         image, sem_seg_gt = aug_input.image, aug_input.sem_seg
 
         image_shape = image.shape[:2]  # h, w
-        dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
+        dataset_dict["image"] = torch.as_tensor(
+            np.ascontiguousarray(image.transpose(2, 0, 1))
+        )
 
         if sem_seg_gt is not None:
             dataset_dict["sem_seg"] = torch.as_tensor(sem_seg_gt.astype("long"))
@@ -125,7 +131,9 @@ class CustomDatasetMapper(DatasetMapper):
         # USER: Remove if you don't use pre-computed proposals.
         # Most users would not need this feature.
         if self.proposal_topk is not None:
-            utils.transform_proposals(dataset_dict, image_shape, transforms, proposal_topk=self.proposal_topk)
+            utils.transform_proposals(
+                dataset_dict, image_shape, transforms, proposal_topk=self.proposal_topk
+            )
 
         if not self.is_train:
             # USER: Modify this if you want to keep them for some reason.
@@ -155,7 +163,9 @@ class CustomDatasetMapper(DatasetMapper):
                 for obj in dataset_dict.pop("annotations")
             ]
             annos = [ann[0] for ann in all_annos if ann[1] == 0]
-            instances = utils.annotations_to_instances(annos, image_shape, mask_format=self.instance_mask_format)
+            instances = utils.annotations_to_instances(
+                annos, image_shape, mask_format=self.instance_mask_format
+            )
 
             del all_annos
             if self.recompute_boxes:
@@ -164,8 +174,13 @@ class CustomDatasetMapper(DatasetMapper):
         if self.with_ann_type:
             dataset_dict["pos_category_ids"] = dataset_dict.get("pos_category_ids", [])
             dataset_dict["ann_type"] = self.dataset_ann[dataset_dict["dataset_source"]]
-        if self.is_debug and (("pos_category_ids" not in dataset_dict) or (dataset_dict["pos_category_ids"] == [])):
-            dataset_dict["pos_category_ids"] = [x for x in sorted(set(dataset_dict["instances"].gt_classes.tolist()))]
+        if self.is_debug and (
+            ("pos_category_ids" not in dataset_dict)
+            or (dataset_dict["pos_category_ids"] == [])
+        ):
+            dataset_dict["pos_category_ids"] = [
+                x for x in sorted(set(dataset_dict["instances"].gt_classes.tolist()))
+            ]
         return dataset_dict
 
 
@@ -181,7 +196,9 @@ def build_transform_gen(cfg, is_train):
         max_size = cfg.INPUT.MAX_SIZE_TEST
         sample_style = "choice"
     if sample_style == "range":
-        assert len(min_size) == 2, "more than 2 ({}) min_size(s) are provided for ranges".format(len(min_size))
+        assert len(min_size) == 2, (
+            "more than 2 ({}) min_size(s) are provided for ranges".format(len(min_size))
+        )
 
     logger = logging.getLogger(__name__)
     tfm_gens = []
@@ -216,7 +233,9 @@ class DetrDatasetMapper:
         self.mask_on = cfg.MODEL.MASK_ON
         self.tfm_gens = build_transform_gen(cfg, is_train)
         logging.getLogger(__name__).info(
-            "Full TransformGens used in training: {}, crop: {}".format(str(self.tfm_gens), str(self.crop_gen))
+            "Full TransformGens used in training: {}, crop: {}".format(
+                str(self.tfm_gens), str(self.crop_gen)
+            )
         )
 
         self.img_format = cfg.INPUT.FORMAT
@@ -248,7 +267,9 @@ class DetrDatasetMapper:
         # Pytorch's dataloader is efficient on torch.Tensor due to shared-memory,
         # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
         # Therefore it's important to use torch.Tensor.
-        dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
+        dataset_dict["image"] = torch.as_tensor(
+            np.ascontiguousarray(image.transpose(2, 0, 1))
+        )
 
         if not self.is_train:
             # USER: Modify this if you want to keep them for some reason.

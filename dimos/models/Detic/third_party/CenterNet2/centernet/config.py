@@ -26,7 +26,13 @@ def add_centernet_config(cfg):
     _C.MODEL.CENTERNET.SIGMOID_CLAMP = 1e-4
     _C.MODEL.CENTERNET.HM_MIN_OVERLAP = 0.8
     _C.MODEL.CENTERNET.MIN_RADIUS = 4
-    _C.MODEL.CENTERNET.SOI = [[0, 80], [64, 160], [128, 320], [256, 640], [512, 10000000]]
+    _C.MODEL.CENTERNET.SOI = [
+        [0, 80],
+        [64, 160],
+        [128, 320],
+        [256, 640],
+        [512, 10000000],
+    ]
     _C.MODEL.CENTERNET.POS_WEIGHT = 1.0
     _C.MODEL.CENTERNET.NEG_WEIGHT = 1.0
     _C.MODEL.CENTERNET.REG_WEIGHT = 2.0

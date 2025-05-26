@@ -208,7 +208,12 @@ class KeyRecorder(AbstractAudioTransform):
         valid_events = [
             event
             for event in audio_events
-            if event is not None and (hasattr(event, "data") and event.data is not None and event.data.size > 0)
+            if event is not None
+            and (
+                hasattr(event, "data")
+                and event.data is not None
+                and event.data.size > 0
+            )
         ]
 
         if not valid_events:
@@ -224,7 +229,9 @@ class KeyRecorder(AbstractAudioTransform):
 
         # Safety check - if somehow we got no samples
         if total_samples <= 0:
-            logger.warning(f"Combined audio would have {total_samples} samples - aborting")
+            logger.warning(
+                f"Combined audio would have {total_samples} samples - aborting"
+            )
             return None
 
         # For multichannel audio, data shape could be (samples,) or (samples, channels)

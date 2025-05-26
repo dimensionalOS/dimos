@@ -48,7 +48,9 @@ class DiskTarDataset(Dataset):
         labels = np.zeros(self.dataset_lens.sum(), dtype=np.int64)
         sI = 0
         for k in range(len(self.dataset_lens)):
-            assert (sI + self.dataset_lens[k]) <= len(labels), f"{k} {sI + self.dataset_lens[k]} vs. {len(labels)}"
+            assert (sI + self.dataset_lens[k]) <= len(labels), (
+                f"{k} {sI + self.dataset_lens[k]} vs. {len(labels)}"
+            )
             labels[sI : (sI + self.dataset_lens[k])] = k
             sI += self.dataset_lens[k]
         self.labels = labels
@@ -65,7 +67,9 @@ class DiskTarDataset(Dataset):
         if index in self.dataset_cumsums:
             d_index += 1
 
-        assert d_index == self.labels[index], f"{d_index} vs. {self.labels[index]} mismatch for {index}"
+        assert d_index == self.labels[index], (
+            f"{d_index} vs. {self.labels[index]} mismatch for {index}"
+        )
 
         # change index to local dataset index
         if d_index == 0:
@@ -73,7 +77,9 @@ class DiskTarDataset(Dataset):
         else:
             local_index = index - self.dataset_cumsums[d_index - 1]
         data_bytes = self.chunk_datasets[d_index][local_index]
-        exception_to_catch = UnidentifiedImageError if unidentified_error_available else Exception
+        exception_to_catch = (
+            UnidentifiedImageError if unidentified_error_available else Exception
+        )
         try:
             image = Image.open(data_bytes).convert("RGB")
         except exception_to_catch:

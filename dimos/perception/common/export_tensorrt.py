@@ -3,15 +3,33 @@ from ultralytics import YOLO, FastSAM
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Export YOLO/FastSAM models to different formats")
-    parser.add_argument("--model_path", type=str, required=True, help="Path to the model weights")
-    parser.add_argument(
-        "--model_type", type=str, choices=["yolo", "fastsam"], required=True, help="Type of model to export"
+    parser = argparse.ArgumentParser(
+        description="Export YOLO/FastSAM models to different formats"
     )
     parser.add_argument(
-        "--precision", type=str, choices=["fp32", "fp16", "int8"], default="fp32", help="Precision for export"
+        "--model_path", type=str, required=True, help="Path to the model weights"
     )
-    parser.add_argument("--format", type=str, choices=["onnx", "engine"], default="onnx", help="Export format")
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        choices=["yolo", "fastsam"],
+        required=True,
+        help="Type of model to export",
+    )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        choices=["fp32", "fp16", "int8"],
+        default="fp32",
+        help="Precision for export",
+    )
+    parser.add_argument(
+        "--format",
+        type=str,
+        choices=["onnx", "engine"],
+        default="onnx",
+        help="Export format",
+    )
     return parser.parse_args()
 
 

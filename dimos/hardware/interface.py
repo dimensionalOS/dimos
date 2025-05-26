@@ -20,7 +20,10 @@ from dimos.hardware.ufactory import UFactory7DOFArm
 
 class HardwareInterface:
     def __init__(
-        self, end_effector: EndEffector = None, sensors: list = None, arm_architecture: UFactory7DOFArm = None
+        self,
+        end_effector: EndEffector = None,
+        sensors: list = None,
+        arm_architecture: UFactory7DOFArm = None,
     ):
         self.end_effector = end_effector
         self.sensors = sensors if sensors is not None else []
@@ -38,7 +41,9 @@ class HardwareInterface:
         """Set the hardware configuration."""
         self.end_effector = configuration.get("end_effector", self.end_effector)
         self.sensors = configuration.get("sensors", self.sensors)
-        self.arm_architecture = configuration.get("arm_architecture", self.arm_architecture)
+        self.arm_architecture = configuration.get(
+            "arm_architecture", self.arm_architecture
+        )
 
     def add_sensor(self, sensor):
         """Add a sensor to the hardware interface."""

@@ -9,7 +9,9 @@ import torch
 
 def to_cuda(samples, targets, device):
     samples = samples.to(device, non_blocking=True)
-    targets = [{k: v.to(device, non_blocking=True) for k, v in t.items()} for t in targets]
+    targets = [
+        {k: v.to(device, non_blocking=True) for k, v in t.items()} for t in targets
+    ]
     return samples, targets
 
 
@@ -37,7 +39,9 @@ class data_prefetcher:
         # at the time we start copying to next_*:
         # self.stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(self.stream):
-            self.next_samples, self.next_targets = to_cuda(self.next_samples, self.next_targets, self.device)
+            self.next_samples, self.next_targets = to_cuda(
+                self.next_samples, self.next_targets, self.device
+            )
             # more code for the alternative if record_stream() doesn't work:
             # copy_ will record the use of the pinned source tensor in this side stream.
             # self.next_input_gpu.copy_(self.next_input, non_blocking=True)

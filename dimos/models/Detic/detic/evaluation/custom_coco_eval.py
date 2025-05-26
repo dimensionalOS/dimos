@@ -26,10 +26,15 @@ class CustomCOCOEvaluator(COCOEvaluator):
 
         # the standard metrics
         results = {
-            metric: float(coco_eval.stats[idx] * 100 if coco_eval.stats[idx] >= 0 else "nan")
+            metric: float(
+                coco_eval.stats[idx] * 100 if coco_eval.stats[idx] >= 0 else "nan"
+            )
             for idx, metric in enumerate(metrics)
         }
-        self._logger.info("Evaluation results for {}: \n".format(iou_type) + create_small_table(results))
+        self._logger.info(
+            "Evaluation results for {}: \n".format(iou_type)
+            + create_small_table(results)
+        )
         if not np.isfinite(sum(results.values())):
             self._logger.info("Some metrics cannot be computed and is shown as NaN.")
 
@@ -66,7 +71,9 @@ class CustomCOCOEvaluator(COCOEvaluator):
         # tabulate it
         N_COLS = min(6, len(results_per_category) * 2)
         results_flatten = list(itertools.chain(*results_per_category))
-        results_2d = itertools.zip_longest(*[results_flatten[i::N_COLS] for i in range(N_COLS)])
+        results_2d = itertools.zip_longest(
+            *[results_flatten[i::N_COLS] for i in range(N_COLS)]
+        )
         table = tabulate(
             results_2d,
             tablefmt="pipe",
@@ -78,7 +85,9 @@ class CustomCOCOEvaluator(COCOEvaluator):
 
         N_COLS = min(6, len(results_per_category50) * 2)
         results_flatten = list(itertools.chain(*results_per_category50))
-        results_2d = itertools.zip_longest(*[results_flatten[i::N_COLS] for i in range(N_COLS)])
+        results_2d = itertools.zip_longest(
+            *[results_flatten[i::N_COLS] for i in range(N_COLS)]
+        )
         table = tabulate(
             results_2d,
             tablefmt="pipe",
@@ -101,6 +110,10 @@ class CustomCOCOEvaluator(COCOEvaluator):
         )
 
         results.update({"AP-" + name: ap for name, ap in results_per_category})
-        results["AP50-seen"] = sum(results_per_category50_seen) / len(results_per_category50_seen)
-        results["AP50-unseen"] = sum(results_per_category50_unseen) / len(results_per_category50_unseen)
+        results["AP50-seen"] = sum(results_per_category50_seen) / len(
+            results_per_category50_seen
+        )
+        results["AP50-unseen"] = sum(results_per_category50_unseen) / len(
+            results_per_category50_unseen
+        )
         return results

@@ -21,7 +21,9 @@ class VisualizationDemo(object):
             parallel (bool): whether to run the model in different processes from visualization.
                 Useful since the visualization logic can be slow.
         """
-        self.metadata = MetadataCatalog.get(cfg.DATASETS.TRAIN[0] if len(cfg.DATASETS.TRAIN) else "__unused")
+        self.metadata = MetadataCatalog.get(
+            cfg.DATASETS.TRAIN[0] if len(cfg.DATASETS.TRAIN) else "__unused"
+        )
         self.cpu_device = torch.device("cpu")
         self.instance_mode = instance_mode
 
@@ -49,28 +51,42 @@ class VisualizationDemo(object):
         use_video_vis = True
         if visualizer is None:
             use_video_vis = False
-            visualizer = Visualizer(image, self.metadata, instance_mode=self.instance_mode)
+            visualizer = Visualizer(
+                image, self.metadata, instance_mode=self.instance_mode
+            )
         if "panoptic_seg" in predictions:
             panoptic_seg, segments_info = predictions["panoptic_seg"]
-            vis_output = visualizer.draw_panoptic_seg_predictions(panoptic_seg.to(self.cpu_device), segments_info)
+            vis_output = visualizer.draw_panoptic_seg_predictions(
+                panoptic_seg.to(self.cpu_device), segments_info
+            )
         else:
             if "sem_seg" in predictions:
-                vis_output = visualizer.draw_sem_seg(predictions["sem_seg"].argmax(dim=0).to(self.cpu_device))
+                vis_output = visualizer.draw_sem_seg(
+                    predictions["sem_seg"].argmax(dim=0).to(self.cpu_device)
+                )
             if "instances" in predictions:
                 instances = predictions["instances"].to(self.cpu_device)
                 if use_video_vis:
-                    vis_output = visualizer.draw_instance_predictions(image, predictions=instances)
+                    vis_output = visualizer.draw_instance_predictions(
+                        image, predictions=instances
+                    )
                 else:
-                    vis_output = visualizer.draw_instance_predictions(predictions=instances)
+                    vis_output = visualizer.draw_instance_predictions(
+                        predictions=instances
+                    )
             elif "proposals" in predictions:
                 instances = predictions["proposals"].to(self.cpu_device)
                 instances.pred_boxes = instances.proposal_boxes
                 instances.scores = instances.objectness_logits
                 instances.pred_classes[:] = -1
                 if use_video_vis:
-                    vis_output = visualizer.draw_instance_predictions(image, predictions=instances)
+                    vis_output = visualizer.draw_instance_predictions(
+                        image, predictions=instances
+                    )
                 else:
-                    vis_output = visualizer.draw_instance_predictions(predictions=instances)
+                    vis_output = visualizer.draw_instance_predictions(
+                        predictions=instances
+                    )
 
         return predictions, vis_output
 
@@ -104,7 +120,9 @@ class VisualizationDemo(object):
                 )
             elif "instances" in predictions:
                 predictions = predictions["instances"].to(self.cpu_device)
-                vis_frame = video_visualizer.draw_instance_predictions(frame, predictions)
+                vis_frame = video_visualizer.draw_instance_predictions(
+                    frame, predictions
+                )
             elif "sem_seg" in predictions:
                 vis_frame = video_visualizer.draw_sem_seg(
                     frame, predictions["sem_seg"].argmax(dim=0).to(self.cpu_device)
@@ -114,7 +132,9 @@ class VisualizationDemo(object):
                 predictions.pred_boxes = predictions.proposal_boxes
                 predictions.scores = predictions.objectness_logits
                 predictions.pred_classes[:] = -1
-                vis_frame = video_visualizer.draw_instance_predictions(frame, predictions)
+                vis_frame = video_visualizer.draw_instance_predictions(
+                    frame, predictions
+                )
 
             # Converts Matplotlib RGB format to OpenCV BGR format
             vis_frame = cv2.cvtColor(vis_frame.get_image(), cv2.COLOR_RGB2BGR)
@@ -186,7 +206,9 @@ class AsyncPredictor:
             cfg = cfg.clone()
             cfg.defrost()
             cfg.MODEL.DEVICE = "cuda:{}".format(gpuid) if num_gpus > 0 else "cpu"
-            self.procs.append(AsyncPredictor._PredictWorker(cfg, self.task_queue, self.result_queue))
+            self.procs.append(
+                AsyncPredictor._PredictWorker(cfg, self.task_queue, self.result_queue)
+            )
 
         self.put_idx = 0
         self.get_idx = 0

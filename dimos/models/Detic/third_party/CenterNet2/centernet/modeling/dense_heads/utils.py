@@ -15,7 +15,9 @@ def _transpose(training_targets, num_loc_list):
     :return: level first training targets
     """
     for im_i in range(len(training_targets)):
-        training_targets[im_i] = torch.split(training_targets[im_i], num_loc_list, dim=0)
+        training_targets[im_i] = torch.split(
+            training_targets[im_i], num_loc_list, dim=0
+        )
 
     targets_level_first = []
     for targets_per_level in zip(*training_targets):

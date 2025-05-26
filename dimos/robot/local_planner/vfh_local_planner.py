@@ -8,7 +8,10 @@ import logging
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.ros_utils import normalize_angle
 
-from dimos.robot.local_planner.local_planner import BaseLocalPlanner, visualize_local_planner_state
+from dimos.robot.local_planner.local_planner import (
+    BaseLocalPlanner,
+    visualize_local_planner_state,
+)
 from dimos.types.costmap import Costmap
 from nav_msgs.msg import OccupancyGrid
 
@@ -93,7 +96,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         self.low_speed_nudge = 0.1
 
         # Add after other initialization
-        self.angle_mapping = np.linspace(-np.pi, np.pi, self.histogram_bins, endpoint=False)
+        self.angle_mapping = np.linspace(
+            -np.pi, np.pi, self.histogram_bins, endpoint=False
+        )
         self.smoothing_kernel = np.array([self.alpha, (1 - 2 * self.alpha), self.alpha])
 
     def _compute_velocity_commands(self) -> Dict[str, float]:
@@ -136,7 +141,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         )
 
         # Calculate Pure Pursuit Velocities
-        linear_vel, angular_vel = self.compute_pure_pursuit(goal_distance, self.selected_direction)
+        linear_vel, angular_vel = self.compute_pure_pursuit(
+            goal_distance, self.selected_direction
+        )
 
         # Slow down when turning sharply
         if abs(self.selected_direction) > 0.25:  # ~15 degrees
@@ -145,7 +152,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             linear_vel *= turn_factor
 
         # Apply Collision Avoidance Stop - skip if ignoring obstacles
-        if not self.ignore_obstacles and self.check_collision(self.selected_direction, safety_threshold=0.5):
+        if not self.ignore_obstacles and self.check_collision(
+            self.selected_direction, safety_threshold=0.5
+        ):
             # Re-select direction prioritizing obstacle avoidance if colliding
             self.selected_direction = self.select_direction(
                 self.goal_weight * 0.2,
@@ -154,15 +163,18 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
                 self.histogram,
                 goal_direction,
             )
-            linear_vel, angular_vel = self.compute_pure_pursuit(goal_distance, self.selected_direction)
+            linear_vel, angular_vel = self.compute_pure_pursuit(
+                goal_distance, self.selected_direction
+            )
 
         if self.check_collision(0.0, safety_threshold=self.safety_threshold):
             logger.warning("Collision detected ahead. Stopping.")
             linear_vel = 0.0
 
         self.prev_linear_vel = linear_vel
-        filtered_linear_vel = self.prev_linear_vel * self.linear_vel_filter_factor + linear_vel * (
-            1 - self.linear_vel_filter_factor
+        filtered_linear_vel = (
+            self.prev_linear_vel * self.linear_vel_filter_factor
+            + linear_vel * (1 - self.linear_vel_filter_factor)
         )
 
         return {"x_vel": filtered_linear_vel, "angular_vel": angular_vel}
@@ -189,7 +201,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             indices = [(i + j) % bins for j in range(-2, 3)]
             # Apply weighted average (more weight to the center)
             weights = [0.1, 0.2, 0.4, 0.2, 0.1]  # Sum = 1.0
-            smoothed[i] = sum(histogram[idx] * weight for idx, weight in zip(indices, weights))
+            smoothed[i] = sum(
+                histogram[idx] * weight for idx, weight in zip(indices, weights)
+            )
 
         # Second pass: peak and valley enhancement
         enhanced = np.zeros_like(smoothed)
@@ -211,7 +225,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
 
         return enhanced
 
-    def build_polar_histogram(self, costmap: Costmap, robot_pose: Tuple[float, float, float]):
+    def build_polar_histogram(
+        self, costmap: Costmap, robot_pose: Tuple[float, float, float]
+    ):
         """
         Build a polar histogram of obstacle densities around the robot.
 
@@ -242,7 +258,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         angles_robot = normalize_angle(angles_grid - robot_theta)
 
         # Convert to bin indices
-        bin_indices = ((angles_robot + np.pi) / (2 * np.pi) * self.histogram_bins).astype(int) % self.histogram_bins
+        bin_indices = (
+            (angles_robot + np.pi) / (2 * np.pi) * self.histogram_bins
+        ).astype(int) % self.histogram_bins
 
         # Get obstacle values
         obstacle_values = occupancy_grid[y_indices, x_indices] / 100.0
@@ -251,12 +269,21 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         histogram = np.zeros(self.histogram_bins)
         mask = distances > 0
         # Weight obstacles by inverse square of distance and cell value
-        np.add.at(histogram, bin_indices[mask], obstacle_values[mask] / (distances[mask] ** 2))
+        np.add.at(
+            histogram, bin_indices[mask], obstacle_values[mask] / (distances[mask] ** 2)
+        )
 
         # Apply the enhanced smoothing
         return self._smooth_histogram(histogram)
 
-    def select_direction(self, goal_weight, obstacle_weight, prev_direction_weight, histogram, goal_direction):
+    def select_direction(
+        self,
+        goal_weight,
+        obstacle_weight,
+        prev_direction_weight,
+        histogram,
+        goal_direction,
+    ):
         """
         Select best direction based on a simple weighted cost function.
 
@@ -276,7 +303,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
 
         # Calculate costs for each possible direction
         angle_diffs = np.abs(normalize_angle(self.angle_mapping - goal_direction))
-        prev_diffs = np.abs(normalize_angle(self.angle_mapping - self.prev_selected_angle))
+        prev_diffs = np.abs(
+            normalize_angle(self.angle_mapping - self.prev_selected_angle)
+        )
 
         # Combine costs with weights
         obstacle_costs = obstacle_weight * histogram
@@ -294,7 +323,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
 
         return selected_angle
 
-    def compute_pure_pursuit(self, goal_distance: float, goal_direction: float) -> Tuple[float, float]:
+    def compute_pure_pursuit(
+        self, goal_distance: float, goal_direction: float
+    ) -> Tuple[float, float]:
         """Compute pure pursuit velocities."""
         if goal_distance < self.goal_tolerance:
             return 0.0, 0.0
@@ -306,7 +337,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
 
         return linear_vel, angular_vel
 
-    def check_collision(self, selected_direction: float, safety_threshold: float = 1.0) -> bool:
+    def check_collision(
+        self, selected_direction: float, safety_threshold: float = 1.0
+    ) -> bool:
         """Check if there's an obstacle in the selected direction within safety threshold."""
         # Skip collision check if ignoring obstacles
         if self.ignore_obstacles:
@@ -365,7 +398,11 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
 
             # Get waypoint data if in waypoint mode
             waypoints_to_draw = self.waypoints_in_odom
-            current_wp_index_to_draw = self.current_waypoint_index if self.waypoints_in_odom is not None else None
+            current_wp_index_to_draw = (
+                self.current_waypoint_index
+                if self.waypoints_in_odom is not None
+                else None
+            )
             # Ensure index is valid before passing
             if waypoints_to_draw is not None and current_wp_index_to_draw is not None:
                 if not (0 <= current_wp_index_to_draw < len(waypoints_to_draw)):
@@ -389,7 +426,13 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         except Exception as e:
             logger.error(f"Error during visualization update: {e}")
             # Return a blank image with error text
-            blank = np.ones((self.visualization_size, self.visualization_size, 3), dtype=np.uint8) * 255
+            blank = (
+                np.ones(
+                    (self.visualization_size, self.visualization_size, 3),
+                    dtype=np.uint8,
+                )
+                * 255
+            )
             cv2.putText(
                 blank,
                 "Viz Error",

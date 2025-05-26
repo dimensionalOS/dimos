@@ -23,14 +23,20 @@ __all__ = ["register_coco_instances", "register_coco_panoptic_separated"]
 def register_oid_instances(name, metadata, json_file, image_root):
     """ """
     # 1. register a function which returns dicts
-    DatasetCatalog.register(name, lambda: load_coco_json_mem_efficient(json_file, image_root, name))
+    DatasetCatalog.register(
+        name, lambda: load_coco_json_mem_efficient(json_file, image_root, name)
+    )
 
     # 2. Optionally, add metadata about this dataset,
     # since they might be useful in evaluation, visualization or logging
-    MetadataCatalog.get(name).set(json_file=json_file, image_root=image_root, evaluator_type="oid", **metadata)
+    MetadataCatalog.get(name).set(
+        json_file=json_file, image_root=image_root, evaluator_type="oid", **metadata
+    )
 
 
-def load_coco_json_mem_efficient(json_file, image_root, dataset_name=None, extra_annotation_keys=None):
+def load_coco_json_mem_efficient(
+    json_file, image_root, dataset_name=None, extra_annotation_keys=None
+):
     """
     Actually not mem efficient
     """
@@ -41,7 +47,9 @@ def load_coco_json_mem_efficient(json_file, image_root, dataset_name=None, extra
     with contextlib.redirect_stdout(io.StringIO()):
         coco_api = COCO(json_file)
     if timer.seconds() > 1:
-        logger.info("Loading {} takes {:.2f} seconds.".format(json_file, timer.seconds()))
+        logger.info(
+            "Loading {} takes {:.2f} seconds.".format(json_file, timer.seconds())
+        )
 
     id_map = None
     if dataset_name is not None:
@@ -79,7 +87,9 @@ def load_coco_json_mem_efficient(json_file, image_root, dataset_name=None, extra
         image_id = record["image_id"] = img_dict["id"]
         anno_dict_list = coco_api.imgToAnns[image_id]
         if "neg_category_ids" in img_dict:
-            record["neg_category_ids"] = [id_map[x] for x in img_dict["neg_category_ids"]]
+            record["neg_category_ids"] = [
+                id_map[x] for x in img_dict["neg_category_ids"]
+            ]
 
         objs = []
         for anno in anno_dict_list:
@@ -93,7 +103,9 @@ def load_coco_json_mem_efficient(json_file, image_root, dataset_name=None, extra
             if segm:  # either list[list[float]] or dict(RLE)
                 if not isinstance(segm, dict):
                     # filter out invalid polygons (< 3 points)
-                    segm = [poly for poly in segm if len(poly) % 2 == 0 and len(poly) >= 6]
+                    segm = [
+                        poly for poly in segm if len(poly) % 2 == 0 and len(poly) >= 6
+                    ]
                     if len(segm) == 0:
                         num_instances_without_valid_segmentation += 1
                         continue  # ignore this instance

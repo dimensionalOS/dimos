@@ -62,7 +62,9 @@ class SemanticSegmentationStream:
                 if "intrinsics" in camera_params:
                     intrinsics = camera_params["intrinsics"]
                     if len(intrinsics) != 4:
-                        raise ValueError("Intrinsics must be a list of 4 values: [fx, fy, cx, cy]")
+                        raise ValueError(
+                            "Intrinsics must be a list of 4 values: [fx, fy, cx, cy]"
+                        )
                     self.depth_model.update_intrinsic(intrinsics)
                 else:
                     # Create camera object and calculate intrinsics from physical parameters
@@ -81,7 +83,9 @@ class SemanticSegmentationStream:
                         ]
                     )
             else:
-                raise ValueError("Camera parameters are required for monocular depth processing.")
+                raise ValueError(
+                    "Camera parameters are required for monocular depth processing."
+                )
 
     def create_stream(self, video_stream: Observable) -> Observable[SegmentationType]:
         """
@@ -96,14 +100,18 @@ class SemanticSegmentationStream:
 
         def process_frame(frame):
             # Process image and get results
-            masks, bboxes, target_ids, probs, names = self.segmenter.process_image(frame)
+            masks, bboxes, target_ids, probs, names = self.segmenter.process_image(
+                frame
+            )
 
             # Run analysis if enabled
             if self.segmenter.use_analyzer:
                 self.segmenter.run_analysis(frame, bboxes, target_ids)
                 names = self.segmenter.get_object_names(target_ids, names)
 
-            viz_frame = self.segmenter.visualize_results(frame, masks, bboxes, target_ids, probs, names)
+            viz_frame = self.segmenter.visualize_results(
+                frame, masks, bboxes, target_ids, probs, names
+            )
 
             # Process depth if enabled
             depth_viz = None
@@ -133,10 +141,26 @@ class SemanticSegmentationStream:
                     # Draw depth text at bottom left of bounding box
                     depth_text = f"{depth:.2f}mm"
                     # Add black background for better visibility
-                    text_size = cv2.getTextSize(depth_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
-                    cv2.rectangle(viz_frame, (x1, y2 - text_size[1] - 5), (x1 + text_size[0], y2), (0, 0, 0), -1)
+                    text_size = cv2.getTextSize(
+                        depth_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2
+                    )[0]
+                    cv2.rectangle(
+                        viz_frame,
+                        (x1, y2 - text_size[1] - 5),
+                        (x1 + text_size[0], y2),
+                        (0, 0, 0),
+                        -1,
+                    )
                     # Draw text in white
-                    cv2.putText(viz_frame, depth_text, (x1, y2 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                    cv2.putText(
+                        viz_frame,
+                        depth_text,
+                        (x1, y2 - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 255, 255),
+                        2,
+                    )
 
             # Create metadata in the new requested format
             objects = []
@@ -162,7 +186,9 @@ class SemanticSegmentationStream:
                 metadata["depth_viz"] = depth_viz
 
             # Convert masks to numpy arrays if they aren't already
-            numpy_masks = [mask.cpu().numpy() if hasattr(mask, "cpu") else mask for mask in masks]
+            numpy_masks = [
+                mask.cpu().numpy() if hasattr(mask, "cpu") else mask for mask in masks
+            ]
 
             return SegmentationType(masks=numpy_masks, metadata=metadata)
 
@@ -181,7 +207,9 @@ class SemanticSegmentationStream:
         # Normalize depth map to 0-255 range for visualization
         depth_min = np.min(depth_map)
         depth_max = np.max(depth_map)
-        depth_normalized = ((depth_map - depth_min) / (depth_max - depth_min) * 255).astype(np.uint8)
+        depth_normalized = (
+            (depth_map - depth_min) / (depth_max - depth_min) * 255
+        ).astype(np.uint8)
 
         # Apply colormap (using JET colormap for better depth perception)
         depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
@@ -193,13 +221,29 @@ class SemanticSegmentationStream:
 
         # Create gradient for scale bar
         for i in range(scale_width):
-            color = cv2.applyColorMap(np.array([[i * 255 // scale_width]], dtype=np.uint8), cv2.COLORMAP_JET)
+            color = cv2.applyColorMap(
+                np.array([[i * 255 // scale_width]], dtype=np.uint8), cv2.COLORMAP_JET
+            )
             scale_bar[:, i] = color[0, 0]
 
         # Add depth values to scale bar
-        cv2.putText(scale_bar, f"{depth_min:.1f}mm", (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         cv2.putText(
-            scale_bar, f"{depth_max:.1f}mm", (scale_width - 60, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
+            scale_bar,
+            f"{depth_min:.1f}mm",
+            (5, 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+        )
+        cv2.putText(
+            scale_bar,
+            f"{depth_max:.1f}mm",
+            (scale_width - 60, 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
         )
 
         # Combine depth map and scale bar

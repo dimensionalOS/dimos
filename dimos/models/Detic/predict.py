@@ -24,7 +24,9 @@ class Predictor(cog.Predictor):
         cfg = get_cfg()
         add_centernet_config(cfg)
         add_detic_config(cfg)
-        cfg.merge_from_file("configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml")
+        cfg.merge_from_file(
+            "configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml"
+        )
         cfg.MODEL.WEIGHTS = "Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth"
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # set threshold for this model
         cfg.MODEL.ROI_BOX_HEAD.ZEROSHOT_WEIGHT_PATH = "rand"
@@ -70,7 +72,9 @@ class Predictor(cog.Predictor):
             reset_cls_test(self.predictor.model, classifier, num_classes)
 
         else:
-            assert custom_vocabulary is not None and len(custom_vocabulary.split(",")) > 0, (
+            assert (
+                custom_vocabulary is not None and len(custom_vocabulary.split(",")) > 0
+            ), (
                 "Please provide your own vocabularies when vocabulary is set to 'custom'."
             )
             metadata = MetadataCatalog.get(str(time.time()))
@@ -80,8 +84,12 @@ class Predictor(cog.Predictor):
             reset_cls_test(self.predictor.model, classifier, num_classes)
             # Reset visualization threshold
             output_score_threshold = 0.3
-            for cascade_stages in range(len(self.predictor.model.roi_heads.box_predictor)):
-                self.predictor.model.roi_heads.box_predictor[cascade_stages].test_score_thresh = output_score_threshold
+            for cascade_stages in range(
+                len(self.predictor.model.roi_heads.box_predictor)
+            ):
+                self.predictor.model.roi_heads.box_predictor[
+                    cascade_stages
+                ].test_score_thresh = output_score_threshold
 
         outputs = self.predictor(image)
         v = Visualizer(image[:, :, ::-1], metadata)

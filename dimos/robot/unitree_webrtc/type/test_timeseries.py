@@ -6,7 +6,9 @@ fixed_date = datetime(2025, 5, 13, 15, 2, 5).astimezone()
 start_event = TEvent(fixed_date, 1)
 end_event = TEvent(fixed_date + timedelta(seconds=10), 9)
 
-sample_list = TList([start_event, TEvent(fixed_date + timedelta(seconds=2), 5), end_event])
+sample_list = TList(
+    [start_event, TEvent(fixed_date + timedelta(seconds=2), 5), end_event]
+)
 
 
 def test_repr():

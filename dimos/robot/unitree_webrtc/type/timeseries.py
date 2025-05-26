@@ -60,7 +60,9 @@ class TEvent(Timestamped, Generic[PAYLOAD]):
         return f"TEvent(ts={self.ts}, data={self.data})"
 
 
-EVENT = TypeVar("EVENT", bound=Timestamped)  # any object that is a subclass of Timestamped
+EVENT = TypeVar(
+    "EVENT", bound=Timestamped
+)  # any object that is a subclass of Timestamped
 
 
 class Timeseries(ABC, Generic[EVENT]):

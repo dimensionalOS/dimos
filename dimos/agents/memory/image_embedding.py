@@ -60,7 +60,12 @@ class ImageEmbeddingProvider:
         """Initialize the specified embedding model."""
         try:
             import torch
-            from transformers import CLIPProcessor, CLIPModel, AutoFeatureExtractor, AutoModel
+            from transformers import (
+                CLIPProcessor,
+                CLIPModel,
+                AutoFeatureExtractor,
+                AutoModel,
+            )
 
             if self.model_name == "clip":
                 model_id = "openai/clip-vit-base-patch32"
@@ -108,7 +113,9 @@ class ImageEmbeddingProvider:
                 with torch.no_grad():
                     image_features = self.model.get_image_features(**inputs)
 
-                image_embedding = image_features / image_features.norm(dim=1, keepdim=True)
+                image_embedding = image_features / image_features.norm(
+                    dim=1, keepdim=True
+                )
                 embedding = image_embedding.numpy()[0]
 
             elif self.model_name == "resnet":
@@ -120,7 +127,9 @@ class ImageEmbeddingProvider:
                 # Get the [CLS] token embedding
                 embedding = outputs.last_hidden_state[:, 0, :].numpy()[0]
             else:
-                logger.warning(f"Unsupported model: {self.model_name}. Using random embedding.")
+                logger.warning(
+                    f"Unsupported model: {self.model_name}. Using random embedding."
+                )
                 embedding = np.random.randn(self.dimensions).astype(np.float32)
 
             # Normalize and ensure correct dimensions
@@ -165,7 +174,9 @@ class ImageEmbeddingProvider:
             text_embedding = text_features / text_features.norm(dim=1, keepdim=True)
             embedding = text_embedding.numpy()[0]
 
-            logger.debug(f"Generated text embedding with shape {embedding.shape} for text: '{text}'")
+            logger.debug(
+                f"Generated text embedding with shape {embedding.shape} for text: '{text}'"
+            )
             return embedding
 
         except Exception as e:

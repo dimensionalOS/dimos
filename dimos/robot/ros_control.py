@@ -163,7 +163,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             )
             self._subscriptions.append(self._global_costmap_sub)
         else:
-            logger.warning("No costmap topic provided - costmap data tracking will be unavailable")
+            logger.warning(
+                "No costmap topic provided - costmap data tracking will be unavailable"
+            )
 
         # Initialize data handling
         self._video_provider = None
@@ -177,8 +179,12 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
                 topic = camera_config["topic"]
                 msg_type = camera_config["type"]
 
-                logger.info(f"Subscribing to {topic} with BEST_EFFORT QoS using message type {msg_type.__name__}")
-                _camera_subscription = self._node.create_subscription(msg_type, topic, self._image_callback, sensor_qos)
+                logger.info(
+                    f"Subscribing to {topic} with BEST_EFFORT QoS using message type {msg_type.__name__}"
+                )
+                _camera_subscription = self._node.create_subscription(
+                    msg_type, topic, self._image_callback, sensor_qos
+                )
                 self._subscriptions.append(_camera_subscription)
 
         # Subscribe to state topic if provided
@@ -192,7 +198,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             )
             self._subscriptions.append(self._state_sub)
         else:
-            logger.warning("No state topic andor message type provided - robot state tracking will be unavailable")
+            logger.warning(
+                "No state topic andor message type provided - robot state tracking will be unavailable"
+            )
 
         if self._imu_topic and self._imu_msg_type:
             self._imu_sub = self._node.create_subscription(
@@ -200,13 +208,19 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             )
             self._subscriptions.append(self._imu_sub)
         else:
-            logger.warning("No IMU topic and/or message type provided - IMU data tracking will be unavailable")
+            logger.warning(
+                "No IMU topic and/or message type provided - IMU data tracking will be unavailable"
+            )
 
         if self._odom_topic:
-            self._odom_sub = self._node.create_subscription(Odometry, self._odom_topic, self._odom_callback, sensor_qos)
+            self._odom_sub = self._node.create_subscription(
+                Odometry, self._odom_topic, self._odom_callback, sensor_qos
+            )
             self._subscriptions.append(self._odom_sub)
         else:
-            logger.warning("No odometry topic provided - odometry data tracking will be unavailable")
+            logger.warning(
+                "No odometry topic provided - odometry data tracking will be unavailable"
+            )
 
         if self._costmap_topic:
             self._costmap_sub = self._node.create_subscription(
@@ -214,7 +228,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             )
             self._subscriptions.append(self._costmap_sub)
         else:
-            logger.warning("No costmap topic provided - costmap data tracking will be unavailable")
+            logger.warning(
+                "No costmap topic provided - costmap data tracking will be unavailable"
+            )
 
         # Nav2 Action Clients
         self._spin_client = ActionClient(self._node, Spin, "spin")
@@ -224,11 +240,15 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             self._spin_client.wait_for_server()
 
         # Publishers
-        self._move_vel_pub = self._node.create_publisher(Twist, move_vel_topic, command_qos)
+        self._move_vel_pub = self._node.create_publisher(
+            Twist, move_vel_topic, command_qos
+        )
         self._pose_pub = self._node.create_publisher(Vector3, pose_topic, command_qos)
 
         if webrtc_msg_type:
-            self._webrtc_pub = self._node.create_publisher(webrtc_msg_type, webrtc_topic, qos_profile=command_qos)
+            self._webrtc_pub = self._node.create_publisher(
+                webrtc_msg_type, webrtc_topic, qos_profile=command_qos
+            )
 
             # Initialize command queue
             self._command_queue = ROSCommandQueue(
@@ -239,7 +259,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             # Start the queue processing thread
             self._command_queue.start()
         else:
-            logger.warning("No WebRTC message type provided - WebRTC commands will be unavailable")
+            logger.warning(
+                "No WebRTC message type provided - WebRTC commands will be unavailable"
+            )
 
         # Initialize TF Buffer and Listener for transform abilities
         self._tf_buffer = tf2_ros.Buffer()
@@ -261,7 +283,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             Optional[OccupancyGrid]: Current global_costmap data or None if not available
         """
         if not self._global_costmap_topic:
-            logger.warning("No global_costmap topic provided - global_costmap data tracking will be unavailable")
+            logger.warning(
+                "No global_costmap topic provided - global_costmap data tracking will be unavailable"
+            )
             return None
 
         if self._global_costmap_data:
@@ -329,7 +353,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             ROS msg containing the robot state information
         """
         if not self._state_topic:
-            logger.warning("No state topic provided - robot state tracking will be unavailable")
+            logger.warning(
+                "No state topic provided - robot state tracking will be unavailable"
+            )
             return None
 
         return self._robot_state
@@ -345,7 +371,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             ROS msg containing the IMU state information
         """
         if not self._imu_topic:
-            logger.warning("No IMU topic provided - IMU data tracking will be unavailable")
+            logger.warning(
+                "No IMU topic provided - IMU data tracking will be unavailable"
+            )
             return None
         return self._imu_state
 
@@ -357,7 +385,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             Optional[Odometry]: Current odometry data or None if not available
         """
         if not self._odom_topic:
-            logger.warning("No odometry topic provided - odometry data tracking will be unavailable")
+            logger.warning(
+                "No odometry topic provided - odometry data tracking will be unavailable"
+            )
             return None
         return self._odom_data
 
@@ -369,7 +399,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             Optional[OccupancyGrid]: Current costmap data or None if not available
         """
         if not self._costmap_topic:
-            logger.warning("No costmap topic provided - costmap data tracking will be unavailable")
+            logger.warning(
+                "No costmap topic provided - costmap data tracking will be unavailable"
+            )
             return None
         return self._costmap_data
 
@@ -394,7 +426,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
         """Data provider property for streaming data"""
         return self._video_provider
 
-    def _send_action_client_goal(self, client, goal_msg, description=None, time_allowance=20.0):
+    def _send_action_client_goal(
+        self, client, goal_msg, description=None, time_allowance=20.0
+    ):
         """
         Generic function to send any action client goal and wait for completion.
 
@@ -417,16 +451,22 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
         self._action_success = None
 
         # Send the goal
-        send_goal_future = client.send_goal_async(goal_msg, feedback_callback=lambda feedback: None)
+        send_goal_future = client.send_goal_async(
+            goal_msg, feedback_callback=lambda feedback: None
+        )
         send_goal_future.add_done_callback(self._goal_response_callback)
 
         # Wait for completion
         start_time = time.time()
-        while self._action_success is None and time.time() - start_time < time_allowance:
+        while (
+            self._action_success is None and time.time() - start_time < time_allowance
+        ):
             time.sleep(0.1)
 
         elapsed = time.time() - start_time
-        print(f"[ROSControl] Action completed in {elapsed:.2f}s with result: {self._action_success}")
+        print(
+            f"[ROSControl] Action completed in {elapsed:.2f}s with result: {self._action_success}"
+        )
 
         # Check result
         if self._action_success is None:
@@ -439,7 +479,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             logger.error("Action failed")
             return False
 
-    def move(self, distance: float, speed: float = 0.5, time_allowance: float = 120) -> bool:
+    def move(
+        self, distance: float, speed: float = 0.5, time_allowance: float = 120
+    ) -> bool:
         """
         Move the robot forward by a specified distance
 
@@ -486,7 +528,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
                 distance=distance,
                 speed=speed,
             )
-            logger.info(f"Queued move command: {cmd_id} - Distance: {distance}m, Speed: {speed}m/s")
+            logger.info(
+                f"Queued move command: {cmd_id} - Distance: {distance}m, Speed: {speed}m/s"
+            )
             return True
 
         except Exception as e:
@@ -496,7 +540,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             logger.error(traceback.format_exc())
             return False
 
-    def reverse(self, distance: float, speed: float = 0.5, time_allowance: float = 120) -> bool:
+    def reverse(
+        self, distance: float, speed: float = 0.5, time_allowance: float = 120
+    ) -> bool:
         """
         Move the robot backward by a specified distance
 
@@ -526,7 +572,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
                 goal.speed = speed  # BackUp expects positive speed
                 goal.time_allowance = Duration(sec=time_allowance)
 
-                print(f"[ROSControl] execute_reverse: Creating BackUp goal with distance={distance}m, speed={speed}m/s")
+                print(
+                    f"[ROSControl] execute_reverse: Creating BackUp goal with distance={distance}m, speed={speed}m/s"
+                )
                 print(
                     f"[ROSControl] execute_reverse: Goal details: x={goal.target.x}, y={goal.target.y}, z={goal.target.z}, speed={goal.speed}"
                 )
@@ -552,7 +600,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
                 distance=distance,
                 speed=speed,
             )
-            logger.info(f"Queued reverse command: {cmd_id} - Distance: {distance}m, Speed: {speed}m/s")
+            logger.info(
+                f"Queued reverse command: {cmd_id} - Distance: {distance}m, Speed: {speed}m/s"
+            )
             return True
 
         except Exception as e:
@@ -562,7 +612,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             logger.error(traceback.format_exc())
             return False
 
-    def spin(self, degrees: float, speed: float = 45.0, time_allowance: float = 120) -> bool:
+    def spin(
+        self, degrees: float, speed: float = 45.0, time_allowance: float = 120
+    ) -> bool:
         """
         Rotate the robot by a specified angle
 
@@ -610,7 +662,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
                 degrees=degrees,
                 speed=speed,
             )
-            logger.info(f"Queued spin command: {cmd_id} - Degrees: {degrees}, Speed: {speed}deg/s")
+            logger.info(
+                f"Queued spin command: {cmd_id} - Degrees: {degrees}, Speed: {speed}deg/s"
+            )
             return True
 
         except Exception as e:

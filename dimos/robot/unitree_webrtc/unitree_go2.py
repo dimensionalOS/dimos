@@ -30,7 +30,9 @@ class UnitreeGo2(WebRTCRobot):
         self.map_stream = self.map.consume(self.lidar_stream())
 
         self.global_planner = AstarPlanner(
-            set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(
+            set_local_nav=lambda path,
+            stop_event=None,
+            goal_theta=None: navigate_path_local(
                 self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event
             ),
             get_costmap=lambda: self.map.costmap,

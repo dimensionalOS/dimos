@@ -32,12 +32,18 @@ class SimpleTracker:
         id_counts = dict(zip(unique_ids, counts))
 
         # Update total counts but ensure it only contains IDs within the history size
-        total_tracked_ids = np.concatenate(self.history) if self.history else np.array([])
-        unique_total_ids, total_counts = np.unique(total_tracked_ids, return_counts=True)
+        total_tracked_ids = (
+            np.concatenate(self.history) if self.history else np.array([])
+        )
+        unique_total_ids, total_counts = np.unique(
+            total_tracked_ids, return_counts=True
+        )
         self.total_counts = dict(zip(unique_total_ids, total_counts))
 
         # Return IDs that appear often enough
-        return [track_id for track_id, count in id_counts.items() if count >= self.min_count]
+        return [
+            track_id for track_id, count in id_counts.items() if count >= self.min_count
+        ]
 
     def get_total_counts(self):
         """Returns the total count of each tracking ID seen over time, limited to history size."""
@@ -129,13 +135,23 @@ def compute_texture_map(frame, blur_size=3):
     texture_map = cv2.GaussianBlur(magnitude, (15, 15), 0)
 
     # Normalize to [0,1]
-    texture_map = (texture_map - texture_map.min()) / (texture_map.max() - texture_map.min() + 1e-8)
+    texture_map = (texture_map - texture_map.min()) / (
+        texture_map.max() - texture_map.min() + 1e-8
+    )
 
     return texture_map
 
 
 def filter_segmentation_results(
-    frame, masks, bboxes, track_ids, probs, names, areas, texture_threshold=0.07, size_filter=800
+    frame,
+    masks,
+    bboxes,
+    track_ids,
+    probs,
+    names,
+    areas,
+    texture_threshold=0.07,
+    size_filter=800,
 ):
     """
     Filters segmentation results using both overlap and saliency detection.
@@ -169,7 +185,9 @@ def filter_segmentation_results(
     # Create mask_sum tensor where each pixel stores the index of the mask that claims it
     mask_sum = torch.zeros_like(masks[0], dtype=torch.int32)
 
-    texture_map = torch.from_numpy(texture_map).to(device)  # Convert texture_map to tensor and move to device
+    texture_map = torch.from_numpy(texture_map).to(
+        device
+    )  # Convert texture_map to tensor and move to device
 
     filtered_texture_values = []  # List to store texture values of filtered masks
 
@@ -181,7 +199,9 @@ def filter_segmentation_results(
         # Only claim pixels if mask passes texture threshold
         if texture_value >= texture_threshold:
             mask_sum[mask > 0] = i
-            filtered_texture_values.append(texture_value.item())  # Store the texture value as a Python float
+            filtered_texture_values.append(
+                texture_value.item()
+            )  # Store the texture value as a Python float
 
     # Get indices that appear in mask_sum (these are the masks we want to keep)
     keep_indices, counts = torch.unique(mask_sum[mask_sum > 0], return_counts=True)
@@ -200,7 +220,14 @@ def filter_segmentation_results(
     filtered_probs = [probs[i] for i in final_indices]
     filtered_names = [names[i] for i in final_indices]
 
-    return filtered_masks, filtered_bboxes, filtered_track_ids, filtered_probs, filtered_names, filtered_texture_values
+    return (
+        filtered_masks,
+        filtered_bboxes,
+        filtered_track_ids,
+        filtered_probs,
+        filtered_names,
+        filtered_texture_values,
+    )
 
 
 def plot_results(image, masks, bboxes, track_ids, probs, names, alpha=0.5):
@@ -242,7 +269,9 @@ def plot_results(image, masks, bboxes, track_ids, probs, names, alpha=0.5):
         (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
 
         # Draw background rectangle for text
-        cv2.rectangle(overlay, (x1, y1 - text_h - 8), (x1 + text_w + 4, y1), color.tolist(), -1)
+        cv2.rectangle(
+            overlay, (x1, y1 - text_h - 8), (x1 + text_w + 4, y1), color.tolist(), -1
+        )
 
         # Draw text with white color for better visibility
         cv2.putText(

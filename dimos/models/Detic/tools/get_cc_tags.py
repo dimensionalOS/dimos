@@ -101,7 +101,9 @@ def map_name(x):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--cc_ann", default="datasets/cc3m/train_image_info.json")
-    parser.add_argument("--out_path", default="datasets/cc3m/train_image_info_tags.json")
+    parser.add_argument(
+        "--out_path", default="datasets/cc3m/train_image_info_tags.json"
+    )
     parser.add_argument("--keep_images", action="store_true")
     parser.add_argument("--allcaps", action="store_true")
     parser.add_argument("--cat_path", default="")
@@ -125,7 +127,9 @@ if __name__ == "__main__":
         print("Loading", args.cat_path)
         cats = json.load(open(args.cat_path))["categories"]
         if "synonyms" not in cats[0]:
-            cocoid2synset = {x["coco_cat_id"]: x["synset"] for x in COCO_SYNSET_CATEGORIES}
+            cocoid2synset = {
+                x["coco_cat_id"]: x["synset"] for x in COCO_SYNSET_CATEGORIES
+            }
             synset2synonyms = {x["synset"]: x["synonyms"] for x in LVIS_CATEGORIES}
             for x in cats:
                 synonyms = synset2synonyms[cocoid2synset[x["id"]]]
@@ -135,7 +139,10 @@ if __name__ == "__main__":
 
     id2cat = {x["id"]: x for x in cc_data["categories"]}
     class_count = {x["id"]: 0 for x in cc_data["categories"]}
-    class_data = {x["id"]: [" " + map_name(xx) + " " for xx in x["synonyms"]] for x in cc_data["categories"]}
+    class_data = {
+        x["id"]: [" " + map_name(xx) + " " for xx in x["synonyms"]]
+        for x in cc_data["categories"]
+    }
     num_examples = 5
     examples = {x["id"]: [] for x in cc_data["categories"]}
 
@@ -153,7 +160,11 @@ if __name__ == "__main__":
         for cat_id, cat_names in class_data.items():
             find = False
             for c in cat_names:
-                if c in caption or caption.startswith(c[1:]) or caption.endswith(c[:-1]):
+                if (
+                    c in caption
+                    or caption.startswith(c[1:])
+                    or caption.endswith(c[:-1])
+                ):
                     find = True
                     break
             if find:
@@ -177,10 +188,18 @@ if __name__ == "__main__":
     #         if x['frequency'] == freq] and class_count[x['id']] > 0))
 
     for freq in ["r", "c", "f"]:
-        print("#Images", freq, sum([v for k, v in class_count.items() if id2cat[k]["frequency"] == freq]))
+        print(
+            "#Images",
+            freq,
+            sum([v for k, v in class_count.items() if id2cat[k]["frequency"] == freq]),
+        )
 
     try:
-        out_data = {"images": images, "categories": cc_data["categories"], "annotations": []}
+        out_data = {
+            "images": images,
+            "categories": cc_data["categories"],
+            "annotations": [],
+        }
         for k, v in out_data.items():
             print(k, len(v))
         if args.keep_images and not args.out_path.endswith("_full.json"):

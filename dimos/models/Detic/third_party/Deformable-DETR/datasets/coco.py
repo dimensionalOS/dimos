@@ -25,9 +25,22 @@ import datasets.transforms as T
 
 
 class CocoDetection(TvCocoDetection):
-    def __init__(self, img_folder, ann_file, transforms, return_masks, cache_mode=False, local_rank=0, local_size=1):
+    def __init__(
+        self,
+        img_folder,
+        ann_file,
+        transforms,
+        return_masks,
+        cache_mode=False,
+        local_rank=0,
+        local_size=1,
+    ):
         super(CocoDetection, self).__init__(
-            img_folder, ann_file, cache_mode=cache_mode, local_rank=local_rank, local_size=local_size
+            img_folder,
+            ann_file,
+            cache_mode=cache_mode,
+            local_rank=local_rank,
+            local_size=local_size,
         )
         self._transforms = transforms
         self.prepare = ConvertCocoPolysToMask(return_masks)
@@ -114,7 +127,9 @@ class ConvertCocoPolysToMask(object):
 
         # for conversion to coco api
         area = torch.tensor([obj["area"] for obj in anno])
-        iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
+        iscrowd = torch.tensor(
+            [obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno]
+        )
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
 
@@ -125,7 +140,9 @@ class ConvertCocoPolysToMask(object):
 
 
 def make_coco_transforms(image_set):
-    normalize = T.Compose([T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+    normalize = T.Compose(
+        [T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]
+    )
 
     scales = [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
 

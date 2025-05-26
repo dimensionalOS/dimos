@@ -39,7 +39,9 @@ class DETRsegm(nn.Module):
 
         hidden_dim, nheads = detr.transformer.d_model, detr.transformer.nhead
         self.bbox_attention = MHAttentionMap(hidden_dim, hidden_dim, nheads, dropout=0)
-        self.mask_head = MaskHeadSmallConv(hidden_dim + nheads, [1024, 512, 256], hidden_dim)
+        self.mask_head = MaskHeadSmallConv(
+            hidden_dim + nheads, [1024, 512, 256], hidden_dim
+        )
 
     def forward(self, samples: NestedTensor):
         if not isinstance(samples, NestedTensor):
@@ -50,21 +52,30 @@ class DETRsegm(nn.Module):
 
         src, mask = features[-1].decompose()
         src_proj = self.detr.input_proj(src)
-        hs, memory = self.detr.transformer(src_proj, mask, self.detr.query_embed.weight, pos[-1])
+        hs, memory = self.detr.transformer(
+            src_proj, mask, self.detr.query_embed.weight, pos[-1]
+        )
 
         outputs_class = self.detr.class_embed(hs)
         outputs_coord = self.detr.bbox_embed(hs).sigmoid()
         out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
         if self.detr.aux_loss:
             out["aux_outputs"] = [
-                {"pred_logits": a, "pred_boxes": b} for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
+                {"pred_logits": a, "pred_boxes": b}
+                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
             ]
 
         # FIXME h_boxes takes the last one computed, keep this in mind
         bbox_mask = self.bbox_attention(hs[-1], memory, mask=mask)
 
-        seg_masks = self.mask_head(src_proj, bbox_mask, [features[2].tensors, features[1].tensors, features[0].tensors])
-        outputs_seg_masks = seg_masks.view(bs, self.detr.num_queries, seg_masks.shape[-2], seg_masks.shape[-1])
+        seg_masks = self.mask_head(
+            src_proj,
+            bbox_mask,
+            [features[2].tensors, features[1].tensors, features[0].tensors],
+        )
+        outputs_seg_masks = seg_masks.view(
+            bs, self.detr.num_queries, seg_masks.shape[-2], seg_masks.shape[-1]
+        )
 
         out["pred_masks"] = outputs_seg_masks
         return out
@@ -79,7 +90,14 @@ class MaskHeadSmallConv(nn.Module):
     def __init__(self, dim, fpn_dims, context_dim):
         super().__init__()
 
-        inter_dims = [dim, context_dim // 2, context_dim // 4, context_dim // 8, context_dim // 16, context_dim // 64]
+        inter_dims = [
+            dim,
+            context_dim // 2,
+            context_dim // 4,
+            context_dim // 8,
+            context_dim // 16,
+            context_dim // 64,
+        ]
         self.lay1 = torch.nn.Conv2d(dim, dim, 3, padding=1)
         self.gn1 = torch.nn.GroupNorm(8, dim)
         self.lay2 = torch.nn.Conv2d(dim, inter_dims[1], 3, padding=1)
@@ -164,9 +182,19 @@ class MHAttentionMap(nn.Module):
 
     def forward(self, q, k, mask=None):
         q = self.q_linear(q)
-        k = F.conv2d(k, self.k_linear.weight.unsqueeze(-1).unsqueeze(-1), self.k_linear.bias)
-        qh = q.view(q.shape[0], q.shape[1], self.num_heads, self.hidden_dim // self.num_heads)
-        kh = k.view(k.shape[0], self.num_heads, self.hidden_dim // self.num_heads, k.shape[-2], k.shape[-1])
+        k = F.conv2d(
+            k, self.k_linear.weight.unsqueeze(-1).unsqueeze(-1), self.k_linear.bias
+        )
+        qh = q.view(
+            q.shape[0], q.shape[1], self.num_heads, self.hidden_dim // self.num_heads
+        )
+        kh = k.view(
+            k.shape[0],
+            self.num_heads,
+            self.hidden_dim // self.num_heads,
+            k.shape[-2],
+            k.shape[-1],
+        )
         weights = torch.einsum("bqnc,bnchw->bqnhw", qh * self.normalize_fact, kh)
 
         if mask is not None:
@@ -194,7 +222,9 @@ def dice_loss(inputs, targets, num_boxes):
     return loss.sum() / num_boxes
 
 
-def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+def sigmoid_focal_loss(
+    inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2
+):
     """
     Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
     Args:
@@ -232,10 +262,14 @@ class PostProcessSegm(nn.Module):
         assert len(orig_target_sizes) == len(max_target_sizes)
         max_h, max_w = max_target_sizes.max(0)[0].tolist()
         outputs_masks = outputs["pred_masks"].squeeze(2)
-        outputs_masks = F.interpolate(outputs_masks, size=(max_h, max_w), mode="bilinear", align_corners=False)
+        outputs_masks = F.interpolate(
+            outputs_masks, size=(max_h, max_w), mode="bilinear", align_corners=False
+        )
         outputs_masks = (outputs_masks.sigmoid() > self.threshold).cpu()
 
-        for i, (cur_mask, t, tt) in enumerate(zip(outputs_masks, max_target_sizes, orig_target_sizes)):
+        for i, (cur_mask, t, tt) in enumerate(
+            zip(outputs_masks, max_target_sizes, orig_target_sizes)
+        ):
             img_h, img_w = t[0], t[1]
             results[i]["masks"] = cur_mask[:, :img_h, :img_w].unsqueeze(1)
             results[i]["masks"] = F.interpolate(
@@ -272,7 +306,11 @@ class PostProcessPanoptic(nn.Module):
         if target_sizes is None:
             target_sizes = processed_sizes
         assert len(processed_sizes) == len(target_sizes)
-        out_logits, raw_masks, raw_boxes = outputs["pred_logits"], outputs["pred_masks"], outputs["pred_boxes"]
+        out_logits, raw_masks, raw_boxes = (
+            outputs["pred_logits"],
+            outputs["pred_masks"],
+            outputs["pred_boxes"],
+        )
         assert len(out_logits) == len(raw_masks) == len(target_sizes)
         preds = []
 
@@ -286,12 +324,16 @@ class PostProcessPanoptic(nn.Module):
         ):
             # we filter empty queries and detection below threshold
             scores, labels = cur_logits.softmax(-1).max(-1)
-            keep = labels.ne(outputs["pred_logits"].shape[-1] - 1) & (scores > self.threshold)
+            keep = labels.ne(outputs["pred_logits"].shape[-1] - 1) & (
+                scores > self.threshold
+            )
             cur_scores, cur_classes = cur_logits.softmax(-1).max(-1)
             cur_scores = cur_scores[keep]
             cur_classes = cur_classes[keep]
             cur_masks = cur_masks[keep]
-            cur_masks = interpolate(cur_masks[None], to_tuple(size), mode="bilinear").squeeze(0)
+            cur_masks = interpolate(
+                cur_masks[None], to_tuple(size), mode="bilinear"
+            ).squeeze(0)
             cur_boxes = box_ops.box_cxcywh_to_xyxy(cur_boxes[keep])
 
             h, w = cur_masks.shape[-2:]
@@ -327,10 +369,14 @@ class PostProcessPanoptic(nn.Module):
                 final_h, final_w = to_tuple(target_size)
 
                 seg_img = Image.fromarray(id2rgb(m_id.view(h, w).cpu().numpy()))
-                seg_img = seg_img.resize(size=(final_w, final_h), resample=Image.NEAREST)
+                seg_img = seg_img.resize(
+                    size=(final_w, final_h), resample=Image.NEAREST
+                )
 
                 np_seg_img = (
-                    torch.ByteTensor(torch.ByteStorage.from_buffer(seg_img.tobytes())).view(final_h, final_w, 3).numpy()
+                    torch.ByteTensor(torch.ByteStorage.from_buffer(seg_img.tobytes()))
+                    .view(final_h, final_w, 3)
+                    .numpy()
                 )
                 m_id = torch.from_numpy(rgb2id(np_seg_img))
 
@@ -344,7 +390,9 @@ class PostProcessPanoptic(nn.Module):
                 # We know filter empty masks as long as we find some
                 while True:
                     filtered_small = torch.as_tensor(
-                        [area[i] <= 4 for i, c in enumerate(cur_classes)], dtype=torch.bool, device=keep.device
+                        [area[i] <= 4 for i, c in enumerate(cur_classes)],
+                        dtype=torch.bool,
+                        device=keep.device,
                     )
                     if filtered_small.any().item():
                         cur_scores = cur_scores[~filtered_small]
@@ -360,11 +408,21 @@ class PostProcessPanoptic(nn.Module):
             segments_info = []
             for i, a in enumerate(area):
                 cat = cur_classes[i].item()
-                segments_info.append({"id": i, "isthing": self.is_thing_map[cat], "category_id": cat, "area": a})
+                segments_info.append(
+                    {
+                        "id": i,
+                        "isthing": self.is_thing_map[cat],
+                        "category_id": cat,
+                        "area": a,
+                    }
+                )
             del cur_classes
 
             with io.BytesIO() as out:
                 seg_img.save(out, format="PNG")
-                predictions = {"png_string": out.getvalue(), "segments_info": segments_info}
+                predictions = {
+                    "png_string": out.getvalue(),
+                    "segments_info": segments_info,
+                }
             preds.append(predictions)
         return preds

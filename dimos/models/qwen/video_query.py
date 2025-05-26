@@ -14,7 +14,10 @@ import json
 
 
 def query_single_frame_observable(
-    video_observable: Observable, query: str, api_key: Optional[str] = None, model_name: str = "qwen2.5-vl-72b-instruct"
+    video_observable: Observable,
+    query: str,
+    api_key: Optional[str] = None,
+    model_name: str = "qwen2.5-vl-72b-instruct",
 ) -> Observable:
     """Process a single frame from a video observable with Qwen model.
 
@@ -38,7 +41,9 @@ def query_single_frame_observable(
     # Get API key from env if not provided
     api_key = api_key or os.getenv("ALIBABA_API_KEY")
     if not api_key:
-        raise ValueError("Alibaba API key must be provided or set in ALIBABA_API_KEY environment variable")
+        raise ValueError(
+            "Alibaba API key must be provided or set in ALIBABA_API_KEY environment variable"
+        )
 
     # Create Qwen client
     qwen_client = OpenAI(
@@ -107,7 +112,9 @@ def query_single_frame(
     # Get API key from env if not provided
     api_key = api_key or os.getenv("ALIBABA_API_KEY")
     if not api_key:
-        raise ValueError("Alibaba API key must be provided or set in ALIBABA_API_KEY environment variable")
+        raise ValueError(
+            "Alibaba API key must be provided or set in ALIBABA_API_KEY environment variable"
+        )
 
     # Create Qwen client
     qwen_client = OpenAI(
@@ -151,7 +158,9 @@ def query_single_frame(
     return response
 
 
-def get_bbox_from_qwen(video_stream: Observable, object_name: Optional[str] = None) -> Optional[list]:
+def get_bbox_from_qwen(
+    video_stream: Observable, object_name: Optional[str] = None
+) -> Optional[list]:
     """Get bounding box coordinates from Qwen for a specific object or any object.
 
     Args:
@@ -167,7 +176,9 @@ def get_bbox_from_qwen(video_stream: Observable, object_name: Optional[str] = No
         "where x1,y1 is the top-left and x2,y2 is the bottom-right corner of the bounding box. If not found, return None."
     )
 
-    response = query_single_frame_observable(video_stream, prompt).pipe(ops.take(1)).run()
+    response = (
+        query_single_frame_observable(video_stream, prompt).pipe(ops.take(1)).run()
+    )
 
     try:
         # Extract JSON from response
@@ -187,7 +198,9 @@ def get_bbox_from_qwen(video_stream: Observable, object_name: Optional[str] = No
     return None
 
 
-def get_bbox_from_qwen_frame(frame, object_name: Optional[str] = None) -> Optional[tuple]:
+def get_bbox_from_qwen_frame(
+    frame, object_name: Optional[str] = None
+) -> Optional[tuple]:
     """Get bounding box coordinates from Qwen for a specific object or any object using a single frame.
 
     Args:

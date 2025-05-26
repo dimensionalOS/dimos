@@ -33,13 +33,17 @@ class Map:
     @property
     def costmap(self) -> Costmap:
         """Return a fully inflated cost-map in a `Costmap` wrapper."""
-        inflate_radius_m = 0.5 * self.voxel_size if self.voxel_size > self.cost_resolution else 0.0
+        inflate_radius_m = (
+            0.5 * self.voxel_size if self.voxel_size > self.cost_resolution else 0.0
+        )
         grid, origin_xy = pointcloud_to_costmap(
             self.pointcloud,
             resolution=self.cost_resolution,
             inflate_radius_m=inflate_radius_m,
         )
-        return Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution)
+        return Costmap(
+            grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution
+        )
 
 
 def splice_sphere(
@@ -48,7 +52,9 @@ def splice_sphere(
     shrink: float = 0.95,
 ) -> o3d.geometry.PointCloud:
     center = patch_pcd.get_center()
-    radius = np.linalg.norm(np.asarray(patch_pcd.points) - center, axis=1).max() * shrink
+    radius = (
+        np.linalg.norm(np.asarray(patch_pcd.points) - center, axis=1).max() * shrink
+    )
     dists = np.linalg.norm(np.asarray(map_pcd.points) - center, axis=1)
     victims = np.nonzero(dists < radius)[0]
     survivors = map_pcd.select_by_index(victims, invert=True)
@@ -77,15 +83,19 @@ def splice_cylinder(
     map_pts = np.asarray(map_pcd.points)
     planar_dists_map = np.linalg.norm(map_pts[:, axes] - center[axes], axis=1)
 
-    victims = np.nonzero((planar_dists_map < radius) & (map_pts[:, axis] >= axis_min) & (map_pts[:, axis] <= axis_max))[
-        0
-    ]
+    victims = np.nonzero(
+        (planar_dists_map < radius)
+        & (map_pts[:, axis] >= axis_min)
+        & (map_pts[:, axis] <= axis_max)
+    )[0]
 
     survivors = map_pcd.select_by_index(victims, invert=True)
     return survivors + patch_pcd
 
 
-def _inflate_lethal(costmap: np.ndarray, radius: int, lethal_val: int = 100) -> np.ndarray:
+def _inflate_lethal(
+    costmap: np.ndarray, radius: int, lethal_val: int = 100
+) -> np.ndarray:
     """Return *costmap* with lethal cells dilated by *radius* grid steps (circular)."""
     if radius <= 0 or not np.any(costmap == lethal_val):
         return costmap

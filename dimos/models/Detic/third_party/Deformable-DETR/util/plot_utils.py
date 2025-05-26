@@ -19,7 +19,12 @@ import matplotlib.pyplot as plt
 from pathlib import Path, PurePath
 
 
-def plot_logs(logs, fields=("class_error", "loss_bbox_unscaled", "mAP"), ewm_col=0, log_name="log.txt"):
+def plot_logs(
+    logs,
+    fields=("class_error", "loss_bbox_unscaled", "mAP"),
+    ewm_col=0,
+    log_name="log.txt",
+):
     """
     Function to plot specific fields from training log(s). Plots both training and test results.
 
@@ -40,7 +45,9 @@ def plot_logs(logs, fields=("class_error", "loss_bbox_unscaled", "mAP"), ewm_col
     if not isinstance(logs, list):
         if isinstance(logs, PurePath):
             logs = [logs]
-            print(f"{func_name} info: logs param expects a list argument, converted to list[Path].")
+            print(
+                f"{func_name} info: logs param expects a list argument, converted to list[Path]."
+            )
         else:
             raise ValueError(
                 f"{func_name} - invalid argument for logs parameter.\n \
@@ -50,7 +57,9 @@ def plot_logs(logs, fields=("class_error", "loss_bbox_unscaled", "mAP"), ewm_col
     # verify valid dir(s) and that every item in list is Path object
     for i, dir in enumerate(logs):
         if not isinstance(dir, PurePath):
-            raise ValueError(f"{func_name} - non-Path object in logs argument of {type(dir)}: \n{dir}")
+            raise ValueError(
+                f"{func_name} - non-Path object in logs argument of {type(dir)}: \n{dir}"
+            )
         if dir.exists():
             continue
         raise ValueError(f"{func_name} - invalid directory in logs argument:\n{dir}")
@@ -63,11 +72,18 @@ def plot_logs(logs, fields=("class_error", "loss_bbox_unscaled", "mAP"), ewm_col
     for df, color in zip(dfs, sns.color_palette(n_colors=len(logs))):
         for j, field in enumerate(fields):
             if field == "mAP":
-                coco_eval = pd.DataFrame(pd.np.stack(df.test_coco_eval.dropna().values)[:, 1]).ewm(com=ewm_col).mean()
+                coco_eval = (
+                    pd.DataFrame(pd.np.stack(df.test_coco_eval.dropna().values)[:, 1])
+                    .ewm(com=ewm_col)
+                    .mean()
+                )
                 axs[j].plot(coco_eval, c=color)
             else:
                 df.interpolate().ewm(com=ewm_col).mean().plot(
-                    y=[f"train_{field}", f"test_{field}"], ax=axs[j], color=[color] * 2, style=["-", "--"]
+                    y=[f"train_{field}", f"test_{field}"],
+                    ax=axs[j],
+                    color=[color] * 2,
+                    style=["-", "--"],
                 )
     for ax, field in zip(axs, fields):
         ax.legend([Path(p).name for p in logs])
@@ -83,7 +99,9 @@ def plot_precision_recall(files, naming_scheme="iter"):
     else:
         raise ValueError(f"not supported {naming_scheme}")
     fig, axs = plt.subplots(ncols=2, figsize=(16, 5))
-    for f, color, name in zip(files, sns.color_palette("Blues", n_colors=len(files)), names):
+    for f, color, name in zip(
+        files, sns.color_palette("Blues", n_colors=len(files)), names
+    ):
         data = torch.load(f)
         # precision is n_iou, n_points, n_cat, n_area, max_det
         precision = data["precision"]

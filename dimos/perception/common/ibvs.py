@@ -23,8 +23,16 @@ class PersonDistanceEstimator:
         self.T = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]])
 
         # Pitch rotation matrix (positive is upward)
-        theta = -camera_pitch  # Negative since positive pitch is negative rotation about robot Y
-        self.R_pitch = np.array([[np.cos(theta), 0, np.sin(theta)], [0, 1, 0], [-np.sin(theta), 0, np.cos(theta)]])
+        theta = (
+            -camera_pitch
+        )  # Negative since positive pitch is negative rotation about robot Y
+        self.R_pitch = np.array(
+            [
+                [np.cos(theta), 0, np.sin(theta)],
+                [0, 1, 0],
+                [-np.sin(theta), 0, np.cos(theta)],
+            ]
+        )
 
         # Combined transform from camera to robot frame
         self.A = self.R_pitch @ self.T
@@ -60,7 +68,9 @@ class PersonDistanceEstimator:
         # If robot_pitch is provided, recalculate the transformation matrix
         if robot_pitch is not None:
             # Combined pitch (fixed camera pitch + current robot pitch)
-            total_pitch = -camera_pitch - robot_pitch  # Both negated for correct rotation direction
+            total_pitch = (
+                -camera_pitch - robot_pitch
+            )  # Both negated for correct rotation direction
             R_total_pitch = np.array(
                 [
                     [np.cos(total_pitch), 0, np.sin(total_pitch)],
@@ -128,8 +138,16 @@ class ObjectDistanceEstimator:
         self.T = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]])
 
         # Pitch rotation matrix (positive is upward)
-        theta = -camera_pitch  # Negative since positive pitch is negative rotation about robot Y
-        self.R_pitch = np.array([[np.cos(theta), 0, np.sin(theta)], [0, 1, 0], [-np.sin(theta), 0, np.cos(theta)]])
+        theta = (
+            -camera_pitch
+        )  # Negative since positive pitch is negative rotation about robot Y
+        self.R_pitch = np.array(
+            [
+                [np.cos(theta), 0, np.sin(theta)],
+                [0, 1, 0],
+                [-np.sin(theta), 0, np.cos(theta)],
+            ]
+        )
 
         # Combined transform from camera to robot frame
         self.A = self.R_pitch @ self.T

@@ -44,7 +44,9 @@ class SegmentProcessor:
             list of np.ndarray: A list of segmentation masks corresponding to the captions.
         """
         try:
-            self.logger.info("STARTING PROCESSING IMAGE ---------------------------------------")
+            self.logger.info(
+                "STARTING PROCESSING IMAGE ---------------------------------------"
+            )
             self.logger.info(f"Processing image with captions: {captions}")
 
             # Convert image to PIL.Image if it's a numpy array
@@ -58,7 +60,9 @@ class SegmentProcessor:
             original_size = image.size  # (width, height)
 
             for idx in range(preds.shape[0]):
-                points = sample_points_from_heatmap(preds[idx][0], original_size, num_points=10)
+                points = sample_points_from_heatmap(
+                    preds[idx][0], original_size, num_points=10
+                )
                 if points:
                     sampled_points.append(points)
                 else:
@@ -67,19 +71,33 @@ class SegmentProcessor:
 
             for idx in range(preds.shape[0]):
                 if sampled_points[idx]:
-                    mask_tensor = self.sam.run_inference_from_points(image, [sampled_points[idx]])
+                    mask_tensor = self.sam.run_inference_from_points(
+                        image, [sampled_points[idx]]
+                    )
                     if mask_tensor:
                         # Convert mask tensor to a numpy array
                         mask = (255 * mask_tensor[0].numpy().squeeze()).astype(np.uint8)
                         sam_masks.append(mask)
                     else:
-                        self.logger.info(f"No mask tensor returned for sampled points at index {idx}")
-                        sam_masks.append(np.zeros((original_size[1], original_size[0]), dtype=np.uint8))
+                        self.logger.info(
+                            f"No mask tensor returned for sampled points at index {idx}"
+                        )
+                        sam_masks.append(
+                            np.zeros(
+                                (original_size[1], original_size[0]), dtype=np.uint8
+                            )
+                        )
                 else:
-                    self.logger.info(f"No sampled points for prediction index {idx}, skipping mask inference")
-                    sam_masks.append(np.zeros((original_size[1], original_size[0]), dtype=np.uint8))
+                    self.logger.info(
+                        f"No sampled points for prediction index {idx}, skipping mask inference"
+                    )
+                    sam_masks.append(
+                        np.zeros((original_size[1], original_size[0]), dtype=np.uint8)
+                    )
 
-            self.logger.info("DONE PROCESSING IMAGE ---------------------------------------")
+            self.logger.info(
+                "DONE PROCESSING IMAGE ---------------------------------------"
+            )
             return sam_masks
         except Exception as e:
             self.logger.error(f"Error processing image: {e}")

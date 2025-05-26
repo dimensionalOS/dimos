@@ -5,7 +5,9 @@ from detectron2.data import transforms as T
 from .transforms.custom_augmentation_impl import EfficientDetResizeCrop
 
 
-def build_custom_augmentation(cfg, is_train, scale=None, size=None, min_size=None, max_size=None):
+def build_custom_augmentation(
+    cfg, is_train, scale=None, size=None, min_size=None, max_size=None
+):
     """
     Create a list of default :class:`Augmentation` from config.
     Now it includes resizing and flipping.

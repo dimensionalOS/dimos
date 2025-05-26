@@ -95,10 +95,14 @@ class Robot(ABC):
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
 
         # Initialize spatial memory properties
-        self.spatial_memory_dir = spatial_memory_dir or os.path.join(self.output_dir, "spatial_memory")
+        self.spatial_memory_dir = spatial_memory_dir or os.path.join(
+            self.output_dir, "spatial_memory"
+        )
         self.spatial_memory_collection = spatial_memory_collection
         self.db_path = os.path.join(self.spatial_memory_dir, "chromadb_data")
-        self.visual_memory_path = os.path.join(self.spatial_memory_dir, "visual_memory.pkl")
+        self.visual_memory_path = os.path.join(
+            self.spatial_memory_dir, "visual_memory.pkl"
+        )
 
         # Create spatial memory directory
         os.makedirs(self.spatial_memory_dir, exist_ok=True)
@@ -152,7 +156,9 @@ class Robot(ABC):
         print(f"Starting ROS video stream at {fps} FPS...")
 
         # Get base stream from video provider
-        video_stream = self.ros_control.video_provider.capture_video_as_observable(fps=fps)
+        video_stream = self.ros_control.video_provider.capture_video_as_observable(
+            fps=fps
+        )
 
         # Add minimal processing pipeline with proper thread handling
         processed_stream = video_stream.pipe(

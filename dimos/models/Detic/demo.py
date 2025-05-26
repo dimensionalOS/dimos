@@ -28,7 +28,12 @@ class ScreenGrab:
     def __init__(self):
         self.sct = mss.mss()
         m0 = self.sct.monitors[0]
-        self.monitor = {"top": 0, "left": 0, "width": m0["width"] / 2, "height": m0["height"] / 2}
+        self.monitor = {
+            "top": 0,
+            "left": 0,
+            "width": m0["width"] / 2,
+            "height": m0["height"] / 2,
+        }
 
     def read(self):
         img = np.array(self.sct.grab(self.monitor))
@@ -57,7 +62,9 @@ def setup_cfg(args):
     # Set score_threshold for builtin models
     cfg.MODEL.RETINANET.SCORE_THRESH_TEST = args.confidence_threshold
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = args.confidence_threshold
-    cfg.MODEL.PANOPTIC_FPN.COMBINE.INSTANCES_CONFIDENCE_THRESH = args.confidence_threshold
+    cfg.MODEL.PANOPTIC_FPN.COMBINE.INSTANCES_CONFIDENCE_THRESH = (
+        args.confidence_threshold
+    )
     cfg.MODEL.ROI_BOX_HEAD.ZEROSHOT_WEIGHT_PATH = "rand"  # load later
     if not args.pred_all_class:
         cfg.MODEL.ROI_HEADS.ONE_CLASS_PER_PROPOSAL = True
@@ -163,7 +170,9 @@ if __name__ == "__main__":
                     assert os.path.isdir(args.output), args.output
                     out_filename = os.path.join(args.output, os.path.basename(path))
                 else:
-                    assert len(args.input) == 1, "Please specify a directory with args.output"
+                    assert len(args.input) == 1, (
+                        "Please specify a directory with args.output"
+                    )
                     out_filename = args.output
                 visualized_output.save(out_filename)
             else:
@@ -192,7 +201,11 @@ if __name__ == "__main__":
         frames_per_second = video.get(cv2.CAP_PROP_FPS)
         num_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
         basename = os.path.basename(args.video_input)
-        codec, file_ext = ("x264", ".mkv") if test_opencv_video_format("x264", ".mkv") else ("mp4v", ".mp4")
+        codec, file_ext = (
+            ("x264", ".mkv")
+            if test_opencv_video_format("x264", ".mkv")
+            else ("mp4v", ".mp4")
+        )
         if codec == ".mp4v":
             warnings.warn("x264 codec not available, switching to mp4v")
         if args.output:

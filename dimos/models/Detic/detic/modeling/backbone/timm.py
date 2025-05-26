@@ -74,7 +74,9 @@ model_params = {
 
 def create_timm_resnet(variant, out_indices, pretrained=False, **kwargs):
     params = model_params[variant]
-    default_cfgs_resnet["resnet50_in21k"] = copy.deepcopy(default_cfgs_resnet["resnet50"])
+    default_cfgs_resnet["resnet50_in21k"] = copy.deepcopy(
+        default_cfgs_resnet["resnet50"]
+    )
     default_cfgs_resnet["resnet50_in21k"]["url"] = (
         "https://miil-public-eu.oss-eu-central-1.aliyuncs.com/model-zoo/ImageNet_21K_P/models/resnet50_miil_21k.pth"
     )
@@ -119,15 +121,26 @@ def freeze_module(x):
 
 
 class TIMM(Backbone):
-    def __init__(self, base_name, out_levels, freeze_at=0, norm="FrozenBN", pretrained=False):
+    def __init__(
+        self, base_name, out_levels, freeze_at=0, norm="FrozenBN", pretrained=False
+    ):
         super().__init__()
         out_indices = [x - 1 for x in out_levels]
         if base_name in model_params:
-            self.base = create_timm_resnet(base_name, out_indices=out_indices, pretrained=False)
+            self.base = create_timm_resnet(
+                base_name, out_indices=out_indices, pretrained=False
+            )
         elif "eff" in base_name or "resnet" in base_name or "regnet" in base_name:
-            self.base = create_model(base_name, features_only=True, out_indices=out_indices, pretrained=pretrained)
+            self.base = create_model(
+                base_name,
+                features_only=True,
+                out_indices=out_indices,
+                pretrained=pretrained,
+            )
         elif "convnext" in base_name:
-            drop_path_rate = 0.2 if ("tiny" in base_name or "small" in base_name) else 0.3
+            drop_path_rate = (
+                0.2 if ("tiny" in base_name or "small" in base_name) else 0.3
+            )
             self.base = create_model(
                 base_name,
                 features_only=True,
@@ -138,11 +151,16 @@ class TIMM(Backbone):
         else:
             assert 0, base_name
         feature_info = [
-            dict(num_chs=f["num_chs"], reduction=f["reduction"]) for i, f in enumerate(self.base.feature_info)
+            dict(num_chs=f["num_chs"], reduction=f["reduction"])
+            for i, f in enumerate(self.base.feature_info)
         ]
         self._out_features = ["layer{}".format(x) for x in out_levels]
-        self._out_feature_channels = {"layer{}".format(l): feature_info[l - 1]["num_chs"] for l in out_levels}
-        self._out_feature_strides = {"layer{}".format(l): feature_info[l - 1]["reduction"] for l in out_levels}
+        self._out_feature_channels = {
+            "layer{}".format(l): feature_info[l - 1]["num_chs"] for l in out_levels
+        }
+        self._out_feature_strides = {
+            "layer{}".format(l): feature_info[l - 1]["reduction"] for l in out_levels
+        }
         self._size_divisibility = max(self._out_feature_strides.values())
         if "resnet" in base_name:
             self.freeze(freeze_at)

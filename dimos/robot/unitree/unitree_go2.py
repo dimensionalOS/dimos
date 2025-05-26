@@ -21,7 +21,9 @@ from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
 from dimos.stream.video_providers.unitree import UnitreeVideoProvider
 from reactivex.disposable import CompositeDisposable
 import logging
-from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import WebRTCConnectionMethod
+from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import (
+    WebRTCConnectionMethod,
+)
 import os
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from reactivex.scheduler import ThreadPoolScheduler
@@ -74,14 +76,20 @@ class UnitreeGo2(Robot):
             spatial_memory_collection: Name of the collection in the ChromaDB database.
             new_memory: If True, creates a new spatial memory from scratch.
         """
-        print(f"Initializing UnitreeGo2 with use_ros: {use_ros} and use_webrtc: {use_webrtc}")
+        print(
+            f"Initializing UnitreeGo2 with use_ros: {use_ros} and use_webrtc: {use_webrtc}"
+        )
         if not (use_ros ^ use_webrtc):  # XOR operator ensures exactly one is True
-            raise ValueError("Exactly one video/control provider (ROS or WebRTC) must be enabled")
+            raise ValueError(
+                "Exactly one video/control provider (ROS or WebRTC) must be enabled"
+            )
 
         # Initialize ros_control if it is not provided and use_ros is True
         if ros_control is None and use_ros:
             ros_control = UnitreeROSControl(
-                node_name="unitree_go2", disable_video_stream=disable_video_stream, mock_connection=mock_connection
+                node_name="unitree_go2",
+                disable_video_stream=disable_video_stream,
+                mock_connection=mock_connection,
             )
 
         # Initialize skill library
@@ -133,7 +141,9 @@ class UnitreeGo2(Robot):
                 dev_name="UnitreeGo2",
                 connection_method=connection_method,
                 serial_number=serial_number,
-                ip=self.ip if connection_method == WebRTCConnectionMethod.LocalSTA else None,
+                ip=self.ip
+                if connection_method == WebRTCConnectionMethod.LocalSTA
+                else None,
             )
         else:
             self.video_stream = None
@@ -151,15 +161,21 @@ class UnitreeGo2(Robot):
                 camera_pitch=self.camera_pitch,
                 camera_height=self.camera_height,
             )
-            person_tracking_stream = self.person_tracker.create_stream(self.video_stream_ros)
-            object_tracking_stream = self.object_tracker.create_stream(self.video_stream_ros)
+            person_tracking_stream = self.person_tracker.create_stream(
+                self.video_stream_ros
+            )
+            object_tracking_stream = self.object_tracker.create_stream(
+                self.video_stream_ros
+            )
 
             self.person_tracking_stream = person_tracking_stream
             self.object_tracking_stream = object_tracking_stream
 
         # Initialize the local planner and create BEV visualization stream
         self.local_planner = VFHPurePursuitPlanner(
-            get_costmap=self.ros_control.topic_latest("/local_costmap/costmap", Costmap),
+            get_costmap=self.ros_control.topic_latest(
+                "/local_costmap/costmap", Costmap
+            ),
             transform=self.ros_control,
             move_vel_control=self.ros_control.move_vel_control,
             robot_width=0.36,  # Unitree Go2 width in meters
@@ -171,7 +187,9 @@ class UnitreeGo2(Robot):
 
         self.global_planner = AstarPlanner(
             conservativism=20,  # how close to obstacles robot is allowed to path plan
-            set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(
+            set_local_nav=lambda path,
+            stop_event=None,
+            goal_theta=None: navigate_path_local(
                 self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event
             ),
             get_costmap=self.ros_control.topic_latest("map", Costmap),
@@ -179,7 +197,9 @@ class UnitreeGo2(Robot):
         )
 
         # Create the visualization stream at 5Hz
-        self.local_planner_viz_stream = self.local_planner.create_stream(frequency_hz=5.0)
+        self.local_planner_viz_stream = self.local_planner.create_stream(
+            frequency_hz=5.0
+        )
 
     def get_skills(self) -> Optional[SkillLibrary]:
         return self.skill_library

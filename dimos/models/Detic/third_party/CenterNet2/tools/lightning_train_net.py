@@ -65,7 +65,9 @@ class TrainingModule(LightningModule):
                 self.model,
                 self.cfg.OUTPUT_DIR,
             )
-            logger.info(f"Load model weights from checkpoint: {self.cfg.MODEL.WEIGHTS}.")
+            logger.info(
+                f"Load model weights from checkpoint: {self.cfg.MODEL.WEIGHTS}."
+            )
             # Only load weights, use lightning checkpointing if you want to resume
             self.checkpointer.load(self.cfg.MODEL.WEIGHTS)
 
@@ -83,13 +85,21 @@ class TrainingModule(LightningModule):
             self.storage.__enter__()
             self.iteration_timer.trainer = weakref.proxy(self)
             self.iteration_timer.before_step()
-            self.writers = default_writers(self.cfg.OUTPUT_DIR, self.max_iter) if comm.is_main_process() else {}
+            self.writers = (
+                default_writers(self.cfg.OUTPUT_DIR, self.max_iter)
+                if comm.is_main_process()
+                else {}
+            )
 
         loss_dict = self.model(batch)
         SimpleTrainer.write_metrics(loss_dict, data_time)
 
         opt = self.optimizers()
-        self.storage.put_scalar("lr", opt.param_groups[self._best_param_group_id]["lr"], smoothing_hint=False)
+        self.storage.put_scalar(
+            "lr",
+            opt.param_groups[self._best_param_group_id]["lr"],
+            smoothing_hint=False,
+        )
         self.iteration_timer.after_step()
         self.storage.step()
         # A little odd to put before step here, but it's the best way to get a proper timing
@@ -143,7 +153,9 @@ class TrainingModule(LightningModule):
                 v = float(v)
             except Exception as e:
                 raise ValueError(
-                    "[EvalHook] eval_function should return a nested dict of float. Got '{}: {}' instead.".format(k, v)
+                    "[EvalHook] eval_function should return a nested dict of float. Got '{}: {}' instead.".format(
+                        k, v
+                    )
                 ) from e
         self.storage.put_scalars(**flattened_results, smoothing_hint=False)
 
@@ -186,7 +198,9 @@ def train(cfg, args):
         # sure max_steps is met first
         "max_epochs": 10**8,
         "max_steps": cfg.SOLVER.MAX_ITER,
-        "val_check_interval": cfg.TEST.EVAL_PERIOD if cfg.TEST.EVAL_PERIOD > 0 else 10**8,
+        "val_check_interval": cfg.TEST.EVAL_PERIOD
+        if cfg.TEST.EVAL_PERIOD > 0
+        else 10**8,
         "num_nodes": args.num_machines,
         "gpus": args.num_gpus,
         "num_sanity_val_steps": 0,
@@ -201,7 +215,9 @@ def train(cfg, args):
         logger.info(f"Resuming training from checkpoint: {last_checkpoint}.")
 
     trainer = pl.Trainer(**trainer_params)
-    logger.info(f"start to train with {args.num_machines} nodes and {args.num_gpus} GPUs")
+    logger.info(
+        f"start to train with {args.num_machines} nodes and {args.num_gpus} GPUs"
+    )
 
     module = TrainingModule(cfg)
     data_module = DataModule(cfg)

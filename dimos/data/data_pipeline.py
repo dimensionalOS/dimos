@@ -65,7 +65,14 @@ class DataPipeline:
                 "Segmentations generation requires Labels. Enable run_labels=True to use run_segmentations=True."
             )
 
-        if not any([self.run_depth, self.run_labels, self.run_pointclouds, self.run_segmentations]):
+        if not any(
+            [
+                self.run_depth,
+                self.run_labels,
+                self.run_pointclouds,
+                self.run_segmentations,
+            ]
+        ):
             warnings.warn(
                 "No pipeline layers selected to run. The DataPipeline will be initialized without any processing."
             )
@@ -135,11 +142,23 @@ class DataPipeline:
         if self.run_labels:
             label = self.labels_processor.caption_image_data(frame)
 
-        if self.run_pointclouds and isinstance(depth_map, DepthMapType) and self.pointcloud_processor:
-            pointcloud = self.pointcloud_processor.process_frame(frame, depth_map.depth_data)
+        if (
+            self.run_pointclouds
+            and isinstance(depth_map, DepthMapType)
+            and self.pointcloud_processor
+        ):
+            pointcloud = self.pointcloud_processor.process_frame(
+                frame, depth_map.depth_data
+            )
 
-        if self.run_segmentations and isinstance(label, LabelType) and self.segmentation_processor:
-            segmentation = self.segmentation_processor.process_frame(frame, label.labels)
+        if (
+            self.run_segmentations
+            and isinstance(label, LabelType)
+            and self.segmentation_processor
+        ):
+            segmentation = self.segmentation_processor.process_frame(
+                frame, label.labels
+            )
 
         return depth_map, label, pointcloud, segmentation
 

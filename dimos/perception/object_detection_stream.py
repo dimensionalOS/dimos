@@ -54,7 +54,9 @@ class ObjectDetectionStream:
         self.class_filter = class_filter
         self.transform_to_map = transform_to_map
         # Initialize object detector
-        self.detector = detector or Detic2DDetector(vocabulary=None, threshold=min_confidence)
+        self.detector = detector or Detic2DDetector(
+            vocabulary=None, threshold=min_confidence
+        )
 
         # Initialize depth estimation model
         self.depth_model = Metric3D(gt_depth_scale)
@@ -66,7 +68,9 @@ class ObjectDetectionStream:
 
             # Create 3x3 camera matrix for calculations
             fx, fy, cx, cy = camera_intrinsics
-            self.camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
+            self.camera_matrix = np.array(
+                [[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32
+            )
         else:
             raise ValueError("camera_intrinsics must be provided")
 
@@ -89,7 +93,9 @@ class ObjectDetectionStream:
 
         def process_frame(frame):
             # Detect objects
-            bboxes, track_ids, class_ids, confidences, names = self.detector.process_image(frame)
+            bboxes, track_ids, class_ids, confidences, names = (
+                self.detector.process_image(frame)
+            )
 
             # Create visualization
             viz_frame = frame.copy()
@@ -114,19 +120,29 @@ class ObjectDetectionStream:
                     continue
 
                 # Calculate object position and rotation
-                position, rotation = calculate_position_rotation_from_bbox(bbox, depth, self.camera_intrinsics)
+                position, rotation = calculate_position_rotation_from_bbox(
+                    bbox, depth, self.camera_intrinsics
+                )
 
                 # Get object dimensions
-                width, height = calculate_object_size_from_bbox(bbox, depth, self.camera_intrinsics)
+                width, height = calculate_object_size_from_bbox(
+                    bbox, depth, self.camera_intrinsics
+                )
 
                 # Transform to map frame if a transform function is provided
                 try:
                     if self.transform_to_map:
                         position = Vector([position["x"], position["y"], position["z"]])
-                        rotation = Vector([rotation["roll"], rotation["pitch"], rotation["yaw"]])
-                        position, rotation = self.transform_to_map(position, rotation, source_frame="base_link")
+                        rotation = Vector(
+                            [rotation["roll"], rotation["pitch"], rotation["yaw"]]
+                        )
+                        position, rotation = self.transform_to_map(
+                            position, rotation, source_frame="base_link"
+                        )
                         position = dict(x=position.x, y=position.y, z=position.z)
-                        rotation = dict(roll=rotation.x, pitch=rotation.y, yaw=rotation.z)
+                        rotation = dict(
+                            roll=rotation.x, pitch=rotation.y, yaw=rotation.z
+                        )
                 except Exception as e:
                     print(f"Error transforming to map frame: {e}")
                     position, rotation = position, rotation
@@ -159,13 +175,35 @@ class ObjectDetectionStream:
 
                 # Draw text background
                 text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
-                cv2.rectangle(viz_frame, (x1, y1 - text_size[1] - 5), (x1 + text_size[0], y1), (0, 0, 0), -1)
+                cv2.rectangle(
+                    viz_frame,
+                    (x1, y1 - text_size[1] - 5),
+                    (x1 + text_size[0], y1),
+                    (0, 0, 0),
+                    -1,
+                )
 
                 # Draw text
-                cv2.putText(viz_frame, text, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(
+                    viz_frame,
+                    text,
+                    (x1, y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 255),
+                    2,
+                )
 
                 # Position text below
-                cv2.putText(viz_frame, pos_text, (x1, y1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(
+                    viz_frame,
+                    pos_text,
+                    (x1, y1 + 15),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 255),
+                    2,
+                )
 
             return {"frame": frame, "viz_frame": viz_frame, "objects": objects}
 
@@ -216,7 +254,9 @@ class ObjectDetectionStream:
                 bbox = obj["bbox"]
 
                 # Format each object with a multiline f-string for better readability
-                bbox_str = f"[{int(bbox[0])}, {int(bbox[1])}, {int(bbox[2])}, {int(bbox[3])}]"
+                bbox_str = (
+                    f"[{int(bbox[0])}, {int(bbox[1])}, {int(bbox[2])}, {int(bbox[3])}]"
+                )
                 formatted_data += (
                     f"Object {i + 1}: {obj['label']}\n"
                     f"  ID: {obj['object_id']}\n"

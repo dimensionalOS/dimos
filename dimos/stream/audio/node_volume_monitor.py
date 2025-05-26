@@ -137,7 +137,9 @@ def monitor(
         The configured volume monitor node
     """
     # Create the volume monitor node with specified parameters
-    volume_monitor = VolumeMonitorNode(threshold=threshold, bar_length=bar_length, volume_func=volume_func)
+    volume_monitor = VolumeMonitorNode(
+        threshold=threshold, bar_length=bar_length, volume_func=volume_func
+    )
 
     # Connect the volume monitor to the audio source
     volume_monitor.consume_audio(audio_source)

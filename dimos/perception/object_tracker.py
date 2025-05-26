@@ -75,7 +75,9 @@ class ObjectTrackingStream:
         x1, y1, x2, y2 = map(int, bbox)
         w, h = x2 - x1, y2 - y1
         if w <= 0 or h <= 0:
-            print(f"Warning: Invalid initial bbox provided: {bbox}. Tracking not started.")
+            print(
+                f"Warning: Invalid initial bbox provided: {bbox}. Tracking not started."
+            )
             self.stop_track()  # Ensure clean state
             return False
 
@@ -218,23 +220,36 @@ class ObjectTrackingStream:
                     if roi.size > 0:
                         _, self.original_des = self.orb.detectAndCompute(roi, None)
                         if self.original_des is None:
-                            print("Warning: No ORB features found in initial ROI during stream processing.")
+                            print(
+                                "Warning: No ORB features found in initial ROI during stream processing."
+                            )
                         else:
-                            print(f"Initial ORB features extracted: {len(self.original_des)}")
+                            print(
+                                f"Initial ORB features extracted: {len(self.original_des)}"
+                            )
 
                         # Initialize the tracker
                         init_success = self.tracker.init(frame, self.tracking_bbox)
                         if init_success:
                             self.tracking_initialized = True
                             tracker_succeeded = True
-                            reid_confirmed_this_frame = True  # Assume re-id true on init
-                            current_bbox_x1y1x2y2 = [x_init, y_init, x_init + w_init, y_init + h_init]
+                            reid_confirmed_this_frame = (
+                                True  # Assume re-id true on init
+                            )
+                            current_bbox_x1y1x2y2 = [
+                                x_init,
+                                y_init,
+                                x_init + w_init,
+                                y_init + h_init,
+                            ]
                             print("Tracker initialized successfully.")
                         else:
                             print("Error: Tracker initialization failed in stream.")
                             self.stop_track()  # Reset if init fails
                     else:
-                        print("Error: Empty ROI during tracker initialization in stream.")
+                        print(
+                            "Error: Empty ROI during tracker initialization in stream."
+                        )
                         self.stop_track()  # Reset if ROI is bad
 
                 else:  # Tracker already initialized, perform update and re-id
@@ -243,7 +258,9 @@ class ObjectTrackingStream:
                         x, y, w, h = map(int, bbox_cv)
                         current_bbox_x1y1x2y2 = [x, y, x + w, y + h]
                         # Perform re-ID check
-                        reid_confirmed_this_frame = self.reid(frame, current_bbox_x1y1x2y2)
+                        reid_confirmed_this_frame = self.reid(
+                            frame, current_bbox_x1y1x2y2
+                        )
 
                         if reid_confirmed_this_frame:
                             self.reid_fail_count = 0  # Reset counter on success
@@ -256,7 +273,9 @@ class ObjectTrackingStream:
             # --- Determine final success and stop tracking if needed ---
             if tracker_succeeded:
                 if self.reid_fail_count >= self.reid_fail_tolerance:
-                    print(f"Re-ID failed consecutively {self.reid_fail_count} times. Target lost.")
+                    print(
+                        f"Re-ID failed consecutively {self.reid_fail_count} times. Target lost."
+                    )
                     final_success = False  # Stop tracking
                 else:
                     final_success = True  # Tracker ok, Re-ID ok or within tolerance
@@ -286,29 +305,50 @@ class ObjectTrackingStream:
                 if not reid_confirmed_this_frame:
                     dist_text += " (Re-ID Failed - Tolerated)"
 
-                if self.distance_estimator is not None and self.distance_estimator.estimated_object_size is not None:
-                    distance, angle = self.distance_estimator.estimate_distance_angle(current_bbox_x1y1x2y2)
+                if (
+                    self.distance_estimator is not None
+                    and self.distance_estimator.estimated_object_size is not None
+                ):
+                    distance, angle = self.distance_estimator.estimate_distance_angle(
+                        current_bbox_x1y1x2y2
+                    )
                     if distance is not None:
                         target_data["distance"] = distance
                         target_data["angle"] = angle
-                        dist_text = f"Object: {distance:.2f}m, {np.rad2deg(angle):.1f} deg"
+                        dist_text = (
+                            f"Object: {distance:.2f}m, {np.rad2deg(angle):.1f} deg"
+                        )
                         if not reid_confirmed_this_frame:
                             dist_text += " (Re-ID Failed - Tolerated)"
 
-                text_size = cv2.getTextSize(dist_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+                text_size = cv2.getTextSize(
+                    dist_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
+                )[0]
                 label_bg_y = max(y1 - text_size[1] - 5, 0)
-                cv2.rectangle(viz_frame, (x1, label_bg_y), (x1 + text_size[0], y1), (0, 0, 0), -1)
-                cv2.putText(viz_frame, dist_text, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                cv2.rectangle(
+                    viz_frame, (x1, label_bg_y), (x1 + text_size[0], y1), (0, 0, 0), -1
+                )
+                cv2.putText(
+                    viz_frame,
+                    dist_text,
+                    (x1, y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 255),
+                    1,
+                )
 
-            elif (
-                self.tracking_initialized
-            ):  # Tracking stopped this frame (either tracker fail or re-id tolerance exceeded)
+            elif self.tracking_initialized:  # Tracking stopped this frame (either tracker fail or re-id tolerance exceeded)
                 self.stop_track()  # Reset tracker state and counter
 
             # else: # Not tracking or initialization failed, do nothing, return empty result
             #     pass
 
-            return {"frame": frame, "viz_frame": viz_frame, "targets": [target_data] if target_data else []}
+            return {
+                "frame": frame,
+                "viz_frame": viz_frame,
+                "targets": [target_data] if target_data else [],
+            }
 
         return video_stream.pipe(ops.map(process_frame))
 

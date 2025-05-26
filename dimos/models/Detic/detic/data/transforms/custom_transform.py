@@ -25,7 +25,16 @@ __all__ = [
 class EfficientDetResizeCropTransform(Transform):
     """ """
 
-    def __init__(self, scaled_h, scaled_w, offset_y, offset_x, img_scale, target_size, interp=None):
+    def __init__(
+        self,
+        scaled_h,
+        scaled_w,
+        offset_y,
+        offset_x,
+        img_scale,
+        target_size,
+        interp=None,
+    ):
         """
         Args:
             h, w (int): original image size
@@ -58,9 +67,14 @@ class EfficientDetResizeCropTransform(Transform):
             shape = list(img.shape)
             shape_4d = shape[:2] + [1] * (4 - len(shape)) + shape[2:]
             img = img.view(shape_4d).permute(2, 3, 0, 1)  # hw(c) -> nchw
-            _PIL_RESIZE_TO_INTERPOLATE_MODE = {Image.BILINEAR: "bilinear", Image.BICUBIC: "bicubic"}
+            _PIL_RESIZE_TO_INTERPOLATE_MODE = {
+                Image.BILINEAR: "bilinear",
+                Image.BICUBIC: "bicubic",
+            }
             mode = _PIL_RESIZE_TO_INTERPOLATE_MODE[self.interp]
-            img = F.interpolate(img, (self.scaled_h, self.scaled_w), mode=mode, align_corners=False)
+            img = F.interpolate(
+                img, (self.scaled_h, self.scaled_w), mode=mode, align_corners=False
+            )
             shape[:2] = (self.scaled_h, self.scaled_w)
             ret = img.permute(2, 3, 0, 1).view(shape).numpy()  # nchw -> hw(c)
             right = min(self.scaled_w, self.offset_x + self.target_size[1])

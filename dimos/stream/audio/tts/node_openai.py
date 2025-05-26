@@ -104,7 +104,9 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
         logger.info("Starting OpenAITTSNode")
 
         # Start the processing thread
-        self.processing_thread = threading.Thread(target=self._process_queue, daemon=True)
+        self.processing_thread = threading.Thread(
+            target=self._process_queue, daemon=True
+        )
         self.processing_thread.start()
 
         # Subscribe to the text observable

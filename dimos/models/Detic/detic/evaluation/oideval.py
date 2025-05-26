@@ -72,7 +72,9 @@ def compute_average_precision(precision, recall):
     for i in range(len(precision) - 2, -1, -1):
         precision[i] = np.maximum(precision[i], precision[i + 1])
     indices = np.where(recall[1:] != recall[:-1])[0] + 1
-    average_precision = np.sum((recall[indices] - recall[indices - 1]) * precision[indices])
+    average_precision = np.sum(
+        (recall[indices] - recall[indices - 1]) * precision[indices]
+    )
     return average_precision
 
 
@@ -178,8 +180,12 @@ class OIDEval:
 
         cat_ids = self.params.cat_ids if self.params.cat_ids else None
 
-        gts = self.lvis_gt.load_anns(self.lvis_gt.get_ann_ids(img_ids=self.params.img_ids, cat_ids=cat_ids))
-        dts = self.lvis_dt.load_anns(self.lvis_dt.get_ann_ids(img_ids=self.params.img_ids, cat_ids=cat_ids))
+        gts = self.lvis_gt.load_anns(
+            self.lvis_gt.get_ann_ids(img_ids=self.params.img_ids, cat_ids=cat_ids)
+        )
+        dts = self.lvis_dt.load_anns(
+            self.lvis_dt.get_ann_ids(img_ids=self.params.img_ids, cat_ids=cat_ids)
+        )
         # convert ground truth to mask if iou_type == 'segm'
         if self.params.iou_type == "segm":
             self._to_mask(gts, self.lvis_gt)
@@ -228,7 +234,9 @@ class OIDEval:
         self._prepare()
 
         self.ious = {
-            (img_id, cat_id): self.compute_iou(img_id, cat_id) for img_id in self.params.img_ids for cat_id in cat_ids
+            (img_id, cat_id): self.compute_iou(img_id, cat_id)
+            for img_id in self.params.img_ids
+            for cat_id in cat_ids
         }
 
         # loop through images, area range, max detection number
@@ -249,8 +257,16 @@ class OIDEval:
             gt = self._gts[img_id, cat_id]
             dt = self._dts[img_id, cat_id]
         else:
-            gt = [_ann for _cat_id in self.params.cat_ids for _ann in self._gts[img_id, cat_id]]
-            dt = [_ann for _cat_id in self.params.cat_ids for _ann in self._dts[img_id, cat_id]]
+            gt = [
+                _ann
+                for _cat_id in self.params.cat_ids
+                for _ann in self._gts[img_id, cat_id]
+            ]
+            dt = [
+                _ann
+                for _cat_id in self.params.cat_ids
+                for _ann in self._dts[img_id, cat_id]
+            ]
         return gt, dt
 
     def compute_iou(self, img_id, cat_id):
@@ -297,8 +313,12 @@ class OIDEval:
                 "num_gt": len(gt),
             }
 
-        no_crowd_inds = [i for i, g in enumerate(gt) if ("iscrowd" not in g) or g["iscrowd"] == 0]
-        crowd_inds = [i for i, g in enumerate(gt) if "iscrowd" in g and g["iscrowd"] == 1]
+        no_crowd_inds = [
+            i for i, g in enumerate(gt) if ("iscrowd" not in g) or g["iscrowd"] == 0
+        ]
+        crowd_inds = [
+            i for i, g in enumerate(gt) if "iscrowd" in g and g["iscrowd"] == 1
+        ]
         dt_idx = np.argsort([-d["score"] for d in dt], kind="mergesort")
 
         if len(self.ious[img_id, cat_id]) > 0:
@@ -321,7 +341,11 @@ class OIDEval:
             is_gt_detected = np.zeros(iou.shape[1], dtype=bool)
             for i in range(num_detected_boxes):
                 gt_id = max_overlap_gt_ids[i]
-                is_evaluatable = not tp_fp_labels[i] and iou[i, gt_id] >= 0.5 and not is_matched_to_group_of[i]
+                is_evaluatable = (
+                    not tp_fp_labels[i]
+                    and iou[i, gt_id] >= 0.5
+                    and not is_matched_to_group_of[i]
+                )
                 if is_evaluatable:
                     if not is_gt_detected[gt_id]:
                         tp_fp_labels[i] = True
@@ -333,7 +357,11 @@ class OIDEval:
             max_overlap_group_of_gt_ids = np.argmax(ioa, axis=1)
             for i in range(num_detected_boxes):
                 gt_id = max_overlap_group_of_gt_ids[i]
-                is_evaluatable = not tp_fp_labels[i] and ioa[i, gt_id] >= 0.5 and not is_matched_to_group_of[i]
+                is_evaluatable = (
+                    not tp_fp_labels[i]
+                    and ioa[i, gt_id] >= 0.5
+                    and not is_matched_to_group_of[i]
+                )
                 if is_evaluatable:
                     is_matched_to_group_of[i] = True
                     scores_group_of[gt_id] = max(scores_group_of[gt_id], scores[i])
@@ -355,13 +383,17 @@ class OIDEval:
         valid_entries = ~is_matched_to_group_of
 
         scores = np.concatenate((scores[valid_entries], scores_box_group_of))
-        tp_fps = np.concatenate((tp_fp_labels[valid_entries].astype(float), tp_fp_labels_box_group_of))
+        tp_fps = np.concatenate(
+            (tp_fp_labels[valid_entries].astype(float), tp_fp_labels_box_group_of)
+        )
 
         return {
             "image_id": img_id,
             "category_id": cat_id,
             "area_rng": area_rng,
-            "dt_matches": np.array([1 if x > 0 else 0 for x in tp_fps], dtype=np.int32).reshape(1, -1),
+            "dt_matches": np.array(
+                [1 if x > 0 else 0 for x in tp_fps], dtype=np.int32
+            ).reshape(1, -1),
             "dt_scores": [x for x in scores],
             "dt_ignore": np.array([0 for x in scores], dtype=np.int32).reshape(1, -1),
             "num_gt": len(gt),
@@ -450,7 +482,8 @@ class OIDEval:
                             pr[i - 1] = pr[i]
 
                     mAP = compute_average_precision(
-                        np.array(pr, np.float).reshape(-1), np.array(rc, np.float).reshape(-1)
+                        np.array(pr, np.float).reshape(-1),
+                        np.array(rc, np.float).reshape(-1),
                     )
                     precision[iou_thr_idx, :, cat_idx, area_idx] = mAP
 
@@ -502,12 +535,18 @@ class OIDEval:
                 iou_thr = float(key[2:]) / 100
                 iou = "{:0.2f}".format(iou_thr)
             else:
-                iou = "{:0.2f}:{:0.2f}".format(self.params.iou_thrs[0], self.params.iou_thrs[-1])
+                iou = "{:0.2f}:{:0.2f}".format(
+                    self.params.iou_thrs[0], self.params.iou_thrs[-1]
+                )
 
             cat_group_name = "all"
             area_rng = "all"
 
-            print(template.format(title, _type, iou, area_rng, max_dets, cat_group_name, value))
+            print(
+                template.format(
+                    title, _type, iou, area_rng, max_dets, cat_group_name, value
+                )
+            )
 
     def get_results(self):
         if not self.results:
@@ -521,7 +560,9 @@ class Params:
         self.cat_ids = []
         # np.arange causes trouble.  the data point on arange is slightly
         # larger than the true value
-        self.iou_thrs = np.linspace(0.5, 0.95, int(np.round((0.95 - 0.5) / 0.05)) + 1, endpoint=True)
+        self.iou_thrs = np.linspace(
+            0.5, 0.95, int(np.round((0.95 - 0.5) / 0.05)) + 1, endpoint=True
+        )
         self.google_style = True
         # print('Using google style PR curve')
         self.iou_thrs = self.iou_thrs[:1]
@@ -559,7 +600,9 @@ class OIDEvaluator(DatasetEvaluator):
         for input, output in zip(inputs, outputs):
             prediction = {"image_id": input["image_id"]}
             instances = output["instances"].to(self._cpu_device)
-            prediction["instances"] = instances_to_coco_json(instances, input["image_id"])
+            prediction["instances"] = instances_to_coco_json(
+                instances, input["image_id"]
+            )
             self._predictions.append(prediction)
 
     def evaluate(self):
@@ -576,7 +619,9 @@ class OIDEvaluator(DatasetEvaluator):
             return {}
 
         self._logger.info("Preparing results in the OID format ...")
-        self._oid_results = list(itertools.chain(*[x["instances"] for x in self._predictions]))
+        self._oid_results = list(
+            itertools.chain(*[x["instances"] for x in self._predictions])
+        )
 
         # unmap the category ids for LVIS (from 0-indexed to 1-indexed)
         for result in self._oid_results:
@@ -608,7 +653,9 @@ class OIDEvaluator(DatasetEvaluator):
         return copy.deepcopy(self._results)
 
 
-def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg=False, class_names=None):
+def _evaluate_predictions_on_oid(
+    oid_gt, oid_results_path, eval_seg=False, class_names=None
+):
     logger = logging.getLogger(__name__)
     metrics = ["AP50", "AP50_expand"]
 
@@ -644,7 +691,10 @@ def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg=False, class
             results_per_category.append(
                 (
                     "{} {}".format(
-                        name.replace(" ", "_"), inst_num if inst_num < 1000 else "{:.1f}k".format(inst_num / 1000)
+                        name.replace(" ", "_"),
+                        inst_num
+                        if inst_num < 1000
+                        else "{:.1f}k".format(inst_num / 1000),
                     ),
                     float(ap * 100),
                 )
@@ -656,7 +706,9 @@ def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg=False, class
     inst_aware_ap = inst_aware_ap * 100 / inst_count
     N_COLS = min(6, len(results_per_category) * 2)
     results_flatten = list(itertools.chain(*results_per_category))
-    results_2d = itertools.zip_longest(*[results_flatten[i::N_COLS] for i in range(N_COLS)])
+    results_2d = itertools.zip_longest(
+        *[results_flatten[i::N_COLS] for i in range(N_COLS)]
+    )
     table = tabulate(
         results_2d,
         tablefmt="pipe",

@@ -39,7 +39,10 @@ class DFConv2d(nn.Module):
             assert len(kernel_size) == 2
             assert len(stride) == 2
             assert len(dilation) == 2
-            padding = (dilation[0] * (kernel_size[0] - 1) // 2, dilation[1] * (kernel_size[1] - 1) // 2)
+            padding = (
+                dilation[0] * (kernel_size[0] - 1) // 2,
+                dilation[1] * (kernel_size[1] - 1) // 2,
+            )
             offset_base_channels = kernel_size[0] * kernel_size[1]
         else:
             padding = dilation * (kernel_size - 1) // 2
@@ -104,7 +107,9 @@ class DFConv2d(nn.Module):
         # get output shape
         output_shape = [
             (i + 2 * p - (di * (k - 1) + 1)) // d + 1
-            for i, p, di, k, d in zip(x.shape[-2:], self.padding, self.dilation, self.kernel_size, self.stride)
+            for i, p, di, k, d in zip(
+                x.shape[-2:], self.padding, self.dilation, self.kernel_size, self.stride
+            )
         ]
         output_shape = [x.shape[0], self.conv.weight.shape[0]] + output_shape
         return _NewEmptyTensorOp.apply(x, output_shape)

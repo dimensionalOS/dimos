@@ -57,7 +57,9 @@ class DepthProcessor:
         elif isinstance(frame, np.ndarray):
             image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         else:
-            raise ValueError("Unsupported frame format. Must be PIL Image or numpy array.")
+            raise ValueError(
+                "Unsupported frame format. Must be PIL Image or numpy array."
+            )
 
         image_np = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
         image_np = resize_image_for_vit(image_np)
@@ -81,7 +83,9 @@ class DepthProcessor:
                 # Save depth map locally or to S3 as needed
                 pass  # Implement saving logic if required
 
-            return DepthMapType(depth_data=depth_map, metadata={"intrinsics": intrinsics})
+            return DepthMapType(
+                depth_data=depth_map, metadata={"intrinsics": intrinsics}
+            )
 
         except Exception as e:
             self.logger.error(f"Error processing frame: {e}")

@@ -155,7 +155,9 @@ class VisualServoing:
                 if result is not None:
                     break
 
-                logger.warning(f"Attempt {attempt + 1}: No tracking result, retrying in 1 second...")
+                logger.warning(
+                    f"Attempt {attempt + 1}: No tracking result, retrying in 1 second..."
+                )
                 time.sleep(3)  # Wait 1 second between attempts
 
             if result is None:
@@ -267,7 +269,9 @@ class VisualServoing:
                 self.current_angle = target.get("angle")
 
                 # Compute control
-                control = self._compute_control(self.current_distance, self.current_angle)
+                control = self._compute_control(
+                    self.current_distance, self.current_angle
+                )
                 return control
 
         # If not found by ID, try to find by IOU
@@ -286,13 +290,17 @@ class VisualServoing:
                 self.current_angle = best_target.get("angle")
 
                 # Compute control
-                control = self._compute_control(self.current_distance, self.current_angle)
+                control = self._compute_control(
+                    self.current_distance, self.current_angle
+                )
                 return control
 
         # Target not found, increment lost counter
         if not target_found:
             self.target_lost_frames += 1
-            logger.warning(f"Target lost: frame {self.target_lost_frames}/{self.max_lost_frames}")
+            logger.warning(
+                f"Target lost: frame {self.target_lost_frames}/{self.max_lost_frames}"
+            )
 
             # Check if target is lost for too many frames
             if self.target_lost_frames >= self.max_lost_frames:
@@ -328,11 +336,15 @@ class VisualServoing:
 
         # Log control values for debugging
         logger.debug(f"Distance: {distance:.2f}m, Angle: {np.rad2deg(angle):.1f}°")
-        logger.debug(f"Control: linear={linear_vel:.2f}m/s, angular={angular_vel:.2f}rad/s")
+        logger.debug(
+            f"Control: linear={linear_vel:.2f}m/s, angular={angular_vel:.2f}rad/s"
+        )
 
         return {"linear_vel": linear_vel, "angular_vel": angular_vel}
 
-    def _find_best_target_by_iou(self, bbox: List[float], targets: List[Dict]) -> Optional[Dict]:
+    def _find_best_target_by_iou(
+        self, bbox: List[float], targets: List[Dict]
+    ) -> Optional[Dict]:
         """
         Find the target with highest IOU to the given bbox.
 
@@ -480,9 +492,13 @@ class VisualServoing:
         distance_error = abs(self.current_distance - self.desired_distance)
         angle_error = abs(self.current_angle)  # Desired angle is always 0 (centered)
 
-        logger.debug(f"Goal check - Distance error: {distance_error:.2f}m, Angle error: {angle_error:.2f}rad")
+        logger.debug(
+            f"Goal check - Distance error: {distance_error:.2f}m, Angle error: {angle_error:.2f}rad"
+        )
 
-        return (distance_error <= distance_threshold) and (angle_error <= angle_threshold)
+        return (distance_error <= distance_threshold) and (
+            angle_error <= angle_threshold
+        )
 
     def cleanup(self):
         """Clean up all resources used by the visual servoing."""

@@ -87,7 +87,8 @@ class HuggingFaceRemoteAgent(LLMAgent):
 
         self.model_name = model_name
         self.prompt_builder = prompt_builder or PromptBuilder(
-            self.model_name, tokenizer=tokenizer or HuggingFaceTokenizer(self.model_name)
+            self.model_name,
+            tokenizer=tokenizer or HuggingFaceTokenizer(self.model_name),
         )
 
         self.model_name = model_name
@@ -110,14 +111,20 @@ class HuggingFaceRemoteAgent(LLMAgent):
 
         # Ensure only one input stream is provided.
         if self.input_video_stream is not None and self.input_query_stream is not None:
-            raise ValueError("More than one input stream provided. Please provide only one input stream.")
+            raise ValueError(
+                "More than one input stream provided. Please provide only one input stream."
+            )
 
         if self.input_video_stream is not None:
             logger.info("Subscribing to input video stream...")
-            self.disposables.add(self.subscribe_to_image_processing(self.input_video_stream))
+            self.disposables.add(
+                self.subscribe_to_image_processing(self.input_video_stream)
+            )
         if self.input_query_stream is not None:
             logger.info("Subscribing to input query stream...")
-            self.disposables.add(self.subscribe_to_query_processing(self.input_query_stream))
+            self.disposables.add(
+                self.subscribe_to_query_processing(self.input_query_stream)
+            )
 
     def _send_query(self, messages: list) -> Any:
         try:
@@ -136,4 +143,8 @@ class HuggingFaceRemoteAgent(LLMAgent):
         """
         Creates an observable that processes a text query and emits the response.
         """
-        return create(lambda observer, _: self._observable_query(observer, incoming_query=query_text))
+        return create(
+            lambda observer, _: self._observable_query(
+                observer, incoming_query=query_text
+            )
+        )

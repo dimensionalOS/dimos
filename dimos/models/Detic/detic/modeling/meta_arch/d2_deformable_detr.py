@@ -21,7 +21,15 @@ __all__ = ["DeformableDetr"]
 
 
 class CustomSetCriterion(SetCriterion):
-    def __init__(self, num_classes, matcher, weight_dict, losses, focal_alpha=0.25, use_fed_loss=False):
+    def __init__(
+        self,
+        num_classes,
+        matcher,
+        weight_dict,
+        losses,
+        focal_alpha=0.25,
+        use_fed_loss=False,
+    ):
         super().__init__(num_classes, matcher, weight_dict, losses, focal_alpha)
         self.use_fed_loss = use_fed_loss
         if self.use_fed_loss:
@@ -35,8 +43,15 @@ class CustomSetCriterion(SetCriterion):
         src_logits = outputs["pred_logits"]
 
         idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
-        target_classes = torch.full(src_logits.shape[:2], self.num_classes, dtype=torch.int64, device=src_logits.device)
+        target_classes_o = torch.cat(
+            [t["labels"][J] for t, (_, J) in zip(targets, indices)]
+        )
+        target_classes = torch.full(
+            src_logits.shape[:2],
+            self.num_classes,
+            dtype=torch.int64,
+            device=src_logits.device,
+        )
         target_classes[idx] = target_classes_o
 
         target_classes_onehot = torch.zeros(
@@ -67,7 +82,13 @@ class CustomSetCriterion(SetCriterion):
             )
         else:
             loss_ce = (
-                sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha, gamma=2)
+                sigmoid_focal_loss(
+                    src_logits,
+                    target_classes_onehot,
+                    num_boxes,
+                    alpha=self.focal_alpha,
+                    gamma=2,
+                )
                 * src_logits.shape[1]
             )
         losses = {"loss_ce": loss_ce}
@@ -169,7 +190,9 @@ class DeformableDetr(nn.Module):
         if self.mask_on:
             assert 0, "Mask is not supported yet :("
 
-        matcher = HungarianMatcher(cost_class=cls_weight, cost_bbox=l1_weight, cost_giou=giou_weight)
+        matcher = HungarianMatcher(
+            cost_class=cls_weight, cost_bbox=l1_weight, cost_giou=giou_weight
+        )
         weight_dict = {"loss_ce": cls_weight, "loss_bbox": l1_weight}
         weight_dict["loss_giou"] = giou_weight
         if deep_supervision:
@@ -212,13 +235,19 @@ class DeformableDetr(nn.Module):
                     loss_dict[k] *= weight_dict[k]
             if self.with_image_labels:
                 if batched_inputs[0]["ann_type"] in ["image", "captiontag"]:
-                    loss_dict["loss_image"] = self.weak_weight * self._weak_loss(output, batched_inputs)
+                    loss_dict["loss_image"] = self.weak_weight * self._weak_loss(
+                        output, batched_inputs
+                    )
                 else:
-                    loss_dict["loss_image"] = images[0].new_zeros([1], dtype=torch.float32)[0]
+                    loss_dict["loss_image"] = images[0].new_zeros(
+                        [1], dtype=torch.float32
+                    )[0]
                 # import pdb; pdb.set_trace()
             return loss_dict
         else:
-            image_sizes = output["pred_boxes"].new_tensor([(t["height"], t["width"]) for t in batched_inputs])
+            image_sizes = output["pred_boxes"].new_tensor(
+                [(t["height"], t["width"]) for t in batched_inputs]
+            )
             results = self.post_process(output, image_sizes)
             return results
 
@@ -226,7 +255,9 @@ class DeformableDetr(nn.Module):
         new_targets = []
         for targets_per_image in targets:
             h, w = targets_per_image.image_size
-            image_size_xyxy = torch.as_tensor([w, h, w, h], dtype=torch.float, device=self.device)
+            image_size_xyxy = torch.as_tensor(
+                [w, h, w, h], dtype=torch.float, device=self.device
+            )
             gt_classes = targets_per_image.gt_classes
             gt_boxes = targets_per_image.gt_boxes.tensor / image_size_xyxy
             gt_boxes = box_xyxy_to_cxcywh(gt_boxes)
@@ -245,7 +276,9 @@ class DeformableDetr(nn.Module):
         assert target_sizes.shape[1] == 2
 
         prob = out_logits.sigmoid()
-        topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), self.test_topk, dim=1)
+        topk_values, topk_indexes = torch.topk(
+            prob.view(out_logits.shape[0], -1), self.test_topk, dim=1
+        )
         scores = topk_values
         topk_boxes = topk_indexes // out_logits.shape[2]
         labels = topk_indexes % out_logits.shape[2]
@@ -285,7 +318,9 @@ class DeformableDetr(nn.Module):
             pred_logits = torch.stack(pred_logits, dim=0)  # L x N x C
             pred_boxes = torch.stack(pred_boxes, dim=0)  # L x N x 4
             for label in labels:
-                loss += self._max_size_loss(pred_logits, pred_boxes, label) / len(labels)
+                loss += self._max_size_loss(pred_logits, pred_boxes, label) / len(
+                    labels
+                )
         loss = loss / len(batched_inputs)
         return loss
 
@@ -299,5 +334,7 @@ class DeformableDetr(nn.Module):
         target[:, label] = 1.0
         sizes = boxes[..., 2] * boxes[..., 3]  # L x N
         ind = sizes.argmax(dim=1)  # L
-        loss = F.binary_cross_entropy_with_logits(logits[range(len(ind)), ind], target, reduction="sum")
+        loss = F.binary_cross_entropy_with_logits(
+            logits[range(len(ind)), ind], target, reduction="sum"
+        )
         return loss

@@ -27,7 +27,9 @@ class GenericSubscriber:
         if stream is not None:
             try:
                 self._subscription = stream.subscribe(
-                    on_next=self._on_next, on_error=self._on_error, on_completed=self._on_completed
+                    on_next=self._on_next,
+                    on_error=self._on_error,
+                    on_completed=self._on_completed,
                 )
                 logger.debug(f"Subscribed to stream {stream}")
             except Exception as e:

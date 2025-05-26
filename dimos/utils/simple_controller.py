@@ -50,7 +50,9 @@ class PIDController:
         # Update integral term with windup protection.
         self.integral += error * dt
         if self.integral_limit is not None:
-            self.integral = max(-self.integral_limit, min(self.integral, self.integral_limit))
+            self.integral = max(
+                -self.integral_limit, min(self.integral, self.integral_limit)
+            )
 
         # Compute derivative term.
         derivative = (error - self.prev_error) / dt if dt > 0 else 0.0
@@ -122,7 +124,9 @@ class VisualServoingController:
         self.angle_pid = PIDController(*angle_pid_params)
         self.prev_measured_angle = 0.0  # Used for angular feed-forward damping
 
-    def compute_control(self, measured_distance, measured_angle, desired_distance, desired_angle, dt):
+    def compute_control(
+        self, measured_distance, measured_angle, desired_distance, desired_angle, dt
+    ):
         """
         Compute the forward (x) and angular (z) commands.
 

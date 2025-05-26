@@ -5,8 +5,12 @@ import copy
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ann", default="datasets/objects365/annotations/zhiyuan_objv2_val.json")
-    parser.add_argument("--fix_name_map", default="datasets/metadata/Objects365_names_fix.csv")
+    parser.add_argument(
+        "--ann", default="datasets/objects365/annotations/zhiyuan_objv2_val.json"
+    )
+    parser.add_argument(
+        "--fix_name_map", default="datasets/metadata/Objects365_names_fix.csv"
+    )
     args = parser.parse_args()
 
     new_names = {}

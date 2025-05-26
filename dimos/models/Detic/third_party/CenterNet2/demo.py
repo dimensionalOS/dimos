@@ -34,7 +34,9 @@ def setup_cfg(args):
     if cfg.MODEL.META_ARCHITECTURE in ["ProposalNetwork", "CenterNetDetector"]:
         cfg.MODEL.CENTERNET.INFERENCE_TH = args.confidence_threshold
         cfg.MODEL.CENTERNET.NMS_TH = cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST
-    cfg.MODEL.PANOPTIC_FPN.COMBINE.INSTANCES_CONFIDENCE_THRESH = args.confidence_threshold
+    cfg.MODEL.PANOPTIC_FPN.COMBINE.INSTANCES_CONFIDENCE_THRESH = (
+        args.confidence_threshold
+    )
     cfg.freeze()
     return cfg
 
@@ -47,9 +49,13 @@ def get_parser():
         metavar="FILE",
         help="path to config file",
     )
-    parser.add_argument("--webcam", action="store_true", help="Take inputs from webcam.")
+    parser.add_argument(
+        "--webcam", action="store_true", help="Take inputs from webcam."
+    )
     parser.add_argument("--video-input", help="Path to video file.")
-    parser.add_argument("--input", nargs="+", help="A list of space separated input images")
+    parser.add_argument(
+        "--input", nargs="+", help="A list of space separated input images"
+    )
     parser.add_argument(
         "--output",
         help="A file or directory to save output visualizations. If not given, will show output in an OpenCV window.",
@@ -87,14 +93,18 @@ if __name__ == "__main__":
             args.input = [args.input[0] + x for x in files]
             assert args.input, "The input path(s) was not found"
         visualizer = VideoVisualizer(
-            MetadataCatalog.get(cfg.DATASETS.TEST[0] if len(cfg.DATASETS.TEST) else "__unused"),
+            MetadataCatalog.get(
+                cfg.DATASETS.TEST[0] if len(cfg.DATASETS.TEST) else "__unused"
+            ),
             instance_mode=ColorMode.IMAGE,
         )
         for path in tqdm.tqdm(args.input, disable=not args.output):
             # use PIL, to be consistent with evaluation
             img = read_image(path, format="BGR")
             start_time = time.time()
-            predictions, visualized_output = demo.run_on_image(img, visualizer=visualizer)
+            predictions, visualized_output = demo.run_on_image(
+                img, visualizer=visualizer
+            )
             if "instances" in predictions:
                 logger.info(
                     "{}: detected {} instances in {:.2f}s".format(

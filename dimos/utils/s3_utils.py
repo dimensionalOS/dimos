@@ -45,7 +45,9 @@ class S3Utils:
             temp_pcd_file = "/tmp/temp_pointcloud.pcd"
             o3d.io.write_point_cloud(temp_pcd_file, inlier_cloud)
             with open(temp_pcd_file, "rb") as pcd_file:
-                self.s3.put_object(Bucket=self.bucket_name, Key=s3_key, Body=pcd_file.read())
+                self.s3.put_object(
+                    Bucket=self.bucket_name, Key=s3_key, Body=pcd_file.read()
+                )
             os.remove(temp_pcd_file)
             print(f"Saved pointcloud to {s3_key}")
         except Exception as e:

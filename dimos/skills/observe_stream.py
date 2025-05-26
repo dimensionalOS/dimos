@@ -45,14 +45,21 @@ class ObserveStream(AbstractRobotSkill):
     or to monitor changes in the environment.
     """
 
-    timestep: float = Field(60.0, description="Time interval in seconds between observation queries")
+    timestep: float = Field(
+        60.0, description="Time interval in seconds between observation queries"
+    )
     query_text: str = Field(
         "What do you see in this image? Alert me if you see any people or important changes.",
         description="Query text to send to agent with each image",
     )
-    max_duration: float = Field(0.0, description="Maximum duration to run the observer in seconds (0 for indefinite)")
+    max_duration: float = Field(
+        0.0,
+        description="Maximum duration to run the observer in seconds (0 for indefinite)",
+    )
 
-    def __init__(self, robot=None, agent: Optional[LLMAgent] = None, video_stream=None, **data):
+    def __init__(
+        self, robot=None, agent: Optional[LLMAgent] = None, video_stream=None, **data
+    ):
         """
         Initialize the ObserveStream skill.
 
@@ -101,9 +108,9 @@ class ObserveStream(AbstractRobotSkill):
         # Initialize start time for duration tracking
         self._start_time = time.time()
 
-        interval_observable = rx.interval(self.timestep, scheduler=self._scheduler).pipe(
-            ops.take_while(lambda _: not self._stop_event.is_set())
-        )
+        interval_observable = rx.interval(
+            self.timestep, scheduler=self._scheduler
+        ).pipe(ops.take_while(lambda _: not self._stop_event.is_set()))
 
         # Subscribe to the interval observable
         self._subscription = interval_observable.subscribe(
@@ -115,7 +122,9 @@ class ObserveStream(AbstractRobotSkill):
         skill_library = self._robot.get_skills()
         self.register_as_running("ObserveStream", skill_library, self._subscription)
 
-        logger.info(f"Observer started with timestep={self.timestep}s, query='{self.query_text}'")
+        logger.info(
+            f"Observer started with timestep={self.timestep}s, query='{self.query_text}'"
+        )
         return f"Observer started with timestep={self.timestep}s, query='{self.query_text}'"
 
     def _monitor_iteration(self, iteration):
@@ -129,7 +138,9 @@ class ObserveStream(AbstractRobotSkill):
             if self.max_duration > 0:
                 elapsed_time = time.time() - self._start_time
                 if elapsed_time > self.max_duration:
-                    logger.info(f"Observer reached maximum duration of {self.max_duration}s")
+                    logger.info(
+                        f"Observer reached maximum duration of {self.max_duration}s"
+                    )
                     self.stop()
                     return
 
@@ -163,7 +174,8 @@ class ObserveStream(AbstractRobotSkill):
         subscription = self._video_stream.pipe(
             ops.take(1)  # Take just one frame
         ).subscribe(
-            on_next=lambda x: frame_subject.on_next(x), on_error=lambda e: logger.error(f"Error getting frame: {e}")
+            on_next=lambda x: frame_subject.on_next(x),
+            on_error=lambda e: logger.error(f"Error getting frame: {e}"),
         )
 
         timeout = 5.0  # 5 seconds timeout
@@ -204,7 +216,9 @@ class ObserveStream(AbstractRobotSkill):
             # Simple subscription to make sure the query executes
             # The actual response content isn't important
             observable.subscribe(
-                on_next=lambda x: logger.info(f"Got response from _observable_query: {x}"),
+                on_next=lambda x: logger.info(
+                    f"Got response from _observable_query: {x}"
+                ),
                 on_error=lambda e: logger.error(f"Error: {e}"),
                 on_completed=lambda: logger.info("ObserveStream query completed"),
             )

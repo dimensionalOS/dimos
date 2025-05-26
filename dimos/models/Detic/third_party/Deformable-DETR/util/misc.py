@@ -55,7 +55,9 @@ if float(torchvision.__version__[:3]) < 0.5:
         assert scale_factor is not None and isinstance(scale_factor, (int, float))
         scale_factors = [scale_factor, scale_factor]
         # math.floor might return float in py2.7
-        return [int(math.floor(input.size(i + 2) * scale_factors[i])) for i in range(dim)]
+        return [
+            int(math.floor(input.size(i + 2) * scale_factors[i])) for i in range(dim)
+        ]
 elif float(torchvision.__version__[:3]) < 0.7:
     from torchvision.ops import _new_empty_tensor
     from torchvision.ops.misc import _output_size
@@ -116,7 +118,11 @@ class SmoothedValue(object):
 
     def __str__(self):
         return self.fmt.format(
-            median=self.median, avg=self.avg, global_avg=self.global_avg, max=self.max, value=self.value
+            median=self.median,
+            avg=self.avg,
+            global_avg=self.global_avg,
+            max=self.max,
+            value=self.value,
         )
 
 
@@ -151,7 +157,9 @@ def all_gather(data):
     for _ in size_list:
         tensor_list.append(torch.empty((max_size,), dtype=torch.uint8, device="cuda"))
     if local_size != max_size:
-        padding = torch.empty(size=(max_size - local_size,), dtype=torch.uint8, device="cuda")
+        padding = torch.empty(
+            size=(max_size - local_size,), dtype=torch.uint8, device="cuda"
+        )
         tensor = torch.cat((tensor, padding), dim=0)
     dist.all_gather(tensor_list, tensor)
 
@@ -207,7 +215,9 @@ class MetricLogger(object):
             return self.meters[attr]
         if attr in self.__dict__:
             return self.__dict__[attr]
-        raise AttributeError("'{}' object has no attribute '{}'".format(type(self).__name__, attr))
+        raise AttributeError(
+            "'{}' object has no attribute '{}'".format(type(self).__name__, attr)
+        )
 
     def __str__(self):
         loss_str = []
@@ -245,7 +255,14 @@ class MetricLogger(object):
             )
         else:
             log_msg = self.delimiter.join(
-                [header, "[{0" + space_fmt + "}/{1}]", "eta: {eta}", "{meters}", "time: {time}", "data: {data}"]
+                [
+                    header,
+                    "[{0" + space_fmt + "}/{1}]",
+                    "eta: {eta}",
+                    "{meters}",
+                    "time: {time}",
+                    "data: {data}",
+                ]
             )
         MB = 1024.0 * 1024.0
         for obj in iterable:
@@ -270,14 +287,23 @@ class MetricLogger(object):
                 else:
                     print(
                         log_msg.format(
-                            i, len(iterable), eta=eta_string, meters=str(self), time=str(iter_time), data=str(data_time)
+                            i,
+                            len(iterable),
+                            eta=eta_string,
+                            meters=str(self),
+                            time=str(iter_time),
+                            data=str(data_time),
                         )
                     )
             i += 1
             end = time.time()
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        print("{} Total time: {} ({:.4f} s / it)".format(header, total_time_str, total_time / len(iterable)))
+        print(
+            "{} Total time: {} ({:.4f} s / it)".format(
+                header, total_time_str, total_time / len(iterable)
+            )
+        )
 
 
 def get_sha():
@@ -433,7 +459,9 @@ def init_distributed_mode(args):
         ntasks = int(os.environ["SLURM_NTASKS"])
         node_list = os.environ["SLURM_NODELIST"]
         num_gpus = torch.cuda.device_count()
-        addr = subprocess.getoutput("scontrol show hostname {} | head -n1".format(node_list))
+        addr = subprocess.getoutput(
+            "scontrol show hostname {} | head -n1".format(node_list)
+        )
         os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "29500")
         os.environ["MASTER_ADDR"] = addr
         os.environ["WORLD_SIZE"] = str(ntasks)
@@ -453,9 +481,14 @@ def init_distributed_mode(args):
 
     torch.cuda.set_device(args.gpu)
     args.dist_backend = "nccl"
-    print("| distributed init (rank {}): {}".format(args.rank, args.dist_url), flush=True)
+    print(
+        "| distributed init (rank {}): {}".format(args.rank, args.dist_url), flush=True
+    )
     torch.distributed.init_process_group(
-        backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank
+        backend=args.dist_backend,
+        init_method=args.dist_url,
+        world_size=args.world_size,
+        rank=args.rank,
     )
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
@@ -480,7 +513,9 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corners=None):
+def interpolate(
+    input, size=None, scale_factor=None, mode="nearest", align_corners=None
+):
     # type: (Tensor, Optional[List[int]], Optional[float], str, Optional[bool]) -> Tensor
     """
     Equivalent to nn.functional.interpolate, but with support for empty batch sizes.
@@ -489,7 +524,9 @@ def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corne
     """
     if float(torchvision.__version__[:3]) < 0.7:
         if input.numel() > 0:
-            return torch.nn.functional.interpolate(input, size, scale_factor, mode, align_corners)
+            return torch.nn.functional.interpolate(
+                input, size, scale_factor, mode, align_corners
+            )
 
         output_shape = _output_size(2, input, size, scale_factor)
         output_shape = list(input.shape[:-2]) + list(output_shape)
@@ -497,7 +534,9 @@ def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corne
             return _NewEmptyTensorOp.apply(input, output_shape)
         return _new_empty_tensor(input, output_shape)
     else:
-        return torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners)
+        return torchvision.ops.misc.interpolate(
+            input, size, scale_factor, mode, align_corners
+        )
 
 
 def get_total_grad_norm(parameters, norm_type=2):
@@ -505,7 +544,10 @@ def get_total_grad_norm(parameters, norm_type=2):
     norm_type = float(norm_type)
     device = parameters[0].grad.device
     total_norm = torch.norm(
-        torch.stack([torch.norm(p.grad.detach(), norm_type).to(device) for p in parameters]), norm_type
+        torch.stack(
+            [torch.norm(p.grad.detach(), norm_type).to(device) for p in parameters]
+        ),
+        norm_type,
     )
     return total_norm
 

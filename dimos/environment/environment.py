@@ -37,7 +37,9 @@ class Environment(ABC):
         pass
 
     @abstractmethod
-    def generate_segmentations(self, model: str = None, objects: list[str] = None, *args, **kwargs) -> list[np.ndarray]:
+    def generate_segmentations(
+        self, model: str = None, objects: list[str] = None, *args, **kwargs
+    ) -> list[np.ndarray]:
         """
         Generate object segmentations of objects[] using neural methods.
 
@@ -103,7 +105,12 @@ class Environment(ABC):
 
     @abstractmethod
     def generate_depth_map(
-        self, stereo: bool = None, monocular: bool = None, model: str = None, *args, **kwargs
+        self,
+        stereo: bool = None,
+        monocular: bool = None,
+        model: str = None,
+        *args,
+        **kwargs,
     ) -> np.ndarray:
         """
         Generate a depth map using monocular or stereo camera methods.
@@ -144,7 +151,9 @@ class Environment(ABC):
 
     def initialize_from_images(self, images):
         """Initialize the environment from a set of image frames or video."""
-        raise NotImplementedError("This method is not implemented for this environment type.")
+        raise NotImplementedError(
+            "This method is not implemented for this environment type."
+        )
 
     def initialize_from_file(self, file_path):
         """Initialize the environment from a spatial file type.
@@ -167,4 +176,6 @@ class Environment(ABC):
         Raises:
             NotImplementedError: If the method is not implemented for this environment type.
         """
-        raise NotImplementedError("This method is not implemented for this environment type.")
+        raise NotImplementedError(
+            "This method is not implemented for this environment type."
+        )

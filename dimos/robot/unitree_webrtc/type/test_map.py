@@ -18,7 +18,9 @@ def test_costmap_vis():
 
 @pytest.mark.vis
 def test_reconstruction_with_realtime_vis():
-    show3d_stream(Map().consume(Mock("office").stream(rate_hz=60.0)), clearframe=True).run()
+    show3d_stream(
+        Map().consume(Mock("office").stream(rate_hz=60.0)), clearframe=True
+    ).run()
 
 
 @pytest.mark.vis

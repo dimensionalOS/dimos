@@ -12,8 +12,12 @@ class CenterNetDetector(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.mean, self.std = cfg.MODEL.PIXEL_MEAN, cfg.MODEL.PIXEL_STD
-        self.register_buffer("pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1))
-        self.register_buffer("pixel_std", torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1))
+        self.register_buffer(
+            "pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1)
+        )
+        self.register_buffer(
+            "pixel_std", torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1)
+        )
 
         self.backbone = build_backbone(cfg)
         self.proposal_generator = build_proposal_generator(
@@ -42,7 +46,9 @@ class CenterNetDetector(nn.Module):
         proposals, _ = self.proposal_generator(images, features, None)
 
         processed_results = []
-        for results_per_image, input_per_image, image_size in zip(proposals, batched_inputs, images.image_sizes):
+        for results_per_image, input_per_image, image_size in zip(
+            proposals, batched_inputs, images.image_sizes
+        ):
             if do_postprocess:
                 height = input_per_image.get("height", image_size[0])
                 width = input_per_image.get("width", image_size[1])

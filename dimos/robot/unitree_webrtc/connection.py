@@ -41,7 +41,8 @@ class WebRTCRobot(AbstractRobot):
             self.conn.datachannel.set_decoder(decoder_type="native")
 
             await self.conn.datachannel.pub_sub.publish_request_new(
-                RTC_TOPIC["MOTION_SWITCHER"], {"api_id": 1002, "parameter": {"name": self.mode}}
+                RTC_TOPIC["MOTION_SWITCHER"],
+                {"api_id": 1002, "parameter": {"name": self.mode}},
             )
 
             self.connected_event.set()
@@ -90,7 +91,11 @@ class WebRTCRobot(AbstractRobot):
 
     @functools.cache
     def lidar_stream(self) -> Subject[LidarMessage]:
-        return backpressure(self.raw_lidar_stream().pipe(ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame))))
+        return backpressure(
+            self.raw_lidar_stream().pipe(
+                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame))
+            )
+        )
 
     @functools.cache
     def odom_stream(self) -> Subject[Position]:
@@ -101,10 +106,14 @@ class WebRTCRobot(AbstractRobot):
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
     def standup_ai(self):
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
+        return self.publish_request(
+            RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]}
+        )
 
     def standup_normal(self):
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]})
+        return self.publish_request(
+            RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]}
+        )
 
     def standup(self):
         if self.mode == "ai":
@@ -113,7 +122,9 @@ class WebRTCRobot(AbstractRobot):
             return self.standup_normal()
 
     def liedown(self):
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
+        return self.publish_request(
+            RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]}
+        )
 
     async def handstand(self):
         return self.publish_request(

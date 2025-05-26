@@ -24,7 +24,9 @@ class Path:
 
     def __init__(
         self,
-        points: Union[List[Vector], List[np.ndarray], List[Tuple], np.ndarray, None] = None,
+        points: Union[
+            List[Vector], List[np.ndarray], List[Tuple], np.ndarray, None
+        ] = None,
     ):
         """Initialize a path from a list of points.
 
@@ -87,7 +89,9 @@ class Path:
         else:
             self._points = np.vstack((self._points, point_data))
 
-    def extend(self, points: Union[List[Vector], List[np.ndarray], List[Tuple], "Path"]) -> None:
+    def extend(
+        self, points: Union[List[Vector], List[np.ndarray], List[Tuple], "Path"]
+    ) -> None:
         """Extend the path with more points.
 
         Args:
@@ -134,7 +138,9 @@ class Path:
 
     def clear(self) -> None:
         """Remove all points from the path."""
-        self._points = np.zeros((0, self._points.shape[1] if len(self._points) > 0 else 0), dtype=float)
+        self._points = np.zeros(
+            (0, self._points.shape[1] if len(self._points) > 0 else 0), dtype=float
+        )
 
     def length(self) -> float:
         """Calculate the total length of the path.
@@ -286,7 +292,9 @@ class Path:
             # Apply weighted average to middle points
             for i in range(1, len(smoothed_points) - 1):
                 neighbor_avg = 0.5 * (smoothed_points[i - 1] + smoothed_points[i + 1])
-                new_points[i] = (1 - weight) * smoothed_points[i] + weight * neighbor_avg
+                new_points[i] = (1 - weight) * smoothed_points[
+                    i
+                ] + weight * neighbor_avg
 
             new_points[-1] = smoothed_points[-1]  # Keep last point unchanged
             smoothed_points = new_points

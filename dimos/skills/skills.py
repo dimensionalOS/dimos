@@ -62,7 +62,11 @@ class SkillLibrary:
                 attr = getattr(self.__class__, attr_name)
 
                 # Check if it's a class and inherits from AbstractSkill
-                if isinstance(attr, type) and issubclass(attr, AbstractSkill) and attr is not AbstractSkill:
+                if (
+                    isinstance(attr, type)
+                    and issubclass(attr, AbstractSkill)
+                    and attr is not AbstractSkill
+                ):
                     skills.append(attr)
             except (AttributeError, TypeError):
                 # Skip attributes that can't be accessed or aren't classes
@@ -114,7 +118,9 @@ class SkillLibrary:
         if key not in self._instances:
             # Instead of creating an instance, store the args for later use
             self._instances[key] = kwargs
-            print(f"Stored args for later instance creation: {name} with args: {kwargs}")
+            print(
+                f"Stored args for later instance creation: {name} with args: {kwargs}"
+            )
 
     def call(self, name, **args):
         # Get the stored args if available; otherwise, use an empty dict
@@ -135,7 +141,9 @@ class SkillLibrary:
 
         # Initialize the instance with the merged arguments
         instance = skill_class(**complete_args)
-        print(f"Instance created and function called for: {name} with args: {complete_args}")
+        print(
+            f"Instance created and function called for: {name} with args: {complete_args}"
+        )
 
         # Call the instance directly
         return instance()
@@ -143,11 +151,15 @@ class SkillLibrary:
     # ==== Tools ====
 
     def get_tools(self) -> Any:
-        tools_json = self.get_list_of_skills_as_json(list_of_skills=self.registered_skills)
+        tools_json = self.get_list_of_skills_as_json(
+            list_of_skills=self.registered_skills
+        )
         # print(f"{Colors.YELLOW_PRINT_COLOR}Tools JSON: {tools_json}{Colors.RESET_COLOR}")
         return tools_json
 
-    def get_list_of_skills_as_json(self, list_of_skills: list["AbstractSkill"]) -> list[str]:
+    def get_list_of_skills_as_json(
+        self, list_of_skills: list["AbstractSkill"]
+    ) -> list[str]:
         return list(map(pydantic_function_tool, list_of_skills))
 
     def register_running_skill(self, name: str, instance: Any, subscription=None):
@@ -212,11 +224,17 @@ class SkillLibrary:
                     logger.warning(f"Skill {name} does not have a stop method")
 
                 # Also dispose the subscription if it exists
-                if subscription is not None and hasattr(subscription, "dispose") and callable(subscription.dispose):
+                if (
+                    subscription is not None
+                    and hasattr(subscription, "dispose")
+                    and callable(subscription.dispose)
+                ):
                     subscription.dispose()
                     logger.info(f"Disposed subscription for skill: {name}")
                 elif subscription is not None:
-                    logger.warning(f"Skill {name} has a subscription but it's not disposable")
+                    logger.warning(
+                        f"Skill {name} has a subscription but it's not disposable"
+                    )
 
                 # unregister the skill
                 self.unregister_running_skill(name)
@@ -248,7 +266,9 @@ class AbstractSkill(BaseModel):
     def clone(self) -> "AbstractSkill":
         return AbstractSkill()
 
-    def register_as_running(self, name: str, skill_library: SkillLibrary, subscription=None):
+    def register_as_running(
+        self, name: str, skill_library: SkillLibrary, subscription=None
+    ):
         """
         Register this skill as running in the skill library.
 
@@ -271,11 +291,15 @@ class AbstractSkill(BaseModel):
 
     # ==== Tools ====
     def get_tools(self) -> Any:
-        tools_json = self.get_list_of_skills_as_json(list_of_skills=self._list_of_skills)
+        tools_json = self.get_list_of_skills_as_json(
+            list_of_skills=self._list_of_skills
+        )
         # print(f"Tools JSON: {tools_json}")
         return tools_json
 
-    def get_list_of_skills_as_json(self, list_of_skills: list["AbstractSkill"]) -> list[str]:
+    def get_list_of_skills_as_json(
+        self, list_of_skills: list["AbstractSkill"]
+    ) -> list[str]:
         return list(map(pydantic_function_tool, list_of_skills))
 
 
@@ -297,7 +321,9 @@ class AbstractRobotSkill(AbstractSkill):
     def __init__(self, *args, robot: Optional[Robot] = None, **kwargs):
         super().__init__(*args, **kwargs)
         self._robot = robot
-        print(f"{Colors.BLUE_PRINT_COLOR}Robot Skill Initialized with Robot: {robot}{Colors.RESET_COLOR}")
+        print(
+            f"{Colors.BLUE_PRINT_COLOR}Robot Skill Initialized with Robot: {robot}{Colors.RESET_COLOR}"
+        )
 
     def set_robot(self, robot: Robot) -> None:
         """Set the robot reference for this skills instance.

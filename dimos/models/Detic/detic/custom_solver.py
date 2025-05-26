@@ -17,7 +17,9 @@ def match_name_keywords(n, name_keywords):
     return out
 
 
-def build_custom_optimizer(cfg: CfgNode, model: torch.nn.Module) -> torch.optim.Optimizer:
+def build_custom_optimizer(
+    cfg: CfgNode, model: torch.nn.Module
+) -> torch.optim.Optimizer:
     """
     Build an optimizer from config.
     """
@@ -63,7 +65,10 @@ def build_custom_optimizer(cfg: CfgNode, model: torch.nn.Module) -> torch.optim.
 
     if optimizer_type == "SGD":
         optimizer = maybe_add_full_model_gradient_clipping(torch.optim.SGD)(
-            params, cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM, nesterov=cfg.SOLVER.NESTEROV
+            params,
+            cfg.SOLVER.BASE_LR,
+            momentum=cfg.SOLVER.MOMENTUM,
+            nesterov=cfg.SOLVER.NESTEROV,
         )
     elif optimizer_type == "ADAMW":
         optimizer = maybe_add_full_model_gradient_clipping(torch.optim.AdamW)(

@@ -85,11 +85,18 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
             # assert self.num_classes == 11493
             print("Extending federated loss weight")
             self.freq_weight = torch.cat(
-                [self.freq_weight, self.freq_weight.new_zeros(self.num_classes - len(self.freq_weight))]
+                [
+                    self.freq_weight,
+                    self.freq_weight.new_zeros(
+                        self.num_classes - len(self.freq_weight)
+                    ),
+                ]
             )
 
         assert (not self.dynamic_classifier) or (not self.use_fed_loss)
-        input_size = input_shape.channels * (input_shape.width or 1) * (input_shape.height or 1)
+        input_size = (
+            input_shape.channels * (input_shape.width or 1) * (input_shape.height or 1)
+        )
 
         if self.use_zeroshot_cls:
             del self.cls_score
@@ -97,7 +104,9 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
             assert cls_score is not None
             self.cls_score = cls_score
             self.bbox_pred = nn.Sequential(
-                nn.Linear(input_size, input_size), nn.ReLU(inplace=True), nn.Linear(input_size, 4)
+                nn.Linear(input_size, input_size),
+                nn.ReLU(inplace=True),
+                nn.Linear(input_size, 4),
             )
             weight_init.c2_xavier_fill(self.bbox_pred[0])
             nn.init.normal_(self.bbox_pred[-1].weight, std=0.001)
@@ -143,12 +152,22 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
             ret["cls_score"] = ZeroShotClassifier(cfg, input_shape)
         return ret
 
-    def losses(self, predictions, proposals, use_advanced_loss=True, classifier_info=(None, None, None)):
+    def losses(
+        self,
+        predictions,
+        proposals,
+        use_advanced_loss=True,
+        classifier_info=(None, None, None),
+    ):
         """
         enable advanced loss
         """
         scores, proposal_deltas = predictions
-        gt_classes = cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0)
+        gt_classes = (
+            cat([p.gt_classes for p in proposals], dim=0)
+            if len(proposals)
+            else torch.empty(0)
+        )
         num_classes = self.num_classes
         if self.dynamic_classifier:
             _, cls_id_map = classifier_info[1]
@@ -158,14 +177,23 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         _log_classification_stats(scores, gt_classes)
 
         if len(proposals):
-            proposal_boxes = cat([p.proposal_boxes.tensor for p in proposals], dim=0)  # Nx4
-            assert not proposal_boxes.requires_grad, "Proposals should not require gradients!"
+            proposal_boxes = cat(
+                [p.proposal_boxes.tensor for p in proposals], dim=0
+            )  # Nx4
+            assert not proposal_boxes.requires_grad, (
+                "Proposals should not require gradients!"
+            )
             gt_boxes = cat(
-                [(p.gt_boxes if p.has("gt_boxes") else p.proposal_boxes).tensor for p in proposals],
+                [
+                    (p.gt_boxes if p.has("gt_boxes") else p.proposal_boxes).tensor
+                    for p in proposals
+                ],
                 dim=0,
             )
         else:
-            proposal_boxes = gt_boxes = torch.empty((0, 4), device=proposal_deltas.device)
+            proposal_boxes = gt_boxes = torch.empty(
+                (0, 4), device=proposal_deltas.device
+            )
 
         if self.use_sigmoid_ce:
             loss_cls = self.sigmoid_cross_entropy_loss(scores, gt_classes)
@@ -174,13 +202,19 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         return {
             "loss_cls": loss_cls,
             "loss_box_reg": self.box_reg_loss(
-                proposal_boxes, gt_boxes, proposal_deltas, gt_classes, num_classes=num_classes
+                proposal_boxes,
+                gt_boxes,
+                proposal_deltas,
+                gt_classes,
+                num_classes=num_classes,
             ),
         }
 
     def sigmoid_cross_entropy_loss(self, pred_class_logits, gt_classes):
         if pred_class_logits.numel() == 0:
-            return pred_class_logits.new_zeros([1])[0]  # This is more robust than .sum() * 0.
+            return pred_class_logits.new_zeros([1])[
+                0
+            ]  # This is more robust than .sum() * 0.
 
         B = pred_class_logits.shape[0]
         C = pred_class_logits.shape[1] - 1
@@ -193,7 +227,10 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
 
         if self.use_fed_loss and (self.freq_weight is not None):  # fedloss
             appeared = get_fed_loss_inds(
-                gt_classes, num_sample_cats=self.fed_loss_num_cat, C=C, weight=self.freq_weight
+                gt_classes,
+                num_sample_cats=self.fed_loss_num_cat,
+                C=C,
+                weight=self.freq_weight,
             )
             appeared_mask = appeared.new_zeros(C + 1)
             appeared_mask[appeared] = 1  # C + 1
@@ -205,7 +242,9 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
             weight = weight * w.view(1, C).expand(B, C)
             # import pdb; pdb.set_trace()
 
-        cls_loss = F.binary_cross_entropy_with_logits(pred_class_logits[:, :-1], target, reduction="none")  # B x C
+        cls_loss = F.binary_cross_entropy_with_logits(
+            pred_class_logits[:, :-1], target, reduction="none"
+        )  # B x C
         loss = torch.sum(cls_loss * weight) / B
         return loss
 
@@ -217,22 +256,36 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
             return pred_class_logits.new_zeros([1])[0]
 
         if self.ignore_zero_cats and (self.freq_weight is not None):
-            zero_weight = torch.cat([(self.freq_weight.view(-1) > 1e-4).float(), self.freq_weight.new_ones(1)])  # C + 1
-            loss = F.cross_entropy(pred_class_logits, gt_classes, weight=zero_weight, reduction="mean")
+            zero_weight = torch.cat(
+                [
+                    (self.freq_weight.view(-1) > 1e-4).float(),
+                    self.freq_weight.new_ones(1),
+                ]
+            )  # C + 1
+            loss = F.cross_entropy(
+                pred_class_logits, gt_classes, weight=zero_weight, reduction="mean"
+            )
         elif self.use_fed_loss and (self.freq_weight is not None):  # fedloss
             C = pred_class_logits.shape[1] - 1
             appeared = get_fed_loss_inds(
-                gt_classes, num_sample_cats=self.fed_loss_num_cat, C=C, weight=self.freq_weight
+                gt_classes,
+                num_sample_cats=self.fed_loss_num_cat,
+                C=C,
+                weight=self.freq_weight,
             )
             appeared_mask = appeared.new_zeros(C + 1).float()
             appeared_mask[appeared] = 1.0  # C + 1
             appeared_mask[C] = 1.0
-            loss = F.cross_entropy(pred_class_logits, gt_classes, weight=appeared_mask, reduction="mean")
+            loss = F.cross_entropy(
+                pred_class_logits, gt_classes, weight=appeared_mask, reduction="mean"
+            )
         else:
             loss = F.cross_entropy(pred_class_logits, gt_classes, reduction="mean")
         return loss
 
-    def box_reg_loss(self, proposal_boxes, gt_boxes, pred_deltas, gt_classes, num_classes=-1):
+    def box_reg_loss(
+        self, proposal_boxes, gt_boxes, pred_deltas, gt_classes, num_classes=-1
+    ):
         """
         Allow custom background index
         """
@@ -242,16 +295,22 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         if pred_deltas.shape[1] == box_dim:  # cls-agnostic regression
             fg_pred_deltas = pred_deltas[fg_inds]
         else:
-            fg_pred_deltas = pred_deltas.view(-1, self.num_classes, box_dim)[fg_inds, gt_classes[fg_inds]]
+            fg_pred_deltas = pred_deltas.view(-1, self.num_classes, box_dim)[
+                fg_inds, gt_classes[fg_inds]
+            ]
 
         if self.box_reg_loss_type == "smooth_l1":
             gt_pred_deltas = self.box2box_transform.get_deltas(
                 proposal_boxes[fg_inds],
                 gt_boxes[fg_inds],
             )
-            loss_box_reg = smooth_l1_loss(fg_pred_deltas, gt_pred_deltas, self.smooth_l1_beta, reduction="sum")
+            loss_box_reg = smooth_l1_loss(
+                fg_pred_deltas, gt_pred_deltas, self.smooth_l1_beta, reduction="sum"
+            )
         elif self.box_reg_loss_type == "giou":
-            fg_pred_boxes = self.box2box_transform.apply_deltas(fg_pred_deltas, proposal_boxes[fg_inds])
+            fg_pred_boxes = self.box2box_transform.apply_deltas(
+                fg_pred_deltas, proposal_boxes[fg_inds]
+            )
             loss_box_reg = giou_loss(fg_pred_boxes, gt_boxes[fg_inds], reduction="sum")
         else:
             raise ValueError(f"Invalid bbox reg loss type '{self.box_reg_loss_type}'")
@@ -266,7 +325,9 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         scores = self.predict_probs(predictions, proposals)
         if self.mult_proposal_score:
             proposal_scores = [p.get("objectness_logits") for p in proposals]
-            scores = [(s * ps[:, None]) ** 0.5 for s, ps in zip(scores, proposal_scores)]
+            scores = [
+                (s * ps[:, None]) ** 0.5 for s, ps in zip(scores, proposal_scores)
+            ]
         image_shapes = [x.image_size for x in proposals]
         return fast_rcnn_inference(
             boxes,
@@ -291,7 +352,12 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         return probs.split(num_inst_per_image, dim=0)
 
     def image_label_losses(
-        self, predictions, proposals, image_labels, classifier_info=(None, None, None), ann_type="image"
+        self,
+        predictions,
+        proposals,
+        image_labels,
+        classifier_info=(None, None, None),
+        ann_type="image",
     ):
         """
         Inputs:
@@ -314,12 +380,16 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         storage = get_event_storage()
         loss = scores[0].new_zeros([1])[0]
         caption_loss = scores[0].new_zeros([1])[0]
-        for idx, (score, labels, prop_score, p) in enumerate(zip(scores, image_labels, prop_scores, proposals)):
+        for idx, (score, labels, prop_score, p) in enumerate(
+            zip(scores, image_labels, prop_scores, proposals)
+        ):
             if score.shape[0] == 0:
                 loss += score.new_zeros([1])[0]
                 continue
             if "caption" in ann_type:
-                score, caption_loss_img = self._caption_loss(score, classifier_info, idx, B)
+                score, caption_loss_img = self._caption_loss(
+                    score, classifier_info, idx, B
+                )
                 caption_loss += self.caption_weight * caption_loss_img
                 if ann_type == "caption":
                     continue
@@ -354,13 +424,25 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
                             p.selected[ind_i] = label
                 else:
                     img_box_count = ind
-                    select_size_count = p[ind].proposal_boxes.area() / (p.image_size[0] * p.image_size[1])
+                    select_size_count = p[ind].proposal_boxes.area() / (
+                        p.image_size[0] * p.image_size[1]
+                    )
                     max_score_count = score[ind, label].sigmoid()
                     select_x_count = (
-                        (p.proposal_boxes.tensor[ind, 0] + p.proposal_boxes.tensor[ind, 2]) / 2 / p.image_size[1]
+                        (
+                            p.proposal_boxes.tensor[ind, 0]
+                            + p.proposal_boxes.tensor[ind, 2]
+                        )
+                        / 2
+                        / p.image_size[1]
                     )
                     select_y_count = (
-                        (p.proposal_boxes.tensor[ind, 1] + p.proposal_boxes.tensor[ind, 3]) / 2 / p.image_size[0]
+                        (
+                            p.proposal_boxes.tensor[ind, 1]
+                            + p.proposal_boxes.tensor[ind, 3]
+                        )
+                        / 2
+                        / p.image_size[0]
                     )
                     if self.debug:
                         p.selected[ind] = label
@@ -423,26 +505,34 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         score, caption_score = score.split([cls_and_cap_num - cap_num, cap_num], dim=1)
         # n x (C + 1), n x B
         caption_score = caption_score[-1:]  # 1 x B # -1: image level box
-        caption_target = caption_score.new_zeros(caption_score.shape)  # 1 x B or 1 x MB, M: num machines
+        caption_target = caption_score.new_zeros(
+            caption_score.shape
+        )  # 1 x B or 1 x MB, M: num machines
         if self.sync_caption_batch:
             # caption_target: 1 x MB
             rank = comm.get_rank()
             global_idx = B * rank + idx
-            assert (classifier_info[2][global_idx, -1] - rank) ** 2 < 1e-8, "{} {} {} {} {}".format(
-                rank,
-                global_idx,
-                classifier_info[2][global_idx, -1],
-                classifier_info[2].shape,
-                classifier_info[2][:, -1],
+            assert (classifier_info[2][global_idx, -1] - rank) ** 2 < 1e-8, (
+                "{} {} {} {} {}".format(
+                    rank,
+                    global_idx,
+                    classifier_info[2][global_idx, -1],
+                    classifier_info[2].shape,
+                    classifier_info[2][:, -1],
+                )
             )
             caption_target[:, global_idx] = 1.0
         else:
             assert caption_score.shape[1] == B
             caption_target[:, idx] = 1.0
-        caption_loss_img = F.binary_cross_entropy_with_logits(caption_score, caption_target, reduction="none")
+        caption_loss_img = F.binary_cross_entropy_with_logits(
+            caption_score, caption_target, reduction="none"
+        )
         if self.sync_caption_batch:
             fg_mask = (caption_target > 0.5).float()
-            assert (fg_mask.sum().item() - 1.0) ** 2 < 1e-8, "{} {}".format(fg_mask.shape, fg_mask)
+            assert (fg_mask.sum().item() - 1.0) ** 2 < 1e-8, "{} {}".format(
+                fg_mask.shape, fg_mask
+            )
             pos_loss = (caption_loss_img * fg_mask).sum()
             neg_loss = (caption_loss_img * (1.0 - fg_mask)).sum()
             caption_loss_img = pos_loss + self.neg_cap_weight * neg_loss
@@ -454,7 +544,9 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         assert prop_score is not None
         loss = 0
         final_score = score.sigmoid() * F.softmax(prop_score, dim=0)  # B x (C + 1)
-        img_score = torch.clamp(torch.sum(final_score, dim=0), min=1e-10, max=1 - 1e-10)  # (C + 1)
+        img_score = torch.clamp(
+            torch.sum(final_score, dim=0), min=1e-10, max=1 - 1e-10
+        )  # (C + 1)
         target = img_score.new_zeros(img_score.shape)  # (C + 1)
         target[label] = 1.0
         loss += F.binary_cross_entropy(img_score, target)
@@ -474,9 +566,13 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         target = score.new_zeros(score.shape)
         target[:, label] = 1.0
         with torch.no_grad():
-            x = F.binary_cross_entropy_with_logits(score, target, reduction="none").sum(dim=1)  # n
+            x = F.binary_cross_entropy_with_logits(score, target, reduction="none").sum(
+                dim=1
+            )  # n
         ind = x.argmin().item()
-        loss += F.binary_cross_entropy_with_logits(score[ind], target[0], reduction="sum")
+        loss += F.binary_cross_entropy_with_logits(
+            score[ind], target[0], reduction="sum"
+        )
         return loss, ind
 
     def _first_loss(self, score, label):
@@ -503,17 +599,23 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         ind = sizes[:-1].argmax().item() if len(sizes) > 1 else 0
         if self.softmax_weak_loss:
             loss += F.cross_entropy(
-                score[ind : ind + 1], score.new_tensor(label, dtype=torch.long).view(1), reduction="sum"
+                score[ind : ind + 1],
+                score.new_tensor(label, dtype=torch.long).view(1),
+                reduction="sum",
             )
         else:
-            loss += F.binary_cross_entropy_with_logits(score[ind], target, reduction="sum")
+            loss += F.binary_cross_entropy_with_logits(
+                score[ind], target, reduction="sum"
+            )
         return loss, ind
 
 
 def put_label_distribution(storage, hist_name, hist_counts, num_classes):
     """ """
     ht_min, ht_max = 0, num_classes
-    hist_edges = torch.linspace(start=ht_min, end=ht_max, steps=num_classes + 1, dtype=torch.float32)
+    hist_edges = torch.linspace(
+        start=ht_min, end=ht_max, steps=num_classes + 1, dtype=torch.float32
+    )
 
     hist_params = dict(
         tag=hist_name,

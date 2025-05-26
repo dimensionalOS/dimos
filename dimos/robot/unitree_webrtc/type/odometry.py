@@ -9,10 +9,18 @@ raw_odometry_msg_sample = {
     "type": "msg",
     "topic": "rt/utlidar/robot_pose",
     "data": {
-        "header": {"stamp": {"sec": 1746565669, "nanosec": 448350564}, "frame_id": "odom"},
+        "header": {
+            "stamp": {"sec": 1746565669, "nanosec": 448350564},
+            "frame_id": "odom",
+        },
         "pose": {
             "position": {"x": 5.961965, "y": -2.916958, "z": 0.319509},
-            "orientation": {"x": 0.002787, "y": -0.000902, "z": -0.970244, "w": -0.242112},
+            "orientation": {
+                "x": 0.002787,
+                "y": -0.000902,
+                "z": -0.970244,
+                "w": -0.242112,
+            },
         },
     },
 }

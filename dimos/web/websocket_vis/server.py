@@ -72,7 +72,11 @@ def deep_merge(source, destination):
     Lists are replaced, not merged.
     """
     for key, value in source.items():
-        if key in destination and isinstance(destination[key], dict) and isinstance(value, dict):
+        if (
+            key in destination
+            and isinstance(destination[key], dict)
+            and isinstance(value, dict)
+        ):
             # If both values are dictionaries, recursively deep merge them
             deep_merge(value, destination[key])
         else:

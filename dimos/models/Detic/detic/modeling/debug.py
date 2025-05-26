@@ -5,15 +5,25 @@ import torch
 import torch.nn.functional as F
 import os
 
-COLORS = ((np.random.rand(1300, 3) * 0.4 + 0.6) * 255).astype(np.uint8).reshape(1300, 1, 1, 3)
+COLORS = (
+    ((np.random.rand(1300, 3) * 0.4 + 0.6) * 255)
+    .astype(np.uint8)
+    .reshape(1300, 1, 1, 3)
+)
 
 
 def _get_color_image(heatmap):
     heatmap = heatmap.reshape(heatmap.shape[0], heatmap.shape[1], heatmap.shape[2], 1)
     if heatmap.shape[0] == 1:
-        color_map = (heatmap * np.ones((1, 1, 1, 3), np.uint8) * 255).max(axis=0).astype(np.uint8)  # H, W, 3
+        color_map = (
+            (heatmap * np.ones((1, 1, 1, 3), np.uint8) * 255)
+            .max(axis=0)
+            .astype(np.uint8)
+        )  # H, W, 3
     else:
-        color_map = (heatmap * COLORS[: heatmap.shape[0]]).max(axis=0).astype(np.uint8)  # H, W, 3
+        color_map = (
+            (heatmap * COLORS[: heatmap.shape[0]]).max(axis=0).astype(np.uint8)
+        )  # H, W, 3
 
     return color_map
 
@@ -45,7 +55,9 @@ def _decompose_level(x, shapes_per_level, N):
         h = shapes_per_level[l][0].int().item()
         w = shapes_per_level[l][1].int().item()
         for i in range(N):
-            ret[l].append(x[st + h * w * i : st + h * w * (i + 1)].view(h, w, -1).permute(2, 0, 1))
+            ret[l].append(
+                x[st + h * w * i : st + h * w * (i + 1)].view(h, w, -1).permute(2, 0, 1)
+            )
         st += h * w * N
     return ret
 
@@ -74,7 +86,15 @@ def _ind2il(ind, shapes_per_level, N):
 
 
 def debug_train(
-    images, gt_instances, flattened_hms, reg_targets, labels, pos_inds, shapes_per_level, locations, strides
+    images,
+    gt_instances,
+    flattened_hms,
+    reg_targets,
+    labels,
+    pos_inds,
+    shapes_per_level,
+    locations,
+    strides,
 ):
     """
     images: N x 3 x H x W
@@ -104,7 +124,12 @@ def debug_train(
             for j in range(len(bboxes)):
                 bbox = bboxes[j]
                 cv2.rectangle(
-                    blend, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), (0, 0, 255), 3, cv2.LINE_AA
+                    blend,
+                    (int(bbox[0]), int(bbox[1])),
+                    (int(bbox[2]), int(bbox[3])),
+                    (0, 0, 255),
+                    3,
+                    cv2.LINE_AA,
                 )
 
         for j in range(len(pos_inds)):
@@ -112,7 +137,12 @@ def debug_train(
             if image_id != i:
                 continue
             loc = locations[pos_inds[j]]
-            cv2.drawMarker(blend, (int(loc[0]), int(loc[1])), (0, 255, 255), markerSize=(l + 1) * 16)
+            cv2.drawMarker(
+                blend,
+                (int(loc[0]), int(loc[1])),
+                (0, 255, 255),
+                markerSize=(l + 1) * 16,
+            )
 
         for j in range(len(reg_inds)):
             image_id, l = _ind2il(reg_inds[j], shapes_per_level, N)
@@ -121,9 +151,19 @@ def debug_train(
             ltrb = reg_targets[reg_inds[j]]
             ltrb *= strides[l]
             loc = locations[reg_inds[j]]
-            bbox = [(loc[0] - ltrb[0]), (loc[1] - ltrb[1]), (loc[0] + ltrb[2]), (loc[1] + ltrb[3])]
+            bbox = [
+                (loc[0] - ltrb[0]),
+                (loc[1] - ltrb[1]),
+                (loc[0] + ltrb[2]),
+                (loc[1] + ltrb[3]),
+            ]
             cv2.rectangle(
-                blend, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), (255, 0, 0), 1, cv2.LINE_AA
+                blend,
+                (int(bbox[0]), int(bbox[1])),
+                (int(bbox[2]), int(bbox[3])),
+                (255, 0, 0),
+                1,
+                cv2.LINE_AA,
             )
             cv2.circle(blend, (int(loc[0]), int(loc[1])), 2, (255, 0, 0), -1)
 
@@ -132,7 +172,14 @@ def debug_train(
 
 
 def debug_test(
-    images, logits_pred, reg_pred, agn_hm_pred=[], preds=[], vis_thresh=0.3, debug_show_name=False, mult_agn=False
+    images,
+    logits_pred,
+    reg_pred,
+    agn_hm_pred=[],
+    preds=[],
+    vis_thresh=0.3,
+    debug_show_name=False,
+    mult_agn=False,
 ):
     """
     images: N x 3 x H x W
@@ -170,9 +217,17 @@ def debug_test(
                 cat2name = [x["name"] for x in LVIS_CATEGORIES]
             for j in range(len(preds[i].scores) if preds is not None else 0):
                 if preds[i].scores[j] > vis_thresh:
-                    bbox = preds[i].proposal_boxes[j] if preds[i].has("proposal_boxes") else preds[i].pred_boxes[j]
+                    bbox = (
+                        preds[i].proposal_boxes[j]
+                        if preds[i].has("proposal_boxes")
+                        else preds[i].pred_boxes[j]
+                    )
                     bbox = bbox.tensor[0].detach().cpu().numpy().astype(np.int32)
-                    cat = int(preds[i].pred_classes[j]) if preds[i].has("pred_classes") else 0
+                    cat = (
+                        int(preds[i].pred_classes[j])
+                        if preds[i].has("pred_classes")
+                        else 0
+                    )
                     cl = COLORS[cat, 0, 0]
                     cv2.rectangle(
                         pred_image,
@@ -183,7 +238,9 @@ def debug_test(
                         cv2.LINE_AA,
                     )
                     if debug_show_name:
-                        txt = "{}{:.1f}".format(cat2name[cat] if cat > 0 else "", preds[i].scores[j])
+                        txt = "{}{:.1f}".format(
+                            cat2name[cat] if cat > 0 else "", preds[i].scores[j]
+                        )
                         font = cv2.FONT_HERSHEY_SIMPLEX
                         cat_size = cv2.getTextSize(txt, font, 0.5, 2)[0]
                         cv2.rectangle(
@@ -206,7 +263,9 @@ def debug_test(
 
             if agn_hm_pred[l] is not None:
                 agn_hm_ = agn_hm_pred[l][i, 0, :, :, None].detach().cpu().numpy()
-                agn_hm_ = (agn_hm_ * np.array([255, 255, 255]).reshape(1, 1, 3)).astype(np.uint8)
+                agn_hm_ = (agn_hm_ * np.array([255, 255, 255]).reshape(1, 1, 3)).astype(
+                    np.uint8
+                )
                 cv2.imshow("agn_hm_{}".format(l), agn_hm_)
         blend = _blend_image_heatmaps(image.copy(), color_maps)
         cv2.imshow("blend", blend)
@@ -239,7 +298,9 @@ def debug_second_stage(
 
         cat2name = ["({}){}".format(x["frequency"], x["name"]) for x in LVIS_CATEGORIES]
     for i in range(len(images)):
-        image = images[i].detach().cpu().numpy().transpose(1, 2, 0).astype(np.uint8).copy()
+        image = (
+            images[i].detach().cpu().numpy().transpose(1, 2, 0).astype(np.uint8).copy()
+        )
         if bgr:
             image = image[:, :, ::-1].copy()
         if instances[i].has("gt_boxes"):
@@ -255,7 +316,14 @@ def debug_second_stage(
                 bbox = bboxes[j]
                 cl = COLORS[cats[j], 0, 0]
                 cl = (int(cl[0]), int(cl[1]), int(cl[2]))
-                cv2.rectangle(image, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), cl, 2, cv2.LINE_AA)
+                cv2.rectangle(
+                    image,
+                    (int(bbox[0]), int(bbox[1])),
+                    (int(bbox[2]), int(bbox[3])),
+                    cl,
+                    2,
+                    cv2.LINE_AA,
+                )
                 if debug_show_name:
                     cat = cats[j]
                     txt = "{}{:.1f}".format(cat2name[cat] if cat > 0 else "", scores[j])
@@ -279,7 +347,15 @@ def debug_second_stage(
                         lineType=cv2.LINE_AA,
                     )
         if proposals is not None:
-            proposal_image = images[i].detach().cpu().numpy().transpose(1, 2, 0).astype(np.uint8).copy()
+            proposal_image = (
+                images[i]
+                .detach()
+                .cpu()
+                .numpy()
+                .transpose(1, 2, 0)
+                .astype(np.uint8)
+                .copy()
+            )
             if bgr:
                 proposal_image = proposal_image.copy()
             else:
@@ -305,7 +381,12 @@ def debug_second_stage(
                         cl = (0, 0, 0xA4)
                         th = 4
                     cv2.rectangle(
-                        proposal_image, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), cl, th, cv2.LINE_AA
+                        proposal_image,
+                        (int(bbox[0]), int(bbox[1])),
+                        (int(bbox[2]), int(bbox[3])),
+                        cl,
+                        th,
+                        cv2.LINE_AA,
                     )
                     if selected[j] >= 0 and debug_show_name:
                         cat = selected[j].item()

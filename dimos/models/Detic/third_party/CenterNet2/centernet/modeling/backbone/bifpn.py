@@ -259,7 +259,9 @@ class FpnCombine(nn.Module):
 
         if weight_method == "attn" or weight_method == "fastattn":
             # WSM
-            self.edge_weights = nn.Parameter(torch.ones(len(inputs_offsets)), requires_grad=True)
+            self.edge_weights = nn.Parameter(
+                torch.ones(len(inputs_offsets)), requires_grad=True
+            )
         else:
             self.edge_weights = None
 
@@ -277,7 +279,13 @@ class FpnCombine(nn.Module):
         elif self.weight_method == "fastattn":
             edge_weights = nn.functional.relu(self.edge_weights.type(dtype))
             weights_sum = torch.sum(edge_weights)
-            x = torch.stack([(nodes[i] * edge_weights[i]) / (weights_sum + 0.0001) for i in range(len(nodes))], dim=-1)
+            x = torch.stack(
+                [
+                    (nodes[i] * edge_weights[i]) / (weights_sum + 0.0001)
+                    for i in range(len(nodes))
+                ],
+                dim=-1,
+            )
         elif self.weight_method == "sum":
             x = torch.stack(nodes, dim=-1)
         else:
@@ -351,7 +359,11 @@ class BiFpnLayer(nn.Module):
                 norm=norm,
                 act_layer=conv_act,
             )
-            after_combine["conv"] = SeparableConv2d(**conv_kwargs) if separable_conv else ConvBnAct2d(**conv_kwargs)
+            after_combine["conv"] = (
+                SeparableConv2d(**conv_kwargs)
+                if separable_conv
+                else ConvBnAct2d(**conv_kwargs)
+            )
             fnode_layers["after_combine"] = nn.Sequential(after_combine)
 
             self.fnode.add_module(str(i), nn.Sequential(fnode_layers))
@@ -389,7 +401,9 @@ class BiFPN(Backbone):
         self.in_features = in_features
         self._size_divisibility = 128
         levels = [int(math.log2(s)) for s in in_strides]
-        self._out_feature_strides = {"p{}".format(int(math.log2(s))): s for s in in_strides}
+        self._out_feature_strides = {
+            "p{}".format(int(math.log2(s))): s for s in in_strides
+        }
         if len(in_features) < num_levels:
             for l in range(num_levels - len(in_features)):
                 s = l + levels[-1]
@@ -401,7 +415,8 @@ class BiFPN(Backbone):
         # print('self._out_feature_channels', self._out_feature_channels)
 
         feature_info = [
-            {"num_chs": in_channels[level], "reduction": in_strides[level]} for level in range(len(self.in_features))
+            {"num_chs": in_channels[level], "reduction": in_strides[level]}
+            for level in range(len(self.in_features))
         ]
         # self.config = config
         fpn_config = get_fpn_config()

@@ -65,7 +65,9 @@ class Costmap:
             pickle.dump(self, f)
 
     @classmethod
-    def create_empty(cls, width: int = 100, height: int = 100, resolution: float = 0.1) -> "Costmap":
+    def create_empty(
+        cls, width: int = 100, height: int = 100, resolution: float = 0.1
+    ) -> "Costmap":
         """Create an empty costmap with specified dimensions."""
         return cls(
             grid=np.zeros((height, width), dtype=np.int8),
@@ -171,7 +173,9 @@ class Costmap:
             -kernel_size // 2 : kernel_size // 2 + 1,
             -kernel_size // 2 : kernel_size // 2 + 1,
         ]
-        kernel = (x * x + y * y <= (kernel_size // 2) * (kernel_size // 2)).astype(np.uint8)
+        kernel = (x * x + y * y <= (kernel_size // 2) * (kernel_size // 2)).astype(
+            np.uint8
+        )
 
         # Create distance map using dilation
         # Each iteration adds one 'ring' of cells around obstacles
@@ -185,7 +189,9 @@ class Costmap:
 
         for i in range(iterations):
             # Dilate the binary map
-            dilated = ndimage.binary_dilation(dilated_map > 0, structure=kernel, iterations=1).astype(np.uint8)
+            dilated = ndimage.binary_dilation(
+                dilated_map > 0, structure=kernel, iterations=1
+            ).astype(np.uint8)
 
             # Calculate the new layer (cells that were just added in this iteration)
             new_layer = (dilated - (dilated_map > 0).astype(np.uint8)) * 100
@@ -263,7 +269,9 @@ class Costmap:
         return self.pointcloud
 
     @property
-    def pointcloud(self, *, res: float = 0.25, origin=(0.0, 0.0), show_unknown: bool = False):
+    def pointcloud(
+        self, *, res: float = 0.25, origin=(0.0, 0.0), show_unknown: bool = False
+    ):
         """
         Visualise a 2-D costmap (int8, −1…100) as an Open3D PointCloud.
 

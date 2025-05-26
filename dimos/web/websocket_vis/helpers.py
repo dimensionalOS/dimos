@@ -27,7 +27,11 @@ class Visualizable(ABC):
 
 
 def vector_stream(
-    name: str, pos: Callable[[], Vector], update_interval=0.1, precision=0.25, history=10
+    name: str,
+    pos: Callable[[], Vector],
+    update_interval=0.1,
+    precision=0.25,
+    history=10,
 ) -> Observable[Tuple[str, Drawable]]:
     return rx.interval(update_interval).pipe(
         ops.map(lambda _: pos()),
@@ -38,5 +42,7 @@ def vector_stream(
             lambda hist, cur: hist.ipush(cur).iclip_tail(history),
             seed=Path(),
         ),
-        ops.flat_map(lambda path: rx.from_([(f"{name}_hst", path), (name, path.last())])),
+        ops.flat_map(
+            lambda path: rx.from_([(f"{name}_hst", path), (name, path.last())])
+        ),
     )

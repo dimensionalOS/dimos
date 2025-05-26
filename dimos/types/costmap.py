@@ -93,7 +93,9 @@ class Costmap:
         qy = costmap_msg.info.origin.orientation.y
         qz = costmap_msg.info.origin.orientation.z
         qw = costmap_msg.info.origin.orientation.w
-        origin_theta = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        origin_theta = math.atan2(
+            2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz)
+        )
 
         # Convert to numpy array
         data = np.array(costmap_msg.data, dtype=np.int8)
@@ -124,7 +126,9 @@ class Costmap:
         return costmap
 
     @classmethod
-    def create_empty(cls, width: int = 100, height: int = 100, resolution: float = 0.1) -> "Costmap":
+    def create_empty(
+        cls, width: int = 100, height: int = 100, resolution: float = 0.1
+    ) -> "Costmap":
         """Create an empty costmap with specified dimensions."""
         return cls(
             grid=np.zeros((height, width), dtype=np.int8),
@@ -227,7 +231,9 @@ class Costmap:
             -kernel_size // 2 : kernel_size // 2 + 1,
             -kernel_size // 2 : kernel_size // 2 + 1,
         ]
-        kernel = (x * x + y * y <= (kernel_size // 2) * (kernel_size // 2)).astype(np.uint8)
+        kernel = (x * x + y * y <= (kernel_size // 2) * (kernel_size // 2)).astype(
+            np.uint8
+        )
 
         # Create distance map using dilation
         # Each iteration adds one 'ring' of cells around obstacles
@@ -241,7 +247,9 @@ class Costmap:
 
         for i in range(iterations):
             # Dilate the binary map
-            dilated = ndimage.binary_dilation(dilated_map > 0, structure=kernel, iterations=1).astype(np.uint8)
+            dilated = ndimage.binary_dilation(
+                dilated_map > 0, structure=kernel, iterations=1
+            ).astype(np.uint8)
 
             # Calculate the new layer (cells that were just added in this iteration)
             new_layer = (dilated - (dilated_map > 0).astype(np.uint8)) * 100
@@ -321,6 +329,8 @@ if __name__ == "__main__":
     print(costmap)
 
     # Create a smudged version of the costmap for better planning
-    smudged_costmap = costmap.smudge(kernel_size=10, iterations=10, threshold=80, preserve_unknown=False)
+    smudged_costmap = costmap.smudge(
+        kernel_size=10, iterations=10, threshold=80, preserve_unknown=False
+    )
 
     print(costmap)

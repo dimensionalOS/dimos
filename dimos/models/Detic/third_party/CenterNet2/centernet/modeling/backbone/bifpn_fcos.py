@@ -47,7 +47,9 @@ class FeatureMapResampler(nn.Module):
             x = self.reduction(x)
 
         if self.stride == 2:
-            x = F.max_pool2d(x, kernel_size=self.stride + 1, stride=self.stride, padding=1)
+            x = F.max_pool2d(
+                x, kernel_size=self.stride + 1, stride=self.stride, padding=1
+            )
         elif self.stride == 1:
             pass
         else:
@@ -61,11 +63,17 @@ class BackboneWithTopLevels(Backbone):
         self.backbone = backbone
         backbone_output_shape = backbone.output_shape()
 
-        self._out_feature_channels = {name: shape.channels for name, shape in backbone_output_shape.items()}
-        self._out_feature_strides = {name: shape.stride for name, shape in backbone_output_shape.items()}
+        self._out_feature_channels = {
+            name: shape.channels for name, shape in backbone_output_shape.items()
+        }
+        self._out_feature_strides = {
+            name: shape.stride for name, shape in backbone_output_shape.items()
+        }
         self._out_features = list(self._out_feature_strides.keys())
 
-        last_feature_name = max(self._out_feature_strides.keys(), key=lambda x: split_name(x)[1])
+        last_feature_name = max(
+            self._out_feature_strides.keys(), key=lambda x: split_name(x)[1]
+        )
         self.last_feature_name = last_feature_name
         self.num_top_levels = num_top_levels
 
@@ -76,7 +84,9 @@ class BackboneWithTopLevels(Backbone):
         prev_channels = last_channels
         for i in range(num_top_levels):
             name = prefix + str(suffix + i + 1)
-            self.add_module(name, FeatureMapResampler(prev_channels, out_channels, 2, norm))
+            self.add_module(
+                name, FeatureMapResampler(prev_channels, out_channels, 2, norm)
+            )
             prev_channels = out_channels
 
             self._out_feature_channels[name] = out_channels
@@ -154,15 +164,26 @@ class SingleBiFPN(Backbone):
 
                 in_channels = node_info[input_offset]
                 if in_channels != out_channels:
-                    lateral_conv = Conv2d(in_channels, out_channels, kernel_size=1, norm=get_norm(norm, out_channels))
-                    self.add_module("lateral_{}_f{}".format(input_offset, feat_level), lateral_conv)
+                    lateral_conv = Conv2d(
+                        in_channels,
+                        out_channels,
+                        kernel_size=1,
+                        norm=get_norm(norm, out_channels),
+                    )
+                    self.add_module(
+                        "lateral_{}_f{}".format(input_offset, feat_level), lateral_conv
+                    )
             node_info.append(out_channels)
             num_output_connections.append(0)
 
             # generate attention weights
             name = "weights_f{}_{}".format(feat_level, inputs_offsets_str)
             self.__setattr__(
-                name, nn.Parameter(torch.ones(len(inputs_offsets), dtype=torch.float32), requires_grad=True)
+                name,
+                nn.Parameter(
+                    torch.ones(len(inputs_offsets), dtype=torch.float32),
+                    requires_grad=True,
+                ),
             )
 
             # generate convolutions after combination
@@ -223,7 +244,9 @@ class SingleBiFPN(Backbone):
                     )
                 elif h <= target_h and w <= target_w:
                     if h < target_h or w < target_w:
-                        input_node = F.interpolate(input_node, size=(target_h, target_w), mode="nearest")
+                        input_node = F.interpolate(
+                            input_node, size=(target_h, target_w), mode="nearest"
+                        )
                 else:
                     raise NotImplementedError()
                 input_nodes.append(input_node)
@@ -259,7 +282,9 @@ class BiFPN(Backbone):
     It creates pyramid features built on top of some input feature maps.
     """
 
-    def __init__(self, bottom_up, in_features, out_channels, num_top_levels, num_repeats, norm=""):
+    def __init__(
+        self, bottom_up, in_features, out_channels, num_top_levels, num_repeats, norm=""
+    ):
         """
         Args:
             bottom_up (Backbone): module representing the bottom up subnetwork.
@@ -279,7 +304,9 @@ class BiFPN(Backbone):
         assert isinstance(bottom_up, Backbone)
 
         # add extra feature levels (i.e., 6 and 7)
-        self.bottom_up = BackboneWithTopLevels(bottom_up, out_channels, num_top_levels, norm)
+        self.bottom_up = BackboneWithTopLevels(
+            bottom_up, out_channels, num_top_levels, norm
+        )
         bottom_up_output_shapes = self.bottom_up.output_shape()
 
         in_features = sorted(in_features, key=lambda x: split_name(x)[1])
@@ -305,10 +332,16 @@ class BiFPN(Backbone):
         self.repeated_bifpn = nn.ModuleList()
         for i in range(num_repeats):
             if i == 0:
-                in_channels_list = [bottom_up_output_shapes[name].channels for name in in_features]
+                in_channels_list = [
+                    bottom_up_output_shapes[name].channels for name in in_features
+                ]
             else:
-                in_channels_list = [self._out_feature_channels[name] for name in self._out_features]
-            self.repeated_bifpn.append(SingleBiFPN(in_channels_list, out_channels, norm))
+                in_channels_list = [
+                    self._out_feature_channels[name] for name in self._out_features
+                ]
+            self.repeated_bifpn.append(
+                SingleBiFPN(in_channels_list, out_channels, norm)
+            )
 
     @property
     def size_divisibility(self):
@@ -340,7 +373,9 @@ def _assert_strides_are_log2_contiguous(strides):
     Assert that each stride is 2x times its preceding stride, i.e. "contiguous in log2".
     """
     for i, stride in enumerate(strides[1:], 1):
-        assert stride == 2 * strides[i - 1], "Strides {} {} are not log2 contiguous".format(stride, strides[i - 1])
+        assert stride == 2 * strides[i - 1], (
+            "Strides {} {} are not log2 contiguous".format(stride, strides[i - 1])
+        )
 
 
 @BACKBONE_REGISTRY.register()

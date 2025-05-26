@@ -58,14 +58,20 @@ def do_test(cfg, model):
     results = OrderedDict()
     for d, dataset_name in enumerate(cfg.DATASETS.TEST):
         if cfg.MODEL.RESET_CLS_TESTS:
-            reset_cls_test(model, cfg.MODEL.TEST_CLASSIFIERS[d], cfg.MODEL.TEST_NUM_CLASSES[d])
+            reset_cls_test(
+                model, cfg.MODEL.TEST_CLASSIFIERS[d], cfg.MODEL.TEST_NUM_CLASSES[d]
+            )
         mapper = (
             None
             if cfg.INPUT.TEST_INPUT_TYPE == "default"
-            else DatasetMapper(cfg, False, augmentations=build_custom_augmentation(cfg, False))
+            else DatasetMapper(
+                cfg, False, augmentations=build_custom_augmentation(cfg, False)
+            )
         )
         data_loader = build_detection_test_loader(cfg, dataset_name, mapper=mapper)
-        output_folder = os.path.join(cfg.OUTPUT_DIR, "inference_{}".format(dataset_name))
+        output_folder = os.path.join(
+            cfg.OUTPUT_DIR, "inference_{}".format(dataset_name)
+        )
         evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
 
         if evaluator_type == "lvis" or cfg.GEN_PSEDO_LABELS:
@@ -101,14 +107,25 @@ def do_train(cfg, model, resume=False):
         optimizer = build_optimizer(cfg, model)
     scheduler = build_lr_scheduler(cfg, optimizer)
 
-    checkpointer = DetectionCheckpointer(model, cfg.OUTPUT_DIR, optimizer=optimizer, scheduler=scheduler)
+    checkpointer = DetectionCheckpointer(
+        model, cfg.OUTPUT_DIR, optimizer=optimizer, scheduler=scheduler
+    )
 
-    start_iter = checkpointer.resume_or_load(cfg.MODEL.WEIGHTS, resume=resume).get("iteration", -1) + 1
+    start_iter = (
+        checkpointer.resume_or_load(cfg.MODEL.WEIGHTS, resume=resume).get(
+            "iteration", -1
+        )
+        + 1
+    )
     if not resume:
         start_iter = 0
-    max_iter = cfg.SOLVER.MAX_ITER if cfg.SOLVER.TRAIN_ITER < 0 else cfg.SOLVER.TRAIN_ITER
+    max_iter = (
+        cfg.SOLVER.MAX_ITER if cfg.SOLVER.TRAIN_ITER < 0 else cfg.SOLVER.TRAIN_ITER
+    )
 
-    periodic_checkpointer = PeriodicCheckpointer(checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD, max_iter=max_iter)
+    periodic_checkpointer = PeriodicCheckpointer(
+        checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD, max_iter=max_iter
+    )
 
     writers = (
         [
@@ -129,7 +146,10 @@ def do_train(cfg, model, resume=False):
         if cfg.INPUT.CUSTOM_AUG == "DETR"
         else MapperClass(cfg, True, augmentations=build_custom_augmentation(cfg, True))
     )
-    if cfg.DATALOADER.SAMPLER_TRAIN in ["TrainingSampler", "RepeatFactorTrainingSampler"]:
+    if cfg.DATALOADER.SAMPLER_TRAIN in [
+        "TrainingSampler",
+        "RepeatFactorTrainingSampler",
+    ]:
         data_loader = build_detection_train_loader(cfg, mapper=mapper)
     else:
         data_loader = build_custom_train_loader(cfg, mapper=mapper)
@@ -153,7 +173,9 @@ def do_train(cfg, model, resume=False):
             losses = sum(loss for k, loss in loss_dict.items())
             assert torch.isfinite(losses).all(), loss_dict
 
-            loss_dict_reduced = {k: v.item() for k, v in comm.reduce_dict(loss_dict).items()}
+            loss_dict_reduced = {
+                k: v.item() for k, v in comm.reduce_dict(loss_dict).items()
+            }
             losses_reduced = sum(loss for loss in loss_dict_reduced.values())
             if comm.is_main_process():
                 storage.put_scalars(total_loss=losses_reduced, **loss_dict_reduced)
@@ -167,24 +189,36 @@ def do_train(cfg, model, resume=False):
                 losses.backward()
                 optimizer.step()
 
-            storage.put_scalar("lr", optimizer.param_groups[0]["lr"], smoothing_hint=False)
+            storage.put_scalar(
+                "lr", optimizer.param_groups[0]["lr"], smoothing_hint=False
+            )
 
             step_time = step_timer.seconds()
             storage.put_scalars(time=step_time)
             data_timer.reset()
             scheduler.step()
 
-            if cfg.TEST.EVAL_PERIOD > 0 and iteration % cfg.TEST.EVAL_PERIOD == 0 and iteration != max_iter:
+            if (
+                cfg.TEST.EVAL_PERIOD > 0
+                and iteration % cfg.TEST.EVAL_PERIOD == 0
+                and iteration != max_iter
+            ):
                 do_test(cfg, model)
                 comm.synchronize()
 
-            if iteration - start_iter > 5 and (iteration % 20 == 0 or iteration == max_iter):
+            if iteration - start_iter > 5 and (
+                iteration % 20 == 0 or iteration == max_iter
+            ):
                 for writer in writers:
                     writer.write()
             periodic_checkpointer.step(iteration)
 
         total_time = time.perf_counter() - start_time
-        logger.info("Total training time: {}".format(str(datetime.timedelta(seconds=int(total_time)))))
+        logger.info(
+            "Total training time: {}".format(
+                str(datetime.timedelta(seconds=int(total_time)))
+            )
+        )
 
 
 def setup(args):
@@ -212,7 +246,9 @@ def main(args):
     model = build_model(cfg)
     logger.info("Model:\n{}".format(model))
     if args.eval_only:
-        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(cfg.MODEL.WEIGHTS, resume=args.resume)
+        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
+            cfg.MODEL.WEIGHTS, resume=args.resume
+        )
 
         return do_test(cfg, model)
 
@@ -233,12 +269,16 @@ if __name__ == "__main__":
     args = default_argument_parser()
     args = args.parse_args()
     if args.num_machines == 1:
-        args.dist_url = "tcp://127.0.0.1:{}".format(torch.randint(11111, 60000, (1,))[0].item())
+        args.dist_url = "tcp://127.0.0.1:{}".format(
+            torch.randint(11111, 60000, (1,))[0].item()
+        )
     else:
         if args.dist_url == "host":
             args.dist_url = "tcp://{}:12345".format(os.environ["SLURM_JOB_NODELIST"])
         elif not args.dist_url.startswith("tcp"):
-            tmp = os.popen("echo $(scontrol show job {} | grep BatchHost)".format(args.dist_url)).read()
+            tmp = os.popen(
+                "echo $(scontrol show job {} | grep BatchHost)".format(args.dist_url)
+            ).read()
             tmp = tmp[tmp.find("=") + 1 : -1]
             args.dist_url = "tcp://{}:12345".format(tmp)
     print("Command Line Args:", args)

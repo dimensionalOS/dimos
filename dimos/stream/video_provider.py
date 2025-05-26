@@ -59,7 +59,9 @@ class VideoFrameError(Exception):
 class AbstractVideoProvider(ABC):
     """Abstract base class for video providers managing video capture resources."""
 
-    def __init__(self, dev_name: str = "NA", pool_scheduler: Optional[ThreadPoolScheduler] = None) -> None:
+    def __init__(
+        self, dev_name: str = "NA", pool_scheduler: Optional[ThreadPoolScheduler] = None
+    ) -> None:
         """Initializes the video provider with a device name.
 
         Args:
@@ -142,7 +144,9 @@ class VideoProvider(AbstractVideoProvider):
 
             logger.info(f"Opened new capture: {self.video_source}")
 
-    def capture_video_as_observable(self, realtime: bool = True, fps: int = 30) -> Observable:
+    def capture_video_as_observable(
+        self, realtime: bool = True, fps: int = 30
+    ) -> Observable:
         """Creates an observable from video capture.
 
         Creates an observable that emits frames at specified FPS or the video's
@@ -172,7 +176,9 @@ class VideoProvider(AbstractVideoProvider):
                     if native_fps > 0:
                         local_fps = native_fps
                     else:
-                        logger.warning("Native FPS not available, defaulting to specified FPS")
+                        logger.warning(
+                            "Native FPS not available, defaulting to specified FPS"
+                        )
 
                 frame_interval: float = 1.0 / local_fps
                 frame_time: float = time.monotonic()

@@ -30,8 +30,12 @@ def build_custom_train_loader(cfg, mapper=None):
         dataset_dicts = get_detection_dataset_dicts_with_source(
             cfg.DATASETS.TRAIN,
             filter_empty=cfg.DATALOADER.FILTER_EMPTY_ANNOTATIONS,
-            min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE if cfg.MODEL.KEYPOINT_ON else 0,
-            proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN if cfg.MODEL.LOAD_PROPOSALS else None,
+            min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE
+            if cfg.MODEL.KEYPOINT_ON
+            else 0,
+            proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN
+            if cfg.MODEL.LOAD_PROPOSALS
+            else None,
         )
         sizes = [0 for _ in range(len(cfg.DATASETS.TRAIN))]
         for d in dataset_dicts:
@@ -41,8 +45,12 @@ def build_custom_train_loader(cfg, mapper=None):
         dataset_dicts = get_detection_dataset_dicts(
             cfg.DATASETS.TRAIN,
             filter_empty=cfg.DATALOADER.FILTER_EMPTY_ANNOTATIONS,
-            min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE if cfg.MODEL.KEYPOINT_ON else 0,
-            proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN if cfg.MODEL.LOAD_PROPOSALS else None,
+            min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE
+            if cfg.MODEL.KEYPOINT_ON
+            else 0,
+            proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN
+            if cfg.MODEL.LOAD_PROPOSALS
+            else None,
         )
     dataset = DatasetFromList(dataset_dicts, copy=False)
 
@@ -61,8 +69,10 @@ def build_custom_train_loader(cfg, mapper=None):
         assert source_aware
         sampler = MultiDatasetSampler(cfg, sizes, dataset_dicts)
     elif sampler_name == "RepeatFactorTrainingSampler":
-        repeat_factors = RepeatFactorTrainingSampler.repeat_factors_from_category_frequency(
-            dataset_dicts, cfg.DATALOADER.REPEAT_THRESHOLD
+        repeat_factors = (
+            RepeatFactorTrainingSampler.repeat_factors_from_category_frequency(
+                dataset_dicts, cfg.DATALOADER.REPEAT_THRESHOLD
+            )
         )
         sampler = RepeatFactorTrainingSampler(repeat_factors)
     elif sampler_name == "ClassAwareSampler":
@@ -100,13 +110,17 @@ class ClassAwareSampler(Sampler):
 
     def __iter__(self):
         start = self._rank
-        yield from itertools.islice(self._infinite_indices(), start, None, self._world_size)
+        yield from itertools.islice(
+            self._infinite_indices(), start, None, self._world_size
+        )
 
     def _infinite_indices(self):
         g = torch.Generator()
         g.manual_seed(self._seed)
         while True:
-            ids = torch.multinomial(self.weights, self._size, generator=g, replacement=True)
+            ids = torch.multinomial(
+                self.weights, self._size, generator=g, replacement=True
+            )
             yield from ids
 
     def _get_class_balance_factor(self, dataset_dicts, l=1.0):
@@ -123,13 +137,17 @@ class ClassAwareSampler(Sampler):
         return torch.tensor(ret).float()
 
 
-def get_detection_dataset_dicts_with_source(dataset_names, filter_empty=True, min_keypoints=0, proposal_files=None):
+def get_detection_dataset_dicts_with_source(
+    dataset_names, filter_empty=True, min_keypoints=0, proposal_files=None
+):
     assert len(dataset_names)
     dataset_dicts = [DatasetCatalog.get(dataset_name) for dataset_name in dataset_names]
     for dataset_name, dicts in zip(dataset_names, dataset_dicts):
         assert len(dicts), "Dataset '{}' is empty!".format(dataset_name)
 
-    for source_id, (dataset_name, dicts) in enumerate(zip(dataset_names, dataset_dicts)):
+    for source_id, (dataset_name, dicts) in enumerate(
+        zip(dataset_names, dataset_dicts)
+    ):
         assert len(dicts), "Dataset '{}' is empty!".format(dataset_name)
         for d in dicts:
             d["dataset_source"] = source_id
@@ -168,7 +186,9 @@ class MultiDatasetSampler(Sampler):
         dataset_ratio = cfg.DATALOADER.DATASET_RATIO
         self._batch_size = cfg.SOLVER.IMS_PER_BATCH
         assert len(dataset_ratio) == len(sizes), (
-            "length of dataset ratio {} should be equal to number if dataset {}".format(len(dataset_ratio), len(sizes))
+            "length of dataset ratio {} should be equal to number if dataset {}".format(
+                len(dataset_ratio), len(sizes)
+            )
         )
         if seed is None:
             seed = comm.shared_random_seed()
@@ -177,7 +197,9 @@ class MultiDatasetSampler(Sampler):
         self._world_size = comm.get_world_size()
 
         self._ims_per_gpu = self._batch_size // self._world_size
-        self.dataset_ids = torch.tensor([d["dataset_source"] for d in dataset_dicts], dtype=torch.long)
+        self.dataset_ids = torch.tensor(
+            [d["dataset_source"] for d in dataset_dicts], dtype=torch.long
+        )
 
         dataset_weight = [
             torch.ones(s) * max(sizes) / s * r / sum(dataset_ratio)
@@ -189,14 +211,21 @@ class MultiDatasetSampler(Sampler):
 
     def __iter__(self):
         start = self._rank
-        yield from itertools.islice(self._infinite_indices(), start, None, self._world_size)
+        yield from itertools.islice(
+            self._infinite_indices(), start, None, self._world_size
+        )
 
     def _infinite_indices(self):
         g = torch.Generator()
         g.manual_seed(self._seed)
         while True:
-            ids = torch.multinomial(self.weights, self.sample_epoch_size, generator=g, replacement=True)
-            nums = [(self.dataset_ids[ids] == i).sum().int().item() for i in range(len(self.sizes))]
+            ids = torch.multinomial(
+                self.weights, self.sample_epoch_size, generator=g, replacement=True
+            )
+            nums = [
+                (self.dataset_ids[ids] == i).sum().int().item()
+                for i in range(len(self.sizes))
+            ]
             print("_rank, len, nums", self._rank, len(ids), nums, flush=True)
             # print('_rank, len, nums, self.dataset_ids[ids[:10]], ',
             #     self._rank, len(ids), nums, self.dataset_ids[ids[:10]],

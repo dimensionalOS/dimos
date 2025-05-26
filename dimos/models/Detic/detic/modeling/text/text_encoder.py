@@ -47,7 +47,11 @@ class ResidualAttentionBlock(nn.Module):
         self.attn_mask = attn_mask
 
     def attention(self, x: torch.Tensor):
-        self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
+        self.attn_mask = (
+            self.attn_mask.to(dtype=x.dtype, device=x.device)
+            if self.attn_mask is not None
+            else None
+        )
         return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
 
     def forward(self, x: torch.Tensor):
@@ -57,11 +61,15 @@ class ResidualAttentionBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None):
+    def __init__(
+        self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None
+    ):
         super().__init__()
         self.width = width
         self.layers = layers
-        self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
+        self.resblocks = nn.Sequential(
+            *[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)]
+        )
 
     def forward(self, x: torch.Tensor):
         return self.resblocks(x)
@@ -92,7 +100,9 @@ class CLIPTEXT(nn.Module):
 
         self.vocab_size = vocab_size
         self.token_embedding = nn.Embedding(vocab_size, transformer_width)
-        self.positional_embedding = nn.Parameter(torch.empty(self.context_length, transformer_width))
+        self.positional_embedding = nn.Parameter(
+            torch.empty(self.context_length, transformer_width)
+        )
         self.ln_final = LayerNorm(transformer_width)
 
         self.text_projection = nn.Parameter(torch.empty(transformer_width, embed_dim))
@@ -104,7 +114,9 @@ class CLIPTEXT(nn.Module):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
 
-        proj_std = (self.transformer.width**-0.5) * ((2 * self.transformer.layers) ** -0.5)
+        proj_std = (self.transformer.width**-0.5) * (
+            (2 * self.transformer.layers) ** -0.5
+        )
         attn_std = self.transformer.width**-0.5
         fc_std = (2 * self.transformer.width) ** -0.5
         for block in self.transformer.resblocks:
@@ -132,14 +144,18 @@ class CLIPTEXT(nn.Module):
     def dtype(self):
         return self.text_projection.dtype
 
-    def tokenize(self, texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
+    def tokenize(
+        self, texts: Union[str, List[str]], context_length: int = 77
+    ) -> torch.LongTensor:
         """ """
         if isinstance(texts, str):
             texts = [texts]
 
         sot_token = self._tokenizer.encoder["<|startoftext|>"]
         eot_token = self._tokenizer.encoder["<|endoftext|>"]
-        all_tokens = [[sot_token] + self._tokenizer.encode(text) + [eot_token] for text in texts]
+        all_tokens = [
+            [sot_token] + self._tokenizer.encode(text) + [eot_token] for text in texts
+        ]
         result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
 
         for i, tokens in enumerate(all_tokens):
@@ -178,9 +194,12 @@ def build_text_encoder(pretrain=True):
 
         pretrained_model, _ = clip.load("ViT-B/32", device="cpu")
         state_dict = pretrained_model.state_dict()
-        to_delete_keys = ["logit_scale", "input_resolution", "context_length", "vocab_size"] + [
-            k for k in state_dict.keys() if k.startswith("visual.")
-        ]
+        to_delete_keys = [
+            "logit_scale",
+            "input_resolution",
+            "context_length",
+            "vocab_size",
+        ] + [k for k in state_dict.keys() if k.startswith("visual.")]
         for k in to_delete_keys:
             if k in state_dict:
                 del state_dict[k]

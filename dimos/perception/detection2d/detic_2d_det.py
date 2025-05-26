@@ -105,7 +105,12 @@ class SimpleTracker:
 
                 # Add to results
                 result.append(
-                    [track_id, detections[best_idx][:4], detections[best_idx][4], int(detections[best_idx][5])]
+                    [
+                        track_id,
+                        detections[best_idx][:4],
+                        detections[best_idx][4],
+                        int(detections[best_idx][5]),
+                    ]
                 )
 
         # Create new tracks for unmatched detections
@@ -117,7 +122,12 @@ class SimpleTracker:
             new_id = self.next_id
             self.next_id += 1
 
-            self.tracks[new_id] = {"bbox": det[:4], "score": det[4], "class_id": int(det[5]), "age": 0}
+            self.tracks[new_id] = {
+                "bbox": det[:4],
+                "score": det[4],
+                "class_id": int(det[5]),
+                "age": 0,
+            }
 
             # Add to results
             result.append([new_id, det[:4], det[4], int(det[5])])
@@ -158,14 +168,15 @@ class Detic2DDetector:
 
         # Use default Detic config
         self.cfg.merge_from_file(
-            os.path.join(detic_path, "configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml")
+            os.path.join(
+                detic_path,
+                "configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml",
+            )
         )
 
         # Set default weights if not provided
         if model_path is None:
-            self.cfg.MODEL.WEIGHTS = (
-                "https://dl.fbaipublicfiles.com/detic/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth"
-            )
+            self.cfg.MODEL.WEIGHTS = "https://dl.fbaipublicfiles.com/detic/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth"
         else:
             self.cfg.MODEL.WEIGHTS = model_path
 
@@ -182,19 +193,27 @@ class Detic2DDetector:
         self.builtin_datasets = {
             "lvis": {
                 "metadata": "lvis_v1_val",
-                "classifier": os.path.join(detic_path, "datasets/metadata/lvis_v1_clip_a+cname.npy"),
+                "classifier": os.path.join(
+                    detic_path, "datasets/metadata/lvis_v1_clip_a+cname.npy"
+                ),
             },
             "objects365": {
                 "metadata": "objects365_v2_val",
-                "classifier": os.path.join(detic_path, "datasets/metadata/o365_clip_a+cnamefix.npy"),
+                "classifier": os.path.join(
+                    detic_path, "datasets/metadata/o365_clip_a+cnamefix.npy"
+                ),
             },
             "openimages": {
                 "metadata": "oid_val_expanded",
-                "classifier": os.path.join(detic_path, "datasets/metadata/oid_clip_a+cname.npy"),
+                "classifier": os.path.join(
+                    detic_path, "datasets/metadata/oid_clip_a+cname.npy"
+                ),
             },
             "coco": {
                 "metadata": "coco_2017_val",
-                "classifier": os.path.join(detic_path, "datasets/metadata/coco_clip_a+cname.npy"),
+                "classifier": os.path.join(
+                    detic_path, "datasets/metadata/coco_clip_a+cname.npy"
+                ),
             },
         }
 
@@ -337,14 +356,24 @@ class Detic2DDetector:
 
         for track_id, bbox, score, class_id in track_results:
             track_ids.append(int(track_id))
-            tracked_bboxes.append(bbox.tolist() if isinstance(bbox, np.ndarray) else bbox)
+            tracked_bboxes.append(
+                bbox.tolist() if isinstance(bbox, np.ndarray) else bbox
+            )
             tracked_class_ids.append(int(class_id))
             tracked_scores.append(score)
             tracked_names.append(self.class_names[int(class_id)])
 
-        return tracked_bboxes, track_ids, tracked_class_ids, tracked_scores, tracked_names
+        return (
+            tracked_bboxes,
+            track_ids,
+            tracked_class_ids,
+            tracked_scores,
+            tracked_names,
+        )
 
-    def visualize_results(self, image, bboxes, track_ids, class_ids, confidences, names):
+    def visualize_results(
+        self, image, bboxes, track_ids, class_ids, confidences, names
+    ):
         """
         Generate visualization of detection results.
 

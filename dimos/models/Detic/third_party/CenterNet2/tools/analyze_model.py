@@ -58,11 +58,18 @@ def do_flop(cfg):
         counts += flops.by_operator()
         total_flops.append(flops.total())
 
-    logger.info("Flops table computed from only one input sample:\n" + flop_count_table(flops))
     logger.info(
-        "Average GFlops for each type of operators:\n" + str([(k, v / (idx + 1) / 1e9) for k, v in counts.items()])
+        "Flops table computed from only one input sample:\n" + flop_count_table(flops)
     )
-    logger.info("Total GFlops: {:.1f}±{:.1f}".format(np.mean(total_flops) / 1e9, np.std(total_flops) / 1e9))
+    logger.info(
+        "Average GFlops for each type of operators:\n"
+        + str([(k, v / (idx + 1) / 1e9) for k, v in counts.items()])
+    )
+    logger.info(
+        "Total GFlops: {:.1f}±{:.1f}".format(
+            np.mean(total_flops) / 1e9, np.std(total_flops) / 1e9
+        )
+    )
 
 
 def do_activation(cfg):
@@ -83,8 +90,15 @@ def do_activation(cfg):
         count = activation_count_operators(model, data)
         counts += count
         total_activations.append(sum(count.values()))
-    logger.info("(Million) Activations for Each Type of Operators:\n" + str([(k, v / idx) for k, v in counts.items()]))
-    logger.info("Total (Million) Activations: {}±{}".format(np.mean(total_activations), np.std(total_activations)))
+    logger.info(
+        "(Million) Activations for Each Type of Operators:\n"
+        + str([(k, v / idx) for k, v in counts.items()])
+    )
+    logger.info(
+        "Total (Million) Activations: {}±{}".format(
+            np.mean(total_activations), np.std(total_activations)
+        )
+    )
 
 
 def do_parameter(cfg):

@@ -66,7 +66,9 @@ class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
                 query=query_texts, k=n_results, score_threshold=similarity_threshold
             )
         else:
-            documents = self.db_connection.similarity_search(query=query_texts, k=n_results)
+            documents = self.db_connection.similarity_search(
+                query=query_texts, k=n_results
+            )
             return [(doc, None) for doc in documents]
 
     def update_vector(self, vector_id, new_vector_data):
@@ -83,7 +85,12 @@ class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
 class OpenAISemanticMemory(ChromaAgentSemanticMemory):
     """Semantic memory implementation using OpenAI's embedding API."""
 
-    def __init__(self, collection_name="my_collection", model="text-embedding-3-large", dimensions=1024):
+    def __init__(
+        self,
+        collection_name="my_collection",
+        model="text-embedding-3-large",
+        dimensions=1024,
+    ):
         """Initialize OpenAI-based semantic memory.
 
         Args:
@@ -120,7 +127,11 @@ class OpenAISemanticMemory(ChromaAgentSemanticMemory):
 class LocalSemanticMemory(ChromaAgentSemanticMemory):
     """Semantic memory implementation using local models."""
 
-    def __init__(self, collection_name="my_collection", model_name="sentence-transformers/all-MiniLM-L6-v2"):
+    def __init__(
+        self,
+        collection_name="my_collection",
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+    ):
         """Initialize the local semantic memory using SentenceTransformer.
 
         Args:
