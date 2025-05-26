@@ -14,6 +14,7 @@ RUN apt-get install -y \
     htop \
     python-is-python3 \
     iputils-ping \
+    pre-commit \
     wget
 
 # Configure git to trust any directory (resolves dubious ownership issues in containers)
