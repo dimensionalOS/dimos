@@ -144,7 +144,7 @@ else
             shift
             ;;
         *)
-            run_devcontainer "$@"
+            run_devcontainer exec "$@"
             shift
           ;;
     esac
