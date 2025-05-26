@@ -6,6 +6,7 @@ ARG GIT_BRANCH=unknown
 
 RUN apt-get install -y \
     git \
+    git-lfs \
     nano \
     vim \
     ccze \
