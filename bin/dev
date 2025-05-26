@@ -37,17 +37,6 @@ stop_image() {
 }
 
 
-ensure_image_running() {
-    ensure_image_downloaded
-
-    if check_image_running ${IMAGE_NAME}; then
-        return
-    else
-        echo "Starting container from image ${IMAGE_NAME}..."
-        devcontainer up --workspace-folder "$REPO_ROOT"
-    fi
-}
-
 get_tag() {
     local branch_name
     branch_name=$(git rev-parse --abbrev-ref HEAD)
@@ -82,27 +71,56 @@ remove_image() {
     docker rm -f "dimos-dev-${tag}" 2>/dev/null || true
 }
 
-ensure_devcontainer_installed() {
-    command -v devcontainer &>/dev/null
-    if [[ $? -ne 0 ]]; then
-        echo "devcontainer CLI is not installed. Installing..."
-        sudo npm install -g @devcontainers/cli
+devcontainer_install() {
+    # prompt user if we should install devcontainer
+    read -p "devcontainer CLI (https://github.com/devcontainers/cli) not found. Install into repo root? (y/n): " install_choice
+    if [[ "$install_choice" != "y" && "$install_choice" != "Y" ]]; then
+        echo "Devcontainer CLI installation aborted. Please install manually"
+        exit 1
     fi
-    command -v devcontainer &>/dev/null
+
+    if [[ ! -d "$REPO_ROOT/node_modules" ]]; then
+        npm init -y 1>/dev/null
+    fi
+    npm install @devcontainers/cli 1>&2
     if [[ $? -ne 0 ]]; then
         echo "Failed to install devcontainer CLI. Please install it manually."
         exit 1
+    fi
+    echo $REPO_ROOT/node_modules/.bin/devcontainer
+}
+
+
+
+find_devcontainer_bin() {
+    local bin_path
+    bin_path=$(command -v devcontainer)
+
+    if [[ -z "$bin_path" ]]; then
+        bin_path="$REPO_ROOT/node_modules/.bin/devcontainer"
+    fi
+
+    if [[ -x "$bin_path" ]]; then
+        echo "$bin_path"
+    else
+        devcontainer_install
     fi
 }
 
 # Passes all arguments to devcontainer command, ensuring:
 # - devcontainer CLI is installed
-# - the image is running
+# - docker image is running
 # - the workspace folder is set to the repository root
 run_devcontainer() {
-    ensure_devcontainer_installed
-    ensure_image_running
-    devcontainer $1 --workspace-folder "$REPO_ROOT" "${@:2}"
+    local devcontainer_bin
+    devcontainer_bin=$(find_devcontainer_bin)
+
+    if ! check_image_running; then
+        ensure_image_downloaded
+        $devcontainer_bin up --workspace-folder "$REPO_ROOT"
+    fi
+
+    exec $devcontainer_bin $1 --workspace-folder "$REPO_ROOT" "${@:2}"
 }
 
 if [[ $# -eq 0 ]]; then
