@@ -14,4 +14,4 @@
 *.mp4 binary
 
 # Explicit LFS tracking for test files
-tests/data/* filter=lfs diff=lfs merge=lfs -text
+tests/data/.lfs/*.tar.gz filter=lfs diff=lfs merge=lfs -text
