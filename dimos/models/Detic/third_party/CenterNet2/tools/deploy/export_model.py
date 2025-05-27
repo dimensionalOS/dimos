@@ -147,7 +147,6 @@ def export_tracing(torch_model, inputs):
 
 
 def get_sample_inputs(args):
-
     if args.sample_image is None:
         # get a first batch from dataset
         data_loader = build_detection_test_loader(cfg, cfg.DATASETS.TEST[0])

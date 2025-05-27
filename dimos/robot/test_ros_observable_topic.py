@@ -5,7 +5,6 @@ from nav_msgs import msg
 import pytest
 from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
 from dimos.utils.logging_config import setup_logger
-from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector
 import asyncio
 
@@ -96,7 +95,9 @@ def test_parallel_and_cleanup():
         assert i in received_messages, f"Expected {i} in received messages, got {received_messages}"
 
     # ensure that ROS end has only a single subscription
-    assert len(robot._node.subs) == 1, f"Expected 1 subscription, got {len(robot._node.subs)}: {robot._node.subs}"
+    assert len(robot._node.subs) == 1, (
+        f"Expected 1 subscription, got {len(robot._node.subs)}: {robot._node.subs}"
+    )
 
     subscription1.dispose()
     subscription2.dispose()

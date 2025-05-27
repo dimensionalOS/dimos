@@ -70,7 +70,7 @@ if __name__ == "__main__":
 
         print(f"RMS Volume: {rms_vol:.4f}")
         print(f"Peak Volume: {peak_vol:.4f}")
-        print(f"Ratio (Peak/RMS): {peak_vol/rms_vol:.2f}")
+        print(f"Ratio (Peak/RMS): {peak_vol / rms_vol:.2f}")
 
     # Set a flag to track when processing is complete
     processed = {"done": False}

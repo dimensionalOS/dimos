@@ -1,23 +1,8 @@
-import logging
-import numpy as np
-import pycocotools.mask as mask_util
-import torch
-from fvcore.common.file_io import PathManager
-from PIL import Image
 
-from detectron2.structures import (
-    BitMasks,
-    Boxes,
-    BoxMode,
-    Instances,
-    Keypoints,
-    PolygonMasks,
-    RotatedBoxes,
-    polygons_to_bitmask,
-)
 
 from detectron2.data import transforms as T
 from .transforms.custom_augmentation_impl import EfficientDetResizeCrop
+
 
 def build_custom_augmentation(cfg, is_train):
     """
@@ -27,7 +12,7 @@ def build_custom_augmentation(cfg, is_train):
     Returns:
         list[Augmentation]
     """
-    if cfg.INPUT.CUSTOM_AUG == 'ResizeShortestEdge':
+    if cfg.INPUT.CUSTOM_AUG == "ResizeShortestEdge":
         if is_train:
             min_size = cfg.INPUT.MIN_SIZE_TRAIN
             max_size = cfg.INPUT.MAX_SIZE_TRAIN
@@ -37,7 +22,7 @@ def build_custom_augmentation(cfg, is_train):
             max_size = cfg.INPUT.MAX_SIZE_TEST
             sample_style = "choice"
         augmentation = [T.ResizeShortestEdge(min_size, max_size, sample_style)]
-    elif cfg.INPUT.CUSTOM_AUG == 'EfficientDetResizeCrop':
+    elif cfg.INPUT.CUSTOM_AUG == "EfficientDetResizeCrop":
         if is_train:
             scale = cfg.INPUT.SCALE_RANGE
             size = cfg.INPUT.TRAIN_SIZE

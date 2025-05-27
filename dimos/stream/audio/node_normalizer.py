@@ -191,9 +191,7 @@ if __name__ == "__main__":
         print("Using simulated audio source")
 
     # Select volume function
-    volume_func = (
-        calculate_rms_volume if volume_method == "rms" else calculate_peak_volume
-    )
+    volume_func = calculate_rms_volume if volume_method == "rms" else calculate_peak_volume
 
     # Create normalizer
     normalizer = AudioNormalizer(target_level=target_level, volume_func=volume_func)

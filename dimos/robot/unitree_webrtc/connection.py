@@ -90,7 +90,11 @@ class WebRTCRobot(AbstractRobot):
 
     @functools.cache
     def lidar_stream(self) -> Subject[LidarMessage]:
-        return backpressure(self.raw_lidar_stream().pipe(ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame))))
+        return backpressure(
+            self.raw_lidar_stream().pipe(
+                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame))
+            )
+        )
 
     @functools.cache
     def odom_stream(self) -> Subject[Position]:

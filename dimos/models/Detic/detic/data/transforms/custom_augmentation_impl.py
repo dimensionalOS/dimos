@@ -1,18 +1,9 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-# Part of the code is from https://github.com/rwightman/efficientdet-pytorch/blob/master/effdet/data/transforms.py 
+# Part of the code is from https://github.com/rwightman/efficientdet-pytorch/blob/master/effdet/data/transforms.py
 # Modified by Xingyi Zhou
 # The original code is under Apache-2.0 License
 import numpy as np
-import sys
-from fvcore.transforms.transform import (
-    BlendTransform,
-    CropTransform,
-    HFlipTransform,
-    NoOpTransform,
-    Transform,
-    VFlipTransform,
-)
 from PIL import Image
 
 from detectron2.data.transforms.augmentation import Augmentation
@@ -22,17 +13,15 @@ __all__ = [
     "EfficientDetResizeCrop",
 ]
 
+
 class EfficientDetResizeCrop(Augmentation):
     """
     Scale the shorter edge to the given size, with a limit of `max_size` on the longer edge.
     If `max_size` is reached, then downscale so that the longer edge does not exceed max_size.
     """
 
-    def __init__(
-        self, size, scale, interp=Image.BILINEAR
-    ):
-        """
-        """
+    def __init__(self, size, scale, interp=Image.BILINEAR):
+        """ """
         super().__init__()
         self.target_size = (size, size)
         self.scale = scale
@@ -57,4 +46,5 @@ class EfficientDetResizeCrop(Augmentation):
         offset_y = int(max(0.0, float(offset_y)) * np.random.uniform(0, 1))
         offset_x = int(max(0.0, float(offset_x)) * np.random.uniform(0, 1))
         return EfficientDetResizeCropTransform(
-            scaled_h, scaled_w, offset_y, offset_x, img_scale, self.target_size, self.interp)
+            scaled_h, scaled_w, offset_y, offset_x, img_scale, self.target_size, self.interp
+        )
