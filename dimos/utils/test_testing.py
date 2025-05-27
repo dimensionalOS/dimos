@@ -3,6 +3,7 @@ import os
 import subprocess
 from dimos.utils import testing
 
+
 def test_pull_file():
     repo_root = testing._get_repo_root()
     test_file_name = "cafe.jpg"
@@ -47,6 +48,7 @@ def test_pull_file():
     with test_file_decompressed.open("rb") as f:
         decompressed_sha256 = hashlib.sha256(f.read()).hexdigest()
         assert decompressed_sha256 == "55d451dde49b05e3ad386fdd4ae9e9378884b8905bff1ca8aaea7d039ff42ddd"
+
 
 def test_pull_dir():
     repo_root = testing._get_repo_root()

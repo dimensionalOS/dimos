@@ -2,6 +2,7 @@ import subprocess
 import tarfile
 from functools import cache
 from pathlib import Path
+from typing import Union
 
 
 def _check_git_lfs_available() -> None:
@@ -23,9 +24,11 @@ def _get_repo_root() -> Path:
     except subprocess.CalledProcessError:
         raise RuntimeError("Not in a Git repository")
 
+
 @cache
 def _get_data_dir() -> Path:
     return _get_repo_root() / "tests" / "data"
+
 
 @cache
 def _get_lfs_dir() -> Path:
@@ -41,26 +44,13 @@ def _is_lfs_pointer_file(file_path: Path) -> bool:
         with open(file_path, "r", encoding="utf-8") as f:
             first_line = f.readline().strip()
             return first_line.startswith("version https://git-lfs.github.com/spec/")
+
     except (UnicodeDecodeError, OSError):
         return False
 
 
-def _ensure_lfs_initialized(repo_root: Path) -> None:
+def _lfs_pull(file_path: Path, repo_root: Path) -> None:
     try:
-        # Check if LFS is already initialized by looking for .git/hooks/pre-push
-        lfs_hook = repo_root / ".git" / "hooks" / "pre-push"
-        if lfs_hook.exists():
-            return
-
-        # Initialize LFS with --skip-smudge to avoid downloading all files
-        subprocess.run(["git", "lfs", "install", "--skip-smudge"], cwd=repo_root, check=True, capture_output=True)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to initialize Git LFS: {e}")
-
-
-def _pull_lfs_file(file_path: Path, repo_root: Path) -> None:
-    try:
-        # Convert absolute path to relative path from repo root
         relative_path = file_path.relative_to(repo_root)
 
         subprocess.run(
@@ -70,7 +60,7 @@ def _pull_lfs_file(file_path: Path, repo_root: Path) -> None:
         raise RuntimeError(f"Failed to pull LFS file {file_path}: {e}")
 
 
-def _pull_lfs_archive(filename: str) -> Path:
+def _pull_lfs_archive(filename: Union[str, Path]) -> Path:
     # Check Git LFS availability first
     _check_git_lfs_available()
 
@@ -89,8 +79,7 @@ def _pull_lfs_archive(filename: str) -> Path:
 
     # If it's an LFS pointer file, ensure LFS is set up and pull the file
     if _is_lfs_pointer_file(file_path):
-        _ensure_lfs_initialized(repo_root)
-        _pull_lfs_file(file_path, repo_root)
+        _lfs_pull(file_path, repo_root)
 
         # Verify the file was actually downloaded
         if _is_lfs_pointer_file(file_path):
@@ -100,7 +89,8 @@ def _pull_lfs_archive(filename: str) -> Path:
 
     return file_path
 
-def _decompress_archive(filename: str) -> Path:
+
+def _decompress_archive(filename: Union[str, Path]) -> Path:
     target_dir = _get_data_dir()
     filename_path = Path(filename)
     with tarfile.open(filename_path, "r:gz") as tar:
@@ -108,8 +98,7 @@ def _decompress_archive(filename: str) -> Path:
     return target_dir / filename_path.name.replace(".tar.gz", "")
 
 
-
-def testData(filename: str) -> Path:
+def testData(filename: Union[str, Path]) -> Path:
     """
     Get the path to a test data, downloading from LFS if needed.
 
@@ -141,6 +130,7 @@ def testData(filename: str) -> Path:
     data_dir = _get_data_dir()
     file_path = data_dir / filename
 
+    # already pulled and decompressed, return it directly
     if file_path.exists():
         return file_path
 
