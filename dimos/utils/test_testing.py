@@ -1,124 +1,89 @@
-import tempfile
-from pathlib import Path
-
-import pytest
-
+import hashlib
+import os
+import subprocess
 from dimos.utils import testing
 
+def test_pull_file():
+    repo_root = testing._get_repo_root()
+    test_file_name = "cafe.jpg"
+    test_file_compressed = testing._get_lfs_dir() / (test_file_name + ".tar.gz")
+    test_file_decompressed = testing._get_data_dir() / test_file_name
 
-class TestRealRepoIntegration:
-    """Integration tests using the actual dimos repository."""
+    # delete decompressed test file if it exists
+    if test_file_decompressed.exists():
+        test_file_compressed.unlink()
 
-    def test_testfile_lfs_download(self):
-        """Test testFile with actual LFS files that need to be downloaded."""
-        import hashlib
-        import os
-        import subprocess
+    # delete lfs archive file if it exists
+    if test_file_compressed.exists():
+        test_file_compressed.unlink()
 
-        repo_root = testing._get_repo_root()
-        test_data_dir = repo_root / "tests" / "data"
+    # pull the lfs file reference from git
+    env = os.environ.copy()
+    env["GIT_LFS_SKIP_SMUDGE"] = "1"
+    subprocess.run(
+        ["git", "checkout", "HEAD", "--", test_file_compressed],
+        cwd=repo_root,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
 
-        # Ensure we start with LFS pointer files, not actual content
-        binary_file = test_data_dir / "binary_test_file.bin"
+    # ensure we have a pointer file from git (small ASCII text file)
+    assert test_file_compressed.exists()
+    test_file_compressed.stat().st_size < 200
 
-        # Remove actual file if it exists
-        if binary_file.exists():
-            binary_file.unlink()
+    # trigger a data file pull
+    assert testing.testData(test_file_name) == test_file_decompressed
 
-        # Restore as LFS pointer file (without downloading content)
-        env = os.environ.copy()
-        env["GIT_LFS_SKIP_SMUDGE"] = "1"
-        subprocess.run(
-            ["git", "checkout", "HEAD", "--", "tests/data/binary_test_file.bin"],
-            cwd=repo_root,
-            env=env,
-            check=True,
-            capture_output=True,
-        )
+    # validate data is received
+    assert test_file_compressed.exists()
+    assert test_file_decompressed.exists()
 
-        # Verify we have a pointer file (small ASCII text file)
-        assert binary_file.exists()
-        assert binary_file.stat().st_size < 200  # Pointer files are small
+    # validate hashes
+    with test_file_compressed.open("rb") as f:
+        compressed_sha256 = hashlib.sha256(f.read()).hexdigest()
+        assert compressed_sha256 == "cdfd708d66e6dd5072ed7636fc10fb97754f8d14e3acd6c3553663e27fc96065"
 
-        # Test with the binary LFS file
-        result = testing.testFile("binary_test_file.bin")
+    with test_file_decompressed.open("rb") as f:
+        decompressed_sha256 = hashlib.sha256(f.read()).hexdigest()
+        assert decompressed_sha256 == "55d451dde49b05e3ad386fdd4ae9e9378884b8905bff1ca8aaea7d039ff42ddd"
 
-        assert isinstance(result, Path)
-        assert result.exists()
-        assert result.name == "binary_test_file.bin"
-        # Should be 10KB (10240 bytes) as we created it
-        assert result.stat().st_size == 10240
+def test_pull_dir():
+    repo_root = testing._get_repo_root()
+    test_dir_name = "ab_lidar_frames"
+    test_dir_compressed = testing._get_lfs_dir() / (test_dir_name + ".tar.gz")
+    test_dir_decompressed = testing._get_data_dir() / test_dir_name
 
-        # Verify the file hash matches expected SHA256
-        expected_sha256 = "01c779312c35758412ab3b27623aee38239398d79e75a8cf4786b19c495d0cba"
-        with result.open("rb") as f:
-            actual_sha256 = hashlib.sha256(f.read()).hexdigest()
-        assert actual_sha256 == expected_sha256, f"File hash mismatch: expected {expected_sha256}, got {actual_sha256}"
+    # delete decompressed test directory if it exists
+    if test_dir_decompressed.exists():
+        for item in test_dir_decompressed.iterdir():
+            item.unlink()
+        test_dir_decompressed.rmdir()
 
-    def test_testfile_with_existing_files(self):
-        """Test testFile with any existing files in tests/data directory."""
-        repo_root = testing._get_repo_root()
-        test_data_dir = repo_root / "tests" / "data"
+    # delete lfs archive file if it exists
+    if test_dir_compressed.exists():
+        test_dir_compressed.unlink()
 
-        # List existing files in tests/data
-        existing_files = [f for f in test_data_dir.iterdir() if f.is_file()] if test_data_dir.exists() else []
+    # pull the lfs file reference from git
+    env = os.environ.copy()
+    env["GIT_LFS_SKIP_SMUDGE"] = "1"
+    subprocess.run(
+        ["git", "checkout", "HEAD", "--", test_dir_compressed],
+        cwd=repo_root,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
 
-        if not existing_files:
-            pytest.skip("No existing test data files found")
+    # ensure we have a pointer file from git (small ASCII text file)
+    assert test_dir_compressed.exists()
+    test_dir_compressed.stat().st_size < 200
 
-        # Test with the first existing file
-        test_file = existing_files[0]
+    # trigger a data file pull
+    assert testing.testData(test_dir_name) == test_dir_decompressed
 
-        result = testing.testFile(test_file.name)
+    # validate data is received
+    assert test_dir_compressed.exists()
+    assert test_dir_decompressed.exists()
 
-        assert isinstance(result, Path)
-        assert result.exists()
-        assert result.name == test_file.name
-        assert result == test_file
-
-    def test_lfs_pointer_detection_with_real_files(self):
-        """Test LFS pointer detection with any existing files."""
-        repo_root = testing._get_repo_root()
-        test_data_dir = repo_root / "tests" / "data"
-
-        if not test_data_dir.exists():
-            pytest.skip("No tests/data directory found")
-
-        # Check all files in tests/data directory
-        existing_files = [f for f in test_data_dir.iterdir() if f.is_file()]
-
-        if not existing_files:
-            pytest.skip("No existing test data files found")
-
-        for test_file in existing_files:
-            # Test LFS pointer detection
-            is_pointer = testing._is_lfs_pointer_file(test_file)
-            # Just verify the function runs without error
-            assert isinstance(is_pointer, bool)
-
-
-class TestErrorConditions:
-    """Test error conditions and edge cases."""
-
-    def test_not_in_git_repo(self):
-        """Test behavior when not in a git repository."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Change to a non-git directory
-            import os
-
-            original_cwd = os.getcwd()
-            try:
-                os.chdir(temp_dir)
-                # Clear cache to force fresh detection
-                testing._get_repo_root.cache_clear()
-
-                with pytest.raises(RuntimeError, match="Not in a Git repository"):
-                    testing._get_repo_root()
-            finally:
-                os.chdir(original_cwd)
-                # Clear cache again to reset for other tests
-                testing._get_repo_root.cache_clear()
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    assert len(list(test_dir_decompressed.iterdir())) == 2

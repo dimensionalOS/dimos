@@ -1,6 +1,5 @@
-# trigger change 3
-
 import subprocess
+import tarfile
 from functools import cache
 from pathlib import Path
 
@@ -24,11 +23,16 @@ def _get_repo_root() -> Path:
     except subprocess.CalledProcessError:
         raise RuntimeError("Not in a Git repository")
 
+@cache
+def _get_data_dir() -> Path:
+    return _get_repo_root() / "tests" / "data"
+
+@cache
+def _get_lfs_dir() -> Path:
+    return _get_data_dir() / ".lfs"
+
 
 def _is_lfs_pointer_file(file_path: Path) -> bool:
-    if not file_path.exists():
-        return False
-
     try:
         # LFS pointer files are small (typically < 200 bytes) and start with specific text
         if file_path.stat().st_size > 1024:  # LFS pointers are much smaller
@@ -66,35 +70,7 @@ def _pull_lfs_file(file_path: Path, repo_root: Path) -> None:
         raise RuntimeError(f"Failed to pull LFS file {file_path}: {e}")
 
 
-def testFile(filename: str) -> Path:
-    """
-    Get the path to a test data file, downloading from LFS if needed.
-
-    This function will:
-    1. Check that Git LFS is available
-    2. Locate the file in the tests/data directory
-    3. Initialize Git LFS if needed
-    4. Download the file from LFS if it's a pointer file
-    5. Return the Path object to the actual file
-
-    Args:
-        filename: Name of the test file (e.g., "lidar_sample.bin")
-
-    Returns:
-        Path: Path object to the test file
-
-    Raises:
-        RuntimeError: If Git LFS is not available or LFS operations fail
-        FileNotFoundError: If the test file doesn't exist
-
-    Usage:
-        # As string path
-        file_path = str(testFile("sample.bin"))
-
-        # As context manager for file operations
-        with testFile("sample.bin").open('rb') as f:
-            data = f.read()
-    """
+def _pull_lfs_archive(filename: str) -> Path:
     # Check Git LFS availability first
     _check_git_lfs_available()
 
@@ -102,8 +78,7 @@ def testFile(filename: str) -> Path:
     repo_root = _get_repo_root()
 
     # Construct path to test data file
-    test_data_dir = repo_root / "tests" / "data"
-    file_path = test_data_dir / filename
+    file_path = _get_lfs_dir() / (filename + ".tar.gz")
 
     # Check if file exists
     if not file_path.exists():
@@ -124,3 +99,49 @@ def testFile(filename: str) -> Path:
             )
 
     return file_path
+
+def _decompress_archive(filename: str) -> Path:
+    target_dir = _get_data_dir()
+    filename_path = Path(filename)
+    with tarfile.open(filename_path, "r:gz") as tar:
+        tar.extractall(target_dir)
+    return target_dir / filename_path.name.replace(".tar.gz", "")
+
+
+
+def testData(filename: str) -> Path:
+    """
+    Get the path to a test data, downloading from LFS if needed.
+
+    This function will:
+    1. Check that Git LFS is available
+    2. Locate the file in the tests/data directory
+    3. Initialize Git LFS if needed
+    4. Download the file from LFS if it's a pointer file
+    5. Return the Path object to the actual file or dir
+
+    Args:
+        filename: Name of the test file (e.g., "lidar_sample.bin")
+
+    Returns:
+        Path: Path object to the test file
+
+    Raises:
+        RuntimeError: If Git LFS is not available or LFS operations fail
+        FileNotFoundError: If the test file doesn't exist
+
+    Usage:
+        # As string path
+        file_path = str(testFile("sample.bin"))
+
+        # As context manager for file operations
+        with testFile("sample.bin").open('rb') as f:
+            data = f.read()
+    """
+    data_dir = _get_data_dir()
+    file_path = data_dir / filename
+
+    if file_path.exists():
+        return file_path
+
+    return _decompress_archive(_pull_lfs_archive(filename))
