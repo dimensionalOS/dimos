@@ -135,7 +135,11 @@ class DataPipeline:
         if self.run_labels:
             label = self.labels_processor.caption_image_data(frame)
 
-        if self.run_pointclouds and isinstance(depth_map, DepthMapType) and self.pointcloud_processor:
+        if (
+            self.run_pointclouds
+            and isinstance(depth_map, DepthMapType)
+            and self.pointcloud_processor
+        ):
             pointcloud = self.pointcloud_processor.process_frame(frame, depth_map.depth_data)
 
         if self.run_segmentations and isinstance(label, LabelType) and self.segmentation_processor:

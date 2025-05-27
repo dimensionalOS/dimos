@@ -91,7 +91,9 @@ class FastAPIServer(EdgeIO):
 
         for key in self.streams:
             if self.streams[key] is not None:
-                self.active_streams[key] = self.streams[key].pipe(ops.map(self.process_frame_fastapi), ops.share())
+                self.active_streams[key] = self.streams[key].pipe(
+                    ops.map(self.process_frame_fastapi), ops.share()
+                )
 
         # Set up text stream subscriptions
         for key, stream in self.text_streams.items():
@@ -215,7 +217,11 @@ class FastAPIServer(EdgeIO):
             text_stream_keys = list(self.text_streams.keys())
             return self.templates.TemplateResponse(
                 "index_fastapi.html",
-                {"request": request, "stream_keys": stream_keys, "text_stream_keys": text_stream_keys},
+                {
+                    "request": request,
+                    "stream_keys": stream_keys,
+                    "text_stream_keys": text_stream_keys,
+                },
             )
 
         @self.app.post("/submit_query")
@@ -229,7 +235,10 @@ class FastAPIServer(EdgeIO):
                 return JSONResponse({"success": False, "message": "No query provided"})
             except Exception as e:
                 # Ensure we always return valid JSON even on error
-                return JSONResponse(status_code=500, content={"success": False, "message": f"Server error: {str(e)}"})
+                return JSONResponse(
+                    status_code=500,
+                    content={"success": False, "message": f"Server error: {str(e)}"},
+                )
 
         # Unitree API endpoints
         @self.app.get("/unitree/status")
@@ -247,13 +256,18 @@ class FastAPIServer(EdgeIO):
                 # Emit the command through the query_subject
                 self.query_subject.on_next(command_text)
 
-                response = {"success": True, "command": command_text, "result": f"Processed command: {command_text}"}
+                response = {
+                    "success": True,
+                    "command": command_text,
+                    "result": f"Processed command: {command_text}",
+                }
 
                 return JSONResponse(response)
             except Exception as e:
                 print(f"Error processing command: {str(e)}")
                 return JSONResponse(
-                    status_code=500, content={"success": False, "message": f"Error processing command: {str(e)}"}
+                    status_code=500,
+                    content={"success": False, "message": f"Error processing command: {str(e)}"},
                 )
 
         @self.app.get("/text_stream/{key}")
@@ -267,7 +281,9 @@ class FastAPIServer(EdgeIO):
 
     def run(self):
         """Run the FastAPI server."""
-        uvicorn.run(self.app, host=self.host, port=self.port)  # TODO: Translate structure to enable in-built workers'
+        uvicorn.run(
+            self.app, host=self.host, port=self.port
+        )  # TODO: Translate structure to enable in-built workers'
 
 
 if __name__ == "__main__":

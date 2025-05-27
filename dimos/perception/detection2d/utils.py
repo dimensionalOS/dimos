@@ -5,7 +5,14 @@ from dimos.utils.ros_utils import distance_angle_to_goal_xy
 
 
 def filter_detections(
-    bboxes, track_ids, class_ids, confidences, names, class_filter=None, name_filter=None, track_id_filter=None
+    bboxes,
+    track_ids,
+    class_ids,
+    confidences,
+    names,
+    class_filter=None,
+    name_filter=None,
+    track_id_filter=None,
 ):
     """
     Filter detection results based on class IDs, names, and/or tracking IDs.
@@ -40,7 +47,9 @@ def filter_detections(
     filtered_names = []
 
     # Filter detections
-    for bbox, track_id, class_id, conf, name in zip(bboxes, track_ids, class_ids, confidences, names):
+    for bbox, track_id, class_id, conf, name in zip(
+        bboxes, track_ids, class_ids, confidences, names
+    ):
         # Check if detection passes all specified filters
         keep = True
 
@@ -61,7 +70,13 @@ def filter_detections(
             filtered_confidences.append(conf)
             filtered_names.append(name)
 
-    return (filtered_bboxes, filtered_track_ids, filtered_class_ids, filtered_confidences, filtered_names)
+    return (
+        filtered_bboxes,
+        filtered_track_ids,
+        filtered_class_ids,
+        filtered_confidences,
+        filtered_names,
+    )
 
 
 def extract_detection_results(result, class_filter=None, name_filter=None, track_id_filter=None):
@@ -170,7 +185,9 @@ def plot_results(image, bboxes, track_ids, class_ids, confidences, names, alpha=
         cv2.rectangle(vis_img, (x1, y1 - text_h - 8), (x1 + text_w + 4, y1), color.tolist(), -1)
 
         # Draw text with white color for better visibility
-        cv2.putText(vis_img, label, (x1 + 2, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(
+            vis_img, label, (x1 + 2, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
+        )
 
     return vis_img
 
@@ -306,6 +323,10 @@ def calculate_position_rotation_from_bbox(bbox, depth, camera_intrinsics):
     # We can use the negative of the angle as an estimate of the object's yaw
     # assuming objects tend to face the camera
     position = {"x": x, "y": y, "z": 0.0}  # z=0 assuming objects are on the ground
-    rotation = {"roll": 0.0, "pitch": 0.0, "yaw": -angle}  # Only yaw is meaningful with monocular camera
+    rotation = {
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": -angle,
+    }  # Only yaw is meaningful with monocular camera
 
     return position, rotation

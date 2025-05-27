@@ -17,7 +17,6 @@ Robot Web Interface wrapper for DIMOS.
 Provides a clean interface to the dimensional-interface FastAPI server.
 """
 
-
 from dimos.web.dimos_interface.api.server import FastAPIServer
 
 

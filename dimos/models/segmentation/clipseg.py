@@ -22,7 +22,10 @@ class CLIPSeg:
 
     def run_inference(self, image, text_descriptions):
         inputs = self.clipseg_processor(
-            text=text_descriptions, images=[image] * len(text_descriptions), padding=True, return_tensors="pt"
+            text=text_descriptions,
+            images=[image] * len(text_descriptions),
+            padding=True,
+            return_tensors="pt",
         )
         outputs = self.clipseg_model(**inputs)
         logits = outputs.logits

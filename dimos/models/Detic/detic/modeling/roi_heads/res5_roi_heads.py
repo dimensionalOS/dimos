@@ -11,7 +11,6 @@ from .detic_fast_rcnn import DeticFastRCNNOutputLayers
 from ..debug import debug_second_stage
 
 
-
 @ROI_HEADS_REGISTRY.register()
 class CustomRes5ROIHeads(Res5ROIHeads):
     @configurable
@@ -26,15 +25,21 @@ class CustomRes5ROIHeads(Res5ROIHeads):
         self.add_image_box = cfg.MODEL.ROI_BOX_HEAD.ADD_IMAGE_BOX
         self.add_feature_to_prop = cfg.MODEL.ROI_BOX_HEAD.ADD_FEATURE_TO_PROP
         self.image_box_size = cfg.MODEL.ROI_BOX_HEAD.IMAGE_BOX_SIZE
-        self.box_predictor = DeticFastRCNNOutputLayers(cfg, ShapeSpec(channels=out_channels, height=1, width=1))
+        self.box_predictor = DeticFastRCNNOutputLayers(
+            cfg, ShapeSpec(channels=out_channels, height=1, width=1)
+        )
 
         self.save_debug = cfg.SAVE_DEBUG
         self.save_debug_path = cfg.SAVE_DEBUG_PATH
         if self.save_debug:
             self.debug_show_name = cfg.DEBUG_SHOW_NAME
             self.vis_thresh = cfg.VIS_THRESH
-            self.pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
-            self.pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            self.pixel_mean = (
+                torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            )
+            self.pixel_std = (
+                torch.Tensor(cfg.MODEL.PIXEL_STD).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            )
             self.bgr = cfg.INPUT.FORMAT == "BGR"
 
     @classmethod
@@ -43,7 +48,15 @@ class CustomRes5ROIHeads(Res5ROIHeads):
         ret["cfg"] = cfg
         return ret
 
-    def forward(self, images, features, proposals, targets=None, ann_type="box", classifier_info=(None, None, None)):
+    def forward(
+        self,
+        images,
+        features,
+        proposals,
+        targets=None,
+        ann_type="box",
+        classifier_info=(None, None, None),
+    ):
         """
         enable debug and image labels
         classifier_info is shared across the batch
@@ -58,11 +71,17 @@ class CustomRes5ROIHeads(Res5ROIHeads):
                 proposals = self.get_top_proposals(proposals)
 
         proposal_boxes = [x.proposal_boxes for x in proposals]
-        box_features = self._shared_roi_transform([features[f] for f in self.in_features], proposal_boxes)
-        predictions = self.box_predictor(box_features.mean(dim=[2, 3]), classifier_info=classifier_info)
+        box_features = self._shared_roi_transform(
+            [features[f] for f in self.in_features], proposal_boxes
+        )
+        predictions = self.box_predictor(
+            box_features.mean(dim=[2, 3]), classifier_info=classifier_info
+        )
 
         if self.add_feature_to_prop:
-            feats_per_image = box_features.mean(dim=[2, 3]).split([len(p) for p in proposals], dim=0)
+            feats_per_image = box_features.mean(dim=[2, 3]).split(
+                [len(p) for p in proposals], dim=0
+            )
             for feat, p in zip(feats_per_image, proposals):
                 p.feat = feat
 
@@ -71,7 +90,11 @@ class CustomRes5ROIHeads(Res5ROIHeads):
             if ann_type != "box":
                 image_labels = [x._pos_category_ids for x in targets]
                 losses = self.box_predictor.image_label_losses(
-                    predictions, proposals, image_labels, classifier_info=classifier_info, ann_type=ann_type
+                    predictions,
+                    proposals,
+                    image_labels,
+                    classifier_info=classifier_info,
+                    ann_type=ann_type,
                 )
             else:
                 losses = self.box_predictor.losses((predictions[0], predictions[1]), proposals)
@@ -131,11 +154,18 @@ class CustomRes5ROIHeads(Res5ROIHeads):
             f = self.image_box_size
             image_box.proposal_boxes = Boxes(
                 p.proposal_boxes.tensor.new_tensor(
-                    [w * (1.0 - f) / 2.0, h * (1.0 - f) / 2.0, w * (1.0 - (1.0 - f) / 2.0), h * (1.0 - (1.0 - f) / 2.0)]
+                    [
+                        w * (1.0 - f) / 2.0,
+                        h * (1.0 - f) / 2.0,
+                        w * (1.0 - (1.0 - f) / 2.0),
+                        h * (1.0 - (1.0 - f) / 2.0),
+                    ]
                 ).view(n, 4)
             )
         else:
-            image_box.proposal_boxes = Boxes(p.proposal_boxes.tensor.new_tensor([0, 0, w, h]).view(n, 4))
+            image_box.proposal_boxes = Boxes(
+                p.proposal_boxes.tensor.new_tensor([0, 0, w, h]).view(n, 4)
+            )
         if use_score:
             image_box.scores = p.objectness_logits.new_ones(n)
             image_box.pred_classes = p.objectness_logits.new_zeros(n, dtype=torch.long)

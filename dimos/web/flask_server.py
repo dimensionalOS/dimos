@@ -33,7 +33,9 @@ class FlaskServer(EdgeIO):
         for key in self.streams:
             if self.streams[key] is not None:
                 # Apply share and ref_count to manage subscriptions
-                self.active_streams[key] = self.streams[key].pipe(ops.map(self.process_frame_flask), ops.share())
+                self.active_streams[key] = self.streams[key].pipe(
+                    ops.map(self.process_frame_flask), ops.share()
+                )
 
         self.setup_routes()
 
@@ -75,14 +77,18 @@ class FlaskServer(EdgeIO):
 
         def make_response_generator(key):
             def response_generator():
-                return Response(stream_generator(key)(), mimetype="multipart/x-mixed-replace; boundary=frame")
+                return Response(
+                    stream_generator(key)(), mimetype="multipart/x-mixed-replace; boundary=frame"
+                )
 
             return response_generator
 
         # Dynamically adding routes using add_url_rule
         for key in self.streams:
             endpoint = f"video_feed_{key}"
-            self.app.add_url_rule(f"/video_feed/{key}", endpoint, view_func=make_response_generator(key))
+            self.app.add_url_rule(
+                f"/video_feed/{key}", endpoint, view_func=make_response_generator(key)
+            )
 
     def run(self, host="0.0.0.0", port=5555, threaded=True):
         self.port = port

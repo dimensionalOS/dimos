@@ -165,7 +165,9 @@ class ImageEmbeddingProvider:
             text_embedding = text_features / text_features.norm(dim=1, keepdim=True)
             embedding = text_embedding.numpy()[0]
 
-            logger.debug(f"Generated text embedding with shape {embedding.shape} for text: '{text}'")
+            logger.debug(
+                f"Generated text embedding with shape {embedding.shape} for text: '{text}'"
+            )
             return embedding
 
         except Exception as e:

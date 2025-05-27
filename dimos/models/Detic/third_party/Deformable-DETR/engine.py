@@ -54,7 +54,9 @@ def train_one_epoch(
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = utils.reduce_dict(loss_dict)
         loss_dict_reduced_unscaled = {f"{k}_unscaled": v for k, v in loss_dict_reduced.items()}
-        loss_dict_reduced_scaled = {k: v * weight_dict[k] for k, v in loss_dict_reduced.items() if k in weight_dict}
+        loss_dict_reduced_scaled = {
+            k: v * weight_dict[k] for k, v in loss_dict_reduced.items() if k in weight_dict
+        }
         losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
 
         loss_value = losses_reduced_scaled.item()
@@ -72,7 +74,9 @@ def train_one_epoch(
             grad_total_norm = utils.get_total_grad_norm(model.parameters(), max_norm)
         optimizer.step()
 
-        metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
+        metric_logger.update(
+            loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled
+        )
         metric_logger.update(class_error=loss_dict_reduced["class_error"])
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(grad_norm=grad_total_norm)
@@ -115,10 +119,14 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
 
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = utils.reduce_dict(loss_dict)
-        loss_dict_reduced_scaled = {k: v * weight_dict[k] for k, v in loss_dict_reduced.items() if k in weight_dict}
+        loss_dict_reduced_scaled = {
+            k: v * weight_dict[k] for k, v in loss_dict_reduced.items() if k in weight_dict
+        }
         loss_dict_reduced_unscaled = {f"{k}_unscaled": v for k, v in loss_dict_reduced.items()}
         metric_logger.update(
-            loss=sum(loss_dict_reduced_scaled.values()), **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled
+            loss=sum(loss_dict_reduced_scaled.values()),
+            **loss_dict_reduced_scaled,
+            **loss_dict_reduced_unscaled,
         )
         metric_logger.update(class_error=loss_dict_reduced["class_error"])
 

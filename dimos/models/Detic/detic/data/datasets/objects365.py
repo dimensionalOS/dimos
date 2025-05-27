@@ -749,14 +749,26 @@ def _get_builtin_metadata():
         x["id"]: i for i, x in enumerate(sorted(categories_v2_fix, key=lambda x: x["id"]))
     }
     thing_classes = [id_to_name[k] for k in sorted(id_to_name)]
-    return {"thing_dataset_id_to_contiguous_id": thing_dataset_id_to_contiguous_id, "thing_classes": thing_classes}
+    return {
+        "thing_dataset_id_to_contiguous_id": thing_dataset_id_to_contiguous_id,
+        "thing_classes": thing_classes,
+    }
 
 
 _PREDEFINED_SPLITS_OBJECTS365 = {
-    "objects365_v2_train": ("objects365/train", "objects365/annotations/zhiyuan_objv2_train_fixname_fixmiss.json"),
+    "objects365_v2_train": (
+        "objects365/train",
+        "objects365/annotations/zhiyuan_objv2_train_fixname_fixmiss.json",
+    ),
     # 80,000 images, 1,240,587 annotations
-    "objects365_v2_val": ("objects365/val", "objects365/annotations/zhiyuan_objv2_val_fixname.json"),
-    "objects365_v2_val_rare": ("objects365/val", "objects365/annotations/zhiyuan_objv2_val_fixname_rare.json"),
+    "objects365_v2_val": (
+        "objects365/val",
+        "objects365/annotations/zhiyuan_objv2_val_fixname.json",
+    ),
+    "objects365_v2_val_rare": (
+        "objects365/val",
+        "objects365/annotations/zhiyuan_objv2_val_fixname_rare.json",
+    ),
 }
 
 for key, (image_root, json_file) in _PREDEFINED_SPLITS_OBJECTS365.items():

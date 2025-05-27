@@ -9,7 +9,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--imagenet_path", default="datasets/imagenet/ImageNet-LVIS")
     parser.add_argument("--lvis_meta_path", default="datasets/lvis/lvis_v1_val.json")
-    parser.add_argument("--out_path", default="datasets/imagenet/annotations/imagenet_lvis_image_info.json")
+    parser.add_argument(
+        "--out_path", default="datasets/imagenet/annotations/imagenet_lvis_image_info.json"
+    )
     args = parser.parse_args()
 
     print("Loading LVIS meta")
@@ -34,7 +36,13 @@ if __name__ == "__main__":
             # img = cv2.imread('{}/{}'.format(args.imagenet_path, file_name))
             img = read_image("{}/{}".format(args.imagenet_path, file_name))
             h, w = img.shape[:2]
-            image = {"id": count, "file_name": file_name, "pos_category_ids": [cat_id], "width": w, "height": h}
+            image = {
+                "id": count,
+                "file_name": file_name,
+                "pos_category_ids": [cat_id],
+                "width": w,
+                "height": h,
+            }
             cat_images.append(image)
         images.extend(cat_images)
         image_counts[cat_id] = len(cat_images)

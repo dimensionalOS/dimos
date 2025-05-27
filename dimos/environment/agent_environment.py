@@ -93,7 +93,9 @@ class AgentEnvironment(Environment):
         # TODO: Implement object labeling using a detection model
         raise NotImplementedError("Object labeling not yet implemented")
 
-    def generate_segmentations(self, model: str = None, objects: List[str] = None, *args, **kwargs) -> List[np.ndarray]:
+    def generate_segmentations(
+        self, model: str = None, objects: List[str] = None, *args, **kwargs
+    ) -> List[np.ndarray]:
         """Generate segmentations for the current frame."""
         # TODO: Implement segmentation generation using specified model
         raise NotImplementedError("Segmentation generation not yet implemented")

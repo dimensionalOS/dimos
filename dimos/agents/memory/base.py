@@ -13,7 +13,10 @@
 # limitations under the License.
 
 from abc import abstractmethod
-from dimos.exceptions.agent_memory_exceptions import UnknownConnectionTypeError, AgentMemoryConnectionError
+from dimos.exceptions.agent_memory_exceptions import (
+    UnknownConnectionTypeError,
+    AgentMemoryConnectionError,
+)
 from dimos.utils.logging_config import setup_logger
 
 # TODO
@@ -36,7 +39,9 @@ class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
         self.logger = setup_logger(self.__class__.__name__)
         self.logger.info("Initializing AgentMemory with connection type: %s", connection_type)
         self.connection_params = kwargs
-        self.db_connection = None  # Holds the conection, whether local or remote, to the database used.
+        self.db_connection = (
+            None  # Holds the conection, whether local or remote, to the database used.
+        )
 
         if connection_type not in ["local", "remote"]:
             error = UnknownConnectionTypeError(
@@ -52,7 +57,9 @@ class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
                 self.create()
         except Exception as e:
             self.logger.error("Failed to initialize database connection: %s", str(e), exc_info=True)
-            raise AgentMemoryConnectionError("Initialization failed due to an unexpected error.", cause=e) from e
+            raise AgentMemoryConnectionError(
+                "Initialization failed due to an unexpected error.", cause=e
+            ) from e
 
     @abstractmethod
     def connect(self):

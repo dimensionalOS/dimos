@@ -27,10 +27,14 @@ def register_oid_instances(name, metadata, json_file, image_root):
 
     # 2. Optionally, add metadata about this dataset,
     # since they might be useful in evaluation, visualization or logging
-    MetadataCatalog.get(name).set(json_file=json_file, image_root=image_root, evaluator_type="oid", **metadata)
+    MetadataCatalog.get(name).set(
+        json_file=json_file, image_root=image_root, evaluator_type="oid", **metadata
+    )
 
 
-def load_coco_json_mem_efficient(json_file, image_root, dataset_name=None, extra_annotation_keys=None):
+def load_coco_json_mem_efficient(
+    json_file, image_root, dataset_name=None, extra_annotation_keys=None
+):
     """
     Actually not mem efficient
     """

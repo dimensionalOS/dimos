@@ -30,18 +30,38 @@ from dimos.types.constants import Colors
 # Module-level constant for Unitree ROS control definitions
 UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
     ("Damp", 1001, "Lowers the robot to the ground fully."),
-    ("BalanceStand", 1002, "Activates a mode that maintains the robot in a balanced standing position."),
-    ("StandUp", 1004, "Commands the robot to transition from a sitting or prone position to a standing posture."),
-    ("StandDown", 1005, "Instructs the robot to move from a standing position to a sitting or prone posture."),
+    (
+        "BalanceStand",
+        1002,
+        "Activates a mode that maintains the robot in a balanced standing position.",
+    ),
+    (
+        "StandUp",
+        1004,
+        "Commands the robot to transition from a sitting or prone position to a standing posture.",
+    ),
+    (
+        "StandDown",
+        1005,
+        "Instructs the robot to move from a standing position to a sitting or prone posture.",
+    ),
     (
         "RecoveryStand",
         1006,
         "Recovers the robot to a state from which it can take more commands. Useful to run after multiple dynamic commands like front flips.",
     ),
-    ("Euler", 1007, "Adjusts the robot's orientation using Euler angles, providing precise control over its rotation."),
+    (
+        "Euler",
+        1007,
+        "Adjusts the robot's orientation using Euler angles, providing precise control over its rotation.",
+    ),
     # ("Move", 1008, "Move the robot using velocity commands."),  # Intentionally omitted
     ("Sit", 1009, "Commands the robot to sit down from a standing or moving stance."),
-    ("RiseSit", 1010, "Commands the robot to rise back to a standing position from a sitting posture."),
+    (
+        "RiseSit",
+        1010,
+        "Commands the robot to rise back to a standing position from a sitting posture.",
+    ),
     (
         "SwitchGait",
         1011,
@@ -63,17 +83,29 @@ UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
         1015,
         "Sets or adjusts the speed at which the robot moves, with various levels available for different operational needs.",
     ),
-    ("Hello", 1016, "Performs a greeting action, which could involve a wave or other friendly gesture."),
+    (
+        "Hello",
+        1016,
+        "Performs a greeting action, which could involve a wave or other friendly gesture.",
+    ),
     ("Stretch", 1017, "Engages the robot in a stretching routine."),
     (
         "TrajectoryFollow",
         1018,
         "Directs the robot to follow a predefined trajectory, which could involve complex paths or maneuvers.",
     ),
-    ("ContinuousGait", 1019, "Enables a mode for continuous walking or running, ideal for long-distance travel."),
+    (
+        "ContinuousGait",
+        1019,
+        "Enables a mode for continuous walking or running, ideal for long-distance travel.",
+    ),
     ("Content", 1020, "To display or trigger when the robot is happy."),
     ("Wallow", 1021, "The robot falls onto its back and rolls around."),
-    ("Dance1", 1022, "Performs a predefined dance routine 1, programmed for entertainment or demonstration."),
+    (
+        "Dance1",
+        1022,
+        "Performs a predefined dance routine 1, programmed for entertainment or demonstration.",
+    ),
     ("Dance2", 1023, "Performs another variant of a predefined dance routine 2."),
     ("GetBodyHeight", 1024, "Retrieves the current height of the robot's body from the ground."),
     (
@@ -92,22 +124,50 @@ UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
         1028,
         "Directs the robot to take a specific pose or stance, which could be used for tasks or performances.",
     ),
-    ("Scrape", 1029, "Robot falls to its hind legs and makes scraping motions with its front legs."),
+    (
+        "Scrape",
+        1029,
+        "Robot falls to its hind legs and makes scraping motions with its front legs.",
+    ),
     ("FrontFlip", 1030, "Executes a front flip, a complex and dynamic maneuver."),
     ("FrontJump", 1031, "Commands the robot to perform a forward jump."),
-    ("FrontPounce", 1032, "Initiates a pouncing movement forward, mimicking animal-like pouncing behavior."),
+    (
+        "FrontPounce",
+        1032,
+        "Initiates a pouncing movement forward, mimicking animal-like pouncing behavior.",
+    ),
     ("WiggleHips", 1033, "Causes the robot to wiggle its hips."),
     (
         "GetState",
         1034,
         "Retrieves the current operational state of the robot, including status reports or diagnostic information.",
     ),
-    ("EconomicGait", 1035, "Engages a more energy-efficient walking or running mode to conserve battery life."),
+    (
+        "EconomicGait",
+        1035,
+        "Engages a more energy-efficient walking or running mode to conserve battery life.",
+    ),
     ("FingerHeart", 1036, "Performs a finger heart gesture while on its hind legs."),
-    ("Handstand", 1301, "Commands the robot to perform a handstand, demonstrating balance and control."),
-    ("CrossStep", 1302, "Engages the robot in a cross-stepping routine, useful for complex locomotion or dance moves."),
-    ("OnesidedStep", 1303, "Commands the robot to perform a stepping motion that predominantly uses one side."),
-    ("Bound", 1304, "Initiates a bounding motion, similar to a light, repetitive hopping or leaping."),
+    (
+        "Handstand",
+        1301,
+        "Commands the robot to perform a handstand, demonstrating balance and control.",
+    ),
+    (
+        "CrossStep",
+        1302,
+        "Engages the robot in a cross-stepping routine, useful for complex locomotion or dance moves.",
+    ),
+    (
+        "OnesidedStep",
+        1303,
+        "Commands the robot to perform a stepping motion that predominantly uses one side.",
+    ),
+    (
+        "Bound",
+        1304,
+        "Initiates a bounding motion, similar to a light, repetitive hopping or leaping.",
+    ),
     (
         "LeadFollow",
         1045,
@@ -156,7 +216,9 @@ class MyUnitreeSkills(SkillLibrary):
 
         # Provide the robot instance to each skill
         for skill_class in self:
-            print(f"{Colors.GREEN_PRINT_COLOR}Creating instance for skill: {skill_class}{Colors.RESET_COLOR}")
+            print(
+                f"{Colors.GREEN_PRINT_COLOR}Creating instance for skill: {skill_class}{Colors.RESET_COLOR}"
+            )
             self.create_instance(skill_class.__name__, robot=self._robot)
 
         # Refresh the class skills
@@ -207,7 +269,9 @@ class MyUnitreeSkills(SkillLibrary):
         x: float = Field(..., description="Forward velocity (m/s).")
         y: float = Field(default=0.0, description="Left/right velocity (m/s)")
         yaw: float = Field(default=0.0, description="Rotational velocity (rad/s)")
-        duration: float = Field(default=0.0, description="How long to move (seconds). If 0, command is continuous")
+        duration: float = Field(
+            default=0.0, description="How long to move (seconds). If 0, command is continuous"
+        )
 
         def __call__(self):
             super().__call__()
@@ -231,7 +295,9 @@ class MyUnitreeSkills(SkillLibrary):
                     asyncio.set_event_loop(loop)
                     start_time = time.time()
                     try:
-                        while not stop_event.is_set() and (time.time() - start_time) < self.duration:
+                        while (
+                            not stop_event.is_set() and (time.time() - start_time) < self.duration
+                        ):
                             self._robot.move(vector)
                             await asyncio.sleep(0.001)  # Send commands at 1000Hz
                         # Always stop at the end
@@ -262,7 +328,9 @@ class MyUnitreeSkills(SkillLibrary):
         x: float = Field(..., description="Backward velocity (m/s). Positive values move backward.")
         y: float = Field(default=0.0, description="Left/right velocity (m/s)")
         yaw: float = Field(default=0.0, description="Rotational velocity (rad/s)")
-        duration: float = Field(default=0.0, description="How long to move (seconds). If 0, command is continuous")
+        duration: float = Field(
+            default=0.0, description="How long to move (seconds). If 0, command is continuous"
+        )
 
         def __call__(self):
             super().__call__()
@@ -286,7 +354,9 @@ class MyUnitreeSkills(SkillLibrary):
                     asyncio.set_event_loop(loop)
                     start_time = time.time()
                     try:
-                        while not stop_event.is_set() and (time.time() - start_time) < self.duration:
+                        while (
+                            not stop_event.is_set() and (time.time() - start_time) < self.duration
+                        ):
                             self._robot.move(vector)
                             await asyncio.sleep(0.001)  # Send commands at 1000Hz
                         # Always stop at the end

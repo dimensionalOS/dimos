@@ -175,7 +175,9 @@ class LLMAgent(Agent):
         self.image_detail: str = "low"
         self.max_input_tokens_per_request: int = max_input_tokens_per_request
         self.max_output_tokens_per_request: int = max_output_tokens_per_request
-        self.max_tokens_per_request: int = self.max_input_tokens_per_request + self.max_output_tokens_per_request
+        self.max_tokens_per_request: int = (
+            self.max_input_tokens_per_request + self.max_output_tokens_per_request
+        )
         self.rag_query_n: int = 4
         self.rag_similarity_threshold: float = 0.45
         self.frame_processor: Optional[FrameProcessor] = None
@@ -200,10 +202,14 @@ class LLMAgent(Agent):
                     RxOps.map(
                         lambda combined: {
                             "query": combined[0],
-                            "objects": combined[1] if len(combined) > 1 else "No object data available",
+                            "objects": combined[1]
+                            if len(combined) > 1
+                            else "No object data available",
                         }
                     ),
-                    RxOps.map(lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"),
+                    RxOps.map(
+                        lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"
+                    ),
                     RxOps.do_action(
                         lambda x: print(f"\033[34mEnriched query: {x.split(chr(10))[0]}\033[0m")
                         or [print(f"\033[34m{line}\033[0m") for line in x.split(chr(10))[1:]]
@@ -222,7 +228,9 @@ class LLMAgent(Agent):
             # Define a query extractor for the merged stream
             query_extractor = lambda emission: (emission[0], emission[1][0])
             self.disposables.add(
-                self.subscribe_to_image_processing(self.merged_stream, query_extractor=query_extractor)
+                self.subscribe_to_image_processing(
+                    self.merged_stream, query_extractor=query_extractor
+                )
             )
         else:
             # If no merged stream, fall back to individual streams
@@ -250,7 +258,9 @@ class LLMAgent(Agent):
             and condensed results (for use in the prompt).
         """
         results = self.agent_memory.query(
-            query_texts=self.query, n_results=self.rag_query_n, similarity_threshold=self.rag_similarity_threshold
+            query_texts=self.query,
+            n_results=self.rag_query_n,
+            similarity_threshold=self.rag_similarity_threshold,
         )
         formatted_results = "\n".join(
             f"Document ID: {doc.id}\nMetadata: {doc.metadata}\nContent: {doc.page_content}\nScore: {score}\n"
@@ -334,7 +344,12 @@ class LLMAgent(Agent):
                 result = skill_library.call(name, **args)
                 logger.info(f"Function Call Results: {result}")
                 new_messages.append(
-                    {"role": "tool", "tool_call_id": tool_call.id, "content": str(result), "name": name}
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": str(result),
+                        "name": name,
+                    }
                 )
             if has_called_tools:
                 logger.info("Sending Another Query.")
@@ -347,7 +362,9 @@ class LLMAgent(Agent):
                 return None
 
         if response_message.tool_calls is not None:
-            return _tooling_callback(response_message, messages, response_message, self.skill_library)
+            return _tooling_callback(
+                response_message, messages, response_message, self.skill_library
+            )
         return None
 
     def _observable_query(
@@ -373,7 +390,9 @@ class LLMAgent(Agent):
         try:
             self._update_query(incoming_query)
             _, condensed_results = self._get_rag_context()
-            messages = self._build_prompt(base64_image, dimensions, override_token_limit, condensed_results)
+            messages = self._build_prompt(
+                base64_image, dimensions, override_token_limit, condensed_results
+            )
             # logger.debug(f"Sending Query: {messages}")
             logger.info("Sending Query.")
             response_message = self._send_query(messages)
@@ -391,13 +410,19 @@ class LLMAgent(Agent):
                 final_msg = (
                     response_message.parsed
                     if hasattr(response_message, "parsed") and response_message.parsed
-                    else (response_message.content if hasattr(response_message, "content") else response_message)
+                    else (
+                        response_message.content
+                        if hasattr(response_message, "content")
+                        else response_message
+                    )
                 )
                 observer.on_next(final_msg)
                 self.response_subject.on_next(final_msg)
             else:
                 response_message_2 = self._handle_tooling(response_message, messages)
-                final_msg = response_message_2 if response_message_2 is not None else response_message
+                final_msg = (
+                    response_message_2 if response_message_2 is not None else response_message
+                )
                 if isinstance(final_msg, BaseModel):  # TODO: Test
                     final_msg = str(final_msg.content)
                 observer.on_next(final_msg)
@@ -440,7 +465,9 @@ class LLMAgent(Agent):
                     file.write(f"{self.dev_name}: {response}\n")
                 logger.info(f"LLM Response [{self.dev_name}]: {response}")
 
-    def subscribe_to_image_processing(self, frame_observable: Observable, query_extractor=None) -> Disposable:
+    def subscribe_to_image_processing(
+        self, frame_observable: Observable, query_extractor=None
+    ) -> Disposable:
         """Subscribes to a stream of video frames for processing.
 
         This method sets up a subscription to process incoming video frames.
@@ -480,7 +507,9 @@ class LLMAgent(Agent):
                 RxOps.subscribe_on(self.pool_scheduler),
                 MyOps.print_emission(id="D", **print_emission_args),
                 MyVidOps.with_jpeg_export(
-                    self.frame_processor, suffix=f"{self.dev_name}_frame_", save_limit=_MAX_SAVED_FRAMES
+                    self.frame_processor,
+                    suffix=f"{self.dev_name}_frame_",
+                    save_limit=_MAX_SAVED_FRAMES,
                 ),
                 MyOps.print_emission(id="E", **print_emission_args),
                 MyVidOps.encode_image(),
@@ -562,7 +591,9 @@ class LLMAgent(Agent):
             return just(query).pipe(
                 MyOps.print_emission(id="Pr A", **print_emission_args),
                 RxOps.flat_map(
-                    lambda query: create(lambda observer, _: self._observable_query(observer, incoming_query=query))
+                    lambda query: create(
+                        lambda observer, _: self._observable_query(observer, incoming_query=query)
+                    )
                 ),
                 MyOps.print_emission(id="Pr B", **print_emission_args),
             )
@@ -612,7 +643,9 @@ class LLMAgent(Agent):
             Observable: An observable that emits string responses from the agent.
         """
         return self.response_subject.pipe(
-            RxOps.observe_on(self.pool_scheduler), RxOps.subscribe_on(self.pool_scheduler), RxOps.share()
+            RxOps.observe_on(self.pool_scheduler),
+            RxOps.subscribe_on(self.pool_scheduler),
+            RxOps.share(),
         )
 
     def run_observable_query(self, query_text: str, **kwargs) -> Observable:
@@ -631,7 +664,11 @@ class LLMAgent(Agent):
         Returns:
             Observable: An observable that emits the response as a string.
         """
-        return create(lambda observer, _: self._observable_query(observer, incoming_query=query_text, **kwargs))
+        return create(
+            lambda observer, _: self._observable_query(
+                observer, incoming_query=query_text, **kwargs
+            )
+        )
 
     def dispose_all(self):
         """Disposes of all active subscriptions managed by this agent."""
@@ -749,7 +786,9 @@ class OpenAIAgent(LLMAgent):
         self.response_model = response_model if response_model is not None else NOT_GIVEN
         self.model_name = model_name
         self.tokenizer = tokenizer or OpenAITokenizer(model_name=self.model_name)
-        self.prompt_builder = prompt_builder or PromptBuilder(self.model_name, tokenizer=self.tokenizer)
+        self.prompt_builder = prompt_builder or PromptBuilder(
+            self.model_name, tokenizer=self.tokenizer
+        )
         self.rag_query_n = rag_query_n
         self.rag_similarity_threshold = rag_similarity_threshold
         self.image_detail = image_detail
@@ -767,8 +806,14 @@ class OpenAIAgent(LLMAgent):
     def _add_context_to_memory(self):
         """Adds initial context to the agent's memory."""
         context_data = [
-            ("id0", "Optical Flow is a technique used to track the movement of objects in a video sequence."),
-            ("id1", "Edge Detection is a technique used to identify the boundaries of objects in an image."),
+            (
+                "id0",
+                "Optical Flow is a technique used to track the movement of objects in a video sequence.",
+            ),
+            (
+                "id1",
+                "Edge Detection is a technique used to identify the boundaries of objects in an image.",
+            ),
             ("id2", "Video is a sequence of frames captured at regular intervals."),
             (
                 "id3",
@@ -805,7 +850,11 @@ class OpenAIAgent(LLMAgent):
                     model=self.model_name,
                     messages=messages,
                     response_format=self.response_model,
-                    tools=(self.skill_library.get_tools() if self.skill_library is not None else NOT_GIVEN),
+                    tools=(
+                        self.skill_library.get_tools()
+                        if self.skill_library is not None
+                        else NOT_GIVEN
+                    ),
                     max_tokens=self.max_output_tokens_per_request,
                 )
             else:
@@ -813,7 +862,11 @@ class OpenAIAgent(LLMAgent):
                     model=self.model_name,
                     messages=messages,
                     max_tokens=self.max_output_tokens_per_request,
-                    tools=(self.skill_library.get_tools() if self.skill_library is not None else NOT_GIVEN),
+                    tools=(
+                        self.skill_library.get_tools()
+                        if self.skill_library is not None
+                        else NOT_GIVEN
+                    ),
                 )
             response_message = response.choices[0].message
             if response_message is None:
@@ -843,7 +896,9 @@ class OpenAIAgent(LLMAgent):
         Returns:
             Observable: An observable that emits the response as a string.
         """
-        return create(lambda observer, _: self._observable_query(observer, incoming_query=query_text))
+        return create(
+            lambda observer, _: self._observable_query(observer, incoming_query=query_text)
+        )
 
 
 # endregion OpenAIAgent Subclass (OpenAI-Specific Implementation)

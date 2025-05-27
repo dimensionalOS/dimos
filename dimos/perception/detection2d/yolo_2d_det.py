@@ -1,6 +1,10 @@
 import cv2
 from ultralytics import YOLO
-from dimos.perception.detection2d.utils import extract_detection_results, plot_results, filter_detections
+from dimos.perception.detection2d.utils import (
+    extract_detection_results,
+    plot_results,
+    filter_detections,
+)
 import os
 
 
@@ -103,7 +107,9 @@ def main():
 
             # Visualize results
             if len(bboxes) > 0:
-                frame = detector.visualize_results(frame, bboxes, track_ids, class_ids, confidences, names)
+                frame = detector.visualize_results(
+                    frame, bboxes, track_ids, class_ids, confidences, names
+                )
 
             # Display results
             cv2.imshow("YOLO Detection", frame)

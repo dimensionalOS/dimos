@@ -20,7 +20,10 @@ from PIL import Image
 import logging
 
 from dimos.models.segmentation.segment_utils import apply_mask_to_image
-from dimos.models.pointcloud.pointcloud_utils import create_point_cloud_from_rgbd, canonicalize_point_cloud
+from dimos.models.pointcloud.pointcloud_utils import (
+    create_point_cloud_from_rgbd,
+    canonicalize_point_cloud,
+)
 from dimos.types.pointcloud import PointCloudType
 
 # Setup logging
@@ -51,7 +54,9 @@ class PointCloudProcessor:
             "cx": 320.0,
             "cy": 240.0,
         }
-        self.intrinsic_parameters = intrinsic_parameters if intrinsic_parameters else self.default_intrinsic_parameters
+        self.intrinsic_parameters = (
+            intrinsic_parameters if intrinsic_parameters else self.default_intrinsic_parameters
+        )
 
     def process_frame(self, image, depth_map, masks):
         """
@@ -67,7 +72,9 @@ class PointCloudProcessor:
             bool: A flag indicating if the point clouds were canonicalized.
         """
         try:
-            self.logger.info("STARTING POINT CLOUD PROCESSING ---------------------------------------")
+            self.logger.info(
+                "STARTING POINT CLOUD PROCESSING ---------------------------------------"
+            )
 
             # Convert images to OpenCV format if they are PIL Images
             if isinstance(image, Image.Image):
@@ -95,8 +102,12 @@ class PointCloudProcessor:
             point_cloud_data = []
 
             # Create original point cloud
-            original_pcd = create_point_cloud_from_rgbd(original_image_cv, depth_image_cv, intrinsic_parameters)
-            pcd, canonicalized, transformation = canonicalize_point_cloud(original_pcd, canonicalize_threshold=0.3)
+            original_pcd = create_point_cloud_from_rgbd(
+                original_image_cv, depth_image_cv, intrinsic_parameters
+            )
+            pcd, canonicalized, transformation = canonicalize_point_cloud(
+                original_pcd, canonicalize_threshold=0.3
+            )
 
             for idx, mask in enumerate(masks):
                 mask_binary = mask > 0
@@ -111,7 +122,9 @@ class PointCloudProcessor:
                 if canonicalized:
                     inlier_cloud.transform(transformation)
 
-                point_clouds.append(PointCloudType(point_cloud=inlier_cloud, metadata={"mask_index": idx}))
+                point_clouds.append(
+                    PointCloudType(point_cloud=inlier_cloud, metadata={"mask_index": idx})
+                )
                 # Save point cloud to file
                 pointcloud_filename = f"pointcloud_{idx}.pcd"
                 pointcloud_filepath = os.path.join(self.output_dir, pointcloud_filename)

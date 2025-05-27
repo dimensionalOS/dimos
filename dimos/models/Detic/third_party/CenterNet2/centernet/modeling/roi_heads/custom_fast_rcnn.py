@@ -40,7 +40,9 @@ class CustomFastRCNNOutputLayers(FastRCNNOutputLayers):
         enable advanced loss
         """
         scores, proposal_deltas = predictions
-        gt_classes = cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0)
+        gt_classes = (
+            cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0)
+        )
         num_classes = self.num_classes
         _log_classification_stats(scores, gt_classes)
 
@@ -60,7 +62,9 @@ class CustomFastRCNNOutputLayers(FastRCNNOutputLayers):
             loss_cls = self.softmax_cross_entropy_loss(scores, gt_classes)
         return {
             "loss_cls": loss_cls,
-            "loss_box_reg": self.box_reg_loss(proposal_boxes, gt_boxes, proposal_deltas, gt_classes),
+            "loss_box_reg": self.box_reg_loss(
+                proposal_boxes, gt_boxes, proposal_deltas, gt_classes
+            ),
         }
 
     def sigmoid_cross_entropy_loss(self, pred_class_logits, gt_classes):
@@ -85,7 +89,9 @@ class CustomFastRCNNOutputLayers(FastRCNNOutputLayers):
             fed_w = appeared_mask.view(1, C).expand(B, C)
             weight = weight * fed_w.float()
 
-        cls_loss = F.binary_cross_entropy_with_logits(pred_class_logits[:, :-1], target, reduction="none")  # B x C
+        cls_loss = F.binary_cross_entropy_with_logits(
+            pred_class_logits[:, :-1], target, reduction="none"
+        )  # B x C
         loss = torch.sum(cls_loss * weight) / B
         return loss
 
@@ -104,7 +110,9 @@ class CustomFastRCNNOutputLayers(FastRCNNOutputLayers):
             appeared_mask = appeared.new_zeros(C + 1).float()
             appeared_mask[appeared] = 1.0  # C + 1
             appeared_mask[C] = 1.0
-            loss = F.cross_entropy(pred_class_logits, gt_classes, weight=appeared_mask, reduction="mean")
+            loss = F.cross_entropy(
+                pred_class_logits, gt_classes, weight=appeared_mask, reduction="mean"
+            )
         else:
             loss = F.cross_entropy(pred_class_logits, gt_classes, reduction="mean")
         return loss

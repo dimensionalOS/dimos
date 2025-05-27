@@ -202,7 +202,8 @@ class FrameProcessor:
         """
         return frame_stream.pipe(
             ops.scan(
-                lambda acc, frame: self.compute_optical_flow(acc, frame, compute_relevancy=False), (None, None, None)
+                lambda acc, frame: self.compute_optical_flow(acc, frame, compute_relevancy=False),
+                (None, None, None),
             ),
             ops.map(lambda result: result[1]),  # Extract flow component
             ops.filter(lambda flow: flow is not None),
@@ -245,7 +246,8 @@ class FrameProcessor:
         """
         return frame_stream.pipe(
             ops.scan(
-                lambda acc, frame: self.compute_optical_flow(acc, frame, compute_relevancy=True), (None, None, None)
+                lambda acc, frame: self.compute_optical_flow(acc, frame, compute_relevancy=True),
+                (None, None, None),
             ),
             # Result is (current_frame, flow, relevancy)
             ops.filter(lambda result: result[1] is not None),  # Filter out None flows

@@ -38,7 +38,9 @@ class PromptBuilder:
     - Maintain a professional and informative tone in your response.
     """)
 
-    def __init__(self, model_name="gpt-4o", max_tokens=128000, tokenizer: Optional[AbstractTokenizer] = None):
+    def __init__(
+        self, model_name="gpt-4o", max_tokens=128000, tokenizer: Optional[AbstractTokenizer] = None
+    ):
         """
         Initialize the prompt builder.
         Args:
@@ -149,7 +151,9 @@ class PromptBuilder:
             system_prompt_token_cnt = self.tokenizer.token_count(system_prompt)
             user_query_token_cnt = self.tokenizer.token_count(user_query)
             image_token_cnt = (
-                self.tokenizer.image_token_count(image_width, image_height, image_detail) if base64_image else 0
+                self.tokenizer.image_token_count(image_width, image_height, image_detail)
+                if base64_image
+                else 0
             )
         else:
             rag_token_cnt = 0
@@ -176,7 +180,9 @@ class PromptBuilder:
                         break
                     if policies[key] != "do_not_truncate":
                         max_allowed = max(0, budgets[key] - excess_tokens)
-                        components[key]["text"] = self.truncate_tokens(component["text"], max_allowed, policies[key])
+                        components[key]["text"] = self.truncate_tokens(
+                            component["text"], max_allowed, policies[key]
+                        )
                         tokens_after = self.tokenizer.token_count(components[key]["text"])
                         excess_tokens -= component["tokens"] - tokens_after
                         component["tokens"] = tokens_after
@@ -186,7 +192,10 @@ class PromptBuilder:
 
         if components["rag"]["text"]:
             user_content = [
-                {"type": "text", "text": f"{components['rag']['text']}\n\n{components['user_query']['text']}"}
+                {
+                    "type": "text",
+                    "text": f"{components['rag']['text']}\n\n{components['user_query']['text']}",
+                }
             ]
         else:
             user_content = [{"type": "text", "text": components["user_query"]["text"]}]

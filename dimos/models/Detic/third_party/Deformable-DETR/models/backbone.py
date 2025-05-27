@@ -11,7 +11,6 @@
 Backbone modules.
 """
 
-
 import torch
 import torch.nn.functional as F
 import torchvision
@@ -69,7 +68,12 @@ class BackboneBase(nn.Module):
     def __init__(self, backbone: nn.Module, train_backbone: bool, return_interm_layers: bool):
         super().__init__()
         for name, parameter in backbone.named_parameters():
-            if not train_backbone or "layer2" not in name and "layer3" not in name and "layer4" not in name:
+            if (
+                not train_backbone
+                or "layer2" not in name
+                and "layer3" not in name
+                and "layer4" not in name
+            ):
                 parameter.requires_grad_(False)
         if return_interm_layers:
             # return_layers = {"layer1": "0", "layer2": "1", "layer3": "2", "layer4": "3"}
@@ -99,7 +103,9 @@ class Backbone(BackboneBase):
     def __init__(self, name: str, train_backbone: bool, return_interm_layers: bool, dilation: bool):
         norm_layer = FrozenBatchNorm2d
         backbone = getattr(torchvision.models, name)(
-            replace_stride_with_dilation=[False, False, dilation], pretrained=is_main_process(), norm_layer=norm_layer
+            replace_stride_with_dilation=[False, False, dilation],
+            pretrained=is_main_process(),
+            norm_layer=norm_layer,
         )
         assert name not in ("resnet18", "resnet34"), "number of channels are hard coded"
         super().__init__(backbone, train_backbone, return_interm_layers)

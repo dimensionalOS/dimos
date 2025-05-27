@@ -114,7 +114,9 @@ class ObjectDetectionStream:
                     continue
 
                 # Calculate object position and rotation
-                position, rotation = calculate_position_rotation_from_bbox(bbox, depth, self.camera_intrinsics)
+                position, rotation = calculate_position_rotation_from_bbox(
+                    bbox, depth, self.camera_intrinsics
+                )
 
                 # Get object dimensions
                 width, height = calculate_object_size_from_bbox(bbox, depth, self.camera_intrinsics)
@@ -124,7 +126,9 @@ class ObjectDetectionStream:
                     if self.transform_to_map:
                         position = Vector([position["x"], position["y"], position["z"]])
                         rotation = Vector([rotation["roll"], rotation["pitch"], rotation["yaw"]])
-                        position, rotation = self.transform_to_map(position, rotation, source_frame="base_link")
+                        position, rotation = self.transform_to_map(
+                            position, rotation, source_frame="base_link"
+                        )
                         position = dict(x=position.x, y=position.y, z=position.z)
                         rotation = dict(roll=rotation.x, pitch=rotation.y, yaw=rotation.z)
                 except Exception as e:
@@ -159,13 +163,25 @@ class ObjectDetectionStream:
 
                 # Draw text background
                 text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
-                cv2.rectangle(viz_frame, (x1, y1 - text_size[1] - 5), (x1 + text_size[0], y1), (0, 0, 0), -1)
+                cv2.rectangle(
+                    viz_frame, (x1, y1 - text_size[1] - 5), (x1 + text_size[0], y1), (0, 0, 0), -1
+                )
 
                 # Draw text
-                cv2.putText(viz_frame, text, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(
+                    viz_frame, text, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2
+                )
 
                 # Position text below
-                cv2.putText(viz_frame, pos_text, (x1, y1 + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                cv2.putText(
+                    viz_frame,
+                    pos_text,
+                    (x1, y1 + 15),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 255),
+                    2,
+                )
 
             return {"frame": frame, "viz_frame": viz_frame, "objects": objects}
 

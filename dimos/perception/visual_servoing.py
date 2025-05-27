@@ -155,7 +155,9 @@ class VisualServoing:
                 if result is not None:
                     break
 
-                logger.warning(f"Attempt {attempt + 1}: No tracking result, retrying in 1 second...")
+                logger.warning(
+                    f"Attempt {attempt + 1}: No tracking result, retrying in 1 second..."
+                )
                 time.sleep(3)  # Wait 1 second between attempts
 
             if result is None:
@@ -480,7 +482,9 @@ class VisualServoing:
         distance_error = abs(self.current_distance - self.desired_distance)
         angle_error = abs(self.current_angle)  # Desired angle is always 0 (centered)
 
-        logger.debug(f"Goal check - Distance error: {distance_error:.2f}m, Angle error: {angle_error:.2f}rad")
+        logger.debug(
+            f"Goal check - Distance error: {distance_error:.2f}m, Angle error: {angle_error:.2f}rad"
+        )
 
         return (distance_error <= distance_threshold) and (angle_error <= angle_threshold)
 

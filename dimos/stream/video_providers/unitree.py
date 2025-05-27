@@ -18,7 +18,9 @@ from queue import Queue
 from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.constants import (
     WebRTCConnectionMethod,
 )
-from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection
+from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import (
+    Go2WebRTCConnection,
+)
 from aiortc import MediaStreamTrack
 import asyncio
 from reactivex import Observable, create, operators as ops
@@ -55,7 +57,9 @@ class UnitreeVideoProvider(AbstractVideoProvider):
             elif ip:
                 self.conn = Go2WebRTCConnection(connection_method, ip=ip)
             else:
-                raise ValueError("Either serial_number or ip must be provided for LocalSTA connection")
+                raise ValueError(
+                    "Either serial_number or ip must be provided for LocalSTA connection"
+                )
         elif connection_method == WebRTCConnectionMethod.LocalAP:
             self.conn = Go2WebRTCConnection(connection_method)
         else:
@@ -121,7 +125,9 @@ class UnitreeVideoProvider(AbstractVideoProvider):
                 # Start asyncio loop if not already running
                 if not self.loop:
                     self.loop = asyncio.new_event_loop()
-                    self.asyncio_thread = threading.Thread(target=self._run_asyncio_loop, args=(self.loop,))
+                    self.asyncio_thread = threading.Thread(
+                        target=self._run_asyncio_loop, args=(self.loop,)
+                    )
                     self.asyncio_thread.start()
 
                 frame_time = time.monotonic()

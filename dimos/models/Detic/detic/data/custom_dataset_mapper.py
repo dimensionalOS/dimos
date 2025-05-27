@@ -125,7 +125,9 @@ class CustomDatasetMapper(DatasetMapper):
         # USER: Remove if you don't use pre-computed proposals.
         # Most users would not need this feature.
         if self.proposal_topk is not None:
-            utils.transform_proposals(dataset_dict, image_shape, transforms, proposal_topk=self.proposal_topk)
+            utils.transform_proposals(
+                dataset_dict, image_shape, transforms, proposal_topk=self.proposal_topk
+            )
 
         if not self.is_train:
             # USER: Modify this if you want to keep them for some reason.
@@ -155,7 +157,9 @@ class CustomDatasetMapper(DatasetMapper):
                 for obj in dataset_dict.pop("annotations")
             ]
             annos = [ann[0] for ann in all_annos if ann[1] == 0]
-            instances = utils.annotations_to_instances(annos, image_shape, mask_format=self.instance_mask_format)
+            instances = utils.annotations_to_instances(
+                annos, image_shape, mask_format=self.instance_mask_format
+            )
 
             del all_annos
             if self.recompute_boxes:
@@ -164,8 +168,12 @@ class CustomDatasetMapper(DatasetMapper):
         if self.with_ann_type:
             dataset_dict["pos_category_ids"] = dataset_dict.get("pos_category_ids", [])
             dataset_dict["ann_type"] = self.dataset_ann[dataset_dict["dataset_source"]]
-        if self.is_debug and (("pos_category_ids" not in dataset_dict) or (dataset_dict["pos_category_ids"] == [])):
-            dataset_dict["pos_category_ids"] = [x for x in sorted(set(dataset_dict["instances"].gt_classes.tolist()))]
+        if self.is_debug and (
+            ("pos_category_ids" not in dataset_dict) or (dataset_dict["pos_category_ids"] == [])
+        ):
+            dataset_dict["pos_category_ids"] = [
+                x for x in sorted(set(dataset_dict["instances"].gt_classes.tolist()))
+            ]
         return dataset_dict
 
 
@@ -181,7 +189,9 @@ def build_transform_gen(cfg, is_train):
         max_size = cfg.INPUT.MAX_SIZE_TEST
         sample_style = "choice"
     if sample_style == "range":
-        assert len(min_size) == 2, "more than 2 ({}) min_size(s) are provided for ranges".format(len(min_size))
+        assert len(min_size) == 2, "more than 2 ({}) min_size(s) are provided for ranges".format(
+            len(min_size)
+        )
 
     logger = logging.getLogger(__name__)
     tfm_gens = []
@@ -216,7 +226,9 @@ class DetrDatasetMapper:
         self.mask_on = cfg.MODEL.MASK_ON
         self.tfm_gens = build_transform_gen(cfg, is_train)
         logging.getLogger(__name__).info(
-            "Full TransformGens used in training: {}, crop: {}".format(str(self.tfm_gens), str(self.crop_gen))
+            "Full TransformGens used in training: {}, crop: {}".format(
+                str(self.tfm_gens), str(self.crop_gen)
+            )
         )
 
         self.img_format = cfg.INPUT.FORMAT

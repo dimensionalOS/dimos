@@ -145,7 +145,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             linear_vel *= turn_factor
 
         # Apply Collision Avoidance Stop - skip if ignoring obstacles
-        if not self.ignore_obstacles and self.check_collision(self.selected_direction, safety_threshold=0.5):
+        if not self.ignore_obstacles and self.check_collision(
+            self.selected_direction, safety_threshold=0.5
+        ):
             # Re-select direction prioritizing obstacle avoidance if colliding
             self.selected_direction = self.select_direction(
                 self.goal_weight * 0.2,
@@ -154,7 +156,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
                 self.histogram,
                 goal_direction,
             )
-            linear_vel, angular_vel = self.compute_pure_pursuit(goal_distance, self.selected_direction)
+            linear_vel, angular_vel = self.compute_pure_pursuit(
+                goal_distance, self.selected_direction
+            )
 
         if self.check_collision(0.0, safety_threshold=self.safety_threshold):
             logger.warning("Collision detected ahead. Stopping.")
@@ -242,7 +246,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         angles_robot = normalize_angle(angles_grid - robot_theta)
 
         # Convert to bin indices
-        bin_indices = ((angles_robot + np.pi) / (2 * np.pi) * self.histogram_bins).astype(int) % self.histogram_bins
+        bin_indices = ((angles_robot + np.pi) / (2 * np.pi) * self.histogram_bins).astype(
+            int
+        ) % self.histogram_bins
 
         # Get obstacle values
         obstacle_values = occupancy_grid[y_indices, x_indices] / 100.0
@@ -256,7 +262,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         # Apply the enhanced smoothing
         return self._smooth_histogram(histogram)
 
-    def select_direction(self, goal_weight, obstacle_weight, prev_direction_weight, histogram, goal_direction):
+    def select_direction(
+        self, goal_weight, obstacle_weight, prev_direction_weight, histogram, goal_direction
+    ):
         """
         Select best direction based on a simple weighted cost function.
 
@@ -294,7 +302,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
 
         return selected_angle
 
-    def compute_pure_pursuit(self, goal_distance: float, goal_direction: float) -> Tuple[float, float]:
+    def compute_pure_pursuit(
+        self, goal_distance: float, goal_direction: float
+    ) -> Tuple[float, float]:
         """Compute pure pursuit velocities."""
         if goal_distance < self.goal_tolerance:
             return 0.0, 0.0
@@ -365,7 +375,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
 
             # Get waypoint data if in waypoint mode
             waypoints_to_draw = self.waypoints_in_odom
-            current_wp_index_to_draw = self.current_waypoint_index if self.waypoints_in_odom is not None else None
+            current_wp_index_to_draw = (
+                self.current_waypoint_index if self.waypoints_in_odom is not None else None
+            )
             # Ensure index is valid before passing
             if waypoints_to_draw is not None and current_wp_index_to_draw is not None:
                 if not (0 <= current_wp_index_to_draw < len(waypoints_to_draw)):
@@ -389,7 +401,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         except Exception as e:
             logger.error(f"Error during visualization update: {e}")
             # Return a blank image with error text
-            blank = np.ones((self.visualization_size, self.visualization_size, 3), dtype=np.uint8) * 255
+            blank = (
+                np.ones((self.visualization_size, self.visualization_size, 3), dtype=np.uint8) * 255
+            )
             cv2.putText(
                 blank,
                 "Viz Error",

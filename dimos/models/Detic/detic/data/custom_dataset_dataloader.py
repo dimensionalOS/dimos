@@ -29,14 +29,18 @@ def _custom_train_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=
         dataset_dicts = get_detection_dataset_dicts_with_source(
             cfg.DATASETS.TRAIN,
             filter_empty=cfg.DATALOADER.FILTER_EMPTY_ANNOTATIONS,
-            min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE if cfg.MODEL.KEYPOINT_ON else 0,
+            min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE
+            if cfg.MODEL.KEYPOINT_ON
+            else 0,
             proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN if cfg.MODEL.LOAD_PROPOSALS else None,
         )
     else:
         dataset_dicts = get_detection_dataset_dicts(
             cfg.DATASETS.TRAIN,
             filter_empty=cfg.DATALOADER.FILTER_EMPTY_ANNOTATIONS,
-            min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE if cfg.MODEL.KEYPOINT_ON else 0,
+            min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE
+            if cfg.MODEL.KEYPOINT_ON
+            else 0,
             proposal_files=cfg.DATASETS.PROPOSAL_FILES_TRAIN if cfg.MODEL.LOAD_PROPOSALS else None,
         )
 
@@ -128,7 +132,9 @@ def build_multi_dataset_batch_data_loader(
     """ """
     world_size = get_world_size()
     assert total_batch_size > 0 and total_batch_size % world_size == 0, (
-        "Total batch size ({}) must be divisible by the number of gpus ({}).".format(total_batch_size, world_size)
+        "Total batch size ({}) must be divisible by the number of gpus ({}).".format(
+            total_batch_size, world_size
+        )
     )
 
     batch_size = total_batch_size // world_size
@@ -146,7 +152,9 @@ def build_multi_dataset_batch_data_loader(
         return MDAspectRatioGroupedDataset(data_loader, batch_size, num_datasets)
 
 
-def get_detection_dataset_dicts_with_source(dataset_names, filter_empty=True, min_keypoints=0, proposal_files=None):
+def get_detection_dataset_dicts_with_source(
+    dataset_names, filter_empty=True, min_keypoints=0, proposal_files=None
+):
     assert len(dataset_names)
     dataset_dicts = [DatasetCatalog.get(dataset_name) for dataset_name in dataset_names]
     for dataset_name, dicts in zip(dataset_names, dataset_dicts):
@@ -195,7 +203,9 @@ class MultiDatasetSampler(Sampler):
         print("dataset sizes", sizes)
         self.sizes = sizes
         assert len(dataset_ratio) == len(sizes), (
-            "length of dataset ratio {} should be equal to number if dataset {}".format(len(dataset_ratio), len(sizes))
+            "length of dataset ratio {} should be equal to number if dataset {}".format(
+                len(dataset_ratio), len(sizes)
+            )
         )
         if seed is None:
             seed = comm.shared_random_seed()
@@ -203,7 +213,9 @@ class MultiDatasetSampler(Sampler):
         self._rank = comm.get_rank()
         self._world_size = comm.get_world_size()
 
-        self.dataset_ids = torch.tensor([d["dataset_source"] for d in dataset_dicts], dtype=torch.long)
+        self.dataset_ids = torch.tensor(
+            [d["dataset_source"] for d in dataset_dicts], dtype=torch.long
+        )
 
         dataset_weight = [
             torch.ones(s) * max(sizes) / s * r / sum(dataset_ratio)
@@ -238,7 +250,9 @@ class MultiDatasetSampler(Sampler):
         g = torch.Generator()
         g.manual_seed(self._seed)
         while True:
-            ids = torch.multinomial(self.weights, self.sample_epoch_size, generator=g, replacement=True)
+            ids = torch.multinomial(
+                self.weights, self.sample_epoch_size, generator=g, replacement=True
+            )
             nums = [(self.dataset_ids[ids] == i).sum().int().item() for i in range(len(self.sizes))]
             yield from ids
 
@@ -292,7 +306,10 @@ def repeat_factors_from_tag_frequency(dataset_dicts, repeat_thresh):
     for k, v in category_freq.items():
         category_freq[k] = v / num_images
 
-    category_rep = {cat_id: max(1.0, math.sqrt(repeat_thresh / cat_freq)) for cat_id, cat_freq in category_freq.items()}
+    category_rep = {
+        cat_id: max(1.0, math.sqrt(repeat_thresh / cat_freq))
+        for cat_id, cat_freq in category_freq.items()
+    }
 
     rep_factors = []
     for dataset_dict in dataset_dicts:

@@ -169,7 +169,9 @@ def filter_segmentation_results(
     # Create mask_sum tensor where each pixel stores the index of the mask that claims it
     mask_sum = torch.zeros_like(masks[0], dtype=torch.int32)
 
-    texture_map = torch.from_numpy(texture_map).to(device)  # Convert texture_map to tensor and move to device
+    texture_map = torch.from_numpy(texture_map).to(
+        device
+    )  # Convert texture_map to tensor and move to device
 
     filtered_texture_values = []  # List to store texture values of filtered masks
 
@@ -181,7 +183,9 @@ def filter_segmentation_results(
         # Only claim pixels if mask passes texture threshold
         if texture_value >= texture_threshold:
             mask_sum[mask > 0] = i
-            filtered_texture_values.append(texture_value.item())  # Store the texture value as a Python float
+            filtered_texture_values.append(
+                texture_value.item()
+            )  # Store the texture value as a Python float
 
     # Get indices that appear in mask_sum (these are the masks we want to keep)
     keep_indices, counts = torch.unique(mask_sum[mask_sum > 0], return_counts=True)
@@ -200,7 +204,14 @@ def filter_segmentation_results(
     filtered_probs = [probs[i] for i in final_indices]
     filtered_names = [names[i] for i in final_indices]
 
-    return filtered_masks, filtered_bboxes, filtered_track_ids, filtered_probs, filtered_names, filtered_texture_values
+    return (
+        filtered_masks,
+        filtered_bboxes,
+        filtered_track_ids,
+        filtered_probs,
+        filtered_names,
+        filtered_texture_values,
+    )
 
 
 def plot_results(image, masks, bboxes, track_ids, probs, names, alpha=0.5):

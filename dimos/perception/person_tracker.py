@@ -9,7 +9,12 @@ import cv2
 
 class PersonTrackingStream:
     def __init__(
-        self, model_path="yolo11n.pt", device="cuda", camera_intrinsics=None, camera_pitch=0.0, camera_height=1.0
+        self,
+        model_path="yolo11n.pt",
+        device="cuda",
+        camera_intrinsics=None,
+        camera_pitch=0.0,
+        camera_height=1.0,
     ):
         """
         Initialize a person tracking stream using Yolo2DDetector and PersonDistanceEstimator.
@@ -32,14 +37,19 @@ class PersonTrackingStream:
             raise ValueError("Camera intrinsics are required for distance estimation")
 
         # Validate camera intrinsics format [fx, fy, cx, cy]
-        if not isinstance(camera_intrinsics, (list, tuple, np.ndarray)) or len(camera_intrinsics) != 4:
+        if (
+            not isinstance(camera_intrinsics, (list, tuple, np.ndarray))
+            or len(camera_intrinsics) != 4
+        ):
             raise ValueError("Camera intrinsics must be provided as [fx, fy, cx, cy]")
 
         # Convert [fx, fy, cx, cy] to 3x3 camera matrix
         fx, fy, cx, cy = camera_intrinsics
         K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
 
-        self.distance_estimator = PersonDistanceEstimator(K=K, camera_pitch=camera_pitch, camera_height=camera_height)
+        self.distance_estimator = PersonDistanceEstimator(
+            K=K, camera_pitch=camera_pitch, camera_height=camera_height
+        )
 
     def create_stream(self, video_stream: Observable) -> Observable:
         """
@@ -57,21 +67,30 @@ class PersonTrackingStream:
             bboxes, track_ids, class_ids, confidences, names = self.detector.process_image(frame)
 
             # Filter to keep only person detections using filter_detections
-            filtered_bboxes, filtered_track_ids, filtered_class_ids, filtered_confidences, filtered_names = (
-                filter_detections(
-                    bboxes,
-                    track_ids,
-                    class_ids,
-                    confidences,
-                    names,
-                    class_filter=[0],  # 0 is the class_id for person
-                    name_filter=["person"],
-                )
+            (
+                filtered_bboxes,
+                filtered_track_ids,
+                filtered_class_ids,
+                filtered_confidences,
+                filtered_names,
+            ) = filter_detections(
+                bboxes,
+                track_ids,
+                class_ids,
+                confidences,
+                names,
+                class_filter=[0],  # 0 is the class_id for person
+                name_filter=["person"],
             )
 
             # Create visualization
             viz_frame = self.detector.visualize_results(
-                frame, filtered_bboxes, filtered_track_ids, filtered_class_ids, filtered_confidences, filtered_names
+                frame,
+                filtered_bboxes,
+                filtered_track_ids,
+                filtered_class_ids,
+                filtered_confidences,
+                filtered_names,
             )
 
             # Calculate distance and angle for each person
@@ -80,7 +99,9 @@ class PersonTrackingStream:
                 target_data = {
                     "target_id": filtered_track_ids[i] if i < len(filtered_track_ids) else -1,
                     "bbox": bbox,
-                    "confidence": filtered_confidences[i] if i < len(filtered_confidences) else None,
+                    "confidence": filtered_confidences[i]
+                    if i < len(filtered_confidences)
+                    else None,
                 }
 
                 distance, angle = self.distance_estimator.estimate_distance_angle(bbox)
@@ -94,11 +115,19 @@ class PersonTrackingStream:
                 # Add black background for better visibility
                 text_size = cv2.getTextSize(dist_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
                 # Position at top-right corner
-                cv2.rectangle(viz_frame, (x2 - text_size[0], y1 - text_size[1] - 5), (x2, y1), (0, 0, 0), -1)
+                cv2.rectangle(
+                    viz_frame, (x2 - text_size[0], y1 - text_size[1] - 5), (x2, y1), (0, 0, 0), -1
+                )
 
                 # Draw text in white at top-right
                 cv2.putText(
-                    viz_frame, dist_text, (x2 - text_size[0], y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2
+                    viz_frame,
+                    dist_text,
+                    (x2 - text_size[0], y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 255),
+                    2,
                 )
 
                 targets.append(target_data)

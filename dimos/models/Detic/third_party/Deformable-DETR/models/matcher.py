@@ -82,16 +82,27 @@ class HungarianMatcher(nn.Module):
             cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
 
             # Compute the giou cost betwen boxes
-            cost_giou = -generalized_box_iou(box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox))
+            cost_giou = -generalized_box_iou(
+                box_cxcywh_to_xyxy(out_bbox), box_cxcywh_to_xyxy(tgt_bbox)
+            )
 
             # Final cost matrix
-            C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
+            C = (
+                self.cost_bbox * cost_bbox
+                + self.cost_class * cost_class
+                + self.cost_giou * cost_giou
+            )
             C = C.view(bs, num_queries, -1).cpu()
 
             sizes = [len(v["boxes"]) for v in targets]
             indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
-            return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+            return [
+                (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
+                for i, j in indices
+            ]
 
 
 def build_matcher(args):
-    return HungarianMatcher(cost_class=args.set_cost_class, cost_bbox=args.set_cost_bbox, cost_giou=args.set_cost_giou)
+    return HungarianMatcher(
+        cost_class=args.set_cost_class, cost_bbox=args.set_cost_bbox, cost_giou=args.set_cost_giou
+    )

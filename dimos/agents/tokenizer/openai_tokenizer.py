@@ -26,7 +26,9 @@ class OpenAITokenizer(AbstractTokenizer):
         try:
             self.tokenizer = tiktoken.encoding_for_model(self.model_name)
         except Exception as e:
-            raise ValueError(f"Failed to initialize tokenizer for model {self.model_name}. Error: {str(e)}")
+            raise ValueError(
+                f"Failed to initialize tokenizer for model {self.model_name}. Error: {str(e)}"
+            )
 
     def tokenize_text(self, text):
         """

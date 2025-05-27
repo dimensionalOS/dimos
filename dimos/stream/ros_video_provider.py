@@ -43,7 +43,9 @@ class ROSVideoProvider(AbstractVideoProvider):
         _last_frame_time: Timestamp of the last received frame.
     """
 
-    def __init__(self, dev_name: str = "ros_video", pool_scheduler: Optional[ThreadPoolScheduler] = None):
+    def __init__(
+        self, dev_name: str = "ros_video", pool_scheduler: Optional[ThreadPoolScheduler] = None
+    ):
         """Initialize the ROS video provider.
 
         Args:
@@ -70,7 +72,9 @@ class ROSVideoProvider(AbstractVideoProvider):
             current_time = time.time()
             if self._last_frame_time:
                 frame_interval = current_time - self._last_frame_time
-                self.logger.debug(f"Frame interval: {frame_interval:.3f}s ({1 / frame_interval:.1f} FPS)")
+                self.logger.debug(
+                    f"Frame interval: {frame_interval:.3f}s ({1 / frame_interval:.1f} FPS)"
+                )
             self._last_frame_time = current_time
 
             self.logger.debug(f"Pushing frame type: {type(frame)}")

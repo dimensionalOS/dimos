@@ -21,7 +21,9 @@ from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
 from dimos.stream.video_providers.unitree import UnitreeVideoProvider
 from reactivex.disposable import CompositeDisposable
 import logging
-from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import WebRTCConnectionMethod
+from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import (
+    WebRTCConnectionMethod,
+)
 import os
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from reactivex.scheduler import ThreadPoolScheduler
@@ -81,7 +83,9 @@ class UnitreeGo2(Robot):
         # Initialize ros_control if it is not provided and use_ros is True
         if ros_control is None and use_ros:
             ros_control = UnitreeROSControl(
-                node_name="unitree_go2", disable_video_stream=disable_video_stream, mock_connection=mock_connection
+                node_name="unitree_go2",
+                disable_video_stream=disable_video_stream,
+                mock_connection=mock_connection,
             )
 
         # Initialize skill library

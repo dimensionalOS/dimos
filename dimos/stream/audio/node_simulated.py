@@ -77,7 +77,10 @@ class SimulatedAudioSource(AbstractAudioEmitter):
         elif self.waveform == "square":
             wave = np.sign(np.sin(phase_arg))
         elif self.waveform == "triangle":
-            wave = 2 * np.abs(2 * (phase_arg / (2 * np.pi) - np.floor(phase_arg / (2 * np.pi) + 0.5))) - 1
+            wave = (
+                2 * np.abs(2 * (phase_arg / (2 * np.pi) - np.floor(phase_arg / (2 * np.pi) + 0.5)))
+                - 1
+            )
         elif self.waveform == "sawtooth":
             wave = 2 * (phase_arg / (2 * np.pi) - np.floor(0.5 + phase_arg / (2 * np.pi)))
         else:
@@ -96,7 +99,9 @@ class SimulatedAudioSource(AbstractAudioEmitter):
             wave *= volume_factor * 0.7
 
             # Update volume phase for next frame
-            self.volume_phase += time_points[-1] - time_points[0] + (time_points[1] - time_points[0])
+            self.volume_phase += (
+                time_points[-1] - time_points[0] + (time_points[1] - time_points[0])
+            )
 
         # Update phase for next frame
         self.phase += time_points[-1] - time_points[0] + (time_points[1] - time_points[0])
@@ -121,7 +126,9 @@ class SimulatedAudioSource(AbstractAudioEmitter):
 
             while self._running:
                 # Calculate time points for this frame
-                time_points = np.arange(sample_index, sample_index + self.frame_length) / self.sample_rate
+                time_points = (
+                    np.arange(sample_index, sample_index + self.frame_length) / self.sample_rate
+                )
 
                 # Generate audio data
                 audio_data = self._generate_sine_wave(time_points)
@@ -165,7 +172,9 @@ class SimulatedAudioSource(AbstractAudioEmitter):
             interval = 1.0 / fps
 
             # Start the audio generation thread
-            self._thread = threading.Thread(target=self._audio_thread, args=(observer, interval), daemon=True)
+            self._thread = threading.Thread(
+                target=self._audio_thread, args=(observer, interval), daemon=True
+            )
             self._thread.start()
 
             logger.info(

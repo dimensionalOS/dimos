@@ -37,7 +37,9 @@ class Environment(ABC):
         pass
 
     @abstractmethod
-    def generate_segmentations(self, model: str = None, objects: list[str] = None, *args, **kwargs) -> list[np.ndarray]:
+    def generate_segmentations(
+        self, model: str = None, objects: list[str] = None, *args, **kwargs
+    ) -> list[np.ndarray]:
         """
         Generate object segmentations of objects[] using neural methods.
 

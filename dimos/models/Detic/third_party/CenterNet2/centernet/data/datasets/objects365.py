@@ -377,7 +377,10 @@ def _get_builtin_metadata(version):
         assert 0, version
     thing_dataset_id_to_contiguous_id = {i + 1: i for i in range(365)}
     thing_classes = [id_to_name[k] for k in sorted(id_to_name)]
-    return {"thing_dataset_id_to_contiguous_id": thing_dataset_id_to_contiguous_id, "thing_classes": thing_classes}
+    return {
+        "thing_dataset_id_to_contiguous_id": thing_dataset_id_to_contiguous_id,
+        "thing_classes": thing_classes,
+    }
 
 
 _PREDEFINED_SPLITS_OBJECTS365 = {

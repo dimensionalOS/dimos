@@ -6,7 +6,9 @@ import os
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ann", default="datasets/objects365/annotations/zhiyuan_objv2_train_fixname.json")
+    parser.add_argument(
+        "--ann", default="datasets/objects365/annotations/zhiyuan_objv2_train_fixname.json"
+    )
     parser.add_argument("--img_dir", default="datasets/objects365/train/")
     args = parser.parse_args()
 

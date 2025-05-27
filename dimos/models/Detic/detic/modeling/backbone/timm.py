@@ -125,7 +125,9 @@ class TIMM(Backbone):
         if base_name in model_params:
             self.base = create_timm_resnet(base_name, out_indices=out_indices, pretrained=False)
         elif "eff" in base_name or "resnet" in base_name or "regnet" in base_name:
-            self.base = create_model(base_name, features_only=True, out_indices=out_indices, pretrained=pretrained)
+            self.base = create_model(
+                base_name, features_only=True, out_indices=out_indices, pretrained=pretrained
+            )
         elif "convnext" in base_name:
             drop_path_rate = 0.2 if ("tiny" in base_name or "small" in base_name) else 0.3
             self.base = create_model(
@@ -138,11 +140,16 @@ class TIMM(Backbone):
         else:
             assert 0, base_name
         feature_info = [
-            dict(num_chs=f["num_chs"], reduction=f["reduction"]) for i, f in enumerate(self.base.feature_info)
+            dict(num_chs=f["num_chs"], reduction=f["reduction"])
+            for i, f in enumerate(self.base.feature_info)
         ]
         self._out_features = ["layer{}".format(x) for x in out_levels]
-        self._out_feature_channels = {"layer{}".format(l): feature_info[l - 1]["num_chs"] for l in out_levels}
-        self._out_feature_strides = {"layer{}".format(l): feature_info[l - 1]["reduction"] for l in out_levels}
+        self._out_feature_channels = {
+            "layer{}".format(l): feature_info[l - 1]["num_chs"] for l in out_levels
+        }
+        self._out_feature_strides = {
+            "layer{}".format(l): feature_info[l - 1]["reduction"] for l in out_levels
+        }
         self._size_divisibility = max(self._out_feature_strides.values())
         if "resnet" in base_name:
             self.freeze(freeze_at)

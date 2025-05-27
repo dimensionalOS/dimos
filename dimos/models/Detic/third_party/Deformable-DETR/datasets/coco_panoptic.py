@@ -40,7 +40,11 @@ class CocoPanoptic:
         self.return_masks = return_masks
 
     def __getitem__(self, idx):
-        ann_info = self.coco["annotations"][idx] if "annotations" in self.coco else self.coco["images"][idx]
+        ann_info = (
+            self.coco["annotations"][idx]
+            if "annotations" in self.coco
+            else self.coco["images"][idx]
+        )
         img_path = Path(self.img_folder) / ann_info["file_name"].replace(".png", ".jpg")
         ann_path = Path(self.ann_folder) / ann_info["file_name"]
 
@@ -54,10 +58,14 @@ class CocoPanoptic:
             masks = masks == ids[:, None, None]
 
             masks = torch.as_tensor(masks, dtype=torch.uint8)
-            labels = torch.tensor([ann["category_id"] for ann in ann_info["segments_info"]], dtype=torch.int64)
+            labels = torch.tensor(
+                [ann["category_id"] for ann in ann_info["segments_info"]], dtype=torch.int64
+            )
 
         target = {}
-        target["image_id"] = torch.tensor([ann_info["image_id"] if "image_id" in ann_info else ann_info["id"]])
+        target["image_id"] = torch.tensor(
+            [ann_info["image_id"] if "image_id" in ann_info else ann_info["id"]]
+        )
         if self.return_masks:
             target["masks"] = masks
         target["labels"] = labels
@@ -102,7 +110,11 @@ def build(image_set, args):
     ann_file = ann_folder_root / ann_file
 
     dataset = CocoPanoptic(
-        img_folder_path, ann_folder, ann_file, transforms=make_coco_transforms(image_set), return_masks=args.masks
+        img_folder_path,
+        ann_folder,
+        ann_file,
+        transforms=make_coco_transforms(image_set),
+        return_masks=args.masks,
     )
 
     return dataset

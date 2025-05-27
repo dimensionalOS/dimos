@@ -27,7 +27,9 @@ class Metric3D:
     def __init__(self, gt_depth_scale=256.0):
         # self.conf = get_config("zoedepth", "infer")
         # self.depth_model = build_model(self.conf)
-        self.depth_model = torch.hub.load("yvanyin/metric3d", "metric3d_vit_small", pretrain=True).cuda()
+        self.depth_model = torch.hub.load(
+            "yvanyin/metric3d", "metric3d_vit_small", pretrain=True
+        ).cuda()
         if torch.cuda.device_count() > 1:
             print(f"Using {torch.cuda.device_count()} GPUs!")
             # self.depth_model = torch.nn.DataParallel(self.depth_model)
@@ -74,7 +76,9 @@ class Metric3D:
 
         # Convert to PIL format
         depth_image = self.unpad_transform_depth(pred_depth)
-        out_16bit_numpy = (depth_image.squeeze().cpu().numpy() * self.gt_depth_scale).astype(np.uint16)
+        out_16bit_numpy = (depth_image.squeeze().cpu().numpy() * self.gt_depth_scale).astype(
+            np.uint16
+        )
         depth_map_pil = Image.fromarray(out_16bit_numpy)
 
         return depth_map_pil
@@ -94,7 +98,9 @@ class Metric3D:
         # input_size = (544, 1216) # for convnext model
         h, w = rgb_origin.shape[:2]
         scale = min(input_size[0] / h, input_size[1] / w)
-        rgb = cv2.resize(rgb_origin, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LINEAR)
+        rgb = cv2.resize(
+            rgb_origin, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LINEAR
+        )
         # remember to scale intrinsic, hold depth
         self.intrinsic_scaled = [
             self.intrinsic[0] * scale,
@@ -110,7 +116,13 @@ class Metric3D:
         pad_h_half = pad_h // 2
         pad_w_half = pad_w // 2
         rgb = cv2.copyMakeBorder(
-            rgb, pad_h_half, pad_h - pad_h_half, pad_w_half, pad_w - pad_w_half, cv2.BORDER_CONSTANT, value=padding
+            rgb,
+            pad_h_half,
+            pad_h - pad_h_half,
+            pad_w_half,
+            pad_w - pad_w_half,
+            cv2.BORDER_CONSTANT,
+            value=padding,
         )
         self.pad_info = [pad_h_half, pad_h - pad_h_half, pad_w_half, pad_w - pad_w_half]
 
@@ -137,7 +149,9 @@ class Metric3D:
         ###################### canonical camera space ######################
 
         #### de-canonical transform
-        canonical_to_real_scale = self.intrinsic_scaled[0] / 1000.0  # 1000.0 is the focal length of canonical camera
+        canonical_to_real_scale = (
+            self.intrinsic_scaled[0] / 1000.0
+        )  # 1000.0 is the focal length of canonical camera
         pred_depth = pred_depth * canonical_to_real_scale  # now the depth is metric
         pred_depth = torch.clamp(pred_depth, 0, 1000)
         return pred_depth

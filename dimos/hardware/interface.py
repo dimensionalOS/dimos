@@ -20,7 +20,10 @@ from dimos.hardware.ufactory import UFactory7DOFArm
 
 class HardwareInterface:
     def __init__(
-        self, end_effector: EndEffector = None, sensors: list = None, arm_architecture: UFactory7DOFArm = None
+        self,
+        end_effector: EndEffector = None,
+        sensors: list = None,
+        arm_architecture: UFactory7DOFArm = None,
     ):
         self.end_effector = end_effector
         self.sensors = sensors if sensors is not None else []

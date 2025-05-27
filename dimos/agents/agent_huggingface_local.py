@@ -98,10 +98,14 @@ class HuggingFaceLocalAgent(LLMAgent):
 
         self.tokenizer = tokenizer or HuggingFaceTokenizer(self.model_name)
 
-        self.prompt_builder = prompt_builder or PromptBuilder(self.model_name, tokenizer=self.tokenizer)
+        self.prompt_builder = prompt_builder or PromptBuilder(
+            self.model_name, tokenizer=self.tokenizer
+        )
 
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name, torch_dtype=torch.float16 if self.device == "cuda" else torch.float32, device_map=self.device
+            model_name,
+            torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+            device_map=self.device,
         )
 
         self.max_output_tokens_per_request = max_output_tokens_per_request
@@ -113,7 +117,9 @@ class HuggingFaceLocalAgent(LLMAgent):
 
         # Ensure only one input stream is provided.
         if self.input_video_stream is not None and self.input_query_stream is not None:
-            raise ValueError("More than one input stream provided. Please provide only one input stream.")
+            raise ValueError(
+                "More than one input stream provided. Please provide only one input stream."
+            )
 
         if self.input_video_stream is not None:
             logger.info("Subscribing to input video stream...")
@@ -142,21 +148,28 @@ class HuggingFaceLocalAgent(LLMAgent):
 
                 # Tokenize the prompt
                 print("Preparing model inputs...")
-                model_inputs = self.tokenizer.tokenizer([prompt_text], return_tensors="pt").to(self.model.device)
+                model_inputs = self.tokenizer.tokenizer([prompt_text], return_tensors="pt").to(
+                    self.model.device
+                )
                 print("Model inputs prepared.")
 
                 # Generate the response
                 print("Generating response...")
-                generated_ids = self.model.generate(**model_inputs, max_new_tokens=self.max_output_tokens_per_request)
+                generated_ids = self.model.generate(
+                    **model_inputs, max_new_tokens=self.max_output_tokens_per_request
+                )
 
                 # Extract the generated tokens (excluding the input prompt tokens)
                 print("Processing generated output...")
                 generated_ids = [
-                    output_ids[len(input_ids) :] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+                    output_ids[len(input_ids) :]
+                    for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
                 ]
 
                 # Convert tokens back to text
-                response = self.tokenizer.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+                response = self.tokenizer.tokenizer.batch_decode(
+                    generated_ids, skip_special_tokens=True
+                )[0]
                 print("Response successfully generated.")
 
                 return response
@@ -168,14 +181,21 @@ class HuggingFaceLocalAgent(LLMAgent):
 
             except Exception as e:
                 # Log any other errors but continue execution
-                logger.warning(f"Error in chat template processing: {e}. Falling back to simple format.")
+                logger.warning(
+                    f"Error in chat template processing: {e}. Falling back to simple format."
+                )
 
             # Fallback approach for models without chat template support
             # This code runs if the try block above raises an exception
             print("Using simple prompt format...")
 
             # Convert messages to a simple text format
-            if isinstance(messages, list) and messages and isinstance(messages[0], dict) and "content" in messages[0]:
+            if (
+                isinstance(messages, list)
+                and messages
+                and isinstance(messages[0], dict)
+                and "content" in messages[0]
+            ):
                 prompt_text = messages[0]["content"]
             else:
                 prompt_text = str(messages)
@@ -207,7 +227,9 @@ class HuggingFaceLocalAgent(LLMAgent):
         """
         Creates an observable that processes a text query and emits the response.
         """
-        return create(lambda observer, _: self._observable_query(observer, incoming_query=query_text))
+        return create(
+            lambda observer, _: self._observable_query(observer, incoming_query=query_text)
+        )
 
 
 # endregion HuggingFaceLLMAgent Subclass (HuggingFace-Specific Implementation)

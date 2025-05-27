@@ -96,8 +96,16 @@ class RobotLocation:
         """
         return cls(
             name=metadata.get("location_name", "unknown"),
-            position=(metadata.get("pos_x", 0.0), metadata.get("pos_y", 0.0), metadata.get("pos_z", 0.0)),
-            rotation=(metadata.get("rot_x", 0.0), metadata.get("rot_y", 0.0), metadata.get("rot_z", 0.0)),
+            position=(
+                metadata.get("pos_x", 0.0),
+                metadata.get("pos_y", 0.0),
+                metadata.get("pos_z", 0.0),
+            ),
+            rotation=(
+                metadata.get("rot_x", 0.0),
+                metadata.get("rot_y", 0.0),
+                metadata.get("rot_z", 0.0),
+            ),
             frame_id=metadata.get("frame_id"),
             timestamp=metadata.get("timestamp", time.time()),
             location_id=metadata.get("location_id", f"loc_{uuid.uuid4().hex[:8]}"),

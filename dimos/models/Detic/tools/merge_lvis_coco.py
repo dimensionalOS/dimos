@@ -123,7 +123,9 @@ if __name__ == "__main__":
     synset2lvisid = {x["synset"]: x["id"] for x in lvis_cats}
     # cocoid2synset = {x['coco_cat_id']: x['synset'] for x in COCO_SYNSET_CATEGORIES}
     coco2lviscats = {
-        x["coco_cat_id"]: synset2lvisid[x["synset"]] for x in COCO_SYNSET_CATEGORIES if x["synset"] in synset2lvisid
+        x["coco_cat_id"]: synset2lvisid[x["synset"]]
+        for x in COCO_SYNSET_CATEGORIES
+        if x["synset"] in synset2lvisid
     }
     print(len(coco2lviscats))
 
@@ -168,7 +170,8 @@ if __name__ == "__main__":
         coco_anns = coco_img2anns[file_name]
         lvis_anns = lvis_img2anns[file_name]
         ious = pairwise_iou(
-            Boxes(torch.tensor([get_bbox(x) for x in coco_anns])), Boxes(torch.tensor([get_bbox(x) for x in lvis_anns]))
+            Boxes(torch.tensor([get_bbox(x) for x in coco_anns])),
+            Boxes(torch.tensor([get_bbox(x) for x in lvis_anns])),
         )
 
         for ann in lvis_anns:
@@ -184,7 +187,10 @@ if __name__ == "__main__":
             else:
                 duplicated = False
                 for j in range(len(ious[i])):
-                    if ious[i, j] >= THRESH and coco_anns[i]["category_id"] == lvis_anns[j]["category_id"]:
+                    if (
+                        ious[i, j] >= THRESH
+                        and coco_anns[i]["category_id"] == lvis_anns[j]["category_id"]
+                    ):
                         duplicated = True
                 if not duplicated:
                     ann_id_count = ann_id_count + 1

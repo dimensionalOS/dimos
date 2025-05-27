@@ -45,12 +45,16 @@ class ObserveStream(AbstractRobotSkill):
     or to monitor changes in the environment.
     """
 
-    timestep: float = Field(60.0, description="Time interval in seconds between observation queries")
+    timestep: float = Field(
+        60.0, description="Time interval in seconds between observation queries"
+    )
     query_text: str = Field(
         "What do you see in this image? Alert me if you see any people or important changes.",
         description="Query text to send to agent with each image",
     )
-    max_duration: float = Field(0.0, description="Maximum duration to run the observer in seconds (0 for indefinite)")
+    max_duration: float = Field(
+        0.0, description="Maximum duration to run the observer in seconds (0 for indefinite)"
+    )
 
     def __init__(self, robot=None, agent: Optional[LLMAgent] = None, video_stream=None, **data):
         """
@@ -163,7 +167,8 @@ class ObserveStream(AbstractRobotSkill):
         subscription = self._video_stream.pipe(
             ops.take(1)  # Take just one frame
         ).subscribe(
-            on_next=lambda x: frame_subject.on_next(x), on_error=lambda e: logger.error(f"Error getting frame: {e}")
+            on_next=lambda x: frame_subject.on_next(x),
+            on_error=lambda e: logger.error(f"Error getting frame: {e}"),
         )
 
         timeout = 5.0  # 5 seconds timeout

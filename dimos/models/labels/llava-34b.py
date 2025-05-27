@@ -34,14 +34,21 @@ class Llava:
         if gpu:
             n_gpu_layers = -1
         self.llm = Llama(
-            model_path=model_path, chat_handler=chat_handler, n_ctx=2048, logits_all=True, n_gpu_layers=n_gpu_layers
+            model_path=model_path,
+            chat_handler=chat_handler,
+            n_ctx=2048,
+            logits_all=True,
+            n_gpu_layers=n_gpu_layers,
         )
 
     def run_inference(self, image, prompt, return_json=True):
         data_uri = image_to_base64_data_uri(image)
         res = self.llm.create_chat_completion(
             messages=[
-                {"role": "system", "content": "You are an assistant who perfectly describes images."},
+                {
+                    "role": "system",
+                    "content": "You are an assistant who perfectly describes images.",
+                },
                 {
                     "role": "user",
                     "content": [
@@ -52,7 +59,13 @@ class Llava:
             ]
         )
         if return_json:
-            return list(set(self.extract_descriptions_from_incomplete_json(res["choices"][0]["message"]["content"])))
+            return list(
+                set(
+                    self.extract_descriptions_from_incomplete_json(
+                        res["choices"][0]["message"]["content"]
+                    )
+                )
+            )
 
         return res["choices"][0]["message"]["content"]
 
@@ -69,7 +82,9 @@ class Llava:
         try:
             json_obj = json.loads(json_str)
             descriptions = [
-                details["description"].replace(".", "") for key, details in json_obj.items() if "description" in details
+                details["description"].replace(".", "")
+                for key, details in json_obj.items()
+                if "description" in details
             ]
 
             return descriptions

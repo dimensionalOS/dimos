@@ -69,7 +69,9 @@ model.roi_heads.update(
         )
         for (w1, w2) in [(10, 5)]
     ],
-    proposal_matchers=[L(Matcher)(thresholds=[th], labels=[0, 1], allow_low_quality_matches=False) for th in [0.5]],
+    proposal_matchers=[
+        L(Matcher)(thresholds=[th], labels=[0, 1], allow_low_quality_matches=False) for th in [0.5]
+    ],
     with_image_labels=True,
     ws_num_props=128,
 )
@@ -97,13 +99,18 @@ dataloader.train = L(build_custom_train_loader)(
         use_diff_bs_size=True,
         dataset_augs=[
             [
-                L(T.ResizeScale)(min_scale=0.1, max_scale=2.0, target_height=image_size, target_width=image_size),
+                L(T.ResizeScale)(
+                    min_scale=0.1, max_scale=2.0, target_height=image_size, target_width=image_size
+                ),
                 L(T.FixedSizeCrop)(crop_size=(image_size, image_size)),
                 L(T.RandomFlip)(horizontal=True),
             ],
             [
                 L(T.ResizeScale)(
-                    min_scale=0.5, max_scale=1.5, target_height=image_size_weak, target_width=image_size_weak
+                    min_scale=0.5,
+                    max_scale=1.5,
+                    target_height=image_size_weak,
+                    target_width=image_size_weak,
                 ),
                 L(T.FixedSizeCrop)(crop_size=(image_size_weak, image_size_weak)),
                 L(T.RandomFlip)(horizontal=True),
