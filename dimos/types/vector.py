@@ -12,23 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import List, Tuple, TypeVar, Union, Sequence
+
 import numpy as np
 from geometry_msgs.msg import Vector3
-from typing import (
-    Tuple,
-    List,
-    TypeVar,
-    Protocol,
-    runtime_checkable,
-)
 
 T = TypeVar("T", bound="Vector")
+
+# Vector-like types that can be converted to/from Vector
+VectorLike = Union[Sequence[Union[int, float]], Vector3, "Vector", np.ndarray]
 
 
 class Vector:
     """A wrapper around numpy arrays for vector operations with intuitive syntax."""
 
-    def __init__(self, *args):
+    def __init__(self, *args: VectorLike):
         """Initialize a vector from components or another iterable.
 
         Examples:
@@ -39,6 +37,7 @@ class Vector:
         """
         if len(args) == 1 and hasattr(args[0], "__iter__"):
             self._data = np.array(args[0], dtype=float)
+
         elif len(args) == 1:
             self._data = np.array([args[0].x, args[0].y, args[0].z], dtype=float)
 
@@ -79,18 +78,11 @@ class Vector:
         """Get the underlying numpy array."""
         return self._data
 
-    def __len__(self) -> int:
-        return len(self._data)
-
     def __getitem__(self, idx):
         return self._data[idx]
 
-    def __iter__(self):
-        return iter(self._data)
-
     def __repr__(self) -> str:
-        components = ",".join(f"{x:.6g}" for x in self._data)
-        return f"({components})"
+        return f"Vector({self.data})"
 
     def __str__(self) -> str:
         if self.dim < 2:
@@ -99,7 +91,9 @@ class Vector:
         def getArrow():
             repr = ["←", "↖", "↑", "↗", "→", "↘", "↓", "↙"]
 
-            if self.y == 0 and self.x == 0:
+            print("SELF X", self.x)
+            print("SELF Y", self.y)
+            if self.x == 0 and self.y == 0:
                 return "·"
 
             # Calculate angle in radians and convert to directional index
@@ -116,9 +110,12 @@ class Vector:
         return {"type": "vector", "c": self._data.tolist()}
 
     def __eq__(self, other) -> bool:
-        if isinstance(other, Vector):
-            return np.array_equal(self._data, other._data)
-        return np.array_equal(self._data, np.array(other, dtype=float))
+        """Check if two vectors are equal using numpy's allclose for floating point comparison."""
+        if not isinstance(other, Vector):
+            return False
+        if len(self._data) != len(other._data):
+            return False
+        return np.allclose(self._data, other._data)
 
     def __add__(self: T, other) -> T:
         if isinstance(other, Vector):
@@ -277,14 +274,24 @@ class Vector:
         """Convert the vector to a numpy array."""
         return self._data
 
+    def is_zero(self) -> bool:
+        """Check if this is a zero vector (all components are zero).
 
-# Protocol approach for static type checking
-@runtime_checkable
-class VectorLike(Protocol):
-    """Protocol for types that can be treated as vectors."""
+        Returns:
+            True if all components are zero, False otherwise
+        """
+        return np.allclose(self._data, 0.0)
 
-    def __getitem__(self, key: int) -> float: ...
-    def __len__(self) -> int: ...
+    def __bool__(self) -> bool:
+        """Boolean conversion for Vector.
+
+        A Vector is considered False if it's a zero vector (all components are zero),
+        and True otherwise.
+
+        Returns:
+            False if vector is zero, True otherwise
+        """
+        return not self.is_zero()
 
 
 def to_numpy(value: VectorLike) -> np.ndarray:
@@ -452,143 +459,3 @@ def z(value: VectorLike) -> float:
     else:
         arr = to_numpy(value)
         return float(arr[2]) if len(arr) > 2 else 0.0
-
-
-if __name__ == "__main__":
-    # Test vectors in various directions
-    test_vectors = [
-        Vector(1, 0),  # Right
-        Vector(1, 1),  # Up-Right
-        Vector(0, 1),  # Up
-        Vector(-1, 1),  # Up-Left
-        Vector(-1, 0),  # Left
-        Vector(-1, -1),  # Down-Left
-        Vector(0, -1),  # Down
-        Vector(1, -1),  # Down-Right
-        Vector(0.5, 0.5),  # Up-Right (shorter)
-        Vector(-3, 4),  # Up-Left (longer)
-        Vector(Vector3(x=2.0, y=3.0, z=4.0)),
-    ]
-
-    for v in test_vectors:
-        print(str(v))
-
-    # Test the vector compatibility functions
-    print("Testing vectortypes.py conversion functions\n")
-
-    # Create test vectors in different formats
-    vector_obj = Vector(1.0, 2.0, 3.0)
-    numpy_arr = np.array([4.0, 5.0, 6.0])
-    tuple_vec = (7.0, 8.0, 9.0)
-    list_vec = [10.0, 11.0, 12.0]
-
-    print("Original values:")
-    print(f"Vector:     {vector_obj}")
-    print(f"NumPy:      {numpy_arr}")
-    print(f"Tuple:      {tuple_vec}")
-    print(f"List:       {list_vec}")
-    print()
-
-    # Test to_numpy
-    print("to_numpy() conversions:")
-    print(f"Vector → NumPy:  {to_numpy(vector_obj)}")
-    print(f"NumPy → NumPy:   {to_numpy(numpy_arr)}")
-    print(f"Tuple → NumPy:   {to_numpy(tuple_vec)}")
-    print(f"List → NumPy:    {to_numpy(list_vec)}")
-    print()
-
-    # Test to_vector
-    print("to_vector() conversions:")
-    print(f"Vector → Vector:  {to_vector(vector_obj)}")
-    print(f"NumPy → Vector:   {to_vector(numpy_arr)}")
-    print(f"Tuple → Vector:   {to_vector(tuple_vec)}")
-    print(f"List → Vector:    {to_vector(list_vec)}")
-    print()
-
-    # Test to_tuple
-    print("to_tuple() conversions:")
-    print(f"Vector → Tuple:  {to_tuple(vector_obj)}")
-    print(f"NumPy → Tuple:   {to_tuple(numpy_arr)}")
-    print(f"Tuple → Tuple:   {to_tuple(tuple_vec)}")
-    print(f"List → Tuple:    {to_tuple(list_vec)}")
-    print()
-
-    # Test to_list
-    print("to_list() conversions:")
-    print(f"Vector → List:  {to_list(vector_obj)}")
-    print(f"NumPy → List:   {to_list(numpy_arr)}")
-    print(f"Tuple → List:   {to_list(tuple_vec)}")
-    print(f"List → List:    {to_list(list_vec)}")
-    print()
-
-    # Test component extraction
-    print("Component extraction:")
-    print("x() function:")
-    print(f"x(Vector):  {x(vector_obj)}")
-    print(f"x(NumPy):   {x(numpy_arr)}")
-    print(f"x(Tuple):   {x(tuple_vec)}")
-    print(f"x(List):    {x(list_vec)}")
-    print()
-
-    print("y() function:")
-    print(f"y(Vector):  {y(vector_obj)}")
-    print(f"y(NumPy):   {y(numpy_arr)}")
-    print(f"y(Tuple):   {y(tuple_vec)}")
-    print(f"y(List):    {y(list_vec)}")
-    print()
-
-    print("z() function:")
-    print(f"z(Vector):  {z(vector_obj)}")
-    print(f"z(NumPy):   {z(numpy_arr)}")
-    print(f"z(Tuple):   {z(tuple_vec)}")
-    print(f"z(List):    {z(list_vec)}")
-    print()
-
-    # Test dimension checking
-    print("Dimension checking:")
-    vec2d = Vector(1.0, 2.0)
-    vec3d = Vector(1.0, 2.0, 3.0)
-    arr2d = np.array([1.0, 2.0])
-    arr3d = np.array([1.0, 2.0, 3.0])
-
-    print(f"is_2d(Vector(1,2)):       {is_2d(vec2d)}")
-    print(f"is_2d(Vector(1,2,3)):     {is_2d(vec3d)}")
-    print(f"is_2d(np.array([1,2])):   {is_2d(arr2d)}")
-    print(f"is_2d(np.array([1,2,3])): {is_2d(arr3d)}")
-    print(f"is_2d((1,2)):             {is_2d((1.0, 2.0))}")
-    print(f"is_2d((1,2,3)):           {is_2d((1.0, 2.0, 3.0))}")
-    print()
-
-    print(f"is_3d(Vector(1,2)):       {is_3d(vec2d)}")
-    print(f"is_3d(Vector(1,2,3)):     {is_3d(vec3d)}")
-    print(f"is_3d(np.array([1,2])):   {is_3d(arr2d)}")
-    print(f"is_3d(np.array([1,2,3])): {is_3d(arr3d)}")
-    print(f"is_3d((1,2)):             {is_3d((1.0, 2.0))}")
-    print(f"is_3d((1,2,3)):           {is_3d((1.0, 2.0, 3.0))}")
-    print()
-
-    # Test the Protocol interface
-    print("Testing VectorLike Protocol:")
-    print(f"isinstance(Vector(1,2), VectorLike):      {isinstance(vec2d, VectorLike)}")
-    print(f"isinstance(np.array([1,2]), VectorLike):  {isinstance(arr2d, VectorLike)}")
-    print(f"isinstance((1,2), VectorLike):            {isinstance((1.0, 2.0), VectorLike)}")
-    print(f"isinstance([1,2], VectorLike):            {isinstance([1.0, 2.0], VectorLike)}")
-    print()
-
-    # Test mixed operations using different vector types
-    # These functions aren't defined in vectortypes, but demonstrate the concept
-    def distance(a, b):
-        a_np = to_numpy(a)
-        b_np = to_numpy(b)
-        diff = a_np - b_np
-        return np.sqrt(np.sum(diff * diff))
-
-    def midpoint(a, b):
-        a_np = to_numpy(a)
-        b_np = to_numpy(b)
-        return (a_np + b_np) / 2
-
-    print("Mixed operations between different vector types:")
-    print(f"distance(Vector(1,2,3), [4,5,6]):           {distance(vec3d, [4.0, 5.0, 6.0])}")
-    print(f"distance(np.array([1,2,3]), (4,5,6)):       {distance(arr3d, (4.0, 5.0, 6.0))}")
-    print(f"midpoint(Vector(1,2,3), np.array([4,5,6])): {midpoint(vec3d, numpy_arr)}")
