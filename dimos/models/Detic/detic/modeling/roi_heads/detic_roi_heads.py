@@ -12,7 +12,6 @@ from detectron2.modeling.roi_heads.cascade_rcnn import CascadeROIHeads, _ScaleGr
 from .detic_fast_rcnn import DeticFastRCNNOutputLayers
 
 
-
 @ROI_HEADS_REGISTRY.register()
 class DeticCascadeROIHeads(CascadeROIHeads):
     @configurable
@@ -65,13 +64,17 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         for box_head, bbox_reg_weights in zip(ret["box_heads"], cascade_bbox_reg_weights):
             box_predictors.append(
                 DeticFastRCNNOutputLayers(
-                    cfg, box_head.output_shape, box2box_transform=Box2BoxTransform(weights=bbox_reg_weights)
+                    cfg,
+                    box_head.output_shape,
+                    box2box_transform=Box2BoxTransform(weights=bbox_reg_weights),
                 )
             )
         ret["box_predictors"] = box_predictors
         return ret
 
-    def _forward_box(self, features, proposals, targets=None, ann_type="box", classifier_info=(None, None, None)):
+    def _forward_box(
+        self, features, proposals, targets=None, ann_type="box", classifier_info=(None, None, None)
+    ):
         """
         Add mult proposal scores at testing
         Add ann_type
@@ -95,7 +98,9 @@ class DeticCascadeROIHeads(CascadeROIHeads):
                 if self.training and ann_type in ["box"]:
                     proposals = self._match_and_label_boxes(proposals, k, targets)
             predictions = self._run_stage(features, proposals, k, classifier_info=classifier_info)
-            prev_pred_boxes = self.box_predictor[k].predict_boxes((predictions[0], predictions[1]), proposals)
+            prev_pred_boxes = self.box_predictor[k].predict_boxes(
+                (predictions[0], predictions[1]), proposals
+            )
             head_outputs.append((self.box_predictor[k], predictions, proposals))
 
         if self.training:
@@ -108,12 +113,18 @@ class DeticCascadeROIHeads(CascadeROIHeads):
                         if ann_type in ["image", "caption", "captiontag"]:
                             image_labels = [x._pos_category_ids for x in targets]
                             weak_losses = predictor.image_label_losses(
-                                predictions, proposals, image_labels, classifier_info=classifier_info, ann_type=ann_type
+                                predictions,
+                                proposals,
+                                image_labels,
+                                classifier_info=classifier_info,
+                                ann_type=ann_type,
                             )
                             stage_losses.update(weak_losses)
                     else:  # supervised
                         stage_losses = predictor.losses(
-                            (predictions[0], predictions[1]), proposals, classifier_info=classifier_info
+                            (predictions[0], predictions[1]),
+                            proposals,
+                            classifier_info=classifier_info,
                         )
                         if self.with_image_labels:
                             stage_losses["image_loss"] = predictions[0].new_zeros([1])[0]
@@ -142,7 +153,15 @@ class DeticCascadeROIHeads(CascadeROIHeads):
             )
             return pred_instances
 
-    def forward(self, images, features, proposals, targets=None, ann_type="box", classifier_info=(None, None, None)):
+    def forward(
+        self,
+        images,
+        features,
+        proposals,
+        targets=None,
+        ann_type="box",
+        classifier_info=(None, None, None),
+    ):
         """
         enable debug and image labels
         classifier_info is shared across the batch
@@ -153,14 +172,18 @@ class DeticCascadeROIHeads(CascadeROIHeads):
             else:
                 proposals = self.get_top_proposals(proposals)
 
-            losses = self._forward_box(features, proposals, targets, ann_type=ann_type, classifier_info=classifier_info)
+            losses = self._forward_box(
+                features, proposals, targets, ann_type=ann_type, classifier_info=classifier_info
+            )
             if ann_type == "box" and targets[0].has("gt_masks"):
                 mask_losses = self._forward_mask(features, proposals)
                 losses.update({k: v * self.mask_weight for k, v in mask_losses.items()})
                 losses.update(self._forward_keypoint(features, proposals))
             else:
                 losses.update(
-                    self._get_empty_mask_loss(features, proposals, device=proposals[0].objectness_logits.device)
+                    self._get_empty_mask_loss(
+                        features, proposals, device=proposals[0].objectness_logits.device
+                    )
                 )
             return proposals, losses
         else:
@@ -185,7 +208,12 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         f = self.image_box_size
         image_box.proposal_boxes = Boxes(
             p.proposal_boxes.tensor.new_tensor(
-                [w * (1.0 - f) / 2.0, h * (1.0 - f) / 2.0, w * (1.0 - (1.0 - f) / 2.0), h * (1.0 - (1.0 - f) / 2.0)]
+                [
+                    w * (1.0 - f) / 2.0,
+                    h * (1.0 - f) / 2.0,
+                    w * (1.0 - (1.0 - f) / 2.0),
+                    h * (1.0 - (1.0 - f) / 2.0),
+                ]
             ).view(n, 4)
         )
         image_box.objectness_logits = p.objectness_logits.new_ones(n)

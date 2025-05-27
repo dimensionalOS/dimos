@@ -57,9 +57,13 @@ class SpatialMemory:
         new_memory: bool = False,  # Whether to create a new memory from scratch
         output_dir: Optional[str] = None,  # Directory for storing visual memory data
         chroma_client: Any = None,  # Optional ChromaDB client for persistence
-        visual_memory: Optional["VisualMemory"] = None,  # Optional VisualMemory instance for storing images
+        visual_memory: Optional[
+            "VisualMemory"
+        ] = None,  # Optional VisualMemory instance for storing images
         video_stream: Optional[Observable] = None,  # Video stream to process
-        transform_provider: Optional[callable] = None,  # Function that returns position and rotation
+        transform_provider: Optional[
+            callable
+        ] = None,  # Function that returns position and rotation
     ):
         """
         Initialize the spatial perception system.
@@ -111,7 +115,9 @@ class SpatialMemory:
             from chromadb.config import Settings
             import chromadb
 
-            self._chroma_client = chromadb.PersistentClient(path=db_path, settings=Settings(anonymized_telemetry=False))
+            self._chroma_client = chromadb.PersistentClient(
+                path=db_path, settings=Settings(anonymized_telemetry=False)
+            )
 
         # Initialize or load visual memory
         self._visual_memory = visual_memory
@@ -122,7 +128,9 @@ class SpatialMemory:
             else:
                 try:
                     logger.info(f"Loading existing visual memory from {visual_memory_path}...")
-                    self._visual_memory = VisualMemory.load(visual_memory_path, output_dir=output_dir)
+                    self._visual_memory = VisualMemory.load(
+                        visual_memory_path, output_dir=output_dir
+                    )
                     logger.info(f"Loaded {self._visual_memory.count()} images from previous runs")
                 except Exception as e:
                     logger.error(f"Error loading visual memory: {e}")
@@ -130,7 +138,9 @@ class SpatialMemory:
 
         # Initialize vector database
         self.vector_db: SpatialVectorDB = SpatialVectorDB(
-            collection_name=collection_name, chroma_client=self._chroma_client, visual_memory=self._visual_memory
+            collection_name=collection_name,
+            chroma_client=self._chroma_client,
+            visual_memory=self._visual_memory,
         )
 
         self.embedding_provider: ImageEmbeddingProvider = ImageEmbeddingProvider(
@@ -155,7 +165,9 @@ class SpatialMemory:
         if video_stream is not None and transform_provider is not None:
             self.start_continuous_processing(video_stream, transform_provider)
 
-    def query_by_location(self, x: float, y: float, radius: float = 2.0, limit: int = 5) -> List[Dict]:
+    def query_by_location(
+        self, x: float, y: float, radius: float = 2.0, limit: int = 5
+    ) -> List[Dict]:
         """
         Query the vector database for images near the specified location.
 
@@ -190,7 +202,9 @@ class SpatialMemory:
         combined_stream = video_stream.pipe(
             ops.map(lambda video_frame: {"frame": video_frame, **transform_provider()}),
             # Filter out bad transforms
-            ops.filter(lambda data: data.get("position") is not None and data.get("rotation") is not None),
+            ops.filter(
+                lambda data: data.get("position") is not None and data.get("rotation") is not None
+            ),
         )
 
         # Process with spatial memory
@@ -285,7 +299,10 @@ class SpatialMemory:
                 logger.debug("Position has not moved, skipping frame")
                 return None
 
-            if self.last_record_time is not None and (time.time() - self.last_record_time) < self.min_time_threshold:
+            if (
+                self.last_record_time is not None
+                and (time.time() - self.last_record_time) < self.min_time_threshold
+            ):
                 logger.debug("Time since last record too short, skipping frame")
                 return None
 
@@ -329,7 +346,9 @@ class SpatialMemory:
                 "timestamp": current_time,
             }
 
-        return combined_stream.pipe(ops.map(process_combined_data), ops.filter(lambda result: result is not None))
+        return combined_stream.pipe(
+            ops.map(process_combined_data), ops.filter(lambda result: result is not None)
+        )
 
     def query_by_image(self, image: np.ndarray, limit: int = 5) -> List[Dict]:
         """

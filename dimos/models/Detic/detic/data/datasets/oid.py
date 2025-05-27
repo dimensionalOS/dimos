@@ -511,7 +511,10 @@ def _get_builtin_metadata(cats):
     id_to_name = {x["id"]: x["name"] for x in cats}
     thing_dataset_id_to_contiguous_id = {i + 1: i for i in range(len(cats))}
     thing_classes = [x["name"] for x in sorted(cats, key=lambda x: x["id"])]
-    return {"thing_dataset_id_to_contiguous_id": thing_dataset_id_to_contiguous_id, "thing_classes": thing_classes}
+    return {
+        "thing_dataset_id_to_contiguous_id": thing_dataset_id_to_contiguous_id,
+        "thing_classes": thing_classes,
+    }
 
 
 _PREDEFINED_SPLITS_OID = {
@@ -520,8 +523,14 @@ _PREDEFINED_SPLITS_OID = {
     # "expanded" duplicates annotations to their father classes based on the official
     #   hierarchy. This is used in the official evaulation protocol.
     #   https://storage.googleapis.com/openimages/web/evaluation.html
-    "oid_val_expanded": ("oid/images/validation/", "oid/annotations/oid_challenge_2019_val_expanded.json"),
-    "oid_val_expanded_rare": ("oid/images/validation/", "oid/annotations/oid_challenge_2019_val_expanded_rare.json"),
+    "oid_val_expanded": (
+        "oid/images/validation/",
+        "oid/annotations/oid_challenge_2019_val_expanded.json",
+    ),
+    "oid_val_expanded_rare": (
+        "oid/images/validation/",
+        "oid/annotations/oid_challenge_2019_val_expanded_rare.json",
+    ),
 }
 
 

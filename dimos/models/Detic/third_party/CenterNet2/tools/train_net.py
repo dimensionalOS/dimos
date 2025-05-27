@@ -106,7 +106,9 @@ class Trainer(DefaultTrainer):
         logger.info("Running inference with test-time augmentation ...")
         model = GeneralizedRCNNWithTTA(cfg, model)
         evaluators = [
-            cls.build_evaluator(cfg, name, output_folder=os.path.join(cfg.OUTPUT_DIR, "inference_TTA"))
+            cls.build_evaluator(
+                cfg, name, output_folder=os.path.join(cfg.OUTPUT_DIR, "inference_TTA")
+            )
             for name in cfg.DATASETS.TEST
         ]
         res = cls.test(cfg, model, evaluators)
@@ -131,7 +133,9 @@ def main(args):
 
     if args.eval_only:
         model = Trainer.build_model(cfg)
-        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(cfg.MODEL.WEIGHTS, resume=args.resume)
+        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
+            cfg.MODEL.WEIGHTS, resume=args.resume
+        )
         res = Trainer.test(cfg, model)
         if cfg.TEST.AUG.ENABLED:
             res.update(Trainer.test_with_TTA(cfg, model))
@@ -147,7 +151,9 @@ def main(args):
     trainer = Trainer(cfg)
     trainer.resume_or_load(resume=args.resume)
     if cfg.TEST.AUG.ENABLED:
-        trainer.register_hooks([hooks.EvalHook(0, lambda: trainer.test_with_TTA(cfg, trainer.model))])
+        trainer.register_hooks(
+            [hooks.EvalHook(0, lambda: trainer.test_with_TTA(cfg, trainer.model))]
+        )
     return trainer.train()
 
 

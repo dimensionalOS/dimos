@@ -25,7 +25,9 @@ def depth_to_point_cloud(depth_image, camera_matrix, subsample_factor=4):
 
     # Create pixel coordinate grid
     rows, cols = depth_image.shape
-    x_grid, y_grid = np.meshgrid(np.arange(0, cols, subsample_factor), np.arange(0, rows, subsample_factor))
+    x_grid, y_grid = np.meshgrid(
+        np.arange(0, cols, subsample_factor), np.arange(0, rows, subsample_factor)
+    )
 
     # Flatten grid and depth
     x = x_grid.flatten()
@@ -124,14 +126,21 @@ def fit_cuboid(points, n_iterations=5, inlier_thresh=2.0):
         dy = np.abs(local_points[:, 1]) - half_dims[1]
         dz = np.abs(local_points[:, 2]) - half_dims[2]
 
-        outside_dist = np.sqrt(np.maximum(dx, 0) ** 2 + np.maximum(dy, 0) ** 2 + np.maximum(dz, 0) ** 2)
+        outside_dist = np.sqrt(
+            np.maximum(dx, 0) ** 2 + np.maximum(dy, 0) ** 2 + np.maximum(dz, 0) ** 2
+        )
         inside_dist = np.minimum(np.maximum(np.maximum(dx, dy), dz), 0)
         distances = outside_dist + inside_dist
         error = np.mean(distances**2)
 
         if error < best_error:
             best_error = error
-            best_params = {"center": center, "rotation": rotation, "dimensions": dimensions, "error": error}
+            best_params = {
+                "center": center,
+                "rotation": rotation,
+                "dimensions": dimensions,
+                "error": error,
+            }
 
         # Update points for next iteration
         current_points = current_points[inlier_mask]
@@ -180,7 +189,9 @@ def visualize_fit(image, cuboid_params, camera_matrix, R=None, t=None):
     Draw the fitted cuboid on the image.
     """
     # Get corners in world coordinates
-    corners = get_cuboid_corners(cuboid_params["center"], cuboid_params["dimensions"], cuboid_params["rotation"])
+    corners = get_cuboid_corners(
+        cuboid_params["center"], cuboid_params["dimensions"], cuboid_params["rotation"]
+    )
 
     # Transform corners if R and t are provided
     if R is not None and t is not None:
@@ -237,10 +248,14 @@ def plot_3d_fit(points, cuboid_params, title="3D Cuboid Fit"):
     ax = fig.add_subplot(111, projection="3d")
 
     # Plot points
-    ax.scatter(points[:, 0], points[:, 1], points[:, 2], c="b", marker=".", alpha=0.1, label="Points")
+    ax.scatter(
+        points[:, 0], points[:, 1], points[:, 2], c="b", marker=".", alpha=0.1, label="Points"
+    )
 
     # Plot fitted cuboid
-    corners = get_cuboid_corners(cuboid_params["center"], cuboid_params["dimensions"], cuboid_params["rotation"])
+    corners = get_cuboid_corners(
+        cuboid_params["center"], cuboid_params["dimensions"], cuboid_params["rotation"]
+    )
 
     # Define edges
     edges = [
@@ -263,7 +278,12 @@ def plot_3d_fit(points, cuboid_params, title="3D Cuboid Fit"):
 
     # Plot edges
     for i, j in edges:
-        ax.plot3D([corners[i, 0], corners[j, 0]], [corners[i, 1], corners[j, 1]], [corners[i, 2], corners[j, 2]], "r-")
+        ax.plot3D(
+            [corners[i, 0], corners[j, 0]],
+            [corners[i, 1], corners[j, 1]],
+            [corners[i, 2], corners[j, 2]],
+            "r-",
+        )
 
     # Set labels and title
     ax.set_xlabel("X")

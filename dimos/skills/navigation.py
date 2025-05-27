@@ -74,7 +74,8 @@ class NavigateWithText(AbstractRobotSkill):
     distance: float = Field(1.0, description="Desired distance to maintain from object in meters")
     timeout: float = Field(40.0, description="Maximum time to spend navigating in seconds")
     similarity_threshold: float = Field(
-        0.25, description="Minimum similarity score required for semantic map results to be considered valid"
+        0.25,
+        description="Minimum similarity score required for semantic map results to be considered valid",
     )
 
     def __init__(self, robot=None, **data):
@@ -142,7 +143,11 @@ class NavigateWithText(AbstractRobotSkill):
             goal_y_robot = 0
             goal_angle = 0
 
-            while time.time() - start_time < 10.0 and not self._stop_event.is_set() and not target_acquired:
+            while (
+                time.time() - start_time < 10.0
+                and not self._stop_event.is_set()
+                and not target_acquired
+            ):
                 # Get the latest tracking data
                 tracking_data = self._robot.object_tracking_stream.pipe(ops.take(1)).run()
 
@@ -151,11 +156,15 @@ class NavigateWithText(AbstractRobotSkill):
 
                     if "distance" in target and "angle" in target:
                         # Convert target distance and angle to xy coordinates in robot frame
-                        goal_distance = target["distance"] - self.distance  # Subtract desired distance to stop short
+                        goal_distance = (
+                            target["distance"] - self.distance
+                        )  # Subtract desired distance to stop short
                         goal_angle = -target["angle"]
                         logger.info(f"Target distance: {goal_distance}, Target angle: {goal_angle}")
 
-                        goal_x_robot, goal_y_robot = distance_angle_to_goal_xy(goal_distance, goal_angle)
+                        goal_x_robot, goal_y_robot = distance_angle_to_goal_xy(
+                            goal_distance, goal_angle
+                        )
                         target_acquired = True
                         break
 
@@ -163,13 +172,19 @@ class NavigateWithText(AbstractRobotSkill):
                         logger.warning(f"No valid target tracking data found. target: {target}")
 
                 else:
-                    logger.warning(f"No valid target tracking data found. tracking_data: {tracking_data}")
+                    logger.warning(
+                        f"No valid target tracking data found. tracking_data: {tracking_data}"
+                    )
 
                 time.sleep(0.1)
 
             if not target_acquired:
                 logger.error("Failed to acquire valid target tracking data")
-                return {"success": False, "failure_reason": "Perception", "error": "Failed to track object"}
+                return {
+                    "success": False,
+                    "failure_reason": "Perception",
+                    "error": "Failed to track object",
+                }
 
             logger.info(
                 f"Navigating to target at local coordinates: ({goal_x_robot:.2f}, {goal_y_robot:.2f}), angle: {goal_angle:.2f}"
@@ -194,7 +209,9 @@ class NavigateWithText(AbstractRobotSkill):
                     "message": f"Successfully navigated to {self.query} in view",
                 }
             else:
-                logger.warning(f"Failed to reach {self.query} within timeout or operation was stopped")
+                logger.warning(
+                    f"Failed to reach {self.query} within timeout or operation was stopped"
+                )
                 return {
                     "success": False,
                     "failure_reason": "Navigation",
@@ -226,7 +243,11 @@ class NavigateWithText(AbstractRobotSkill):
 
             if not results:
                 logger.warning(f"No results found for query: '{self.query}'")
-                return {"success": False, "query": self.query, "error": "No matching location found in semantic map"}
+                return {
+                    "success": False,
+                    "query": self.query,
+                    "error": "No matching location found in semantic map",
+                }
 
             # Get the best match
             best_match = results[0]
@@ -236,13 +257,20 @@ class NavigateWithText(AbstractRobotSkill):
                 metadata = metadata[0]
 
             # Extract coordinates from metadata
-            if isinstance(metadata, dict) and "pos_x" in metadata and "pos_y" in metadata and "rot_z" in metadata:
+            if (
+                isinstance(metadata, dict)
+                and "pos_x" in metadata
+                and "pos_y" in metadata
+                and "rot_z" in metadata
+            ):
                 pos_x = metadata.get("pos_x", 0)
                 pos_y = metadata.get("pos_y", 0)
                 theta = metadata.get("rot_z", 0)
 
                 # Calculate similarity score (distance is inverse of similarity)
-                similarity = 1.0 - (best_match.get("distance", 0) if best_match.get("distance") is not None else 0)
+                similarity = 1.0 - (
+                    best_match.get("distance", 0) if best_match.get("distance") is not None else 0
+                )
 
                 logger.info(
                     f"Found match for '{self.query}' at ({pos_x:.2f}, {pos_y:.2f}, rotation {theta:.2f}) with similarity: {similarity:.4f}"
@@ -272,7 +300,9 @@ class NavigateWithText(AbstractRobotSkill):
                     self.register_as_running("Navigate", skill_library)
 
                     try:
-                        logger.info(f"Starting navigation to ({pos_x:.2f}, {pos_y:.2f}) with rotation {theta:.2f}")
+                        logger.info(
+                            f"Starting navigation to ({pos_x:.2f}, {pos_y:.2f}) with rotation {theta:.2f}"
+                        )
                         # Pass our stop_event to allow cancellation
                         result = False
                         try:
@@ -312,7 +342,11 @@ class NavigateWithText(AbstractRobotSkill):
                 }
             else:
                 logger.warning(f"No valid position data found for query: '{self.query}'")
-                return {"success": False, "query": self.query, "error": "No valid position data found in semantic map"}
+                return {
+                    "success": False,
+                    "query": self.query,
+                    "error": "No valid position data found in semantic map",
+                }
         except Exception as e:
             logger.error(f"Error in semantic map navigation: {e}")
             return {"success": False, "error": f"Semantic map error: {e}"}
@@ -340,11 +374,15 @@ class NavigateWithText(AbstractRobotSkill):
             return object_result
 
         elif object_result and object_result["failure_reason"] == "Navigation":
-            logger.info(f"Failed to navigate to {self.query} in view: {object_result.get('error', 'Unknown error')}")
+            logger.info(
+                f"Failed to navigate to {self.query} in view: {object_result.get('error', 'Unknown error')}"
+            )
             return object_result
 
         # If object navigation failed, fall back to semantic map
-        logger.info(f"Object not found in view. Falling back to semantic map query for: '{self.query}'")
+        logger.info(
+            f"Object not found in view. Falling back to semantic map query for: '{self.query}'"
+        )
 
         return self._navigate_using_semantic_map()
 
@@ -397,7 +435,9 @@ class GetPose(AbstractRobotSkill):
     allowing you to navigate back to it later using the Navigate skill.
     """
 
-    location_name: str = Field("", description="Optional name to assign to this location (e.g., 'kitchen', 'office')")
+    location_name: str = Field(
+        "", description="Optional name to assign to this location (e.g., 'kitchen', 'office')"
+    )
 
     def __init__(self, robot=None, **data):
         """
@@ -430,7 +470,11 @@ class GetPose(AbstractRobotSkill):
             # Format the response
             result = {
                 "success": True,
-                "position": {"x": position[0], "y": position[1], "z": position[2] if len(position) > 2 else 0.0},
+                "position": {
+                    "x": position[0],
+                    "y": position[1],
+                    "z": position[2] if len(position) > 2 else 0.0,
+                },
                 "rotation": {"roll": rotation[0], "pitch": rotation[1], "yaw": rotation[2]},
             }
 
@@ -440,7 +484,9 @@ class GetPose(AbstractRobotSkill):
                 spatial_memory = self._robot.get_spatial_memory()
 
                 # Create a RobotLocation object
-                location = RobotLocation(name=self.location_name, position=position, rotation=rotation)
+                location = RobotLocation(
+                    name=self.location_name, position=position, rotation=rotation
+                )
 
                 # Add to spatial memory
                 if spatial_memory.add_robot_location(location):
@@ -467,7 +513,9 @@ class NavigateToGoal(AbstractRobotSkill):
     orientation at the goal position.
     """
 
-    position: Tuple[float, float] = Field((0.0, 0.0), description="Target position (x, y) in map frame")
+    position: Tuple[float, float] = Field(
+        (0.0, 0.0), description="Target position (x, y) in map frame"
+    )
     rotation: Optional[float] = Field(None, description="Target orientation (yaw) in radians")
     frame: str = Field("map", description="Reference frame for the position and rotation")
     timeout: float = Field(120.0, description="Maximum time (in seconds) allowed for navigation")
@@ -535,7 +583,12 @@ class NavigateToGoal(AbstractRobotSkill):
         except Exception as e:
             error_msg = f"Error during navigation: {e}"
             logger.error(error_msg)
-            return {"success": False, "position": self.position, "rotation": self.rotation, "error": error_msg}
+            return {
+                "success": False,
+                "position": self.position,
+                "rotation": self.rotation,
+                "error": error_msg,
+            }
         finally:
             self.stop()
 

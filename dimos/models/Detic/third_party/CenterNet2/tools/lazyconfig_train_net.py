@@ -35,7 +35,9 @@ logger = logging.getLogger("detectron2")
 
 def do_test(cfg, model):
     if "evaluator" in cfg.dataloader:
-        ret = inference_on_dataset(model, instantiate(cfg.dataloader.test), instantiate(cfg.dataloader.evaluator))
+        ret = inference_on_dataset(
+            model, instantiate(cfg.dataloader.test), instantiate(cfg.dataloader.evaluator)
+        )
         print_csv_format(ret)
         return ret
 
@@ -80,7 +82,9 @@ def do_train(args, cfg):
         [
             hooks.IterationTimer(),
             hooks.LRScheduler(scheduler=instantiate(cfg.lr_multiplier)),
-            hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer) if comm.is_main_process() else None,
+            hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer)
+            if comm.is_main_process()
+            else None,
             hooks.EvalHook(cfg.train.eval_period, lambda: do_test(cfg, model)),
             hooks.PeriodicWriter(
                 default_writers(cfg.train.output_dir, cfg.train.max_iter),

@@ -95,13 +95,18 @@ class VideoOperators:
             sample_interval = timedelta(microseconds=int(1_000_000 / fps))
 
         def _operator(source: Observable) -> Observable:
-            return source.pipe(ops.sample(sample_interval) if use_latest else ops.throttle_first(sample_interval))
+            return source.pipe(
+                ops.sample(sample_interval) if use_latest else ops.throttle_first(sample_interval)
+            )
 
         return _operator
 
     @staticmethod
     def with_jpeg_export(
-        frame_processor: "FrameProcessor", save_limit: int = 100, suffix: str = "", loop: bool = False
+        frame_processor: "FrameProcessor",
+        save_limit: int = 100,
+        suffix: str = "",
+        loop: bool = False,
     ) -> Callable[[Observable], Observable]:
         """Creates an operator that saves video frames as JPEG files.
 
@@ -134,7 +139,11 @@ class VideoOperators:
         """
 
         def _operator(source: Observable) -> Observable:
-            return source.pipe(ops.map(lambda frame: frame_processor.export_to_jpeg(frame, save_limit, loop, suffix)))
+            return source.pipe(
+                ops.map(
+                    lambda frame: frame_processor.export_to_jpeg(frame, save_limit, loop, suffix)
+                )
+            )
 
         return _operator
 
@@ -183,7 +192,9 @@ class VideoOperators:
     def with_edge_detection(
         frame_processor: "FrameProcessor",
     ) -> Callable[[Observable], Observable]:
-        return lambda source: source.pipe(ops.map(lambda frame: frame_processor.edge_detection(frame)))
+        return lambda source: source.pipe(
+            ops.map(lambda frame: frame_processor.edge_detection(frame))
+        )
 
     @staticmethod
     def with_optical_flow(
@@ -191,7 +202,9 @@ class VideoOperators:
     ) -> Callable[[Observable], Observable]:
         return lambda source: source.pipe(
             ops.scan(
-                lambda acc, frame: frame_processor.compute_optical_flow(acc, frame, compute_relevancy=False),
+                lambda acc, frame: frame_processor.compute_optical_flow(
+                    acc, frame, compute_relevancy=False
+                ),
                 (None, None, None),
             ),
             ops.map(lambda result: result[1]),  # Extract flow component
@@ -200,7 +213,9 @@ class VideoOperators:
         )
 
     @staticmethod
-    def with_zmq_socket(socket: zmq.Socket, scheduler: Optional[Any] = None) -> Callable[[Observable], Observable]:
+    def with_zmq_socket(
+        socket: zmq.Socket, scheduler: Optional[Any] = None
+    ) -> Callable[[Observable], Observable]:
         def send_frame(frame, socket):
             _, img_encoded = cv2.imencode(".jpg", frame)
             socket.send(img_encoded.tobytes())
@@ -330,7 +345,9 @@ class Operators:
                         if not in_flight:
                             observer.on_completed()
 
-                upstream_disp = source.subscribe(on_next, on_error, on_completed, scheduler=scheduler)
+                upstream_disp = source.subscribe(
+                    on_next, on_error, on_completed, scheduler=scheduler
+                )
                 return dispose_all
 
             return create(_subscribe)
@@ -418,7 +435,10 @@ class Operators:
                             observer.on_completed()
 
                 upstream_disp = source.subscribe(
-                    on_next=on_next, on_error=on_error, on_completed=on_completed, scheduler=scheduler
+                    on_next=on_next,
+                    on_error=on_error,
+                    on_completed=on_completed,
+                    scheduler=scheduler,
                 )
 
                 return Disposable(dispose_all)
@@ -457,7 +477,10 @@ class Operators:
                     print("\033[35mItem processed.\033[0m")
 
                 return source.subscribe(
-                    on_next=on_next, on_error=observer.on_error, on_completed=observer.on_completed, scheduler=scheduler
+                    on_next=on_next,
+                    on_error=observer.on_error,
+                    on_completed=observer.on_completed,
+                    scheduler=scheduler,
                 )
 
             return create(subscribe)
@@ -488,7 +511,10 @@ class Operators:
                     observer.on_completed()
 
                 return source.subscribe(
-                    on_next=on_next, on_error=on_error, on_completed=on_completed, scheduler=scheduler
+                    on_next=on_next,
+                    on_error=on_error,
+                    on_completed=on_completed,
+                    scheduler=scheduler,
                 )
 
             return Observable(subscribe)
@@ -514,7 +540,10 @@ class Operators:
                     observer.on_completed()
 
                 return source.subscribe(
-                    on_next=on_next, on_error=on_error, on_completed=on_completed, scheduler=scheduler
+                    on_next=on_next,
+                    on_error=on_error,
+                    on_completed=on_completed,
+                    scheduler=scheduler,
                 )
 
             return Observable(subscribe)
@@ -534,7 +563,11 @@ class Operators:
 
     @staticmethod
     def print_emission(
-        id: str, dev_name: str = "NA", counts: dict = None, color: "Operators.PrintColor" = None, enabled: bool = True
+        id: str,
+        dev_name: str = "NA",
+        counts: dict = None,
+        color: "Operators.PrintColor" = None,
+        enabled: bool = True,
     ):
         """
         Creates an operator that prints the emission with optional counts for debugging.
@@ -578,7 +611,10 @@ class Operators:
                     observer.on_next(value)
 
                 return source.subscribe(
-                    on_next=on_next, on_error=observer.on_error, on_completed=observer.on_completed, scheduler=scheduler
+                    on_next=on_next,
+                    on_error=observer.on_error,
+                    on_completed=observer.on_completed,
+                    scheduler=scheduler,
                 )
 
             return create(_subscribe)

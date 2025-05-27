@@ -42,7 +42,9 @@ class FollowHuman(AbstractRobotSkill):
     if you want to navigate to a specific person, use NavigateTo instead.
     """
 
-    distance: float = Field(1.5, description="Desired distance to maintain from the person in meters")
+    distance: float = Field(
+        1.5, description="Desired distance to maintain from the person in meters"
+    )
     timeout: float = Field(20.0, description="Maximum time to follow the person in seconds")
     point: Optional[Tuple[int, int]] = Field(
         None, description="Optional point to start tracking (x,y pixel coordinates)"
@@ -62,7 +64,10 @@ class FollowHuman(AbstractRobotSkill):
         """
         super().__call__()
 
-        if not hasattr(self._robot, "person_tracking_stream") or self._robot.person_tracking_stream is None:
+        if (
+            not hasattr(self._robot, "person_tracking_stream")
+            or self._robot.person_tracking_stream is None
+        ):
             logger.error("Robot does not have a person tracking stream")
             return False
 
@@ -74,13 +79,17 @@ class FollowHuman(AbstractRobotSkill):
 
         try:
             # Initialize visual servoing
-            self._visual_servoing = VisualServoing(tracking_stream=self._robot.person_tracking_stream)
+            self._visual_servoing = VisualServoing(
+                tracking_stream=self._robot.person_tracking_stream
+            )
 
             logger.warning(f"Following human for {self.timeout} seconds...")
             start_time = time.time()
 
             # Start tracking
-            track_success = self._visual_servoing.start_tracking(point=self.point, desired_distance=self.distance)
+            track_success = self._visual_servoing.start_tracking(
+                point=self.point, desired_distance=self.distance
+            )
 
             if not track_success:
                 logger.error("Failed to start tracking")

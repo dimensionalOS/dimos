@@ -192,7 +192,9 @@ if __name__ == "__main__":
         frames_per_second = video.get(cv2.CAP_PROP_FPS)
         num_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
         basename = os.path.basename(args.video_input)
-        codec, file_ext = ("x264", ".mkv") if test_opencv_video_format("x264", ".mkv") else ("mp4v", ".mp4")
+        codec, file_ext = (
+            ("x264", ".mkv") if test_opencv_video_format("x264", ".mkv") else ("mp4v", ".mp4")
+        )
         if codec == ".mp4v":
             warnings.warn("x264 codec not available, switching to mp4v")
         if args.output:

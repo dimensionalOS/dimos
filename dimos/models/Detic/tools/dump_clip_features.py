@@ -52,7 +52,9 @@ if __name__ == "__main__":
         sentences_synonyms = [["a photo of a {}".format(xx) for xx in x] for x in synonyms]
     elif args.prompt == "scene":
         sentences = ["a photo of a {} in the scene".format(x) for x in cat_names]
-        sentences_synonyms = [["a photo of a {} in the scene".format(xx) for xx in x] for x in synonyms]
+        sentences_synonyms = [
+            ["a photo of a {} in the scene".format(xx) for xx in x] for x in synonyms
+        ]
 
     print("sentences_synonyms", len(sentences_synonyms), sum(len(x) for x in sentences_synonyms))
     if args.model == "clip":
@@ -67,7 +69,11 @@ if __name__ == "__main__":
         with torch.no_grad():
             if len(text) > 10000:
                 text_features = torch.cat(
-                    [model.encode_text(text[: len(text) // 2]), model.encode_text(text[len(text) // 2 :])], dim=0
+                    [
+                        model.encode_text(text[: len(text) // 2]),
+                        model.encode_text(text[len(text) // 2 :]),
+                    ],
+                    dim=0,
                 )
             else:
                 text_features = model.encode_text(text)

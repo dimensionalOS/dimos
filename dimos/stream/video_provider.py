@@ -59,7 +59,9 @@ class VideoFrameError(Exception):
 class AbstractVideoProvider(ABC):
     """Abstract base class for video providers managing video capture resources."""
 
-    def __init__(self, dev_name: str = "NA", pool_scheduler: Optional[ThreadPoolScheduler] = None) -> None:
+    def __init__(
+        self, dev_name: str = "NA", pool_scheduler: Optional[ThreadPoolScheduler] = None
+    ) -> None:
         """Initializes the video provider with a device name.
 
         Args:

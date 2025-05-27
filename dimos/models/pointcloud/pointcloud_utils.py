@@ -54,7 +54,9 @@ def create_point_cloud_from_rgbd(rgb_image, depth_image, intrinsic_parameters):
 
 def canonicalize_point_cloud(pcd, canonicalize_threshold=0.3):
     # Segment the largest plane, assumed to be the floor
-    plane_model, inliers = pcd.segment_plane(distance_threshold=0.01, ransac_n=3, num_iterations=1000)
+    plane_model, inliers = pcd.segment_plane(
+        distance_threshold=0.01, ransac_n=3, num_iterations=1000
+    )
 
     canonicalized = False
     if len(inliers) / len(pcd.points) > canonicalize_threshold:
@@ -82,7 +84,9 @@ def canonicalize_point_cloud(pcd, canonicalize_threshold=0.3):
         pcd.transform(transformation)
 
         # Additional 180-degree rotation around the Z-axis
-        rotation_z_180 = np.array([[np.cos(np.pi), -np.sin(np.pi), 0], [np.sin(np.pi), np.cos(np.pi), 0], [0, 0, 1]])
+        rotation_z_180 = np.array(
+            [[np.cos(np.pi), -np.sin(np.pi), 0], [np.sin(np.pi), np.cos(np.pi), 0], [0, 0, 1]]
+        )
         pcd.rotate(rotation_z_180, center=(0, 0, 0))
 
         return pcd, canonicalized, transformation

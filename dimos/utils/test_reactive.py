@@ -5,7 +5,12 @@ import reactivex as rx
 from reactivex import operators as ops
 from typing import Callable, TypeVar, Any
 from reactivex.disposable import Disposable
-from dimos.utils.reactive import backpressure, getter_streaming, getter_ondemand, callback_to_observable
+from dimos.utils.reactive import (
+    backpressure,
+    getter_streaming,
+    getter_ondemand,
+    callback_to_observable,
+)
 
 
 def measure_time(func: Callable[[], Any], iterations: int = 1) -> float:
@@ -16,7 +21,9 @@ def measure_time(func: Callable[[], Any], iterations: int = 1) -> float:
     return result, total_time
 
 
-def assert_time(func: Callable[[], Any], assertion: Callable[[int], bool], assert_fail_msg=None) -> None:
+def assert_time(
+    func: Callable[[], Any], assertion: Callable[[int], bool], assert_fail_msg=None
+) -> None:
     [result, total_time] = measure_time(func)
     assert assertion(total_time), assert_fail_msg + f", took {round(total_time, 2)}s"
     return result
@@ -56,7 +63,9 @@ def test_backpressure_handling():
     received_fast = []
     received_slow = []
     # Create an observable that emits numpy arrays instead of integers
-    source = dispose_spy(rx.interval(0.1).pipe(ops.map(lambda i: np.array([i, i + 1, i + 2])), ops.take(50)))
+    source = dispose_spy(
+        rx.interval(0.1).pipe(ops.map(lambda i: np.array([i, i + 1, i + 2])), ops.take(50))
+    )
 
     # Wrap with backpressure handling
     safe_source = backpressure(source)
@@ -80,10 +89,14 @@ def test_backpressure_handling():
     print("Slow observer received:", len(received_slow), [arr[0] for arr in received_slow])
 
     # Fast observer should get all or nearly all items
-    assert len(received_fast) > 15, f"Expected fast observer to receive most items, got {len(received_fast)}"
+    assert len(received_fast) > 15, (
+        f"Expected fast observer to receive most items, got {len(received_fast)}"
+    )
 
     # Slow observer should get fewer items due to backpressure handling
-    assert len(received_slow) < len(received_fast), "Slow observer should receive fewer items than fast observer"
+    assert len(received_slow) < len(received_fast), (
+        "Slow observer should receive fewer items than fast observer"
+    )
     # Specifically, processing at 0.25s means ~4 items per second, so expect 8-10 items
     assert 7 <= len(received_slow) <= 11, f"Expected 7-11 items, got {len(received_slow)}"
 
@@ -98,11 +111,19 @@ def test_backpressure_handling():
 
 
 def test_getter_streaming_blocking():
-    source = dispose_spy(rx.interval(0.2).pipe(ops.map(lambda i: np.array([i, i + 1, i + 2])), ops.take(50)))
+    source = dispose_spy(
+        rx.interval(0.2).pipe(ops.map(lambda i: np.array([i, i + 1, i + 2])), ops.take(50))
+    )
     assert source.is_disposed()
 
-    getter = min_time(lambda: getter_streaming(source), 0.2, "Latest getter needs to block until first msg is ready")
-    assert np.array_equal(getter(), np.array([0, 1, 2])), f"Expected to get the first array [0,1,2], got {getter()}"
+    getter = min_time(
+        lambda: getter_streaming(source),
+        0.2,
+        "Latest getter needs to block until first msg is ready",
+    )
+    assert np.array_equal(getter(), np.array([0, 1, 2])), (
+        f"Expected to get the first array [0,1,2], got {getter()}"
+    )
 
     time.sleep(0.5)
     assert getter()[0] >= 2, f"Expected array with first value >= 2, got {getter()}"
@@ -125,7 +146,9 @@ def test_getter_streaming_nonblocking():
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
 
     getter = max_time(
-        lambda: getter_streaming(source, nonblocking=True), 0.1, "nonblocking getter init shouldn't block"
+        lambda: getter_streaming(source, nonblocking=True),
+        0.1,
+        "nonblocking getter init shouldn't block",
     )
     min_time(getter, 0.2, "Expected for first value call to block if cache is empty")
     assert getter() == 0

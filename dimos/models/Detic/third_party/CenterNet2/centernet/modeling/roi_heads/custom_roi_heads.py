@@ -22,8 +22,12 @@ class CustomROIHeads(StandardROIHeads):
             self.debug_show_name = cfg.DEBUG_SHOW_NAME
             self.save_debug = cfg.SAVE_DEBUG
             self.vis_thresh = cfg.VIS_THRESH
-            self.pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
-            self.pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            self.pixel_mean = (
+                torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            )
+            self.pixel_std = (
+                torch.Tensor(cfg.MODEL.PIXEL_STD).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            )
         return ret
 
     def forward(self, images, features, proposals, targets=None):
@@ -70,7 +74,9 @@ class CustomCascadeROIHeads(CascadeROIHeads):
         for box_head, bbox_reg_weights in zip(ret["box_heads"], cascade_bbox_reg_weights):
             box_predictors.append(
                 CustomFastRCNNOutputLayers(
-                    cfg, box_head.output_shape, box2box_transform=Box2BoxTransform(weights=bbox_reg_weights)
+                    cfg,
+                    box_head.output_shape,
+                    box2box_transform=Box2BoxTransform(weights=bbox_reg_weights),
                 )
             )
         ret["box_predictors"] = box_predictors
@@ -79,8 +85,12 @@ class CustomCascadeROIHeads(CascadeROIHeads):
             self.debug_show_name = cfg.DEBUG_SHOW_NAME
             self.save_debug = cfg.SAVE_DEBUG
             self.vis_thresh = cfg.VIS_THRESH
-            self.pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
-            self.pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            self.pixel_mean = (
+                torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            )
+            self.pixel_std = (
+                torch.Tensor(cfg.MODEL.PIXEL_STD).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            )
         return ret
 
     def _forward_box(self, features, proposals, targets=None):

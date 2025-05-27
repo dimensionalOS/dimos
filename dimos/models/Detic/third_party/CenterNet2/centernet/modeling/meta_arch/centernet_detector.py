@@ -42,7 +42,9 @@ class CenterNetDetector(nn.Module):
         proposals, _ = self.proposal_generator(images, features, None)
 
         processed_results = []
-        for results_per_image, input_per_image, image_size in zip(proposals, batched_inputs, images.image_sizes):
+        for results_per_image, input_per_image, image_size in zip(
+            proposals, batched_inputs, images.image_sizes
+        ):
             if do_postprocess:
                 height = input_per_image.get("height", image_size[0])
                 width = input_per_image.get("width", image_size[1])

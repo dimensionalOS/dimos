@@ -47,7 +47,9 @@ def start_audio_queue_processor():
 
     if _queue_processor_thread is None or not _queue_processor_thread.is_alive():
         _queue_running = True
-        _queue_processor_thread = threading.Thread(target=_process_audio_queue, daemon=True, name="AudioQueueProcessor")
+        _queue_processor_thread = threading.Thread(
+            target=_process_audio_queue, daemon=True, name="AudioQueueProcessor"
+        )
         _queue_processor_thread.start()
         logger.info("Started audio queue processor thread")
 

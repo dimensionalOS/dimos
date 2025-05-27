@@ -83,7 +83,9 @@ class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
 class OpenAISemanticMemory(ChromaAgentSemanticMemory):
     """Semantic memory implementation using OpenAI's embedding API."""
 
-    def __init__(self, collection_name="my_collection", model="text-embedding-3-large", dimensions=1024):
+    def __init__(
+        self, collection_name="my_collection", model="text-embedding-3-large", dimensions=1024
+    ):
         """Initialize OpenAI-based semantic memory.
 
         Args:
@@ -120,7 +122,9 @@ class OpenAISemanticMemory(ChromaAgentSemanticMemory):
 class LocalSemanticMemory(ChromaAgentSemanticMemory):
     """Semantic memory implementation using local models."""
 
-    def __init__(self, collection_name="my_collection", model_name="sentence-transformers/all-MiniLM-L6-v2"):
+    def __init__(
+        self, collection_name="my_collection", model_name="sentence-transformers/all-MiniLM-L6-v2"
+    ):
         """Initialize the local semantic memory using SentenceTransformer.
 
         Args:

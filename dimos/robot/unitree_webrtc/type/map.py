@@ -77,9 +77,11 @@ def splice_cylinder(
     map_pts = np.asarray(map_pcd.points)
     planar_dists_map = np.linalg.norm(map_pts[:, axes] - center[axes], axis=1)
 
-    victims = np.nonzero((planar_dists_map < radius) & (map_pts[:, axis] >= axis_min) & (map_pts[:, axis] <= axis_max))[
-        0
-    ]
+    victims = np.nonzero(
+        (planar_dists_map < radius)
+        & (map_pts[:, axis] >= axis_min)
+        & (map_pts[:, axis] <= axis_max)
+    )[0]
 
     survivors = map_pcd.select_by_index(victims, invert=True)
     return survivors + patch_pcd

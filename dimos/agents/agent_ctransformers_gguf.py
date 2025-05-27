@@ -141,7 +141,9 @@ class CTransformersGGUFAgent(LLMAgent):
 
         self.tokenizer = CTransformersTokenizerAdapter(self.model)
 
-        self.prompt_builder = prompt_builder or PromptBuilder(self.model_name, tokenizer=self.tokenizer)
+        self.prompt_builder = prompt_builder or PromptBuilder(
+            self.model_name, tokenizer=self.tokenizer
+        )
 
         self.max_output_tokens_per_request = max_output_tokens_per_request
 
@@ -152,7 +154,9 @@ class CTransformersGGUFAgent(LLMAgent):
 
         # Ensure only one input stream is provided.
         if self.input_video_stream is not None and self.input_query_stream is not None:
-            raise ValueError("More than one input stream provided. Please provide only one input stream.")
+            raise ValueError(
+                "More than one input stream provided. Please provide only one input stream."
+            )
 
         if self.input_video_stream is not None:
             logger.info("Subscribing to input video stream...")
@@ -198,7 +202,9 @@ class CTransformersGGUFAgent(LLMAgent):
         """
         Creates an observable that processes a text query and emits the response.
         """
-        return create(lambda observer, _: self._observable_query(observer, incoming_query=query_text))
+        return create(
+            lambda observer, _: self._observable_query(observer, incoming_query=query_text)
+        )
 
 
 # endregion HuggingFaceLLMAgent Subclass (HuggingFace-Specific Implementation)

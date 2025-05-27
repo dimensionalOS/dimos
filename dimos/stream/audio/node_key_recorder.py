@@ -208,7 +208,8 @@ class KeyRecorder(AbstractAudioTransform):
         valid_events = [
             event
             for event in audio_events
-            if event is not None and (hasattr(event, "data") and event.data is not None and event.data.size > 0)
+            if event is not None
+            and (hasattr(event, "data") and event.data is not None and event.data.size > 0)
         ]
 
         if not valid_events:

@@ -19,7 +19,10 @@ def _get_builtin_metadata():
     id_to_name = {x["id"]: x["name"] for x in categories}
     thing_dataset_id_to_contiguous_id = {i: i for i in range(len(categories))}
     thing_classes = [id_to_name[k] for k in sorted(id_to_name)]
-    return {"thing_dataset_id_to_contiguous_id": thing_dataset_id_to_contiguous_id, "thing_classes": thing_classes}
+    return {
+        "thing_dataset_id_to_contiguous_id": thing_dataset_id_to_contiguous_id,
+        "thing_classes": thing_classes,
+    }
 
 
 _PREDEFINED_SPLITS = {

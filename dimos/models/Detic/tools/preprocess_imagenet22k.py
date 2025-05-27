@@ -89,7 +89,9 @@ def preprocess():
         for log_file in log_files:
             syn = log_file.replace(".tarlog", "")
             dataset = _RawTarDataset(
-                os.path.join(i22kdir, syn + ".tar"), os.path.join(i22ktarlogs, syn + ".tarlog"), preload=False
+                os.path.join(i22kdir, syn + ".tar"),
+                os.path.join(i22ktarlogs, syn + ".tarlog"),
+                preload=False,
             )
             names = np.array(dataset.names)
             offsets = np.array(dataset.offsets, dtype=np.int64)

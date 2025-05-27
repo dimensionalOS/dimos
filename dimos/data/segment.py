@@ -73,10 +73,16 @@ class SegmentProcessor:
                         mask = (255 * mask_tensor[0].numpy().squeeze()).astype(np.uint8)
                         sam_masks.append(mask)
                     else:
-                        self.logger.info(f"No mask tensor returned for sampled points at index {idx}")
-                        sam_masks.append(np.zeros((original_size[1], original_size[0]), dtype=np.uint8))
+                        self.logger.info(
+                            f"No mask tensor returned for sampled points at index {idx}"
+                        )
+                        sam_masks.append(
+                            np.zeros((original_size[1], original_size[0]), dtype=np.uint8)
+                        )
                 else:
-                    self.logger.info(f"No sampled points for prediction index {idx}, skipping mask inference")
+                    self.logger.info(
+                        f"No sampled points for prediction index {idx}, skipping mask inference"
+                    )
                     sam_masks.append(np.zeros((original_size[1], original_size[0]), dtype=np.uint8))
 
             self.logger.info("DONE PROCESSING IMAGE ---------------------------------------")

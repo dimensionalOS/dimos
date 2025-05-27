@@ -134,13 +134,18 @@ class CustomRCNN(GeneralizedRCNN):
             caps = [x["captions"][ind] for ind, x in zip(inds, batched_inputs)]
             caption_features = self.text_encoder(caps).float()
         if self.sync_caption_batch:
-            caption_features = self._sync_caption_features(caption_features, ann_type, len(batched_inputs))
+            caption_features = self._sync_caption_features(
+                caption_features, ann_type, len(batched_inputs)
+            )
 
         if self.dynamic_classifier and ann_type != "caption":
             cls_inds = self._sample_cls_inds(gt_instances, ann_type)  # inds, inv_inds
             ind_with_bg = cls_inds[0].tolist() + [-1]
             cls_features = (
-                self.roi_heads.box_predictor[0].cls_score.zs_weight[:, ind_with_bg].permute(1, 0).contiguous()
+                self.roi_heads.box_predictor[0]
+                .cls_score.zs_weight[:, ind_with_bg]
+                .permute(1, 0)
+                .contiguous()
             )
 
         classifier_info = cls_features, cls_inds, caption_features
@@ -150,7 +155,12 @@ class CustomRCNN(GeneralizedRCNN):
             proposals, detector_losses = self.roi_heads(images, features, proposals, gt_instances)
         else:
             proposals, detector_losses = self.roi_heads(
-                images, features, proposals, gt_instances, ann_type=ann_type, classifier_info=classifier_info
+                images,
+                features,
+                proposals,
+                gt_instances,
+                ann_type=ann_type,
+                classifier_info=classifier_info,
             )
 
         if self.vis_period > 0:
@@ -188,7 +198,9 @@ class CustomRCNN(GeneralizedRCNN):
         caption_features = torch.cat([caption_features, rank], dim=1)
         global_caption_features = comm.all_gather(caption_features)
         caption_features = (
-            torch.cat([x.to(self.device) for x in global_caption_features], dim=0) if has_caption_feature else None
+            torch.cat([x.to(self.device) for x in global_caption_features], dim=0)
+            if has_caption_feature
+            else None
         )  # (NB) x (D + 1)
         return caption_features
 
@@ -199,7 +211,10 @@ class CustomRCNN(GeneralizedRCNN):
             freq_weight = self.freq_weight
         else:
             gt_classes = torch.cat(
-                [torch.tensor(x._pos_category_ids, dtype=torch.long, device=x.gt_classes.device) for x in gt_instances]
+                [
+                    torch.tensor(x._pos_category_ids, dtype=torch.long, device=x.gt_classes.device)
+                    for x in gt_instances
+                ]
             )
             C = self.num_classes
             freq_weight = None

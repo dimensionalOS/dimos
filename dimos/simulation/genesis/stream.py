@@ -106,7 +106,9 @@ class GenesisStream(StreamBase):
                 if frame_count % 100 == 0:
                     elapsed_time = time.time() - start_time
                     current_fps = frame_count / elapsed_time
-                    print(f"[Stream] Processed {frame_count} frames | Current FPS: {current_fps:.2f}")
+                    print(
+                        f"[Stream] Processed {frame_count} frames | Current FPS: {current_fps:.2f}"
+                    )
 
         except KeyboardInterrupt:
             print("\n[Stream] Received keyboard interrupt, stopping stream...")

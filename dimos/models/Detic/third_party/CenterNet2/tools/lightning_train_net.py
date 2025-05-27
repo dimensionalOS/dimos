@@ -83,13 +83,19 @@ class TrainingModule(LightningModule):
             self.storage.__enter__()
             self.iteration_timer.trainer = weakref.proxy(self)
             self.iteration_timer.before_step()
-            self.writers = default_writers(self.cfg.OUTPUT_DIR, self.max_iter) if comm.is_main_process() else {}
+            self.writers = (
+                default_writers(self.cfg.OUTPUT_DIR, self.max_iter)
+                if comm.is_main_process()
+                else {}
+            )
 
         loss_dict = self.model(batch)
         SimpleTrainer.write_metrics(loss_dict, data_time)
 
         opt = self.optimizers()
-        self.storage.put_scalar("lr", opt.param_groups[self._best_param_group_id]["lr"], smoothing_hint=False)
+        self.storage.put_scalar(
+            "lr", opt.param_groups[self._best_param_group_id]["lr"], smoothing_hint=False
+        )
         self.iteration_timer.after_step()
         self.storage.step()
         # A little odd to put before step here, but it's the best way to get a proper timing
@@ -143,7 +149,9 @@ class TrainingModule(LightningModule):
                 v = float(v)
             except Exception as e:
                 raise ValueError(
-                    "[EvalHook] eval_function should return a nested dict of float. Got '{}: {}' instead.".format(k, v)
+                    "[EvalHook] eval_function should return a nested dict of float. Got '{}: {}' instead.".format(
+                        k, v
+                    )
                 ) from e
         self.storage.put_scalars(**flattened_results, smoothing_hint=False)
 

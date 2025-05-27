@@ -116,7 +116,11 @@ class SmoothedValue(object):
 
     def __str__(self):
         return self.fmt.format(
-            median=self.median, avg=self.avg, global_avg=self.global_avg, max=self.max, value=self.value
+            median=self.median,
+            avg=self.avg,
+            global_avg=self.global_avg,
+            max=self.max,
+            value=self.value,
         )
 
 
@@ -245,7 +249,14 @@ class MetricLogger(object):
             )
         else:
             log_msg = self.delimiter.join(
-                [header, "[{0" + space_fmt + "}/{1}]", "eta: {eta}", "{meters}", "time: {time}", "data: {data}"]
+                [
+                    header,
+                    "[{0" + space_fmt + "}/{1}]",
+                    "eta: {eta}",
+                    "{meters}",
+                    "time: {time}",
+                    "data: {data}",
+                ]
             )
         MB = 1024.0 * 1024.0
         for obj in iterable:
@@ -270,14 +281,23 @@ class MetricLogger(object):
                 else:
                     print(
                         log_msg.format(
-                            i, len(iterable), eta=eta_string, meters=str(self), time=str(iter_time), data=str(data_time)
+                            i,
+                            len(iterable),
+                            eta=eta_string,
+                            meters=str(self),
+                            time=str(iter_time),
+                            data=str(data_time),
                         )
                     )
             i += 1
             end = time.time()
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-        print("{} Total time: {} ({:.4f} s / it)".format(header, total_time_str, total_time / len(iterable)))
+        print(
+            "{} Total time: {} ({:.4f} s / it)".format(
+                header, total_time_str, total_time / len(iterable)
+            )
+        )
 
 
 def get_sha():
@@ -455,7 +475,10 @@ def init_distributed_mode(args):
     args.dist_backend = "nccl"
     print("| distributed init (rank {}): {}".format(args.rank, args.dist_url), flush=True)
     torch.distributed.init_process_group(
-        backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank
+        backend=args.dist_backend,
+        init_method=args.dist_url,
+        world_size=args.world_size,
+        rank=args.rank,
     )
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
@@ -505,7 +528,8 @@ def get_total_grad_norm(parameters, norm_type=2):
     norm_type = float(norm_type)
     device = parameters[0].grad.device
     total_norm = torch.norm(
-        torch.stack([torch.norm(p.grad.detach(), norm_type).to(device) for p in parameters]), norm_type
+        torch.stack([torch.norm(p.grad.detach(), norm_type).to(device) for p in parameters]),
+        norm_type,
     )
     return total_norm
 

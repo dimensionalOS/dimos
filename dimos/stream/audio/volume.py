@@ -82,7 +82,9 @@ if __name__ == "__main__":
         processed["done"] = True
 
     # Subscribe to get a single frame and process it
-    subscription = audio_observable.subscribe(on_next=process_frame_wrapper, on_completed=lambda: print("Completed"))
+    subscription = audio_observable.subscribe(
+        on_next=process_frame_wrapper, on_completed=lambda: print("Completed")
+    )
 
     # Wait for frame processing to complete
     while not processed["done"]:

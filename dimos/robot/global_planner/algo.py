@@ -53,13 +53,17 @@ def find_nearest_free_cell(
 
         # Check if we've reached the maximum search radius
         if dist > max_search_radius:
-            print(f"Could not find free cell within {max_search_radius} cells of ({start_x}, {start_y})")
+            print(
+                f"Could not find free cell within {max_search_radius} cells of ({start_x}, {start_y})"
+            )
             return (start_x, start_y)  # Return original position if no free cell found
 
         # Check if this cell is valid and free
         if 0 <= x < costmap.width and 0 <= y < costmap.height:
             if costmap.grid[y, x] < cost_threshold:
-                print(f"Found free cell at ({x}, {y}), {dist} cells away from ({start_x}, {start_y})")
+                print(
+                    f"Found free cell at ({x}, {y}), {dist} cells away from ({start_x}, {start_y})"
+                )
                 return (x, y)
 
         # Add neighbors to the queue
@@ -169,7 +173,9 @@ def astar(
         return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
     # Start with the starting node
-    f_score = g_score[start_tuple] + heuristic(start_tuple[0], start_tuple[1], goal_tuple[0], goal_tuple[1])
+    f_score = g_score[start_tuple] + heuristic(
+        start_tuple[0], start_tuple[1], goal_tuple[0], goal_tuple[1]
+    )
     heapq.heappush(open_set, (f_score, start_tuple))
 
     while open_set:
@@ -228,7 +234,11 @@ def astar(
                 continue
 
             obstacle_proximity_penalty = costmap.grid[neighbor_y, neighbor_x] / 25
-            tentative_g_score = g_score[current] + movement_costs[i] + (obstacle_proximity_penalty * movement_costs[i])
+            tentative_g_score = (
+                g_score[current]
+                + movement_costs[i]
+                + (obstacle_proximity_penalty * movement_costs[i])
+            )
 
             # Get the current g_score for the neighbor or set to infinity if not yet explored
             neighbor_g_score = g_score.get(neighbor, float("inf"))
@@ -238,7 +248,9 @@ def astar(
                 # Update the neighbor's scores and parent
                 parents[neighbor] = current
                 g_score[neighbor] = tentative_g_score
-                f_score = tentative_g_score + heuristic(neighbor_x, neighbor_y, goal_tuple[0], goal_tuple[1])
+                f_score = tentative_g_score + heuristic(
+                    neighbor_x, neighbor_y, goal_tuple[0], goal_tuple[1]
+                )
 
                 # Add the neighbor to the open set with its f_score
                 heapq.heappush(open_set, (f_score, neighbor))

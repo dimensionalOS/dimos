@@ -193,7 +193,9 @@ class PlanningAgent(OpenAIAgent):
             return super()._send_query(messages)
         except Exception as e:
             logger.error(f"Caught exception in _send_query: {str(e)}")
-            return PlanningAgentResponse(type="dialogue", content=f"Error: {str(e)}", needs_confirmation=False)
+            return PlanningAgentResponse(
+                type="dialogue", content=f"Error: {str(e)}", needs_confirmation=False
+            )
 
     def process_user_input(self, user_input: str) -> None:
         """Process user input and generate appropriate response.
@@ -210,7 +212,9 @@ class PlanningAgent(OpenAIAgent):
             self.plan_confirmed = True
             # Create a proper PlanningAgentResponse with content as a list
             confirmation_msg = PlanningAgentResponse(
-                type="dialogue", content="Plan confirmed! Streaming steps to execution...", needs_confirmation=False
+                type="dialogue",
+                content="Plan confirmed! Streaming steps to execution...",
+                needs_confirmation=False,
             )
             self._handle_response(confirmation_msg)
             self._stream_plan()
@@ -247,7 +251,9 @@ class PlanningAgent(OpenAIAgent):
         print("=" * 50)
         print("\nDimOS Action PlanningAgent\n")
         print("I have access to your Robot() and Robot Skills()")
-        print("Describe your task and I'll break it down into steps using your skills as a reference.")
+        print(
+            "Describe your task and I'll break it down into steps using your skills as a reference."
+        )
         print("Once you're happy with the plan, type 'yes' to execute it.")
         print("Type 'quit' to exit.\n")
 

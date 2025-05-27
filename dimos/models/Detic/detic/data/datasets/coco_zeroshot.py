@@ -88,14 +88,33 @@ def _get_metadata(cat):
 
     thing_dataset_id_to_contiguous_id = {x: i for i, x in enumerate(sorted(id_to_name))}
     thing_classes = [id_to_name[k] for k in sorted(id_to_name)]
-    return {"thing_dataset_id_to_contiguous_id": thing_dataset_id_to_contiguous_id, "thing_classes": thing_classes}
+    return {
+        "thing_dataset_id_to_contiguous_id": thing_dataset_id_to_contiguous_id,
+        "thing_classes": thing_classes,
+    }
 
 
 _PREDEFINED_SPLITS_COCO = {
-    "coco_zeroshot_train": ("coco/train2017", "coco/zero-shot/instances_train2017_seen_2.json", "seen"),
-    "coco_zeroshot_val": ("coco/val2017", "coco/zero-shot/instances_val2017_unseen_2.json", "unseen"),
-    "coco_not_zeroshot_val": ("coco/val2017", "coco/zero-shot/instances_val2017_seen_2.json", "seen"),
-    "coco_generalized_zeroshot_val": ("coco/val2017", "coco/zero-shot/instances_val2017_all_2_oriorder.json", "all"),
+    "coco_zeroshot_train": (
+        "coco/train2017",
+        "coco/zero-shot/instances_train2017_seen_2.json",
+        "seen",
+    ),
+    "coco_zeroshot_val": (
+        "coco/val2017",
+        "coco/zero-shot/instances_val2017_unseen_2.json",
+        "unseen",
+    ),
+    "coco_not_zeroshot_val": (
+        "coco/val2017",
+        "coco/zero-shot/instances_val2017_seen_2.json",
+        "seen",
+    ),
+    "coco_generalized_zeroshot_val": (
+        "coco/val2017",
+        "coco/zero-shot/instances_val2017_all_2_oriorder.json",
+        "all",
+    ),
     "coco_zeroshot_train_oriorder": (
         "coco/train2017",
         "coco/zero-shot/instances_train2017_seen_2_oriorder.json",
@@ -113,7 +132,10 @@ for key, (image_root, json_file, cat) in _PREDEFINED_SPLITS_COCO.items():
 
 _CUSTOM_SPLITS_COCO = {
     "cc3m_coco_train_tags": ("cc3m/training/", "cc3m/coco_train_image_info_tags.json"),
-    "coco_caption_train_tags": ("coco/train2017/", "coco/annotations/captions_train2017_tags_allcaps.json"),
+    "coco_caption_train_tags": (
+        "coco/train2017/",
+        "coco/annotations/captions_train2017_tags_allcaps.json",
+    ),
 }
 
 for key, (image_root, json_file) in _CUSTOM_SPLITS_COCO.items():

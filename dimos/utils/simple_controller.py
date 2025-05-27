@@ -122,7 +122,9 @@ class VisualServoingController:
         self.angle_pid = PIDController(*angle_pid_params)
         self.prev_measured_angle = 0.0  # Used for angular feed-forward damping
 
-    def compute_control(self, measured_distance, measured_angle, desired_distance, desired_angle, dt):
+    def compute_control(
+        self, measured_distance, measured_angle, desired_distance, desired_angle, dt
+    ):
         """
         Compute the forward (x) and angular (z) commands.
 

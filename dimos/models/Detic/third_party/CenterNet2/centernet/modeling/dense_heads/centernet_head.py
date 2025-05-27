@@ -69,7 +69,12 @@ class CenterNetHead(nn.Module):
                     conv_func = nn.Conv2d
                 tower.append(
                     conv_func(
-                        in_channels if i == 0 else channel, channel, kernel_size=3, stride=1, padding=1, bias=True
+                        in_channels if i == 0 else channel,
+                        channel,
+                        kernel_size=3,
+                        stride=1,
+                        padding=1,
+                        bias=True,
                     )
                 )
                 if norm == "GN" and channel % 32 != 0:
@@ -79,7 +84,9 @@ class CenterNetHead(nn.Module):
                 tower.append(nn.ReLU())
             self.add_module("{}_tower".format(head), nn.Sequential(*tower))
 
-        self.bbox_pred = nn.Conv2d(in_channels, 4, kernel_size=self.out_kernel, stride=1, padding=self.out_kernel // 2)
+        self.bbox_pred = nn.Conv2d(
+            in_channels, 4, kernel_size=self.out_kernel, stride=1, padding=self.out_kernel // 2
+        )
 
         self.scales = nn.ModuleList([Scale(init_value=1.0) for _ in range(num_levels)])
 
@@ -99,7 +106,9 @@ class CenterNetHead(nn.Module):
         bias_value = -math.log((1 - prior_prob) / prior_prob)
 
         if self.with_agn_hm:
-            self.agn_hm = nn.Conv2d(in_channels, 1, kernel_size=self.out_kernel, stride=1, padding=self.out_kernel // 2)
+            self.agn_hm = nn.Conv2d(
+                in_channels, 1, kernel_size=self.out_kernel, stride=1, padding=self.out_kernel // 2
+            )
             torch.nn.init.constant_(self.agn_hm.bias, bias_value)
             torch.nn.init.normal_(self.agn_hm.weight, std=0.01)
 

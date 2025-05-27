@@ -18,7 +18,9 @@ if __name__ == "__main__":
     parser.add_argument("--imagenet_dir", default="datasets/imagenet/ImageNet-21k/")
     parser.add_argument("--tarfile_path", default="datasets/imagenet/metadata-22k/tar_files.npy")
     parser.add_argument("--tar_index_dir", default="datasets/imagenet/metadata-22k/tarindex_npy")
-    parser.add_argument("--out_path", default="datasets/imagenet/annotations/imagenet-22k_image_info.json")
+    parser.add_argument(
+        "--out_path", default="datasets/imagenet/annotations/imagenet-22k_image_info.json"
+    )
     parser.add_argument("--workers", default=16, type=int)
     args = parser.parse_args()
 

@@ -61,7 +61,9 @@ model.roi_heads.update(
         )
         for (w1, w2) in [(10, 5)]
     ],
-    proposal_matchers=[L(Matcher)(thresholds=[th], labels=[0, 1], allow_low_quality_matches=False) for th in [0.5]],
+    proposal_matchers=[
+        L(Matcher)(thresholds=[th], labels=[0, 1], allow_low_quality_matches=False) for th in [0.5]
+    ],
 )
 model.roi_heads.mask_head.num_classes = 1
 
@@ -73,7 +75,9 @@ dataloader.train.sampler = L(RepeatFactorTrainingSampler)(
 )
 image_size = 896
 dataloader.train.mapper.augmentations = [
-    L(T.ResizeScale)(min_scale=0.1, max_scale=2.0, target_height=image_size, target_width=image_size),
+    L(T.ResizeScale)(
+        min_scale=0.1, max_scale=2.0, target_height=image_size, target_width=image_size
+    ),
     L(T.FixedSizeCrop)(crop_size=(image_size, image_size)),
     L(T.RandomFlip)(horizontal=True),
 ]

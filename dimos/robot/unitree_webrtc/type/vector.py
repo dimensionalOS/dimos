@@ -197,7 +197,8 @@ class Vector:
             other_data = np.array(other, dtype=float)
 
         cos_angle = np.clip(
-            np.dot(self._data, other_data) / (np.linalg.norm(self._data) * np.linalg.norm(other_data)),
+            np.dot(self._data, other_data)
+            / (np.linalg.norm(self._data) * np.linalg.norm(other_data)),
             -1.0,
             1.0,
         )

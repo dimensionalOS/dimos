@@ -62,7 +62,11 @@ class SkillLibrary:
                 attr = getattr(self.__class__, attr_name)
 
                 # Check if it's a class and inherits from AbstractSkill
-                if isinstance(attr, type) and issubclass(attr, AbstractSkill) and attr is not AbstractSkill:
+                if (
+                    isinstance(attr, type)
+                    and issubclass(attr, AbstractSkill)
+                    and attr is not AbstractSkill
+                ):
                     skills.append(attr)
             except (AttributeError, TypeError):
                 # Skip attributes that can't be accessed or aren't classes
@@ -212,7 +216,11 @@ class SkillLibrary:
                     logger.warning(f"Skill {name} does not have a stop method")
 
                 # Also dispose the subscription if it exists
-                if subscription is not None and hasattr(subscription, "dispose") and callable(subscription.dispose):
+                if (
+                    subscription is not None
+                    and hasattr(subscription, "dispose")
+                    and callable(subscription.dispose)
+                ):
                     subscription.dispose()
                     logger.info(f"Disposed subscription for skill: {name}")
                 elif subscription is not None:
@@ -297,7 +305,9 @@ class AbstractRobotSkill(AbstractSkill):
     def __init__(self, *args, robot: Optional[Robot] = None, **kwargs):
         super().__init__(*args, **kwargs)
         self._robot = robot
-        print(f"{Colors.BLUE_PRINT_COLOR}Robot Skill Initialized with Robot: {robot}{Colors.RESET_COLOR}")
+        print(
+            f"{Colors.BLUE_PRINT_COLOR}Robot Skill Initialized with Robot: {robot}{Colors.RESET_COLOR}"
+        )
 
     def set_robot(self, robot: Robot) -> None:
         """Set the robot reference for this skills instance.

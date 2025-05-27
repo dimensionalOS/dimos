@@ -166,7 +166,9 @@ class CenterNet(nn.Module):
             "pixel_mean": cfg.MODEL.PIXEL_MEAN,
             "pixel_std": cfg.MODEL.PIXEL_STD,
             "device": cfg.MODEL.DEVICE,
-            "centernet_head": CenterNetHead(cfg, [input_shape[f] for f in cfg.MODEL.CENTERNET.IN_FEATURES]),
+            "centernet_head": CenterNetHead(
+                cfg, [input_shape[f] for f in cfg.MODEL.CENTERNET.IN_FEATURES]
+            ),
         }
         return ret
 
@@ -174,12 +176,18 @@ class CenterNet(nn.Module):
         features = [features_dict[f] for f in self.in_features]
         clss_per_level, reg_pred_per_level, agn_hm_pred_per_level = self.centernet_head(features)
         grids = self.compute_grids(features)
-        shapes_per_level = grids[0].new_tensor([(x.shape[2], x.shape[3]) for x in reg_pred_per_level])
+        shapes_per_level = grids[0].new_tensor(
+            [(x.shape[2], x.shape[3]) for x in reg_pred_per_level]
+        )
 
         if not self.training:
-            return self.inference(images, clss_per_level, reg_pred_per_level, agn_hm_pred_per_level, grids)
+            return self.inference(
+                images, clss_per_level, reg_pred_per_level, agn_hm_pred_per_level, grids
+            )
         else:
-            pos_inds, labels, reg_targets, flattened_hms = self._get_ground_truth(grids, shapes_per_level, gt_instances)
+            pos_inds, labels, reg_targets, flattened_hms = self._get_ground_truth(
+                grids, shapes_per_level, gt_instances
+            )
             # logits_pred: M x F, reg_pred: M x 4, agn_hm_pred: M
             logits_pred, reg_pred, agn_hm_pred = self._flatten_outputs(
                 clss_per_level, reg_pred_per_level, agn_hm_pred_per_level
@@ -191,7 +199,9 @@ class CenterNet(nn.Module):
                 #   2. their regression losses are small (<self.more_pos_thresh)
                 pos_inds, labels = self._add_more_pos(reg_pred, gt_instances, shapes_per_level)
 
-            losses = self.losses(pos_inds, labels, reg_targets, flattened_hms, logits_pred, reg_pred, agn_hm_pred)
+            losses = self.losses(
+                pos_inds, labels, reg_targets, flattened_hms, logits_pred, reg_pred, agn_hm_pred
+            )
 
             proposals = None
             if self.only_proposal:
@@ -206,7 +216,11 @@ class CenterNet(nn.Module):
             elif self.as_proposal:  # category specific bbox as agnostic proposals
                 clss_per_level = [x.sigmoid() for x in clss_per_level]
                 proposals = self.predict_instances(
-                    grids, clss_per_level, reg_pred_per_level, images.image_sizes, agn_hm_pred_per_level
+                    grids,
+                    clss_per_level,
+                    reg_pred_per_level,
+                    images.image_sizes,
+                    agn_hm_pred_per_level,
                 )
             if self.only_proposal or self.as_proposal:
                 for p in range(len(proposals)):
@@ -230,7 +244,9 @@ class CenterNet(nn.Module):
                 )
             return proposals, losses
 
-    def losses(self, pos_inds, labels, reg_targets, flattened_hms, logits_pred, reg_pred, agn_hm_pred):
+    def losses(
+        self, pos_inds, labels, reg_targets, flattened_hms, logits_pred, reg_pred, agn_hm_pred
+    ):
         """
         Inputs:
             pos_inds: N
@@ -284,7 +300,9 @@ class CenterNet(nn.Module):
             reg_norm = max(reduce_sum(reg_weight_map.sum()).item() / num_gpus, 1)
 
         reg_loss = (
-            self.reg_weight * self.iou_loss(reg_pred, reg_targets_pos, reg_weight_map, reduction="sum") / reg_norm
+            self.reg_weight
+            * self.iou_loss(reg_pred, reg_targets_pos, reg_weight_map, reduction="sum")
+            / reg_norm
         )
         losses["loss_centernet_loc"] = reg_loss
 
@@ -315,10 +333,18 @@ class CenterNet(nn.Module):
         for level, feature in enumerate(features):
             h, w = feature.size()[-2:]
             shifts_x = torch.arange(
-                0, w * self.strides[level], step=self.strides[level], dtype=torch.float32, device=feature.device
+                0,
+                w * self.strides[level],
+                step=self.strides[level],
+                dtype=torch.float32,
+                device=feature.device,
             )
             shifts_y = torch.arange(
-                0, h * self.strides[level], step=self.strides[level], dtype=torch.float32, device=feature.device
+                0,
+                h * self.strides[level],
+                step=self.strides[level],
+                dtype=torch.float32,
+                device=feature.device,
             )
             shift_y, shift_x = torch.meshgrid(shifts_y, shifts_x)
             shift_x = shift_x.reshape(-1)
@@ -355,7 +381,10 @@ class CenterNet(nn.Module):
         ).float()  # M
         reg_size_ranges = torch.cat(
             [
-                shapes_per_level.new_tensor(self.sizes_of_interest[l]).float().view(1, 2).expand(num_loc_list[l], 2)
+                shapes_per_level.new_tensor(self.sizes_of_interest[l])
+                .float()
+                .view(1, 2)
+                .expand(num_loc_list[l], 2)
                 for l in range(L)
             ]
         )  # M x 2
@@ -372,7 +401,9 @@ class CenterNet(nn.Module):
             N = boxes.shape[0]
             if N == 0:
                 reg_targets.append(grids.new_zeros((M, 4)) - INF)
-                flattened_hms.append(grids.new_zeros((M, 1 if self.only_proposal else heatmap_channels)))
+                flattened_hms.append(
+                    grids.new_zeros((M, 1 if self.only_proposal else heatmap_channels))
+                )
                 continue
 
             l = grids[:, 0].view(M, 1) - boxes[:, 0].view(1, N)  # M x N
@@ -388,18 +419,24 @@ class CenterNet(nn.Module):
                 (centers_expanded / strides_expanded).int() * strides_expanded
             ).float() + strides_expanded / 2  # M x N x 2
 
-            is_peak = ((grids.view(M, 1, 2).expand(M, N, 2) - centers_discret) ** 2).sum(dim=2) == 0  # M x N
+            is_peak = ((grids.view(M, 1, 2).expand(M, N, 2) - centers_discret) ** 2).sum(
+                dim=2
+            ) == 0  # M x N
             is_in_boxes = reg_target.min(dim=2)[0] > 0  # M x N
             is_center3x3 = self.get_center3x3(grids, centers, strides) & is_in_boxes  # M x N
             is_cared_in_the_level = self.assign_reg_fpn(reg_target, reg_size_ranges)  # M x N
             reg_mask = is_center3x3 & is_cared_in_the_level  # M x N
 
-            dist2 = ((grids.view(M, 1, 2).expand(M, N, 2) - centers_expanded) ** 2).sum(dim=2)  # M x N
+            dist2 = ((grids.view(M, 1, 2).expand(M, N, 2) - centers_expanded) ** 2).sum(
+                dim=2
+            )  # M x N
             dist2[is_peak] = 0
             radius2 = self.delta**2 * 2 * area  # N
             radius2 = torch.clamp(radius2, min=self.min_radius**2)
             weighted_dist2 = dist2 / radius2.view(1, N).expand(M, N)  # M x N
-            reg_target = self._get_reg_targets(reg_target, weighted_dist2.clone(), reg_mask, area)  # M x 4
+            reg_target = self._get_reg_targets(
+                reg_target, weighted_dist2.clone(), reg_mask, area
+            )  # M x 4
 
             if self.only_proposal:
                 flattened_hm = self._create_agn_heatmaps_from_dist(weighted_dist2.clone())  # M x 1
@@ -464,7 +501,9 @@ class CenterNet(nn.Module):
             )  # n x L
             is_cared_in_the_level = self.assign_fpn_level(bboxes)
             pos_ind = pos_ind[is_cared_in_the_level].view(-1)
-            label = targets_per_im.gt_classes.view(n, 1).expand(n, L)[is_cared_in_the_level].view(-1)
+            label = (
+                targets_per_im.gt_classes.view(n, 1).expand(n, L)[is_cared_in_the_level].view(-1)
+            )
 
             pos_inds.append(pos_ind)  # n'
             labels.append(label)  # n'
@@ -480,12 +519,16 @@ class CenterNet(nn.Module):
         Return:
             is_cared_in_the_level: n x L
         """
-        size_ranges = boxes.new_tensor(self.sizes_of_interest).view(len(self.sizes_of_interest), 2)  # L x 2
+        size_ranges = boxes.new_tensor(self.sizes_of_interest).view(
+            len(self.sizes_of_interest), 2
+        )  # L x 2
         crit = ((boxes[:, 2:] - boxes[:, :2]) ** 2).sum(dim=1) ** 0.5 / 2  # n
         n, L = crit.shape[0], size_ranges.shape[0]
         crit = crit.view(n, 1).expand(n, L)
         size_ranges_expand = size_ranges.view(1, L, 2).expand(n, L, 2)
-        is_cared_in_the_level = (crit >= size_ranges_expand[:, :, 0]) & (crit <= size_ranges_expand[:, :, 1])
+        is_cared_in_the_level = (crit >= size_ranges_expand[:, :, 0]) & (
+            crit <= size_ranges_expand[:, :, 1]
+        )
         return is_cared_in_the_level
 
     def assign_reg_fpn(self, reg_targets_per_im, size_ranges):
@@ -495,7 +538,9 @@ class CenterNet(nn.Module):
             reg_targets_per_im: M x N x 4
             size_ranges: M x 2
         """
-        crit = ((reg_targets_per_im[:, :, :2] + reg_targets_per_im[:, :, 2:]) ** 2).sum(dim=2) ** 0.5 / 2  # M x N
+        crit = ((reg_targets_per_im[:, :, :2] + reg_targets_per_im[:, :, 2:]) ** 2).sum(
+            dim=2
+        ) ** 0.5 / 2  # M x N
         is_cared_in_the_level = (crit >= size_ranges[:, [0]]) & (crit <= size_ranges[:, [1]])
         return is_cared_in_the_level
 
@@ -544,10 +589,16 @@ class CenterNet(nn.Module):
     def _flatten_outputs(self, clss, reg_pred, agn_hm_pred):
         # Reshape: (N, F, Hl, Wl) -> (N, Hl, Wl, F) -> (sum_l N*Hl*Wl, F)
         clss = (
-            cat([x.permute(0, 2, 3, 1).reshape(-1, x.shape[1]) for x in clss], dim=0) if clss[0] is not None else None
+            cat([x.permute(0, 2, 3, 1).reshape(-1, x.shape[1]) for x in clss], dim=0)
+            if clss[0] is not None
+            else None
         )
         reg_pred = cat([x.permute(0, 2, 3, 1).reshape(-1, 4) for x in reg_pred], dim=0)
-        agn_hm_pred = cat([x.permute(0, 2, 3, 1).reshape(-1) for x in agn_hm_pred], dim=0) if self.with_agn_hm else None
+        agn_hm_pred = (
+            cat([x.permute(0, 2, 3, 1).reshape(-1) for x in agn_hm_pred], dim=0)
+            if self.with_agn_hm
+            else None
+        )
         return clss, reg_pred, agn_hm_pred
 
     def get_center3x3(self, locations, centers, strides):
@@ -571,7 +622,9 @@ class CenterNet(nn.Module):
     @torch.no_grad()
     def inference(self, images, clss_per_level, reg_pred_per_level, agn_hm_pred_per_level, grids):
         logits_pred = [x.sigmoid() if x is not None else None for x in clss_per_level]
-        agn_hm_pred_per_level = [x.sigmoid() if x is not None else None for x in agn_hm_pred_per_level]
+        agn_hm_pred_per_level = [
+            x.sigmoid() if x is not None else None for x in agn_hm_pred_per_level
+        ]
 
         if self.only_proposal:
             proposals = self.predict_instances(
@@ -604,7 +657,9 @@ class CenterNet(nn.Module):
         return proposals, {}
 
     @torch.no_grad()
-    def predict_instances(self, grids, logits_pred, reg_pred, image_sizes, agn_hm_pred, is_proposal=False):
+    def predict_instances(
+        self, grids, logits_pred, reg_pred, image_sizes, agn_hm_pred, is_proposal=False
+    ):
         sampled_boxes = []
         for l in range(len(grids)):
             sampled_boxes.append(
@@ -624,7 +679,9 @@ class CenterNet(nn.Module):
         return boxlists
 
     @torch.no_grad()
-    def predict_single_level(self, grids, heatmap, reg_pred, image_sizes, agn_hm, level, is_proposal=False):
+    def predict_single_level(
+        self, grids, heatmap, reg_pred, image_sizes, agn_hm, level, is_proposal=False
+    ):
         N, C, H, W = heatmap.shape
         # put in the same format as grids
         if self.center_nms:
@@ -702,7 +759,9 @@ class CenterNet(nn.Module):
             post_nms_topk = self.post_nms_topk_train if self.training else self.post_nms_topk_test
             if num_dets > post_nms_topk:
                 cls_scores = result.scores
-                image_thresh, _ = torch.kthvalue(cls_scores.float().cpu(), num_dets - post_nms_topk + 1)
+                image_thresh, _ = torch.kthvalue(
+                    cls_scores.float().cpu(), num_dets - post_nms_topk + 1
+                )
                 keep = cls_scores >= image_thresh.item()
                 keep = torch.nonzero(keep).squeeze(1)
                 result = result[keep]
@@ -713,7 +772,9 @@ class CenterNet(nn.Module):
 
     @torch.no_grad()
     def _add_more_pos(self, reg_pred, gt_instances, shapes_per_level):
-        labels, level_masks, c33_inds, c33_masks, c33_regs = self._get_c33_inds(gt_instances, shapes_per_level)
+        labels, level_masks, c33_inds, c33_masks, c33_regs = self._get_c33_inds(
+            gt_instances, shapes_per_level
+        )
         N, L, K = labels.shape[0], len(self.strides), 9
         c33_inds[c33_masks == 0] = 0
         reg_pred_c33 = reg_pred[c33_inds].detach()  # N x L x K
@@ -722,7 +783,9 @@ class CenterNet(nn.Module):
         if N > 0:
             with torch.no_grad():
                 c33_reg_loss = (
-                    self.iou_loss(reg_pred_c33.view(N * L * K, 4), c33_regs_expand, None, reduction="none")
+                    self.iou_loss(
+                        reg_pred_c33.view(N * L * K, 4), c33_regs_expand, None, reduction="none"
+                    )
                     .view(N, L, K)
                     .detach()
                 )  # N x L x K
