@@ -1,4 +1,40 @@
 #!/usr/bin/env bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+REL_PATH=$(realpath --relative-to="$REPO_ROOT" "$(pwd)")
+IMAGE="ghcr.io/dimensionalos/dev"
+IMAGE_NAME="$IMAGE:dev"
+
+image_exists() {
+    docker image inspect "${IMAGE_NAME}" &>/dev/null
+}
+
+image_pull() {
+    docker pull "$IMAGE_NAME"
+}
+
+ensure_image_downloaded() {
+    if ! image_exists "$1"; then
+        echo "Image ${IMAGE_NAME} not found. Pulling..."
+        image_pull "$1"
+    fi
+}
+
+check_image_running() {
+    if docker ps -q --filter "ancestor=${IMAGE_NAME}" | grep -q .; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+stop_image() {
+    if check_image_running ${IMAGE_NAME}; then
+        echo "Stopping containers from image ${IMAGE_NAME}..."
+        docker stop $(docker ps -q --filter "ancestor=${IMAGE_NAME}")
+    else
+        echo "No containers from image ${IMAGE_NAME} are running."
+    fi
+}
 
 
 get_tag() {
@@ -16,9 +52,6 @@ get_tag() {
             | sed -E 's#^-+|-+$##g')
         ;;
     esac
-#    echo "image tag determined: '${image_tag}'"
-    
-    # Return the image tag value
     echo "${image_tag}"
 }
 
@@ -38,47 +71,81 @@ remove_image() {
     docker rm -f "dimos-dev-${tag}" 2>/dev/null || true
 }
 
-COMPOSE_FILE="docker/dev/docker-compose.yaml"
+devcontainer_install() {
+    # prompt user if we should install devcontainer
+    read -p "devcontainer CLI (https://github.com/devcontainers/cli) not found. Install into repo root? (y/n): " install_choice
+    if [[ "$install_choice" != "y" && "$install_choice" != "Y" ]]; then
+        echo "Devcontainer CLI installation aborted. Please install manually"
+        exit 1
+    fi
 
-# Parse flags and commands
-while [[ $# -gt 0 ]]; do
+    if [[ ! -d "$REPO_ROOT/node_modules" ]]; then
+        npm init -y 1>/dev/null
+    fi
+    npm install @devcontainers/cli 1>&2
+    if [[ $? -ne 0 ]]; then
+        echo "Failed to install devcontainer CLI. Please install it manually."
+        exit 1
+    fi
+    echo $REPO_ROOT/node_modules/.bin/devcontainer
+}
+
+
+
+find_devcontainer_bin() {
+    local bin_path
+    bin_path=$(command -v devcontainer)
+
+    if [[ -z "$bin_path" ]]; then
+        bin_path="$REPO_ROOT/node_modules/.bin/devcontainer"
+    fi
+
+    if [[ -x "$bin_path" ]]; then
+        echo "$bin_path"
+    else
+        devcontainer_install
+    fi
+}
+
+# Passes all arguments to devcontainer command, ensuring:
+# - devcontainer CLI is installed
+# - docker image is running
+# - the workspace folder is set to the repository root
+run_devcontainer() {
+    local devcontainer_bin
+    devcontainer_bin=$(find_devcontainer_bin)
+
+    if ! check_image_running; then
+        ensure_image_downloaded
+        $devcontainer_bin up --workspace-folder="$REPO_ROOT" --gpu-availability="detect"
+    fi
+
+    exec $devcontainer_bin $1 --workspace-folder="$REPO_ROOT" "${@:2}"
+}
+
+if [[ $# -eq 0 ]]; then
+    run_devcontainer exec bash
+else
     case "$1" in
-        -c|--cuda)
-            COMPOSE_FILE="docker/dev/docker-compose-cuda.yaml"
-            shift
-            ;;
-        remove)
-            remove_image
-            exit 0
-            ;;
         build)
-            remove_image
             build_image
             shift
             ;;
-        *)
-            # Skip unrecognized args
+        stop)
+            stop_image
             shift
             ;;
+        down)
+            stop_image
+            shift
+            ;;
+        pull)
+            docker pull ghcr.io/dimensionalos/dev:dev
+            shift
+            ;;
+        *)
+            run_devcontainer exec "$@"
+            shift
+          ;;
     esac
-done
-
-image_tag=$(get_tag)
-image_name="ghcr.io/dimensionalos/dev:${image_tag}"
-
-if ! docker image inspect "${image_name}" &>/dev/null; then
-    echo "Image ${image_name} not found. Building..."
-    build_image
 fi
-
-# Get current directory relative to repo root
-REPO_ROOT=$(git rev-parse --show-toplevel)
-REL_PATH=$(realpath --relative-to="$REPO_ROOT" "$(pwd)")
-
-export DEV_IMAGE_TAG="${image_tag}"
-echo "Starting container with image: ghcr.io/dimensionalos/dev:${image_tag}"
-docker compose -f "$REPO_ROOT/$COMPOSE_FILE" up -d
-
-container_name="dimos-dev-${image_tag}"
-echo "Entering container $container_name"
-docker exec -it "$container_name" bash -c "cd $REL_PATH; exec bash"

@@ -17,3 +17,10 @@ venv*
 assets/agent/memory.txt
 
 .bash_history
+
+# Ignore all test data directories but allow compressed files
+tests/data/*
+!tests/data/.lfs/
+
+# node modules (for dev tooling)
+node_modules

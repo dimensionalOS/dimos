@@ -9,7 +9,10 @@
       ]
     }
   },
-
+  "containerEnv": {
+    "PYTHONPATH": "${localEnv:PYTHONPATH}:/workspaces/dimos"
+  },
+  "postCreateCommand": "git config --global --add safe.directory /workspaces/dimos",
   "settings": {
     "notebook.formatOnSave.enabled": true,
     "notebook.codeActionsOnSave": {
