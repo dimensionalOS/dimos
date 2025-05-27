@@ -6,6 +6,7 @@ import os
 from typing import List, Union, Dict
 
 import dotenv
+
 dotenv.load_dotenv()
 
 from textwrap import dedent
@@ -14,17 +15,18 @@ from pydantic import BaseModel
 
 MODEL = "gpt-4o-2024-08-06"
 
-math_tutor_prompt = '''
+math_tutor_prompt = """
     You are a helpful math tutor. You will be provided with a math problem,
     and your goal will be to output a step by step solution, along with a final answer.
     For each step, just provide the output as an equation use the explanation field to detail the reasoning.
-'''
+"""
 
-general_prompt = '''
+general_prompt = """
     Follow the instructions. Output a step by step solution, along with a final answer. Use the explanation field to detail the reasoning.
-'''
+"""
 
 client = OpenAI()
+
 
 class MathReasoning(BaseModel):
     class Step(BaseModel):
@@ -33,6 +35,7 @@ class MathReasoning(BaseModel):
 
     steps: list[Step]
     final_answer: str
+
 
 def get_math_solution(question: str):
     prompt = general_prompt
@@ -45,6 +48,7 @@ def get_math_solution(question: str):
         response_format=MathReasoning,
     )
     return completion.choices[0].message
+
 
 # Define Problem
 problem = "What is the derivative of 3x^2"
@@ -63,7 +67,7 @@ parsed_solution = solution.parsed
 if not parsed_solution:
     print(f"Unable to Parse Solution")
     exit()
-    
+
 # Print solution from class definitions
 print(f"Parsed: {parsed_solution}")
 

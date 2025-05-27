@@ -129,25 +129,19 @@ import os
 from huggingface_hub import InferenceClient
 
 # Use environment variable for API key
-api_key = os.getenv('HUGGINGFACE_ACCESS_TOKEN')
+api_key = os.getenv("HUGGINGFACE_ACCESS_TOKEN")
 
 client = InferenceClient(
     provider="hf-inference",
     api_key=api_key,
 )
 
-messages = [
-	{
-		"role": "user",
-		"content": "How many r's are in the word \"strawberry\""
-	}
-]
+messages = [{"role": "user", "content": 'How many r\'s are in the word "strawberry"'}]
 
 completion = client.chat.completions.create(
-    model="Qwen/QwQ-32B", 
-	messages=messages, 
-	max_tokens=150,
+    model="Qwen/QwQ-32B",
+    messages=messages,
+    max_tokens=150,
 )
 
 print(completion.choices[0].message)
-

@@ -48,12 +48,19 @@ logger = setup_logger("simple_navigation_test")
 
 
 def parse_args():
+    spatial_memory_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../assets/spatial_memory_vegas")
+    )
 
-    spatial_memory_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../assets/spatial_memory_vegas"))
-    
     parser = argparse.ArgumentParser(description="Simple test for semantic map skills.")
-    parser.add_argument("--skip-build", action="store_true", help="Skip building the map and run navigation with existing semantic and visual memory")
-    parser.add_argument("--query", type=str, default="kitchen", help="Text query for navigation (default: kitchen)")
+    parser.add_argument(
+        "--skip-build",
+        action="store_true",
+        help="Skip building the map and run navigation with existing semantic and visual memory",
+    )
+    parser.add_argument(
+        "--query", type=str, default="kitchen", help="Text query for navigation (default: kitchen)"
+    )
     parser.add_argument(
         "--db-path",
         type=str,
@@ -68,7 +75,10 @@ def parse_args():
         help="Directory for visual memory",
     )
     parser.add_argument(
-        "--visual-memory-file", type=str, default="visual_memory.pkl", help="Filename for visual memory"
+        "--visual-memory-file",
+        type=str,
+        default="visual_memory.pkl",
+        help="Filename for visual memory",
     )
     parser.add_argument(
         "--port", type=int, default=5555, help="Port for web visualization interface"
@@ -134,32 +144,26 @@ def query_map(robot, args):
 def setup_visualization(robot, port=5555):
     """Set up visualization streams for the web interface"""
     logger.info(f"Setting up visualization streams on port {port}")
-    
+
     # Get video stream from robot
     video_stream = robot.video_stream_ros.pipe(
         RxOps.share(),
         RxOps.map(lambda frame: frame),
         RxOps.filter(lambda frame: frame is not None),
     )
-    
+
     # Get local planner visualization stream
     local_planner_stream = robot.local_planner_viz_stream.pipe(
         RxOps.share(),
         RxOps.map(lambda frame: frame),
         RxOps.filter(lambda frame: frame is not None),
     )
-    
+
     # Create web interface with streams
-    streams = {
-        "robot_video": video_stream,
-        "local_planner": local_planner_stream
-    }
-    
-    web_interface = RobotWebInterface(
-        port=port,
-        **streams
-    )
-    
+    streams = {"robot_video": video_stream, "local_planner": local_planner_stream}
+
+    web_interface = RobotWebInterface(port=port, **streams)
+
     return web_interface
 
 
@@ -186,7 +190,7 @@ def main():
     web_interface = None
     try:
         # Set up visualization first if the robot has video capabilities
-        if hasattr(robot, 'video_stream_ros') and robot.video_stream_ros is not None:
+        if hasattr(robot, "video_stream_ros") and robot.video_stream_ros is not None:
             web_interface = setup_visualization(robot, port=args.port)
             # Start web interface in a separate thread
             viz_thread = threading.Thread(target=web_interface.run, daemon=True)
@@ -194,19 +198,18 @@ def main():
             logger.info(f"Web visualization available at http://localhost:{args.port}")
             # Wait a moment for the web interface to initialize
             time.sleep(2)
-        
+
         if args.justgo:
             # Just go to the specified location
             coords = list(map(float, args.justgo.split(",")))
             logger.info(f"Navigating to coordinates: {coords}")
-            
+
             # Run navigation
             navigate_thread = threading.Thread(
-                target=lambda: run_navigation(robot, coords),
-                daemon=True
+                target=lambda: run_navigation(robot, coords), daemon=True
             )
             navigate_thread.start()
-            
+
             # Wait for navigation to complete or user to interrupt
             try:
                 while navigate_thread.is_alive():
@@ -225,14 +228,13 @@ def main():
             if not target:
                 logger.error("No target found for navigation.")
                 return
-            
+
             # Run navigation
             navigate_thread = threading.Thread(
-                target=lambda: run_navigation(robot, target),
-                daemon=True
+                target=lambda: run_navigation(robot, target), daemon=True
             )
             navigate_thread.start()
-            
+
             # Wait for navigation to complete or user to interrupt
             try:
                 while navigate_thread.is_alive():
@@ -243,13 +245,15 @@ def main():
 
         # If web interface is running, keep the main thread alive
         if web_interface:
-            logger.info("Navigation completed. Visualization still available. Press Ctrl+C to exit.")
+            logger.info(
+                "Navigation completed. Visualization still available. Press Ctrl+C to exit."
+            )
             try:
                 while True:
                     time.sleep(0.5)
             except KeyboardInterrupt:
                 logger.info("Exiting...")
-                
+
     finally:
         # Clean up
         logger.info("Cleaning up resources...")

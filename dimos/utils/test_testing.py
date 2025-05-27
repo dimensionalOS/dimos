@@ -43,11 +43,16 @@ def test_pull_file():
     # validate hashes
     with test_file_compressed.open("rb") as f:
         compressed_sha256 = hashlib.sha256(f.read()).hexdigest()
-        assert compressed_sha256 == "cdfd708d66e6dd5072ed7636fc10fb97754f8d14e3acd6c3553663e27fc96065"
+        assert (
+            compressed_sha256 == "cdfd708d66e6dd5072ed7636fc10fb97754f8d14e3acd6c3553663e27fc96065"
+        )
 
     with test_file_decompressed.open("rb") as f:
         decompressed_sha256 = hashlib.sha256(f.read()).hexdigest()
-        assert decompressed_sha256 == "55d451dde49b05e3ad386fdd4ae9e9378884b8905bff1ca8aaea7d039ff42ddd"
+        assert (
+            decompressed_sha256
+            == "55d451dde49b05e3ad386fdd4ae9e9378884b8905bff1ca8aaea7d039ff42ddd"
+        )
 
 
 def test_pull_dir():
