@@ -70,7 +70,7 @@ if __name__ == "__main__":
 
         print(f"RMS Volume: {rms_vol:.4f}")
         print(f"Peak Volume: {peak_vol:.4f}")
-        print(f"Ratio (Peak/RMS): {peak_vol/rms_vol:.2f}")
+        print(f"Ratio (Peak/RMS): {peak_vol / rms_vol:.2f}")
 
     # Set a flag to track when processing is complete
     processed = {"done": False}
@@ -82,9 +82,7 @@ if __name__ == "__main__":
         processed["done"] = True
 
     # Subscribe to get a single frame and process it
-    subscription = audio_observable.subscribe(
-        on_next=process_frame_wrapper, on_completed=lambda: print("Completed")
-    )
+    subscription = audio_observable.subscribe(on_next=process_frame_wrapper, on_completed=lambda: print("Completed"))
 
     # Wait for frame processing to complete
     while not processed["done"]:

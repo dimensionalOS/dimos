@@ -14,6 +14,7 @@
 
 from abc import ABC, abstractmethod
 
+
 class AbstractSensor(ABC):
     def __init__(self, sensor_type=None):
         self.sensor_type = sensor_type

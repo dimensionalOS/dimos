@@ -97,9 +97,9 @@ class NodeDistributedSampler(Sampler):
                 raise RuntimeError("Requires distributed package to be available")
             rank = dist.get_rank()
         if local_rank is None:
-            local_rank = int(os.environ.get('LOCAL_RANK', 0))
+            local_rank = int(os.environ.get("LOCAL_RANK", 0))
         if local_size is None:
-            local_size = int(os.environ.get('LOCAL_SIZE', 1))
+            local_size = int(os.environ.get("LOCAL_SIZE", 1))
         self.dataset = dataset
         self.shuffle = shuffle
         self.num_replicas = num_replicas
@@ -123,11 +123,11 @@ class NodeDistributedSampler(Sampler):
         indices = [i for i in indices if i % self.num_parts == self.local_rank]
 
         # add extra samples to make it evenly divisible
-        indices += indices[:(self.total_size_parts - len(indices))]
+        indices += indices[: (self.total_size_parts - len(indices))]
         assert len(indices) == self.total_size_parts
 
         # subsample
-        indices = indices[self.rank // self.num_parts:self.total_size_parts:self.num_replicas // self.num_parts]
+        indices = indices[self.rank // self.num_parts : self.total_size_parts : self.num_replicas // self.num_parts]
         assert len(indices) == self.num_samples
 
         return iter(indices)

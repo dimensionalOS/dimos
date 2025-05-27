@@ -1,21 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # Copyright (c) Facebook, Inc. and its affiliates.
-import math
-from os.path import join
-import numpy as np
 import copy
-from functools import partial
 
 import torch
 from torch import nn
-import torch.utils.model_zoo as model_zoo
 import torch.nn.functional as F
 import fvcore.nn.weight_init as weight_init
 
 from detectron2.modeling.backbone import FPN
 from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
-from detectron2.layers.batch_norm import get_norm, FrozenBatchNorm2d
+from detectron2.layers.batch_norm import FrozenBatchNorm2d
 from detectron2.modeling.backbone import Backbone
 
 from timm import create_model
@@ -29,21 +24,24 @@ from timm.models.convnext import ConvNeXt, default_cfgs, checkpoint_filter_fn
 @register_model
 def convnext_tiny_21k(pretrained=False, **kwargs):
     model_args = dict(depths=(3, 3, 9, 3), dims=(96, 192, 384, 768), **kwargs)
-    cfg = default_cfgs['convnext_tiny']
-    cfg['url'] = 'https://dl.fbaipublicfiles.com/convnext/convnext_tiny_22k_224.pth'
+    cfg = default_cfgs["convnext_tiny"]
+    cfg["url"] = "https://dl.fbaipublicfiles.com/convnext/convnext_tiny_22k_224.pth"
     model = build_model_with_cfg(
-        ConvNeXt, 'convnext_tiny', pretrained,
+        ConvNeXt,
+        "convnext_tiny",
+        pretrained,
         default_cfg=cfg,
         pretrained_filter_fn=checkpoint_filter_fn,
         feature_cfg=dict(out_indices=(0, 1, 2, 3), flatten_sequential=True),
-        **model_args)
+        **model_args,
+    )
     return model
+
 
 class CustomResNet(ResNet):
     def __init__(self, **kwargs):
-        self.out_indices = kwargs.pop('out_indices')
+        self.out_indices = kwargs.pop("out_indices")
         super().__init__(**kwargs)
-
 
     def forward(self, x):
         x = self.conv1(x)
@@ -61,40 +59,42 @@ class CustomResNet(ResNet):
         ret.append(x)
         return [ret[i] for i in self.out_indices]
 
-
     def load_pretrained(self, cached_file):
-        data = torch.load(cached_file, map_location='cpu')
-        if 'state_dict' in data:
-            self.load_state_dict(data['state_dict'])
+        data = torch.load(cached_file, map_location="cpu")
+        if "state_dict" in data:
+            self.load_state_dict(data["state_dict"])
         else:
             self.load_state_dict(data)
 
 
 model_params = {
-    'resnet50_in21k': dict(block=Bottleneck, layers=[3, 4, 6, 3]),
+    "resnet50_in21k": dict(block=Bottleneck, layers=[3, 4, 6, 3]),
 }
 
 
 def create_timm_resnet(variant, out_indices, pretrained=False, **kwargs):
     params = model_params[variant]
-    default_cfgs_resnet['resnet50_in21k'] = \
-        copy.deepcopy(default_cfgs_resnet['resnet50'])
-    default_cfgs_resnet['resnet50_in21k']['url'] = \
-        'https://miil-public-eu.oss-eu-central-1.aliyuncs.com/model-zoo/ImageNet_21K_P/models/resnet50_miil_21k.pth'
-    default_cfgs_resnet['resnet50_in21k']['num_classes'] = 11221
+    default_cfgs_resnet["resnet50_in21k"] = copy.deepcopy(default_cfgs_resnet["resnet50"])
+    default_cfgs_resnet["resnet50_in21k"]["url"] = (
+        "https://miil-public-eu.oss-eu-central-1.aliyuncs.com/model-zoo/ImageNet_21K_P/models/resnet50_miil_21k.pth"
+    )
+    default_cfgs_resnet["resnet50_in21k"]["num_classes"] = 11221
 
     return build_model_with_cfg(
-        CustomResNet, variant, pretrained,
+        CustomResNet,
+        variant,
+        pretrained,
         default_cfg=default_cfgs_resnet[variant],
         out_indices=out_indices,
         pretrained_custom_load=True,
         **params,
-        **kwargs)
+        **kwargs,
+    )
 
 
 class LastLevelP6P7_P5(nn.Module):
-    """
-    """
+    """ """
+
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.num_levels = 2
@@ -111,8 +111,7 @@ class LastLevelP6P7_P5(nn.Module):
 
 
 def freeze_module(x):
-    """
-    """
+    """ """
     for p in x.parameters():
         p.requires_grad = False
     FrozenBatchNorm2d.convert_frozen_batchnorm(x)
@@ -120,54 +119,50 @@ def freeze_module(x):
 
 
 class TIMM(Backbone):
-    def __init__(self, base_name, out_levels, freeze_at=0, norm='FrozenBN', pretrained=False):
+    def __init__(self, base_name, out_levels, freeze_at=0, norm="FrozenBN", pretrained=False):
         super().__init__()
         out_indices = [x - 1 for x in out_levels]
         if base_name in model_params:
-            self.base = create_timm_resnet(
-                base_name, out_indices=out_indices, 
-                pretrained=False)
-        elif 'eff' in base_name or 'resnet' in base_name or 'regnet' in base_name:
+            self.base = create_timm_resnet(base_name, out_indices=out_indices, pretrained=False)
+        elif "eff" in base_name or "resnet" in base_name or "regnet" in base_name:
+            self.base = create_model(base_name, features_only=True, out_indices=out_indices, pretrained=pretrained)
+        elif "convnext" in base_name:
+            drop_path_rate = 0.2 if ("tiny" in base_name or "small" in base_name) else 0.3
             self.base = create_model(
-                base_name, features_only=True, 
-                out_indices=out_indices, pretrained=pretrained)
-        elif 'convnext' in base_name:
-            drop_path_rate = 0.2 \
-                if ('tiny' in base_name or 'small' in base_name) else 0.3
-            self.base = create_model(
-                base_name, features_only=True, 
-                out_indices=out_indices, pretrained=pretrained,
-                drop_path_rate=drop_path_rate)
+                base_name,
+                features_only=True,
+                out_indices=out_indices,
+                pretrained=pretrained,
+                drop_path_rate=drop_path_rate,
+            )
         else:
             assert 0, base_name
-        feature_info = [dict(num_chs=f['num_chs'], reduction=f['reduction']) \
-            for i, f in enumerate(self.base.feature_info)] 
-        self._out_features = ['layer{}'.format(x) for x in out_levels]
-        self._out_feature_channels = {
-            'layer{}'.format(l): feature_info[l - 1]['num_chs'] for l in out_levels}
-        self._out_feature_strides = {
-            'layer{}'.format(l): feature_info[l - 1]['reduction'] for l in out_levels}
+        feature_info = [
+            dict(num_chs=f["num_chs"], reduction=f["reduction"]) for i, f in enumerate(self.base.feature_info)
+        ]
+        self._out_features = ["layer{}".format(x) for x in out_levels]
+        self._out_feature_channels = {"layer{}".format(l): feature_info[l - 1]["num_chs"] for l in out_levels}
+        self._out_feature_strides = {"layer{}".format(l): feature_info[l - 1]["reduction"] for l in out_levels}
         self._size_divisibility = max(self._out_feature_strides.values())
-        if 'resnet' in base_name:
+        if "resnet" in base_name:
             self.freeze(freeze_at)
-        if norm == 'FrozenBN':
+        if norm == "FrozenBN":
             self = FrozenBatchNorm2d.convert_frozen_batchnorm(self)
 
     def freeze(self, freeze_at=0):
-        """
-        """
+        """ """
         if freeze_at >= 1:
-            print('Frezing', self.base.conv1)
+            print("Frezing", self.base.conv1)
             self.base.conv1 = freeze_module(self.base.conv1)
         if freeze_at >= 2:
-            print('Frezing', self.base.layer1)
+            print("Frezing", self.base.layer1)
             self.base.layer1 = freeze_module(self.base.layer1)
 
     def forward(self, x):
         features = self.base(x)
         ret = {k: v for k, v in zip(self._out_features, features)}
         return ret
-    
+
     @property
     def size_divisibility(self):
         return self._size_divisibility
@@ -176,7 +171,7 @@ class TIMM(Backbone):
 @BACKBONE_REGISTRY.register()
 def build_timm_backbone(cfg, input_shape):
     model = TIMM(
-        cfg.MODEL.TIMM.BASE_NAME, 
+        cfg.MODEL.TIMM.BASE_NAME,
         cfg.MODEL.TIMM.OUT_LEVELS,
         freeze_at=cfg.MODEL.TIMM.FREEZE_AT,
         norm=cfg.MODEL.TIMM.NORM,
@@ -187,8 +182,7 @@ def build_timm_backbone(cfg, input_shape):
 
 @BACKBONE_REGISTRY.register()
 def build_p67_timm_fpn_backbone(cfg, input_shape):
-    """
-    """
+    """ """
     bottom_up = build_timm_backbone(cfg, input_shape)
     in_features = cfg.MODEL.FPN.IN_FEATURES
     out_channels = cfg.MODEL.FPN.OUT_CHANNELS
@@ -202,12 +196,12 @@ def build_p67_timm_fpn_backbone(cfg, input_shape):
     )
     return backbone
 
+
 @BACKBONE_REGISTRY.register()
 def build_p35_timm_fpn_backbone(cfg, input_shape):
-    """
-    """
+    """ """
     bottom_up = build_timm_backbone(cfg, input_shape)
-    
+
     in_features = cfg.MODEL.FPN.IN_FEATURES
     out_channels = cfg.MODEL.FPN.OUT_CHANNELS
     backbone = FPN(

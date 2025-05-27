@@ -14,7 +14,6 @@
 
 """RTSP video provider using ffmpeg for robust stream handling."""
 
-import logging
 import subprocess
 import threading
 import time
@@ -29,11 +28,9 @@ from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.utils.logging_config import setup_logger
-from dimos.stream.frame_processor import FrameProcessor
-from dimos.stream.video_operators import VideoOperators as vops
+
 # Assuming AbstractVideoProvider and exceptions are in the sibling file
-from .video_provider import (AbstractVideoProvider, VideoFrameError,
-                             VideoSourceError, get_scheduler)
+from .video_provider import AbstractVideoProvider, VideoFrameError, VideoSourceError
 
 logger = setup_logger("dimos.stream.rtsp_video_provider")
 
@@ -46,10 +43,7 @@ class RtspVideoProvider(AbstractVideoProvider):
     built-in VideoCapture for RTSP.
     """
 
-    def __init__(self,
-                 dev_name: str,
-                 rtsp_url: str,
-                 pool_scheduler: Optional[ThreadPoolScheduler] = None) -> None:
+    def __init__(self, dev_name: str, rtsp_url: str, pool_scheduler: Optional[ThreadPoolScheduler] = None) -> None:
         """Initializes the RTSP video provider.
 
         Args:
@@ -71,37 +65,36 @@ class RtspVideoProvider(AbstractVideoProvider):
             # Probe the stream without the problematic timeout argument
             probe = ffmpeg.probe(self.rtsp_url)
         except ffmpeg.Error as e:
-            stderr = e.stderr.decode('utf8', errors='ignore') if e.stderr else 'No stderr'
+            stderr = e.stderr.decode("utf8", errors="ignore") if e.stderr else "No stderr"
             msg = f"({self.dev_name}) Failed to probe RTSP stream {self.rtsp_url}: {stderr}"
             logger.error(msg)
             raise VideoSourceError(msg) from e
         except Exception as e:
-             msg = f"({self.dev_name}) Unexpected error during probing {self.rtsp_url}: {e}"
-             logger.error(msg)
-             raise VideoSourceError(msg) from e
-
+            msg = f"({self.dev_name}) Unexpected error during probing {self.rtsp_url}: {e}"
+            logger.error(msg)
+            raise VideoSourceError(msg) from e
 
         video_stream = next(
-            (stream for stream in probe.get('streams', []) if stream.get('codec_type') == 'video'),
-            None)
+            (stream for stream in probe.get("streams", []) if stream.get("codec_type") == "video"), None
+        )
 
         if video_stream is None:
             msg = f"({self.dev_name}) No video stream found in {self.rtsp_url}"
             logger.error(msg)
             raise VideoSourceError(msg)
 
-        width = video_stream.get('width')
-        height = video_stream.get('height')
-        fps_str = video_stream.get('avg_frame_rate', '0/1')
+        width = video_stream.get("width")
+        height = video_stream.get("height")
+        fps_str = video_stream.get("avg_frame_rate", "0/1")
 
         if not width or not height:
-             msg = f"({self.dev_name}) Could not determine resolution for {self.rtsp_url}. Stream info: {video_stream}"
-             logger.error(msg)
-             raise VideoSourceError(msg)
+            msg = f"({self.dev_name}) Could not determine resolution for {self.rtsp_url}. Stream info: {video_stream}"
+            logger.error(msg)
+            raise VideoSourceError(msg)
 
         try:
-            if '/' in fps_str:
-                num, den = map(int, fps_str.split('/'))
+            if "/" in fps_str:
+                num, den = map(int, fps_str.split("/"))
                 fps = float(num) / den if den != 0 else 30.0
             else:
                 fps = float(fps_str)
@@ -109,8 +102,8 @@ class RtspVideoProvider(AbstractVideoProvider):
                 logger.warning(f"({self.dev_name}) Invalid avg_frame_rate '{fps_str}', defaulting FPS to 30.")
                 fps = 30.0
         except ValueError:
-             logger.warning(f"({self.dev_name}) Could not parse FPS '{fps_str}', defaulting FPS to 30.")
-             fps = 30.0
+            logger.warning(f"({self.dev_name}) Could not parse FPS '{fps_str}', defaulting FPS to 30.")
+            fps = 30.0
 
         logger.info(f"({self.dev_name}) Stream info: {width}x{height} @ {fps:.2f} FPS")
         return {"width": width, "height": height, "fps": fps}
@@ -121,27 +114,26 @@ class RtspVideoProvider(AbstractVideoProvider):
         try:
             # Configure ffmpeg input: prefer TCP, set timeout, reduce buffering/delay
             input_options = {
-                'rtsp_transport': 'tcp',
-                'stimeout': '5000000',  # 5 seconds timeout for RTSP server responses
-                'fflags': 'nobuffer',   # Reduce input buffering
-                'flags': 'low_delay',   # Reduce decoding delay
+                "rtsp_transport": "tcp",
+                "stimeout": "5000000",  # 5 seconds timeout for RTSP server responses
+                "fflags": "nobuffer",  # Reduce input buffering
+                "flags": "low_delay",  # Reduce decoding delay
                 # 'timeout': '10000000' # Removed: This was misinterpreted as listen timeout
             }
             process = (
-                ffmpeg
-                .input(self.rtsp_url, **input_options)
-                .output('pipe:', format='rawvideo', pix_fmt='bgr24') # Output raw BGR frames
-                .global_args('-loglevel', 'warning') # Reduce ffmpeg log spam, use 'error' for less
-                .run_async(pipe_stdout=True, pipe_stderr=True) # Capture stdout and stderr
+                ffmpeg.input(self.rtsp_url, **input_options)
+                .output("pipe:", format="rawvideo", pix_fmt="bgr24")  # Output raw BGR frames
+                .global_args("-loglevel", "warning")  # Reduce ffmpeg log spam, use 'error' for less
+                .run_async(pipe_stdout=True, pipe_stderr=True)  # Capture stdout and stderr
             )
             logger.info(f"({self.dev_name}) ffmpeg process started (PID: {process.pid})")
             return process
         except ffmpeg.Error as e:
-            stderr = e.stderr.decode('utf8', errors='ignore') if e.stderr else 'No stderr'
+            stderr = e.stderr.decode("utf8", errors="ignore") if e.stderr else "No stderr"
             msg = f"({self.dev_name}) Failed to start ffmpeg for {self.rtsp_url}: {stderr}"
             logger.error(msg)
             raise VideoSourceError(msg) from e
-        except Exception as e: # Catch other errors like ffmpeg executable not found
+        except Exception as e:  # Catch other errors like ffmpeg executable not found
             msg = f"({self.dev_name}) An unexpected error occurred starting ffmpeg: {e}"
             logger.error(msg)
             raise VideoSourceError(msg) from e
@@ -165,7 +157,9 @@ class RtspVideoProvider(AbstractVideoProvider):
             VideoFrameError: If there's an error reading or processing frames.
         """
         if fps != 0:
-             logger.warning(f"({self.dev_name}) The 'fps' argument ({fps}) is currently ignored. Using stream native FPS.")
+            logger.warning(
+                f"({self.dev_name}) The 'fps' argument ({fps}) is currently ignored. Using stream native FPS."
+            )
 
         def emit_frames(observer, scheduler):
             """Function executed by rx.create to emit frames."""
@@ -183,36 +177,41 @@ class RtspVideoProvider(AbstractVideoProvider):
                     if process and process.poll() is None:
                         logger.info(f"({self.dev_name}) Terminating ffmpeg process (PID: {process.pid}).")
                         try:
-                            process.terminate() # Ask ffmpeg to exit gracefully
-                            process.wait(timeout=1.0) # Wait up to 1 second
+                            process.terminate()  # Ask ffmpeg to exit gracefully
+                            process.wait(timeout=1.0)  # Wait up to 1 second
                         except subprocess.TimeoutExpired:
-                            logger.warning(f"({self.dev_name}) ffmpeg (PID: {process.pid}) did not terminate gracefully, killing.")
-                            process.kill() # Force kill if it didn't exit
+                            logger.warning(
+                                f"({self.dev_name}) ffmpeg (PID: {process.pid}) did not terminate gracefully, killing."
+                            )
+                            process.kill()  # Force kill if it didn't exit
                         except Exception as e:
                             logger.error(f"({self.dev_name}) Error during ffmpeg termination: {e}")
                         finally:
-                             # Ensure we clear the process variable even if wait/kill fails
-                             process = None
-                             # Also clear the shared class attribute if this was the active process
-                             if self._ffmpeg_process and self._ffmpeg_process.pid == process.pid:
-                                 self._ffmpeg_process = None
+                            # Ensure we clear the process variable even if wait/kill fails
+                            process = None
+                            # Also clear the shared class attribute if this was the active process
+                            if self._ffmpeg_process and self._ffmpeg_process.pid == process.pid:
+                                self._ffmpeg_process = None
                     elif process and process.poll() is not None:
                         # Process exists but already terminated
-                        logger.debug(f"({self.dev_name}) ffmpeg process (PID: {process.pid}) already terminated (exit code: {process.poll()}).")
-                        process = None # Clear the variable
+                        logger.debug(
+                            f"({self.dev_name}) ffmpeg process (PID: {process.pid}) already terminated (exit code: {process.poll()})."
+                        )
+                        process = None  # Clear the variable
                         # Clear shared attribute if it matches
                         if self._ffmpeg_process and self._ffmpeg_process.pid == process.pid:
-                           self._ffmpeg_process = None
+                            self._ffmpeg_process = None
                     else:
                         # Process variable is already None or doesn't match _ffmpeg_process
-                         logger.debug(f"({self.dev_name}) No active ffmpeg process found needing termination in cleanup.")
-
+                        logger.debug(
+                            f"({self.dev_name}) No active ffmpeg process found needing termination in cleanup."
+                        )
 
             try:
                 # 1. Probe the stream to get essential info (width, height)
                 stream_info = self._get_stream_info()
-                width = stream_info['width']
-                height = stream_info['height']
+                width = stream_info["width"]
+                height = stream_info["height"]
                 # Calculate expected bytes per frame (BGR format = 3 bytes per pixel)
                 frame_size = width * height * 3
 
@@ -223,7 +222,9 @@ class RtspVideoProvider(AbstractVideoProvider):
                         with self._lock:
                             # Check if another thread/subscription already started the process
                             if self._ffmpeg_process and self._ffmpeg_process.poll() is None:
-                                logger.warning(f"({self.dev_name}) ffmpeg process (PID: {self._ffmpeg_process.pid}) seems to be already running. Reusing.")
+                                logger.warning(
+                                    f"({self.dev_name}) ffmpeg process (PID: {self._ffmpeg_process.pid}) seems to be already running. Reusing."
+                                )
                                 process = self._ffmpeg_process
                             else:
                                 # Start a new ffmpeg process
@@ -238,26 +239,30 @@ class RtspVideoProvider(AbstractVideoProvider):
 
                             if len(in_bytes) == 0:
                                 # End of stream or process terminated unexpectedly
-                                logger.warning(f"({self.dev_name}) ffmpeg stdout returned 0 bytes. EOF or process terminated.")
-                                process.wait(timeout=0.5) # Allow stderr to flush
-                                stderr_data = process.stderr.read().decode('utf8', errors='ignore')
+                                logger.warning(
+                                    f"({self.dev_name}) ffmpeg stdout returned 0 bytes. EOF or process terminated."
+                                )
+                                process.wait(timeout=0.5)  # Allow stderr to flush
+                                stderr_data = process.stderr.read().decode("utf8", errors="ignore")
                                 exit_code = process.poll()
-                                logger.warning(f"({self.dev_name}) ffmpeg process (PID: {process.pid}) exited with code {exit_code}. Stderr: {stderr_data}")
+                                logger.warning(
+                                    f"({self.dev_name}) ffmpeg process (PID: {process.pid}) exited with code {exit_code}. Stderr: {stderr_data}"
+                                )
                                 # Break inner loop to trigger cleanup and potential restart
                                 with self._lock:
                                     # Clear the shared process handle if it matches the one that just exited
                                     if self._ffmpeg_process and self._ffmpeg_process.pid == process.pid:
                                         self._ffmpeg_process = None
-                                process = None # Clear local process variable
-                                break # Exit frame reading loop
+                                process = None  # Clear local process variable
+                                break  # Exit frame reading loop
 
                             elif len(in_bytes) != frame_size:
                                 # Received incomplete frame data - indicates a problem
                                 msg = f"({self.dev_name}) Incomplete frame read. Expected {frame_size}, got {len(in_bytes)}. Stopping."
                                 logger.error(msg)
                                 observer.on_error(VideoFrameError(msg))
-                                should_stop.set() # Signal outer loop to stop
-                                break # Exit frame reading loop
+                                should_stop.set()  # Signal outer loop to stop
+                                break  # Exit frame reading loop
 
                             # Convert the raw bytes to a NumPy array (height, width, channels)
                             frame = np.frombuffer(in_bytes, np.uint8).reshape((height, width, 3))
@@ -266,35 +271,36 @@ class RtspVideoProvider(AbstractVideoProvider):
 
                         # 4. Handle ffmpeg process exit/crash (if not stopping deliberately)
                         if not should_stop.is_set() and process is None:
-                            logger.info(f"({self.dev_name}) ffmpeg process ended. Attempting reconnection in 5 seconds...")
+                            logger.info(
+                                f"({self.dev_name}) ffmpeg process ended. Attempting reconnection in 5 seconds..."
+                            )
                             # Wait for a few seconds before trying to restart
                             time.sleep(5)
                             # Continue to the next iteration of the outer loop to restart
-
 
                     except (VideoSourceError, ffmpeg.Error) as e:
                         # Errors during ffmpeg process start or severe runtime errors
                         logger.error(f"({self.dev_name}) Unrecoverable ffmpeg error: {e}. Stopping emission.")
                         observer.on_error(e)
-                        should_stop.set() # Stop retrying
+                        should_stop.set()  # Stop retrying
                     except Exception as e:
                         # Catch other unexpected errors during frame reading/processing
                         logger.error(f"({self.dev_name}) Unexpected error processing stream: {e}", exc_info=True)
                         observer.on_error(VideoFrameError(f"Frame processing failed: {e}"))
-                        should_stop.set() # Stop retrying
+                        should_stop.set()  # Stop retrying
 
                 # 5. Loop finished (likely due to should_stop being set)
                 logger.info(f"({self.dev_name}) Frame emission loop stopped.")
                 observer.on_completed()
 
             except VideoSourceError as e:
-                 # Handle errors during the initial probing phase
-                 logger.error(f"({self.dev_name}) Failed initial setup: {e}")
-                 observer.on_error(e)
+                # Handle errors during the initial probing phase
+                logger.error(f"({self.dev_name}) Failed initial setup: {e}")
+                observer.on_error(e)
             except Exception as e:
-                 # Catch-all for unexpected errors before the main loop starts
-                 logger.error(f"({self.dev_name}) Unexpected setup error: {e}", exc_info=True)
-                 observer.on_error(VideoSourceError(f"Setup failed: {e}"))
+                # Catch-all for unexpected errors before the main loop starts
+                logger.error(f"({self.dev_name}) Unexpected setup error: {e}", exc_info=True)
+                observer.on_error(VideoSourceError(f"Setup failed: {e}"))
             finally:
                 # Crucial: Ensure the ffmpeg process is terminated when the observable
                 # is completed, errored, or disposed.
@@ -305,12 +311,11 @@ class RtspVideoProvider(AbstractVideoProvider):
             # signals the loop to stop. The finally block handles the actual cleanup.
             return Disposable(should_stop.set)
 
-
         # Create the observable using rx.create, applying scheduling and sharing
         return rx.create(emit_frames).pipe(
-            ops.subscribe_on(self.pool_scheduler), # Run the emit_frames logic on the pool
+            ops.subscribe_on(self.pool_scheduler),  # Run the emit_frames logic on the pool
             # ops.observe_on(self.pool_scheduler), # Optional: Switch thread for downstream operators
-            ops.share() # Ensure multiple subscribers share the same ffmpeg process
+            ops.share(),  # Ensure multiple subscribers share the same ffmpeg process
         )
 
     def dispose_all(self) -> None:
@@ -318,24 +323,28 @@ class RtspVideoProvider(AbstractVideoProvider):
         logger.info(f"({self.dev_name}) dispose_all called.")
         # Terminate the ffmpeg process using the same locked logic as cleanup
         with self._lock:
-            process = self._ffmpeg_process # Get the current process handle
+            process = self._ffmpeg_process  # Get the current process handle
             if process and process.poll() is None:
-                 logger.info(f"({self.dev_name}) Terminating ffmpeg process (PID: {process.pid}) via dispose_all.")
-                 try:
-                     process.terminate()
-                     process.wait(timeout=1.0)
-                 except subprocess.TimeoutExpired:
-                     logger.warning(f"({self.dev_name}) ffmpeg process (PID: {process.pid}) kill required in dispose_all.")
-                     process.kill()
-                 except Exception as e:
-                     logger.error(f"({self.dev_name}) Error during ffmpeg termination in dispose_all: {e}")
-                 finally:
-                    self._ffmpeg_process = None # Clear handle after attempting termination
-            elif process: # Process exists but already terminated
-                logger.debug(f"({self.dev_name}) ffmpeg process (PID: {process.pid}) already terminated in dispose_all.")
+                logger.info(f"({self.dev_name}) Terminating ffmpeg process (PID: {process.pid}) via dispose_all.")
+                try:
+                    process.terminate()
+                    process.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        f"({self.dev_name}) ffmpeg process (PID: {process.pid}) kill required in dispose_all."
+                    )
+                    process.kill()
+                except Exception as e:
+                    logger.error(f"({self.dev_name}) Error during ffmpeg termination in dispose_all: {e}")
+                finally:
+                    self._ffmpeg_process = None  # Clear handle after attempting termination
+            elif process:  # Process exists but already terminated
+                logger.debug(
+                    f"({self.dev_name}) ffmpeg process (PID: {process.pid}) already terminated in dispose_all."
+                )
                 self._ffmpeg_process = None
             else:
-                 logger.debug(f"({self.dev_name}) No active ffmpeg process found during dispose_all.")
+                logger.debug(f"({self.dev_name}) No active ffmpeg process found during dispose_all.")
 
         # Call the parent class's dispose_all to handle Rx Disposables
         super().dispose_all()

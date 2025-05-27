@@ -21,20 +21,16 @@ from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
 from dimos.stream.video_providers.unitree import UnitreeVideoProvider
 from reactivex.disposable import CompositeDisposable
 import logging
-import time
 from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import WebRTCConnectionMethod
 import os
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from reactivex.scheduler import ThreadPoolScheduler
-import threading
 from dimos.utils.logging_config import setup_logger
 from dimos.perception.person_tracker import PersonTrackingStream
 from dimos.perception.object_tracker import ObjectTrackingStream
 from dimos.robot.local_planner import VFHPurePursuitPlanner, navigate_path_local
 from dimos.robot.global_planner.planner import AstarPlanner
-from dimos.types.path import Path
 from dimos.types.costmap import Costmap
-from dimos.utils.reactive import backpressure
 
 # Set up logging
 logger = setup_logger("dimos.robot.unitree.unitree_go2", level=logging.DEBUG)
@@ -175,7 +171,9 @@ class UnitreeGo2(Robot):
 
         self.global_planner = AstarPlanner(
             conservativism=20,  # how close to obstacles robot is allowed to path plan
-            set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event),
+            set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(
+                self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event
+            ),
             get_costmap=self.ros_control.topic_latest("map", Costmap),
             get_robot_pos=lambda: self.ros_control.transform_euler_pos("base_link"),
         )
@@ -189,7 +187,7 @@ class UnitreeGo2(Robot):
     def get_pose(self) -> Tuple[Tuple[float, float, float], Tuple[float, float, float]]:
         """
         Get the current pose (position and rotation) of the robot in the map frame.
-        
+
         Returns:
             Tuple containing:
                 - position: Tuple[float, float, float] (x, y, z)

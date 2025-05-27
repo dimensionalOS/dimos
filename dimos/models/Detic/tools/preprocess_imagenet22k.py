@@ -5,17 +5,15 @@ import os
 import numpy as np
 import sys
 
-sys.path.insert(0, 'third_party/CenterNet2/')
-sys.path.insert(0, 'third_party/Deformable-DETR')
-from detic.data.tar_dataset import _TarDataset, DiskTarDataset
-import pickle
+sys.path.insert(0, "third_party/CenterNet2/")
+sys.path.insert(0, "third_party/Deformable-DETR")
+from detic.data.tar_dataset import _TarDataset
 import io
 import gzip
 import time
 
 
 class _RawTarDataset(object):
-
     def __init__(self, filename, indexname, preload=False):
         self.filename = filename
         self.names = []
@@ -25,18 +23,18 @@ class _RawTarDataset(object):
             ll = l.split()
             a, b, c = ll[:3]
             offset = int(b[:-1])
-            if l.endswith('** Block of NULs **\n'):
+            if l.endswith("** Block of NULs **\n"):
                 self.offsets.append(offset)
                 break
             else:
-                if c.endswith('JPEG'):
+                if c.endswith("JPEG"):
                     self.names.append(c)
                     self.offsets.append(offset)
                 else:
                     # ignore directories
                     pass
         if preload:
-            self.data = np.memmap(filename, mode='r', dtype='uint8')
+            self.data = np.memmap(filename, mode="r", dtype="uint8")
         else:
             self.data = None
 
@@ -45,26 +43,25 @@ class _RawTarDataset(object):
 
     def __getitem__(self, idx):
         if self.data is None:
-            self.data = np.memmap(self.filename, mode='r', dtype='uint8')
+            self.data = np.memmap(self.filename, mode="r", dtype="uint8")
         ofs = self.offsets[idx] * 512
         fsize = 512 * (self.offsets[idx + 1] - self.offsets[idx])
-        data = self.data[ofs:ofs + fsize]
+        data = self.data[ofs : ofs + fsize]
 
-        if data[:13].tostring() == '././@LongLink':
-            data = data[3 * 512:]
+        if data[:13].tostring() == "././@LongLink":
+            data = data[3 * 512 :]
         else:
             data = data[512:]
 
         # just to make it more fun a few JPEGs are GZIP compressed...
         # catch this case
-        if tuple(data[:2]) == (0x1f, 0x8b):
+        if tuple(data[:2]) == (0x1F, 0x8B):
             s = io.StringIO(data.tostring())
-            g = gzip.GzipFile(None, 'r', 0, s)
+            g = gzip.GzipFile(None, "r", 0, s)
             sdata = g.read()
         else:
             sdata = data.tostring()
         return sdata
-
 
 
 def preprocess():
@@ -72,13 +69,13 @@ def preprocess():
     # Expect 12358684 samples with 11221 classes
     # ImageNet folder has 21841 classes (synsets)
 
-    i22kdir = '/datasets01/imagenet-22k/062717/'
-    i22ktarlogs = '/checkpoint/imisra/datasets/imagenet-22k/tarindex'
-    class_names_file = '/checkpoint/imisra/datasets/imagenet-22k/words.txt'
+    i22kdir = "/datasets01/imagenet-22k/062717/"
+    i22ktarlogs = "/checkpoint/imisra/datasets/imagenet-22k/tarindex"
+    class_names_file = "/checkpoint/imisra/datasets/imagenet-22k/words.txt"
 
-    output_dir = '/checkpoint/zhouxy/Datasets/ImageNet/metadata-22k/'
-    i22knpytarlogs = '/checkpoint/zhouxy/Datasets/ImageNet/metadata-22k/tarindex_npy'
-    print('Listing dir')
+    output_dir = "/checkpoint/zhouxy/Datasets/ImageNet/metadata-22k/"
+    i22knpytarlogs = "/checkpoint/zhouxy/Datasets/ImageNet/metadata-22k/tarindex_npy"
+    print("Listing dir")
     log_files = os.listdir(i22ktarlogs)
     log_files = [x for x in log_files if x.endswith(".tarlog")]
     log_files.sort()
@@ -86,14 +83,14 @@ def preprocess():
     dataset_lens = []
     min_count = 0
     create_npy_tarlogs = True
-    print('Creating folders')
+    print("Creating folders")
     if create_npy_tarlogs:
         os.makedirs(i22knpytarlogs, exist_ok=True)
         for log_file in log_files:
             syn = log_file.replace(".tarlog", "")
-            dataset = _RawTarDataset(os.path.join(i22kdir, syn + ".tar"),
-                                    os.path.join(i22ktarlogs, syn + ".tarlog"),
-                                    preload=False)
+            dataset = _RawTarDataset(
+                os.path.join(i22kdir, syn + ".tar"), os.path.join(i22ktarlogs, syn + ".tarlog"), preload=False
+            )
             names = np.array(dataset.names)
             offsets = np.array(dataset.offsets, dtype=np.int64)
             np.save(os.path.join(i22knpytarlogs, f"{syn}_names.npy"), names)
@@ -111,7 +108,6 @@ def preprocess():
         dataset_lens.append(len(dataset))
     end_time = time.time()
     print(f"Time {end_time - start_time}")
-
 
     dataset_lens = np.array(dataset_lens)
     dataset_valid = dataset_lens > min_count

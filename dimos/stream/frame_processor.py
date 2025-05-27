@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import timedelta
 import cv2
 import numpy as np
 import os
 from reactivex import Observable
 from reactivex import operators as ops
-from typing import Callable, Tuple, Optional
+from typing import Tuple, Optional
+
 
 # TODO: Reorganize, filenaming - Consider merger with VideoOperators class
 class FrameProcessor:
-    def __init__(self, output_dir=f'{os.getcwd()}/assets/output/frames', delete_on_init=False):
+    def __init__(self, output_dir=f"{os.getcwd()}/assets/output/frames", delete_on_init=False):
         """Initializes the FrameProcessor.
 
         Sets up the output directory for frame storage and optionally cleans up
@@ -43,8 +43,7 @@ class FrameProcessor:
 
         if delete_on_init:
             try:
-                jpg_files = [f for f in os.listdir(self.output_dir) 
-                           if f.lower().endswith('.jpg')]
+                jpg_files = [f for f in os.listdir(self.output_dir) if f.lower().endswith(".jpg")]
                 for file in jpg_files:
                     file_path = os.path.join(self.output_dir, file)
                     os.remove(file_path)
@@ -52,9 +51,9 @@ class FrameProcessor:
             except Exception as e:
                 print(f"Error cleaning up JPG files: {e}")
                 raise
-        
-        self.image_count = 1 
-        # TODO: Add randomness to jpg folder storage naming. 
+
+        self.image_count = 1
+        # TODO: Add randomness to jpg folder storage naming.
         # Will overwrite between sessions.
 
     def to_grayscale(self, frame):
@@ -73,7 +72,7 @@ class FrameProcessor:
         if frame is None:
             print("Error: Attempted to save a None image.")
             return None
-        
+
         # Check if the image has an acceptable number of channels
         if len(frame.shape) == 3 and frame.shape[2] not in [1, 3, 4]:
             print(f"Error: Frame with shape {frame.shape} has unsupported number of channels.")
@@ -85,8 +84,8 @@ class FrameProcessor:
                 self.image_count = 1
             else:
                 return frame
-        
-        filepath = os.path.join(self.output_dir, f'{self.image_count}_{suffix}.jpg')
+
+        filepath = os.path.join(self.output_dir, f"{self.image_count}_{suffix}.jpg")
         cv2.imwrite(filepath, frame)
         self.image_count += 1
         return frame
@@ -95,7 +94,7 @@ class FrameProcessor:
         self,
         acc: Tuple[np.ndarray, np.ndarray, Optional[float]],
         current_frame: np.ndarray,
-        compute_relevancy: bool = True
+        compute_relevancy: bool = True,
     ) -> Tuple[np.ndarray, np.ndarray, Optional[float]]:
         """Computes optical flow between consecutive frames.
 
@@ -171,10 +170,7 @@ class FrameProcessor:
             ops.map(self.to_grayscale),
         )
 
-    def process_stream_optical_flow(
-        self, 
-        frame_stream: Observable
-    ) -> Observable:
+    def process_stream_optical_flow(self, frame_stream: Observable) -> Observable:
         """Processes video stream to compute and visualize optical flow.
 
         Computes optical flow between consecutive frames and generates a color-coded
@@ -206,21 +202,17 @@ class FrameProcessor:
         """
         return frame_stream.pipe(
             ops.scan(
-                lambda acc, frame: self.compute_optical_flow(acc, frame, compute_relevancy=False),
-                (None, None, None)
+                lambda acc, frame: self.compute_optical_flow(acc, frame, compute_relevancy=False), (None, None, None)
             ),
             ops.map(lambda result: result[1]),  # Extract flow component
             ops.filter(lambda flow: flow is not None),
             ops.map(self.visualize_flow),
         )
-    
-    def process_stream_optical_flow_with_relevancy(
-        self, 
-        frame_stream: Observable
-    ) -> Observable:
+
+    def process_stream_optical_flow_with_relevancy(self, frame_stream: Observable) -> Observable:
         """Processes video stream to compute optical flow with movement relevancy.
 
-        Applies optical flow computation to each frame and returns both the 
+        Applies optical flow computation to each frame and returns both the
         visualized flow and a relevancy score indicating the amount of movement.
         The relevancy score is calculated as the mean magnitude of flow vectors.
         This method includes relevancy computation for motion detection.
@@ -253,23 +245,21 @@ class FrameProcessor:
         """
         return frame_stream.pipe(
             ops.scan(
-                lambda acc, frame: self.compute_optical_flow(acc, frame, compute_relevancy=True),
-                (None, None, None)
+                lambda acc, frame: self.compute_optical_flow(acc, frame, compute_relevancy=True), (None, None, None)
             ),
             # Result is (current_frame, flow, relevancy)
             ops.filter(lambda result: result[1] is not None),  # Filter out None flows
-            ops.map(lambda result: (
-                self.visualize_flow(result[1]),  # Visualized flow
-                result[2]                        # Relevancy score
-            )),
-            ops.filter(lambda result: result[0] is not None)  # Ensure valid visualization
+            ops.map(
+                lambda result: (
+                    self.visualize_flow(result[1]),  # Visualized flow
+                    result[2],  # Relevancy score
+                )
+            ),
+            ops.filter(lambda result: result[0] is not None),  # Ensure valid visualization
         )
 
     def process_stream_with_jpeg_export(
-        self, 
-        frame_stream: Observable,
-        suffix: str = "",
-        loop: bool = False
+        self, frame_stream: Observable, suffix: str = "", loop: bool = False
     ) -> Observable:
         """Processes stream by saving frames as JPEGs while passing them through.
 

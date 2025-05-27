@@ -16,7 +16,6 @@
 from dimos.stream.videostream import VideoStream
 
 import warnings
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from collections import deque
 from dimos.types.depth_map import DepthMapType
 from dimos.types.label import LabelType
@@ -24,13 +23,17 @@ from dimos.types.pointcloud import PointCloudType
 from dimos.types.segmentation import SegmentationType
 import os
 
+
 class DataPipeline:
-    def __init__(self, video_stream: VideoStream,
-                 run_depth: bool = False,
-                 run_labels: bool = False,
-                 run_pointclouds: bool = False,
-                 run_segmentations: bool = False,
-                 max_workers: int = 4):
+    def __init__(
+        self,
+        video_stream: VideoStream,
+        run_depth: bool = False,
+        run_labels: bool = False,
+        run_pointclouds: bool = False,
+        run_segmentations: bool = False,
+        max_workers: int = 4,
+    ):
         self.video_stream = video_stream
         self.run_depth = run_depth
         self.run_labels = run_labels
@@ -53,20 +56,25 @@ class DataPipeline:
     def _validate_pipeline(self):
         """Validate the pipeline configuration based on dependencies."""
         if self.run_pointclouds and not self.run_depth:
-            raise ValueError("PointClouds generation requires Depth maps. "
-                             "Enable run_depth=True to use run_pointclouds=True.")
+            raise ValueError(
+                "PointClouds generation requires Depth maps. Enable run_depth=True to use run_pointclouds=True."
+            )
 
         if self.run_segmentations and not self.run_labels:
-            raise ValueError("Segmentations generation requires Labels. "
-                             "Enable run_labels=True to use run_segmentations=True.")
+            raise ValueError(
+                "Segmentations generation requires Labels. Enable run_labels=True to use run_segmentations=True."
+            )
 
         if not any([self.run_depth, self.run_labels, self.run_pointclouds, self.run_segmentations]):
-            warnings.warn("No pipeline layers selected to run. The DataPipeline will be initialized without any processing.")
+            warnings.warn(
+                "No pipeline layers selected to run. The DataPipeline will be initialized without any processing."
+            )
 
     def _initialize_pipeline(self):
         """Initialize necessary components based on selected pipeline layers."""
         if self.run_depth:
             from .depth import DepthProcessor
+
             self.depth_processor = DepthProcessor(debug=True)
             print("Depth map generation enabled.")
         else:
@@ -74,6 +82,7 @@ class DataPipeline:
 
         if self.run_labels:
             from .labels import LabelProcessor
+
             self.labels_processor = LabelProcessor(debug=True)
             print("Label generation enabled.")
         else:
@@ -81,6 +90,7 @@ class DataPipeline:
 
         if self.run_pointclouds:
             from .pointcloud import PointCloudProcessor
+
             self.pointcloud_processor = PointCloudProcessor(debug=True)
             print("PointCloud generation enabled.")
         else:
@@ -88,6 +98,7 @@ class DataPipeline:
 
         if self.run_segmentations:
             from .segment import SegmentProcessor
+
             self.segmentation_processor = SegmentProcessor(debug=True)
             print("Segmentation generation enabled.")
         else:

@@ -5,7 +5,6 @@ import torch
 from torch.nn.parallel import DistributedDataParallel
 import time
 import datetime
-import json
 
 from fvcore.common.timer import Timer
 import detectron2.utils.comm as comm
@@ -40,56 +39,55 @@ from centernet.data.custom_build_augmentation import build_custom_augmentation
 
 logger = logging.getLogger("detectron2")
 
+
 def do_test(cfg, model):
     results = OrderedDict()
     for dataset_name in cfg.DATASETS.TEST:
-        mapper = None if cfg.INPUT.TEST_INPUT_TYPE == 'default' else \
-            DatasetMapper(
-                cfg, False, augmentations=build_custom_augmentation(cfg, False))
+        mapper = (
+            None
+            if cfg.INPUT.TEST_INPUT_TYPE == "default"
+            else DatasetMapper(cfg, False, augmentations=build_custom_augmentation(cfg, False))
+        )
         data_loader = build_detection_test_loader(cfg, dataset_name, mapper=mapper)
-        output_folder = os.path.join(
-            cfg.OUTPUT_DIR, "inference_{}".format(dataset_name))
+        output_folder = os.path.join(cfg.OUTPUT_DIR, "inference_{}".format(dataset_name))
         evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
 
         if evaluator_type == "lvis":
             evaluator = LVISEvaluator(dataset_name, cfg, True, output_folder)
-        elif evaluator_type == 'coco':
+        elif evaluator_type == "coco":
             evaluator = COCOEvaluator(dataset_name, cfg, True, output_folder)
         else:
             assert 0, evaluator_type
-            
-        results[dataset_name] = inference_on_dataset(
-            model, data_loader, evaluator)
+
+        results[dataset_name] = inference_on_dataset(model, data_loader, evaluator)
         if comm.is_main_process():
-            logger.info("Evaluation results for {} in csv format:".format(
-                dataset_name))
+            logger.info("Evaluation results for {} in csv format:".format(dataset_name))
             print_csv_format(results[dataset_name])
     if len(results) == 1:
         results = list(results.values())[0]
     return results
+
 
 def do_train(cfg, model, resume=False):
     model.train()
     optimizer = build_optimizer(cfg, model)
     scheduler = build_lr_scheduler(cfg, optimizer)
 
-    checkpointer = DetectionCheckpointer(
-        model, cfg.OUTPUT_DIR, optimizer=optimizer, scheduler=scheduler
-    )
+    checkpointer = DetectionCheckpointer(model, cfg.OUTPUT_DIR, optimizer=optimizer, scheduler=scheduler)
 
     start_iter = (
         checkpointer.resume_or_load(
-            cfg.MODEL.WEIGHTS, resume=resume,
-            ).get("iteration", -1) + 1
+            cfg.MODEL.WEIGHTS,
+            resume=resume,
+        ).get("iteration", -1)
+        + 1
     )
     if cfg.SOLVER.RESET_ITER:
-        logger.info('Reset loaded iteration. Start training from iteration 0.')
+        logger.info("Reset loaded iteration. Start training from iteration 0.")
         start_iter = 0
     max_iter = cfg.SOLVER.MAX_ITER if cfg.SOLVER.TRAIN_ITER < 0 else cfg.SOLVER.TRAIN_ITER
 
-    periodic_checkpointer = PeriodicCheckpointer(
-        checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD, max_iter=max_iter
-    )
+    periodic_checkpointer = PeriodicCheckpointer(checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD, max_iter=max_iter)
 
     writers = (
         [
@@ -101,15 +99,17 @@ def do_train(cfg, model, resume=False):
         else []
     )
 
-
-    mapper = DatasetMapper(cfg, True) if cfg.INPUT.CUSTOM_AUG == '' else \
-        DatasetMapper(cfg, True, augmentations=build_custom_augmentation(cfg, True))
-    if cfg.DATALOADER.SAMPLER_TRAIN in ['TrainingSampler', 'RepeatFactorTrainingSampler']:
+    mapper = (
+        DatasetMapper(cfg, True)
+        if cfg.INPUT.CUSTOM_AUG == ""
+        else DatasetMapper(cfg, True, augmentations=build_custom_augmentation(cfg, True))
+    )
+    if cfg.DATALOADER.SAMPLER_TRAIN in ["TrainingSampler", "RepeatFactorTrainingSampler"]:
         data_loader = build_detection_train_loader(cfg, mapper=mapper)
     else:
-        from centernet.data.custom_dataset_dataloader import  build_custom_train_loader
-        data_loader = build_custom_train_loader(cfg, mapper=mapper)
+        from centernet.data.custom_dataset_dataloader import build_custom_train_loader
 
+        data_loader = build_custom_train_loader(cfg, mapper=mapper)
 
     logger.info("Starting training from iteration {}".format(start_iter))
     with EventStorage(start_iter) as storage:
@@ -124,47 +124,37 @@ def do_train(cfg, model, resume=False):
             storage.step()
             loss_dict = model(data)
 
-            losses = sum(
-                loss for k, loss in loss_dict.items())
+            losses = sum(loss for k, loss in loss_dict.items())
             assert torch.isfinite(losses).all(), loss_dict
 
-            loss_dict_reduced = {k: v.item() \
-                for k, v in comm.reduce_dict(loss_dict).items()}
+            loss_dict_reduced = {k: v.item() for k, v in comm.reduce_dict(loss_dict).items()}
             losses_reduced = sum(loss for loss in loss_dict_reduced.values())
             if comm.is_main_process():
-                storage.put_scalars(
-                    total_loss=losses_reduced, **loss_dict_reduced)
+                storage.put_scalars(total_loss=losses_reduced, **loss_dict_reduced)
 
             optimizer.zero_grad()
             losses.backward()
             optimizer.step()
 
-            storage.put_scalar(
-                "lr", optimizer.param_groups[0]["lr"], smoothing_hint=False)
+            storage.put_scalar("lr", optimizer.param_groups[0]["lr"], smoothing_hint=False)
 
             step_time = step_timer.seconds()
             storage.put_scalars(time=step_time)
             data_timer.reset()
             scheduler.step()
 
-            if (
-                cfg.TEST.EVAL_PERIOD > 0
-                and iteration % cfg.TEST.EVAL_PERIOD == 0
-                and iteration != max_iter
-            ):
+            if cfg.TEST.EVAL_PERIOD > 0 and iteration % cfg.TEST.EVAL_PERIOD == 0 and iteration != max_iter:
                 do_test(cfg, model)
                 comm.synchronize()
 
-            if iteration - start_iter > 5 and \
-                (iteration % 20 == 0 or iteration == max_iter):
+            if iteration - start_iter > 5 and (iteration % 20 == 0 or iteration == max_iter):
                 for writer in writers:
                     writer.write()
             periodic_checkpointer.step(iteration)
 
         total_time = time.perf_counter() - start_time
-        logger.info(
-            "Total training time: {}".format(
-                str(datetime.timedelta(seconds=int(total_time)))))
+        logger.info("Total training time: {}".format(str(datetime.timedelta(seconds=int(total_time)))))
+
 
 def setup(args):
     """
@@ -174,10 +164,10 @@ def setup(args):
     add_centernet_config(cfg)
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
-    if '/auto' in cfg.OUTPUT_DIR:
+    if "/auto" in cfg.OUTPUT_DIR:
         file_name = os.path.basename(args.config_file)[:-5]
-        cfg.OUTPUT_DIR = cfg.OUTPUT_DIR.replace('/auto', '/{}'.format(file_name))
-        logger.info('OUTPUT_DIR: {}'.format(cfg.OUTPUT_DIR))
+        cfg.OUTPUT_DIR = cfg.OUTPUT_DIR.replace("/auto", "/{}".format(file_name))
+        logger.info("OUTPUT_DIR: {}".format(cfg.OUTPUT_DIR))
     cfg.freeze()
     default_setup(cfg, args)
     return cfg
@@ -189,9 +179,7 @@ def main(args):
     model = build_model(cfg)
     logger.info("Model:\n{}".format(model))
     if args.eval_only:
-        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
-            cfg.MODEL.WEIGHTS, resume=args.resume
-        )
+        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(cfg.MODEL.WEIGHTS, resume=args.resume)
         if cfg.TEST.AUG.ENABLED:
             logger.info("Running inference with test-time augmentation ...")
             model = GeneralizedRCNNWithTTA(cfg, model, batch_size=1)
@@ -201,8 +189,7 @@ def main(args):
     distributed = comm.get_world_size() > 1
     if distributed:
         model = DistributedDataParallel(
-            model, device_ids=[comm.get_local_rank()], broadcast_buffers=False,
-            find_unused_parameters=True
+            model, device_ids=[comm.get_local_rank()], broadcast_buffers=False, find_unused_parameters=True
         )
 
     do_train(cfg, model, resume=args.resume)
@@ -211,12 +198,11 @@ def main(args):
 
 if __name__ == "__main__":
     args = default_argument_parser()
-    args.add_argument('--manual_device', default='')
+    args.add_argument("--manual_device", default="")
     args = args.parse_args()
-    if args.manual_device != '':
-        os.environ['CUDA_VISIBLE_DEVICES'] = args.manual_device
-    args.dist_url = 'tcp://127.0.0.1:{}'.format(
-        torch.randint(11111, 60000, (1,))[0].item())
+    if args.manual_device != "":
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.manual_device
+    args.dist_url = "tcp://127.0.0.1:{}".format(torch.randint(11111, 60000, (1,))[0].item())
     print("Command Line Args:", args)
     launch(
         main,

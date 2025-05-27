@@ -205,10 +205,12 @@ class KeyRecorder(AbstractAudioTransform):
             return None
 
         # Filter out any empty events that might cause broadcasting errors
-        valid_events = [event for event in audio_events if event is not None and 
-                      (hasattr(event, 'data') and event.data is not None and 
-                       event.data.size > 0)]
-        
+        valid_events = [
+            event
+            for event in audio_events
+            if event is not None and (hasattr(event, "data") and event.data is not None and event.data.size > 0)
+        ]
+
         if not valid_events:
             logger.warning("No valid audio events to combine")
             return None
@@ -219,12 +221,12 @@ class KeyRecorder(AbstractAudioTransform):
 
         # Calculate total samples only from valid events
         total_samples = sum(event.data.shape[0] for event in valid_events)
-        
+
         # Safety check - if somehow we got no samples
         if total_samples <= 0:
             logger.warning(f"Combined audio would have {total_samples} samples - aborting")
             return None
-            
+
         # For multichannel audio, data shape could be (samples,) or (samples, channels)
         if len(first_event.data.shape) == 1:
             # 1D audio data (mono)
@@ -250,10 +252,12 @@ class KeyRecorder(AbstractAudioTransform):
                         combined_data[offset : offset + samples] = event.data
                         offset += samples
                     except ValueError as e:
-                        logger.error(f"Error combining audio events: {e}. "  
-                                    f"Event shape: {event.data.shape}, "  
-                                    f"Combined shape: {combined_data.shape}, "
-                                    f"Offset: {offset}, Samples: {samples}")
+                        logger.error(
+                            f"Error combining audio events: {e}. "
+                            f"Event shape: {event.data.shape}, "
+                            f"Combined shape: {combined_data.shape}, "
+                            f"Offset: {offset}, Samples: {samples}"
+                        )
                         # Continue with next event instead of failing completely
 
         # Create new audio event with the combined data

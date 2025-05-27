@@ -1,6 +1,3 @@
-import math
-import json
-import numpy as np
 import torch
 from torch import nn
 
@@ -9,6 +6,7 @@ from detectron2.modeling import build_backbone, build_proposal_generator
 from detectron2.modeling import detector_postprocess
 from detectron2.structures import ImageList
 
+
 @META_ARCH_REGISTRY.register()
 class CenterNetDetector(nn.Module):
     def __init__(self, cfg):
@@ -16,12 +14,12 @@ class CenterNetDetector(nn.Module):
         self.mean, self.std = cfg.MODEL.PIXEL_MEAN, cfg.MODEL.PIXEL_STD
         self.register_buffer("pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1))
         self.register_buffer("pixel_std", torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1))
-        
+
         self.backbone = build_backbone(cfg)
         self.proposal_generator = build_proposal_generator(
-            cfg, self.backbone.output_shape()) # TODO: change to a more precise name
-    
-    
+            cfg, self.backbone.output_shape()
+        )  # TODO: change to a more precise name
+
     def forward(self, batched_inputs):
         if not self.training:
             return self.inference(batched_inputs)
@@ -29,15 +27,12 @@ class CenterNetDetector(nn.Module):
         features = self.backbone(images.tensor)
         gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
 
-        _, proposal_losses = self.proposal_generator(
-            images, features, gt_instances)
+        _, proposal_losses = self.proposal_generator(images, features, gt_instances)
         return proposal_losses
-
 
     @property
     def device(self):
         return self.pixel_mean.device
-
 
     @torch.no_grad()
     def inference(self, batched_inputs, do_postprocess=True):
@@ -47,8 +42,7 @@ class CenterNetDetector(nn.Module):
         proposals, _ = self.proposal_generator(images, features, None)
 
         processed_results = []
-        for results_per_image, input_per_image, image_size in zip(
-            proposals, batched_inputs, images.image_sizes):
+        for results_per_image, input_per_image, image_size in zip(proposals, batched_inputs, images.image_sizes):
             if do_postprocess:
                 height = input_per_image.get("height", image_size[0])
                 width = input_per_image.get("width", image_size[1])

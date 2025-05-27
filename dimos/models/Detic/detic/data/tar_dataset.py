@@ -15,12 +15,15 @@ except ImportError:
     # UnidentifiedImageError isn't available in older versions of PIL
     unidentified_error_available = False
 
+
 class DiskTarDataset(Dataset):
-    def __init__(self, 
-        tarfile_path='dataset/imagenet/ImageNet-21k/metadata/tar_files.npy',
-        tar_index_dir='dataset/imagenet/ImageNet-21k/metadata/tarindex_npy',
-        preload=False, 
-        num_synsets="all"):
+    def __init__(
+        self,
+        tarfile_path="dataset/imagenet/ImageNet-21k/metadata/tar_files.npy",
+        tar_index_dir="dataset/imagenet/ImageNet-21k/metadata/tarindex_npy",
+        preload=False,
+        num_synsets="all",
+    ):
         """
         - preload (bool): Recommend to set preload to False when using
         - num_synsets (integer or string "all"): set to small number for debugging
@@ -45,8 +48,8 @@ class DiskTarDataset(Dataset):
         labels = np.zeros(self.dataset_lens.sum(), dtype=np.int64)
         sI = 0
         for k in range(len(self.dataset_lens)):
-            assert (sI+self.dataset_lens[k]) <= len(labels), f"{k} {sI+self.dataset_lens[k]} vs. {len(labels)}"
-            labels[sI:(sI+self.dataset_lens[k])] = k
+            assert (sI + self.dataset_lens[k]) <= len(labels), f"{k} {sI + self.dataset_lens[k]} vs. {len(labels)}"
+            labels[sI : (sI + self.dataset_lens[k])] = k
             sI += self.dataset_lens[k]
         self.labels = labels
 
@@ -74,7 +77,7 @@ class DiskTarDataset(Dataset):
         try:
             image = Image.open(data_bytes).convert("RGB")
         except exception_to_catch:
-            image = Image.fromarray(np.ones((224,224,3), dtype=np.uint8)*128)
+            image = Image.fromarray(np.ones((224, 224, 3), dtype=np.uint8) * 128)
             d_index = -1
 
         # label is the dataset (synset) we indexed into
@@ -84,8 +87,8 @@ class DiskTarDataset(Dataset):
         st = f"DiskTarDataset(subdatasets={len(self.dataset_lens)},samples={self.num_samples})"
         return st
 
-class _TarDataset(object):
 
+class _TarDataset(object):
     def __init__(self, filename, npy_index_dir, preload=False):
         # translated from
         # fbcode/experimental/deeplearning/matthijs/comp_descs/tardataset.lua
@@ -97,11 +100,10 @@ class _TarDataset(object):
 
         self.num_samples = len(names)
         if preload:
-            self.data = np.memmap(filename, mode='r', dtype='uint8')
+            self.data = np.memmap(filename, mode="r", dtype="uint8")
             self.offsets = offsets
         else:
             self.data = None
-
 
     def __len__(self):
         return self.num_samples
@@ -115,23 +117,23 @@ class _TarDataset(object):
 
     def __getitem__(self, idx):
         if self.data is None:
-            self.data = np.memmap(self.filename, mode='r', dtype='uint8')
+            self.data = np.memmap(self.filename, mode="r", dtype="uint8")
             _, self.offsets = self.load_index()
 
         ofs = self.offsets[idx] * 512
         fsize = 512 * (self.offsets[idx + 1] - self.offsets[idx])
-        data = self.data[ofs:ofs + fsize]
+        data = self.data[ofs : ofs + fsize]
 
-        if data[:13].tostring() == '././@LongLink':
-            data = data[3 * 512:]
+        if data[:13].tostring() == "././@LongLink":
+            data = data[3 * 512 :]
         else:
             data = data[512:]
 
         # just to make it more fun a few JPEGs are GZIP compressed...
         # catch this case
-        if tuple(data[:2]) == (0x1f, 0x8b):
+        if tuple(data[:2]) == (0x1F, 0x8B):
             s = io.BytesIO(data.tostring())
-            g = gzip.GzipFile(None, 'r', 0, s)
+            g = gzip.GzipFile(None, "r", 0, s)
             sdata = g.read()
         else:
             sdata = data.tostring()

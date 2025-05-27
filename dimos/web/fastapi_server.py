@@ -25,7 +25,7 @@
 # Fast Api & Uvicorn
 import cv2
 from dimos.web.edge_io import EdgeIO
-from fastapi import FastAPI, Request, Response, Form, HTTPException
+from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from fastapi.templating import Jinja2Templates
@@ -43,26 +43,27 @@ import reactivex as rx
 
 
 class FastAPIServer(EdgeIO):
-
-    def __init__(self,
-                 dev_name="FastAPI Server",
-                 edge_type="Bidirectional",
-                 host="0.0.0.0",
-                 port=5555,
-                 text_streams=None,
-                 **streams):
+    def __init__(
+        self,
+        dev_name="FastAPI Server",
+        edge_type="Bidirectional",
+        host="0.0.0.0",
+        port=5555,
+        text_streams=None,
+        **streams,
+    ):
         super().__init__(dev_name, edge_type)
         self.app = FastAPI()
         self.port = port
         self.host = host
         BASE_DIR = Path(__file__).resolve().parent
-        self.templates = Jinja2Templates(directory=str(BASE_DIR / 'templates'))
+        self.templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
         self.streams = streams
         self.active_streams = {}
         self.stream_locks = {key: Lock() for key in self.streams}
         self.stream_queues = {}
         self.stream_disposables = {}
-        
+
         # Initialize text streams
         self.text_streams = text_streams or {}
         self.text_queues = {}
@@ -75,18 +76,16 @@ class FastAPIServer(EdgeIO):
 
         for key in self.streams:
             if self.streams[key] is not None:
-                self.active_streams[key] = self.streams[key].pipe(
-                    ops.map(self.process_frame_fastapi), ops.share())
-                    
+                self.active_streams[key] = self.streams[key].pipe(ops.map(self.process_frame_fastapi), ops.share())
+
         # Set up text stream subscriptions
         for key, stream in self.text_streams.items():
             if stream is not None:
                 self.text_queues[key] = Queue(maxsize=100)
                 disposable = stream.subscribe(
-                    lambda text, k=key: self.text_queues[k].put(text) 
-                    if text is not None else None,
+                    lambda text, k=key: self.text_queues[k].put(text) if text is not None else None,
                     lambda e, k=key: self.text_queues[k].put(None),
-                    lambda k=key: self.text_queues[k].put(None)
+                    lambda k=key: self.text_queues[k].put(None),
                 )
                 self.text_disposables[key] = disposable
                 self.disposables.add(disposable)
@@ -95,7 +94,7 @@ class FastAPIServer(EdgeIO):
 
     def process_frame_fastapi(self, frame):
         """Convert frame to JPEG format for streaming."""
-        _, buffer = cv2.imencode('.jpg', frame)
+        _, buffer = cv2.imencode(".jpg", frame)
         return buffer.tobytes()
 
     def stream_generator(self, key):
@@ -125,10 +124,10 @@ class FastAPIServer(EdgeIO):
                             break
 
                     disposable.disposable = self.active_streams[key].subscribe(
-                        lambda frame: frame_queue.put(frame)
-                        if frame is not None else None,
+                        lambda frame: frame_queue.put(frame) if frame is not None else None,
                         lambda e: frame_queue.put(None),
-                        lambda: frame_queue.put(None))
+                        lambda: frame_queue.put(None),
+                    )
 
             try:
                 while True:
@@ -136,9 +135,7 @@ class FastAPIServer(EdgeIO):
                         frame = frame_queue.get(timeout=1)
                         if frame is None:
                             break
-                        yield (b'--frame\r\n'
-                               b'Content-Type: image/jpeg\r\n\r\n' + frame +
-                               b'\r\n')
+                        yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
                     except Empty:
                         # Instead of breaking, continue waiting for new frames
                         continue
@@ -153,8 +150,8 @@ class FastAPIServer(EdgeIO):
 
         async def video_feed():
             return StreamingResponse(
-                self.stream_generator(key)(),
-                media_type="multipart/x-mixed-replace; boundary=frame")
+                self.stream_generator(key)(), media_type="multipart/x-mixed-replace; boundary=frame"
+            )
 
         return video_feed
 
@@ -162,28 +159,21 @@ class FastAPIServer(EdgeIO):
         """Generate SSE events for text stream."""
         client_id = id(object())
         self.text_clients.add(client_id)
-        
+
         try:
             while True:
                 if key in self.text_queues:
                     try:
                         text = self.text_queues[key].get(timeout=1)
                         if text is not None:
-                            yield {
-                                "event": "message",
-                                "id": key,
-                                "data": text
-                            }
+                            yield {"event": "message", "id": key, "data": text}
                     except Empty:
                         # Send a keep-alive comment
-                        yield {
-                            "event": "ping",
-                            "data": ""
-                        }
+                        yield {"event": "ping", "data": ""}
                 await asyncio.sleep(0.1)
         finally:
             self.text_clients.remove(client_id)
-            
+
     def setup_routes(self):
         """Set up FastAPI routes."""
 
@@ -191,11 +181,10 @@ class FastAPIServer(EdgeIO):
         async def index(request: Request):
             stream_keys = list(self.streams.keys())
             text_stream_keys = list(self.text_streams.keys())
-            return self.templates.TemplateResponse("index_fastapi.html", {
-                "request": request,
-                "stream_keys": stream_keys,
-                "text_stream_keys": text_stream_keys
-            })
+            return self.templates.TemplateResponse(
+                "index_fastapi.html",
+                {"request": request, "stream_keys": stream_keys, "text_stream_keys": text_stream_keys},
+            )
 
         @self.app.post("/submit_query")
         async def submit_query(query: str = Form(...)):
@@ -204,21 +193,11 @@ class FastAPIServer(EdgeIO):
                 if query:
                     # Emit the query through our Subject
                     self.query_subject.on_next(query)
-                    return JSONResponse({
-                        "success": True,
-                        "message": "Query received"
-                    })
-                return JSONResponse({
-                    "success": False,
-                    "message": "No query provided"
-                })
+                    return JSONResponse({"success": True, "message": "Query received"})
+                return JSONResponse({"success": False, "message": "No query provided"})
             except Exception as e:
                 # Ensure we always return valid JSON even on error
-                return JSONResponse(status_code=500,
-                                    content={
-                                        "success": False,
-                                        "message": f"Server error: {str(e)}"
-                                    })
+                return JSONResponse(status_code=500, content={"success": False, "message": f"Server error: {str(e)}"})
 
         @self.app.get("/text_stream/{key}")
         async def text_stream(key: str):
@@ -227,10 +206,8 @@ class FastAPIServer(EdgeIO):
             return EventSourceResponse(self.text_stream_generator(key))
 
         for key in self.streams:
-            self.app.get(f"/video_feed/{key}")(
-                self.create_video_feed_route(key))
+            self.app.get(f"/video_feed/{key}")(self.create_video_feed_route(key))
 
     def run(self):
         """Run the FastAPI server."""
-        uvicorn.run(self.app, host=self.host, port=self.port
-                   )  # TODO: Translate structure to enable in-built workers'
+        uvicorn.run(self.app, host=self.host, port=self.port)  # TODO: Translate structure to enable in-built workers'

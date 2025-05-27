@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 # Standard library imports
-import json
 import logging
 import os
 from typing import Any, Optional
@@ -26,14 +25,11 @@ from reactivex import Observable, create
 from reactivex.scheduler import ThreadPoolScheduler
 from reactivex.subject import Subject
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Local imports
 from dimos.agents.agent import LLMAgent
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
-from dimos.agents.tokenizer.base import AbstractTokenizer
-from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.utils.logging_config import setup_logger
 
 # Initialize environment variables
@@ -43,6 +39,7 @@ load_dotenv()
 logger = setup_logger("dimos.agents", level=logging.DEBUG)
 
 from ctransformers import AutoModelForCausalLM as CTransformersModel
+
 
 class CTransformersTokenizerAdapter:
     def __init__(self, model):
@@ -84,26 +81,27 @@ class CTransformersTokenizerAdapter:
 
 # CTransformers Agent Class
 class CTransformersGGUFAgent(LLMAgent):
-    def __init__(self,
-                 dev_name: str,
-                 agent_type: str = "HF-LLM",
-                 model_name: str = "TheBloke/Llama-2-7B-GGUF",
-                 model_file: str = "llama-2-7b.Q4_K_M.gguf",
-                 model_type: str = "llama",
-                 gpu_layers: int = 50,
-                 device: str = "auto",
-                 query: str = "How many r's are in the word 'strawberry'?",
-                 input_query_stream: Optional[Observable] = None,
-                 input_video_stream: Optional[Observable] = None,
-                 output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
-                 agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-                 system_query: Optional[str] = "You are a helpful assistant.",
-                 max_output_tokens_per_request: int = 10,
-                 max_input_tokens_per_request: int = 250,
-                 prompt_builder: Optional[PromptBuilder] = None,
-                 pool_scheduler: Optional[ThreadPoolScheduler] = None,
-                 process_all_inputs: Optional[bool] = None,):
-        
+    def __init__(
+        self,
+        dev_name: str,
+        agent_type: str = "HF-LLM",
+        model_name: str = "TheBloke/Llama-2-7B-GGUF",
+        model_file: str = "llama-2-7b.Q4_K_M.gguf",
+        model_type: str = "llama",
+        gpu_layers: int = 50,
+        device: str = "auto",
+        query: str = "How many r's are in the word 'strawberry'?",
+        input_query_stream: Optional[Observable] = None,
+        input_video_stream: Optional[Observable] = None,
+        output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
+        agent_memory: Optional[AbstractAgentSemanticMemory] = None,
+        system_query: Optional[str] = "You are a helpful assistant.",
+        max_output_tokens_per_request: int = 10,
+        max_input_tokens_per_request: int = 250,
+        prompt_builder: Optional[PromptBuilder] = None,
+        pool_scheduler: Optional[ThreadPoolScheduler] = None,
+        process_all_inputs: Optional[bool] = None,
+    ):
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
             # Default to True for text queries, False for video streams
@@ -120,7 +118,7 @@ class CTransformersGGUFAgent(LLMAgent):
             process_all_inputs=process_all_inputs,
             system_query=system_query,
             max_output_tokens_per_request=max_output_tokens_per_request,
-            max_input_tokens_per_request=max_input_tokens_per_request
+            max_input_tokens_per_request=max_input_tokens_per_request,
         )
 
         self.query = query
@@ -138,18 +136,12 @@ class CTransformersGGUFAgent(LLMAgent):
         print(f"Device: {self.device}")
 
         self.model = CTransformersModel.from_pretrained(
-            model_name,
-            model_file=model_file,
-            model_type=model_type,
-            gpu_layers=gpu_layers
+            model_name, model_file=model_file, model_type=model_type, gpu_layers=gpu_layers
         )
 
         self.tokenizer = CTransformersTokenizerAdapter(self.model)
 
-        self.prompt_builder = prompt_builder or PromptBuilder(
-            self.model_name,
-            tokenizer=self.tokenizer
-        )
+        self.prompt_builder = prompt_builder or PromptBuilder(self.model_name, tokenizer=self.tokenizer)
 
         self.max_output_tokens_per_request = max_output_tokens_per_request
 
@@ -160,19 +152,14 @@ class CTransformersGGUFAgent(LLMAgent):
 
         # Ensure only one input stream is provided.
         if self.input_video_stream is not None and self.input_query_stream is not None:
-            raise ValueError(
-                "More than one input stream provided. Please provide only one input stream."
-            )
+            raise ValueError("More than one input stream provided. Please provide only one input stream.")
 
         if self.input_video_stream is not None:
             logger.info("Subscribing to input video stream...")
-            self.disposables.add(
-                self.subscribe_to_image_processing(self.input_video_stream))
+            self.disposables.add(self.subscribe_to_image_processing(self.input_video_stream))
         if self.input_query_stream is not None:
             logger.info("Subscribing to input query stream...")
-            self.disposables.add(
-                self.subscribe_to_query_processing(self.input_query_stream))
-
+            self.disposables.add(self.subscribe_to_query_processing(self.input_query_stream))
 
     def _send_query(self, messages: list) -> Any:
         try:
@@ -194,9 +181,7 @@ class CTransformersGGUFAgent(LLMAgent):
 
             print("Applying chat template...")
             prompt_text = self.tokenizer.apply_chat_template(
-                conversation=flat_messages,
-                tokenize=False,
-                add_generation_prompt=True
+                conversation=flat_messages, tokenize=False, add_generation_prompt=True
             )
             print("Chat template applied.")
             print(f"Prompt text:\n{prompt_text}")
@@ -213,7 +198,7 @@ class CTransformersGGUFAgent(LLMAgent):
         """
         Creates an observable that processes a text query and emits the response.
         """
-        return create(lambda observer, _: self._observable_query(
-            observer, incoming_query=query_text))
+        return create(lambda observer, _: self._observable_query(observer, incoming_query=query_text))
+
 
 # endregion HuggingFaceLLMAgent Subclass (HuggingFace-Specific Implementation)

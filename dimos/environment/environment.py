@@ -15,6 +15,7 @@
 from abc import ABC, abstractmethod
 import numpy as np
 
+
 class Environment(ABC):
     def __init__(self):
         self.environment_type = None
@@ -24,7 +25,7 @@ class Environment(ABC):
     def label_objects(self) -> list[str]:
         """
         Label all objects in the environment.
-        
+
         Returns:
             A list of string labels representing the objects in the environment.
         """
@@ -34,7 +35,7 @@ class Environment(ABC):
     def get_visualization(self, format_type):
         """Return different visualization formats like images, NERFs, or other 3D file types."""
         pass
-    
+
     @abstractmethod
     def generate_segmentations(self, model: str = None, objects: list[str] = None, *args, **kwargs) -> list[np.ndarray]:
         """
@@ -65,7 +66,6 @@ class Environment(ABC):
             representing a binary mask for a segmented area of an object in the environment.
         """
         pass
-
 
     @abstractmethod
     def generate_point_cloud(self, object: str = None, *args, **kwargs) -> np.ndarray:
@@ -102,7 +102,9 @@ class Environment(ABC):
         pass
 
     @abstractmethod
-    def generate_depth_map(self, stereo: bool = None, monocular: bool = None, model: str = None, *args, **kwargs) -> np.ndarray:
+    def generate_depth_map(
+        self, stereo: bool = None, monocular: bool = None, model: str = None, *args, **kwargs
+    ) -> np.ndarray:
         """
         Generate a depth map using monocular or stereo camera methods.
 
@@ -166,5 +168,3 @@ class Environment(ABC):
             NotImplementedError: If the method is not implemented for this environment type.
         """
         raise NotImplementedError("This method is not implemented for this environment type.")
-
-

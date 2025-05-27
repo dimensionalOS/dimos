@@ -14,14 +14,11 @@ def register_distill_coco_instances(name, metadata, json_file, image_root):
     assert isinstance(json_file, (str, os.PathLike)), json_file
     assert isinstance(image_root, (str, os.PathLike)), image_root
     # 1. register a function which returns dicts
-    DatasetCatalog.register(name, lambda: load_coco_json(
-        json_file, image_root, name, extra_annotation_keys=['score']))
+    DatasetCatalog.register(name, lambda: load_coco_json(json_file, image_root, name, extra_annotation_keys=["score"]))
 
     # 2. Optionally, add metadata about this dataset,
     # since they might be useful in evaluation, visualization or logging
-    MetadataCatalog.get(name).set(
-        json_file=json_file, image_root=image_root, evaluator_type="coco", **metadata
-    )
+    MetadataCatalog.get(name).set(json_file=json_file, image_root=image_root, evaluator_type="coco", **metadata)
 
 
 _PREDEFINED_SPLITS_COCO = {
@@ -31,7 +28,7 @@ _PREDEFINED_SPLITS_COCO = {
 for key, (image_root, json_file) in _PREDEFINED_SPLITS_COCO.items():
     register_coco_instances(
         key,
-        _get_builtin_metadata('coco'),
+        _get_builtin_metadata("coco"),
         os.path.join("datasets", json_file) if "://" not in json_file else json_file,
         os.path.join("datasets", image_root),
     )
@@ -43,7 +40,7 @@ _PREDEFINED_SPLITS_DISTILL_COCO = {
 for key, (image_root, json_file) in _PREDEFINED_SPLITS_DISTILL_COCO.items():
     register_distill_coco_instances(
         key,
-        _get_builtin_metadata('coco'),
+        _get_builtin_metadata("coco"),
         os.path.join("datasets", json_file) if "://" not in json_file else json_file,
         os.path.join("datasets", image_root),
     )

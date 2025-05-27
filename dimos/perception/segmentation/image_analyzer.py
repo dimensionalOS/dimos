@@ -1,8 +1,6 @@
 import base64
-import requests
 from openai import OpenAI
 import cv2
-import numpy as np
 import os
 
 NORMAL_PROMPT = "What are in these images? Give a short word answer with at most two words, \
@@ -87,7 +85,7 @@ def main():
     if not os.path.exists(cropped_images_dir):
         print(f"Directory '{cropped_images_dir}' does not exist.")
         return
-    
+
     # Load all images from the directory
     images = []
     for filename in os.listdir(cropped_images_dir):
@@ -98,19 +96,19 @@ def main():
                 images.append(image)
             else:
                 print(f"Warning: Could not read image {image_path}")
-    
+
     if not images:
         print("No valid images found in the directory.")
         return
-    
+
     # Initialize ImageAnalyzer
     analyzer = ImageAnalyzer()
-    
+
     # Analyze images
     results = analyzer.analyze_images(images)
-    
+
     # Split results into a list of items
-    object_list = [item.strip()[2:] for item in results.split('\n')]
+    object_list = [item.strip()[2:] for item in results.split("\n")]
 
     # Overlay text on images and display them
     for i, (img, obj) in enumerate(zip(images, object_list)):
@@ -120,19 +118,19 @@ def main():
             font_scale = 0.5
             thickness = 2
             text = obj.strip()
-            
+
             # Get text size
             (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
-            
+
             # Position text at top of image
             x = 10
             y = text_height + 10
-            
+
             # Add white background for text
-            cv2.rectangle(img, (x-5, y-text_height-5), (x+text_width+5, y+5), (255,255,255), -1)
+            cv2.rectangle(img, (x - 5, y - text_height - 5), (x + text_width + 5, y + 5), (255, 255, 255), -1)
             # Add text
-            cv2.putText(img, text, (x, y), font, font_scale, (0,0,0), thickness)
-            
+            cv2.putText(img, text, (x, y), font, font_scale, (0, 0, 0), thickness)
+
             # Save or display the image
             cv2.imwrite(f"annotated_image_{i}.jpg", img)
             print(f"Detected object: {obj}")

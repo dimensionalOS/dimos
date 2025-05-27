@@ -15,7 +15,9 @@
 from dimos.stream.video_provider import AbstractVideoProvider
 
 from queue import Queue
-from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD, WebRTCConnectionMethod
+from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.constants import (
+    WebRTCConnectionMethod,
+)
 from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection
 from aiortc import MediaStreamTrack
 import asyncio
@@ -24,10 +26,17 @@ import logging
 import threading
 import time
 
+
 class UnitreeVideoProvider(AbstractVideoProvider):
-    def __init__(self, dev_name: str = "UnitreeGo2", connection_method: WebRTCConnectionMethod = WebRTCConnectionMethod.LocalSTA, serial_number: str = None, ip: str = None):
+    def __init__(
+        self,
+        dev_name: str = "UnitreeGo2",
+        connection_method: WebRTCConnectionMethod = WebRTCConnectionMethod.LocalSTA,
+        serial_number: str = None,
+        ip: str = None,
+    ):
         """Initialize the Unitree video stream with WebRTC connection.
-        
+
         Args:
             dev_name: Name of the device
             connection_method: WebRTC connection method (LocalSTA, LocalAP, Remote)
@@ -38,7 +47,7 @@ class UnitreeVideoProvider(AbstractVideoProvider):
         self.frame_queue = Queue()
         self.loop = None
         self.asyncio_thread = None
-        
+
         # Initialize WebRTC connection based on method
         if connection_method == WebRTCConnectionMethod.LocalSTA:
             if serial_number:
@@ -63,7 +72,7 @@ class UnitreeVideoProvider(AbstractVideoProvider):
     def _run_asyncio_loop(self, loop):
         """Run the asyncio event loop in a separate thread."""
         asyncio.set_event_loop(loop)
-        
+
         async def setup():
             try:
                 await self.conn.connect()
@@ -78,17 +87,17 @@ class UnitreeVideoProvider(AbstractVideoProvider):
                 # await self.conn.datachannel.sendDamp()
                 # await asyncio.sleep(5)
                 # await self.conn.datachannel.sendStandUp()
-                # await asyncio.sleep(5)  
+                # await asyncio.sleep(5)
 
                 # Wiggle the robot
                 # await self.conn.datachannel.switchToNormalMode()
                 # await self.conn.datachannel.sendWiggle()
-                #await asyncio.sleep(3)
+                # await asyncio.sleep(3)
 
                 # Stretch the robot
                 # await self.conn.datachannel.sendStretch()
                 # await asyncio.sleep(3)
-                
+
             except Exception as e:
                 logging.error(f"Error in WebRTC connection: {e}")
                 raise
@@ -98,10 +107,10 @@ class UnitreeVideoProvider(AbstractVideoProvider):
 
     def capture_video_as_observable(self, fps: int = 30) -> Observable:
         """Create an observable that emits video frames at the specified FPS.
-        
+
         Args:
             fps: Frames per second to emit (default: 30)
-            
+
         Returns:
             Observable emitting video frames
         """
@@ -112,26 +121,23 @@ class UnitreeVideoProvider(AbstractVideoProvider):
                 # Start asyncio loop if not already running
                 if not self.loop:
                     self.loop = asyncio.new_event_loop()
-                    self.asyncio_thread = threading.Thread(
-                        target=self._run_asyncio_loop,
-                        args=(self.loop,)
-                    )
+                    self.asyncio_thread = threading.Thread(target=self._run_asyncio_loop, args=(self.loop,))
                     self.asyncio_thread.start()
 
                 frame_time = time.monotonic()
-                
+
                 while True:
                     if not self.frame_queue.empty():
                         frame = self.frame_queue.get()
-                        
+
                         # Control frame rate
                         now = time.monotonic()
                         next_frame_time = frame_time + frame_interval
                         sleep_time = next_frame_time - now
-                        
+
                         if sleep_time > 0:
                             time.sleep(sleep_time)
-                            
+
                         observer.on_next(frame)
                         frame_time = next_frame_time
                     else:

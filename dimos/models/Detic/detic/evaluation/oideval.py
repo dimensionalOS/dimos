@@ -8,7 +8,7 @@
 # The code is from https://github.com/xingyizhou/UniDet/blob/master/projects/UniDet/unidet/evaluation/oideval.py
 # The original code is under Apache-2.0 License
 # Copyright (c) Facebook, Inc. and its affiliates.
-import os 
+import os
 import datetime
 import logging
 import itertools
@@ -32,54 +32,59 @@ from detectron2.evaluation.coco_evaluation import instances_to_coco_json
 from detectron2.utils.logger import create_small_table
 from detectron2.evaluation import DatasetEvaluator
 
+
 def compute_average_precision(precision, recall):
-  """Compute Average Precision according to the definition in VOCdevkit.
-  Precision is modified to ensure that it does not decrease as recall
-  decrease.
-  Args:
-    precision: A float [N, 1] numpy array of precisions
-    recall: A float [N, 1] numpy array of recalls
-  Raises:
-    ValueError: if the input is not of the correct format
-  Returns:
-    average_precison: The area under the precision recall curve. NaN if
-      precision and recall are None.
-  """
-  if precision is None:
-    if recall is not None:
-      raise ValueError("If precision is None, recall must also be None")
-    return np.NAN
+    """Compute Average Precision according to the definition in VOCdevkit.
+    Precision is modified to ensure that it does not decrease as recall
+    decrease.
+    Args:
+      precision: A float [N, 1] numpy array of precisions
+      recall: A float [N, 1] numpy array of recalls
+    Raises:
+      ValueError: if the input is not of the correct format
+    Returns:
+      average_precison: The area under the precision recall curve. NaN if
+        precision and recall are None.
+    """
+    if precision is None:
+        if recall is not None:
+            raise ValueError("If precision is None, recall must also be None")
+        return np.NAN
 
-  if not isinstance(precision, np.ndarray) or not isinstance(
-      recall, np.ndarray):
-    raise ValueError("precision and recall must be numpy array")
-  if precision.dtype != np.float or recall.dtype != np.float:
-    raise ValueError("input must be float numpy array.")
-  if len(precision) != len(recall):
-    raise ValueError("precision and recall must be of the same size.")
-  if not precision.size:
-    return 0.0
-  if np.amin(precision) < 0 or np.amax(precision) > 1:
-    raise ValueError("Precision must be in the range of [0, 1].")
-  if np.amin(recall) < 0 or np.amax(recall) > 1:
-    raise ValueError("recall must be in the range of [0, 1].")
-  if not all(recall[i] <= recall[i + 1] for i in range(len(recall) - 1)):
-    raise ValueError("recall must be a non-decreasing array")
+    if not isinstance(precision, np.ndarray) or not isinstance(recall, np.ndarray):
+        raise ValueError("precision and recall must be numpy array")
+    if precision.dtype != np.float or recall.dtype != np.float:
+        raise ValueError("input must be float numpy array.")
+    if len(precision) != len(recall):
+        raise ValueError("precision and recall must be of the same size.")
+    if not precision.size:
+        return 0.0
+    if np.amin(precision) < 0 or np.amax(precision) > 1:
+        raise ValueError("Precision must be in the range of [0, 1].")
+    if np.amin(recall) < 0 or np.amax(recall) > 1:
+        raise ValueError("recall must be in the range of [0, 1].")
+    if not all(recall[i] <= recall[i + 1] for i in range(len(recall) - 1)):
+        raise ValueError("recall must be a non-decreasing array")
 
-  recall = np.concatenate([[0], recall, [1]])
-  precision = np.concatenate([[0], precision, [0]])
+    recall = np.concatenate([[0], recall, [1]])
+    precision = np.concatenate([[0], precision, [0]])
 
-  for i in range(len(precision) - 2, -1, -1):
-    precision[i] = np.maximum(precision[i], precision[i + 1])
-  indices = np.where(recall[1:] != recall[:-1])[0] + 1
-  average_precision = np.sum(
-      (recall[indices] - recall[indices - 1]) * precision[indices])
-  return average_precision
+    for i in range(len(precision) - 2, -1, -1):
+        precision[i] = np.maximum(precision[i], precision[i + 1])
+    indices = np.where(recall[1:] != recall[:-1])[0] + 1
+    average_precision = np.sum((recall[indices] - recall[indices - 1]) * precision[indices])
+    return average_precision
+
 
 class OIDEval:
     def __init__(
-        self, lvis_gt, lvis_dt, iou_type="bbox", expand_pred_label=False, 
-        oid_hierarchy_path='./datasets/oid/annotations/challenge-2019-label500-hierarchy.json'):
+        self,
+        lvis_gt,
+        lvis_dt,
+        iou_type="bbox",
+        expand_pred_label=False,
+        oid_hierarchy_path="./datasets/oid/annotations/challenge-2019-label500-hierarchy.json",
+    ):
         """Constructor for OIDEval.
         Args:
             lvis_gt (LVIS class instance, or str containing path of annotation file)
@@ -108,46 +113,49 @@ class OIDEval:
             raise TypeError("Unsupported type {} of lvis_dt.".format(lvis_dt))
 
         if expand_pred_label:
-            oid_hierarchy = json.load(open(oid_hierarchy_path, 'r'))
-            cat_info = self.lvis_gt.dataset['categories']
-            freebase2id = {x['freebase_id']: x['id'] for x in cat_info}
-            id2freebase = {x['id']: x['freebase_id'] for x in cat_info}
-            id2name = {x['id']: x['name'] for x in cat_info}
-            
+            oid_hierarchy = json.load(open(oid_hierarchy_path, "r"))
+            cat_info = self.lvis_gt.dataset["categories"]
+            freebase2id = {x["freebase_id"]: x["id"] for x in cat_info}
+            id2freebase = {x["id"]: x["freebase_id"] for x in cat_info}
+            id2name = {x["id"]: x["name"] for x in cat_info}
+
             fas = defaultdict(set)
+
             def dfs(hierarchy, cur_id):
                 all_childs = set()
                 all_keyed_child = {}
-                if 'Subcategory' in hierarchy:
-                    for x in hierarchy['Subcategory']:
-                        childs = dfs(x, freebase2id[x['LabelName']])
+                if "Subcategory" in hierarchy:
+                    for x in hierarchy["Subcategory"]:
+                        childs = dfs(x, freebase2id[x["LabelName"]])
                         all_childs.update(childs)
                 if cur_id != -1:
                     for c in all_childs:
                         fas[c].add(cur_id)
                 all_childs.add(cur_id)
                 return all_childs
+
             dfs(oid_hierarchy, -1)
-            
+
             expanded_pred = []
             id_count = 0
-            for d in self.lvis_dt.dataset['annotations']:
-                cur_id = d['category_id']
+            for d in self.lvis_dt.dataset["annotations"]:
+                cur_id = d["category_id"]
                 ids = [cur_id] + [x for x in fas[cur_id]]
                 for cat_id in ids:
                     new_box = copy.deepcopy(d)
                     id_count = id_count + 1
-                    new_box['id'] = id_count
-                    new_box['category_id'] = cat_id
+                    new_box["id"] = id_count
+                    new_box["category_id"] = cat_id
                     expanded_pred.append(new_box)
 
-            print('Expanding original {} preds to {} preds'.format(
-                len(self.lvis_dt.dataset['annotations']),
-                len(expanded_pred)
-                ))
-            self.lvis_dt.dataset['annotations'] = expanded_pred
+            print(
+                "Expanding original {} preds to {} preds".format(
+                    len(self.lvis_dt.dataset["annotations"]), len(expanded_pred)
+                )
+            )
+            self.lvis_dt.dataset["annotations"] = expanded_pred
             self.lvis_dt._create_index()
-        
+
         # per-image per-category evaluation results
         self.eval_imgs = defaultdict(list)
         self.eval = {}  # accumulated evaluation results
@@ -170,12 +178,8 @@ class OIDEval:
 
         cat_ids = self.params.cat_ids if self.params.cat_ids else None
 
-        gts = self.lvis_gt.load_anns(
-            self.lvis_gt.get_ann_ids(img_ids=self.params.img_ids, cat_ids=cat_ids)
-        )
-        dts = self.lvis_dt.load_anns(
-            self.lvis_dt.get_ann_ids(img_ids=self.params.img_ids, cat_ids=cat_ids)
-        )
+        gts = self.lvis_gt.load_anns(self.lvis_gt.get_ann_ids(img_ids=self.params.img_ids, cat_ids=cat_ids))
+        dts = self.lvis_dt.load_anns(self.lvis_dt.get_ann_ids(img_ids=self.params.img_ids, cat_ids=cat_ids))
         # convert ground truth to mask if iou_type == 'segm'
         if self.params.iou_type == "segm":
             self._to_mask(gts, self.lvis_gt)
@@ -199,7 +203,7 @@ class OIDEval:
             # img_pl[ann["image_id"]].add(ann["category_id"])
             assert ann["category_id"] in img_pl[ann["image_id"]]
         # print('check pos ids OK.')
-        
+
         for dt in dts:
             img_id, cat_id = dt["image_id"], dt["category_id"]
             if cat_id not in img_nl[img_id] and cat_id not in img_pl[img_id]:
@@ -224,13 +228,11 @@ class OIDEval:
         self._prepare()
 
         self.ious = {
-            (img_id, cat_id): self.compute_iou(img_id, cat_id)
-            for img_id in self.params.img_ids
-            for cat_id in cat_ids
+            (img_id, cat_id): self.compute_iou(img_id, cat_id) for img_id in self.params.img_ids for cat_id in cat_ids
         }
 
         # loop through images, area range, max detection number
-        print('Evaluating ...')
+        print("Evaluating ...")
         self.eval_imgs = [
             self.evaluate_img_google(img_id, cat_id, area_rng)
             for cat_id in cat_ids
@@ -247,16 +249,8 @@ class OIDEval:
             gt = self._gts[img_id, cat_id]
             dt = self._dts[img_id, cat_id]
         else:
-            gt = [
-                _ann
-                for _cat_id in self.params.cat_ids
-                for _ann in self._gts[img_id, cat_id]
-            ]
-            dt = [
-                _ann
-                for _cat_id in self.params.cat_ids
-                for _ann in self._dts[img_id, cat_id]
-            ]
+            gt = [_ann for _cat_id in self.params.cat_ids for _ann in self._gts[img_id, cat_id]]
+            dt = [_ann for _cat_id in self.params.cat_ids for _ann in self._dts[img_id, cat_id]]
         return gt, dt
 
     def compute_iou(self, img_id, cat_id):
@@ -270,7 +264,7 @@ class OIDEval:
         dt = [dt[i] for i in idx]
 
         # iscrowd = [int(False)] * len(gt)
-        iscrowd = [int('iscrowd' in g and g['iscrowd'] > 0) for g in gt]
+        iscrowd = [int("iscrowd" in g and g["iscrowd"] > 0) for g in gt]
 
         if self.params.iou_type == "segm":
             ann_type = "segmentation"
@@ -290,7 +284,7 @@ class OIDEval:
         gt, dt = self._get_gt_dt(img_id, cat_id)
         if len(gt) == 0 and len(dt) == 0:
             return None
-        
+
         if len(dt) == 0:
             return {
                 "image_id": img_id,
@@ -300,13 +294,11 @@ class OIDEval:
                 "dt_matches": np.array([], dtype=np.int32).reshape(1, -1),
                 "dt_scores": [],
                 "dt_ignore": np.array([], dtype=np.int32).reshape(1, -1),
-                'num_gt': len(gt)
+                "num_gt": len(gt),
             }
 
-        no_crowd_inds = [i for i, g in enumerate(gt) \
-            if ('iscrowd' not in g) or g['iscrowd'] == 0]
-        crowd_inds = [i for i, g in enumerate(gt) \
-            if 'iscrowd' in g and g['iscrowd'] == 1]
+        no_crowd_inds = [i for i, g in enumerate(gt) if ("iscrowd" not in g) or g["iscrowd"] == 0]
+        crowd_inds = [i for i, g in enumerate(gt) if "iscrowd" in g and g["iscrowd"] == 1]
         dt_idx = np.argsort([-d["score"] for d in dt], kind="mergesort")
 
         if len(self.ious[img_id, cat_id]) > 0:
@@ -318,7 +310,7 @@ class OIDEval:
         else:
             iou = np.zeros((len(dt_idx), 0))
             ioa = np.zeros((len(dt_idx), 0))
-        scores = np.array([dt[i]['score'] for i in dt_idx])
+        scores = np.array([dt[i]["score"] for i in dt_idx])
 
         num_detected_boxes = len(dt)
         tp_fp_labels = np.zeros(num_detected_boxes, dtype=bool)
@@ -329,9 +321,7 @@ class OIDEval:
             is_gt_detected = np.zeros(iou.shape[1], dtype=bool)
             for i in range(num_detected_boxes):
                 gt_id = max_overlap_gt_ids[i]
-                is_evaluatable = (not tp_fp_labels[i] and
-                                iou[i, gt_id] >= 0.5 and
-                                not is_matched_to_group_of[i])
+                is_evaluatable = not tp_fp_labels[i] and iou[i, gt_id] >= 0.5 and not is_matched_to_group_of[i]
                 if is_evaluatable:
                     if not is_gt_detected[gt_id]:
                         tp_fp_labels[i] = True
@@ -339,14 +329,11 @@ class OIDEval:
 
         def compute_match_ioa(ioa):
             scores_group_of = np.zeros(ioa.shape[1], dtype=float)
-            tp_fp_labels_group_of = np.ones(
-                ioa.shape[1], dtype=float)
+            tp_fp_labels_group_of = np.ones(ioa.shape[1], dtype=float)
             max_overlap_group_of_gt_ids = np.argmax(ioa, axis=1)
             for i in range(num_detected_boxes):
                 gt_id = max_overlap_group_of_gt_ids[i]
-                is_evaluatable = (not tp_fp_labels[i] and
-                                ioa[i, gt_id] >= 0.5 and
-                                not is_matched_to_group_of[i])
+                is_evaluatable = not tp_fp_labels[i] and ioa[i, gt_id] >= 0.5 and not is_matched_to_group_of[i]
                 if is_evaluatable:
                     is_matched_to_group_of[i] = True
                     scores_group_of[gt_id] = max(scores_group_of[gt_id], scores[i])
@@ -365,22 +352,19 @@ class OIDEval:
         if ioa.shape[1] > 0:
             scores_box_group_of, tp_fp_labels_box_group_of = compute_match_ioa(ioa)
 
-        valid_entries = (~is_matched_to_group_of)
+        valid_entries = ~is_matched_to_group_of
 
-        scores =  np.concatenate(
-            (scores[valid_entries], scores_box_group_of))
-        tp_fps = np.concatenate(
-            (tp_fp_labels[valid_entries].astype(float),
-             tp_fp_labels_box_group_of))
-    
+        scores = np.concatenate((scores[valid_entries], scores_box_group_of))
+        tp_fps = np.concatenate((tp_fp_labels[valid_entries].astype(float), tp_fp_labels_box_group_of))
+
         return {
             "image_id": img_id,
             "category_id": cat_id,
             "area_rng": area_rng,
             "dt_matches": np.array([1 if x > 0 else 0 for x in tp_fps], dtype=np.int32).reshape(1, -1),
             "dt_scores": [x for x in scores],
-            "dt_ignore":  np.array([0 for x in scores], dtype=np.int32).reshape(1, -1),
-            'num_gt': len(gt)
+            "dt_ignore": np.array([0 for x in scores], dtype=np.int32).reshape(1, -1),
+            "num_gt": len(gt),
         }
 
     def accumulate(self):
@@ -405,9 +389,7 @@ class OIDEval:
         num_imgs = len(self.params.img_ids)
 
         # -1 for absent categories
-        precision = -np.ones(
-            (num_thrs, num_recalls, num_cats, num_area_rngs)
-        )
+        precision = -np.ones((num_thrs, num_recalls, num_cats, num_area_rngs))
         recall = -np.ones((num_thrs, num_cats, num_area_rngs))
 
         # Initialize dt_pointers
@@ -422,12 +404,9 @@ class OIDEval:
             Nk = cat_idx * num_area_rngs * num_imgs
             for area_idx in range(num_area_rngs):
                 Na = area_idx * num_imgs
-                E = [
-                    self.eval_imgs[Nk + Na + img_idx]
-                    for img_idx in range(num_imgs)
-                ]
+                E = [self.eval_imgs[Nk + Na + img_idx] for img_idx in range(num_imgs)]
                 # Remove elements which are None
-                E = [e for e in E if not e is None]
+                E = [e for e in E if e is not None]
                 if len(E) == 0:
                     continue
 
@@ -437,7 +416,7 @@ class OIDEval:
                 dt_m = np.concatenate([e["dt_matches"] for e in E], axis=1)[:, dt_idx]
                 dt_ig = np.concatenate([e["dt_ignore"] for e in E], axis=1)[:, dt_idx]
 
-                num_gt = sum([e['num_gt'] for e in E])
+                num_gt = sum([e["num_gt"] for e in E])
                 if num_gt == 0:
                     continue
 
@@ -456,11 +435,9 @@ class OIDEval:
                     fp = np.array(fp)
                     num_tp = len(tp)
                     rc = tp / num_gt
-                    
+
                     if num_tp:
-                        recall[iou_thr_idx, cat_idx, area_idx] = rc[
-                            -1
-                        ]
+                        recall[iou_thr_idx, cat_idx, area_idx] = rc[-1]
                     else:
                         recall[iou_thr_idx, cat_idx, area_idx] = 0
 
@@ -473,8 +450,8 @@ class OIDEval:
                             pr[i - 1] = pr[i]
 
                     mAP = compute_average_precision(
-                        np.array(pr, np.float).reshape(-1), 
-                        np.array(rc, np.float).reshape(-1))
+                        np.array(pr, np.float).reshape(-1), np.array(rc, np.float).reshape(-1)
+                    )
                     precision[iou_thr_idx, :, cat_idx, area_idx] = mAP
 
         self.eval = {
@@ -501,7 +478,7 @@ class OIDEval:
             raise RuntimeError("Please run accumulate() first.")
 
         max_dets = self.params.max_dets
-        self.results["AP50"] = self._summarize('ap')
+        self.results["AP50"] = self._summarize("ap")
 
     def run(self):
         """Wrapper function which calculates the results."""
@@ -522,12 +499,10 @@ class OIDEval:
                 _type = "(AR)"
 
             if len(key) > 2 and key[2].isdigit():
-                iou_thr = (float(key[2:]) / 100)
+                iou_thr = float(key[2:]) / 100
                 iou = "{:0.2f}".format(iou_thr)
             else:
-                iou = "{:0.2f}:{:0.2f}".format(
-                    self.params.iou_thrs[0], self.params.iou_thrs[-1]
-                )
+                iou = "{:0.2f}:{:0.2f}".format(self.params.iou_thrs[0], self.params.iou_thrs[-1])
 
             cat_group_name = "all"
             area_rng = "all"
@@ -546,16 +521,14 @@ class Params:
         self.cat_ids = []
         # np.arange causes trouble.  the data point on arange is slightly
         # larger than the true value
-        self.iou_thrs = np.linspace(
-            0.5, 0.95, int(np.round((0.95 - 0.5) / 0.05)) + 1, endpoint=True
-        )
+        self.iou_thrs = np.linspace(0.5, 0.95, int(np.round((0.95 - 0.5) / 0.05)) + 1, endpoint=True)
         self.google_style = True
         # print('Using google style PR curve')
         self.iou_thrs = self.iou_thrs[:1]
         self.max_dets = 1000
 
         self.area_rng = [
-            [0 ** 2, 1e5 ** 2],
+            [0**2, 1e5**2],
         ]
         self.area_rng_lbl = ["all"]
         self.use_cats = 1
@@ -586,8 +559,7 @@ class OIDEvaluator(DatasetEvaluator):
         for input, output in zip(inputs, outputs):
             prediction = {"image_id": input["image_id"]}
             instances = output["instances"].to(self._cpu_device)
-            prediction["instances"] = instances_to_coco_json(
-                instances, input["image_id"])
+            prediction["instances"] = instances_to_coco_json(instances, input["image_id"])
             self._predictions.append(prediction)
 
     def evaluate(self):
@@ -604,16 +576,14 @@ class OIDEvaluator(DatasetEvaluator):
             return {}
 
         self._logger.info("Preparing results in the OID format ...")
-        self._oid_results = list(
-            itertools.chain(*[x["instances"] for x in self._predictions]))
+        self._oid_results = list(itertools.chain(*[x["instances"] for x in self._predictions]))
 
         # unmap the category ids for LVIS (from 0-indexed to 1-indexed)
         for result in self._oid_results:
             result["category_id"] += 1
 
         PathManager.mkdirs(self._output_dir)
-        file_path = os.path.join(
-            self._output_dir, "oid_instances_results.json")
+        file_path = os.path.join(self._output_dir, "oid_instances_results.json")
         self._logger.info("Saving results to {}".format(file_path))
         with PathManager.open(file_path, "w") as f:
             f.write(json.dumps(self._oid_results))
@@ -631,37 +601,36 @@ class OIDEvaluator(DatasetEvaluator):
             eval_seg=self._mask_on,
             class_names=self._metadata.get("thing_classes"),
         )
-        self._results['bbox'] = res
+        self._results["bbox"] = res
         mAP_out_path = os.path.join(self._output_dir, "oid_mAP.npy")
-        self._logger.info('Saving mAP to' + mAP_out_path)
+        self._logger.info("Saving mAP to" + mAP_out_path)
         np.save(mAP_out_path, mAP)
         return copy.deepcopy(self._results)
 
-def _evaluate_predictions_on_oid(
-    oid_gt, oid_results_path, eval_seg=False,
-    class_names=None):
+
+def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg=False, class_names=None):
     logger = logging.getLogger(__name__)
     metrics = ["AP50", "AP50_expand"]
 
     results = {}
-    oid_eval = OIDEval(oid_gt, oid_results_path, 'bbox', expand_pred_label=False)
+    oid_eval = OIDEval(oid_gt, oid_results_path, "bbox", expand_pred_label=False)
     oid_eval.run()
     oid_eval.print_results()
     results["AP50"] = oid_eval.get_results()["AP50"]
 
     if eval_seg:
-        oid_eval = OIDEval(oid_gt, oid_results_path, 'segm', expand_pred_label=False)
+        oid_eval = OIDEval(oid_gt, oid_results_path, "segm", expand_pred_label=False)
         oid_eval.run()
         oid_eval.print_results()
         results["AP50_segm"] = oid_eval.get_results()["AP50"]
     else:
-        oid_eval = OIDEval(oid_gt, oid_results_path, 'bbox', expand_pred_label=True)
+        oid_eval = OIDEval(oid_gt, oid_results_path, "bbox", expand_pred_label=True)
         oid_eval.run()
         oid_eval.print_results()
         results["AP50_expand"] = oid_eval.get_results()["AP50"]
 
     mAP = np.zeros(len(class_names)) - 1
-    precisions = oid_eval.eval['precision']
+    precisions = oid_eval.eval["precision"]
     assert len(class_names) == precisions.shape[2]
     results_per_category = []
     id2apiid = sorted(oid_gt.get_cat_ids())
@@ -672,10 +641,14 @@ def _evaluate_predictions_on_oid(
         ap = np.mean(precision) if precision.size else float("nan")
         inst_num = len(oid_gt.get_ann_ids(cat_ids=[id2apiid[idx]]))
         if inst_num > 0:
-            results_per_category.append(("{} {}".format(
-                name.replace(' ', '_'), 
-                inst_num if inst_num < 1000 else '{:.1f}k'.format(inst_num / 1000)), 
-                float(ap * 100)))
+            results_per_category.append(
+                (
+                    "{} {}".format(
+                        name.replace(" ", "_"), inst_num if inst_num < 1000 else "{:.1f}k".format(inst_num / 1000)
+                    ),
+                    float(ap * 100),
+                )
+            )
             inst_aware_ap += inst_num * ap
             inst_count += inst_num
             mAP[idx] = ap
@@ -691,9 +664,8 @@ def _evaluate_predictions_on_oid(
         headers=["category", "AP"] * (N_COLS // 2),
         numalign="left",
     )
-    logger.info("Per-category {} AP: \n".format('bbox') + table)
-    logger.info("Instance-aware {} AP: {:.4f}".format('bbox', inst_aware_ap))
+    logger.info("Per-category {} AP: \n".format("bbox") + table)
+    logger.info("Instance-aware {} AP: {:.4f}".format("bbox", inst_aware_ap))
 
-    logger.info("Evaluation results for bbox: \n" + \
-        create_small_table(results))
+    logger.info("Evaluation results for bbox: \n" + create_small_table(results))
     return results, mAP

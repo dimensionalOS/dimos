@@ -37,6 +37,7 @@ def to_euler_rot(msg: TransformStamped) -> [Vector, Vector]:
 def to_euler_pos(msg: TransformStamped) -> [Vector, Vector]:
     return Vector(msg.transform.translation).to_2d()
 
+
 def to_euler(msg: TransformStamped) -> [Vector, Vector]:
     return [to_euler_pos(msg), to_euler_rot(msg)]
 
@@ -119,8 +120,6 @@ class ROSTransformAbility:
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
             logger.error(f"Transform from {source_frame} to {target_frame} failed: {e}")
             return None
-        
-    
 
     def transform_path(self, path: Path, source_frame: str, target_frame: str = "map", timeout: float = 1.0):
         """Transform a path from source_frame to target_frame.
@@ -158,34 +157,36 @@ class ROSTransformAbility:
             self.tf_buffer.can_transform(
                 target_frame, source_frame, rclpy.time.Time(), rclpy.duration.Duration(seconds=timeout)
             )
-            
+
             # Create a rotation matrix from the input Euler angles
-            input_rotation = R.from_euler('xyz', rotation, degrees=False)
-            
+            input_rotation = R.from_euler("xyz", rotation, degrees=False)
+
             # Get the transform from source to target frame
             transform = self.transform(source_frame, target_frame, timeout)
             if transform is None:
                 return None
-                
+
             # Extract the rotation from the transform
             q = transform.transform.rotation
             transform_rotation = R.from_quat([q.x, q.y, q.z, q.w])
-            
+
             # Compose the rotations
             # The resulting rotation is the composition of the transform rotation and input rotation
             result_rotation = transform_rotation * input_rotation
-            
+
             # Convert back to Euler angles
-            euler_angles = result_rotation.as_euler('xyz', degrees=False)
-            
+            euler_angles = result_rotation.as_euler("xyz", degrees=False)
+
             # Return as Vector type
             return Vector(euler_angles)
-            
+
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
             logger.error(f"Transform rotation from {source_frame} to {target_frame} failed: {e}")
             return None
 
-    def transform_pose(self, position: Vector, rotation: Vector, source_frame: str, target_frame: str = "map", timeout: float = 1.0):
+    def transform_pose(
+        self, position: Vector, rotation: Vector, source_frame: str, target_frame: str = "map", timeout: float = 1.0
+    ):
         """Transform a pose from source_frame to target_frame.
 
         Args:
@@ -196,14 +197,14 @@ class ROSTransformAbility:
             timeout: Time to wait for the transform to become available (seconds)
 
         Returns:
-            Tuple of (transformed_position, transformed_rotation) as Vectors, 
+            Tuple of (transformed_position, transformed_rotation) as Vectors,
             or (None, None) if either transform failed
         """
         # Transform position
         transformed_position = self.transform_point(position, source_frame, target_frame, timeout)
-        
+
         # Transform rotation
         transformed_rotation = self.transform_rot(rotation, source_frame, target_frame, timeout)
-        
+
         # Return results (both might be None if transforms failed)
         return transformed_position, transformed_rotation

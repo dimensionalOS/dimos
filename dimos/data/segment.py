@@ -26,7 +26,7 @@ logger.setLevel(logging.INFO)
 
 
 class SegmentProcessor:
-    def __init__(self, device='cuda'):
+    def __init__(self, device="cuda"):
         # Initialize CLIPSeg and SAM models
         self.clipseg = CLIPSeg(model_name="CIDAS/clipseg-rd64-refined", device=device)
         self.sam = SAM(model_name="facebook/sam-vit-huge", device=device)

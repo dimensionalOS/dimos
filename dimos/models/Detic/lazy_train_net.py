@@ -9,6 +9,7 @@ few common configuration parameters currently defined in "configs/common/train.p
 To add more complicated training logic, you can easily add other configs
 in the config file and implement a new train_net.py to handle them.
 """
+
 import logging
 import sys
 
@@ -26,15 +27,15 @@ from detectron2.engine import (
 from detectron2.engine.defaults import create_ddp_model
 from detectron2.evaluation import inference_on_dataset, print_csv_format
 from detectron2.utils import comm
-sys.path.insert(0, 'third_party/CenterNet2/')
-sys.path.insert(0, 'third_party/Deformable-DETR')
+
+sys.path.insert(0, "third_party/CenterNet2/")
+sys.path.insert(0, "third_party/Deformable-DETR")
 logger = logging.getLogger("detectron2")
+
 
 def do_test(cfg, model):
     if "evaluator" in cfg.dataloader:
-        ret = inference_on_dataset(
-            model, instantiate(cfg.dataloader.test), instantiate(cfg.dataloader.evaluator)
-        )
+        ret = inference_on_dataset(model, instantiate(cfg.dataloader.test), instantiate(cfg.dataloader.evaluator))
         print_csv_format(ret)
         return ret
 
@@ -79,9 +80,7 @@ def do_train(args, cfg):
     train_hooks = [
         hooks.IterationTimer(),
         hooks.LRScheduler(scheduler=instantiate(cfg.lr_multiplier)),
-        hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer)
-        if comm.is_main_process()
-        else None,
+        hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer) if comm.is_main_process() else None,
         hooks.EvalHook(cfg.train.eval_period, lambda: do_test(cfg, model)),
         hooks.PeriodicWriter(
             default_writers(cfg.train.output_dir, cfg.train.max_iter),

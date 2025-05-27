@@ -1,19 +1,18 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 from collections import defaultdict
 import torch
-import sys
 import json
-import numpy as np
 
 from detectron2.structures import Boxes, pairwise_iou
-COCO_PATH = 'datasets/coco/annotations/instances_train2017.json'
-IMG_PATH = 'datasets/coco/train2017/'
-LVIS_PATH = 'datasets/lvis/lvis_v1_train.json'
+
+COCO_PATH = "datasets/coco/annotations/instances_train2017.json"
+IMG_PATH = "datasets/coco/train2017/"
+LVIS_PATH = "datasets/lvis/lvis_v1_train.json"
 NO_SEG = False
 if NO_SEG:
-    SAVE_PATH = 'datasets/lvis/lvis_v1_train+coco_box.json'
+    SAVE_PATH = "datasets/lvis/lvis_v1_train+coco_box.json"
 else:
-    SAVE_PATH = 'datasets/lvis/lvis_v1_train+coco_mask.json'
+    SAVE_PATH = "datasets/lvis/lvis_v1_train+coco_mask.json"
 THRESH = 0.7
 DEBUG = False
 
@@ -105,60 +104,61 @@ COCO_SYNSET_CATEGORIES = [
 
 
 def get_bbox(ann):
-    bbox = ann['bbox']
+    bbox = ann["bbox"]
     return [bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]]
 
 
-if __name__ == '__main__':
-    file_name_key = 'file_name' if 'v0.5' in LVIS_PATH else 'coco_url'
-    coco_data = json.load(open(COCO_PATH, 'r'))
-    lvis_data = json.load(open(LVIS_PATH, 'r'))
+if __name__ == "__main__":
+    file_name_key = "file_name" if "v0.5" in LVIS_PATH else "coco_url"
+    coco_data = json.load(open(COCO_PATH, "r"))
+    lvis_data = json.load(open(LVIS_PATH, "r"))
 
-    coco_cats = coco_data['categories']
-    lvis_cats = lvis_data['categories']
+    coco_cats = coco_data["categories"]
+    lvis_cats = lvis_data["categories"]
 
     num_find = 0
     num_not_find = 0
     num_twice = 0
     coco2lviscats = {}
-    synset2lvisid = {x['synset']: x['id'] for x in lvis_cats}
+    synset2lvisid = {x["synset"]: x["id"] for x in lvis_cats}
     # cocoid2synset = {x['coco_cat_id']: x['synset'] for x in COCO_SYNSET_CATEGORIES}
-    coco2lviscats = {x['coco_cat_id']: synset2lvisid[x['synset']] \
-        for x in COCO_SYNSET_CATEGORIES if x['synset'] in synset2lvisid}
+    coco2lviscats = {
+        x["coco_cat_id"]: synset2lvisid[x["synset"]] for x in COCO_SYNSET_CATEGORIES if x["synset"] in synset2lvisid
+    }
     print(len(coco2lviscats))
-    
-    lvis_file2id = {x[file_name_key][-16:]: x['id'] for x in lvis_data['images']}
-    lvis_id2img = {x['id']: x for x in lvis_data['images']}
-    lvis_catid2name = {x['id']: x['name'] for x in lvis_data['categories']}
+
+    lvis_file2id = {x[file_name_key][-16:]: x["id"] for x in lvis_data["images"]}
+    lvis_id2img = {x["id"]: x for x in lvis_data["images"]}
+    lvis_catid2name = {x["id"]: x["name"] for x in lvis_data["categories"]}
 
     coco_file2anns = {}
-    coco_id2img = {x['id']: x for x in coco_data['images']}
+    coco_id2img = {x["id"]: x for x in coco_data["images"]}
     coco_img2anns = defaultdict(list)
-    for ann in coco_data['annotations']:
-        coco_img = coco_id2img[ann['image_id']]
-        file_name = coco_img['file_name'][-16:]
-        if ann['category_id'] in coco2lviscats and \
-            file_name in lvis_file2id:
+    for ann in coco_data["annotations"]:
+        coco_img = coco_id2img[ann["image_id"]]
+        file_name = coco_img["file_name"][-16:]
+        if ann["category_id"] in coco2lviscats and file_name in lvis_file2id:
             lvis_image_id = lvis_file2id[file_name]
             lvis_image = lvis_id2img[lvis_image_id]
-            lvis_cat_id = coco2lviscats[ann['category_id']]
-            if lvis_cat_id in lvis_image['neg_category_ids']:
+            lvis_cat_id = coco2lviscats[ann["category_id"]]
+            if lvis_cat_id in lvis_image["neg_category_ids"]:
                 continue
                 if DEBUG:
                     import cv2
+
                     img_path = IMG_PATH + file_name
                     img = cv2.imread(img_path)
                     print(lvis_catid2name[lvis_cat_id])
-                    print('neg', [lvis_catid2name[x] for x in lvis_image['neg_category_ids']])
-                    cv2.imshow('img', img)
+                    print("neg", [lvis_catid2name[x] for x in lvis_image["neg_category_ids"]])
+                    cv2.imshow("img", img)
                     cv2.waitKey()
-            ann['category_id'] = lvis_cat_id
-            ann['image_id'] = lvis_image_id
+            ann["category_id"] = lvis_cat_id
+            ann["image_id"] = lvis_image_id
             coco_img2anns[file_name].append(ann)
-    
+
     lvis_img2anns = defaultdict(list)
-    for ann in lvis_data['annotations']:
-        lvis_img = lvis_id2img[ann['image_id']]
+    for ann in lvis_data["annotations"]:
+        lvis_img = lvis_id2img[ann["image_id"]]
         file_name = lvis_img[file_name_key][-16:]
         lvis_img2anns[file_name].append(ann)
 
@@ -168,35 +168,33 @@ if __name__ == '__main__':
         coco_anns = coco_img2anns[file_name]
         lvis_anns = lvis_img2anns[file_name]
         ious = pairwise_iou(
-            Boxes(torch.tensor([get_bbox(x) for x in coco_anns])), 
-            Boxes(torch.tensor([get_bbox(x) for x in lvis_anns]))
+            Boxes(torch.tensor([get_bbox(x) for x in coco_anns])), Boxes(torch.tensor([get_bbox(x) for x in lvis_anns]))
         )
 
         for ann in lvis_anns:
             ann_id_count = ann_id_count + 1
-            ann['id'] = ann_id_count
+            ann["id"] = ann_id_count
             anns.append(ann)
 
         for i, ann in enumerate(coco_anns):
             if len(ious[i]) == 0 or ious[i].max() < THRESH:
                 ann_id_count = ann_id_count + 1
-                ann['id'] = ann_id_count
+                ann["id"] = ann_id_count
                 anns.append(ann)
             else:
                 duplicated = False
                 for j in range(len(ious[i])):
-                    if ious[i, j] >= THRESH and \
-                        coco_anns[i]['category_id'] == lvis_anns[j]['category_id']:
+                    if ious[i, j] >= THRESH and coco_anns[i]["category_id"] == lvis_anns[j]["category_id"]:
                         duplicated = True
                 if not duplicated:
                     ann_id_count = ann_id_count + 1
-                    ann['id'] = ann_id_count
+                    ann["id"] = ann_id_count
                     anns.append(ann)
     if NO_SEG:
         for ann in anns:
-            del ann['segmentation']
-    lvis_data['annotations'] = anns
-    
-    print('# Images', len(lvis_data['images']))
-    print('# Anns', len(lvis_data['annotations']))
-    json.dump(lvis_data, open(SAVE_PATH, 'w'))
+            del ann["segmentation"]
+    lvis_data["annotations"] = anns
+
+    print("# Images", len(lvis_data["images"]))
+    print("# Anns", len(lvis_data["annotations"]))
+    json.dump(lvis_data, open(SAVE_PATH, "w"))

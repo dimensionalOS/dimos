@@ -1,19 +1,14 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # Modified by Xingyi Zhou from https://github.com/facebookresearch/detectron2/blob/master/detectron2/data/datasets/coco.py
-import copy
 import io
 import logging
 import contextlib
 import os
-import datetime
-import json
-import numpy as np
 
-from PIL import Image
 
 from fvcore.common.timer import Timer
-from fvcore.common.file_io import PathManager, file_lock
-from detectron2.structures import BoxMode, PolygonMasks, Boxes
+from fvcore.common.file_io import PathManager
+from detectron2.structures import BoxMode
 from detectron2.data import DatasetCatalog, MetadataCatalog
 
 logger = logging.getLogger(__name__)
@@ -25,19 +20,14 @@ This file contains functions to register a COCO-format dataset to the DatasetCat
 __all__ = ["register_coco_instances", "register_coco_panoptic_separated"]
 
 
-
 def register_oid_instances(name, metadata, json_file, image_root):
-    """
-    """
+    """ """
     # 1. register a function which returns dicts
-    DatasetCatalog.register(name, lambda: load_coco_json_mem_efficient(
-        json_file, image_root, name))
+    DatasetCatalog.register(name, lambda: load_coco_json_mem_efficient(json_file, image_root, name))
 
     # 2. Optionally, add metadata about this dataset,
     # since they might be useful in evaluation, visualization or logging
-    MetadataCatalog.get(name).set(
-        json_file=json_file, image_root=image_root, evaluator_type="oid", **metadata
-    )
+    MetadataCatalog.get(name).set(json_file=json_file, image_root=image_root, evaluator_type="oid", **metadata)
 
 
 def load_coco_json_mem_efficient(json_file, image_root, dataset_name=None, extra_annotation_keys=None):
@@ -88,9 +78,8 @@ def load_coco_json_mem_efficient(json_file, image_root, dataset_name=None, extra
         record["width"] = img_dict["width"]
         image_id = record["image_id"] = img_dict["id"]
         anno_dict_list = coco_api.imgToAnns[image_id]
-        if 'neg_category_ids' in img_dict:
-            record['neg_category_ids'] = \
-                [id_map[x] for x in img_dict['neg_category_ids']]
+        if "neg_category_ids" in img_dict:
+            record["neg_category_ids"] = [id_map[x] for x in img_dict["neg_category_ids"]]
 
         objs = []
         for anno in anno_dict_list:
@@ -117,6 +106,6 @@ def load_coco_json_mem_efficient(json_file, image_root, dataset_name=None, extra
             objs.append(obj)
         record["annotations"] = objs
         dataset_dicts.append(record)
-    
+
     del coco_api
     return dataset_dicts

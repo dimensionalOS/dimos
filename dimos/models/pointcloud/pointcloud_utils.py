@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pickle
 import numpy as np
 import open3d as o3d
 import random
+
 
 def save_pointcloud(pcd, file_path):
     """
     Save a point cloud to a file using Open3D.
     """
     o3d.io.write_point_cloud(file_path, pcd)
+
 
 def restore_pointclouds(pointcloud_paths):
     restored_pointclouds = []
@@ -34,16 +35,22 @@ def create_point_cloud_from_rgbd(rgb_image, depth_image, intrinsic_parameters):
     rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
         o3d.geometry.Image(rgb_image),
         o3d.geometry.Image(depth_image),
-        depth_scale=0.125, #1000.0,
-        depth_trunc=10.0, #10.0,
-        convert_rgb_to_intensity=False
+        depth_scale=0.125,  # 1000.0,
+        depth_trunc=10.0,  # 10.0,
+        convert_rgb_to_intensity=False,
     )
     intrinsic = o3d.camera.PinholeCameraIntrinsic()
-    intrinsic.set_intrinsics(intrinsic_parameters['width'], intrinsic_parameters['height'],
-                             intrinsic_parameters['fx'], intrinsic_parameters['fy'],
-                             intrinsic_parameters['cx'], intrinsic_parameters['cy'])
+    intrinsic.set_intrinsics(
+        intrinsic_parameters["width"],
+        intrinsic_parameters["height"],
+        intrinsic_parameters["fx"],
+        intrinsic_parameters["fy"],
+        intrinsic_parameters["cx"],
+        intrinsic_parameters["cy"],
+    )
     pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, intrinsic)
     return pcd
+
 
 def canonicalize_point_cloud(pcd, canonicalize_threshold=0.3):
     # Segment the largest plane, assumed to be the floor
@@ -75,9 +82,7 @@ def canonicalize_point_cloud(pcd, canonicalize_threshold=0.3):
         pcd.transform(transformation)
 
         # Additional 180-degree rotation around the Z-axis
-        rotation_z_180 = np.array([[np.cos(np.pi), -np.sin(np.pi), 0],
-                                   [np.sin(np.pi), np.cos(np.pi), 0],
-                                   [0, 0, 1]])
+        rotation_z_180 = np.array([[np.cos(np.pi), -np.sin(np.pi), 0], [np.sin(np.pi), np.cos(np.pi), 0], [0, 0, 1]])
         pcd.rotate(rotation_z_180, center=(0, 0, 0))
 
         return pcd, canonicalized, transformation
@@ -141,6 +146,7 @@ def human_like_distance(distance_meters):
     # Fallback to the last choice if something goes wrong
     return f"{choices[-1][0]} {choices[-1][1]}"
 
+
 def calculate_distances_between_point_clouds(A, B):
     dist_pcd1_to_pcd2 = np.asarray(A.compute_point_cloud_distance(B))
     dist_pcd2_to_pcd1 = np.asarray(B.compute_point_cloud_distance(A))
@@ -148,11 +154,13 @@ def calculate_distances_between_point_clouds(A, B):
     avg_dist = np.mean(combined_distances)
     return human_like_distance(avg_dist)
 
+
 def calculate_centroid(pcd):
     """Calculate the centroid of a point cloud."""
     points = np.asarray(pcd.points)
     centroid = np.mean(points, axis=0)
     return centroid
+
 
 def calculate_relative_positions(centroids):
     """Calculate the relative positions between centroids of point clouds."""
@@ -164,13 +172,12 @@ def calculate_relative_positions(centroids):
             relative_vector = centroids[j] - centroids[i]
 
             distance = np.linalg.norm(relative_vector)
-            relative_positions_info.append({
-                'pcd_pair': (i, j),
-                'relative_vector': relative_vector,
-                'distance': distance
-            })
+            relative_positions_info.append(
+                {"pcd_pair": (i, j), "relative_vector": relative_vector, "distance": distance}
+            )
 
     return relative_positions_info
+
 
 def get_bounding_box_height(pcd):
     """
@@ -184,6 +191,7 @@ def get_bounding_box_height(pcd):
     """
     aabb = pcd.get_axis_aligned_bounding_box()
     return aabb.get_extent()[1]  # Assuming the Y-axis is the up-direction
+
 
 def compare_bounding_box_height(pcd_i, pcd_j):
     """

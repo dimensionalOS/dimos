@@ -12,11 +12,12 @@ from detectron2.utils.visualizer import Visualizer
 from detectron2.data import MetadataCatalog
 
 # Detic libraries
-sys.path.insert(0, 'third_party/CenterNet2/')
+sys.path.insert(0, "third_party/CenterNet2/")
 from centernet.config import add_centernet_config
 from detic.config import add_detic_config
 from detic.modeling.utils import reset_cls_test
 from detic.modeling.text.text_encoder import build_text_encoder
+
 
 class Predictor(cog.Predictor):
     def setup(self):
@@ -24,22 +25,22 @@ class Predictor(cog.Predictor):
         add_centernet_config(cfg)
         add_detic_config(cfg)
         cfg.merge_from_file("configs/Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.yaml")
-        cfg.MODEL.WEIGHTS = 'Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth'
+        cfg.MODEL.WEIGHTS = "Detic_LCOCOI21k_CLIP_SwinB_896b32_4x_ft4x_max-size.pth"
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # set threshold for this model
-        cfg.MODEL.ROI_BOX_HEAD.ZEROSHOT_WEIGHT_PATH = 'rand'
+        cfg.MODEL.ROI_BOX_HEAD.ZEROSHOT_WEIGHT_PATH = "rand"
         cfg.MODEL.ROI_HEADS.ONE_CLASS_PER_PROPOSAL = True
         self.predictor = DefaultPredictor(cfg)
         self.BUILDIN_CLASSIFIER = {
-            'lvis': 'datasets/metadata/lvis_v1_clip_a+cname.npy',
-            'objects365': 'datasets/metadata/o365_clip_a+cnamefix.npy',
-            'openimages': 'datasets/metadata/oid_clip_a+cname.npy',
-            'coco': 'datasets/metadata/coco_clip_a+cname.npy',
+            "lvis": "datasets/metadata/lvis_v1_clip_a+cname.npy",
+            "objects365": "datasets/metadata/o365_clip_a+cnamefix.npy",
+            "openimages": "datasets/metadata/oid_clip_a+cname.npy",
+            "coco": "datasets/metadata/coco_clip_a+cname.npy",
         }
         self.BUILDIN_METADATA_PATH = {
-            'lvis': 'lvis_v1_val',
-            'objects365': 'objects365_v2_val',
-            'openimages': 'oid_val_expanded',
-            'coco': 'coco_2017_val',
+            "lvis": "lvis_v1_val",
+            "objects365": "objects365_v2_val",
+            "openimages": "oid_val_expanded",
+            "coco": "coco_2017_val",
         }
 
     @cog.input(
@@ -50,8 +51,8 @@ class Predictor(cog.Predictor):
     @cog.input(
         "vocabulary",
         type=str,
-        default='lvis',
-        options=['lvis', 'objects365', 'openimages', 'coco', 'custom'],
+        default="lvis",
+        options=["lvis", "objects365", "openimages", "coco", "custom"],
         help="Choose vocabulary",
     )
     @cog.input(
@@ -62,17 +63,18 @@ class Predictor(cog.Predictor):
     )
     def predict(self, image, vocabulary, custom_vocabulary):
         image = cv2.imread(str(image))
-        if not vocabulary == 'custom':
+        if not vocabulary == "custom":
             metadata = MetadataCatalog.get(self.BUILDIN_METADATA_PATH[vocabulary])
             classifier = self.BUILDIN_CLASSIFIER[vocabulary]
             num_classes = len(metadata.thing_classes)
             reset_cls_test(self.predictor.model, classifier, num_classes)
 
         else:
-            assert custom_vocabulary is not None and len(custom_vocabulary.split(',')) > 0, \
+            assert custom_vocabulary is not None and len(custom_vocabulary.split(",")) > 0, (
                 "Please provide your own vocabularies when vocabulary is set to 'custom'."
+            )
             metadata = MetadataCatalog.get(str(time.time()))
-            metadata.thing_classes = custom_vocabulary.split(',')
+            metadata.thing_classes = custom_vocabulary.split(",")
             classifier = get_clip_embeddings(metadata.thing_classes)
             num_classes = len(metadata.thing_classes)
             reset_cls_test(self.predictor.model, classifier, num_classes)
@@ -89,7 +91,7 @@ class Predictor(cog.Predictor):
         return out_path
 
 
-def get_clip_embeddings(vocabulary, prompt='a '):
+def get_clip_embeddings(vocabulary, prompt="a "):
     text_encoder = build_text_encoder(pretrain=True)
     text_encoder.eval()
     texts = [prompt + x for x in vocabulary]

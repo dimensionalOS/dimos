@@ -13,12 +13,14 @@ from detectron2.utils.logger import setup_logger
 
 from predictor import VisualizationDemo
 from centernet.config import add_centernet_config
+
 # constants
 WINDOW_NAME = "CenterNet2 detections"
 
 from detectron2.utils.video_visualizer import VideoVisualizer
-from detectron2.utils.visualizer import ColorMode, Visualizer
+from detectron2.utils.visualizer import ColorMode
 from detectron2.data import MetadataCatalog
+
 
 def setup_cfg(args):
     # load config from file and command-line arguments
@@ -29,7 +31,7 @@ def setup_cfg(args):
     # Set score_threshold for builtin models
     cfg.MODEL.RETINANET.SCORE_THRESH_TEST = args.confidence_threshold
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = args.confidence_threshold
-    if cfg.MODEL.META_ARCHITECTURE in ['ProposalNetwork', 'CenterNetDetector']:
+    if cfg.MODEL.META_ARCHITECTURE in ["ProposalNetwork", "CenterNetDetector"]:
         cfg.MODEL.CENTERNET.INFERENCE_TH = args.confidence_threshold
         cfg.MODEL.CENTERNET.NMS_TH = cfg.MODEL.ROI_HEADS.NMS_THRESH_TEST
     cfg.MODEL.PANOPTIC_FPN.COMBINE.INSTANCES_CONFIDENCE_THRESH = args.confidence_threshold
@@ -50,8 +52,7 @@ def get_parser():
     parser.add_argument("--input", nargs="+", help="A list of space separated input images")
     parser.add_argument(
         "--output",
-        help="A file or directory to save output visualizations. "
-        "If not given, will show output in an OpenCV window.",
+        help="A file or directory to save output visualizations. If not given, will show output in an OpenCV window.",
     )
 
     parser.add_argument(
@@ -86,17 +87,15 @@ if __name__ == "__main__":
             args.input = [args.input[0] + x for x in files]
             assert args.input, "The input path(s) was not found"
         visualizer = VideoVisualizer(
-            MetadataCatalog.get(
-                cfg.DATASETS.TEST[0] if len(cfg.DATASETS.TEST) else "__unused"
-            ), 
-            instance_mode=ColorMode.IMAGE)
+            MetadataCatalog.get(cfg.DATASETS.TEST[0] if len(cfg.DATASETS.TEST) else "__unused"),
+            instance_mode=ColorMode.IMAGE,
+        )
         for path in tqdm.tqdm(args.input, disable=not args.output):
             # use PIL, to be consistent with evaluation
             img = read_image(path, format="BGR")
             start_time = time.time()
-            predictions, visualized_output = demo.run_on_image(
-                img, visualizer=visualizer)
-            if 'instances' in predictions:
+            predictions, visualized_output = demo.run_on_image(img, visualizer=visualizer)
+            if "instances" in predictions:
                 logger.info(
                     "{}: detected {} instances in {:.2f}s".format(
                         path, len(predictions["instances"]), time.time() - start_time
@@ -134,7 +133,7 @@ if __name__ == "__main__":
             else:
                 # cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
                 cv2.imshow(WINDOW_NAME, visualized_output.get_image()[:, :, ::-1])
-                if cv2.waitKey(1 ) == 27:
+                if cv2.waitKey(1) == 27:
                     break  # esc to quit
     elif args.webcam:
         assert args.input is None, "Cannot have both --input and --webcam!"
@@ -149,7 +148,7 @@ if __name__ == "__main__":
         video = cv2.VideoCapture(args.video_input)
         width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        frames_per_second = 15 # video.get(cv2.CAP_PROP_FPS)
+        frames_per_second = 15  # video.get(cv2.CAP_PROP_FPS)
         num_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
         basename = os.path.basename(args.video_input)
 

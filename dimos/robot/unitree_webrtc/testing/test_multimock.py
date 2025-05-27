@@ -12,6 +12,7 @@ from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.type.timeseries import to_datetime
 from dimos.robot.unitree_webrtc.testing.multimock import Multimock
 
+
 @pytest.mark.needsdata
 @pytest.mark.vis
 def test_multimock_stream():

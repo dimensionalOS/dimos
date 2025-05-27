@@ -16,15 +16,11 @@ import os
 import cv2
 import numpy as np
 import open3d as o3d
-from pathlib import Path
 from PIL import Image
 import logging
 
 from dimos.models.segmentation.segment_utils import apply_mask_to_image
-from dimos.models.pointcloud.pointcloud_utils import (
-    create_point_cloud_from_rgbd,
-    canonicalize_point_cloud
-)
+from dimos.models.pointcloud.pointcloud_utils import create_point_cloud_from_rgbd, canonicalize_point_cloud
 from dimos.types.pointcloud import PointCloudType
 
 # Setup logging
@@ -48,12 +44,12 @@ class PointCloudProcessor:
 
         # Default intrinsic parameters
         self.default_intrinsic_parameters = {
-            'width': 640,
-            'height': 480,
-            'fx': 960.0,
-            'fy': 960.0,
-            'cx': 320.0,
-            'cy': 240.0,
+            "width": 640,
+            "height": 480,
+            "fx": 960.0,
+            "fy": 960.0,
+            "cx": 320.0,
+            "cy": 240.0,
         }
         self.intrinsic_parameters = intrinsic_parameters if intrinsic_parameters else self.default_intrinsic_parameters
 
@@ -75,23 +71,25 @@ class PointCloudProcessor:
 
             # Convert images to OpenCV format if they are PIL Images
             if isinstance(image, Image.Image):
-                original_image_cv = cv2.cvtColor(np.array(image.convert('RGB')), cv2.COLOR_RGB2BGR)
+                original_image_cv = cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR)
             else:
                 original_image_cv = image
 
             if isinstance(depth_map, Image.Image):
-                depth_image_cv = cv2.cvtColor(np.array(depth_map.convert('RGB')), cv2.COLOR_RGB2BGR)
+                depth_image_cv = cv2.cvtColor(np.array(depth_map.convert("RGB")), cv2.COLOR_RGB2BGR)
             else:
                 depth_image_cv = depth_map
 
             width, height = original_image_cv.shape[1], original_image_cv.shape[0]
             intrinsic_parameters = self.intrinsic_parameters.copy()
-            intrinsic_parameters.update({
-                'width': width,
-                'height': height,
-                'cx': width / 2,
-                'cy': height / 2,      
-            })
+            intrinsic_parameters.update(
+                {
+                    "width": width,
+                    "height": height,
+                    "cx": width / 2,
+                    "cy": height / 2,
+                }
+            )
 
             point_clouds = []
             point_cloud_data = []

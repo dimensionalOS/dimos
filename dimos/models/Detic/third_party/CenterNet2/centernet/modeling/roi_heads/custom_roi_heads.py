@@ -1,21 +1,12 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-import numpy as np
-import json
-import math
 import torch
-from torch import nn
-from torch.autograd.function import Function
-from typing import Dict, List, Optional, Tuple, Union
 
-from detectron2.layers import ShapeSpec
-from detectron2.structures import Boxes, Instances, pairwise_iou
 from detectron2.utils.events import get_event_storage
 
 from detectron2.modeling.box_regression import Box2BoxTransform
 from detectron2.modeling.roi_heads.fast_rcnn import fast_rcnn_inference
 from detectron2.modeling.roi_heads.roi_heads import ROI_HEADS_REGISTRY, StandardROIHeads
 from detectron2.modeling.roi_heads.cascade_rcnn import CascadeROIHeads
-from detectron2.modeling.roi_heads.box_head import build_box_head
 from .custom_fast_rcnn import CustomFastRCNNOutputLayers
 
 
@@ -24,18 +15,15 @@ class CustomROIHeads(StandardROIHeads):
     @classmethod
     def _init_box_head(self, cfg, input_shape):
         ret = super()._init_box_head(cfg, input_shape)
-        del ret['box_predictor']
-        ret['box_predictor'] = CustomFastRCNNOutputLayers(
-            cfg, ret['box_head'].output_shape)
+        del ret["box_predictor"]
+        ret["box_predictor"] = CustomFastRCNNOutputLayers(cfg, ret["box_head"].output_shape)
         self.debug = cfg.DEBUG
         if self.debug:
             self.debug_show_name = cfg.DEBUG_SHOW_NAME
             self.save_debug = cfg.SAVE_DEBUG
             self.vis_thresh = cfg.VIS_THRESH
-            self.pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(
-                torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
-            self.pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(
-                torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            self.pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            self.pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
         return ret
 
     def forward(self, images, features, proposals, targets=None):
@@ -59,11 +47,14 @@ class CustomROIHeads(StandardROIHeads):
             pred_instances = self.forward_with_given_boxes(features, pred_instances)
             if self.debug:
                 from ..debug import debug_second_stage
+
                 denormalizer = lambda x: x * self.pixel_std + self.pixel_mean
                 debug_second_stage(
                     [denormalizer(images[0].clone())],
-                    pred_instances, proposals=proposals,
-                    debug_show_name=self.debug_show_name)
+                    pred_instances,
+                    proposals=proposals,
+                    debug_show_name=self.debug_show_name,
+                )
             return pred_instances, {}
 
 
@@ -73,40 +64,35 @@ class CustomCascadeROIHeads(CascadeROIHeads):
     def _init_box_head(self, cfg, input_shape):
         self.mult_proposal_score = cfg.MODEL.ROI_BOX_HEAD.MULT_PROPOSAL_SCORE
         ret = super()._init_box_head(cfg, input_shape)
-        del ret['box_predictors']
+        del ret["box_predictors"]
         cascade_bbox_reg_weights = cfg.MODEL.ROI_BOX_CASCADE_HEAD.BBOX_REG_WEIGHTS
         box_predictors = []
-        for box_head, bbox_reg_weights in zip(ret['box_heads'], cascade_bbox_reg_weights):
+        for box_head, bbox_reg_weights in zip(ret["box_heads"], cascade_bbox_reg_weights):
             box_predictors.append(
                 CustomFastRCNNOutputLayers(
-                    cfg, box_head.output_shape,
-                    box2box_transform=Box2BoxTransform(weights=bbox_reg_weights)
-                ))
-        ret['box_predictors'] = box_predictors
+                    cfg, box_head.output_shape, box2box_transform=Box2BoxTransform(weights=bbox_reg_weights)
+                )
+            )
+        ret["box_predictors"] = box_predictors
         self.debug = cfg.DEBUG
         if self.debug:
             self.debug_show_name = cfg.DEBUG_SHOW_NAME
             self.save_debug = cfg.SAVE_DEBUG
             self.vis_thresh = cfg.VIS_THRESH
-            self.pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(
-                torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
-            self.pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(
-                torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            self.pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
+            self.pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(torch.device(cfg.MODEL.DEVICE)).view(3, 1, 1)
         return ret
-
 
     def _forward_box(self, features, proposals, targets=None):
         """
         Add mult proposal scores at testing
         """
         if (not self.training) and self.mult_proposal_score:
-            if len(proposals) > 0 and proposals[0].has('scores'):
-                proposal_scores = [
-                    p.get('scores') for p in proposals]
+            if len(proposals) > 0 and proposals[0].has("scores"):
+                proposal_scores = [p.get("scores") for p in proposals]
             else:
-                proposal_scores = [
-                    p.get('objectness_logits') for p in proposals]
-        
+                proposal_scores = [p.get("objectness_logits") for p in proposals]
+
         features = [features[f] for f in self.box_in_features]
         head_outputs = []  # (predictor, predictions, proposals)
         prev_pred_boxes = None
@@ -135,10 +121,9 @@ class CustomCascadeROIHeads(CascadeROIHeads):
                 sum(list(scores_per_image)) * (1.0 / self.num_cascade_stages)
                 for scores_per_image in zip(*scores_per_stage)
             ]
-            
+
             if self.mult_proposal_score:
-                scores = [(s * ps[:, None]) ** 0.5 \
-                    for s, ps in zip(scores, proposal_scores)]
+                scores = [(s * ps[:, None]) ** 0.5 for s, ps in zip(scores, proposal_scores)]
 
             predictor, predictions, proposals = head_outputs[-1]
             boxes = predictor.predict_boxes(predictions, proposals)
@@ -150,13 +135,13 @@ class CustomCascadeROIHeads(CascadeROIHeads):
                 predictor.test_nms_thresh,
                 predictor.test_topk_per_image,
             )
-            
+
             return pred_instances
 
     def forward(self, images, features, proposals, targets=None):
-        '''
+        """
         enable debug
-        '''
+        """
         if not self.debug:
             del images
         if self.training:
@@ -173,13 +158,14 @@ class CustomCascadeROIHeads(CascadeROIHeads):
             pred_instances = self.forward_with_given_boxes(features, pred_instances)
             if self.debug:
                 from ..debug import debug_second_stage
+
                 denormalizer = lambda x: x * self.pixel_std + self.pixel_mean
                 debug_second_stage(
                     [denormalizer(x.clone()) for x in images],
-                    pred_instances, proposals=proposals,
+                    pred_instances,
+                    proposals=proposals,
                     save_debug=self.save_debug,
                     debug_show_name=self.debug_show_name,
-                    vis_thresh=self.vis_thresh)
+                    vis_thresh=self.vis_thresh,
+                )
             return pred_instances, {}
-
-

@@ -14,10 +14,11 @@
 
 import requests
 from dimos.skills.skills import AbstractSkill
-from typing import Optional, Dict, Any
 from pydantic import Field
 import logging
+
 logger = logging.getLogger(__name__)
+
 
 class GenericRestSkill(AbstractSkill):
     """Performs a configurable REST API call.
@@ -29,9 +30,10 @@ class GenericRestSkill(AbstractSkill):
         url: The target URL for the API call.
         method: The HTTP method (e.g., 'GET', 'POST'). Case-insensitive.
         timeout: Request timeout in seconds.
-    """ 
+    """
+
     # TODO: Add query parameters, request body data (form-encoded or JSON), and headers.
-    #, query
+    # , query
     # parameters, request body data (form-encoded or JSON), and headers.
     # params: Optional dictionary of URL query parameters.
     # data: Optional dictionary for form-encoded request body data.
@@ -45,7 +47,6 @@ class GenericRestSkill(AbstractSkill):
     # data: Optional[Dict[str, Any]] = Field(default=None, description="Form-encoded request body.")
     # json_payload: Optional[Dict[str, Any]] = Field(default=None, alias="json", description="JSON request body.")
     # headers: Optional[Dict[str, str]] = Field(default=None, description="HTTP headers.")
-
 
     def __call__(self) -> str:
         """Executes the configured REST API call.
@@ -68,21 +69,21 @@ class GenericRestSkill(AbstractSkill):
         try:
             logger.debug(
                 f"Executing {self.method.upper()} request to {self.url} "
-                f"with timeout={self.timeout}" # , params={self.params}, "
+                f"with timeout={self.timeout}"  # , params={self.params}, "
                 # f"data={self.data}, json={self.json_payload}, headers={self.headers}"
             )
             response = requests.request(
-                method=self.method.upper(), # Normalize method to uppercase
+                method=self.method.upper(),  # Normalize method to uppercase
                 url=self.url,
                 # params=self.params,
                 # data=self.data,
                 # json=self.json_payload, # Use the attribute name defined in Pydantic
                 # headers=self.headers,
-                timeout=self.timeout
+                timeout=self.timeout,
             )
             response.raise_for_status()  # Raises HTTPError for bad responses (4xx or 5xx)
             logger.debug(f"Request successful. Status: {response.status_code}, Response: {response.text[:100]}...")
-            return response.text # Return text content directly
+            return response.text  # Return text content directly
         except requests.exceptions.HTTPError as http_err:
             logger.error(f"HTTP error occurred: {http_err} - Status Code: {http_err.response.status_code}")
             return f"HTTP error making {self.method.upper()} request to {self.url}: {http_err.response.status_code} {http_err.response.reason}"
@@ -90,5 +91,5 @@ class GenericRestSkill(AbstractSkill):
             logger.error(f"Request exception occurred: {req_err}")
             return f"Error making {self.method.upper()} request to {self.url}: {req_err}"
         except Exception as e:
-            logger.exception(f"An unexpected error occurred: {e}") # Log the full traceback
+            logger.exception(f"An unexpected error occurred: {e}")  # Log the full traceback
             return f"An unexpected error occurred: {type(e).__name__}: {e}"

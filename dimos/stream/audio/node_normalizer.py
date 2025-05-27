@@ -88,9 +88,7 @@ class AudioNormalizer(AbstractAudioTransform):
         ideal_gain = min(ideal_gain, self.max_gain)
 
         # Smoothly adapt current gain towards ideal gain
-        self.current_gain = (
-            1 - self.adapt_speed
-        ) * self.current_gain + self.adapt_speed * ideal_gain
+        self.current_gain = (1 - self.adapt_speed) * self.current_gain + self.adapt_speed * ideal_gain
 
         # Apply gain to audio data
         normalized_data = audio_event.data * self.current_gain
@@ -137,10 +135,7 @@ class AudioNormalizer(AbstractAudioTransform):
                 on_completed=lambda: observer.on_completed(),
             )
 
-            logger.info(
-                f"Started audio normalizer with target level: {self.target_level}, "
-                f"max gain: {self.max_gain}"
-            )
+            logger.info(f"Started audio normalizer with target level: {self.target_level}, max gain: {self.max_gain}")
 
             # Return a disposable to clean up resources
             def dispose():
@@ -191,9 +186,7 @@ if __name__ == "__main__":
         print("Using simulated audio source")
 
     # Select volume function
-    volume_func = (
-        calculate_rms_volume if volume_method == "rms" else calculate_peak_volume
-    )
+    volume_func = calculate_rms_volume if volume_method == "rms" else calculate_peak_volume
 
     # Create normalizer
     normalizer = AudioNormalizer(target_level=target_level, volume_func=volume_func)

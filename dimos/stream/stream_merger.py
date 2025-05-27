@@ -1,13 +1,13 @@
-from typing import List, TypeVar, Tuple, Any
+from typing import List, TypeVar, Tuple
 from reactivex import Observable
 from reactivex import operators as ops
 
-T = TypeVar('T')
-Q = TypeVar('Q')
+T = TypeVar("T")
+Q = TypeVar("Q")
+
 
 def create_stream_merger(
-    data_input_stream: Observable[T],
-    text_query_stream: Observable[Q]
+    data_input_stream: Observable[T], text_query_stream: Observable[Q]
 ) -> Observable[Tuple[Q, List[T]]]:
     """
     Creates a merged stream that combines the latest value from data_input_stream
@@ -26,8 +26,6 @@ def create_stream_merger(
         # This avoids any boolean evaluation of arrays
         ops.map(lambda x: [x])
     )
-    
+
     # Use safe_data_stream instead of raw data_input_stream
-    return text_query_stream.pipe(
-        ops.with_latest_from(safe_data_stream)
-    )
+    return text_query_stream.pipe(ops.with_latest_from(safe_data_stream))

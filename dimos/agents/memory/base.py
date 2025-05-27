@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod
-import logging
+from abc import abstractmethod
 from dimos.exceptions.agent_memory_exceptions import UnknownConnectionTypeError, AgentMemoryConnectionError
 from dimos.utils.logging_config import setup_logger
 
@@ -23,8 +22,9 @@ from dimos.utils.logging_config import setup_logger
 # TODO
 # class AbstractAgentSymbolicMemory(AbstractAgentMemory):
 
-class AbstractAgentSemanticMemory(): # AbstractAgentMemory):
-    def __init__(self, connection_type='local', **kwargs):
+
+class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
+    def __init__(self, connection_type="local", **kwargs):
         """
         Initialize with dynamic connection parameters.
         Args:
@@ -34,25 +34,26 @@ class AbstractAgentSemanticMemory(): # AbstractAgentMemory):
             AgentMemoryConnectionError: If initializing the database connection fails.
         """
         self.logger = setup_logger(self.__class__.__name__)
-        self.logger.info('Initializing AgentMemory with connection type: %s', connection_type)
+        self.logger.info("Initializing AgentMemory with connection type: %s", connection_type)
         self.connection_params = kwargs
         self.db_connection = None  # Holds the conection, whether local or remote, to the database used.
-        
-        if connection_type not in ['local', 'remote']:
-            error = UnknownConnectionTypeError(f"Invalid connection_type {connection_type}. Expected 'local' or 'remote'.")
+
+        if connection_type not in ["local", "remote"]:
+            error = UnknownConnectionTypeError(
+                f"Invalid connection_type {connection_type}. Expected 'local' or 'remote'."
+            )
             self.logger.error(str(error))
             raise error
 
         try:
-            if connection_type == 'remote':
+            if connection_type == "remote":
                 self.connect()
-            elif connection_type == 'local':
+            elif connection_type == "local":
                 self.create()
         except Exception as e:
             self.logger.error("Failed to initialize database connection: %s", str(e), exc_info=True)
             raise AgentMemoryConnectionError("Initialization failed due to an unexpected error.", cause=e) from e
 
-    
     @abstractmethod
     def connect(self):
         """Establish a connection to the data store using dynamic parameters specified during initialization."""
@@ -77,7 +78,7 @@ class AbstractAgentSemanticMemory(): # AbstractAgentMemory):
         Args:
             vector_id (any): The identifier of the vector to retrieve.
         """
-    
+
     @abstractmethod
     def query(self, query_texts, n_results=4, similarity_threshold=None):
         """Performs a semantic search in the vector database.
@@ -123,4 +124,3 @@ class AbstractAgentSemanticMemory(): # AbstractAgentMemory):
 # (some sort of tag/metadata)
 
 # temporal
-
