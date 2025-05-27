@@ -75,7 +75,9 @@ class Sam2DSegmenter:
 
         if len(results) > 0:
             # Get initial segmentation results
-            masks, bboxes, track_ids, probs, names, areas = extract_masks_bboxes_probs_names(results[0])
+            masks, bboxes, track_ids, probs, names, areas = extract_masks_bboxes_probs_names(
+                results[0]
+            )
 
             # Filter results
             (
@@ -100,8 +102,8 @@ class Sam2DSegmenter:
                 )
 
                 # Get tracked results
-                tracked_masks, tracked_bboxes, tracked_target_ids, tracked_probs, tracked_names = get_tracked_results(
-                    tracked_targets
+                tracked_masks, tracked_bboxes, tracked_target_ids, tracked_probs, tracked_names = (
+                    get_tracked_results(tracked_targets)
                 )
 
                 if self.use_analyzer:
@@ -111,7 +113,9 @@ class Sam2DSegmenter:
                     # Remove untracked objects from object_names
                     all_target_ids = list(self.tracker.targets.keys())
                     self.object_names = {
-                        track_id: name for track_id, name in self.object_names.items() if track_id in all_target_ids
+                        track_id: name
+                        for track_id, name in self.object_names.items()
+                        if track_id in all_target_ids
                     }
 
                     # Remove untracked objects from queue and results
@@ -122,18 +126,37 @@ class Sam2DSegmenter:
                     # Filter out any IDs being analyzed from the to_be_analyzed queue
                     if self.current_queue_ids:
                         self.to_be_analyzed = deque(
-                            [tid for tid in self.to_be_analyzed if tid not in self.current_queue_ids]
+                            [
+                                tid
+                                for tid in self.to_be_analyzed
+                                if tid not in self.current_queue_ids
+                            ]
                         )
 
                     # Add new track_ids to analysis queue
                     for track_id in tracked_target_ids:
-                        if track_id not in self.object_names and track_id not in self.to_be_analyzed:
+                        if (
+                            track_id not in self.object_names
+                            and track_id not in self.to_be_analyzed
+                        ):
                             self.to_be_analyzed.append(track_id)
 
-                return tracked_masks, tracked_bboxes, tracked_target_ids, tracked_probs, tracked_names
+                return (
+                    tracked_masks,
+                    tracked_bboxes,
+                    tracked_target_ids,
+                    tracked_probs,
+                    tracked_names,
+                )
             else:
                 # Return filtered results directly if tracker is disabled
-                return filtered_masks, filtered_bboxes, filtered_track_ids, filtered_probs, filtered_names
+                return (
+                    filtered_masks,
+                    filtered_bboxes,
+                    filtered_track_ids,
+                    filtered_probs,
+                    filtered_names,
+                )
         return [], [], [], [], []
 
     def check_analysis_status(self, tracked_target_ids):
@@ -209,7 +232,8 @@ class Sam2DSegmenter:
             return tracked_names
 
         return [
-            self.object_names.get(track_id, tracked_name) for track_id, tracked_name in zip(track_ids, tracked_names)
+            self.object_names.get(track_id, tracked_name)
+            for track_id, tracked_name in zip(track_ids, tracked_names)
         ]
 
     def visualize_results(self, image, masks, bboxes, track_ids, probs, names):

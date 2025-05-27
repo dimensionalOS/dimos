@@ -76,7 +76,9 @@ class IsaacStream(StreamBase):
         if not camera_prim:
             raise RuntimeError(f"Failed to find camera at path: {self.camera_path}")
 
-        self.render_product = self.rep.create.render_product(self.camera_path, resolution=(self.width, self.height))
+        self.render_product = self.rep.create.render_product(
+            self.camera_path, resolution=(self.width, self.height)
+        )
 
     def _setup_annotator(self):
         """Setup the specified annotator."""
@@ -114,7 +116,9 @@ class IsaacStream(StreamBase):
                 if frame_count % 100 == 0:
                     elapsed_time = time.time() - start_time
                     current_fps = frame_count / elapsed_time
-                    print(f"[Stream] Processed {frame_count} frames | Current FPS: {current_fps:.2f}")
+                    print(
+                        f"[Stream] Processed {frame_count} frames | Current FPS: {current_fps:.2f}"
+                    )
 
         except KeyboardInterrupt:
             print("\n[Stream] Received keyboard interrupt, stopping stream...")

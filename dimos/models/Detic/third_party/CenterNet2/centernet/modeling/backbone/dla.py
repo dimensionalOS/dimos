@@ -42,11 +42,19 @@ class BasicBlock(nn.Module):
     def __init__(self, inplanes, planes, stride=1, dilation=1, norm="BN"):
         super(BasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(
-            inplanes, planes, kernel_size=3, stride=stride, padding=dilation, bias=False, dilation=dilation
+            inplanes,
+            planes,
+            kernel_size=3,
+            stride=stride,
+            padding=dilation,
+            bias=False,
+            dilation=dilation,
         )
         self.bn1 = get_norm(norm, planes)
         self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=dilation, bias=False, dilation=dilation)
+        self.conv2 = nn.Conv2d(
+            planes, planes, kernel_size=3, stride=1, padding=dilation, bias=False, dilation=dilation
+        )
         self.bn2 = get_norm(norm, planes)
         self.stride = stride
 
@@ -77,7 +85,13 @@ class Bottleneck(nn.Module):
         self.conv1 = nn.Conv2d(inplanes, bottle_planes, kernel_size=1, bias=False)
         self.bn1 = get_norm(norm, bottle_planes)
         self.conv2 = nn.Conv2d(
-            bottle_planes, bottle_planes, kernel_size=3, stride=stride, padding=dilation, bias=False, dilation=dilation
+            bottle_planes,
+            bottle_planes,
+            kernel_size=3,
+            stride=stride,
+            padding=dilation,
+            bias=False,
+            dilation=dilation,
         )
         self.bn2 = get_norm(norm, bottle_planes)
         self.conv3 = nn.Conv2d(bottle_planes, planes, kernel_size=1, bias=False)
@@ -109,7 +123,9 @@ class Bottleneck(nn.Module):
 class Root(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, residual, norm="BN"):
         super(Root, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, 1, stride=1, bias=False, padding=(kernel_size - 1) // 2)
+        self.conv = nn.Conv2d(
+            in_channels, out_channels, 1, stride=1, bias=False, padding=(kernel_size - 1) // 2
+        )
         self.bn = get_norm(norm, out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.residual = residual
@@ -183,7 +199,8 @@ class Tree(nn.Module):
             self.downsample = nn.MaxPool2d(stride, stride=stride)
         if in_channels != out_channels:
             self.project = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, bias=False), get_norm(norm, out_channels)
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, bias=False),
+                get_norm(norm, out_channels),
             )
 
     def forward(self, x, residual=None, children=None):
@@ -203,7 +220,9 @@ class Tree(nn.Module):
 
 
 class DLA(nn.Module):
-    def __init__(self, num_layers, levels, channels, block=BasicBlock, residual_root=False, norm="BN"):
+    def __init__(
+        self, num_layers, levels, channels, block=BasicBlock, residual_root=False, norm="BN"
+    ):
         """
         Args:
         """
@@ -218,24 +237,56 @@ class DLA(nn.Module):
         self.level0 = self._make_conv_level(channels[0], channels[0], levels[0])
         self.level1 = self._make_conv_level(channels[0], channels[1], levels[1], stride=2)
         self.level2 = Tree(
-            levels[2], block, channels[1], channels[2], 2, level_root=False, root_residual=residual_root, norm=norm
+            levels[2],
+            block,
+            channels[1],
+            channels[2],
+            2,
+            level_root=False,
+            root_residual=residual_root,
+            norm=norm,
         )
         self.level3 = Tree(
-            levels[3], block, channels[2], channels[3], 2, level_root=True, root_residual=residual_root, norm=norm
+            levels[3],
+            block,
+            channels[2],
+            channels[3],
+            2,
+            level_root=True,
+            root_residual=residual_root,
+            norm=norm,
         )
         self.level4 = Tree(
-            levels[4], block, channels[3], channels[4], 2, level_root=True, root_residual=residual_root, norm=norm
+            levels[4],
+            block,
+            channels[3],
+            channels[4],
+            2,
+            level_root=True,
+            root_residual=residual_root,
+            norm=norm,
         )
         self.level5 = Tree(
-            levels[5], block, channels[4], channels[5], 2, level_root=True, root_residual=residual_root, norm=norm
+            levels[5],
+            block,
+            channels[4],
+            channels[5],
+            2,
+            level_root=True,
+            root_residual=residual_root,
+            norm=norm,
         )
-        self.load_pretrained_model(data="imagenet", name="dla{}".format(num_layers), hash=HASH[num_layers])
+        self.load_pretrained_model(
+            data="imagenet", name="dla{}".format(num_layers), hash=HASH[num_layers]
+        )
 
     def load_pretrained_model(self, data, name, hash):
         model_url = get_model_url(data, name, hash)
         model_weights = model_zoo.load_url(model_url)
         num_classes = len(model_weights[list(model_weights.keys())[-1]])
-        self.fc = nn.Conv2d(self.channels[-1], num_classes, kernel_size=1, stride=1, padding=0, bias=True)
+        self.fc = nn.Conv2d(
+            self.channels[-1], num_classes, kernel_size=1, stride=1, padding=0, bias=True
+        )
         print("Loading pretrained")
         self.load_state_dict(model_weights, strict=False)
 
@@ -286,7 +337,9 @@ class _DeformConv(nn.Module):
         self.actf = nn.Sequential(get_norm(norm, cho), nn.ReLU(inplace=True))
         if DCNV1:
             self.offset = Conv2d(chi, 18, kernel_size=3, stride=1, padding=1, dilation=1)
-            self.conv = DeformConv(chi, cho, kernel_size=(3, 3), stride=1, padding=1, dilation=1, deformable_groups=1)
+            self.conv = DeformConv(
+                chi, cho, kernel_size=(3, 3), stride=1, padding=1, dilation=1, deformable_groups=1
+            )
         else:
             self.offset = Conv2d(chi, 27, kernel_size=3, stride=1, padding=1, dilation=1)
             self.conv = ModulatedDeformConv(
@@ -318,7 +371,9 @@ class IDAUp(nn.Module):
             proj = _DeformConv(c, o, norm=norm)
             node = _DeformConv(o, o, norm=norm)
 
-            up = nn.ConvTranspose2d(o, o, f * 2, stride=f, padding=f // 2, output_padding=0, groups=o, bias=False)
+            up = nn.ConvTranspose2d(
+                o, o, f * 2, stride=f, padding=f // 2, output_padding=0, groups=o, bias=False
+            )
             fill_up_weights(up)
 
             setattr(self, "proj_" + str(i), proj)
@@ -345,7 +400,11 @@ class DLAUp(nn.Module):
         scales = np.array(scales, dtype=int)
         for i in range(len(channels) - 1):
             j = -i - 2
-            setattr(self, "ida_{}".format(i), IDAUp(channels[j], in_channels[j:], scales[j:] // scales[j], norm=norm))
+            setattr(
+                self,
+                "ida_{}".format(i),
+                IDAUp(channels[j], in_channels[j:], scales[j:] // scales[j], norm=norm),
+            )
             scales[j + 1 :] = scales[j]
             in_channels[j + 1 :] = [channels[j] for _ in channels[j + 1 :]]
 
@@ -369,7 +428,9 @@ class DLASeg(Backbone):
         super(DLASeg, self).__init__()
         # depth = 34
         levels, channels, Block = DLA_CONFIGS[num_layers]
-        self.base = DLA(num_layers=num_layers, levels=levels, channels=channels, block=Block, norm=norm)
+        self.base = DLA(
+            num_layers=num_layers, levels=levels, channels=channels, block=Block, norm=norm
+        )
         down_ratio = 4
         self.first_level = int(np.log2(down_ratio))
         self.ms_output = ms_output

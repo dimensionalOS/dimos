@@ -37,7 +37,9 @@ class SpatialVectorDB:
     their absolute locations and querying by location, text, or image cosine semantic similarity.
     """
 
-    def __init__(self, collection_name: str = "spatial_memory", chroma_client=None, visual_memory=None):
+    def __init__(
+        self, collection_name: str = "spatial_memory", chroma_client=None, visual_memory=None
+    ):
         """
         Initialize the spatial vector database.
 
@@ -80,11 +82,15 @@ class SpatialVectorDB:
         try:
             count = len(self.image_collection.get(include=[])["ids"])
             if collection_exists:
-                logger.info(f"Using EXISTING {client_type} collection '{collection_name}' with {count} entries")
+                logger.info(
+                    f"Using EXISTING {client_type} collection '{collection_name}' with {count} entries"
+                )
             else:
                 logger.info(f"Created NEW {client_type} collection '{collection_name}'")
         except Exception as e:
-            logger.info(f"Initialized {client_type} collection '{collection_name}' (count error: {str(e)})")
+            logger.info(
+                f"Initialized {client_type} collection '{collection_name}' (count error: {str(e)})"
+            )
 
     def add_image_vector(
         self, vector_id: str, image: np.ndarray, embedding: np.ndarray, metadata: Dict[str, Any]
@@ -102,7 +108,9 @@ class SpatialVectorDB:
         self.visual_memory.add(vector_id, image)
 
         # Add the vector to ChromaDB
-        self.image_collection.add(ids=[vector_id], embeddings=[embedding.tolist()], metadatas=[metadata])
+        self.image_collection.add(
+            ids=[vector_id], embeddings=[embedding.tolist()], metadatas=[metadata]
+        )
 
         logger.debug(f"Added image vector {vector_id} with metadata: {metadata}")
 
@@ -117,12 +125,16 @@ class SpatialVectorDB:
         Returns:
             List of results, each containing the image and its metadata
         """
-        results = self.image_collection.query(query_embeddings=[embedding.tolist()], n_results=limit)
+        results = self.image_collection.query(
+            query_embeddings=[embedding.tolist()], n_results=limit
+        )
 
         return self._process_query_results(results)
 
     # TODO: implement efficient nearest neighbor search
-    def query_by_location(self, x: float, y: float, radius: float = 2.0, limit: int = 5) -> List[Dict]:
+    def query_by_location(
+        self, x: float, y: float, radius: float = 2.0, limit: int = 5
+    ) -> List[Dict]:
         """
         Query the vector database for images near the specified location.
 
@@ -156,8 +168,12 @@ class SpatialVectorDB:
 
         sorted_indices = np.argsort(filtered_results["distances"])
         filtered_results["ids"] = [filtered_results["ids"][i] for i in sorted_indices[:limit]]
-        filtered_results["metadatas"] = [filtered_results["metadatas"][i] for i in sorted_indices[:limit]]
-        filtered_results["distances"] = [filtered_results["distances"][i] for i in sorted_indices[:limit]]
+        filtered_results["metadatas"] = [
+            filtered_results["metadatas"][i] for i in sorted_indices[:limit]
+        ]
+        filtered_results["distances"] = [
+            filtered_results["distances"][i] for i in sorted_indices[:limit]
+        ]
 
         return self._process_query_results(filtered_results)
 
@@ -172,12 +188,17 @@ class SpatialVectorDB:
             lookup_id = vector_id[0] if isinstance(vector_id, list) else vector_id
 
             # Create the result dictionary with metadata regardless of image availability
-            result = {"metadata": results["metadatas"][i] if "metadatas" in results else {}, "id": lookup_id}
+            result = {
+                "metadata": results["metadatas"][i] if "metadatas" in results else {},
+                "id": lookup_id,
+            }
 
             # Add distance if available
             if "distances" in results:
                 result["distance"] = (
-                    results["distances"][i][0] if isinstance(results["distances"][i], list) else results["distances"][i]
+                    results["distances"][i][0]
+                    if isinstance(results["distances"][i], list)
+                    else results["distances"][i]
                 )
 
             # Get the image from visual memory
@@ -209,10 +230,14 @@ class SpatialVectorDB:
         text_embedding = embedding_provider.get_text_embedding(text)
 
         results = self.image_collection.query(
-            query_embeddings=[text_embedding.tolist()], n_results=limit, include=["documents", "metadatas", "distances"]
+            query_embeddings=[text_embedding.tolist()],
+            n_results=limit,
+            include=["documents", "metadatas", "distances"],
         )
 
-        logger.info(f"Text query: '{text}' returned {len(results['ids'] if 'ids' in results else [])} results")
+        logger.info(
+            f"Text query: '{text}' returned {len(results['ids'] if 'ids' in results else [])} results"
+        )
         return self._process_query_results(results)
 
     def get_all_locations(self) -> List[Tuple[float, float, float]]:

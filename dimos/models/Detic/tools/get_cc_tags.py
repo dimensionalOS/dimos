@@ -135,7 +135,9 @@ if __name__ == "__main__":
 
     id2cat = {x["id"]: x for x in cc_data["categories"]}
     class_count = {x["id"]: 0 for x in cc_data["categories"]}
-    class_data = {x["id"]: [" " + map_name(xx) + " " for xx in x["synonyms"]] for x in cc_data["categories"]}
+    class_data = {
+        x["id"]: [" " + map_name(xx) + " " for xx in x["synonyms"]] for x in cc_data["categories"]
+    }
     num_examples = 5
     examples = {x["id"]: [] for x in cc_data["categories"]}
 
@@ -177,7 +179,11 @@ if __name__ == "__main__":
     #         if x['frequency'] == freq] and class_count[x['id']] > 0))
 
     for freq in ["r", "c", "f"]:
-        print("#Images", freq, sum([v for k, v in class_count.items() if id2cat[k]["frequency"] == freq]))
+        print(
+            "#Images",
+            freq,
+            sum([v for k, v in class_count.items() if id2cat[k]["frequency"] == freq]),
+        )
 
     try:
         out_data = {"images": images, "categories": cc_data["categories"], "annotations": []}

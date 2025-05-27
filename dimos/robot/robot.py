@@ -95,7 +95,9 @@ class Robot(ABC):
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
 
         # Initialize spatial memory properties
-        self.spatial_memory_dir = spatial_memory_dir or os.path.join(self.output_dir, "spatial_memory")
+        self.spatial_memory_dir = spatial_memory_dir or os.path.join(
+            self.output_dir, "spatial_memory"
+        )
         self.spatial_memory_collection = spatial_memory_collection
         self.db_path = os.path.join(self.spatial_memory_dir, "chromadb_data")
         self.visual_memory_path = os.path.join(self.spatial_memory_dir, "visual_memory.pkl")

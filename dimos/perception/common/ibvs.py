@@ -24,7 +24,9 @@ class PersonDistanceEstimator:
 
         # Pitch rotation matrix (positive is upward)
         theta = -camera_pitch  # Negative since positive pitch is negative rotation about robot Y
-        self.R_pitch = np.array([[np.cos(theta), 0, np.sin(theta)], [0, 1, 0], [-np.sin(theta), 0, np.cos(theta)]])
+        self.R_pitch = np.array(
+            [[np.cos(theta), 0, np.sin(theta)], [0, 1, 0], [-np.sin(theta), 0, np.cos(theta)]]
+        )
 
         # Combined transform from camera to robot frame
         self.A = self.R_pitch @ self.T
@@ -129,7 +131,9 @@ class ObjectDistanceEstimator:
 
         # Pitch rotation matrix (positive is upward)
         theta = -camera_pitch  # Negative since positive pitch is negative rotation about robot Y
-        self.R_pitch = np.array([[np.cos(theta), 0, np.sin(theta)], [0, 1, 0], [-np.sin(theta), 0, np.cos(theta)]])
+        self.R_pitch = np.array(
+            [[np.cos(theta), 0, np.sin(theta)], [0, 1, 0], [-np.sin(theta), 0, np.cos(theta)]]
+        )
 
         # Combined transform from camera to robot frame
         self.A = self.R_pitch @ self.T

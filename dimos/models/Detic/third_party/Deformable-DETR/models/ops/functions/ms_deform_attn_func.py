@@ -21,21 +21,42 @@ import MultiScaleDeformableAttention as MSDA
 class MSDeformAttnFunction(Function):
     @staticmethod
     def forward(
-        ctx, value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, im2col_step
+        ctx,
+        value,
+        value_spatial_shapes,
+        value_level_start_index,
+        sampling_locations,
+        attention_weights,
+        im2col_step,
     ):
         ctx.im2col_step = im2col_step
         output = MSDA.ms_deform_attn_forward(
-            value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, ctx.im2col_step
+            value,
+            value_spatial_shapes,
+            value_level_start_index,
+            sampling_locations,
+            attention_weights,
+            ctx.im2col_step,
         )
         ctx.save_for_backward(
-            value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights
+            value,
+            value_spatial_shapes,
+            value_level_start_index,
+            sampling_locations,
+            attention_weights,
         )
         return output
 
     @staticmethod
     @once_differentiable
     def backward(ctx, grad_output):
-        value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights = ctx.saved_tensors
+        (
+            value,
+            value_spatial_shapes,
+            value_level_start_index,
+            sampling_locations,
+            attention_weights,
+        ) = ctx.saved_tensors
         grad_value, grad_sampling_loc, grad_attn_weight = MSDA.ms_deform_attn_backward(
             value,
             value_spatial_shapes,
@@ -69,5 +90,9 @@ def ms_deform_attn_core_pytorch(value, value_spatial_shapes, sampling_locations,
         sampling_value_list.append(sampling_value_l_)
     # (N_, Lq_, M_, L_, P_) -> (N_, M_, Lq_, L_, P_) -> (N_, M_, 1, Lq_, L_*P_)
     attention_weights = attention_weights.transpose(1, 2).reshape(N_ * M_, 1, Lq_, L_ * P_)
-    output = (torch.stack(sampling_value_list, dim=-2).flatten(-2) * attention_weights).sum(-1).view(N_, M_ * D_, Lq_)
+    output = (
+        (torch.stack(sampling_value_list, dim=-2).flatten(-2) * attention_weights)
+        .sum(-1)
+        .view(N_, M_ * D_, Lq_)
+    )
     return output.transpose(1, 2).contiguous()

@@ -9,7 +9,9 @@ COLORS = ((np.random.rand(1300, 3) * 0.4 + 0.6) * 255).astype(np.uint8).reshape(
 def _get_color_image(heatmap):
     heatmap = heatmap.reshape(heatmap.shape[0], heatmap.shape[1], heatmap.shape[2], 1)
     if heatmap.shape[0] == 1:
-        color_map = (heatmap * np.ones((1, 1, 1, 3), np.uint8) * 255).max(axis=0).astype(np.uint8)  # H, W, 3
+        color_map = (
+            (heatmap * np.ones((1, 1, 1, 3), np.uint8) * 255).max(axis=0).astype(np.uint8)
+        )  # H, W, 3
     else:
         color_map = (heatmap * COLORS[: heatmap.shape[0]]).max(axis=0).astype(np.uint8)  # H, W, 3
 
@@ -72,7 +74,15 @@ def _ind2il(ind, shapes_per_level, N):
 
 
 def debug_train(
-    images, gt_instances, flattened_hms, reg_targets, labels, pos_inds, shapes_per_level, locations, strides
+    images,
+    gt_instances,
+    flattened_hms,
+    reg_targets,
+    labels,
+    pos_inds,
+    shapes_per_level,
+    locations,
+    strides,
 ):
     """
     images: N x 3 x H x W
@@ -102,7 +112,12 @@ def debug_train(
             for j in range(len(bboxes)):
                 bbox = bboxes[j]
                 cv2.rectangle(
-                    blend, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), (0, 0, 255), 3, cv2.LINE_AA
+                    blend,
+                    (int(bbox[0]), int(bbox[1])),
+                    (int(bbox[2]), int(bbox[3])),
+                    (0, 0, 255),
+                    3,
+                    cv2.LINE_AA,
                 )
 
         for j in range(len(pos_inds)):
@@ -110,7 +125,9 @@ def debug_train(
             if image_id != i:
                 continue
             loc = locations[pos_inds[j]]
-            cv2.drawMarker(blend, (int(loc[0]), int(loc[1])), (0, 255, 255), markerSize=(l + 1) * 16)
+            cv2.drawMarker(
+                blend, (int(loc[0]), int(loc[1])), (0, 255, 255), markerSize=(l + 1) * 16
+            )
 
         for j in range(len(reg_inds)):
             image_id, l = _ind2il(reg_inds[j], shapes_per_level, N)
@@ -121,7 +138,12 @@ def debug_train(
             loc = locations[reg_inds[j]]
             bbox = [(loc[0] - ltrb[0]), (loc[1] - ltrb[1]), (loc[0] + ltrb[2]), (loc[1] + ltrb[3])]
             cv2.rectangle(
-                blend, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), (255, 0, 0), 1, cv2.LINE_AA
+                blend,
+                (int(bbox[0]), int(bbox[1])),
+                (int(bbox[2]), int(bbox[3])),
+                (255, 0, 0),
+                1,
+                cv2.LINE_AA,
             )
             cv2.circle(blend, (int(loc[0]), int(loc[1])), 2, (255, 0, 0), -1)
 
@@ -130,7 +152,14 @@ def debug_train(
 
 
 def debug_test(
-    images, logits_pred, reg_pred, agn_hm_pred=[], preds=[], vis_thresh=0.3, debug_show_name=False, mult_agn=False
+    images,
+    logits_pred,
+    reg_pred,
+    agn_hm_pred=[],
+    preds=[],
+    vis_thresh=0.3,
+    debug_show_name=False,
+    mult_agn=False,
 ):
     """
     images: N x 3 x H x W
@@ -168,7 +197,11 @@ def debug_test(
                 cat2name = [x["name"] for x in LVIS_CATEGORIES]
             for j in range(len(preds[i].scores) if preds is not None else 0):
                 if preds[i].scores[j] > vis_thresh:
-                    bbox = preds[i].proposal_boxes[j] if preds[i].has("proposal_boxes") else preds[i].pred_boxes[j]
+                    bbox = (
+                        preds[i].proposal_boxes[j]
+                        if preds[i].has("proposal_boxes")
+                        else preds[i].pred_boxes[j]
+                    )
                     bbox = bbox.tensor[0].detach().cpu().numpy().astype(np.int32)
                     cat = int(preds[i].pred_classes[j]) if preds[i].has("pred_classes") else 0
                     cl = COLORS[cat, 0, 0]
@@ -181,7 +214,9 @@ def debug_test(
                         cv2.LINE_AA,
                     )
                     if debug_show_name:
-                        txt = "{}{:.1f}".format(cat2name[cat] if cat > 0 else "", preds[i].scores[j])
+                        txt = "{}{:.1f}".format(
+                            cat2name[cat] if cat > 0 else "", preds[i].scores[j]
+                        )
                         font = cv2.FONT_HERSHEY_SIMPLEX
                         cat_size = cv2.getTextSize(txt, font, 0.5, 2)[0]
                         cv2.rectangle(
@@ -216,7 +251,9 @@ global cnt
 cnt = 0
 
 
-def debug_second_stage(images, instances, proposals=None, vis_thresh=0.3, save_debug=False, debug_show_name=False):
+def debug_second_stage(
+    images, instances, proposals=None, vis_thresh=0.3, save_debug=False, debug_show_name=False
+):
     images = _imagelist_to_tensor(images)
     if debug_show_name:
         from detectron2.data.datasets.lvis_v1_categories import LVIS_CATEGORIES
@@ -237,7 +274,14 @@ def debug_second_stage(images, instances, proposals=None, vis_thresh=0.3, save_d
                 bbox = bboxes[j]
                 cl = COLORS[cats[j], 0, 0]
                 cl = (int(cl[0]), int(cl[1]), int(cl[2]))
-                cv2.rectangle(image, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), cl, 2, cv2.LINE_AA)
+                cv2.rectangle(
+                    image,
+                    (int(bbox[0]), int(bbox[1])),
+                    (int(bbox[2]), int(bbox[3])),
+                    cl,
+                    2,
+                    cv2.LINE_AA,
+                )
                 if debug_show_name:
                     cat = cats[j]
                     txt = "{}{:.1f}".format(cat2name[cat] if cat > 0 else "", scores[j])
@@ -261,7 +305,9 @@ def debug_second_stage(images, instances, proposals=None, vis_thresh=0.3, save_d
                         lineType=cv2.LINE_AA,
                     )
         if proposals is not None:
-            proposal_image = images[i].detach().cpu().numpy().transpose(1, 2, 0).astype(np.uint8).copy()
+            proposal_image = (
+                images[i].detach().cpu().numpy().transpose(1, 2, 0).astype(np.uint8).copy()
+            )
             bboxes = proposals[i].proposal_boxes.tensor.cpu().numpy()
             if proposals[i].has("scores"):
                 scores = proposals[i].scores.cpu().numpy()
@@ -272,7 +318,12 @@ def debug_second_stage(images, instances, proposals=None, vis_thresh=0.3, save_d
                     bbox = bboxes[j]
                     cl = (209, 159, 83)
                     cv2.rectangle(
-                        proposal_image, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), cl, 2, cv2.LINE_AA
+                        proposal_image,
+                        (int(bbox[0]), int(bbox[1])),
+                        (int(bbox[2]), int(bbox[3])),
+                        cl,
+                        2,
+                        cv2.LINE_AA,
                     )
 
         cv2.imshow("image", image)

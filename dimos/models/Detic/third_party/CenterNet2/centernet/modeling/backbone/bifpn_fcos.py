@@ -61,8 +61,12 @@ class BackboneWithTopLevels(Backbone):
         self.backbone = backbone
         backbone_output_shape = backbone.output_shape()
 
-        self._out_feature_channels = {name: shape.channels for name, shape in backbone_output_shape.items()}
-        self._out_feature_strides = {name: shape.stride for name, shape in backbone_output_shape.items()}
+        self._out_feature_channels = {
+            name: shape.channels for name, shape in backbone_output_shape.items()
+        }
+        self._out_feature_strides = {
+            name: shape.stride for name, shape in backbone_output_shape.items()
+        }
         self._out_features = list(self._out_feature_strides.keys())
 
         last_feature_name = max(self._out_feature_strides.keys(), key=lambda x: split_name(x)[1])
@@ -154,7 +158,9 @@ class SingleBiFPN(Backbone):
 
                 in_channels = node_info[input_offset]
                 if in_channels != out_channels:
-                    lateral_conv = Conv2d(in_channels, out_channels, kernel_size=1, norm=get_norm(norm, out_channels))
+                    lateral_conv = Conv2d(
+                        in_channels, out_channels, kernel_size=1, norm=get_norm(norm, out_channels)
+                    )
                     self.add_module("lateral_{}_f{}".format(input_offset, feat_level), lateral_conv)
             node_info.append(out_channels)
             num_output_connections.append(0)
@@ -162,7 +168,10 @@ class SingleBiFPN(Backbone):
             # generate attention weights
             name = "weights_f{}_{}".format(feat_level, inputs_offsets_str)
             self.__setattr__(
-                name, nn.Parameter(torch.ones(len(inputs_offsets), dtype=torch.float32), requires_grad=True)
+                name,
+                nn.Parameter(
+                    torch.ones(len(inputs_offsets), dtype=torch.float32), requires_grad=True
+                ),
             )
 
             # generate convolutions after combination
@@ -223,7 +232,9 @@ class SingleBiFPN(Backbone):
                     )
                 elif h <= target_h and w <= target_w:
                     if h < target_h or w < target_w:
-                        input_node = F.interpolate(input_node, size=(target_h, target_w), mode="nearest")
+                        input_node = F.interpolate(
+                            input_node, size=(target_h, target_w), mode="nearest"
+                        )
                 else:
                     raise NotImplementedError()
                 input_nodes.append(input_node)
@@ -340,7 +351,9 @@ def _assert_strides_are_log2_contiguous(strides):
     Assert that each stride is 2x times its preceding stride, i.e. "contiguous in log2".
     """
     for i, stride in enumerate(strides[1:], 1):
-        assert stride == 2 * strides[i - 1], "Strides {} {} are not log2 contiguous".format(stride, strides[i - 1])
+        assert stride == 2 * strides[i - 1], "Strides {} {} are not log2 contiguous".format(
+            stride, strides[i - 1]
+        )
 
 
 @BACKBONE_REGISTRY.register()

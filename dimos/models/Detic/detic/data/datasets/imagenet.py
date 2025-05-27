@@ -9,11 +9,16 @@ from .lvis_v1 import custom_load_lvis_json, get_lvis_22k_meta
 def custom_register_imagenet_instances(name, metadata, json_file, image_root):
     """ """
     DatasetCatalog.register(name, lambda: custom_load_lvis_json(json_file, image_root, name))
-    MetadataCatalog.get(name).set(json_file=json_file, image_root=image_root, evaluator_type="imagenet", **metadata)
+    MetadataCatalog.get(name).set(
+        json_file=json_file, image_root=image_root, evaluator_type="imagenet", **metadata
+    )
 
 
 _CUSTOM_SPLITS_IMAGENET = {
-    "imagenet_lvis_v1": ("imagenet/ImageNet-LVIS/", "imagenet/annotations/imagenet_lvis_image_info.json"),
+    "imagenet_lvis_v1": (
+        "imagenet/ImageNet-LVIS/",
+        "imagenet/annotations/imagenet_lvis_image_info.json",
+    ),
 }
 
 for key, (image_root, json_file) in _CUSTOM_SPLITS_IMAGENET.items():
@@ -26,7 +31,10 @@ for key, (image_root, json_file) in _CUSTOM_SPLITS_IMAGENET.items():
 
 
 _CUSTOM_SPLITS_IMAGENET_22K = {
-    "imagenet_lvis-22k": ("imagenet/ImageNet-LVIS/", "imagenet/annotations/imagenet-22k_image_info_lvis-22k.json"),
+    "imagenet_lvis-22k": (
+        "imagenet/ImageNet-LVIS/",
+        "imagenet/annotations/imagenet-22k_image_info_lvis-22k.json",
+    ),
 }
 
 for key, (image_root, json_file) in _CUSTOM_SPLITS_IMAGENET_22K.items():

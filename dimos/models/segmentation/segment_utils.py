@@ -48,7 +48,9 @@ def sample_points_from_heatmap(heatmap, original_size, num_points=5, percentile=
 
     attn = torch.sigmoid(heatmap)
     w = attn.shape[0]
-    sampled_indices = torch.multinomial(torch.tensor(probabilities.ravel()), num_points, replacement=True)
+    sampled_indices = torch.multinomial(
+        torch.tensor(probabilities.ravel()), num_points, replacement=True
+    )
 
     sampled_coords = np.array(np.unravel_index(sampled_indices, attn.shape)).T
     medoid, sampled_coords = find_medoid_and_closest_points(sampled_coords)

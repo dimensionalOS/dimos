@@ -34,7 +34,9 @@ def check_forward_equal_with_pytorch_double():
     attention_weights /= attention_weights.sum(-1, keepdim=True).sum(-2, keepdim=True)
     im2col_step = 2
     output_pytorch = (
-        ms_deform_attn_core_pytorch(value.double(), shapes, sampling_locations.double(), attention_weights.double())
+        ms_deform_attn_core_pytorch(
+            value.double(), shapes, sampling_locations.double(), attention_weights.double()
+        )
         .detach()
         .cpu()
     )
@@ -66,9 +68,15 @@ def check_forward_equal_with_pytorch_float():
     attention_weights = torch.rand(N, Lq, M, L, P).cuda() + 1e-5
     attention_weights /= attention_weights.sum(-1, keepdim=True).sum(-2, keepdim=True)
     im2col_step = 2
-    output_pytorch = ms_deform_attn_core_pytorch(value, shapes, sampling_locations, attention_weights).detach().cpu()
+    output_pytorch = (
+        ms_deform_attn_core_pytorch(value, shapes, sampling_locations, attention_weights)
+        .detach()
+        .cpu()
+    )
     output_cuda = (
-        MSDeformAttnFunction.apply(value, shapes, level_start_index, sampling_locations, attention_weights, im2col_step)
+        MSDeformAttnFunction.apply(
+            value, shapes, level_start_index, sampling_locations, attention_weights, im2col_step
+        )
         .detach()
         .cpu()
     )
@@ -81,7 +89,9 @@ def check_forward_equal_with_pytorch_float():
     )
 
 
-def check_gradient_numerical(channels=4, grad_value=True, grad_sampling_loc=True, grad_attn_weight=True):
+def check_gradient_numerical(
+    channels=4, grad_value=True, grad_sampling_loc=True, grad_attn_weight=True
+):
     value = torch.rand(N, S, M, channels).cuda() * 0.01
     sampling_locations = torch.rand(N, Lq, M, L, P, 2).cuda()
     attention_weights = torch.rand(N, Lq, M, L, P).cuda() + 1e-5

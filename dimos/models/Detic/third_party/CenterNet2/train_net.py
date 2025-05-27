@@ -73,7 +73,9 @@ def do_train(cfg, model, resume=False):
     optimizer = build_optimizer(cfg, model)
     scheduler = build_lr_scheduler(cfg, optimizer)
 
-    checkpointer = DetectionCheckpointer(model, cfg.OUTPUT_DIR, optimizer=optimizer, scheduler=scheduler)
+    checkpointer = DetectionCheckpointer(
+        model, cfg.OUTPUT_DIR, optimizer=optimizer, scheduler=scheduler
+    )
 
     start_iter = (
         checkpointer.resume_or_load(
@@ -87,7 +89,9 @@ def do_train(cfg, model, resume=False):
         start_iter = 0
     max_iter = cfg.SOLVER.MAX_ITER if cfg.SOLVER.TRAIN_ITER < 0 else cfg.SOLVER.TRAIN_ITER
 
-    periodic_checkpointer = PeriodicCheckpointer(checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD, max_iter=max_iter)
+    periodic_checkpointer = PeriodicCheckpointer(
+        checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD, max_iter=max_iter
+    )
 
     writers = (
         [
@@ -143,7 +147,11 @@ def do_train(cfg, model, resume=False):
             data_timer.reset()
             scheduler.step()
 
-            if cfg.TEST.EVAL_PERIOD > 0 and iteration % cfg.TEST.EVAL_PERIOD == 0 and iteration != max_iter:
+            if (
+                cfg.TEST.EVAL_PERIOD > 0
+                and iteration % cfg.TEST.EVAL_PERIOD == 0
+                and iteration != max_iter
+            ):
                 do_test(cfg, model)
                 comm.synchronize()
 
@@ -153,7 +161,9 @@ def do_train(cfg, model, resume=False):
             periodic_checkpointer.step(iteration)
 
         total_time = time.perf_counter() - start_time
-        logger.info("Total training time: {}".format(str(datetime.timedelta(seconds=int(total_time)))))
+        logger.info(
+            "Total training time: {}".format(str(datetime.timedelta(seconds=int(total_time))))
+        )
 
 
 def setup(args):
@@ -179,7 +189,9 @@ def main(args):
     model = build_model(cfg)
     logger.info("Model:\n{}".format(model))
     if args.eval_only:
-        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(cfg.MODEL.WEIGHTS, resume=args.resume)
+        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
+            cfg.MODEL.WEIGHTS, resume=args.resume
+        )
         if cfg.TEST.AUG.ENABLED:
             logger.info("Running inference with test-time augmentation ...")
             model = GeneralizedRCNNWithTTA(cfg, model, batch_size=1)
@@ -189,7 +201,10 @@ def main(args):
     distributed = comm.get_world_size() > 1
     if distributed:
         model = DistributedDataParallel(
-            model, device_ids=[comm.get_local_rank()], broadcast_buffers=False, find_unused_parameters=True
+            model,
+            device_ids=[comm.get_local_rank()],
+            broadcast_buffers=False,
+            find_unused_parameters=True,
         )
 
     do_train(cfg, model, resume=args.resume)

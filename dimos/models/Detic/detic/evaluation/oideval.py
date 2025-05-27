@@ -178,8 +178,12 @@ class OIDEval:
 
         cat_ids = self.params.cat_ids if self.params.cat_ids else None
 
-        gts = self.lvis_gt.load_anns(self.lvis_gt.get_ann_ids(img_ids=self.params.img_ids, cat_ids=cat_ids))
-        dts = self.lvis_dt.load_anns(self.lvis_dt.get_ann_ids(img_ids=self.params.img_ids, cat_ids=cat_ids))
+        gts = self.lvis_gt.load_anns(
+            self.lvis_gt.get_ann_ids(img_ids=self.params.img_ids, cat_ids=cat_ids)
+        )
+        dts = self.lvis_dt.load_anns(
+            self.lvis_dt.get_ann_ids(img_ids=self.params.img_ids, cat_ids=cat_ids)
+        )
         # convert ground truth to mask if iou_type == 'segm'
         if self.params.iou_type == "segm":
             self._to_mask(gts, self.lvis_gt)
@@ -228,7 +232,9 @@ class OIDEval:
         self._prepare()
 
         self.ious = {
-            (img_id, cat_id): self.compute_iou(img_id, cat_id) for img_id in self.params.img_ids for cat_id in cat_ids
+            (img_id, cat_id): self.compute_iou(img_id, cat_id)
+            for img_id in self.params.img_ids
+            for cat_id in cat_ids
         }
 
         # loop through images, area range, max detection number
@@ -321,7 +327,9 @@ class OIDEval:
             is_gt_detected = np.zeros(iou.shape[1], dtype=bool)
             for i in range(num_detected_boxes):
                 gt_id = max_overlap_gt_ids[i]
-                is_evaluatable = not tp_fp_labels[i] and iou[i, gt_id] >= 0.5 and not is_matched_to_group_of[i]
+                is_evaluatable = (
+                    not tp_fp_labels[i] and iou[i, gt_id] >= 0.5 and not is_matched_to_group_of[i]
+                )
                 if is_evaluatable:
                     if not is_gt_detected[gt_id]:
                         tp_fp_labels[i] = True
@@ -333,7 +341,9 @@ class OIDEval:
             max_overlap_group_of_gt_ids = np.argmax(ioa, axis=1)
             for i in range(num_detected_boxes):
                 gt_id = max_overlap_group_of_gt_ids[i]
-                is_evaluatable = not tp_fp_labels[i] and ioa[i, gt_id] >= 0.5 and not is_matched_to_group_of[i]
+                is_evaluatable = (
+                    not tp_fp_labels[i] and ioa[i, gt_id] >= 0.5 and not is_matched_to_group_of[i]
+                )
                 if is_evaluatable:
                     is_matched_to_group_of[i] = True
                     scores_group_of[gt_id] = max(scores_group_of[gt_id], scores[i])
@@ -355,13 +365,17 @@ class OIDEval:
         valid_entries = ~is_matched_to_group_of
 
         scores = np.concatenate((scores[valid_entries], scores_box_group_of))
-        tp_fps = np.concatenate((tp_fp_labels[valid_entries].astype(float), tp_fp_labels_box_group_of))
+        tp_fps = np.concatenate(
+            (tp_fp_labels[valid_entries].astype(float), tp_fp_labels_box_group_of)
+        )
 
         return {
             "image_id": img_id,
             "category_id": cat_id,
             "area_rng": area_rng,
-            "dt_matches": np.array([1 if x > 0 else 0 for x in tp_fps], dtype=np.int32).reshape(1, -1),
+            "dt_matches": np.array([1 if x > 0 else 0 for x in tp_fps], dtype=np.int32).reshape(
+                1, -1
+            ),
             "dt_scores": [x for x in scores],
             "dt_ignore": np.array([0 for x in scores], dtype=np.int32).reshape(1, -1),
             "num_gt": len(gt),
@@ -521,7 +535,9 @@ class Params:
         self.cat_ids = []
         # np.arange causes trouble.  the data point on arange is slightly
         # larger than the true value
-        self.iou_thrs = np.linspace(0.5, 0.95, int(np.round((0.95 - 0.5) / 0.05)) + 1, endpoint=True)
+        self.iou_thrs = np.linspace(
+            0.5, 0.95, int(np.round((0.95 - 0.5) / 0.05)) + 1, endpoint=True
+        )
         self.google_style = True
         # print('Using google style PR curve')
         self.iou_thrs = self.iou_thrs[:1]
@@ -644,7 +660,8 @@ def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg=False, class
             results_per_category.append(
                 (
                     "{} {}".format(
-                        name.replace(" ", "_"), inst_num if inst_num < 1000 else "{:.1f}k".format(inst_num / 1000)
+                        name.replace(" ", "_"),
+                        inst_num if inst_num < 1000 else "{:.1f}k".format(inst_num / 1000),
                     ),
                     float(ap * 100),
                 )

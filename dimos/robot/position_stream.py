@@ -41,7 +41,11 @@ class PositionStreamProvider:
     """
 
     def __init__(
-        self, ros_node: Node, odometry_topic: str = "/odom", pose_topic: Optional[str] = None, use_odometry: bool = True
+        self,
+        ros_node: Node,
+        odometry_topic: str = "/odom",
+        pose_topic: Optional[str] = None,
+        use_odometry: bool = True,
     ):
         """
         Initialize the position stream provider.
@@ -81,7 +85,9 @@ class PositionStreamProvider:
             if not self.pose_topic:
                 raise ValueError("Pose topic must be specified when use_odometry is False")
 
-            self.subscription = self.ros_node.create_subscription(PoseStamped, self.pose_topic, self._pose_callback, 10)
+            self.subscription = self.ros_node.create_subscription(
+                PoseStamped, self.pose_topic, self._pose_callback, 10
+            )
             logger.info(f"Subscribed to pose topic: {self.pose_topic}")
 
     def _odometry_callback(self, msg: Odometry):

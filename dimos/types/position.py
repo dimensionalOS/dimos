@@ -63,7 +63,9 @@ class Position(Vector):
         """Check if two positions are equal using numpy's allclose for floating point comparison."""
         if not isinstance(other, Position):
             return False
-        return np.allclose(self.pos._data, other.pos._data) and np.allclose(self.rot._data, other.rot._data)
+        return np.allclose(self.pos._data, other.pos._data) and np.allclose(
+            self.rot._data, other.rot._data
+        )
 
     @property
     def rot(self) -> Vector:

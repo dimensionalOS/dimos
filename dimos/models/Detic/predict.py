@@ -81,7 +81,9 @@ class Predictor(cog.Predictor):
             # Reset visualization threshold
             output_score_threshold = 0.3
             for cascade_stages in range(len(self.predictor.model.roi_heads.box_predictor)):
-                self.predictor.model.roi_heads.box_predictor[cascade_stages].test_score_thresh = output_score_threshold
+                self.predictor.model.roi_heads.box_predictor[
+                    cascade_stages
+                ].test_score_thresh = output_score_threshold
 
         outputs = self.predictor(image)
         v = Visualizer(image[:, :, ::-1], metadata)

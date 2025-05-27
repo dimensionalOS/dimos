@@ -14,11 +14,15 @@ def register_distill_coco_instances(name, metadata, json_file, image_root):
     assert isinstance(json_file, (str, os.PathLike)), json_file
     assert isinstance(image_root, (str, os.PathLike)), image_root
     # 1. register a function which returns dicts
-    DatasetCatalog.register(name, lambda: load_coco_json(json_file, image_root, name, extra_annotation_keys=["score"]))
+    DatasetCatalog.register(
+        name, lambda: load_coco_json(json_file, image_root, name, extra_annotation_keys=["score"])
+    )
 
     # 2. Optionally, add metadata about this dataset,
     # since they might be useful in evaluation, visualization or logging
-    MetadataCatalog.get(name).set(json_file=json_file, image_root=image_root, evaluator_type="coco", **metadata)
+    MetadataCatalog.get(name).set(
+        json_file=json_file, image_root=image_root, evaluator_type="coco", **metadata
+    )
 
 
 _PREDEFINED_SPLITS_COCO = {
@@ -34,7 +38,10 @@ for key, (image_root, json_file) in _PREDEFINED_SPLITS_COCO.items():
     )
 
 _PREDEFINED_SPLITS_DISTILL_COCO = {
-    "coco_un_yolov4_55_0.5": ("coco/unlabeled2017", "coco/annotations/yolov4_cocounlabeled_55_ann0.5.json"),
+    "coco_un_yolov4_55_0.5": (
+        "coco/unlabeled2017",
+        "coco/annotations/yolov4_cocounlabeled_55_ann0.5.json",
+    ),
 }
 
 for key, (image_root, json_file) in _PREDEFINED_SPLITS_DISTILL_COCO.items():

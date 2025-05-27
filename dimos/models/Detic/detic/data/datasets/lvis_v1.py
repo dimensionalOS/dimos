@@ -16,7 +16,9 @@ __all__ = ["custom_load_lvis_json", "custom_register_lvis_instances"]
 def custom_register_lvis_instances(name, metadata, json_file, image_root):
     """ """
     DatasetCatalog.register(name, lambda: custom_load_lvis_json(json_file, image_root, name))
-    MetadataCatalog.get(name).set(json_file=json_file, image_root=image_root, evaluator_type="lvis", **metadata)
+    MetadataCatalog.get(name).set(
+        json_file=json_file, image_root=image_root, evaluator_type="lvis", **metadata
+    )
 
 
 def custom_load_lvis_json(json_file, image_root, dataset_name=None):
@@ -35,7 +37,10 @@ def custom_load_lvis_json(json_file, image_root, dataset_name=None):
     if timer.seconds() > 1:
         logger.info("Loading {} takes {:.2f} seconds.".format(json_file, timer.seconds()))
 
-    catid2contid = {x["id"]: i for i, x in enumerate(sorted(lvis_api.dataset["categories"], key=lambda x: x["id"]))}
+    catid2contid = {
+        x["id"]: i
+        for i, x in enumerate(sorted(lvis_api.dataset["categories"], key=lambda x: x["id"]))
+    }
     if len(lvis_api.dataset["categories"]) == 1203:
         for x in lvis_api.dataset["categories"]:
             assert catid2contid[x["id"]] == x["id"] - 1
@@ -44,7 +49,9 @@ def custom_load_lvis_json(json_file, image_root, dataset_name=None):
     anns = [lvis_api.img_ann_map[img_id] for img_id in img_ids]
 
     ann_ids = [ann["id"] for anns_per_image in anns for ann in anns_per_image]
-    assert len(set(ann_ids)) == len(ann_ids), "Annotation ids in '{}' are not unique".format(json_file)
+    assert len(set(ann_ids)) == len(ann_ids), "Annotation ids in '{}' are not unique".format(
+        json_file
+    )
 
     imgs_anns = list(zip(imgs, anns))
     logger.info("Loaded {} images in the LVIS v1 format from {}".format(len(imgs_anns), json_file))
@@ -72,7 +79,9 @@ def custom_load_lvis_json(json_file, image_root, dataset_name=None):
         # NOTE: modified by Xingyi: convert to 0-based
         record["neg_category_ids"] = [catid2contid[x] for x in record["neg_category_ids"]]
         if "pos_category_ids" in img_dict:
-            record["pos_category_ids"] = [catid2contid[x] for x in img_dict.get("pos_category_ids", [])]
+            record["pos_category_ids"] = [
+                catid2contid[x] for x in img_dict.get("pos_category_ids", [])
+            ]
         if "captions" in img_dict:
             record["captions"] = img_dict["captions"]
         if "caption_features" in img_dict:
@@ -122,7 +131,9 @@ def get_lvis_22k_meta():
     from .lvis_22k_categories import CATEGORIES
 
     cat_ids = [k["id"] for k in CATEGORIES]
-    assert min(cat_ids) == 1 and max(cat_ids) == len(cat_ids), "Category ids are not in [1, #categories], as expected"
+    assert min(cat_ids) == 1 and max(cat_ids) == len(cat_ids), (
+        "Category ids are not in [1, #categories], as expected"
+    )
     # Ensure that the category list is sorted by id
     lvis_categories = sorted(CATEGORIES, key=lambda x: x["id"])
     thing_classes = [k["name"] for k in lvis_categories]

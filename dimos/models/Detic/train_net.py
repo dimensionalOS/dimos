@@ -101,14 +101,20 @@ def do_train(cfg, model, resume=False):
         optimizer = build_optimizer(cfg, model)
     scheduler = build_lr_scheduler(cfg, optimizer)
 
-    checkpointer = DetectionCheckpointer(model, cfg.OUTPUT_DIR, optimizer=optimizer, scheduler=scheduler)
+    checkpointer = DetectionCheckpointer(
+        model, cfg.OUTPUT_DIR, optimizer=optimizer, scheduler=scheduler
+    )
 
-    start_iter = checkpointer.resume_or_load(cfg.MODEL.WEIGHTS, resume=resume).get("iteration", -1) + 1
+    start_iter = (
+        checkpointer.resume_or_load(cfg.MODEL.WEIGHTS, resume=resume).get("iteration", -1) + 1
+    )
     if not resume:
         start_iter = 0
     max_iter = cfg.SOLVER.MAX_ITER if cfg.SOLVER.TRAIN_ITER < 0 else cfg.SOLVER.TRAIN_ITER
 
-    periodic_checkpointer = PeriodicCheckpointer(checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD, max_iter=max_iter)
+    periodic_checkpointer = PeriodicCheckpointer(
+        checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD, max_iter=max_iter
+    )
 
     writers = (
         [
@@ -174,7 +180,11 @@ def do_train(cfg, model, resume=False):
             data_timer.reset()
             scheduler.step()
 
-            if cfg.TEST.EVAL_PERIOD > 0 and iteration % cfg.TEST.EVAL_PERIOD == 0 and iteration != max_iter:
+            if (
+                cfg.TEST.EVAL_PERIOD > 0
+                and iteration % cfg.TEST.EVAL_PERIOD == 0
+                and iteration != max_iter
+            ):
                 do_test(cfg, model)
                 comm.synchronize()
 
@@ -184,7 +194,9 @@ def do_train(cfg, model, resume=False):
             periodic_checkpointer.step(iteration)
 
         total_time = time.perf_counter() - start_time
-        logger.info("Total training time: {}".format(str(datetime.timedelta(seconds=int(total_time)))))
+        logger.info(
+            "Total training time: {}".format(str(datetime.timedelta(seconds=int(total_time))))
+        )
 
 
 def setup(args):
@@ -212,7 +224,9 @@ def main(args):
     model = build_model(cfg)
     logger.info("Model:\n{}".format(model))
     if args.eval_only:
-        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(cfg.MODEL.WEIGHTS, resume=args.resume)
+        DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
+            cfg.MODEL.WEIGHTS, resume=args.resume
+        )
 
         return do_test(cfg, model)
 
@@ -238,7 +252,9 @@ if __name__ == "__main__":
         if args.dist_url == "host":
             args.dist_url = "tcp://{}:12345".format(os.environ["SLURM_JOB_NODELIST"])
         elif not args.dist_url.startswith("tcp"):
-            tmp = os.popen("echo $(scontrol show job {} | grep BatchHost)".format(args.dist_url)).read()
+            tmp = os.popen(
+                "echo $(scontrol show job {} | grep BatchHost)".format(args.dist_url)
+            ).read()
             tmp = tmp[tmp.find("=") + 1 : -1]
             args.dist_url = "tcp://{}:12345".format(tmp)
     print("Command Line Args:", args)

@@ -98,7 +98,9 @@ class BaseLocalPlanner(ABC):
         # Stuck detection
         self.stuck_detection_window_seconds = 8.0  # Time window for stuck detection (seconds)
         self.position_history_size = int(self.stuck_detection_window_seconds * control_frequency)
-        self.position_history = deque(maxlen=self.position_history_size)  # History of recent positions
+        self.position_history = deque(
+            maxlen=self.position_history_size
+        )  # History of recent positions
         self.stuck_distance_threshold = 0.1  # Distance threshold for stuck detection (meters)
         self.unstuck_distance_threshold = 0.5  # Distance threshold for unstuck detection (meters)
         self.stuck_time_threshold = 4.0  # Time threshold for stuck detection (seconds)
@@ -127,7 +129,9 @@ class BaseLocalPlanner(ABC):
 
         logger.info("Local planner state has been reset")
 
-    def set_goal(self, goal_xy: VectorLike, frame: str = "odom", goal_theta: Optional[float] = None):
+    def set_goal(
+        self, goal_xy: VectorLike, frame: str = "odom", goal_theta: Optional[float] = None
+    ):
         """Set a single goal position, converting to odom frame if necessary.
            This clears any existing waypoints being followed.
 
@@ -147,13 +151,21 @@ class BaseLocalPlanner(ABC):
 
         target_goal_xy: Optional[Tuple[float, float]] = None
 
-        target_goal_xy = self.transform.transform_point(goal_xy, source_frame=frame, target_frame="odom").to_tuple()
+        target_goal_xy = self.transform.transform_point(
+            goal_xy, source_frame=frame, target_frame="odom"
+        ).to_tuple()
 
-        logger.info(f"Goal set directly in odom frame: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})")
+        logger.info(
+            f"Goal set directly in odom frame: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})"
+        )
 
         # Check if goal is valid (in bounds and not colliding)
-        if not self.is_goal_in_costmap_bounds(target_goal_xy) or self.check_goal_collision(target_goal_xy):
-            logger.warning("Goal is in collision or out of bounds. Adjusting goal to valid position.")
+        if not self.is_goal_in_costmap_bounds(target_goal_xy) or self.check_goal_collision(
+            target_goal_xy
+        ):
+            logger.warning(
+                "Goal is in collision or out of bounds. Adjusting goal to valid position."
+            )
             self.goal_xy = self.adjust_goal_to_valid_position(target_goal_xy)
         else:
             self.goal_xy = target_goal_xy  # Set the adjusted or original valid goal
@@ -165,7 +177,9 @@ class BaseLocalPlanner(ABC):
             )
             self.goal_theta = transformed_rot[2]
 
-    def set_goal_waypoints(self, waypoints: Path, frame: str = "map", goal_theta: Optional[float] = None):
+    def set_goal_waypoints(
+        self, waypoints: Path, frame: str = "map", goal_theta: Optional[float] = None
+    ):
         """Sets a path of waypoints for the robot to follow.
 
         Args:
@@ -191,11 +205,15 @@ class BaseLocalPlanner(ABC):
         self.current_waypoint_index = 0
 
         # Transform waypoints to odom frame
-        self.waypoints_in_odom = self.transform.transform_path(self.waypoints, source_frame=frame, target_frame="odom")
+        self.waypoints_in_odom = self.transform.transform_path(
+            self.waypoints, source_frame=frame, target_frame="odom"
+        )
 
         # Set the initial target to the first waypoint, adjusting if necessary
         first_waypoint = self.waypoints_in_odom[0]
-        if not self.is_goal_in_costmap_bounds(first_waypoint) or self.check_goal_collision(first_waypoint):
+        if not self.is_goal_in_costmap_bounds(first_waypoint) or self.check_goal_collision(
+            first_waypoint
+        ):
             logger.warning("First waypoint is invalid. Adjusting...")
             self.goal_xy = self.adjust_goal_to_valid_position(first_waypoint)
         else:
@@ -244,7 +262,9 @@ class BaseLocalPlanner(ABC):
             Distance in meters
         """
         robot_pos, _ = self._get_robot_pose()
-        return np.linalg.norm([target_position[0] - robot_pos[0], target_position[1] - robot_pos[1]])
+        return np.linalg.norm(
+            [target_position[0] - robot_pos[0], target_position[1] - robot_pos[1]]
+        )
 
     def plan(self) -> Dict[str, float]:
         """
@@ -256,7 +276,11 @@ class BaseLocalPlanner(ABC):
             Dict[str, float]: Velocity commands with 'x_vel' and 'angular_vel' keys
         """
         # If goal orientation is specified, rotate to match it
-        if self.position_reached and self.goal_theta is not None and not self._is_goal_orientation_reached():
+        if (
+            self.position_reached
+            and self.goal_theta is not None
+            and not self._is_goal_orientation_reached()
+        ):
             logger.info("Position goal reached. Rotating to target orientation.")
             return self._rotate_to_goal_orientation()
 
@@ -400,7 +424,9 @@ class BaseLocalPlanner(ABC):
         # Calculate the angle difference and normalize
         angle_diff = abs(normalize_angle(self.goal_theta - robot_theta))
 
-        logger.debug(f"Orientation error: {angle_diff:.4f} rad, tolerance: {self.angle_tolerance:.4f} rad")
+        logger.debug(
+            f"Orientation error: {angle_diff:.4f} rad, tolerance: {self.angle_tolerance:.4f} rad"
+        )
         return angle_diff <= self.angle_tolerance
 
     def _update_waypoint_target(self, robot_pos_np: np.ndarray) -> bool:
@@ -453,7 +479,9 @@ class BaseLocalPlanner(ABC):
             self.current_waypoint_index = len(self.waypoints_in_odom) - 1
 
         # Set the lookahead point as the immediate target, adjusting if needed
-        if not self.is_goal_in_costmap_bounds(lookahead_point) or self.check_goal_collision(lookahead_point):
+        if not self.is_goal_in_costmap_bounds(lookahead_point) or self.check_goal_collision(
+            lookahead_point
+        ):
             logger.debug("Lookahead point is invalid. Adjusting...")
             adjusted_lookahead = self.adjust_goal_to_valid_position(lookahead_point)
             # Only update if adjustment didn't fail completely
@@ -579,7 +607,9 @@ class BaseLocalPlanner(ABC):
 
         return is_in_bounds
 
-    def adjust_goal_to_valid_position(self, goal_xy: VectorLike, clearance: float = 0.5) -> Tuple[float, float]:
+    def adjust_goal_to_valid_position(
+        self, goal_xy: VectorLike, clearance: float = 0.5
+    ) -> Tuple[float, float]:
         """Find a valid (non-colliding) goal position by moving it towards the robot.
 
         Args:
@@ -639,9 +669,9 @@ class BaseLocalPlanner(ABC):
                 break
 
             # Check if this position is valid
-            if not self.check_goal_collision((current_x, current_y)) and self.is_goal_in_costmap_bounds(
+            if not self.check_goal_collision(
                 (current_x, current_y)
-            ):
+            ) and self.is_goal_in_costmap_bounds((current_x, current_y)):
                 # Store the first valid position
                 if not valid_found:
                     valid_found = True
@@ -657,13 +687,17 @@ class BaseLocalPlanner(ABC):
                     clearance_x = current_x + dx * clearance
                     clearance_y = current_y + dy * clearance
 
-                    logger.info(f"Checking clearance position at ({clearance_x:.2f}, {clearance_y:.2f})")
+                    logger.info(
+                        f"Checking clearance position at ({clearance_x:.2f}, {clearance_y:.2f})"
+                    )
 
                     # Check if the clearance position is also valid
-                    if not self.check_goal_collision((clearance_x, clearance_y)) and self.is_goal_in_costmap_bounds(
+                    if not self.check_goal_collision(
                         (clearance_x, clearance_y)
-                    ):
-                        logger.info(f"Found valid goal with clearance at ({clearance_x:.2f}, {clearance_y:.2f})")
+                    ) and self.is_goal_in_costmap_bounds((clearance_x, clearance_y)):
+                        logger.info(
+                            f"Found valid goal with clearance at ({clearance_x:.2f}, {clearance_y:.2f})"
+                        )
                         return (clearance_x, clearance_y)
 
                 # Return the valid position without clearance
@@ -675,7 +709,9 @@ class BaseLocalPlanner(ABC):
             logger.info(f"Using valid goal found at ({valid_x:.2f}, {valid_y:.2f})")
             return (valid_x, valid_y)
 
-        logger.warning(f"Could not find valid goal after {steps} steps, using closest point to robot")
+        logger.warning(
+            f"Could not find valid goal after {steps} steps, using closest point to robot"
+        )
         return (current_x, current_y)
 
     def check_if_stuck(self) -> bool:
@@ -735,7 +771,9 @@ class BaseLocalPlanner(ABC):
         )
 
         if is_currently_stuck:
-            logger.warning(f"Robot appears to be stuck! Displacement {displacement:.3f}m over {time_range:.1f}s")
+            logger.warning(
+                f"Robot appears to be stuck! Displacement {displacement:.3f}m over {time_range:.1f}s"
+            )
 
             # Don't trigger recovery if it's already active
             if not self.is_recovery_active:
@@ -745,7 +783,9 @@ class BaseLocalPlanner(ABC):
 
             # Check if we've been trying to recover for too long
             elif current_time - self.recovery_start_time > self.recovery_duration:
-                logger.error(f"Recovery behavior has been active for {self.recovery_duration}s without success")
+                logger.error(
+                    f"Recovery behavior has been active for {self.recovery_duration}s without success"
+                )
                 # Reset recovery state - maybe a different behavior will work
                 self.is_recovery_active = False
                 self.recovery_start_time = current_time
@@ -814,7 +854,9 @@ def navigate_to_goal_local(
     Returns:
         bool: True if the goal was reached within the timeout, False otherwise.
     """
-    logger.info(f"Starting navigation to local goal {goal_xy_robot} with distance {distance}m and timeout {timeout}s.")
+    logger.info(
+        f"Starting navigation to local goal {goal_xy_robot} with distance {distance}m and timeout {timeout}s."
+    )
 
     goal_x, goal_y = goal_xy_robot
 
@@ -902,7 +944,9 @@ def navigate_path_local(
     Returns:
         bool: True if the entire path was successfully followed, False otherwise
     """
-    logger.info(f"Starting navigation along path with {len(path)} waypoints and timeout {timeout}s.")
+    logger.info(
+        f"Starting navigation along path with {len(path)} waypoints and timeout {timeout}s."
+    )
 
     # Set the path in the local planner
     robot.local_planner.set_goal_waypoints(path, goal_theta=goal_theta)
@@ -939,7 +983,9 @@ def navigate_path_local(
             time.sleep(control_period)
 
         if not path_completed:
-            logger.warning(f"Path following timed out after {timeout} seconds before completing the path.")
+            logger.warning(
+                f"Path following timed out after {timeout} seconds before completing the path."
+            )
 
     except KeyboardInterrupt:
         logger.info("Path navigation interrupted by user.")
@@ -1010,8 +1056,12 @@ def visualize_local_planner_state(
     half_size_cells = int(map_size_meters / grid_resolution / 2)
 
     # Draw grid cells (using standard occupancy coloring)
-    for y in range(max(0, robot_cell_y - half_size_cells), min(grid_height, robot_cell_y + half_size_cells)):
-        for x in range(max(0, robot_cell_x - half_size_cells), min(grid_width, robot_cell_x + half_size_cells)):
+    for y in range(
+        max(0, robot_cell_y - half_size_cells), min(grid_height, robot_cell_y + half_size_cells)
+    ):
+        for x in range(
+            max(0, robot_cell_x - half_size_cells), min(grid_width, robot_cell_x + half_size_cells)
+        ):
             cell_rel_x_meters = (x - robot_cell_x) * grid_resolution
             cell_rel_y_meters = (y - robot_cell_y) * grid_resolution
 
@@ -1064,7 +1114,9 @@ def visualize_local_planner_state(
             # Connect waypoints with lines to show the path
             if len(path_points) > 1:
                 for i in range(len(path_points) - 1):
-                    cv2.line(vis_img, path_points[i], path_points[i + 1], (0, 200, 0), 1)  # Green line
+                    cv2.line(
+                        vis_img, path_points[i], path_points[i + 1], (0, 200, 0), 1
+                    )  # Green line
         except Exception as e:
             logger.error(f"Error drawing waypoints: {e}")
 
@@ -1121,12 +1173,17 @@ def visualize_local_planner_state(
         dtype=np.float32,
     )
     rotation_matrix = np.array(
-        [[math.cos(robot_theta), -math.sin(robot_theta)], [math.sin(robot_theta), math.cos(robot_theta)]]
+        [
+            [math.cos(robot_theta), -math.sin(robot_theta)],
+            [math.sin(robot_theta), math.cos(robot_theta)],
+        ]
     )
     robot_pts = np.dot(robot_pts, rotation_matrix.T)
     robot_pts[:, 0] += center_x
     robot_pts[:, 1] = center_y - robot_pts[:, 1]  # Flip y-axis
-    cv2.fillPoly(vis_img, [robot_pts.reshape((-1, 1, 2)).astype(np.int32)], (0, 0, 255))  # Red robot
+    cv2.fillPoly(
+        vis_img, [robot_pts.reshape((-1, 1, 2)).astype(np.int32)], (0, 0, 255)
+    )  # Red robot
 
     # Draw robot direction line
     front_x = int(center_x + (robot_length_px / 2) * math.cos(robot_theta))
@@ -1145,7 +1202,9 @@ def visualize_local_planner_state(
         sel_end_x = int(center_x + sel_dir_line_length * math.cos(vis_angle_selected))
         sel_end_y = int(center_y - sel_dir_line_length * math.sin(vis_angle_selected))  # Flipped Y
 
-        cv2.line(vis_img, (center_x, center_y), (sel_end_x, sel_end_y), (0, 165, 255), 2)  # BGR for Orange
+        cv2.line(
+            vis_img, (center_x, center_y), (sel_end_x, sel_end_y), (0, 165, 255), 2
+        )  # BGR for Orange
 
     # Draw goal
     if goal_xy is not None:
@@ -1183,15 +1242,27 @@ def visualize_local_planner_state(
         # Draw goal orientation arrow
         if 0 <= goal_img_x < vis_size and 0 <= goal_img_y < vis_size:
             cv2.arrowedLine(
-                vis_img, (goal_img_x, goal_img_y), (goal_dir_end_x, goal_dir_end_y), (255, 0, 255), 4
+                vis_img,
+                (goal_img_x, goal_img_y),
+                (goal_dir_end_x, goal_dir_end_y),
+                (255, 0, 255),
+                4,
             )  # Magenta arrow
 
     # Add scale bar
     scale_bar_length_px = int(1.0 * scale)
     scale_bar_x = vis_size - scale_bar_length_px - 10
     scale_bar_y = vis_size - 20
-    cv2.line(vis_img, (scale_bar_x, scale_bar_y), (scale_bar_x + scale_bar_length_px, scale_bar_y), (0, 0, 0), 2)
-    cv2.putText(vis_img, "1m", (scale_bar_x, scale_bar_y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+    cv2.line(
+        vis_img,
+        (scale_bar_x, scale_bar_y),
+        (scale_bar_x + scale_bar_length_px, scale_bar_y),
+        (0, 0, 0),
+        2,
+    )
+    cv2.putText(
+        vis_img, "1m", (scale_bar_x, scale_bar_y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1
+    )
 
     # Add status info
     status_text = []

@@ -82,10 +82,14 @@ class GenericRestSkill(AbstractSkill):
                 timeout=self.timeout,
             )
             response.raise_for_status()  # Raises HTTPError for bad responses (4xx or 5xx)
-            logger.debug(f"Request successful. Status: {response.status_code}, Response: {response.text[:100]}...")
+            logger.debug(
+                f"Request successful. Status: {response.status_code}, Response: {response.text[:100]}..."
+            )
             return response.text  # Return text content directly
         except requests.exceptions.HTTPError as http_err:
-            logger.error(f"HTTP error occurred: {http_err} - Status Code: {http_err.response.status_code}")
+            logger.error(
+                f"HTTP error occurred: {http_err} - Status Code: {http_err.response.status_code}"
+            )
             return f"HTTP error making {self.method.upper()} request to {self.url}: {http_err.response.status_code} {http_err.response.reason}"
         except requests.exceptions.RequestException as req_err:
             logger.error(f"Request exception occurred: {req_err}")

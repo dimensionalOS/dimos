@@ -61,7 +61,17 @@ class target2d:
     detection probabilities, and computed texture values.
     """
 
-    def __init__(self, initial_mask, initial_bbox, track_id, prob, name, texture_value, target_id, history_size=10):
+    def __init__(
+        self,
+        initial_mask,
+        initial_bbox,
+        track_id,
+        prob,
+        name,
+        texture_value,
+        target_id,
+        history_size=10,
+    ):
         """
         Args:
             initial_mask (torch.Tensor): Latest segmentation mask.
@@ -288,7 +298,9 @@ class target2dTracker:
         frame_shape = frame.shape[:2]  # (height, width)
 
         # For each detection, try to match with an existing target.
-        for mask, bbox, det_tid, prob, name, texture in zip(masks, bboxes, track_ids, probs, names, texture_values):
+        for mask, bbox, det_tid, prob, name, texture in zip(
+            masks, bboxes, track_ids, probs, names, texture_values
+        ):
             matched_target = None
 
             # First, try matching by detection track ID if valid.
@@ -312,7 +324,9 @@ class target2dTracker:
                 matched_target.update(mask, bbox, det_tid, prob, name, texture)
                 updated_target_ids.add(matched_target.target_id)
             else:
-                new_target = target2d(mask, bbox, det_tid, prob, name, texture, self.next_target_id, self.history_size)
+                new_target = target2d(
+                    mask, bbox, det_tid, prob, name, texture, self.next_target_id, self.history_size
+                )
                 self.targets[self.next_target_id] = new_target
                 updated_target_ids.add(self.next_target_id)
                 self.next_target_id += 1

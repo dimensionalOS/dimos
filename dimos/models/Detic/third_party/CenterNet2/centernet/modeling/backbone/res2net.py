@@ -142,7 +142,9 @@ class BottleneckBlock(CNNBlockBase):
 
         if in_channels != out_channels:
             self.shortcut = nn.Sequential(
-                nn.AvgPool2d(kernel_size=stride, stride=stride, ceil_mode=True, count_include_pad=False),
+                nn.AvgPool2d(
+                    kernel_size=stride, stride=stride, ceil_mode=True, count_include_pad=False
+                ),
                 Conv2d(
                     in_channels,
                     out_channels,
@@ -299,7 +301,9 @@ class DeformBottleneckBlock(ResNetBlockBase):
             #     norm=get_norm(norm, out_channels),
             # )
             self.shortcut = nn.Sequential(
-                nn.AvgPool2d(kernel_size=stride, stride=stride, ceil_mode=True, count_include_pad=False),
+                nn.AvgPool2d(
+                    kernel_size=stride, stride=stride, ceil_mode=True, count_include_pad=False
+                ),
                 Conv2d(
                     in_channels,
                     out_channels,
@@ -602,7 +606,9 @@ class ResNet(Backbone):
             self.add_module(name, stage)
             self.stages_and_names.append((stage, name))
 
-            self._out_feature_strides[name] = current_stride = int(current_stride * np.prod([k.stride for k in blocks]))
+            self._out_feature_strides[name] = current_stride = int(
+                current_stride * np.prod([k.stride for k in blocks])
+            )
             self._out_feature_channels[name] = curr_channels = blocks[-1].out_channels
 
         if num_classes is not None:
@@ -642,7 +648,9 @@ class ResNet(Backbone):
 
     def output_shape(self):
         return {
-            name: ShapeSpec(channels=self._out_feature_channels[name], stride=self._out_feature_strides[name])
+            name: ShapeSpec(
+                channels=self._out_feature_channels[name], stride=self._out_feature_strides[name]
+            )
             for name in self._out_features
         }
 
@@ -709,7 +717,9 @@ def build_res2net_backbone(cfg, input_shape):
 
     if depth in [18, 34]:
         assert out_channels == 64, "Must set MODEL.RESNETS.RES2_OUT_CHANNELS = 64 for R18/R34"
-        assert not any(deform_on_per_stage), "MODEL.RESNETS.DEFORM_ON_PER_STAGE unsupported for R18/R34"
+        assert not any(deform_on_per_stage), (
+            "MODEL.RESNETS.DEFORM_ON_PER_STAGE unsupported for R18/R34"
+        )
         assert res5_dilation == 1, "Must set MODEL.RESNETS.RES5_DILATION = 1 for R18/R34"
         assert num_groups == 1, "Must set MODEL.RESNETS.NUM_GROUPS = 1 for R18/R34"
 
