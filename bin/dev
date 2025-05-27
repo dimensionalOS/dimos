@@ -117,10 +117,10 @@ run_devcontainer() {
 
     if ! check_image_running; then
         ensure_image_downloaded
-        $devcontainer_bin up --workspace-folder "$REPO_ROOT"
+        $devcontainer_bin up --workspace-folder="$REPO_ROOT" --gpu-availability="detect"
     fi
 
-    exec $devcontainer_bin $1 --workspace-folder "$REPO_ROOT" "${@:2}"
+    exec $devcontainer_bin $1 --workspace-folder="$REPO_ROOT" "${@:2}"
 }
 
 if [[ $# -eq 0 ]]; then
