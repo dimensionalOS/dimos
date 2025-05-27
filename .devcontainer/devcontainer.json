@@ -9,7 +9,9 @@
       ]
     }
   },
-
+  "containerEnv": {
+    "PYTHONPATH": "${localEnv:PYTHONPATH}:/workspaces/dimos"
+  },
   "settings": {
     "notebook.formatOnSave.enabled": true,
     "notebook.codeActionsOnSave": {
