@@ -1,12 +1,5 @@
 name: docker-tree
-on:
-#  - push
-  - workflow_call:
-      inputs:
-        branch-tag:
-          required: true
-          type: string
-          default: "latest"
+on: workflow_call
 
 permissions:
   contents: read
