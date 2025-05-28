@@ -1,5 +1,9 @@
 name: docker
-on: workflow_call
+on:
+  workflow_run:
+    workflows: ["cleanup"]
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -57,7 +61,6 @@ jobs:
           echo branch_tag="${branch_tag}" >> "$GITHUB_OUTPUT"
 
   ros:
-    name: docker-ros
     needs: [check-changes]
     if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
@@ -104,17 +107,3 @@ jobs:
     with:
       branch-tag:   ${{ needs.check-changes.outputs.branch-tag }}
       target: dev
-
-  run-tests:
-    needs: [check-changes, dev]
-    if: |
-      ${{
-      always() && !cancelled() &&
-      needs.check-changes.result == 'success' &&
-      ((needs.dev.result == 'success') ||
-      (needs.dev.result == 'skipped' &&
-      needs.check-changes.outputs.tests == 'true'))
-      }}
-    uses: ./.github/workflows/tests.yml
-    with:
-      branch-tag: ${{ needs.dev.result != 'success' && 'dev' || needs.check-changes.outputs.branch-tag }}
