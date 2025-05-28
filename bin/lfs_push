@@ -15,9 +15,6 @@ NC='\033[0m' # No Color
 ROOT=$(git rev-parse --show-toplevel)
 cd $ROOT
 
-# Ensure tests/data/.lfs directory exists
-mkdir -p tests/data/.lfs
-
 # Check if tests/data exists
 if [ ! -d "tests/data" ]; then
     echo -e "${YELLOW}No tests/data directory found, skipping compression.${NC}"
