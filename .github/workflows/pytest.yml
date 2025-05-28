@@ -21,9 +21,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          set-safe-directory: true
 
       - run: |
+          cat /root/.gitconfig
           git config --global --add safe.directory '*'
+          cat /root/.gitconfig
 
       - name: Run tests
         run: |
