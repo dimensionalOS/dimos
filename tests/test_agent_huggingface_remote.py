@@ -39,24 +39,24 @@ query_provider = QueryDataProvider()
 
 # Initialize agent
 agent = HuggingFaceRemoteAgent(
-            dev_name="HuggingFaceRemoteAgent",
-            model_name="meta-llama/Meta-Llama-3-8B-Instruct",
-            tokenizer=HuggingFaceTokenizer(model_name="meta-llama/Meta-Llama-3-8B-Instruct"),
-            max_output_tokens_per_request=8192,
-            input_query_stream=query_provider.data_stream,
-            # input_video_stream=video_stream,
-            system_query="You are a helpful assistant that can answer questions and help with tasks.",
-        )
+    dev_name="HuggingFaceRemoteAgent",
+    model_name="meta-llama/Meta-Llama-3-8B-Instruct",
+    tokenizer=HuggingFaceTokenizer(model_name="meta-llama/Meta-Llama-3-8B-Instruct"),
+    max_output_tokens_per_request=8192,
+    input_query_stream=query_provider.data_stream,
+    # input_video_stream=video_stream,
+    system_query="You are a helpful assistant that can answer questions and help with tasks.",
+)
 
 # Start the query stream.
 # Queries will be pushed every 1 second, in a count from 100 to 5000.
 query_provider.start_query_stream(
-    query_template=
-    "{query}; Denote the number at the beginning of this query before the semicolon as the 'reference number'. Provide the reference number, without any other text in your response.",
+    query_template="{query}; Denote the number at the beginning of this query before the semicolon as the 'reference number'. Provide the reference number, without any other text in your response.",
     frequency=5,
     start_count=1,
     end_count=10000,
-    step=1)
+    step=1,
+)
 
 try:
     input("Press ESC to exit...")

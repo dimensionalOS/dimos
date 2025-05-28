@@ -19,7 +19,9 @@ def _check_git_lfs_available() -> None:
 @cache
 def _get_repo_root() -> Path:
     try:
-        result = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, check=True, text=True)
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], capture_output=True, check=True, text=True
+        )
         return Path(result.stdout.strip())
     except subprocess.CalledProcessError:
         raise RuntimeError("Not in a Git repository")
@@ -54,7 +56,10 @@ def _lfs_pull(file_path: Path, repo_root: Path) -> None:
         relative_path = file_path.relative_to(repo_root)
 
         subprocess.run(
-            ["git", "lfs", "pull", "--include", str(relative_path)], cwd=repo_root, check=True, capture_output=True
+            ["git", "lfs", "pull", "--include", str(relative_path)],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
         )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"Failed to pull LFS file {file_path}: {e}")

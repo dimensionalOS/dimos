@@ -29,17 +29,18 @@ def main():
     robot_ip = os.getenv("ROBOT_IP")
     if not robot_ip:
         raise ValueError("ROBOT_IP environment variable is required")
-    connection_method = os.getenv("CONN_TYPE") or 'webrtc'
-    output_dir = os.getenv("ROS_OUTPUT_DIR",
-                           os.path.join(os.getcwd(), "assets/output/ros"))
+    connection_method = os.getenv("CONN_TYPE") or "webrtc"
+    output_dir = os.getenv("ROS_OUTPUT_DIR", os.path.join(os.getcwd(), "assets/output/ros"))
 
     try:
         # Initialize robot
         logger.info("Initializing Unitree Robot")
-        robot = UnitreeGo2(ip=robot_ip,
-                           connection_method=connection_method,
-                           output_dir=output_dir,
-                           skills=MyUnitreeSkills())
+        robot = UnitreeGo2(
+            ip=robot_ip,
+            connection_method=connection_method,
+            output_dir=output_dir,
+            skills=MyUnitreeSkills(),
+        )
 
         # Set up video stream
         logger.info("Starting video stream")
@@ -48,15 +49,15 @@ def main():
         # Create FastAPI server with video stream and text streams
         logger.info("Initializing FastAPI server")
         streams = {"unitree_video": video_stream}
-        
+
         # Create a subject for agent responses
         agent_response_subject = rx.subject.Subject()
         agent_response_stream = agent_response_subject.pipe(ops.share())
-        
+
         text_streams = {
             "agent_responses": agent_response_stream,
         }
-        
+
         web_interface = FastAPIServer(port=5555, text_streams=text_streams, **streams)
 
         logger.info("Starting action primitive execution agent")
@@ -66,11 +67,9 @@ def main():
             output_dir=output_dir,
             skills=robot.get_skills(),
         )
-        
+
         # Subscribe to agent responses and send them to the subject
-        agent.get_response_observable().subscribe(
-            lambda x: agent_response_subject.on_next(x)
-        )
+        agent.get_response_observable().subscribe(lambda x: agent_response_subject.on_next(x))
 
         # Start server (blocking call)
         logger.info("Starting FastAPI server")

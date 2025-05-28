@@ -1,0 +1,98 @@
+#!/bin/bash
+# Compresses directories in tests/data/* into tests/data/.lfs/dirname.tar.gz
+# Pushes to LFS
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+#echo -e "${GREEN}Running test data compression check...${NC}"
+
+ROOT=$(git rev-parse --show-toplevel)
+cd $ROOT
+
+# Check if tests/data exists
+if [ ! -d "tests/data" ]; then
+    echo -e "${YELLOW}No tests/data directory found, skipping compression.${NC}"
+    exit 0
+fi
+
+# Track if any compression was performed
+compressed_dirs=()
+
+# Iterate through all directories in tests/data
+for dir_path in tests/data/*; do
+    # Skip if no directories found (glob didn't match)
+    [ ! "$dir_path" ] && continue
+    
+    # Extract directory name
+    dir_name=$(basename "$dir_path")
+    
+    # Skip .lfs directory if it exists
+    [ "$dir_name" = ".lfs" ] && continue
+    
+    # Define compressed file path
+    compressed_file="tests/data/.lfs/${dir_name}.tar.gz"
+    
+    # Check if compressed file already exists
+    if [ -f "$compressed_file" ]; then
+        continue
+    fi
+    
+    echo -e "  ${YELLOW}Compressing${NC} $dir_path -> $compressed_file"
+    
+    # Show directory size before compression
+    dir_size=$(du -sh "$dir_path" | cut -f1)
+    echo -e "    Data size: ${YELLOW}$dir_size${NC}"
+    
+    # Create compressed archive with progress bar
+    # Use tar with gzip compression, excluding hidden files and common temp files
+    tar -czf "$compressed_file" \
+        --exclude='*.tmp' \
+        --exclude='*.temp' \
+        --exclude='.DS_Store' \
+        --exclude='Thumbs.db' \
+        --checkpoint=1000 \
+        --checkpoint-action=dot \
+        -C "tests/data" \
+        "$dir_name"
+    
+    if [ $? -eq 0 ]; then
+        # Show compressed file size
+        compressed_size=$(du -sh "$compressed_file" | cut -f1)
+        echo -e "  ${GREEN}✓${NC} Successfully compressed $dir_name (${GREEN}$dir_size${NC} → ${GREEN}$compressed_size${NC})"
+        compressed_dirs+=("$dir_name")
+        
+        # Add the compressed file to git LFS tracking
+        git add "$compressed_file"
+
+        echo -e "  ${GREEN}✓${NC} git-add $compressed_file"
+
+    else
+        echo -e "  ${RED}✗${NC} Failed to compress $dir_name"
+        exit 1
+    fi
+done
+
+if [ ${#compressed_dirs[@]} -gt 0 ]; then
+    # Create commit message with compressed directory names
+    if [ ${#compressed_dirs[@]} -eq 1 ]; then
+        commit_msg="Auto-compress test data: ${compressed_dirs[0]}"
+    else
+        # Join array elements with commas
+        dirs_list=$(IFS=', '; echo "${compressed_dirs[*]}")
+        commit_msg="Auto-compress test data: ${dirs_list}"
+    fi
+    
+    #git commit -m "$commit_msg"
+    echo -e "${GREEN}✓${NC} Compressed file references added. Uploading..."
+    git lfs push origin $(git branch --show-current)
+    echo -e "${GREEN}✓${NC} Uploaded to LFS"
+else
+    echo -e "${GREEN}✓${NC} No test data to compress"
+fi
+

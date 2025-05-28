@@ -43,21 +43,31 @@ load_dotenv()
 # Allow command line arguments to control spatial memory parameters
 import argparse
 
+
 def parse_arguments():
-    parser = argparse.ArgumentParser(description='Run the robot with optional spatial memory parameters')
-    parser.add_argument('--new-memory', action='store_true', help='Create a new spatial memory from scratch')
-    parser.add_argument('--spatial-memory-dir', type=str, help='Directory for storing spatial memory data')
+    parser = argparse.ArgumentParser(
+        description="Run the robot with optional spatial memory parameters"
+    )
+    parser.add_argument(
+        "--new-memory", action="store_true", help="Create a new spatial memory from scratch"
+    )
+    parser.add_argument(
+        "--spatial-memory-dir", type=str, help="Directory for storing spatial memory data"
+    )
     return parser.parse_args()
+
 
 args = parse_arguments()
 
 # Initialize robot with spatial memory parameters
-robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
-                    skills=MyUnitreeSkills(),
-                    mock_connection=False,
-                    spatial_memory_dir=args.spatial_memory_dir,  # Will use default if None
-                    new_memory=args.new_memory,  # Create a new memory if specified
-                    mode = "ai")
+robot = UnitreeGo2(
+    ip=os.getenv("ROBOT_IP"),
+    skills=MyUnitreeSkills(),
+    mock_connection=False,
+    spatial_memory_dir=args.spatial_memory_dir,  # Will use default if None
+    new_memory=args.new_memory,  # Create a new memory if specified
+    mode="ai",
+)
 
 # Create a subject for agent responses
 agent_response_subject = rx.subject.Subject()
@@ -79,7 +89,7 @@ object_detector = ObjectDetectionStream(
     class_filter=class_filter,
     transform_to_map=robot.ros_control.transform_pose,
     detector=detector,
-    video_stream=video_stream
+    video_stream=video_stream,
 )
 
 # Create visualization stream for web interface
@@ -94,12 +104,13 @@ formatted_detection_stream = object_detector.get_formatted_stream().pipe(
     ops.filter(lambda x: x is not None)
 )
 
+
 # Create a direct mapping that combines detection data with locations
 def combine_with_locations(object_detections):
     # Get locations from spatial memory
     try:
         locations = robot.get_spatial_memory().get_robot_locations()
-        
+
         # Format the locations section
         locations_text = "\n\nSaved Robot Locations:\n"
         if locations:
@@ -108,22 +119,22 @@ def combine_with_locations(object_detections):
                 locations_text += f"Rotation ({loc.rotation[0]:.2f}, {loc.rotation[1]:.2f}, {loc.rotation[2]:.2f})\n"
         else:
             locations_text += "None\n"
-            
+
         # Simply concatenate the strings
         return object_detections + locations_text
     except Exception as e:
         print(f"Error adding locations: {e}")
         return object_detections
 
-# Create the combined stream with a simple pipe operation
-enhanced_data_stream = formatted_detection_stream.pipe(
-    ops.map(combine_with_locations),
-    ops.share()
-)
 
-streams = {"unitree_video": robot.get_ros_video_stream(),
-           "local_planner_viz": local_planner_viz_stream,
-           "object_detection": viz_stream}
+# Create the combined stream with a simple pipe operation
+enhanced_data_stream = formatted_detection_stream.pipe(ops.map(combine_with_locations), ops.share())
+
+streams = {
+    "unitree_video": robot.get_ros_video_stream(),
+    "local_planner_viz": local_planner_viz_stream,
+    "object_detection": viz_stream,
+}
 text_streams = {
     "agent_responses": agent_response_stream,
 }
@@ -145,7 +156,7 @@ agent = ClaudeAgent(
     skills=robot.get_skills(),
     system_query="What do you see",
     model_name="claude-3-7-sonnet-latest",
-    thinking_budget_tokens=0
+    thinking_budget_tokens=0,
 )
 
 # tts_node = tts()
@@ -168,9 +179,7 @@ robot_skills.create_instance("GetPose", robot=robot)
 robot_skills.create_instance("Speak", tts_node=tts_node)
 
 # Subscribe to agent responses and send them to the subject
-agent.get_response_observable().subscribe(
-    lambda x: agent_response_subject.on_next(x)
-)
+agent.get_response_observable().subscribe(lambda x: agent_response_subject.on_next(x))
 
 print("ObserveStream and Kill skills registered and ready for use")
 print("Created memory.txt file")

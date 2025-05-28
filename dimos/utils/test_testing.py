@@ -12,11 +12,14 @@ def test_pull_file():
 
     # delete decompressed test file if it exists
     if test_file_decompressed.exists():
-        test_file_compressed.unlink()
+        test_file_decompressed.unlink()
 
     # delete lfs archive file if it exists
     if test_file_compressed.exists():
         test_file_compressed.unlink()
+
+    assert not test_file_compressed.exists()
+    assert not test_file_decompressed.exists()
 
     # pull the lfs file reference from git
     env = os.environ.copy()
@@ -31,7 +34,7 @@ def test_pull_file():
 
     # ensure we have a pointer file from git (small ASCII text file)
     assert test_file_compressed.exists()
-    test_file_compressed.stat().st_size < 200
+    assert test_file_compressed.stat().st_size < 200
 
     # trigger a data file pull
     assert testing.testData(test_file_name) == test_file_decompressed
@@ -42,12 +45,18 @@ def test_pull_file():
 
     # validate hashes
     with test_file_compressed.open("rb") as f:
+        assert test_file_compressed.stat().st_size > 200
         compressed_sha256 = hashlib.sha256(f.read()).hexdigest()
-        assert compressed_sha256 == "cdfd708d66e6dd5072ed7636fc10fb97754f8d14e3acd6c3553663e27fc96065"
+        assert (
+            compressed_sha256 == "b8cf30439b41033ccb04b09b9fc8388d18fb544d55b85c155dbf85700b9e7603"
+        )
 
     with test_file_decompressed.open("rb") as f:
         decompressed_sha256 = hashlib.sha256(f.read()).hexdigest()
-        assert decompressed_sha256 == "55d451dde49b05e3ad386fdd4ae9e9378884b8905bff1ca8aaea7d039ff42ddd"
+        assert (
+            decompressed_sha256
+            == "55d451dde49b05e3ad386fdd4ae9e9378884b8905bff1ca8aaea7d039ff42ddd"
+        )
 
 
 def test_pull_dir():
@@ -79,13 +88,23 @@ def test_pull_dir():
 
     # ensure we have a pointer file from git (small ASCII text file)
     assert test_dir_compressed.exists()
-    test_dir_compressed.stat().st_size < 200
+    assert test_dir_compressed.stat().st_size < 200
 
     # trigger a data file pull
     assert testing.testData(test_dir_name) == test_dir_decompressed
+    assert test_dir_compressed.stat().st_size > 200
 
     # validate data is received
     assert test_dir_compressed.exists()
     assert test_dir_decompressed.exists()
 
-    assert len(list(test_dir_decompressed.iterdir())) == 2
+    for [file, expected_hash] in zip(
+        sorted(test_dir_decompressed.iterdir()),
+        [
+            "6c3aaa9a79853ea4a7453c7db22820980ceb55035777f7460d05a0fa77b3b1b3",
+            "456cc2c23f4ffa713b4e0c0d97143c27e48bbe6ef44341197b31ce84b3650e74",
+        ],
+    ):
+        with file.open("rb") as f:
+            sha256 = hashlib.sha256(f.read()).hexdigest()
+            assert sha256 == expected_hash

@@ -6,6 +6,7 @@ import tests.test_header
 
 from dotenv import load_dotenv
 
+
 # Sanity check for dotenv
 def test_dotenv():
     print("test_dotenv:")
@@ -13,9 +14,11 @@ def test_dotenv():
     openai_api_key = os.getenv("OPENAI_API_KEY")
     print("\t\tOPENAI_API_KEY: ", openai_api_key)
 
+
 # Sanity check for openai connection
 def test_openai_connection():
     from openai import OpenAI
+
     client = OpenAI()
     print("test_openai_connection:")
     response = client.chat.completions.create(
@@ -37,6 +40,7 @@ def test_openai_connection():
         max_tokens=300,
     )
     print("\t\tOpenAI Response: ", response.choices[0])
+
 
 test_dotenv()
 test_openai_connection()
