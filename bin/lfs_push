@@ -1,7 +1,6 @@
 #!/bin/bash
-
-# Pre-push hook to compress testing data directories
 # Compresses directories in tests/data/* into tests/data/.lfs/dirname.tar.gz
+# Pushes to LFS
 
 set -e
 
@@ -14,9 +13,8 @@ NC='\033[0m' # No Color
 #echo -e "${GREEN}Running test data compression check...${NC}"
 
 ROOT=$(git rev-parse --show-toplevel)
-
-
 cd $ROOT
+
 # Ensure tests/data/.lfs directory exists
 mkdir -p tests/data/.lfs
 
@@ -73,7 +71,6 @@ for dir_path in tests/data/*; do
         compressed_dirs+=("$dir_name")
         
         # Add the compressed file to git LFS tracking
-
         git add "$compressed_file"
 
         echo -e "  ${GREEN}✓${NC} git-add $compressed_file"
