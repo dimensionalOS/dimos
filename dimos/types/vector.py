@@ -91,8 +91,6 @@ class Vector:
         def getArrow():
             repr = ["←", "↖", "↑", "↗", "→", "↘", "↓", "↙"]
 
-            print("SELF X", self.x)
-            print("SELF Y", self.y)
             if self.x == 0 and self.y == 0:
                 return "·"
 

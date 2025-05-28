@@ -2,6 +2,7 @@ import hashlib
 import os
 import subprocess
 from dimos.utils import testing
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
 def test_pull_file():
@@ -108,3 +109,21 @@ def test_pull_dir():
         with file.open("rb") as f:
             sha256 = hashlib.sha256(f.read()).hexdigest()
             assert sha256 == expected_hash
+
+
+def test_sensor_replay():
+    counter = 0
+    for message in testing.SensorReplay(name="office_lidar").iterate():
+        counter += 1
+        assert isinstance(message, dict)
+    assert counter == 500
+
+
+def test_sensor_replay_cast():
+    counter = 0
+    for message in testing.SensorReplay(
+        name="office_lidar", autocast=lambda x: LidarMessage.from_msg(x)
+    ).iterate():
+        counter += 1
+        assert isinstance(message, LidarMessage)
+    assert counter == 500
