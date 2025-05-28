@@ -1,10 +1,12 @@
 name: tests
 
 on:
-  workflow_run:
-    workflows: ["docker"]
-    types:
-      - completed
+ workflow_call:
+   inputs:
+     branch-tag:
+       required: true
+       type: string
+       default: "latest"
 
 permissions:
   contents: read

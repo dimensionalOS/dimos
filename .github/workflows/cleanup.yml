@@ -3,6 +3,8 @@ on: push
 
 permissions:
   contents: write
+  packages: write
+  pull-requests: read
 
 jobs:
   pre-commit:
@@ -25,3 +27,7 @@ jobs:
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
         commit_message: "CI code cleanup"
+
+  docker:
+    needs: [pre-commit]
+    uses: ./.github/workflows/docker.yml
