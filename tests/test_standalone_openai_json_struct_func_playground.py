@@ -105,31 +105,34 @@ import os
 import requests
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from openai import OpenAI
 
 client = OpenAI()
 
+
 def get_current_weather(latitude, longitude):
     """Get the current weather in a given latitude and longitude using the 7Timer API"""
     base = "http://www.7timer.info/bin/api.pl"
     request_url = f"{base}?lon={longitude}&lat={latitude}&product=civillight&output=json"
     response = requests.get(request_url)
-    
+
     # Parse response to extract the main weather data
     weather_data = response.json()
-    current_data = weather_data.get('dataseries', [{}])[0]
-    
+    current_data = weather_data.get("dataseries", [{}])[0]
+
     result = {
         "latitude": latitude,
         "longitude": longitude,
-        "temp": current_data.get('temp2m', {'max': 'Unknown', 'min': 'Unknown'}),
-        "humidity": "Unknown"
+        "temp": current_data.get("temp2m", {"max": "Unknown", "min": "Unknown"}),
+        "humidity": "Unknown",
     }
-    
+
     # Convert the dictionary to JSON string to match the given structure
     return json.dumps(result)
+
 
 def run_conversation(content):
     messages = [{"role": "user", "content": content}]
@@ -192,15 +195,14 @@ def run_conversation(content):
             )
 
         second_response = client.chat.completions.create(
-            model="gpt-3.5-turbo-0125",
-            messages=messages,
-            stream=True
+            model="gpt-3.5-turbo-0125", messages=messages, stream=True
         )
         return second_response
+
 
 if __name__ == "__main__":
     question = "What's the weather like in Paris and San Francisco?"
     response = run_conversation(question)
     for chunk in response:
-        print(chunk.choices[0].delta.content or "", end='', flush=True)
+        print(chunk.choices[0].delta.content or "", end="", flush=True)
 # Milestone 2

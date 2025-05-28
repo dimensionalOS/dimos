@@ -40,7 +40,7 @@ if which_test == 1:
 
     # Create an observable that emits every second
     secondly_emission = reactivex.interval(1.0, scheduler=pool_scheduler).pipe(
-        ops.map(lambda x: f"Value {x} emitted after {x+1} second(s)"),
+        ops.map(lambda x: f"Value {x} emitted after {x + 1} second(s)"),
         ops.do_action(emission_process),
         ops.take(30),  # Limit the emission to 30 times
     )
@@ -50,7 +50,7 @@ if which_test == 1:
         on_next=lambda x: print(x),
         on_error=lambda e: print(e),
         on_completed=lambda: print("Emission completed."),
-        scheduler=pool_scheduler
+        scheduler=pool_scheduler,
     )
 
 elif which_test == 2:
@@ -92,19 +92,16 @@ elif which_test == 2:
 
     # Observable that emits every second
     secondly_emission = reactivex.interval(1.0, scheduler=pool_scheduler).pipe(
-        ops.map(lambda x: f"Second {x+1}"),
-        ops.take(30)
+        ops.map(lambda x: f"Second {x + 1}"), ops.take(30)
     )
 
     # Observable that emits values immediately and repeatedly
-    immediate_emission = reactivex.from_(['a', 'b', 'c', 'd', 'e']).pipe(
-        ops.repeat()
-    )
+    immediate_emission = reactivex.from_(["a", "b", "c", "d", "e"]).pipe(ops.repeat())
 
     # Combine emissions using zip
     combined_emissions = reactivex.zip(secondly_emission, immediate_emission).pipe(
         ops.map(lambda combined: f"{combined[0]} - Value: {combined[1]}"),
-        ops.do_action(lambda s: print(f"Combined emission: {s}"))
+        ops.do_action(lambda s: print(f"Combined emission: {s}")),
     )
 
     # Subscribe to the combined emissions
@@ -113,9 +110,9 @@ elif which_test == 2:
         on_error=lambda e: print(f"Error: {e}"),
         on_completed=lambda: {
             print("Combined emission completed."),
-            completed_event.set()  # Set the event to signal completion
+            completed_event.set(),  # Set the event to signal completion
         },
-        scheduler=pool_scheduler
+        scheduler=pool_scheduler,
     )
 
     # Wait for the observable to complete

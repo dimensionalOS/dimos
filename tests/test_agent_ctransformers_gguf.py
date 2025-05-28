@@ -35,7 +35,7 @@ test_query = "User: Travel forward 10 meters"
 agent.run_observable_query(test_query).subscribe(
     on_next=lambda response: print(f"One-off query response: {response}"),
     on_error=lambda error: print(f"Error: {error}"),
-    on_completed=lambda: print("Query completed")
+    on_completed=lambda: print("Query completed"),
 )
 
 try:

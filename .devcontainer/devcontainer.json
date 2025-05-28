@@ -12,7 +12,7 @@
   "containerEnv": {
     "PYTHONPATH": "${localEnv:PYTHONPATH}:/workspaces/dimos"
   },
-  "postCreateCommand": "git config --global --add safe.directory /workspaces/dimos",
+  "postCreateCommand": "git config --global --add safe.directory /workspaces/dimos && cd /workspaces/dimos && pre-commit install",
   "settings": {
     "notebook.formatOnSave.enabled": true,
     "notebook.codeActionsOnSave": {

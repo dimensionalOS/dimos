@@ -22,5 +22,7 @@ assets/agent/memory.txt
 tests/data/*
 !tests/data/.lfs/
 
-# node modules (for dev tooling)
+# node env (used by devcontainers cli)
 node_modules
+package.json
+package-lock.json
