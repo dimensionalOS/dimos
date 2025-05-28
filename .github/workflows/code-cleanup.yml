@@ -25,3 +25,7 @@ jobs:
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
         commit_message: "CI code cleanup"
+
+  run-docker-builds:
+    needs: [pre-commit]
+    uses: ./.github/workflows/docker.yml
