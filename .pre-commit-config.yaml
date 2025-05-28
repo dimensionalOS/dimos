@@ -20,12 +20,13 @@ repos:
       - id: check-toml
       - id: check-yaml
       - id: pretty-format-json
+        name: format json
         args: [ --autofix, --no-sort-keys ]
 
   - repo: local
     hooks:
       - id: lfs_push
-        name: lfs data compress and push
+        name: new LFS files compress and push
         always_run: true
         pass_filenames: false
         verbose: true

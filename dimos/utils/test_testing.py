@@ -3,8 +3,6 @@ import os
 import subprocess
 from dimos.utils import testing
 
-# trigger rebuild1
-
 
 def test_pull_file():
     repo_root = testing._get_repo_root()
