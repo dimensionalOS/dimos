@@ -1,4 +1,4 @@
-name: docker
+name: dkr
 on: workflow_call
 
 permissions:
