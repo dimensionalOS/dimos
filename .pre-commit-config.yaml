@@ -29,5 +29,5 @@ repos:
         always_run: true
         pass_filenames: false
         verbose: true
-        entry: bin/lfs_push_all
+        entry: bin/lfs_push
         language: script
