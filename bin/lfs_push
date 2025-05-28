@@ -76,7 +76,7 @@ for dir_path in tests/data/*; do
 
         git add "$compressed_file"
 
-        echo -e "${GREEN}✓${NC} git-add $compressed_file"
+        echo -e "  ${GREEN}✓${NC} git-add $compressed_file"
 
     else
         echo -e "  ${RED}✗${NC} Failed to compress $dir_name"
@@ -95,10 +95,9 @@ if [ ${#compressed_dirs[@]} -gt 0 ]; then
     fi
     
     #git commit -m "$commit_msg"
-    echo -e "${GREEN}✓${NC} Compressed files committed automatically, uploading..."
+    echo -e "${GREEN}✓${NC} Compressed file references added. Uploading..."
     git lfs push origin $(git branch --show-current)
     echo -e "${GREEN}✓${NC} Uploaded to LFS"
-    echo -e "${GREEN}✓${NC} New commit has been added"
 else
     echo -e "${GREEN}✓${NC} No test data to compress"
 fi
