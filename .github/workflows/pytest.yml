@@ -21,10 +21,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          set-safe-directory: tru
 
-      - run: |
-          git config --global --add safe.directory '*'
-          cat /root/.gitconfig
+#      - run: |
+#          git config --global --add safe.directory '*'
+#          cat /root/.gitconfig
 
       - name: Run tests
         run: |
