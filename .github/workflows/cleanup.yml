@@ -1,4 +1,4 @@
-name: code-cleanup
+name: cleanup
 on: push
 
 permissions:
@@ -28,6 +28,6 @@ jobs:
       with:
         commit_message: "CI code cleanup"
 
-  run-docker-builds:
+  docker:
     needs: [pre-commit]
     uses: ./.github/workflows/docker.yml

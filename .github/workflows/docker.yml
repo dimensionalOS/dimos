@@ -1,4 +1,4 @@
-name: docker-tree
+name: docker
 on: workflow_call
 
 permissions:
