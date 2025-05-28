@@ -28,6 +28,6 @@ jobs:
       with:
         commit_message: "CI code cleanup"
 
-  dkr:
+  docker:
     needs: [pre-commit]
     uses: ./.github/workflows/docker.yml

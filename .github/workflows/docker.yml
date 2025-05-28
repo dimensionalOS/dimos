@@ -1,4 +1,4 @@
-name: dkr
+name: docker
 on: workflow_call
 
 permissions:
@@ -57,6 +57,7 @@ jobs:
           echo branch_tag="${branch_tag}" >> "$GITHUB_OUTPUT"
 
   ros:
+    name: docker-ros
     needs: [check-changes]
     if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
