@@ -10,10 +10,11 @@ cd $ROOT
 
 new_data=()
 
+# Enable nullglob to make globs expand to nothing when not matching
+shopt -s nullglob
+
 # Iterate through all directories in tests/data
 for dir_path in tests/data/*; do
-    # Skip if no directories found (glob didn't match)
-    [ ! "$dir_path" ] && continue
 
     # Extract directory name
     dir_name=$(basename "$dir_path")
