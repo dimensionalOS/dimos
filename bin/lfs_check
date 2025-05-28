@@ -36,6 +36,6 @@ done
 if [ ${#new_data[@]} -gt 0 ]; then
    echo -e "${RED}✗${NC} New test data detected:"
    echo -e "  ${GREEN}${new_data[@]}${NC}"
-   echo -e "\neither delete or run ./bin/lfs_push to add the data to LFS and your commit"
+   echo -e "\neither delete or run ${GREEN}./bin/lfs_push${NC} to add the data to LFS and your commit"
    exit 1
 fi
