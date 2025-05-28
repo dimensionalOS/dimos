@@ -114,6 +114,6 @@ jobs:
       (needs.build-dev.result == 'skipped' &&
       needs.check-changes.outputs.tests == 'true'))
       }}
-    uses: ./.github/workflows/pytest.yml
+    uses: ./.github/workflows/tests.yml
     with:
       branch-tag: ${{ needs.build-dev.result != 'success' && 'dev' || needs.check-changes.outputs.branch-tag }}
