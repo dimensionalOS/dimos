@@ -21,8 +21,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        set-safe-directory: true
+
       - run: |
           cat /root/.gitconfig
+
       - name: Run tests
         run: |
           /entrypoint.sh bash -c "pytest"
