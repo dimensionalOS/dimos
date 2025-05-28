@@ -3,6 +3,8 @@ on: push
 
 permissions:
   contents: write
+  packages: write
+  pull-requests: read
 
 jobs:
   pre-commit:
