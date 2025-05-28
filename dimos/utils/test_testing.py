@@ -100,10 +100,7 @@ def test_pull_dir():
 
     for [file, expected_hash] in zip(
         sorted(test_dir_decompressed.iterdir()),
-        [
-            "6c3aaa9a79853ea4a7453c7db22820980ceb55035777f7460d05a0fa77b3b1b3",
-            "456cc2c23f4ffa713b4e0c0d97143c27e48bbe6ef44341197b31ce84b3650e74",
-        ],
+        [ "6c3aaa9a79853ea4a7453c7db22820980ceb55035777f7460d05a0fa77b3b1b3", "456cc2c23f4ffa713b4e0c0d97143c27e48bbe6ef44341197b31ce84b3650e74" ]
     ):
         with file.open("rb") as f:
             sha256 = hashlib.sha256(f.read()).hexdigest()
