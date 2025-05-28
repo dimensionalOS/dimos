@@ -25,7 +25,7 @@ repos:
   - repo: local
     hooks:
       - id: lfs_push
-        name: lfs_push
+        name: lfs data compress and push
         always_run: true
         pass_filenames: false
         verbose: true
