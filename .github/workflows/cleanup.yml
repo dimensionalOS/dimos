@@ -1,0 +1,33 @@
+name: cleanup
+on: push
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: read
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-python@v3
+    - name: Run pre-commit
+      id: pre-commit-first
+      uses: pre-commit/action@v3.0.1
+      continue-on-error: true
+      
+    - name: Re-run pre-commit if failed initially
+      id: pre-commit-retry
+      if: steps.pre-commit-first.outcome == 'failure'
+      uses: pre-commit/action@v3.0.1
+      continue-on-error: false
+      
+    - name: Commit code changes
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: "CI code cleanup"
+
+  docker:
+    needs: [pre-commit]
+    uses: ./.github/workflows/docker.yml

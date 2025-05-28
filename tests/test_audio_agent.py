@@ -5,7 +5,6 @@ from dimos.agents.agent import OpenAIAgent
 
 
 def main():
-
     stt_node = stt()
 
     agent = OpenAIAgent(

@@ -36,17 +36,20 @@ import os
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # RTSP URL must be provided as a command-line argument or environment variable
 RTSP_URL = os.environ.get("TEST_RTSP_URL", "")
 if len(sys.argv) > 1:
-    RTSP_URL = sys.argv[1] # Allow overriding with command-line argument
+    RTSP_URL = sys.argv[1]  # Allow overriding with command-line argument
 elif RTSP_URL == "":
-        print("Please provide an RTSP URL for testing.")
-        print("You can set the TEST_RTSP_URL environment variable or pass it as a command-line argument.")
-        print("Example: python -m dimos.stream.rtsp_video_provider rtsp://...")
-        sys.exit(1)
+    print("Please provide an RTSP URL for testing.")
+    print(
+        "You can set the TEST_RTSP_URL environment variable or pass it as a command-line argument."
+    )
+    print("Example: python -m dimos.stream.rtsp_video_provider rtsp://...")
+    sys.exit(1)
 
 logger.info(f"Attempting to connect to provided RTSP URL.")
 provider = RtspVideoProvider(dev_name="TestRtspCam", rtsp_url=RTSP_URL)
@@ -56,33 +59,39 @@ video_stream_observable = provider.capture_video_as_observable()
 
 logger.info("Subscribing to observable...")
 frame_counter = 0
-start_time = time.monotonic() # Re-initialize start_time
-last_log_time = start_time # Keep this for interval timing
+start_time = time.monotonic()  # Re-initialize start_time
+last_log_time = start_time  # Keep this for interval timing
 
 # Create a subject for ffmpeg responses
 ffmpeg_response_subject = rx.subject.Subject()
 ffmpeg_response_stream = ffmpeg_response_subject.pipe(ops.observe_on(get_scheduler()), ops.share())
 
+
 def process_frame(frame: np.ndarray):
     """Callback function executed for each received frame."""
-    global frame_counter, last_log_time, start_time # Add start_time to global
+    global frame_counter, last_log_time, start_time  # Add start_time to global
     frame_counter += 1
     current_time = time.monotonic()
     # Log stats periodically (e.g., every 5 seconds)
     if current_time - last_log_time >= 5.0:
-        total_elapsed_time = current_time - start_time # Calculate total elapsed time
+        total_elapsed_time = current_time - start_time  # Calculate total elapsed time
         avg_fps = frame_counter / total_elapsed_time if total_elapsed_time > 0 else 0
         logger.info(f"Received frame {frame_counter}. Shape: {frame.shape}. Avg FPS: {avg_fps:.2f}")
-        ffmpeg_response_subject.on_next(f"Received frame {frame_counter}. Shape: {frame.shape}. Avg FPS: {avg_fps:.2f}")
-        last_log_time = current_time # Update log time for the next interval
+        ffmpeg_response_subject.on_next(
+            f"Received frame {frame_counter}. Shape: {frame.shape}. Avg FPS: {avg_fps:.2f}"
+        )
+        last_log_time = current_time  # Update log time for the next interval
+
 
 def handle_error(error: Exception):
     """Callback function executed if the observable stream errors."""
-    logger.error(f"Stream error: {error}", exc_info=True) # Log with traceback
+    logger.error(f"Stream error: {error}", exc_info=True)  # Log with traceback
+
 
 def handle_completion():
     """Callback function executed when the observable stream completes."""
     logger.info("Stream completed.")
+
 
 # Subscribe to the observable stream
 processor = FrameProcessor()
@@ -91,22 +100,16 @@ subscription = video_stream_observable.pipe(
     ops.observe_on(get_scheduler()),
     ops.share(),
     vops.with_jpeg_export(processor, suffix="reolink_", save_limit=30, loop=True),
-).subscribe(
-    on_next=process_frame,
-    on_error=handle_error,
-    on_completed=handle_completion
-)
+).subscribe(on_next=process_frame, on_error=handle_error, on_completed=handle_completion)
 
-streams = {
-    "reolink_video": video_stream_observable
-}
+streams = {"reolink_video": video_stream_observable}
 text_streams = {
     "ffmpeg_responses": ffmpeg_response_stream,
 }
 
 web_interface = RobotWebInterface(port=5555, text_streams=text_streams, **streams)
 
-web_interface.run() # This may block the main thread
+web_interface.run()  # This may block the main thread
 
 # TODO: Redo disposal / keep-alive loop
 
@@ -135,9 +138,9 @@ finally:
     print("Cleanup finished.")
 
 # Final check (optional, for debugging)
-time.sleep(1) # Give background threads a moment
+time.sleep(1)  # Give background threads a moment
 final_process = provider._ffmpeg_process
 if final_process and final_process.poll() is None:
-        print(f"WARNING: ffmpeg process (PID: {final_process.pid}) may still be running after cleanup!")
+    print(f"WARNING: ffmpeg process (PID: {final_process.pid}) may still be running after cleanup!")
 else:
-        print("ffmpeg process appears terminated.") 
+    print("ffmpeg process appears terminated.")
