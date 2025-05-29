@@ -268,7 +268,7 @@ class CerebrasAgent(LLMAgent):
                 tools = self.skill_library.get_tools()
                 api_params["tools"] = tools  # No conversion needed
                 api_params["tool_choice"] = "auto"
-            
+
             # Make the API call
             response = self.client.chat.completions.create(**api_params)
 
