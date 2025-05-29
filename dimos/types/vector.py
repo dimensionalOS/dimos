@@ -91,8 +91,6 @@ class Vector:
         def getArrow():
             repr = ["←", "↖", "↑", "↗", "→", "↘", "↓", "↙"]
 
-            print("SELF X", self.x)
-            print("SELF Y", self.y)
             if self.x == 0 and self.y == 0:
                 return "·"
 
@@ -108,6 +106,10 @@ class Vector:
     def serialize(self) -> Tuple:
         """Serialize the vector to a tuple."""
         return {"type": "vector", "c": self._data.tolist()}
+
+    def __len__(self) -> int:
+        """Return the dimension of the vector."""
+        return len(self._data)
 
     def __eq__(self, other) -> bool:
         """Check if two vectors are equal using numpy's allclose for floating point comparison."""

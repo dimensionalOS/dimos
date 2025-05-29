@@ -15,12 +15,7 @@
 from dimos.stream.video_provider import AbstractVideoProvider
 
 from queue import Queue
-from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.constants import (
-    WebRTCConnectionMethod,
-)
-from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import (
-    Go2WebRTCConnection,
-)
+from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
 from aiortc import MediaStreamTrack
 import asyncio
 from reactivex import Observable, create, operators as ops
