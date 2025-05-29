@@ -16,12 +16,12 @@ def main():
     # Hardcoded parameters
     timeout = 60.0  # Maximum time to follow a person (seconds)
     distance = 0.5  # Desired distance to maintain from target (meters)
-    
+
     print("Initializing Unitree Go2 robot...")
-    
+
     # Initialize the robot with ROS control and skills
     robot = UnitreeGo2(
-        ip=os.getenv('ROBOT_IP'),
+        ip=os.getenv("ROBOT_IP"),
         ros_control=UnitreeROSControl(),
         skills=MyUnitreeSkills(),
     )
@@ -33,58 +33,59 @@ def main():
         RxOps.filter(lambda x: x is not None),
     )
     video_stream = robot.get_ros_video_stream()
-    
+
     try:
         # Set up web interface
         logger.info("Initializing web interface")
-        streams = {
-            "unitree_video": video_stream,
-            "person_tracking": viz_stream
-        }
-        
-        web_interface = RobotWebInterface(
-            port=5555,
-            **streams
-        )
-        
+        streams = {"unitree_video": video_stream, "person_tracking": viz_stream}
+
+        web_interface = RobotWebInterface(port=5555, **streams)
+
         # Wait for camera and tracking to initialize
         print("Waiting for camera and tracking to initialize...")
         time.sleep(5)
         # Get initial point from Qwen
 
         max_retries = 5
-        delay = 3  
-        
+        delay = 3
+
         for attempt in range(max_retries):
             try:
-                qwen_point = eval(query_single_frame_observable(
-                    video_stream,
-                    "Look at this frame and point to the person shirt. Return ONLY their center coordinates as a tuple (x,y)."
-                ).pipe(RxOps.take(1)).run())  # Get first response and convert string tuple to actual tuple
+                qwen_point = eval(
+                    query_single_frame_observable(
+                        video_stream,
+                        "Look at this frame and point to the person shirt. Return ONLY their center coordinates as a tuple (x,y).",
+                    )
+                    .pipe(RxOps.take(1))
+                    .run()
+                )  # Get first response and convert string tuple to actual tuple
                 logger.info(f"Found person at coordinates {qwen_point}")
                 break  # If successful, break out of retry loop
             except Exception as e:
                 if attempt < max_retries - 1:
-                    logger.error(f"Person not found. Attempt {attempt + 1}/{max_retries} failed. Retrying in {delay}s... Error: {e}")
+                    logger.error(
+                        f"Person not found. Attempt {attempt + 1}/{max_retries} failed. Retrying in {delay}s... Error: {e}"
+                    )
                     time.sleep(delay)
                 else:
                     logger.error(f"Person not found after {max_retries} attempts. Last error: {e}")
                     return
-        
+
         # Start following human in a separate thread
         import threading
+
         follow_thread = threading.Thread(
             target=lambda: robot.follow_human(timeout=timeout, distance=distance, point=qwen_point),
-            daemon=True
+            daemon=True,
         )
         follow_thread.start()
-        
+
         print(f"Following human at point {qwen_point} for {timeout} seconds...")
         print("Web interface available at http://localhost:5555")
-        
+
         # Start web server (blocking call)
         web_interface.run()
-        
+
     except KeyboardInterrupt:
         print("\nInterrupted by user")
     except Exception as e:

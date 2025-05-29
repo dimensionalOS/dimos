@@ -6,6 +6,7 @@ ARG GIT_BRANCH=unknown
 
 RUN apt-get install -y \
     git \
+    git-lfs \
     nano \
     vim \
     ccze \
@@ -14,6 +15,12 @@ RUN apt-get install -y \
     python-is-python3 \
     iputils-ping \
     wget
+
+# Configure git to trust any directory (resolves dubious ownership issues in containers)
+RUN git config --global --add safe.directory '*'
+
+COPY docker/dev/dev-requirements.txt /app/
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r dev-requirements.txt
 
 # Copy files and add version to motd
 COPY motd /etc/motd

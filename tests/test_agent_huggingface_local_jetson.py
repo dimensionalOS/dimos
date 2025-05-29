@@ -43,7 +43,7 @@ system_query = "You are a helpful assistant."
 agent = HuggingFaceLocalAgent(
     dev_name="HuggingFaceLLMAgent",
     model_name="Qwen/Qwen2.5-0.5B",
-    #model_name="HuggingFaceTB/SmolLM2-135M",
+    # model_name="HuggingFaceTB/SmolLM2-135M",
     agent_type="HF-LLM",
     system_query=system_query,
     input_query_stream=query_provider.data_stream,
@@ -60,12 +60,12 @@ agent = HuggingFaceLocalAgent(
 # This will cause listening agents to consume the queries and respond
 # to them via skill execution and provide 1-shot responses.
 query_provider.start_query_stream(
-    query_template=
-    "{query}; User: Hello how are you!",
+    query_template="{query}; User: Hello how are you!",
     frequency=30,
     start_count=1,
     end_count=10000,
-    step=1)
+    step=1,
+)
 
 try:
     input("Press ESC to exit...")

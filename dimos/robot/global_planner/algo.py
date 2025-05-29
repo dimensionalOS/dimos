@@ -8,20 +8,17 @@ from dimos.types.costmap import Costmap
 
 
 def find_nearest_free_cell(
-    costmap: Costmap, 
-    position: VectorLike, 
-    cost_threshold: int = 90,
-    max_search_radius: int = 20
+    costmap: Costmap, position: VectorLike, cost_threshold: int = 90, max_search_radius: int = 20
 ) -> Tuple[int, int]:
     """
     Find the nearest unoccupied cell in the costmap using BFS.
-    
+
     Args:
         costmap: Costmap object containing the environment
         position: Position to find nearest free cell from
         cost_threshold: Cost threshold above which a cell is considered an obstacle
         max_search_radius: Maximum search radius in cells
-        
+
     Returns:
         Tuple of (x, y) in grid coordinates of the nearest free cell,
         or the original position if no free cell is found within max_search_radius
@@ -29,43 +26,53 @@ def find_nearest_free_cell(
     # Convert world coordinates to grid coordinates
     grid_pos = costmap.world_to_grid(position)
     start_x, start_y = int(grid_pos.x), int(grid_pos.y)
-    
+
     # If the cell is already free, return it
     if 0 <= start_x < costmap.width and 0 <= start_y < costmap.height:
         if costmap.grid[start_y, start_x] < cost_threshold:
             return (start_x, start_y)
-    
+
     # BFS to find nearest free cell
     queue = deque([(start_x, start_y, 0)])  # (x, y, distance)
     visited = set([(start_x, start_y)])
-    
+
     # Possible movements (8-connected grid)
     directions = [
-        (0, 1), (1, 0), (0, -1), (-1, 0),  # horizontal/vertical
-        (1, 1), (1, -1), (-1, 1), (-1, -1)  # diagonal
+        (0, 1),
+        (1, 0),
+        (0, -1),
+        (-1, 0),  # horizontal/vertical
+        (1, 1),
+        (1, -1),
+        (-1, 1),
+        (-1, -1),  # diagonal
     ]
-    
+
     while queue:
         x, y, dist = queue.popleft()
-        
+
         # Check if we've reached the maximum search radius
         if dist > max_search_radius:
-            print(f"Could not find free cell within {max_search_radius} cells of ({start_x}, {start_y})")
+            print(
+                f"Could not find free cell within {max_search_radius} cells of ({start_x}, {start_y})"
+            )
             return (start_x, start_y)  # Return original position if no free cell found
-        
+
         # Check if this cell is valid and free
         if 0 <= x < costmap.width and 0 <= y < costmap.height:
             if costmap.grid[y, x] < cost_threshold:
-                print(f"Found free cell at ({x}, {y}), {dist} cells away from ({start_x}, {start_y})")
+                print(
+                    f"Found free cell at ({x}, {y}), {dist} cells away from ({start_x}, {start_y})"
+                )
                 return (x, y)
-        
+
         # Add neighbors to the queue
         for dx, dy in directions:
             nx, ny = x + dx, y + dy
             if (nx, ny) not in visited:
                 visited.add((nx, ny))
                 queue.append((nx, ny, dist + 1))
-    
+
     # If the queue is empty and no free cell is found, return the original position
     return (start_x, start_y)
 
@@ -93,22 +100,21 @@ def astar(
     # Convert world coordinates to grid coordinates directly using vector-like inputs
     start_vector = costmap.world_to_grid(start)
     goal_vector = costmap.world_to_grid(goal)
-    
+
     # Store original positions for reference
     original_start = (int(start_vector.x), int(start_vector.y))
     original_goal = (int(goal_vector.x), int(goal_vector.y))
-    
+
     adjusted_start = original_start
     adjusted_goal = original_goal
 
     # Check if start is out of bounds or in an obstacle
-    start_valid = (0 <= start_vector.x < costmap.width and 
-                  0 <= start_vector.y < costmap.height)
-    
+    start_valid = 0 <= start_vector.x < costmap.width and 0 <= start_vector.y < costmap.height
+
     start_in_obstacle = False
     if start_valid:
         start_in_obstacle = costmap.grid[int(start_vector.y), int(start_vector.x)] >= cost_threshold
-    
+
     if not start_valid or start_in_obstacle:
         print("Start position is out of bounds or in an obstacle, finding nearest free cell")
         adjusted_start = find_nearest_free_cell(costmap, start, cost_threshold)
@@ -116,13 +122,12 @@ def astar(
         start_vector = Vector(adjusted_start[0], adjusted_start[1])
 
     # Check if goal is out of bounds or in an obstacle
-    goal_valid = (0 <= goal_vector.x < costmap.width and 
-                 0 <= goal_vector.y < costmap.height)
-    
+    goal_valid = 0 <= goal_vector.x < costmap.width and 0 <= goal_vector.y < costmap.height
+
     goal_in_obstacle = False
     if goal_valid:
         goal_in_obstacle = costmap.grid[int(goal_vector.y), int(goal_vector.x)] >= cost_threshold
-    
+
     if not goal_valid or goal_in_obstacle:
         print("Goal position is out of bounds or in an obstacle, finding nearest free cell")
         adjusted_goal = find_nearest_free_cell(costmap, goal, cost_threshold)
@@ -168,7 +173,9 @@ def astar(
         return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
     # Start with the starting node
-    f_score = g_score[start_tuple] + heuristic(start_tuple[0], start_tuple[1], goal_tuple[0], goal_tuple[1])
+    f_score = g_score[start_tuple] + heuristic(
+        start_tuple[0], start_tuple[1], goal_tuple[0], goal_tuple[1]
+    )
     heapq.heappush(open_set, (f_score, start_tuple))
 
     while open_set:
@@ -197,7 +204,7 @@ def astar(
 
             if not waypoints or waypoints[-1].distance(goal_point) > 1e-5:
                 waypoints.append(goal_point)
-                
+
             # If we adjusted the goal, add the original goal as the final point
             if adjusted_goal != original_goal and goal_valid:
                 original_goal_point = costmap.grid_to_world(original_goal)
@@ -227,7 +234,11 @@ def astar(
                 continue
 
             obstacle_proximity_penalty = costmap.grid[neighbor_y, neighbor_x] / 25
-            tentative_g_score = g_score[current] + movement_costs[i] + (obstacle_proximity_penalty * movement_costs[i])
+            tentative_g_score = (
+                g_score[current]
+                + movement_costs[i]
+                + (obstacle_proximity_penalty * movement_costs[i])
+            )
 
             # Get the current g_score for the neighbor or set to infinity if not yet explored
             neighbor_g_score = g_score.get(neighbor, float("inf"))
@@ -237,7 +248,9 @@ def astar(
                 # Update the neighbor's scores and parent
                 parents[neighbor] = current
                 g_score[neighbor] = tentative_g_score
-                f_score = tentative_g_score + heuristic(neighbor_x, neighbor_y, goal_tuple[0], goal_tuple[1])
+                f_score = tentative_g_score + heuristic(
+                    neighbor_x, neighbor_y, goal_tuple[0], goal_tuple[1]
+                )
 
                 # Add the neighbor to the open set with its f_score
                 heapq.heappush(open_set, (f_score, neighbor))

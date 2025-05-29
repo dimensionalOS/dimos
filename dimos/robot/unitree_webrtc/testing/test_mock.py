@@ -4,6 +4,7 @@ import pytest
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.testing.mock import Mock
 
+
 @pytest.mark.needsdata
 def test_mock_load_cast():
     mock = Mock("test")

@@ -16,8 +16,8 @@ import tiktoken
 from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.utils.logging_config import setup_logger
 
-class OpenAITokenizer(AbstractTokenizer):
 
+class OpenAITokenizer(AbstractTokenizer):
     def __init__(self, model_name: str = "gpt-4o", **kwargs):
         super().__init__(**kwargs)
 
@@ -56,15 +56,13 @@ class OpenAITokenizer(AbstractTokenizer):
         """
         Calculate the number of tokens in an image. Low detail is 85 tokens, high detail is 170 tokens per 512x512 square.
         """
-        logger = setup_logger(
-            "dimos.agents.tokenizer.openai.image_token_count")
+        logger = setup_logger("dimos.agents.tokenizer.openai.image_token_count")
 
         if image_detail == "low":
             return 85
         elif image_detail == "high":
             # Image dimensions
-            logger.debug(
-                f"Image Width: {image_width}, Image Height: {image_height}")
+            logger.debug(f"Image Width: {image_width}, Image Height: {image_height}")
             if image_width is None or image_height is None:
                 raise ValueError(
                     "Image width and height must be provided for high detail image token count calculation."
@@ -87,7 +85,4 @@ class OpenAITokenizer(AbstractTokenizer):
             num_squares = (image_width // 512) * (image_height // 512)
             return 170 * num_squares + 85
         else:
-            raise ValueError(
-                "Detail specification of image is not 'low' or 'high'")
-        
-
+            raise ValueError("Detail specification of image is not 'low' or 'high'")

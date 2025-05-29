@@ -147,7 +147,6 @@ def export_tracing(torch_model, inputs):
 
 
 def get_sample_inputs(args):
-
     if args.sample_image is None:
         # get a first batch from dataset
         data_loader = build_detection_test_loader(cfg, cfg.DATASETS.TEST[0])
@@ -223,8 +222,7 @@ if __name__ == "__main__":
     # run evaluation with the converted model
     if args.run_eval:
         assert exported_model is not None, (
-            "Python inference is not yet implemented for "
-            f"export_method={args.export_method}, format={args.format}."
+            f"Python inference is not yet implemented for export_method={args.export_method}, format={args.format}."
         )
         logger.info("Running evaluation ... this takes a long time if you export to CPU.")
         dataset = cfg.DATASETS.TEST[0]
