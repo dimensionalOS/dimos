@@ -21,12 +21,9 @@ from dimos.agents.cerebras_agent import CerebrasAgent
 load_dotenv()
 
 # Create a CerebrasAgent instance
-agent = CerebrasAgent(
-    dev_name="test_agent",
-    query="What is the capital of France?"
-)
+agent = CerebrasAgent(dev_name="test_agent", query="What is the capital of France?")
 
 # Use the stream_query method to get a response
 response = agent.run_observable_query("What is the capital of France?").run()
 
-print(f"Response from Cerebras Agent: {response}") 
+print(f"Response from Cerebras Agent: {response}")

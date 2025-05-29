@@ -57,7 +57,10 @@ text_streams = {
     "agent_responses": agent_response_stream,
 }
 
-web_interface = RobotWebInterface(port=5556, text_streams=text_streams,)
+web_interface = RobotWebInterface(
+    port=5556,
+    text_streams=text_streams,
+)
 
 # stt_node = stt()
 robot_skills = MyUnitreeSkills()
@@ -78,7 +81,7 @@ IMPORTANT INSTRUCTIONS:
 4. Parse the user's instructions carefully to determine correct parameter values
 
 Example: If the user asks to move forward 1 meter, call the Move function with distance=1""",
-    model_name="llama-4-scout-17b-16e-instruct"
+    model_name="llama-4-scout-17b-16e-instruct",
 )
 
 # tts_node = tts()
@@ -100,11 +103,9 @@ robot_skills.create_instance("NavigateToGoal", robot=robot)
 # robot_skills.create_instance("Speak", tts_node=tts_node)
 
 # Subscribe to agent responses and send them to the subject
-agent.get_response_observable().subscribe(
-    lambda x: agent_response_subject.on_next(x)
-)
+agent.get_response_observable().subscribe(lambda x: agent_response_subject.on_next(x))
 
 # print(f"Registered skills: {', '.join([skill.__name__ for skill in robot_skills.skills])}")
 print("Cerebras agent demo initialized. You can now interact with the agent via the web interface.")
 
-web_interface.run() 
+web_interface.run()
