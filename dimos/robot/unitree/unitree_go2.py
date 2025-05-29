@@ -22,7 +22,7 @@ from dimos.stream.video_providers.unitree import UnitreeVideoProvider
 from reactivex.disposable import CompositeDisposable
 import logging
 import time
-from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import WebRTCConnectionMethod
+from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
 import os
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from reactivex.scheduler import ThreadPoolScheduler
