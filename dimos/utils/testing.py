@@ -1,8 +1,15 @@
 import subprocess
 import tarfile
+import glob
+import os
+import pickle
 from functools import cache
 from pathlib import Path
-from typing import Union
+from typing import Union, Iterator, TypeVar, Generic, Optional, Any, Type, Callable
+
+from reactivex import operators as ops
+from reactivex import interval, from_iterable
+from reactivex.observable import Observable
 
 
 def _check_git_lfs_available() -> None:
@@ -140,3 +147,78 @@ def testData(filename: Union[str, Path]) -> Path:
         return file_path
 
     return _decompress_archive(_pull_lfs_archive(filename))
+
+
+T = TypeVar("T")
+
+
+class SensorReplay(Generic[T]):
+    """Generic sensor data replay utility.
+
+    Args:
+        name: The name of the test dataset
+        autocast: Optional function that takes unpickled data and returns a processed result.
+                  For example: lambda data: LidarMessage.from_msg(data)
+    """
+
+    def __init__(self, name: str, autocast: Optional[Callable[[Any], T]] = None):
+        self.root_dir = testData(name)
+        self.autocast = autocast
+        self.cnt = 0
+
+    def load(self, *names: Union[int, str]) -> Union[T, Any, list[T], list[Any]]:
+        if len(names) == 1:
+            return self.load_one(names[0])
+        return list(map(lambda name: self.load_one(name), names))
+
+    def load_one(self, name: Union[int, str, Path]) -> Union[T, Any]:
+        if isinstance(name, int):
+            full_path = self.root_dir / f"/{name:03d}.pickle"
+        elif isinstance(name, Path):
+            full_path = self.root_dir / f"/{name}.pickle"
+        else:
+            full_path = name
+
+        with open(full_path, "rb") as f:
+            data = pickle.load(f)
+            if self.autocast:
+                return self.autocast(data)
+            return data
+
+    def iterate(self) -> Iterator[Union[T, Any]]:
+        pattern = os.path.join(self.root_dir, "*")
+        for file_path in sorted(glob.glob(pattern)):
+            yield self.load_one(file_path)
+
+    def stream(self, rate_hz: float = 10.0) -> Observable[Union[T, Any]]:
+        sleep_time = 1.0 / rate_hz
+
+        return from_iterable(self.iterate()).pipe(
+            ops.zip(interval(sleep_time)),
+            ops.map(lambda x: x[0] if isinstance(x, tuple) else x),
+        )
+
+    def save_stream(self, observable: Observable[Union[T, Any]]) -> Observable[int]:
+        return observable.pipe(ops.map(lambda frame: self.save_one(frame)))
+
+    def save(self, *frames) -> int:
+        [self.save_one(frame) for frame in frames]
+        return self.cnt
+
+    def save_one(self, frame) -> int:
+        file_name = f"/{self.cnt:03d}.pickle"
+        full_path = self.root_dir + file_name
+
+        self.cnt += 1
+
+        if os.path.isfile(full_path):
+            raise Exception(f"file {full_path} exists")
+
+        # Convert to raw message if frame has a raw_msg attribute
+        if hasattr(frame, "raw_msg"):
+            frame = frame.raw_msg
+
+        with open(full_path, "wb") as f:
+            pickle.dump(frame, f)
+
+        return self.cnt

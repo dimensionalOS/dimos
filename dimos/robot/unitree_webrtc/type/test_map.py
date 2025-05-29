@@ -1,8 +1,11 @@
 import pytest
+
+from dimos.robot.unitree_webrtc.testing.helpers import show3d, show3d_stream
 from dimos.robot.unitree_webrtc.testing.mock import Mock
-from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream, show3d
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.map import Map, splice_sphere
 from dimos.utils.reactive import backpressure
-from dimos.robot.unitree_webrtc.type.map import splice_sphere, Map
+from dimos.utils.testing import SensorReplay
 
 
 @pytest.mark.vis
@@ -35,4 +38,26 @@ def test_robot_vis():
         Map().consume(backpressure(Mock("office").stream())),
         clearframe=True,
         title="gloal dynamic map test",
+    )
+
+
+def test_robot_mapping():
+    lidar_stream = SensorReplay("office_lidar", autocast=lambda x: LidarMessage.from_msg(x))
+    map = Map(voxel_size=0.5)
+    map.consume(lidar_stream.stream(rate_hz=100.0)).run()
+
+    costmap = map.costmap
+
+    assert costmap.grid.shape == (404, 276)
+
+    assert 70 <= costmap.unknown_percent <= 80, (
+        f"Unknown percent {costmap.unknown_percent} is not within the range 70-80"
+    )
+
+    assert 5 < costmap.free_percent < 10, (
+        f"Free percent {costmap.free_percent} is not within the range 5-10"
+    )
+
+    assert 8 < costmap.occupied_percent < 15, (
+        f"Occupied percent {costmap.occupied_percent} is not within the range 8-15"
     )
