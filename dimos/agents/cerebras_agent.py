@@ -51,30 +51,32 @@ logger = setup_logger("dimos.agents.cerebras")
 
 class CerebrasAgent(LLMAgent):
     """Cerebras agent implementation using the official Cerebras Python SDK.
-    
+
     This class implements the _send_query method to interact with Cerebras API
     using their official SDK, allowing most of the LLMAgent logic to be reused.
     """
 
-    def __init__(self,
-                 dev_name: str,
-                 agent_type: str = "Vision",
-                 query: str = "What do you see?",
-                 input_query_stream: Optional[Observable] = None,
-                 input_video_stream: Optional[Observable] = None,
-                 input_data_stream: Optional[Observable] = None,
-                 output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
-                 agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-                 system_query: Optional[str] = None,
-                 max_input_tokens_per_request: int = 128000,
-                 max_output_tokens_per_request: int = 16384,
-                 model_name: str = "llama-4-scout-17b-16e-instruct",
-                 skills: Optional[Union[AbstractSkill, list[AbstractSkill], SkillLibrary]] = None,
-                 response_model: Optional[BaseModel] = None,
-                 frame_processor: Optional[FrameProcessor] = None,
-                 image_detail: str = "low",
-                 pool_scheduler: Optional[ThreadPoolScheduler] = None,
-                 process_all_inputs: Optional[bool] = None):
+    def __init__(
+        self,
+        dev_name: str,
+        agent_type: str = "Vision",
+        query: str = "What do you see?",
+        input_query_stream: Optional[Observable] = None,
+        input_video_stream: Optional[Observable] = None,
+        input_data_stream: Optional[Observable] = None,
+        output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
+        agent_memory: Optional[AbstractAgentSemanticMemory] = None,
+        system_query: Optional[str] = None,
+        max_input_tokens_per_request: int = 128000,
+        max_output_tokens_per_request: int = 16384,
+        model_name: str = "llama-4-scout-17b-16e-instruct",
+        skills: Optional[Union[AbstractSkill, list[AbstractSkill], SkillLibrary]] = None,
+        response_model: Optional[BaseModel] = None,
+        frame_processor: Optional[FrameProcessor] = None,
+        image_detail: str = "low",
+        pool_scheduler: Optional[ThreadPoolScheduler] = None,
+        process_all_inputs: Optional[bool] = None,
+    ):
         """
         Initializes a new instance of the CerebrasAgent.
 
@@ -110,7 +112,7 @@ class CerebrasAgent(LLMAgent):
                 process_all_inputs = True
             else:
                 process_all_inputs = False
-                
+
         super().__init__(
             dev_name=dev_name,
             agent_type=agent_type,
@@ -120,12 +122,12 @@ class CerebrasAgent(LLMAgent):
             system_query=system_query,
             input_query_stream=input_query_stream,
             input_video_stream=input_video_stream,
-            input_data_stream=input_data_stream
+            input_data_stream=input_data_stream,
         )
-        
+
         # Initialize Cerebras client
         self.client = Cerebras()
-        
+
         self.query = query
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
@@ -146,7 +148,7 @@ class CerebrasAgent(LLMAgent):
         elif isinstance(self.skills, AbstractSkill):
             self.skill_library = SkillLibrary()
             self.skill_library.add(self.skills)
-        
+
         self.response_model = response_model if response_model is not None else NOT_GIVEN
         self.model_name = model_name
         self.image_detail = image_detail
@@ -161,28 +163,35 @@ class CerebrasAgent(LLMAgent):
     def _add_context_to_memory(self):
         """Adds initial context to the agent's memory."""
         context_data = [
-            ("id0",
-             "Optical Flow is a technique used to track the movement of objects in a video sequence."
-             ),
-            ("id1",
-             "Edge Detection is a technique used to identify the boundaries of objects in an image."
-             ),
-            ("id2",
-             "Video is a sequence of frames captured at regular intervals."),
-            ("id3",
-             "Colors in Optical Flow are determined by the movement of light, and can be used to track the movement of objects."
-             ),
-            ("id4",
-             "Json is a data interchange format that is easy for humans to read and write, and easy for machines to parse and generate."
-             ),
+            (
+                "id0",
+                "Optical Flow is a technique used to track the movement of objects in a video sequence.",
+            ),
+            (
+                "id1",
+                "Edge Detection is a technique used to identify the boundaries of objects in an image.",
+            ),
+            ("id2", "Video is a sequence of frames captured at regular intervals."),
+            (
+                "id3",
+                "Colors in Optical Flow are determined by the movement of light, and can be used to track the movement of objects.",
+            ),
+            (
+                "id4",
+                "Json is a data interchange format that is easy for humans to read and write, and easy for machines to parse and generate.",
+            ),
         ]
         for doc_id, text in context_data:
             self.agent_memory.add_vector(doc_id, text)
 
-    def _build_prompt(self, messages: list, base64_image: Optional[Union[str, List[str]]] = None,
-                      dimensions: Optional[Tuple[int, int]] = None,
-                      override_token_limit: bool = False,
-                      condensed_results: str = "") -> list:
+    def _build_prompt(
+        self,
+        messages: list,
+        base64_image: Optional[Union[str, List[str]]] = None,
+        dimensions: Optional[Tuple[int, int]] = None,
+        override_token_limit: bool = False,
+        condensed_results: str = "",
+    ) -> list:
         """Builds a prompt message specifically for Cerebras API.
 
         Args:
@@ -195,44 +204,41 @@ class CerebrasAgent(LLMAgent):
         Returns:
             list: Messages formatted for Cerebras API.
         """
-        
+
         # Add system message if provided and not already in history
         if self.system_query and (not messages or messages[0].get("role") != "system"):
             messages.insert(0, {"role": "system", "content": self.system_query})
             logger.info("Added system message to conversation")
-        
+
         # Append user query while handling RAG
         if condensed_results:
             user_message = {"role": "user", "content": f"{condensed_results}\n\n{self.query}"}
             logger.info("Created user message with RAG context")
-        else:   
+        else:
             user_message = {"role": "user", "content": self.query}
-        
+
         messages.append(user_message)
-        
+
         if base64_image is not None:
             # Handle both single image (str) and multiple images (List[str])
             images = [base64_image] if isinstance(base64_image, str) else base64_image
-            
+
             # For Cerebras, we'll add images inline with text (OpenAI-style format)
             for img in images:
                 img_content = [
-                    {
-                        "type": "text",
-                        "text": "Here is an image to analyze:"
-                    },
+                    {"type": "text", "text": "Here is an image to analyze:"},
                     {
                         "type": "image_url",
                         "image_url": {
                             "url": f"data:image/jpeg;base64,{img}",
-                            "detail": self.image_detail
-                        }
-                    }
+                            "detail": self.image_detail,
+                        },
+                    },
                 ]
                 messages.append({"role": "user", "content": img_content})
-            
+
             logger.info(f"Added {len(images)} image(s) to conversation")
-    
+
         return messages
 
     def _send_query(self, messages: list) -> Any:
@@ -256,23 +262,23 @@ class CerebrasAgent(LLMAgent):
                 "messages": messages,
                 "max_tokens": self.max_output_tokens_per_request,
             }
-            
+
             # Add tools if available
             if self.skill_library and self.skill_library.get_tools():
                 tools = self.skill_library.get_tools()
                 api_params["tools"] = tools  # No conversion needed
                 api_params["tool_choice"] = "auto"
-            
+
             # Make the API call
             response = self.client.chat.completions.create(**api_params)
-            
+
             response_message = response.choices[0].message
             if response_message is None:
                 logger.error("Response message does not exist.")
                 raise Exception("Response message does not exist.")
-            
+
             return response_message
-            
+
         except ConnectionError as ce:
             logger.error(f"Connection error with Cerebras API: {ce}")
             raise
@@ -283,17 +289,19 @@ class CerebrasAgent(LLMAgent):
             logger.error(f"Unexpected error in Cerebras API call: {e}")
             raise
 
-    def _observable_query(self,
-                          observer: Observer,
-                          base64_image: Optional[str] = None,
-                          dimensions: Optional[Tuple[int, int]] = None,
-                          override_token_limit: bool = False,
-                          incoming_query: Optional[str] = None,
-                          reset_conversation: bool = False):
+    def _observable_query(
+        self,
+        observer: Observer,
+        base64_image: Optional[str] = None,
+        dimensions: Optional[Tuple[int, int]] = None,
+        override_token_limit: bool = False,
+        incoming_query: Optional[str] = None,
+        reset_conversation: bool = False,
+    ):
         """Main query handler that manages conversation history and Cerebras interactions.
-        
+
         This method follows ClaudeAgent's pattern for efficient conversation history management.
-        
+
         Args:
             observer (Observer): The observer to emit responses to.
             base64_image (str): Optional Base64-encoded image.
@@ -317,13 +325,15 @@ class CerebrasAgent(LLMAgent):
             _, condensed_results = self._get_rag_context()
 
             # Build prompt
-            messages = self._build_prompt(messages, base64_image, dimensions, override_token_limit, condensed_results)
-            
+            messages = self._build_prompt(
+                messages, base64_image, dimensions, override_token_limit, condensed_results
+            )
+
             # Send query and get response
             logger.info("Sending Query.")
             response_message = self._send_query(messages)
             logger.info(f"Received Response: {response_message}")
-            
+
             if response_message is None:
                 logger.error("Received None response from Cerebras API")
                 observer.on_next("")
@@ -332,44 +342,50 @@ class CerebrasAgent(LLMAgent):
 
             # Add assistant response to local messages (always)
             assistant_message = {"role": "assistant"}
-            
+
             if response_message.content:
                 assistant_message["content"] = response_message.content
             else:
                 assistant_message["content"] = ""  # Ensure content is never None
-                
-            if hasattr(response_message, 'tool_calls') and response_message.tool_calls:
+
+            if hasattr(response_message, "tool_calls") and response_message.tool_calls:
                 assistant_message["tool_calls"] = []
                 for tool_call in response_message.tool_calls:
-                    assistant_message["tool_calls"].append({
-                        "id": tool_call.id,
-                        "type": "function",
-                        "function": {
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments
+                    assistant_message["tool_calls"].append(
+                        {
+                            "id": tool_call.id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": tool_call.function.arguments,
+                            },
                         }
-                    })
-                logger.info(f"Assistant response includes {len(response_message.tool_calls)} tool call(s)")
-            
+                    )
+                logger.info(
+                    f"Assistant response includes {len(response_message.tool_calls)} tool call(s)"
+                )
+
             messages.append(assistant_message)
 
             # Handle tool calls if present (add tool messages to conversation)
             self._handle_tooling(response_message, messages)
 
             # At the end, append only new messages to the global conversation history under a lock
-            if not hasattr(self, '_history_lock'):
+            if not hasattr(self, "_history_lock"):
                 self._history_lock = threading.Lock()
             with self._history_lock:
                 for msg in messages[base_len:]:
                     self.conversation_history.append(msg)
-                logger.info(f"Updated conversation history (total: {len(self.conversation_history)} messages)")
+                logger.info(
+                    f"Updated conversation history (total: {len(self.conversation_history)} messages)"
+                )
 
             # Send response to observers
             result = response_message.content or ""
             observer.on_next(result)
             self.response_subject.on_next(result)
             observer.on_completed()
-            
+
         except Exception as e:
             logger.error(f"Query failed in {self.dev_name}: {e}")
             observer.on_error(e)
@@ -377,26 +393,30 @@ class CerebrasAgent(LLMAgent):
 
     def _handle_tooling(self, response_message, messages):
         """Executes tools and appends tool-use/result blocks to messages."""
-        if not hasattr(response_message, 'tool_calls') or not response_message.tool_calls:
+        if not hasattr(response_message, "tool_calls") or not response_message.tool_calls:
             logger.info("No tool calls found in response message")
             return None
-            
+
         if len(response_message.tool_calls) > 1:
-            logger.warning("Multiple tool calls detected in response message. Not a tested feature.")
+            logger.warning(
+                "Multiple tool calls detected in response message. Not a tested feature."
+            )
 
         # Execute all tools and add their results to messages
         for tool_call in response_message.tool_calls:
             logger.info(f"Processing tool call: {tool_call.function.name}")
-            
+
             # Execute the tool
             args = json.loads(tool_call.function.arguments)
             tool_result = self.skill_library.call(tool_call.function.name, **args)
             logger.info(f"Function Call Results: {tool_result}")
-            
+
             # Add tool result to conversation history (OpenAI format)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": str(tool_result),
-                "name": tool_call.function.name
-            }) 
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": str(tool_result),
+                    "name": tool_call.function.name,
+                }
+            )
