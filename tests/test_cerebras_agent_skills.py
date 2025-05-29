@@ -25,8 +25,8 @@ from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.skills.observe_stream import ObserveStream
 from dimos.skills.kill_skill import KillSkill
-from dimos.skills.navigation import Navigate, BuildSemanticMap, GetPose, NavigateToGoal
-from dimos.skills.visual_navigation_skills import NavigateToObject, FollowHuman
+from dimos.skills.navigation import NavigateWithText, GetPose, NavigateToGoal
+from dimos.skills.visual_navigation_skills import FollowHuman
 import reactivex as rx
 import reactivex.operators as ops
 from dimos.stream.audio.pipelines import tts, stt
@@ -82,18 +82,14 @@ tts_node = tts()
 robot_skills = robot.get_skills()
 robot_skills.add(ObserveStream)
 robot_skills.add(KillSkill)
-robot_skills.add(Navigate)
-robot_skills.add(BuildSemanticMap)
-robot_skills.add(NavigateToObject)
+robot_skills.add(NavigateWithText)
 robot_skills.add(FollowHuman)
 robot_skills.add(GetPose)
 robot_skills.add(Speak)
 robot_skills.add(NavigateToGoal)
 robot_skills.create_instance("ObserveStream", robot=robot, agent=agent)
 robot_skills.create_instance("KillSkill", robot=robot, skill_library=robot_skills)
-robot_skills.create_instance("Navigate", robot=robot)
-robot_skills.create_instance("BuildSemanticMap", robot=robot)
-robot_skills.create_instance("NavigateToObject", robot=robot)
+robot_skills.create_instance("NavigateWithText", robot=robot)
 robot_skills.create_instance("FollowHuman", robot=robot)
 robot_skills.create_instance("GetPose", robot=robot)
 robot_skills.create_instance("NavigateToGoal", robot=robot)
