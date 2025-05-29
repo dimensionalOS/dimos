@@ -147,7 +147,7 @@ class CerebrasAgent(LLMAgent):
             self.skill_library = SkillLibrary()
             self.skill_library.add(self.skills)
         
-        self.response_model = response_model
+        self.response_model = response_model if response_model is not None else NOT_GIVEN
         self.model_name = model_name
         self.image_detail = image_detail
         self.max_output_tokens_per_request = max_output_tokens_per_request
