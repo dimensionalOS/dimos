@@ -122,10 +122,10 @@ RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /root/.bashrc && \
 COPY docker /app/docker/
 
 # Setup supervisor configuration
-COPY docker/unitree/agents/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY docker/deprecated/unitree/agents/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Copy entrypoint script
-COPY docker/unitree/agents/entrypoint.sh /entrypoint.sh
+COPY docker/deprecated/unitree/agents/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Copy dimos and tests
