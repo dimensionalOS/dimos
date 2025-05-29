@@ -56,21 +56,31 @@ load_dotenv()
 # Allow command line arguments to control spatial memory parameters
 import argparse
 
+
 def parse_arguments():
-    parser = argparse.ArgumentParser(description='Run the robot with optional spatial memory parameters')
-    parser.add_argument('--new-memory', action='store_true', help='Create a new spatial memory from scratch')
-    parser.add_argument('--spatial-memory-dir', type=str, help='Directory for storing spatial memory data')
+    parser = argparse.ArgumentParser(
+        description="Run the robot with optional spatial memory parameters"
+    )
+    parser.add_argument(
+        "--new-memory", action="store_true", help="Create a new spatial memory from scratch"
+    )
+    parser.add_argument(
+        "--spatial-memory-dir", type=str, help="Directory for storing spatial memory data"
+    )
     return parser.parse_args()
+
 
 args = parse_arguments()
 
 # Initialize robot with spatial memory parameters
-robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
-                    ros_control=UnitreeROSControl(),
-                    skills=MyUnitreeSkills(),
-                    mock_connection=False,
-                    spatial_memory_dir=args.spatial_memory_dir,  # Will use default if None
-                    new_memory=args.new_memory)  # Create a new memory if specified
+robot = UnitreeGo2(
+    ip=os.getenv("ROBOT_IP"),
+    ros_control=UnitreeROSControl(),
+    skills=MyUnitreeSkills(),
+    mock_connection=False,
+    spatial_memory_dir=args.spatial_memory_dir,  # Will use default if None
+    new_memory=args.new_memory,
+)  # Create a new memory if specified
 
 # Create a subject for agent responses
 agent_response_subject = rx.subject.Subject()
@@ -98,7 +108,7 @@ object_detector = ObjectDetectionStream(
     class_filter=class_filter,
     transform_to_map=robot.ros_control.transform_pose,
     detector=detector,
-    video_stream=video_stream
+    video_stream=video_stream,
 )
 
 # Create visualization stream for web interface (detection visualization)
@@ -108,43 +118,45 @@ viz_stream = backpressure(object_detector.get_stream()).pipe(
     ops.filter(lambda x: x is not None),
 )
 
+
 # Helper function to draw a manipulation point on a frame
 def draw_point_on_frame(frame, x, y):
     # Draw a circle at the manipulation point
     cv2.circle(frame, (x, y), 10, (0, 0, 255), -1)  # Red circle
     cv2.circle(frame, (x, y), 12, (255, 255, 255), 2)  # White border
-    
+
     # Add text with coordinates
-    cv2.putText(frame, f"({x},{y})", (x+15, y+15), 
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-    
+    cv2.putText(
+        frame, f"({x},{y})", (x + 15, y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2
+    )
+
     return frame
+
 
 # Function to add manipulation point to stream frames
 def draw_manipulation_point(frame):
     try:
         if frame is None or latest_manipulation_point.value is None:
             return frame
-            
+
         # Make a copy to avoid modifying the original frame
         viz_frame = frame.copy()
-        
+
         # Get the latest manipulation point coordinates
         x, y = latest_manipulation_point.value
-        
+
         # Draw the point using our helper function
         draw_point_on_frame(viz_frame, x, y)
-                    
+
         return viz_frame
     except Exception as e:
         logger.error(f"Error drawing manipulation point: {e}")
         return frame
 
+
 # Create manipulation point visualization stream
 manipulation_viz_stream = video_stream.pipe(
-    ops.map(draw_manipulation_point),
-    ops.filter(lambda x: x is not None),
-    ops.share()
+    ops.map(draw_manipulation_point), ops.filter(lambda x: x is not None), ops.share()
 )
 
 # Get the formatted detection stream
@@ -152,12 +164,13 @@ formatted_detection_stream = object_detector.get_formatted_stream().pipe(
     ops.filter(lambda x: x is not None)
 )
 
+
 # Create a direct mapping that combines detection data with locations
 def combine_with_locations(object_detections):
     # Get locations from spatial memory
     try:
         locations = robot.get_spatial_memory().get_robot_locations()
-        
+
         # Format the locations section
         locations_text = "\n\nSaved Robot Locations:\n"
         if locations:
@@ -166,23 +179,23 @@ def combine_with_locations(object_detections):
                 locations_text += f"Rotation ({loc.rotation[0]:.2f}, {loc.rotation[1]:.2f}, {loc.rotation[2]:.2f})\n"
         else:
             locations_text += "None\n"
-            
+
         # Simply concatenate the strings
         return object_detections + locations_text
     except Exception as e:
         print(f"Error adding locations: {e}")
         return object_detections
 
-# Create the combined stream with a simple pipe operation
-enhanced_data_stream = formatted_detection_stream.pipe(
-    ops.map(combine_with_locations),
-    ops.share()
-)
 
-streams = {"unitree_video": video_stream,
-           "local_planner_viz": local_planner_viz_stream,
-           "object_detection": viz_stream,
-           "manipulation_point": manipulation_viz_stream}
+# Create the combined stream with a simple pipe operation
+enhanced_data_stream = formatted_detection_stream.pipe(ops.map(combine_with_locations), ops.share())
+
+streams = {
+    "unitree_video": video_stream,
+    "local_planner_viz": local_planner_viz_stream,
+    "object_detection": viz_stream,
+    "manipulation_point": manipulation_viz_stream,
+}
 text_streams = {
     "agent_responses": agent_response_stream,
 }
@@ -192,13 +205,15 @@ web_interface = RobotWebInterface(port=5555, text_streams=text_streams, **stream
 # stt_node = stt()
 
 # Read system query from prompt.txt file
-with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'agent', 'prompt.txt'), 'r') as f:
+with open(
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "agent", "prompt.txt"), "r"
+) as f:
     system_query = f.read()
 
 # Create Qwen client
 qwen_client = OpenAI(
-    base_url='https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
-    api_key=os.getenv('ALIBABA_API_KEY'),
+    base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    api_key=os.getenv("ALIBABA_API_KEY"),
 )
 
 # Create response subject
@@ -209,68 +224,73 @@ response_subject = rx.subject.Subject()
 current_frame_subject = BehaviorSubject(None)
 latest_manipulation_point = BehaviorSubject(None)  # Will store (x, y) tuple
 
+
 # Function to parse manipulation point coordinates from VLM response
 def process_manipulation_point(response, frame):
     logger.info(f"Processing manipulation point with response: {response}")
     try:
         # Parse coordinates from response (format: "x,y")
-        coords = response.strip().split(',')
+        coords = response.strip().split(",")
         if len(coords) != 2:
             logger.error(f"Invalid coordinate format: {response}")
             return
-            
+
         x, y = int(coords[0]), int(coords[1])
-        
+
         # Update the latest manipulation point subject with the new coordinates
         latest_manipulation_point.on_next((x, y))
-        
+
         # Save a static image with the point for reference
         save_manipulation_point_image(frame, x, y)
-        
+
     except Exception as e:
         logger.error(f"Error processing manipulation point: {e}")
-        
+
+
 # Function to save a static image with manipulation point visualization
 def save_manipulation_point_image(frame, x, y):
     try:
         if frame is None:
             logger.error("Cannot save manipulation point image: frame is None")
             return
-            
+
         # Create a copy of the frame for static image saving
         visualization = frame.copy()
-        
+
         # Draw the manipulation point
         draw_point_on_frame(visualization, x, y)
-        
+
         # Create directory if it doesn't exist
-        output_dir = os.path.join(os.getcwd(), 'assets', 'agent', 'manipulation_agent')
+        output_dir = os.path.join(os.getcwd(), "assets", "agent", "manipulation_agent")
         os.makedirs(output_dir, exist_ok=True)
-        
+
         # Save image with timestamp
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = os.path.join(output_dir, f"manipulation_point_{timestamp}.jpg")
         cv2.imwrite(output_path, visualization)
-        
+
         logger.info(f"Saved manipulation point visualization to {output_path}")
     except Exception as e:
         logger.error(f"Error saving manipulation point image: {e}")
 
+
 # Subscribe to video stream to capture current frame
 # Use BehaviorSubject to store the latest frame for manipulation point visualization
 video_stream.subscribe(
-    on_next=lambda frame: current_frame_subject.on_next(frame.copy() if frame is not None else None),
-    on_error=lambda error: logger.error(f"Error in video stream: {error}")
+    on_next=lambda frame: current_frame_subject.on_next(
+        frame.copy() if frame is not None else None
+    ),
+    on_error=lambda error: logger.error(f"Error in video stream: {error}"),
 )
 
 # Create temporary agent for processing
 manipulation_vlm = OpenAIAgent(
     dev_name="QwenSingleFrameAgent",
     openai_client=qwen_client,
-    model_name='qwen2.5-vl-72b-instruct',
+    model_name="qwen2.5-vl-72b-instruct",
     tokenizer=HuggingFaceTokenizer(model_name=f"Qwen/qwen2.5-vl-72b-instruct"),
     max_output_tokens_per_request=100,
-    system_query='Given the input task return ONLY the x,y coordinates of the ONE exact point on the object that would be best to grasp',
+    system_query="Given the input task return ONLY the x,y coordinates of the ONE exact point on the object that would be best to grasp",
     input_video_stream=video_stream,
     input_query_stream=web_interface.query_stream,
 )
@@ -278,9 +298,8 @@ manipulation_vlm = OpenAIAgent(
 # Subscribe to VLM responses to process manipulation points
 manipulation_vlm.get_response_observable().subscribe(
     on_next=lambda response: process_manipulation_point(response, current_frame_subject.value),
-    on_error=lambda error: logger.error(f"Error in VLM response stream: {error}")
+    on_error=lambda error: logger.error(f"Error in VLM response stream: {error}"),
 )
-
 
 
 # Create a ClaudeAgent instance
