@@ -261,122 +261,29 @@ class MyUnitreeSkills(SkillLibrary):
     # region Class-based Skills
 
     class Move(AbstractRobotSkill):
-        """Move the robot using direct velocity commands.
-
-        This skill works with both ROS and WebRTC robot implementations.
-        """
+        """Move the robot using direct velocity commands. Determine duration required based on user distance instructions."""
 
         x: float = Field(..., description="Forward velocity (m/s).")
         y: float = Field(default=0.0, description="Left/right velocity (m/s)")
         yaw: float = Field(default=0.0, description="Rotational velocity (rad/s)")
-        duration: float = Field(
-            default=0.0, description="How long to move (seconds). If 0, command is continuous"
-        )
+        duration: float = Field(default=0.0, description="How long to move (seconds).")
 
         def __call__(self):
             super().__call__()
-
-            from dimos.types.vector import Vector
-
-            vector = Vector(self.x, self.y, self.yaw)
-
-            # Handle duration for continuous movement
-            if self.duration > 0:
-                import time
-                import threading
-                import asyncio
-
-                # Create a stop event
-                stop_event = threading.Event()
-
-                # Function to continuously send movement commands
-                async def continuous_move():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    start_time = time.time()
-                    try:
-                        while (
-                            not stop_event.is_set() and (time.time() - start_time) < self.duration
-                        ):
-                            self._robot.move(vector)
-                            await asyncio.sleep(0.001)  # Send commands at 1000Hz
-                        # Always stop at the end
-                        self._robot.move(Vector(0, 0, 0))
-                    finally:
-                        loop.close()
-
-                # Run movement in a separate thread with asyncio event loop
-                move_thread = threading.Thread(target=lambda: asyncio.run(continuous_move()))
-                move_thread.daemon = True
-                move_thread.start()
-
-                # Wait for the full duration
-                time.sleep(self.duration)
-                stop_event.set()
-                move_thread.join(timeout=0.5)  # Wait for thread to finish with timeout
-            else:
-                # Just execute the move command once for continuous movement
-                self._robot.move(vector)
-            return True
+            return self._robot.move_vel(x=self.x, y=self.y, yaw=self.yaw, duration=self.duration)
 
     class Reverse(AbstractRobotSkill):
-        """Reverse the robot using direct velocity commands.
-
-        This skill works with both ROS and WebRTC robot implementations.
-        """
+        """Reverse the robot using direct velocity commands. Determine duration required based on user distance instructions."""
 
         x: float = Field(..., description="Backward velocity (m/s). Positive values move backward.")
         y: float = Field(default=0.0, description="Left/right velocity (m/s)")
         yaw: float = Field(default=0.0, description="Rotational velocity (rad/s)")
-        duration: float = Field(
-            default=0.0, description="How long to move (seconds). If 0, command is continuous"
-        )
+        duration: float = Field(default=0.0, description="How long to move (seconds).")
 
         def __call__(self):
             super().__call__()
-            from dimos.types.vector import Vector
-
-            # Use negative x for backward movement
-            vector = Vector(-self.x, self.y, self.yaw)
-
-            # Handle duration for continuous movement
-            if self.duration > 0:
-                import time
-                import threading
-                import asyncio
-
-                # Create a stop event
-                stop_event = threading.Event()
-
-                # Function to continuously send movement commands
-                async def continuous_move():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    start_time = time.time()
-                    try:
-                        while (
-                            not stop_event.is_set() and (time.time() - start_time) < self.duration
-                        ):
-                            self._robot.move(vector)
-                            await asyncio.sleep(0.001)  # Send commands at 1000Hz
-                        # Always stop at the end
-                        self._robot.move(Vector(0, 0, 0))
-                    finally:
-                        loop.close()
-
-                # Run movement in a separate thread with asyncio event loop
-                move_thread = threading.Thread(target=lambda: asyncio.run(continuous_move()))
-                move_thread.daemon = True
-                move_thread.start()
-
-                # Wait for the full duration
-                time.sleep(self.duration)
-                stop_event.set()
-                move_thread.join(timeout=0.5)  # Wait for thread to finish with timeout
-            else:
-                # Just execute the move command once for continuous movement
-                self._robot.move(vector)
-            return True
+            # Use move_vel with negative x for backward movement
+            return self._robot.move_vel(x=-self.x, y=self.y, yaw=self.yaw, duration=self.duration)
 
     class SpinLeft(AbstractRobotSkill):
         """Spin the robot left using degree commands."""

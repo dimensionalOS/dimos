@@ -37,7 +37,7 @@ logger = setup_logger("dimos.robot.unitree.unitree_go2", level=logging.DEBUG)
 
 # UnitreeGo2 Print Colors (Magenta)
 UNITREE_GO2_PRINT_COLOR = "\033[35m"
-UNITREE_GO2_RESET_COLOR == "\033[0m"
+UNITREE_GO2_RESET_COLOR = "\033[0m"
 
 
 class UnitreeGo2(Robot):
