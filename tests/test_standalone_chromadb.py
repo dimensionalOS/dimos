@@ -24,6 +24,7 @@ db_connection = Chroma(
     embedding_function=embeddings,
 )
 
+
 def add_vector(vector_id, vector_data):
     """Add a vector to the ChromaDB collection."""
     if not db_connection:
@@ -33,6 +34,7 @@ def add_vector(vector_id, vector_data):
         texts=[vector_data],
         metadatas=[{"name": vector_id}],
     )
+
 
 add_vector("id0", "Food")
 add_vector("id1", "Cat")
@@ -50,22 +52,22 @@ add_vector("id8", "Yellow")
 
 def get_vector(vector_id):
     """Retrieve a vector from the ChromaDB by its identifier."""
-    result = db_connection.get(include=['embeddings'], ids=[vector_id])
+    result = db_connection.get(include=["embeddings"], ids=[vector_id])
     return result
+
 
 print(get_vector("id1"))
 # print(get_vector("id3"))
 # print(get_vector("id0"))
 # print(get_vector("id2"))
 
+
 def query(query_texts, n_results=2):
     """Query the collection with a specific text and return up to n results."""
     if not db_connection:
         raise Exception("Collection not initialized. Call connect() first.")
-    return db_connection.similarity_search(
-        query=query_texts,
-        k=n_results
-    )
+    return db_connection.similarity_search(query=query_texts, k=n_results)
+
 
 results = query("Colors")
 print(results)

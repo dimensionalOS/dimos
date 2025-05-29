@@ -12,3 +12,6 @@
 *.ico binary
 *.pdf binary
 *.mp4 binary
+
+# Explicit LFS tracking for test files
+tests/data/.lfs/*.tar.gz filter=lfs diff=lfs merge=lfs -text

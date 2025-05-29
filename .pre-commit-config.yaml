@@ -1,0 +1,33 @@
+default_stages: [pre-commit]
+exclude: (dimos/models/.*)|(deprecated)
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.11
+    hooks:
+      #- id: ruff-check
+      #  args: [--fix]
+      - id: ruff-format
+        stages: [pre-commit]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-case-conflict
+      - id: trailing-whitespace
+        language: python
+        types: [text]
+        stages: [pre-push]
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+      - id: pretty-format-json
+        name: format json
+        args: [ --autofix, --no-sort-keys ]
+
+  - repo: local
+    hooks:
+      - id: lfs_check
+        name: LFS data
+        always_run: true
+        pass_filenames: false
+        entry: bin/lfs_check
+        language: script

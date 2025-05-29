@@ -35,7 +35,10 @@ class Planner(Visualizable):
     def plan(self, goal: VectorLike) -> Path: ...
 
     def set_goal(
-        self, goal: VectorLike, goal_theta: Optional[float] = None, stop_event: Optional[threading.Event] = None
+        self,
+        goal: VectorLike,
+        goal_theta: Optional[float] = None,
+        stop_event: Optional[threading.Event] = None,
     ):
         path = self.plan(goal)
         if not path:
