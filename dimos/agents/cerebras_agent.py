@@ -268,29 +268,26 @@ class CerebrasAgent(LLMAgent):
                 tools = self.skill_library.get_tools()
                 api_params["tools"] = tools  # No conversion needed
                 api_params["tool_choice"] = "auto"
-
+            
             # Add response format for structured output if specified
             if self.response_model is not None:
                 # Convert Pydantic model to JSON schema for Cerebras
                 from pydantic import TypeAdapter
-
                 schema = TypeAdapter(self.response_model).json_schema()
-
+                
                 # Ensure additionalProperties is set to False for strict mode
                 if "additionalProperties" not in schema:
                     schema["additionalProperties"] = False
-
+                
                 api_params["response_format"] = {
                     "type": "json_schema",
                     "json_schema": {
-                        "name": self.response_model.__name__
-                        if hasattr(self.response_model, "__name__")
-                        else "response",
+                        "name": self.response_model.__name__ if hasattr(self.response_model, '__name__') else "response",
                         "strict": True,
-                        "schema": schema,
-                    },
+                        "schema": schema
+                    }
                 }
-
+            
             # Make the API call
             response = self.client.chat.completions.create(**api_params)
 
