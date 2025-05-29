@@ -106,7 +106,7 @@ class Vector:
     def serialize(self) -> Tuple:
         """Serialize the vector to a tuple."""
         return {"type": "vector", "c": self._data.tolist()}
-        
+
     def __len__(self) -> int:
         """Return the dimension of the vector."""
         return len(self._data)
