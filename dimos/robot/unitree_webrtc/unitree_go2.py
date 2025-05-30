@@ -33,7 +33,7 @@ class UnitreeGo2(WebRTCRobot):
         self.map_stream = self.map.consume(self.lidar_stream())
 
         self.local_planner = SimplePlanner(
-            get_costmap=lambda: self.map.costmap, get_robot_pos=lambda: self.odom()
+            get_costmap=lambda: self.map.costmap, get_robot_pos=self.odom
         )
 
         def set_goal(path, *args, **kwargs):
@@ -45,7 +45,7 @@ class UnitreeGo2(WebRTCRobot):
             get_robot_pos=lambda: self.odom().pos,
         )
 
-        self.local_planner.get_move_stream().subscribe(self.move)
+        self.local_planner.get_move_stream().subscribe(on_next=self.move, on_error=print)
 
         # #self.local_planner.get_move_stream().subscribe(on_next=self.move, on_error=print)
         # self.local_planner = VFHPurePursuitPlanner(
