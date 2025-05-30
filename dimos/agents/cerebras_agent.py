@@ -41,9 +41,14 @@ from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.utils.logging_config import setup_logger
 
+
 # Response object compatible with LLMAgent
 class CerebrasResponseMessage:
-    def __init__(self, content="", tool_calls=None,):
+    def __init__(
+        self,
+        content="",
+        tool_calls=None,
+    ):
         self.content = content
         self.tool_calls = tool_calls or []
         self.parsed = None
@@ -62,6 +67,7 @@ class CerebrasResponseMessage:
             parts.append(f"[Tools called: {', '.join(tool_names)}]")
 
         return "\n".join(parts) if parts else "[No content]"
+
 
 # Initialize environment variables
 load_dotenv()
@@ -340,12 +346,10 @@ class CerebrasAgent(LLMAgent):
             if cerebras_message is None:
                 logger.error("Response message does not exist.")
                 raise Exception("Response message does not exist.")
-                
+
             # Convert to our CerebrasResponseMessage format - only pass content
             # Tool calls will be parsed in _observable_query
-            response_message = CerebrasResponseMessage(
-                content=cerebras_message.content
-            )
+            response_message = CerebrasResponseMessage(content=cerebras_message.content)
 
             return response_message
 
@@ -409,12 +413,16 @@ class CerebrasAgent(LLMAgent):
                 observer.on_next("")
                 observer.on_completed()
                 return
-            
+
             # Try to parse structured response if response_model is defined
             if response_message.content:
                 try:
                     parsed_content = json.loads(response_message.content)
-                    if isinstance(parsed_content, dict) and "name" in parsed_content and "arguments" in parsed_content:
+                    if (
+                        isinstance(parsed_content, dict)
+                        and "name" in parsed_content
+                        and "arguments" in parsed_content
+                    ):
                         # Create tool call object from parsed JSON
                         tool_call_obj = type(
                             "ToolCall",
@@ -432,7 +440,9 @@ class CerebrasAgent(LLMAgent):
                             },
                         )
                         response_message.tool_calls = [tool_call_obj]
-                        logger.info(f"Parsed structured JSON response into a tool call: {parsed_content['name']}")
+                        logger.info(
+                            f"Parsed structured JSON response into a tool call: {parsed_content['name']}"
+                        )
                 except (json.JSONDecodeError, TypeError, KeyError) as e:
                     logger.warning(f"Failed to parse response as JSON tool call: {e}")
 

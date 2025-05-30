@@ -41,10 +41,12 @@ load_dotenv()
 
 # robot = MockRobot()
 robot_skills = MyUnitreeSkills()
-robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
-                    ros_control=UnitreeROSControl(),
-                    skills=robot_skills,
-                    mock_connection=False)
+robot = UnitreeGo2(
+    ip=os.getenv("ROBOT_IP"),
+    ros_control=UnitreeROSControl(),
+    skills=robot_skills,
+    mock_connection=False,
+)
 
 # Create a subject for agent responses
 agent_response_subject = rx.subject.Subject()
