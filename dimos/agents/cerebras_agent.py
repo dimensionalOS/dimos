@@ -245,24 +245,32 @@ class CerebrasAgent(LLMAgent):
         """Simple schema cleaner that removes unsupported fields for Cerebras API."""
         if not isinstance(schema, dict):
             return schema
-        
+
         # Removing the problematic fields that pydantic generates
         cleaned = {}
         unsupported_fields = {
-            'minItems', 'maxItems', 'uniqueItems',
-            'exclusiveMinimum', 'exclusiveMaximum', 'minimum', 'maximum'
+            "minItems",
+            "maxItems",
+            "uniqueItems",
+            "exclusiveMinimum",
+            "exclusiveMaximum",
+            "minimum",
+            "maximum",
         }
-        
+
         for key, value in schema.items():
             if key in unsupported_fields:
                 continue  # Skip unsupported fields
             elif isinstance(value, dict):
                 cleaned[key] = self.clean_cerebras_schema(value)
             elif isinstance(value, list):
-                cleaned[key] = [self.clean_cerebras_schema(item) if isinstance(item, dict) else item for item in value]
+                cleaned[key] = [
+                    self.clean_cerebras_schema(item) if isinstance(item, dict) else item
+                    for item in value
+                ]
             else:
                 cleaned[key] = value
-        
+
         return cleaned
 
     def _send_query(self, messages: list) -> Any:
@@ -292,15 +300,14 @@ class CerebrasAgent(LLMAgent):
                 tools = self.skill_library.get_tools()
                 for tool in tools:
                     if "function" in tool and "parameters" in tool["function"]:
-                        tool["function"]["parameters"] = self.clean_cerebras_schema(tool["function"]["parameters"])
+                        tool["function"]["parameters"] = self.clean_cerebras_schema(
+                            tool["function"]["parameters"]
+                        )
                 api_params["tools"] = tools
                 api_params["tool_choice"] = "auto"
 
             if self.response_model is not None:
-                api_params["response_format"] = {
-                    "type": "json_object",
-                    "schema": schema
-                }
+                api_params["response_format"] = {"type": "json_object", "schema": schema}
 
             # Make the API call
             response = self.client.chat.completions.create(**api_params)
