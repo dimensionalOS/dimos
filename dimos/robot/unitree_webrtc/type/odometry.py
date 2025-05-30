@@ -1,9 +1,15 @@
 from typing import TypedDict, Literal
 from datetime import datetime
 from dataclasses import dataclass
-from dimos.types.vector import Vector
+from dimos.types.vector import VectorLike, Vector
 from dimos.types.position import Position
-from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_human_readable
+from dimos.robot.unitree_webrtc.type.timeseries import (
+    Timestamped,
+    to_human_readable,
+    to_datetime,
+    EpochLike,
+)
+
 
 raw_odometry_msg_sample = {
     "type": "msg",
@@ -57,18 +63,19 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-@dataclass
-class Odometry(Timestamped, Position):
-    ts: datetime
+class Odometry(Position):
+    def __init__(self, pos: VectorLike, rot: VectorLike, ts: EpochLike):
+        super().__init__(pos, rot)
+        self.ts = to_datetime(ts) if ts else datetime.now()
 
     @classmethod
     def from_msg(cls, msg: RawOdometryMessage) -> "Odometry":
         pose = msg["data"]["pose"]
         orientation = pose["orientation"]
         position = pose["position"]
-        pos = Vector(position.get("x"), position.get("y"), position.get("z"))
-        rot = Vector(orientation.get("x"), orientation.get("y"), orientation.get("z"))
-        return cls(pos=pos, rot=rot, ts=msg["data"]["header"]["stamp"])
+        pos = [position.get("x"), position.get("y"), position.get("z")]
+        rot = [orientation.get("x"), orientation.get("y"), orientation.get("z")]
+        return cls(pos, rot, msg["data"]["header"]["stamp"])
 
     def __repr__(self) -> str:
         return f"Odom ts({to_human_readable(self.ts)}) pos({self.pos}), rot({self.rot})"

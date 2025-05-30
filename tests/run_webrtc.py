@@ -11,20 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import cv2
 import os
-import asyncio
-from dotenv import load_dotenv
-from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2, Color
-from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
-from dimos.web.websocket_vis.server import WebsocketVis
-from dimos.types.vector import Vector
-import logging
-import open3d as o3d
-import reactivex.operators as ops
-import numpy as np
-import time
 import threading
+import time
+
+import reactivex.operators as ops
+from dotenv import load_dotenv
+
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.types.vector import Vector
+from dimos.web.websocket_vis.server import WebsocketVis
 
 # logging.basicConfig(level=logging.DEBUG)
 
@@ -39,6 +35,7 @@ websocket_vis.connect(robot.global_planner.vis_stream())
 def msg_handler(msgtype, data):
     if msgtype == "click":
         try:
+            print(data)
             robot.global_planner.set_goal(Vector(data["position"]))
         except Exception as e:
             print(f"Error setting goal: {e}")
@@ -55,6 +52,7 @@ websocket_vis.msg_handler = threaded_msg_handler
 
 print("standing up")
 robot.standup()
+
 print("robot is up")
 
 
@@ -65,11 +63,29 @@ def newmap(msg):
 websocket_vis.connect(robot.map_stream.pipe(ops.map(newmap)))
 websocket_vis.connect(robot.odom_stream().pipe(ops.map(lambda pos: ["robot_pos", pos.pos.to_2d()])))
 
-try:
-    while True:
-        #        robot.move_vel(Vector(0.1, 0.1, 0.1))
-        time.sleep(0.01)
+# Keep the script running and handle graceful shutdown
+shutdown_event = threading.Event()
 
+
+# def signal_handler(signum, frame):
+#     print("\nShutdown signal received. Cleaning up...")
+#     shutdown_event.set()
+
+
+# # Register signal handlers for graceful shutdown
+# signal.signal(signal.SIGINT, signal_handler)
+# signal.signal(signal.SIGTERM, signal_handler)
+
+
+print("Robot is running. Press Ctrl+C to stop.")
+
+try:
+    # Keep the main thread alive while the robot loop runs in the background
+    while not shutdown_event.is_set():
+        time.sleep(0.1)
 except KeyboardInterrupt:
-    print("Stopping robot")
+    print("\nKeyboard interrupt received. Shutting down...")
+finally:
+    print("Stopping robot...")
     robot.liedown()
+    print("Robot stopped.")

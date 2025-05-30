@@ -44,6 +44,7 @@ class Planner(Visualizable):
         if not path:
             logger.warning("No path found to the goal.")
             return False
+
         print("pathing success", path)
         return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
 

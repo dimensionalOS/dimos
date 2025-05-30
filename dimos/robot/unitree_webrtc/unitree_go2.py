@@ -3,12 +3,14 @@ from typing import Union, Optional
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.connection import WebRTCRobot
 from dimos.robot.global_planner.planner import AstarPlanner
+from dimos.robot.local_planner.simple import SimplePlanner
 from dimos.utils.reactive import getter_streaming
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 import os
 from go2_webrtc_driver.constants import VUI_COLOR
-from dimos.robot.local_planner import navigate_path_local
+from dimos.robot.local_planner.vfh.vfh_local_planner import VFHPurePursuitPlanner
+from dimos.robot.local_planner.vfh.local_planner import navigate_path_local
 
 
 class Color(VUI_COLOR): ...
@@ -26,16 +28,44 @@ class UnitreeGo2(WebRTCRobot):
         super().__init__(ip=ip, mode=mode)
 
         self.odom = getter_streaming(self.odom_stream())
-        self.map = Map()
+
+        self.map = Map(voxel_size=1)
         self.map_stream = self.map.consume(self.lidar_stream())
 
+        self.local_planner = SimplePlanner(
+            get_costmap=lambda: self.map.costmap, get_robot_pos=lambda: self.odom()
+        )
+
+        def set_goal(path, *args, **kwargs):
+            self.local_planner.set_goal(path.last())
+
         self.global_planner = AstarPlanner(
-            set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(
-                self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event
-            ),
+            set_local_nav=set_goal,
             get_costmap=lambda: self.map.costmap,
             get_robot_pos=lambda: self.odom().pos,
         )
+
+        self.local_planner.get_move_stream().subscribe(self.move)
+
+        # #self.local_planner.get_move_stream().subscribe(on_next=self.move, on_error=print)
+        # self.local_planner = VFHPurePursuitPlanner(
+        #     get_costmap=lambda: self.map.costmap,
+        #     get_robot_pose=lambda: self.odom(),
+        #     move=self.move,
+        #     robot_width=0.36,  # Unitree Go2 width in meters
+        #     robot_length=0.6,  # Unitree Go2 length in meters
+        #     max_linear_vel=0.5,
+        #     lookahead_distance=2.0,
+        #     visualization_size=500,  # 500x500 pixel visualization
+        #   )
+
+        # self.global_planner = AstarPlanner(
+        #      set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(
+        #          self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event
+        #      ),
+        #      get_costmap=lambda: self.map.costmap,
+        #      get_robot_pos=lambda: self.odom().pos,
+        #  )
 
         # # Initialize skills
         # if skills is None:

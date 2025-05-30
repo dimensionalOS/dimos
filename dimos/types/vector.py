@@ -107,10 +107,6 @@ class Vector:
         """Serialize the vector to a tuple."""
         return {"type": "vector", "c": self._data.tolist()}
 
-    def __len__(self) -> int:
-        """Return the dimension of the vector."""
-        return len(self._data)
-
     def __eq__(self, other) -> bool:
         """Check if two vectors are equal using numpy's allclose for floating point comparison."""
         if not isinstance(other, Vector):
