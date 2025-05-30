@@ -306,10 +306,7 @@ class CerebrasAgent(LLMAgent):
                 api_params["tool_choice"] = "auto"
 
             if self.response_model is not None:
-                api_params["response_format"] = {
-                    "type": "json_object",
-                    "schema": self.response_model,
-                }
+                api_params["response_format"] = {"type": "json_object", "schema": self.response_model}
 
             # Make the API call
             response = self.client.chat.completions.create(**api_params)
