@@ -1,8 +1,9 @@
 import hashlib
 import os
 import subprocess
-from dimos.utils import testing
+
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.utils import testing
 
 
 def test_pull_file():
