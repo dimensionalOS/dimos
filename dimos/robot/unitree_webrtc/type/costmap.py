@@ -231,6 +231,34 @@ class Costmap:
             origin=self.origin,
         )
 
+    @property
+    def total_cells(self) -> int:
+        return self.width * self.height
+
+    @property
+    def occupied_cells(self) -> int:
+        return np.sum(self.grid >= 0.1)
+
+    @property
+    def unknown_cells(self) -> int:
+        return np.sum(self.grid == -1)
+
+    @property
+    def free_cells(self) -> int:
+        return self.total_cells - self.occupied_cells - self.unknown_cells
+
+    @property
+    def free_percent(self) -> float:
+        return (self.free_cells / self.total_cells) * 100 if self.total_cells > 0 else 0.0
+
+    @property
+    def occupied_percent(self) -> float:
+        return (self.occupied_cells / self.total_cells) * 100 if self.total_cells > 0 else 0.0
+
+    @property
+    def unknown_percent(self) -> float:
+        return (self.unknown_cells / self.total_cells) * 100 if self.total_cells > 0 else 0.0
+
     def __str__(self) -> str:
         """
         Create a string representation of the Costmap.
@@ -238,16 +266,6 @@ class Costmap:
         Returns:
             A formatted string with key costmap information
         """
-        # Calculate occupancy statistics
-        total_cells = self.width * self.height
-        occupied_cells = np.sum(self.grid >= 0.1)
-        unknown_cells = np.sum(self.grid == -1)
-        free_cells = total_cells - occupied_cells - unknown_cells
-
-        # Calculate percentages
-        occupied_percent = (occupied_cells / total_cells) * 100
-        unknown_percent = (unknown_cells / total_cells) * 100
-        free_percent = (free_cells / total_cells) * 100
 
         cell_info = [
             "▦ Costmap",
@@ -255,9 +273,9 @@ class Costmap:
             f"({self.width * self.resolution:.1f}x{self.height * self.resolution:.1f}m @",
             f"{1 / self.resolution:.0f}cm res)",
             f"Origin: ({x(self.origin):.2f}, {y(self.origin):.2f})",
-            f"▣ {occupied_percent:.1f}%",
-            f"□ {free_percent:.1f}%",
-            f"◌ {unknown_percent:.1f}%",
+            f"▣ {self.occupied_percent:.1f}%",
+            f"□ {self.free_percent:.1f}%",
+            f"◌ {self.unknown_percent:.1f}%",
         ]
 
         return " ".join(cell_info)

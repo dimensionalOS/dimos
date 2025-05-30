@@ -116,7 +116,6 @@ class Vector:
 
     def __sub__(self: T, other: Union["Vector", Iterable[float]]) -> T:
         if isinstance(other, Vector):
-            print(self, other)
             return self.__class__(self._data - other._data)
         return self.__class__(self._data - np.array(other, dtype=float))
 
@@ -188,7 +187,9 @@ class Vector:
 
     def angle(self, other: Union["Vector", Iterable[float]]) -> float:
         """Compute the angle (in radians) between this vector and another."""
-        if self.length() < 1e-10 or (isinstance(other, Vector) and other.length() < 1e-10):
+        if self.length() < 1e-10 or (
+            isinstance(other, Vector) and other.length() < 1e-10
+        ):
             return 0.0
 
         if isinstance(other, Vector):
@@ -551,8 +552,12 @@ if __name__ == "__main__":
     print("Testing VectorLike Protocol:")
     print(f"isinstance(Vector(1,2), VectorLike):      {isinstance(vec2d, VectorLike)}")
     print(f"isinstance(np.array([1,2]), VectorLike):  {isinstance(arr2d, VectorLike)}")
-    print(f"isinstance((1,2), VectorLike):            {isinstance((1.0, 2.0), VectorLike)}")
-    print(f"isinstance([1,2], VectorLike):            {isinstance([1.0, 2.0], VectorLike)}")
+    print(
+        f"isinstance((1,2), VectorLike):            {isinstance((1.0, 2.0), VectorLike)}"
+    )
+    print(
+        f"isinstance([1,2], VectorLike):            {isinstance([1.0, 2.0], VectorLike)}"
+    )
     print()
 
     # Test mixed operations using different vector types
@@ -569,6 +574,10 @@ if __name__ == "__main__":
         return (a_np + b_np) / 2
 
     print("Mixed operations between different vector types:")
-    print(f"distance(Vector(1,2,3), [4,5,6]):           {distance(vec3d, [4.0, 5.0, 6.0])}")
-    print(f"distance(np.array([1,2,3]), (4,5,6)):       {distance(arr3d, (4.0, 5.0, 6.0))}")
+    print(
+        f"distance(Vector(1,2,3), [4,5,6]):           {distance(vec3d, [4.0, 5.0, 6.0])}"
+    )
+    print(
+        f"distance(np.array([1,2,3]), (4,5,6)):       {distance(arr3d, (4.0, 5.0, 6.0))}"
+    )
     print(f"midpoint(Vector(1,2,3), np.array([4,5,6])): {midpoint(vec3d, numpy_arr)}")
