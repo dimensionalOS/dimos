@@ -61,6 +61,9 @@ class WebRTCRobot(AbstractRobot):
         self.connection_ready.wait()
 
     def move(self, vector: Vector):
+        # x - Positive right, negative left
+        # y - positive forward, negative backwards
+        # z - Positive rotate right, negative rotate left
         async def async_move():
             self.conn.datachannel.pub_sub.publish_without_callback(
                 RTC_TOPIC["WIRELESS_CONTROLLER"],
