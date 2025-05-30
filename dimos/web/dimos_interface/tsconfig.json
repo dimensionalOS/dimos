@@ -12,8 +12,6 @@
       "node"
     ]
   },
-
-
   "include": [
     "src/**/*.ts",
     "src/**/*.js",
