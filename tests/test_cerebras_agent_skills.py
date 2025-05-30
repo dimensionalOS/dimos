@@ -39,12 +39,12 @@ from dimos.skills.speak import Speak
 # Load API key from environment
 load_dotenv()
 
-robot = MockRobot()
-
-# robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
-#                     ros_control=UnitreeROSControl(),
-#                     skills=MyUnitreeSkills(),
-#                     mock_connection=False)
+# robot = MockRobot()
+robot_skills = MyUnitreeSkills()
+robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
+                    ros_control=UnitreeROSControl(),
+                    skills=robot_skills,
+                    mock_connection=False)
 
 # Create a subject for agent responses
 agent_response_subject = rx.subject.Subject()
@@ -63,8 +63,6 @@ web_interface = RobotWebInterface(
 )
 
 # stt_node = stt()
-robot_skills = MyUnitreeSkills()
-
 
 # Create a CerebrasAgent instance
 agent = CerebrasAgent(
@@ -80,26 +78,28 @@ IMPORTANT INSTRUCTIONS:
 3. If you're unsure which tool to use, choose the most appropriate one based on the user's query
 4. Parse the user's instructions carefully to determine correct parameter values
 
-Example: If the user asks to move forward 1 meter, call the Move function with distance=1""",
+When you need to call a skill or tool, ALWAYS respond ONLY with a JSON object in this exact format: {"name": "SkillName", "arguments": {"arg1": "value1", "arg2": "value2"}}
+
+Example: If the user asks to spin right by 90 degrees, output ONLY the following: {"name": "SpinRight", "arguments": {"degrees": 90}}""",
     model_name="llama-4-scout-17b-16e-instruct",
 )
 
 # tts_node = tts()
 # tts_node.consume_text(agent.get_response_observable())
 
-robot_skills.add(ObserveStream)
-robot_skills.add(KillSkill)
-robot_skills.add(NavigateWithText)
-robot_skills.add(FollowHuman)
-robot_skills.add(GetPose)
-# robot_skills.add(Speak)
-robot_skills.add(NavigateToGoal)
-robot_skills.create_instance("ObserveStream", robot=robot, agent=agent)
-robot_skills.create_instance("KillSkill", robot=robot, skill_library=robot_skills)
-robot_skills.create_instance("NavigateWithText", robot=robot)
-robot_skills.create_instance("FollowHuman", robot=robot)
-robot_skills.create_instance("GetPose", robot=robot)
-robot_skills.create_instance("NavigateToGoal", robot=robot)
+# robot_skills.add(ObserveStream)
+# robot_skills.add(KillSkill)
+# robot_skills.add(NavigateWithText)
+# robot_skills.add(FollowHuman)
+# robot_skills.add(GetPose)
+# # robot_skills.add(Speak)
+# robot_skills.add(NavigateToGoal)
+# robot_skills.create_instance("ObserveStream", robot=robot, agent=agent)
+# robot_skills.create_instance("KillSkill", robot=robot, skill_library=robot_skills)
+# robot_skills.create_instance("NavigateWithText", robot=robot)
+# robot_skills.create_instance("FollowHuman", robot=robot)
+# robot_skills.create_instance("GetPose", robot=robot)
+# robot_skills.create_instance("NavigateToGoal", robot=robot)
 # robot_skills.create_instance("Speak", tts_node=tts_node)
 
 # Subscribe to agent responses and send them to the subject
