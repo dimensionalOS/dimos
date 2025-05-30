@@ -27,29 +27,39 @@ from dimos.agents.cerebras_agent import CerebrasAgent
 # Load environment variables
 load_dotenv()
 
+
 # Test Pydantic models with various validation constraints
 class SimpleResponse(BaseModel):
     """A simple response model with basic fields."""
+
     message: str
     count: int = 0
 
+
 class ListResponse(BaseModel):
     """A response model with list validation."""
+
     items: List[str] = Field(default_factory=list, min_items=1, max_items=5)
+
 
 class NestedResponse(BaseModel):
     """A response model with nested structures."""
+
     name: str
     details: SimpleResponse
     tags: Optional[List[str]] = None
 
+
 class SkillResponse(BaseModel):
     """A response model for a skill call with unsupported validation constraints."""
+
     items: List[str] = Field(default_factory=list, min_items=1, max_items=5)
+
 
 class UnsupportedFieldsResponse(BaseModel):
     items: List[str] = Field(default_factory=list, min_items=1, max_items=5)
     wrgwrgrw: str = "should not be here"
+
 
 def extract_json_from_response(response: str) -> str:
     # Remove markdown code block if present
@@ -58,27 +68,29 @@ def extract_json_from_response(response: str) -> str:
         return match.group(1).strip()
     return response.strip()
 
+
 def test_simple_json_response():
     """Test CerebrasAgent with a simple JSON response model."""
     print("\n=== Testing Simple JSON Response ===")
-    
+
     # Create agent with simple response model
     agent = CerebrasAgent(
         dev_name="test_agent",
         query="Return a JSON object with a 'message' field containing 'Hello, World!' and a 'count' field set to 5. The response MUST be a valid JSON object.",
         response_model=SimpleResponse,
-        system_query="You MUST respond with a valid JSON object matching this schema: {\"message\": string, \"count\": number}. Do not include any explanations or code examples."
+        system_query='You MUST respond with a valid JSON object matching this schema: {"message": string, "count": number}. Do not include any explanations or code examples.',
     )
-    
+
     # Run query
     response = agent.run_observable_query(
         "Return a JSON object with a 'message' field containing 'Hello, World!' and a 'count' field set to 5. The response MUST be a valid JSON object."
     ).run()
     print(f"Response: {response}")
-    
+
     # Try to parse response as JSON
     try:
         import json
+
         json_str = extract_json_from_response(response)
         parsed = json.loads(json_str)
         print(f"Parsed JSON: {parsed}")
@@ -89,24 +101,26 @@ def test_simple_json_response():
         print(f"Failed to parse JSON: {e}")
         raise
 
+
 def test_list_json_response():
     """Test CerebrasAgent with a list-based JSON response model."""
     print("\n=== Testing List JSON Response ===")
-    
+
     agent = CerebrasAgent(
         dev_name="test_agent",
         query="Return a JSON object with an 'items' field containing a list of 3 colors. The field must be named 'items'.",
         response_model=ListResponse,
-        system_query="You must respond with a JSON object matching this schema: {\"items\": [string, ...]}"
+        system_query='You must respond with a JSON object matching this schema: {"items": [string, ...]}',
     )
-    
+
     response = agent.run_observable_query(
         "Return a JSON object with an 'items' field containing a list of 3 colors. The field must be named 'items'."
     ).run()
     print(f"Response: {response}")
-    
+
     try:
         import json
+
         json_str = extract_json_from_response(response)
         parsed = json.loads(json_str)
         print(f"Parsed JSON: {parsed}")
@@ -117,27 +131,29 @@ def test_list_json_response():
         print(f"Failed to parse JSON: {e}")
         raise
 
+
 def test_nested_json_response():
     """Test CerebrasAgent with a nested JSON response model."""
     print("\n=== Testing Nested JSON Response ===")
-    
+
     # Create agent with nested response model
     agent = CerebrasAgent(
         dev_name="test_agent",
         query="Return a JSON object with a 'name' field set to 'John' and a 'details' field containing a nested object with 'message' set to 'Hello' and 'count' set to 3. The response MUST be a valid JSON object with this exact structure.",
         response_model=NestedResponse,
-        system_query="You MUST respond with a valid JSON object matching this schema: {\"name\": string, \"details\": {\"message\": string, \"count\": number}}. The 'details' field MUST be a nested object."
+        system_query='You MUST respond with a valid JSON object matching this schema: {"name": string, "details": {"message": string, "count": number}}. The \'details\' field MUST be a nested object.',
     )
-    
+
     # Run query
     response = agent.run_observable_query(
         "Return a JSON object with a 'name' field set to 'John' and a 'details' field containing a nested object with 'message' set to 'Hello' and 'count' set to 3. The response MUST be a valid JSON object with this exact structure."
     ).run()
     print(f"Response: {response}")
-    
+
     # Try to parse response as JSON
     try:
         import json
+
         json_str = extract_json_from_response(response)
         parsed = json.loads(json_str)
         print(f"Parsed JSON: {parsed}")
@@ -151,24 +167,26 @@ def test_nested_json_response():
         print(f"Failed to parse JSON: {e}")
         raise
 
+
 def test_skill_json_response():
     """Test CerebrasAgent with a skill call that includes unsupported JSON schema fields."""
     print("\n=== Testing Skill JSON Response ===")
-    
+
     agent = CerebrasAgent(
         dev_name="test_agent",
         query="Return a JSON object with an 'items' field containing a list of 3 colors. The field must be named 'items'.",
         response_model=SkillResponse,
-        system_query="You must respond with a JSON object matching this schema: {\"items\": [string, ...]}"
+        system_query='You must respond with a JSON object matching this schema: {"items": [string, ...]}',
     )
-    
+
     response = agent.run_observable_query(
         "Return a JSON object with an 'items' field containing a list of 3 colors. The field must be named 'items'."
     ).run()
     print(f"Response: {response}")
-    
+
     try:
         import json
+
         json_str = extract_json_from_response(response)
         parsed = json.loads(json_str)
         print(f"Parsed JSON: {parsed}")
@@ -179,6 +197,7 @@ def test_skill_json_response():
         print(f"Failed to parse JSON: {e}")
         raise
 
+
 def test_unsupported_schema_fields():
     """Test that Cerebras API returns a 400 error for unsupported JSON schema fields."""
     print("\n=== Testing Unsupported Schema Fields ===")
@@ -186,7 +205,7 @@ def test_unsupported_schema_fields():
         dev_name="test_agent",
         query="Return a JSON object with an 'items' field containing a list of 3 colors. The field must be named 'items'.",
         response_model=UnsupportedFieldsResponse,
-        system_query="You must respond with a JSON object matching this schema: {\"items\": [string, ...]}"
+        system_query='You must respond with a JSON object matching this schema: {"items": [string, ...]}',
     )
     try:
         response = agent.run_observable_query(
@@ -196,8 +215,11 @@ def test_unsupported_schema_fields():
         print("✗ ERROR: Expected a 400 error from Cerebras API, but got a response.")
     except Exception as e:
         print(f"Caught exception as expected: {e}")
-        assert "Unsupported JSON schema fields" in str(e) or "wrong_api_format" in str(e), "Did not get expected unsupported fields error"
+        assert "Unsupported JSON schema fields" in str(e) or "wrong_api_format" in str(e), (
+            "Did not get expected unsupported fields error"
+        )
         print("✓ Correctly caught unsupported schema fields error.")
+
 
 if __name__ == "__main__":
     # Run all tests
@@ -205,4 +227,4 @@ if __name__ == "__main__":
     test_list_json_response()
     test_nested_json_response()
     test_skill_json_response()
-    test_unsupported_schema_fields() 
+    test_unsupported_schema_fields()
