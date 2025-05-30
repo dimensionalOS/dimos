@@ -92,21 +92,11 @@ class SimplePlanner(LocalPlanner):
 
     def get_move_stream(self, frequency: float = 40.0) -> rx.Observable:
         return rx.interval(1.0 / frequency, scheduler=get_scheduler()).pipe(
-            # do we have a goal?
             ops.filter(lambda _: self.goal is not None),
-            # calculate direction vector
-            self.spy("goal"),
-            ops.map(lambda _: self.get_robot_pos().pos.to_2d() - self.goal),
-            ops.filter(lambda direction: direction.length() > 0.1),
-            # ops.map(self.calc_move),
-            self.spy("direction"),
-            # ops.map(
-            #    lambda direction: transform_to_robot_frame(
-            #        direction.normalize() * self.speed,
-            #        self.get_robot_pos(),
-            #    )
-            # ),
+            ops.map(lambda _: self.goal - self.get_robot_pos().pos.to_2d()),
+            ops.filter(lambda direction: direction.length() > 0.2),
             ops.map(self.rotate_to_target),
+            ops.map(lambda rot: rot + Vector(0, 0.3, 0)),
         )
 
     def rotate_to_target(self, direction_to_goal: Vector) -> Vector:
@@ -137,7 +127,7 @@ class SimplePlanner(LocalPlanner):
         )
 
         # Calculate angular velocity (proportional control)
-        max_angular_speed = 0.3  # rad/s
+        max_angular_speed = 0.75  # rad/s
         raw_angular_velocity = yaw_error * 2.0
         angular_velocity = max(-max_angular_speed, min(max_angular_speed, raw_angular_velocity))
 
