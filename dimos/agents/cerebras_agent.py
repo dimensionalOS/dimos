@@ -33,7 +33,6 @@ from pydantic import BaseModel
 from reactivex import Observable
 from reactivex.observer import Observer
 from reactivex.scheduler import ThreadPoolScheduler
-from openai._types import NOT_GIVEN
 
 # Local imports
 from dimos.agents.agent import LLMAgent
@@ -307,7 +306,7 @@ class CerebrasAgent(LLMAgent):
                 api_params["tool_choice"] = "auto"
 
             if self.response_model is not None:
-                api_params["response_format"] = {"type": "json_object", "schema": schema}
+                api_params["response_format"] = {"type": "json_object", "schema": self.response_model}
 
             # Make the API call
             response = self.client.chat.completions.create(**api_params)
