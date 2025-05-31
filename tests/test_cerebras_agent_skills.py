@@ -58,7 +58,10 @@ text_streams = {
     "agent_responses": agent_response_stream,
 }
 
-web_interface = RobotWebInterface(port=5556, text_streams=text_streams,)
+web_interface = RobotWebInterface(
+    port=5556,
+    text_streams=text_streams,
+)
 
 # stt_node = stt()
 robot_skills = MyUnitreeSkills(robot)
@@ -79,7 +82,7 @@ IMPORTANT INSTRUCTIONS:
 4. Parse the user's instructions carefully to determine correct parameter values
 
 Example: If the user asks to move forward 1 meter, call the Move function with distance=1""",
-    model_name="llama-4-scout-17b-16e-instruct"
+    model_name="llama-4-scout-17b-16e-instruct",
 )
 
 # tts_node = tts()
