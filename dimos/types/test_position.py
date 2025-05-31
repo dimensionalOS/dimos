@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import numpy as np
-
+import math
 from dimos.types.position import Position, to_position
 from dimos.types.vector import Vector
 
@@ -315,3 +315,9 @@ def test_to_position_with_sequence():
     assert pos3.rot.x == 16.0
     assert pos3.rot.y == 17.0
     assert pos3.rot.z == 18.0
+
+
+def test_vector_transform():
+    robot_position = Position(Vector(4.0, 2.0, 0.5), Vector(0.0, 0.0, math.pi / 2))
+    target = Vector(1.0, 3.0, 0.0)
+    print(robot_position.vector_to(target))
