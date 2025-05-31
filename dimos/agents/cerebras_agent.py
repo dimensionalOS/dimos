@@ -41,6 +41,11 @@ from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.utils.logging_config import setup_logger
 
+# Initialize environment variables
+load_dotenv()
+
+# Initialize logger for the Cerebras agent
+logger = setup_logger("dimos.agents.cerebras")
 
 # Response object compatible with LLMAgent
 class CerebrasResponseMessage:
@@ -55,26 +60,39 @@ class CerebrasResponseMessage:
 
     def __str__(self):
         # Return a string representation for logging
-        parts = []
-
-        # Include content if available
         if self.content:
-            parts.append(self.content)
+            return self.content
+        elif self.tool_calls:
+            # Return JSON representation of the first tool call
+            if self.tool_calls:
+                tool_call = self.tool_calls[0]
+                tool_json = {
+                    "name": tool_call.function.name,
+                    "arguments": json.loads(tool_call.function.arguments)
+                }
+                return json.dumps(tool_json)
+        return "[No content]"
 
-        # Include tool calls if available
+    def to_dict(self):
+        """Convert to dictionary format for JSON serialization."""
+        result = {
+            "role": "assistant",
+            "content": self.content or ""
+        }
+        
         if self.tool_calls:
-            tool_names = [tc.function.name for tc in self.tool_calls]
-            parts.append(f"[Tools called: {', '.join(tool_names)}]")
-
-        return "\n".join(parts) if parts else "[No content]"
-
-
-# Initialize environment variables
-load_dotenv()
-
-# Initialize logger for the Cerebras agent
-logger = setup_logger("dimos.agents.cerebras")
-
+            result["tool_calls"] = []
+            for tool_call in self.tool_calls:
+                result["tool_calls"].append({
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    },
+                })
+        
+        return result
 
 class CerebrasAgent(LLMAgent):
     """Cerebras agent implementation using the official Cerebras Python SDK.
@@ -300,7 +318,35 @@ class CerebrasAgent(LLMAgent):
 
         return cleaned
 
-    def _send_query(self, messages: list) -> Any:
+    def create_tool_call(self, name: str = None, arguments: dict = None, call_id: str = None, content: str = None):
+        """Create a tool call object from either direct parameters or JSON content."""
+        # If content is provided, parse it as JSON
+        if content:
+            try:
+                content_json = json.loads(content)
+                if isinstance(content_json, dict) and "name" in content_json and "arguments" in content_json:
+                    name = content_json["name"]
+                    arguments = content_json["arguments"]
+                else:
+                    return None
+            except json.JSONDecodeError:
+                logger.warning("Content appears to be JSON but failed to parse")
+                return None
+        
+        # Create the tool call object
+        if name and arguments is not None:
+    
+            return type("ToolCall", (), {
+                "id": call_id,
+                "function": type("Function", (), {
+                    "name": name,
+                    "arguments": json.dumps(arguments)
+                })
+            })
+        
+        return None
+
+    def _send_query(self, messages: list) -> CerebrasResponseMessage:
         """Sends the query to Cerebras API using the official Cerebras SDK.
 
         Args:
@@ -310,7 +356,7 @@ class CerebrasAgent(LLMAgent):
             The response message from Cerebras wrapped in our CerebrasResponseMessage class.
 
         Raises:
-            Exception: If no response message is returned.
+            Exception: If no response message is returned from the API.
             ConnectionError: If there's an issue connecting to the API.
             ValueError: If the messages or other parameters are invalid.
         """
@@ -334,24 +380,28 @@ class CerebrasAgent(LLMAgent):
                 api_params["tool_choice"] = "auto"
 
             if self.response_model is not None:
-                api_params["response_format"] = {
-                    "type": "json_object",
-                    "schema": self.response_model,
-                }
+                api_params["response_format"] = {"type": "json_object", "schema": self.response_model}
 
             # Make the API call
             response = self.client.chat.completions.create(**api_params)
 
-            cerebras_message = response.choices[0].message
-            if cerebras_message is None:
+            raw_message = response.choices[0].message
+            if raw_message is None:
                 logger.error("Response message does not exist.")
                 raise Exception("Response message does not exist.")
 
-            # Convert to our CerebrasResponseMessage format - only pass content
-            # Tool calls will be parsed in _observable_query
-            response_message = CerebrasResponseMessage(content=cerebras_message.content)
+            # Process response into final format
+            content = raw_message.content
+            tool_calls = getattr(raw_message, 'tool_calls', None)
 
-            return response_message
+            # If no structured tool calls from API, try parsing content as JSON tool call
+            if not tool_calls and content and content.strip().startswith('{'):
+                parsed_tool_call = self.create_tool_call(content=content)
+                if parsed_tool_call:
+                    tool_calls = [parsed_tool_call]
+                    content = None
+
+            return CerebrasResponseMessage(content=content, tool_calls=tool_calls)
 
         except ConnectionError as ce:
             logger.error(f"Connection error with Cerebras API: {ce}")
@@ -414,38 +464,6 @@ class CerebrasAgent(LLMAgent):
                 observer.on_completed()
                 return
 
-            # Try to parse structured response if response_model is defined
-            if response_message.content:
-                try:
-                    parsed_content = json.loads(response_message.content)
-                    if (
-                        isinstance(parsed_content, dict)
-                        and "name" in parsed_content
-                        and "arguments" in parsed_content
-                    ):
-                        # Create tool call object from parsed JSON
-                        tool_call_obj = type(
-                            "ToolCall",
-                            (),
-                            {
-                                "id": f"call_{threading.get_ident()}",
-                                "function": type(
-                                    "Function",
-                                    (),
-                                    {
-                                        "name": parsed_content["name"],
-                                        "arguments": json.dumps(parsed_content["arguments"]),
-                                    },
-                                ),
-                            },
-                        )
-                        response_message.tool_calls = [tool_call_obj]
-                        logger.info(
-                            f"Parsed structured JSON response into a tool call: {parsed_content['name']}"
-                        )
-                except (json.JSONDecodeError, TypeError, KeyError) as e:
-                    logger.warning(f"Failed to parse response as JSON tool call: {e}")
-
             # Add assistant response to local messages (always)
             assistant_message = {"role": "assistant"}
 
@@ -473,23 +491,50 @@ class CerebrasAgent(LLMAgent):
 
             messages.append(assistant_message)
 
-            # Handle tool calls if present (add tool messages to conversation)
-            self._handle_tooling(response_message, messages)
+            # If no skill library is provided or there are no tool calls, emit the response directly
+            if (
+                self.skill_library is None
+                or self.skill_library.get_tools() is None
+                or not hasattr(response_message, "tool_calls")
+                or response_message.tool_calls is None
+            ):
+                # Just use the content directly since JSON parsing is already handled in _send_query
+                final_msg = response_message.content or ""
+                
+                observer.on_next(final_msg)
+                self.response_subject.on_next(final_msg)
+            else:
+                # Handle tool calls if present
+                response_message_2 = self._handle_tooling(response_message, messages)
 
-            # At the end, append only new messages to the global conversation history under a lock
-            if not hasattr(self, "_history_lock"):
-                self._history_lock = threading.Lock()
-            with self._history_lock:
-                for msg in messages[base_len:]:
-                    self.conversation_history.append(msg)
-                logger.info(
-                    f"Updated conversation history (total: {len(self.conversation_history)} messages)"
-                )
+                # Update conversation history
+                if not hasattr(self, "_history_lock"):
+                    self._history_lock = threading.Lock()
+                with self._history_lock:
+                    for msg in messages[base_len:]:
+                        self.conversation_history.append(msg)
+                    logger.info(
+                        f"Updated conversation history (total: {len(self.conversation_history)} messages)"
+                    )
 
-            # Send response to observers
-            result = response_message.content or ""
-            observer.on_next(result)
-            self.response_subject.on_next(result)
+                # For tool call responses, show what was executed
+                if response_message_2 is not None:
+                    # Handle different types of responses from skill execution
+                    if hasattr(response_message_2, "content"):
+                        final_msg = response_message_2.content
+                    else:
+                        # Skill result is not a response object, just convert to string
+                        final_msg = f"Skill executed successfully. Result: {response_message_2}"
+                else:
+                    # Create a summary of executed commands
+                    final_msg = "Executed commands: " + ", ".join(
+                        f"{tc.function.name}({tc.function.arguments})"
+                        for tc in response_message.tool_calls
+                    )
+            
+            observer.on_next(final_msg)
+            self.response_subject.on_next(final_msg)
+
             observer.on_completed()
 
         except Exception as e:
@@ -498,31 +543,50 @@ class CerebrasAgent(LLMAgent):
             self.response_subject.on_error(e)
 
     def _handle_tooling(self, response_message, messages):
-        """Executes tools and appends tool-use/result blocks to messages."""
-        if not hasattr(response_message, "tool_calls") or not response_message.tool_calls:
-            logger.info("No tool calls found in response message")
+        """Handles tooling callbacks in the response message.
+
+        If tool calls are present, the corresponding functions are executed and
+        a follow-up query is sent.
+
+        Args:
+            response_message: The response message containing tool calls.
+            messages (list): The original list of messages sent.
+
+        Returns:
+            The final response message after processing tool calls, if any.
+        """
+
+        def _tooling_callback(message, messages, response_message, skill_library: SkillLibrary):
+            has_called_tools = False
+            new_messages = []
+            for tool_call in message.tool_calls:
+                has_called_tools = True
+                name = tool_call.function.name
+                args = json.loads(tool_call.function.arguments)
+                result = skill_library.call(name, **args)
+                logger.info(f"Function Call Results: {result}")
+                new_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": str(result),
+                        "name": name,
+                    }
+                )
+
+            if has_called_tools:
+                # Convert response_message to dict format for JSON serialization
+                response_dict = response_message.to_dict()
+                messages.append(response_dict)
+                messages.extend(new_messages)
+
+                logger.info("Sending Another Query.")
+                try:
+                    response_2 = self._send_query(messages)
+                    return response_2
+                except Exception as e:
+                    logger.error(f"Error in follow-up query: {e}")
+                    return None
             return None
 
-        if len(response_message.tool_calls) > 1:
-            logger.warning(
-                "Multiple tool calls detected in response message. Not a tested feature."
-            )
-
-        # Execute all tools and add their results to messages
-        for tool_call in response_message.tool_calls:
-            logger.info(f"Processing tool call: {tool_call.function.name}")
-
-            # Execute the tool
-            args = json.loads(tool_call.function.arguments)
-            tool_result = self.skill_library.call(tool_call.function.name, **args)
-            logger.info(f"Function Call Results: {tool_result}")
-
-            # Add tool result to conversation history (OpenAI format)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": str(tool_result),
-                    "name": tool_call.function.name,
-                }
-            )
+        return _tooling_callback(response_message, messages, response_message, self.skill_library)
