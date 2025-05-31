@@ -47,6 +47,7 @@ load_dotenv()
 # Initialize logger for the Cerebras agent
 logger = setup_logger("dimos.agents.cerebras")
 
+
 # Response object compatible with LLMAgent
 class CerebrasResponseMessage:
     def __init__(
@@ -68,31 +69,31 @@ class CerebrasResponseMessage:
                 tool_call = self.tool_calls[0]
                 tool_json = {
                     "name": tool_call.function.name,
-                    "arguments": json.loads(tool_call.function.arguments)
+                    "arguments": json.loads(tool_call.function.arguments),
                 }
                 return json.dumps(tool_json)
         return "[No content]"
 
     def to_dict(self):
         """Convert to dictionary format for JSON serialization."""
-        result = {
-            "role": "assistant",
-            "content": self.content or ""
-        }
-        
+        result = {"role": "assistant", "content": self.content or ""}
+
         if self.tool_calls:
             result["tool_calls"] = []
             for tool_call in self.tool_calls:
-                result["tool_calls"].append({
-                    "id": tool_call.id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_call.function.name,
-                        "arguments": tool_call.function.arguments,
-                    },
-                })
-        
+                result["tool_calls"].append(
+                    {
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments,
+                        },
+                    }
+                )
+
         return result
+
 
 class CerebrasAgent(LLMAgent):
     """Cerebras agent implementation using the official Cerebras Python SDK.
@@ -318,13 +319,19 @@ class CerebrasAgent(LLMAgent):
 
         return cleaned
 
-    def create_tool_call(self, name: str = None, arguments: dict = None, call_id: str = None, content: str = None):
+    def create_tool_call(
+        self, name: str = None, arguments: dict = None, call_id: str = None, content: str = None
+    ):
         """Create a tool call object from either direct parameters or JSON content."""
         # If content is provided, parse it as JSON
         if content:
             try:
                 content_json = json.loads(content)
-                if isinstance(content_json, dict) and "name" in content_json and "arguments" in content_json:
+                if (
+                    isinstance(content_json, dict)
+                    and "name" in content_json
+                    and "arguments" in content_json
+                ):
                     name = content_json["name"]
                     arguments = content_json["arguments"]
                 else:
@@ -332,18 +339,20 @@ class CerebrasAgent(LLMAgent):
             except json.JSONDecodeError:
                 logger.warning("Content appears to be JSON but failed to parse")
                 return None
-        
+
         # Create the tool call object
         if name and arguments is not None:
-    
-            return type("ToolCall", (), {
-                "id": call_id,
-                "function": type("Function", (), {
-                    "name": name,
-                    "arguments": json.dumps(arguments)
-                })
-            })
-        
+            return type(
+                "ToolCall",
+                (),
+                {
+                    "id": call_id,
+                    "function": type(
+                        "Function", (), {"name": name, "arguments": json.dumps(arguments)}
+                    ),
+                },
+            )
+
         return None
 
     def _send_query(self, messages: list) -> CerebrasResponseMessage:
@@ -380,7 +389,10 @@ class CerebrasAgent(LLMAgent):
                 api_params["tool_choice"] = "auto"
 
             if self.response_model is not None:
-                api_params["response_format"] = {"type": "json_object", "schema": self.response_model}
+                api_params["response_format"] = {
+                    "type": "json_object",
+                    "schema": self.response_model,
+                }
 
             # Make the API call
             response = self.client.chat.completions.create(**api_params)
@@ -392,10 +404,10 @@ class CerebrasAgent(LLMAgent):
 
             # Process response into final format
             content = raw_message.content
-            tool_calls = getattr(raw_message, 'tool_calls', None)
+            tool_calls = getattr(raw_message, "tool_calls", None)
 
             # If no structured tool calls from API, try parsing content as JSON tool call
-            if not tool_calls and content and content.strip().startswith('{'):
+            if not tool_calls and content and content.strip().startswith("{"):
                 parsed_tool_call = self.create_tool_call(content=content)
                 if parsed_tool_call:
                     tool_calls = [parsed_tool_call]
@@ -500,7 +512,7 @@ class CerebrasAgent(LLMAgent):
             ):
                 # Just use the content directly since JSON parsing is already handled in _send_query
                 final_msg = response_message.content or ""
-                
+
                 observer.on_next(final_msg)
                 self.response_subject.on_next(final_msg)
             else:
@@ -531,7 +543,7 @@ class CerebrasAgent(LLMAgent):
                         f"{tc.function.name}({tc.function.arguments})"
                         for tc in response_message.tool_calls
                     )
-            
+
             observer.on_next(final_msg)
             self.response_subject.on_next(final_msg)
 
