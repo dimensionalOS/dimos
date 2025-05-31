@@ -29,18 +29,18 @@ class UnitreeGo2(WebRTCRobot):
 
         self.odom = getter_streaming(self.odom_stream())
 
-        self.map = Map(voxel_size=1)
+        self.map = Map(voxel_size=0.5)
         self.map_stream = self.map.consume(self.lidar_stream())
 
         self.local_planner = SimplePlanner(
             get_costmap=lambda: self.map.costmap, get_robot_pos=self.odom
         )
 
-        def set_goal(path, *args, **kwargs):
-            self.local_planner.set_goal(path.last())
+        def set_path(path, *args, **kwargs):
+            self.local_planner.set_path(path)
 
         self.global_planner = AstarPlanner(
-            set_local_nav=set_goal,
+            set_local_nav=set_path,
             get_costmap=lambda: self.map.costmap,
             get_robot_pos=lambda: self.odom().pos,
         )

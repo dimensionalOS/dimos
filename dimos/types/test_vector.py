@@ -373,3 +373,12 @@ def test_vector_add():
     # Adding zero vector should return original vector
     v_zero = Vector.zeros(3)
     assert (v1 + v_zero) == v1
+
+
+def test_vector_add_dim_mismatch():
+    """Test vector addition operator."""
+    v1 = Vector(1.0, 2.0)
+    v2 = Vector(4.0, 5.0, 6.0)
+
+    # Using + operator
+    v_add_op = v1 + v2

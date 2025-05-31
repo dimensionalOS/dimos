@@ -117,13 +117,35 @@ class Vector:
 
     def __add__(self: T, other) -> T:
         if isinstance(other, Vector):
+            # Handle different dimensions by padding the smaller vector
+            if len(self._data) != len(other._data):
+                max_dim = max(len(self._data), len(other._data))
+                return self.pad(max_dim) + other.pad(max_dim)
             return self.__class__(self._data + other._data)
-        return self.__class__(self._data + np.array(other, dtype=float))
+
+        # For non-Vector types, convert to array and handle potential dimension mismatch
+        other_arr = np.array(other, dtype=float)
+        if len(self._data) != len(other_arr):
+            max_dim = max(len(self._data), len(other_arr))
+            other_vec = self.__class__(other_arr)
+            return self.pad(max_dim) + other_vec.pad(max_dim)
+        return self.__class__(self._data + other_arr)
 
     def __sub__(self: T, other) -> T:
         if isinstance(other, Vector):
+            # Handle different dimensions by padding the smaller vector
+            if len(self._data) != len(other._data):
+                max_dim = max(len(self._data), len(other._data))
+                return self.pad(max_dim) - other.pad(max_dim)
             return self.__class__(self._data - other._data)
-        return self.__class__(self._data - np.array(other, dtype=float))
+
+        # For non-Vector types, convert to array and handle potential dimension mismatch
+        other_arr = np.array(other, dtype=float)
+        if len(self._data) != len(other_arr):
+            max_dim = max(len(self._data), len(other_arr))
+            other_vec = self.__class__(other_arr)
+            return self.pad(max_dim) - other_vec.pad(max_dim)
+        return self.__class__(self._data - other_arr)
 
     def __mul__(self: T, scalar: float) -> T:
         return self.__class__(self._data * scalar)
@@ -176,6 +198,18 @@ class Vector:
     def to_2d(self: T) -> T:
         """Convert a vector to a 2D vector by taking only the x and y components."""
         return self.__class__(self._data[:2])
+
+    def pad(self: T, dim: int) -> T:
+        """Pad a vector with zeros to reach the specified dimension.
+
+        If vector already has dimension >= dim, it is returned unchanged.
+        """
+        if self.dim >= dim:
+            return self
+
+        padded = np.zeros(dim, dtype=float)
+        padded[: len(self._data)] = self._data
+        return self.__class__(padded)
 
     def distance(self, other) -> float:
         """Compute Euclidean distance to another vector."""
