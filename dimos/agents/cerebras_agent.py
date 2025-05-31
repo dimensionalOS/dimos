@@ -325,6 +325,7 @@ class CerebrasAgent(LLMAgent):
         """Create a tool call object from either direct parameters or JSON content."""
         # If content is provided, parse it as JSON
         if content:
+            logger.info(f"Creating tool call from content: {content}")
             try:
                 content_json = json.loads(content)
                 if (
@@ -346,7 +347,7 @@ class CerebrasAgent(LLMAgent):
                 "ToolCall",
                 (),
                 {
-                    "id": call_id,
+                    "id": "1",
                     "function": type(
                         "Function", (), {"name": name, "arguments": json.dumps(arguments)}
                     ),
