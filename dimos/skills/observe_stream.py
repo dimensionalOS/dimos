@@ -203,7 +203,6 @@ class ObserveStream(AbstractRobotSkill):
             observable = self._agent.run_observable_query(
                 f"{self.query_text}\n\nHere is the current camera view from the robot:",
                 base64_image=base64_image,
-                thinking_budget_tokens=0,
             )
 
             # Simple subscription to make sure the query executes
