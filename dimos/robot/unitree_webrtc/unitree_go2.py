@@ -43,7 +43,7 @@ class UnitreeGo2(WebRTCRobot):
         super().__init__(ip=ip, mode=mode)
 
         self.odom = getter_streaming(self.odom_stream())
-        self.map = Map()
+        self.map = Map(voxel_size=0.5)
         self.map_stream = self.map.consume(self.lidar_stream())
 
         # # Initialize skills
