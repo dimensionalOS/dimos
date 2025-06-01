@@ -178,9 +178,9 @@ class WebsocketVis:
     def stop(self):
         if self.server_thread and self.server_thread.is_alive():
             self.server_thread.join()
-        if hasattr(self, "_executor"):
+        if hasattr(self, '_executor'):
             self._executor.shutdown(wait=True)
-        if hasattr(self.sio, "disconnect"):
+        if hasattr(self.sio, 'disconnect'):
             try:
                 asyncio.run(self.sio.disconnect())
             except:
@@ -207,7 +207,7 @@ class WebsocketVis:
                 except Exception as e:
                     print(f"Error updating state: {e}")
                     return None
-
+            
             future = self._executor.submit(run_async)
             try:
                 return future.result(timeout=5.0)
