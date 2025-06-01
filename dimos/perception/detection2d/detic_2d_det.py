@@ -27,7 +27,7 @@ class SimpleTracker:
         self.iou_threshold = iou_threshold
         self.max_age = max_age
         self.next_id = 1
-        self.tracks = {}  # id -> {bbox, class_id, age, etc}
+        self.tracks = {}  # id -> {bbox, class_id, age, mask, etc}
 
     def _calculate_iou(self, bbox1, bbox2):
         """Calculate IoU between two bboxes in format [x1,y1,x2,y2]"""
@@ -46,14 +46,15 @@ class SimpleTracker:
 
         return intersection / union if union > 0 else 0
 
-    def update(self, detections):
+    def update(self, detections, masks):
         """Update tracker with new detections
 
         Args:
             detections: List of [x1,y1,x2,y2,score,class_id]
+            masks: List of segmentation masks corresponding to detections
 
         Returns:
-            List of [track_id, bbox, score, class_id]
+            List of [track_id, bbox, score, class_id, mask]
         """
         if len(detections) == 0:
             # Age existing tracks
@@ -101,15 +102,17 @@ class SimpleTracker:
                 self.tracks[track_id]["bbox"] = detections[best_idx][:4]
                 self.tracks[track_id]["score"] = detections[best_idx][4]
                 self.tracks[track_id]["age"] = 0
+                self.tracks[track_id]["mask"] = masks[best_idx]
                 matched_indices.add(best_idx)
 
-                # Add to results
+                # Add to results with mask
                 result.append(
                     [
                         track_id,
                         detections[best_idx][:4],
                         detections[best_idx][4],
                         int(detections[best_idx][5]),
+                        self.tracks[track_id]["mask"],
                     ]
                 )
 
@@ -127,10 +130,11 @@ class SimpleTracker:
                 "score": det[4],
                 "class_id": int(det[5]),
                 "age": 0,
+                "mask": masks[i],
             }
 
-            # Add to results
-            result.append([new_id, det[:4], det[4], int(det[5])])
+            # Add to results with mask directly from the track
+            result.append([new_id, det[:4], det[4], int(det[5]), masks[i]])
 
         return result
 
@@ -301,24 +305,26 @@ class Detic2DDetector:
             image: Input image in BGR format (OpenCV)
 
         Returns:
-            tuple: (bboxes, track_ids, class_ids, confidences, names)
+            tuple: (bboxes, track_ids, class_ids, confidences, names, masks)
                 - bboxes: list of [x1, y1, x2, y2] coordinates
                 - track_ids: list of tracking IDs (or -1 if no tracking)
                 - class_ids: list of class indices
                 - confidences: list of detection confidences
                 - names: list of class names
+                - masks: list of segmentation masks (numpy arrays)
         """
         # Run inference with Detic
         outputs = self.predictor(image)
         instances = outputs["instances"].to("cpu")
 
-        # Extract bounding boxes, classes, and scores
+        # Extract bounding boxes, classes, scores, and masks
         if len(instances) == 0:
-            return [], [], [], [], []
+            return [], [], [], [], [], []
 
         boxes = instances.pred_boxes.tensor.numpy()
         class_ids = instances.pred_classes.numpy()
         scores = instances.scores.numpy()
+        masks = instances.pred_masks.numpy()
 
         # Convert boxes to [x1, y1, x2, y2] format
         bboxes = []
@@ -331,16 +337,18 @@ class Detic2DDetector:
 
         # Apply tracking
         detections = []
+        filtered_masks = []
         for i, bbox in enumerate(bboxes):
             if scores[i] >= self.threshold:
                 # Format for tracker: [x1, y1, x2, y2, score, class_id]
                 detections.append(bbox + [scores[i], class_ids[i]])
+                filtered_masks.append(masks[i])
 
         if not detections:
-            return [], [], [], [], []
+            return [], [], [], [], [], []
 
-        # Update tracker with detections
-        track_results = self.tracker.update(detections)
+        # Update tracker with detections and correctly aligned masks
+        track_results = self.tracker.update(detections, filtered_masks)
 
         # Process tracking results
         track_ids = []
@@ -348,15 +356,24 @@ class Detic2DDetector:
         tracked_class_ids = []
         tracked_scores = []
         tracked_names = []
+        tracked_masks = []
 
-        for track_id, bbox, score, class_id in track_results:
+        for track_id, bbox, score, class_id, mask in track_results:
             track_ids.append(int(track_id))
             tracked_bboxes.append(bbox.tolist() if isinstance(bbox, np.ndarray) else bbox)
             tracked_class_ids.append(int(class_id))
             tracked_scores.append(score)
             tracked_names.append(self.class_names[int(class_id)])
+            tracked_masks.append(mask)
 
-        return tracked_bboxes, track_ids, tracked_class_ids, tracked_scores, tracked_names
+        return (
+            tracked_bboxes,
+            track_ids,
+            tracked_class_ids,
+            tracked_scores,
+            tracked_names,
+            tracked_masks,
+        )
 
     def visualize_results(self, image, bboxes, track_ids, class_ids, confidences, names):
         """

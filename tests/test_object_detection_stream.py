@@ -121,6 +121,7 @@ def main():
             transform_to_map=robot.ros_control.transform_pose,
             detector=detector,
             video_stream=video_stream,
+            disable_depth=True,
         )
 
     else:  # webcam mode
