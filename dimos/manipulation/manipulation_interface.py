@@ -37,7 +37,7 @@ from dimos.types.manipulation import (
     ManipulationMetadata,
     ObjectData,
 )
-from dimos.types.manipulation_history import (
+from dimos.manipulation.manipulation_history import (
     ManipulationHistory,
     ManipulationHistoryEntry,
 )

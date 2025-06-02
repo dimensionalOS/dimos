@@ -18,7 +18,7 @@ import tempfile
 import pytest
 from typing import Dict, List, Optional, Any, Tuple
 
-from dimos.types.manipulation_history import ManipulationHistory, ManipulationHistoryEntry
+from dimos.manipulation.manipulation_history import ManipulationHistory, ManipulationHistoryEntry
 from dimos.types.manipulation import (
     ManipulationTask,
     AbstractConstraint,
