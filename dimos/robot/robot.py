@@ -21,10 +21,12 @@ and video streaming.
 
 from abc import ABC
 import os
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, List, Union, Dict, Any
 
 from dimos.hardware.interface import HardwareInterface
 from dimos.perception.spatial_perception import SpatialMemory
+from dimos.manipulation.manipulation_interface import ManipulationInterface
+from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -38,6 +40,8 @@ from reactivex.disposable import CompositeDisposable
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.utils.threadpool import get_scheduler
+from dimos.utils.reactive import backpressure
+from dimos.stream.video_provider import VideoProvider
 
 logger = setup_logger("dimos.robot.robot")
 
@@ -65,9 +69,10 @@ class Robot(ABC):
         output_dir: str = os.path.join(os.getcwd(), "assets", "output"),
         pool_scheduler: ThreadPoolScheduler = None,
         skill_library: SkillLibrary = None,
-        spatial_memory_dir: str = None,
         spatial_memory_collection: str = "spatial_memory",
         new_memory: bool = False,
+        capabilities: List[RobotCapability] = None,
+        video_stream: Optional[Observable] = None,
     ):
         """Initialize a Robot instance.
 
@@ -77,7 +82,6 @@ class Robot(ABC):
             output_dir: Directory for storing output files. Defaults to "./assets/output".
             pool_scheduler: Thread pool scheduler. If None, one will be created.
             skill_library: Skill library instance. If None, one will be created.
-            spatial_memory_dir: Directory for storing spatial memory data. If None, uses output_dir/spatial_memory.
             spatial_memory_collection: Name of the collection in the ChromaDB database.
             new_memory: If True, creates a new spatial memory from scratch. Defaults to False.
         """
@@ -88,16 +92,19 @@ class Robot(ABC):
         self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
         self.skill_library = skill_library if skill_library else SkillLibrary()
 
+        # Initialize robot capabilities
+        self.capabilities = capabilities or []
+
         # Create output directory if it doesn't exist
         os.makedirs(self.output_dir, exist_ok=True)
-
-        # Create output directory if it doesn't exist
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
 
+        # Initialize memory properties
+        self.memory_dir = os.path.join(self.output_dir, "memory")
+        os.makedirs(self.memory_dir, exist_ok=True)
+
         # Initialize spatial memory properties
-        self.spatial_memory_dir = spatial_memory_dir or os.path.join(
-            self.output_dir, "spatial_memory"
-        )
+        self.spatial_memory_dir = os.path.join(self.memory_dir, "spatial_memory")
         self.spatial_memory_collection = spatial_memory_collection
         self.db_path = os.path.join(self.spatial_memory_dir, "chromadb_data")
         self.visual_memory_path = os.path.join(self.spatial_memory_dir, "visual_memory.pkl")
@@ -106,17 +113,14 @@ class Robot(ABC):
         os.makedirs(self.spatial_memory_dir, exist_ok=True)
         os.makedirs(self.db_path, exist_ok=True)
 
-        # Import SpatialMemory here to avoid circular imports
-        from dimos.perception.spatial_perception import SpatialMemory
-
         # Initialize spatial memory - this will be handled by SpatialMemory class
-        video_stream = None
+        self._video_stream = video_stream
         transform_provider = None
 
         # Only create video stream if ROS control is available
         if self.ros_control is not None and self.ros_control.video_provider is not None:
             # Get video stream
-            video_stream = self.get_ros_video_stream(fps=10)  # Lower FPS for processing
+            self._video_stream = self.get_ros_video_stream(fps=10)  # Lower FPS for processing
 
             # Define transform provider
             def transform_provider():
@@ -125,6 +129,9 @@ class Robot(ABC):
                     return {"position": None, "rotation": None}
                 return {"position": position, "rotation": rotation}
 
+        # Avoids circular imports
+        from dimos.perception.spatial_perception import SpatialMemory
+
         # Create SpatialMemory instance - it will handle all initialization internally
         self._spatial_memory = SpatialMemory(
             collection_name=self.spatial_memory_collection,
@@ -132,9 +139,24 @@ class Robot(ABC):
             visual_memory_path=self.visual_memory_path,
             new_memory=new_memory,
             output_dir=self.spatial_memory_dir,
-            video_stream=video_stream,
+            video_stream=self._video_stream,
             transform_provider=transform_provider,
         )
+
+        # Initialize manipulation interface if the robot has manipulation capability
+        self._manipulation_interface = None
+        if RobotCapability.MANIPULATION in self.capabilities:
+            # Initialize manipulation memory properties if the robot has manipulation capability
+            self.manipulation_memory_dir = os.path.join(self.memory_dir, "manipulation_memory")
+
+            # Create manipulation memory directory
+            os.makedirs(self.manipulation_memory_dir, exist_ok=True)
+
+            self._manipulation_interface = ManipulationInterface(
+                output_dir=self.output_dir,  # Use the main output directory
+                new_memory=new_memory,
+            )
+            logger.info("Manipulation interface initialized")
 
     def get_ros_video_stream(self, fps: int = 30) -> Observable:
         """Get the ROS video stream with rate limiting and frame processing.
@@ -323,13 +345,52 @@ class Robot(ABC):
         """
         self.hardware_interface.set_configuration(configuration)
 
+    @property
+    def spatial_memory(self) -> SpatialMemory:
+        """Get the robot's spatial memory.
+
+        Returns:
+            SpatialMemory: The robot's spatial memory system.
+        """
+        return self._spatial_memory
+
+    @property
+    def manipulation_interface(self) -> Optional[ManipulationInterface]:
+        """Get the robot's manipulation interface.
+
+        Returns:
+            ManipulationInterface: The robot's manipulation interface or None if not available.
+        """
+        return self._manipulation_interface
+
+    def has_capability(self, capability: RobotCapability) -> bool:
+        """Check if the robot has a specific capability.
+
+        Args:
+            capability: The capability to check for
+
+        Returns:
+            bool: True if the robot has the capability, False otherwise
+        """
+        return capability in self.capabilities
+
     def get_spatial_memory(self) -> Optional[SpatialMemory]:
         """Simple getter for the spatial memory instance.
+        (For backwards compatibility)
 
         Returns:
             The spatial memory instance or None if not set.
         """
         return self._spatial_memory if self._spatial_memory else None
+
+    @property
+    def video_stream(self) -> Optional[Observable]:
+        """Get the robot's video stream.
+
+        Returns:
+            Observable: The robot's video stream or None if not available.
+        """
+        return self._video_stream
 
     def cleanup(self):
         """Clean up resources used by the robot.
@@ -356,3 +417,20 @@ class MockRobot(Robot):
 
     def my_print(self):
         print("Hello, world!")
+
+
+class MockManipulationRobot(Robot):
+    def __init__(self, skill_library: Optional[SkillLibrary] = None):
+        video_provider = VideoProvider("webcam", video_source=0)  # Default camera
+        video_stream = backpressure(
+            video_provider.capture_video_as_observable(realtime=True, fps=30)
+        )
+
+        super().__init__(
+            capabilities=[RobotCapability.MANIPULATION],
+            video_stream=video_stream,
+            skill_library=skill_library,
+        )
+        self.camera_intrinsics = [489.33, 367.0, 320.0, 240.0]
+        self.ros_control = None
+        self.hardware_interface = None

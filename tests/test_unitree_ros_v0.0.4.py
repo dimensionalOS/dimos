@@ -49,9 +49,6 @@ def parse_arguments():
         description="Run the robot with optional spatial memory parameters"
     )
     parser.add_argument(
-        "--spatial-memory-dir", type=str, help="Directory for storing spatial memory data"
-    )
-    parser.add_argument(
         "--voice",
         action="store_true",
         help="Use voice input from microphone instead of web interface",
@@ -66,7 +63,6 @@ robot = UnitreeGo2(
     ip=os.getenv("ROBOT_IP"),
     skills=MyUnitreeSkills(),
     mock_connection=False,
-    spatial_memory_dir=args.spatial_memory_dir,  # Will use default if None
     new_memory=True,
 )
 
