@@ -15,22 +15,26 @@
 from typing import Optional, List, Tuple
 from pydantic import Field
 
+from dimos.skills.manipulation.abstract_manipulation_skill import AbstractManipulationSkill
 from dimos.skills.skills import AbstractRobotSkill
-from dimos.types.manipulation_constraint import ForceConstraint, Vector
+from dimos.types.manipulation import ForceConstraint, Vector
 from dimos.utils.logging_config import setup_logger
 
 # Initialize logger
 logger = setup_logger("dimos.skills.force_constraint_skill")
 
 
-class ForceConstraintSkill(AbstractRobotSkill):
+class ForceConstraintSkill(AbstractManipulationSkill):
     """
     Skill for generating force constraints for robot manipulation.
+
+    This skill generates force constraints and adds them to the ManipulationInterface's
+    agent_constraints list for tracking constraints created by the Agent.
     """
 
     # Constraint parameters
-    max_force: float = Field(0.0, description="Maximum force in newtons to apply")
-    min_force: float = Field(0.0, description="Minimum force in newtons to apply")
+    min_force: float = Field(0.0, description="Minimum force magnitude in Newtons")
+    max_force: float = Field(100.0, description="Maximum force magnitude in Newtons to apply")
 
     # Force direction as (x,y) tuple
     force_direction: Optional[Tuple[float, float]] = Field(
@@ -59,6 +63,9 @@ class ForceConstraintSkill(AbstractRobotSkill):
             force_direction=force_direction_vector,
             description=self.description,
         )
+
+        # Add constraint to manipulation interface for Agent recall
+        self.manipulation_interface.add_constraint(constraint)
 
         # Log the constraint creation
         logger.info(f"Generated force constraint: {self.description}")

@@ -12,26 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Literal
 from pydantic import Field
 
+from dimos.skills.manipulation.abstract_manipulation_skill import AbstractManipulationSkill
 from dimos.skills.skills import AbstractRobotSkill
-from dimos.types.manipulation_constraint import TranslationConstraint, Vector
+from dimos.types.manipulation import TranslationConstraint, Vector
 from dimos.utils.logging_config import setup_logger
 
 # Initialize logger
 logger = setup_logger("dimos.skills.translation_constraint_skill")
 
 
-class TranslationConstraintSkill(AbstractRobotSkill):
+class TranslationConstraintSkill(AbstractManipulationSkill):
     """
     Skill for generating translation constraints for robot manipulation.
+
+    This skill generates translation constraints and adds them to the ManipulationInterface's
+    agent_constraints list for tracking constraints created by the Agent.
     """
 
     # Constraint parameters
-    lock_x: bool = Field(False, description="Whether to lock translation along the x-axis")
-    lock_y: bool = Field(False, description="Whether to lock translation along the y-axis")
-    lock_z: bool = Field(False, description="Whether to lock translation along the z-axis")
+    translation_axis: Literal["x", "y", "z"] = Field(
+        "x", description="Axis to translate along: 'x', 'y', or 'z'"
+    )
 
     reference_point: Optional[Tuple[float, float]] = Field(
         None, description="Reference point (x,y) on the target object for translation constraining"
@@ -79,19 +83,18 @@ class TranslationConstraintSkill(AbstractRobotSkill):
         if self.target_point:
             target_point = Vector(self.target_point[0], self.target_point[1], 0.0)
 
-        # Create and return the constraint
         constraint = TranslationConstraint(
-            lock_x=self.lock_x,
-            lock_y=self.lock_y,
-            lock_z=self.lock_z,
+            translation_axis=self.translation_axis,
             reference_point=reference_point,
             bounds_min=bounds_min,
             bounds_max=bounds_max,
             target_point=target_point,
-            description=self.description,
         )
 
-        # Log the constraint creation
-        logger.info(f"Generated translation constraint: {self.description}")
+        # Add constraint to manipulation interface
+        self.manipulation_interface.add_constraint(constraint)
 
-        return constraint
+        # Log the constraint creation
+        logger.info(f"Generated translation constraint along {self.translation_axis} axis")
+
+        return {"success": True}
