@@ -55,14 +55,14 @@ def fit_cuboid(points, n_iterations=5, inlier_thresh=2.0):
         # Get rotation matrix from PCA
         # Open3D expects eigenvectors as columns, but PCA.components_ gives rows
         rotation = pca.components_.T
-        
+
         # Ensure rotation matrix is right-handed
         if np.linalg.det(rotation) < 0:
             rotation[:, 2] = -rotation[:, 2]  # Flip the third column to make right-handed
-        
+
         # Transform points to PCA space
         local_points = current_points @ rotation
-        
+
         # Initialize mask for this iteration
         inlier_mask = np.ones(len(current_points), dtype=bool)
         dimensions = np.zeros(3)
@@ -140,17 +140,22 @@ def compute_fitting_error(local_points, dimensions):
 def get_cuboid_corners(center, dimensions, rotation):
     """Get the 8 corners of a cuboid."""
     half_dims = dimensions / 2
-    corners_local = np.array([
-        [-1, -1, -1],  # 0: left  bottom back
-        [-1, -1,  1],  # 1: left  bottom front
-        [-1,  1, -1],  # 2: left  top    back
-        [-1,  1,  1],  # 3: left  top    front
-        [ 1, -1, -1],  # 4: right bottom back
-        [ 1, -1,  1],  # 5: right bottom front
-        [ 1,  1, -1],  # 6: right top    back
-        [ 1,  1,  1]   # 7: right top    front
-    ]) * half_dims
-    
+    corners_local = (
+        np.array(
+            [
+                [-1, -1, -1],  # 0: left  bottom back
+                [-1, -1, 1],  # 1: left  bottom front
+                [-1, 1, -1],  # 2: left  top    back
+                [-1, 1, 1],  # 3: left  top    front
+                [1, -1, -1],  # 4: right bottom back
+                [1, -1, 1],  # 5: right bottom front
+                [1, 1, -1],  # 6: right top    back
+                [1, 1, 1],  # 7: right top    front
+            ]
+        )
+        * half_dims
+    )
+
     # Apply transpose to rotation matrix to be consistent with Open3D convention
     return corners_local @ rotation.T + center
 
@@ -158,7 +163,7 @@ def get_cuboid_corners(center, dimensions, rotation):
 def visualize_fit(image, cuboid_params, camera_matrix, R=None, t=None):
     """
     Draw the fitted cuboid on the image.
-    
+
     Args:
         image: Input image to draw on
         cuboid_params: Dictionary containing cuboid parameters (center, dimensions, rotation)
@@ -181,10 +186,11 @@ def visualize_fit(image, cuboid_params, camera_matrix, R=None, t=None):
     # Use OpenCV's projectPoints for simplicity - handles projection properly
     # We pass zeros for rotation and translation since our points are already in camera frame
     corners_img, _ = cv2.projectPoints(
-        corners, 
-        np.zeros(3), np.zeros(3),  # No additional rotation/translation
-        camera_matrix, 
-        None  # No distortion
+        corners,
+        np.zeros(3),
+        np.zeros(3),  # No additional rotation/translation
+        camera_matrix,
+        None,  # No distortion
     )
     corners_img = corners_img.reshape(-1, 2).astype(int)
 
