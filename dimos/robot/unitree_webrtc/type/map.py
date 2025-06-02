@@ -55,6 +55,17 @@ class Map:
             inflate_radius_m=inflate_radius_m,
         )
         return Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution)
+    
+    @property
+    def local_costmap(self) -> Costmap:
+        """Return a local costmap centered at *origin* with radius *radius*."""
+        inflate_radius_m = 1.0 * self.voxel_size if self.voxel_size > self.cost_resolution else 0.0
+        grid, origin_xy = pointcloud_to_costmap(
+            self.new_pct,
+            resolution=self.cost_resolution,
+            inflate_radius_m=inflate_radius_m,
+        )
+        return Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution)
 
     @property
     def local_costmap(self) -> Costmap:

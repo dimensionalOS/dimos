@@ -114,21 +114,21 @@ class BaseLocalPlanner(ABC):
         # Stuck detection
         self.stuck_detection_window_seconds = 8.0  # Time window for stuck detection (seconds)
         self.position_history_size = int(self.stuck_detection_window_seconds * control_frequency)
-        self.position_history = deque(
-            maxlen=self.position_history_size
-        )  # History of recent positions
+        self.position_history = deque(maxlen=self.position_history_size)  # History of recent positions
         self.stuck_distance_threshold = 0.15  # Distance threshold for stuck detection (meters)
-        self.unstuck_distance_threshold = (
-            0.5  # Distance threshold for unstuck detection (meters) - increased hysteresis
-        )
+        self.unstuck_distance_threshold = 0.5  # Distance threshold for unstuck detection (meters) - increased hysteresis
         self.stuck_time_threshold = 5.0  # Time threshold for stuck detection (seconds) - increased
         self.is_recovery_active = False  # Whether recovery behavior is active
         self.recovery_start_time = 0.0  # When recovery behavior started
-        self.recovery_duration = (
-            8.0  # How long to run recovery before giving up (seconds) - increased
-        )
+        self.recovery_duration = 12.0  # How long to run recovery before giving up (seconds) - increased
         self.last_update_time = time.time()  # Last time position was updated
         self.navigation_failed = False  # Flag indicating if navigation should be terminated
+        
+        # Recovery improvements
+        self.recovery_cooldown_time = 3.0  # Seconds to wait after recovery before checking stuck again
+        self.last_recovery_end_time = 0.0  # When the last recovery ended
+        self.pre_recovery_position = None  # Position when recovery started (for better stuck detection)
+        self.backup_duration = 4.0  # How long to backup when stuck (seconds)
 
         # Recovery improvements
         self.recovery_cooldown_time = (
@@ -173,10 +173,12 @@ class BaseLocalPlanner(ABC):
         self.position_reached = False
         self.final_goal_reached = False
         self.ignore_obstacles = False
-
+        
         # Reset recovery improvements
         self.last_recovery_end_time = 0.0
         self.pre_recovery_position = None
+        
+        logger.info("Local planner state has been reset")
 
     def set_goal(self, goal_xy: VectorLike, is_relative: bool = False, goal_theta: Optional[float] = None):
         """Set a single goal position, converting to absolute frame if necessary.
@@ -821,7 +823,7 @@ class BaseLocalPlanner(ABC):
         """
         Check if the robot is stuck by analyzing movement history.
         Includes improvements to prevent oscillation between stuck and recovered states.
-
+        
         Returns:
             bool: True if the robot is determined to be stuck, False otherwise
         """
@@ -831,58 +833,48 @@ class BaseLocalPlanner(ABC):
         # Get current robot position
         [pos, _] = self._get_robot_pose()
         current_position = (pos[0], pos[1], current_time)
-
+        
         # If we're already in recovery, don't add movements to history (they're intentional)
         # Instead, check if we should continue or end recovery
         if self.is_recovery_active:
             # Check if we've moved far enough from our pre-recovery position to consider unstuck
             if self.pre_recovery_position is not None:
                 pre_recovery_x, pre_recovery_y = self.pre_recovery_position[:2]
-                displacement_from_start = np.sqrt(
-                    (pos[0] - pre_recovery_x) ** 2 + (pos[1] - pre_recovery_y) ** 2
-                )
-
+                displacement_from_start = np.sqrt((pos[0] - pre_recovery_x)**2 + (pos[1] - pre_recovery_y)**2)
+                
                 # If we've moved far enough, we're unstuck
                 if displacement_from_start > self.unstuck_distance_threshold:
-                    logger.info(
-                        f"Robot has escaped from stuck state (moved {displacement_from_start:.3f}m from start)"
-                    )
+                    logger.info(f"Robot has escaped from stuck state (moved {displacement_from_start:.3f}m from start)")
                     self.is_recovery_active = False
                     self.last_recovery_end_time = current_time
-                    self.recovery_attempts = 0
-                    logger.info("Recovery attempts reset after successful recovery")
                     # Clear position history to start fresh tracking
                     self.position_history.clear()
                     return False
-
+                    
             # Check if we've been trying to recover for too long
             recovery_time = current_time - self.recovery_start_time
             if recovery_time > self.recovery_duration:
-                logger.error(
-                    f"Recovery behavior has been active for {self.recovery_duration}s without success"
-                )
+                logger.error(f"Recovery behavior has been active for {self.recovery_duration}s without success")
                 self.navigation_failed = True
                 return True
-
+                
             # Continue recovery
             return True
-
+        
         # Check cooldown period - don't immediately check for stuck after recovery
         if current_time - self.last_recovery_end_time < self.recovery_cooldown_time:
             # Add position to history but don't check for stuck yet
             self.position_history.append(current_position)
             return False
-
+        
         # Add current position to history (newest is appended at the end)
         self.position_history.append(current_position)
 
         # Need enough history to make a determination
-        min_history_size = int(
-            self.stuck_detection_window_seconds * self.control_frequency * 0.6
-        )  # 60% of window
+        min_history_size = int(self.stuck_detection_window_seconds * self.control_frequency * 0.6)  # 60% of window
         if len(self.position_history) < min_history_size:
             return False
-
+            
         # Find positions within our detection window
         window_start_time = current_time - self.stuck_detection_window_seconds
         window_positions = []
@@ -902,89 +894,69 @@ class BaseLocalPlanner(ABC):
         # Get the oldest and newest positions in the window
         oldest_x, oldest_y, oldest_time = window_positions[0]
         newest_x, newest_y, newest_time = window_positions[-1]
-
+        
         # Calculate time range in the window
         time_range = newest_time - oldest_time
 
         # Calculate displacement from oldest to newest position
-        displacement = np.sqrt((newest_x - oldest_x) ** 2 + (newest_y - oldest_y) ** 2)
-
+        displacement = np.sqrt((newest_x - oldest_x)**2 + (newest_y - oldest_y)**2)
+        
         # Also check average displacement over multiple sub-windows to avoid false positives
         sub_window_size = max(3, len(window_positions) // 3)
         avg_displacement = 0.0
         displacement_count = 0
-
+        
         for i in range(0, len(window_positions) - sub_window_size, sub_window_size // 2):
             start_pos = window_positions[i]
             end_pos = window_positions[min(i + sub_window_size, len(window_positions) - 1)]
-            sub_displacement = np.sqrt(
-                (end_pos[0] - start_pos[0]) ** 2 + (end_pos[1] - start_pos[1]) ** 2
-            )
+            sub_displacement = np.sqrt((end_pos[0] - start_pos[0])**2 + (end_pos[1] - start_pos[1])**2)
             avg_displacement += sub_displacement
             displacement_count += 1
-
+            
         if displacement_count > 0:
             avg_displacement /= displacement_count
-
+        
         # Check if we're stuck - moved less than threshold over minimum time
-        is_currently_stuck = (
-            time_range >= self.stuck_time_threshold
-            and time_range <= self.stuck_detection_window_seconds
-            and displacement < self.stuck_distance_threshold
-            and avg_displacement < self.stuck_distance_threshold * 1.5
-        )
-
+        is_currently_stuck = (time_range >= self.stuck_time_threshold and 
+                             time_range <= self.stuck_detection_window_seconds and 
+                             displacement < self.stuck_distance_threshold and
+                             avg_displacement < self.stuck_distance_threshold * 1.5)
+        
         if is_currently_stuck:
-            logger.warning(
-                f"Robot appears to be stuck! Total displacement: {displacement:.3f}m, "
-                f"avg displacement: {avg_displacement:.3f}m over {time_range:.1f}s"
-            )
-
+            logger.warning(f"Robot appears to be stuck! Total displacement: {displacement:.3f}m, "
+                          f"avg displacement: {avg_displacement:.3f}m over {time_range:.1f}s")
+            
             # Start recovery behavior
             self.is_recovery_active = True
             self.recovery_start_time = current_time
             self.pre_recovery_position = current_position
-
+            
             # Clear position history to avoid contamination during recovery
             self.position_history.clear()
-
-            # Increment recovery attempts
-            self.recovery_attempts += 1
-            logger.warning(
-                f"Starting recovery attempt {self.recovery_attempts}/{self.max_recovery_attempts}"
-            )
-
-            # Check if maximum recovery attempts have been exceeded
-            if self.recovery_attempts >= self.max_recovery_attempts:
-                logger.error(
-                    f"Maximum recovery attempts ({self.max_recovery_attempts}) exceeded. Navigation failed."
-                )
-                self.navigation_failed = True
-
+            
             return True
-
+        
         return False
-
+        
     def execute_recovery_behavior(self) -> Dict[str, float]:
         """
         Execute a simple recovery behavior when the robot is stuck.
         Just backs up for a set duration.
-
+        
         Returns:
             Dict[str, float]: Velocity commands for the recovery behavior
         """
         current_time = time.time()
         recovery_time = current_time - self.recovery_start_time
-
+        
         # Simple backup for the specified duration
         if recovery_time < self.backup_duration:
             logger.debug(f"Recovery: backing up ({recovery_time:.1f}s/{self.backup_duration:.1f}s)")
-            return {"x_vel": -0.5, "angular_vel": 0.0}  # Backup at moderate speed
+            return {'x_vel': -0.5, 'angular_vel': 0.0}  # Backup at moderate speed
         else:
             # Recovery completed - let the stuck detection logic handle the rest
             logger.info("Recovery backup completed")
-            return {"x_vel": 0.0, "angular_vel": 0.0}
-
+            return {'x_vel': 0.0, 'angular_vel': 0.0}
 
 def navigate_to_goal_local(
     robot,

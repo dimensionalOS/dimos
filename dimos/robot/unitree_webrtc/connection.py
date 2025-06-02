@@ -94,7 +94,7 @@ class WebRTCRobot(ConnectionInterface):
         async def async_move():
             self.conn.datachannel.pub_sub.publish_without_callback(
                 RTC_TOPIC["WIRELESS_CONTROLLER"],
-                data={"lx": 2.0 * vector.y, "ly": 2.0 * vector.x, "rx": -2.0 * vector.z, "ry": 0},
+                data={"lx": vector.y, "ly": vector.x, "rx": -vector.z, "ry": 0},
             )
 
         async def async_move_duration():
