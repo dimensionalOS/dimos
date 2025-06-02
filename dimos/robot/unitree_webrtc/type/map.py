@@ -27,13 +27,14 @@ import reactivex.operators as ops
 @dataclass
 class Map:
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
+    new_pct: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
     voxel_size: float = 0.05
     cost_resolution: float = 0.05
 
     def add_frame(self, frame: LidarMessage) -> "Map":
         """Voxelise *frame* and splice it into the running map."""
-        new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
-        self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
+        self.new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
+        self.pointcloud = splice_cylinder(self.pointcloud, self.new_pct, shrink=0.5)
         return self
 
     def consume(self, observable: Observable[LidarMessage]) -> Observable["Map"]:
@@ -50,6 +51,17 @@ class Map:
         inflate_radius_m = 0.5 * self.voxel_size if self.voxel_size > self.cost_resolution else 0.0
         grid, origin_xy = pointcloud_to_costmap(
             self.pointcloud,
+            resolution=self.cost_resolution,
+            inflate_radius_m=inflate_radius_m,
+        )
+        return Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution)
+    
+    @property
+    def local_costmap(self) -> Costmap:
+        """Return a local costmap centered at *origin* with radius *radius*."""
+        inflate_radius_m = 1.0 * self.voxel_size if self.voxel_size > self.cost_resolution else 0.0
+        grid, origin_xy = pointcloud_to_costmap(
+            self.new_pct,
             resolution=self.cost_resolution,
             inflate_radius_m=inflate_radius_m,
         )

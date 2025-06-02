@@ -43,7 +43,7 @@ class UnitreeGo2(WebRTCRobot):
         super().__init__(ip=ip, mode=mode)
 
         self.odom = getter_streaming(self.odom_stream())
-        self.map = Map(voxel_size=0.5)
+        self.map = Map(voxel_size=0.2)
         self.map_stream = self.map.consume(self.lidar_stream())
 
         # # Initialize skills
@@ -87,13 +87,14 @@ class UnitreeGo2(WebRTCRobot):
 
         # Initialize the local planner and create BEV visualization stream
         self.local_planner = VFHPurePursuitPlanner(
-            get_costmap=lambda: self.map.costmap,
+            get_costmap=lambda: self.map.local_costmap,
             get_robot_pose=lambda: self.odom(),
             move=self.move,
             robot_width=0.36,  # Unitree Go2 width in meters
             robot_length=0.6,  # Unitree Go2 length in meters
-            max_linear_vel=0.5,
-            lookahead_distance=2.0,
+            max_linear_vel=0.7,
+            max_angular_vel=0.8,
+            lookahead_distance=1.5,
             visualization_size=500,  # 500x500 pixel visualization
         )
 

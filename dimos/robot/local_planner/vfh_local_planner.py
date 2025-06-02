@@ -96,10 +96,10 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         self.selected_direction = None
 
         # VFH tuning parameters
-        self.alpha = 0.2  # Histogram smoothing factor
-        self.obstacle_weight = 10.0
-        self.goal_weight = 1.0
-        self.prev_direction_weight = 0.5
+        self.alpha = 0.25  # Histogram smoothing factor
+        self.obstacle_weight = 5.0
+        self.goal_weight = 2.0
+        self.prev_direction_weight = 1.0
         self.prev_selected_angle = 0.0
         self.prev_linear_vel = 0.0
         self.linear_vel_filter_factor = 0.4
