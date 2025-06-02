@@ -72,8 +72,8 @@ class ResultPrinter:
                 print(
                     f"{i + 1}. {obj['label']} (ID: {obj['object_id']}, Conf: {obj['confidence']:.2f})"
                 )
-                print(f"   Position: x={pos['x']:.2f}, y={pos['y']:.2f}, z={pos['z']:.2f} m")
-                print(f"   Rotation: yaw={rot['yaw']:.2f} rad")
+                print(f"   Position: x={pos.x:.2f}, y={pos.y:.2f}, z={pos.z:.2f} m")
+                print(f"   Rotation: yaw={rot.z:.2f} rad")
                 print(f"   Size: width={size['width']:.2f}, height={size['height']:.2f} m")
                 print(f"   Depth: {obj['depth']:.2f} m")
                 print("-" * 30)
@@ -121,6 +121,7 @@ def main():
             transform_to_map=robot.ros_control.transform_pose,
             detector=detector,
             video_stream=video_stream,
+            disable_depth=True,
         )
 
     else:  # webcam mode
@@ -155,6 +156,7 @@ def main():
             class_filter=class_filter,
             detector=detector,
             video_stream=video_stream,
+            disable_depth=True,
         )
 
         # Set placeholder robot for cleanup
