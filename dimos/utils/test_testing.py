@@ -4,6 +4,7 @@ import subprocess
 
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils import testing
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
 def test_pull_file():
