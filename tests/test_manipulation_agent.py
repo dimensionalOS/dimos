@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos.skills.skills import SkillLibrary
 import tests.test_header
 import os
 
@@ -46,6 +47,10 @@ from dimos.utils.reactive import backpressure
 from dimos.stream.video_provider import VideoProvider
 from reactivex.subject import Subject, BehaviorSubject
 from dimos.utils.logging_config import setup_logger
+from dimos.skills.manipulation.translation_constraint_skill import TranslationConstraintSkill
+from dimos.skills.manipulation.rotation_constraint_skill import RotationConstraintSkill
+from dimos.skills.manipulation.manipulate_skill import Manipulate
+from dimos.robot.robot import MockManipulationRobot
 
 # Initialize logger for the agent module
 logger = setup_logger("dimos.tests.test_manipulation_agent")
@@ -64,36 +69,35 @@ def parse_arguments():
     parser.add_argument(
         "--new-memory", action="store_true", help="Create a new spatial memory from scratch"
     )
-    parser.add_argument(
-        "--spatial-memory-dir", type=str, help="Directory for storing spatial memory data"
-    )
     return parser.parse_args()
 
 
 args = parse_arguments()
 
-# Initialize robot with spatial memory parameters
-robot = UnitreeGo2(
-    ip=os.getenv("ROBOT_IP"),
-    ros_control=UnitreeROSControl(),
-    skills=MyUnitreeSkills(),
-    mock_connection=False,
-    spatial_memory_dir=args.spatial_memory_dir,  # Will use default if None
-    new_memory=args.new_memory,
-)  # Create a new memory if specified
+
+# Set up the manipulation skills library
+manipulation_skills = SkillLibrary()
+
+robot = MockManipulationRobot(skill_library=manipulation_skills)
+
+# Add the skills to the library
+manipulation_skills.add(TranslationConstraintSkill)
+manipulation_skills.add(RotationConstraintSkill)
+manipulation_skills.add(Manipulate)
+
+# Create instances with appropriate parameters
+manipulation_skills.create_instance("TranslationConstraintSkill", robot=robot)
+manipulation_skills.create_instance("RotationConstraintSkill", robot=robot)
+manipulation_skills.create_instance("Manipulate", robot=robot)
+
 
 # Create a subject for agent responses
 agent_response_subject = rx.subject.Subject()
 agent_response_stream = agent_response_subject.pipe(ops.share())
-local_planner_viz_stream = robot.local_planner_viz_stream.pipe(ops.share())
 
 # Initialize object detection stream
-min_confidence = 0.6
-class_filter = None  # No class filtering
-detector = Detic2DDetector(vocabulary=None, threshold=min_confidence)
+detector = Detic2DDetector()
 
-# Create video stream from robot's camera
-video_stream = backpressure(robot.get_ros_video_stream())
 
 # Initialize test video stream
 # video_stream = VideoProvider(
@@ -104,11 +108,9 @@ video_stream = backpressure(robot.get_ros_video_stream())
 # Initialize ObjectDetectionStream with robot
 object_detector = ObjectDetectionStream(
     camera_intrinsics=robot.camera_intrinsics,
-    min_confidence=min_confidence,
-    class_filter=class_filter,
-    transform_to_map=robot.ros_control.transform_pose,
     detector=detector,
-    video_stream=video_stream,
+    video_stream=robot.video_stream,
+    disable_depth=True,
 )
 
 # Create visualization stream for web interface (detection visualization)
@@ -155,7 +157,7 @@ def draw_manipulation_point(frame):
 
 
 # Create manipulation point visualization stream
-manipulation_viz_stream = video_stream.pipe(
+manipulation_viz_stream = robot.video_stream.pipe(
     ops.map(draw_manipulation_point), ops.filter(lambda x: x is not None), ops.share()
 )
 
@@ -191,8 +193,7 @@ def combine_with_locations(object_detections):
 enhanced_data_stream = formatted_detection_stream.pipe(ops.map(combine_with_locations), ops.share())
 
 streams = {
-    "unitree_video": video_stream,
-    "local_planner_viz": local_planner_viz_stream,
+    "unitree_video": robot.video_stream,
     "object_detection": viz_stream,
     "manipulation_point": manipulation_viz_stream,
 }
@@ -210,11 +211,6 @@ with open(
 ) as f:
     system_query = f.read()
 
-# Create Qwen client
-qwen_client = OpenAI(
-    base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-    api_key=os.getenv("ALIBABA_API_KEY"),
-)
 
 # Create response subject
 response_subject = rx.subject.Subject()
@@ -275,31 +271,39 @@ def save_manipulation_point_image(frame, x, y):
 
 
 # Subscribe to video stream to capture current frame
-# Use BehaviorSubject to store the latest frame for manipulation point visualization
-video_stream.subscribe(
+# Use `current_frame_subject` BehaviorSubject to store the latest frame for manipulation point visualization
+robot.video_stream.subscribe(
     on_next=lambda frame: current_frame_subject.on_next(
         frame.copy() if frame is not None else None
     ),
     on_error=lambda error: logger.error(f"Error in video stream: {error}"),
 )
 
-# Create temporary agent for processing
-manipulation_vlm = OpenAIAgent(
-    dev_name="QwenSingleFrameAgent",
-    openai_client=qwen_client,
-    model_name="qwen2.5-vl-72b-instruct",
-    tokenizer=HuggingFaceTokenizer(model_name=f"Qwen/qwen2.5-vl-72b-instruct"),
-    max_output_tokens_per_request=100,
-    system_query="Given the input task return ONLY the x,y coordinates of the ONE exact point on the object that would be best to grasp",
-    input_video_stream=video_stream,
-    input_query_stream=web_interface.query_stream,
+# Create Qwen client
+qwen_client = OpenAI(
+    base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    api_key=os.getenv("ALIBABA_API_KEY"),
 )
 
-# Subscribe to VLM responses to process manipulation points
-manipulation_vlm.get_response_observable().subscribe(
-    on_next=lambda response: process_manipulation_point(response, current_frame_subject.value),
-    on_error=lambda error: logger.error(f"Error in VLM response stream: {error}"),
+# Create temporary agent for processing
+manipulation_vlm = ClaudeAgent(
+    dev_name="QwenSingleFrameAgent",
+    # openai_client=qwen_client,
+    # model_name="qwen2.5-vl-72b-instruct",
+    # tokenizer=HuggingFaceTokenizer(model_name=f"Qwen/qwen2.5-vl-72b-instruct"),
+    # max_output_tokens_per_request=100,
+    system_query="You are a robot that is trying to perform a manipulation task. ",
+    # input_video_stream=robot.video_stream,
+    skills=manipulation_skills,
+    input_query_stream=web_interface.query_stream,
+    # input_data_stream=enhanced_data_stream,
 )
+
+# # Subscribe to VLM responses to process manipulation points
+# manipulation_vlm.get_response_observable().subscribe(
+#     on_next=lambda response: process_manipulation_point(response, current_frame_subject.value),
+#     on_error=lambda error: logger.error(f"Error in VLM response stream: {error}"),
+# )
 
 
 # Create a ClaudeAgent instance
@@ -338,7 +342,5 @@ manipulation_vlm.get_response_observable().subscribe(
 #     lambda x: agent_response_subject.on_next(x)
 # )
 
-print("ObserveStream and Kill skills registered and ready for use")
-print("Created memory.txt file")
 
 web_interface.run()
