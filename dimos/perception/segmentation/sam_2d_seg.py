@@ -185,11 +185,20 @@ class Sam2DSegmenter:
                 if self.use_analyzer:
                     # Add unanalyzed IDs to the analysis queue
                     for track_id in filtered_track_ids:
-                        if track_id not in self.object_names and track_id not in self.to_be_analyzed:
+                        if (
+                            track_id not in self.object_names
+                            and track_id not in self.to_be_analyzed
+                        ):
                             self.to_be_analyzed.append(track_id)
-                
+
                 # Simply return filtered results
-                return filtered_masks, filtered_bboxes, filtered_track_ids, filtered_probs, filtered_names
+                return (
+                    filtered_masks,
+                    filtered_bboxes,
+                    filtered_track_ids,
+                    filtered_probs,
+                    filtered_names,
+                )
         return [], [], [], [], []
 
     def check_analysis_status(self, tracked_target_ids):
@@ -299,7 +308,7 @@ def main():
 
     # Example 4: Basic segmentation only (both tracker and analyzer disabled)
     # segmenter = Sam2DSegmenter(use_tracker=False, use_analyzer=False)
-    
+
     # Example 5: Analyzer without tracker (new capability)
     # segmenter = Sam2DSegmenter(use_tracker=False, use_analyzer=True)
 
