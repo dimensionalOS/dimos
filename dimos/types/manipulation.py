@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from enum import Enum
-from typing import Dict, List, Optional, Any, Union, TypedDict, Tuple
+from typing import Dict, List, Optional, Any, Union, TypedDict, Tuple, Literal
 from dataclasses import dataclass, field, fields
 from abc import ABC, abstractmethod
 import uuid
@@ -40,30 +40,24 @@ class AbstractConstraint(ABC):
 
 @dataclass
 class TranslationConstraint(AbstractConstraint):
-    """Constraint parameters for translational movement."""
+    """Constraint parameters for translational movement along a single axis."""
 
-    lock_x: bool = False
-    lock_y: bool = False
-    lock_z: bool = False
+    translation_axis: Literal["x", "y", "z"] = None  # Axis to translate along
     reference_point: Optional[Vector] = None
     bounds_min: Optional[Vector] = None  # For bounded translation
     bounds_max: Optional[Vector] = None  # For bounded translation
     target_point: Optional[Vector] = None  # For relative positioning
-    description: str = ""
 
 
 @dataclass
 class RotationConstraint(AbstractConstraint):
-    """Constraint parameters for rotational movement."""
+    """Constraint parameters for rotational movement around a single axis."""
 
-    lock_roll: bool = False
-    lock_pitch: bool = False
-    lock_yaw: bool = False
-    start_angle: Optional[Vector] = None  # Roll, pitch, yaw start angles
-    end_angle: Optional[Vector] = None  # Roll, pitch, yaw end angles
+    rotation_axis: Literal["roll", "pitch", "yaw"] = None  # Axis to rotate around
+    start_angle: Optional[Vector] = None  # Angle values applied to the specified rotation axis
+    end_angle: Optional[Vector] = None  # Angle values applied to the specified rotation axis
     pivot_point: Optional[Vector] = None  # Point of rotation
-    secondary_pivot_point: Optional[Vector] = None  # For double point locked rotation
-    description: str = ""
+    secondary_pivot_point: Optional[Vector] = None  # For double point rotations
 
 
 @dataclass
@@ -73,7 +67,6 @@ class ForceConstraint(AbstractConstraint):
     max_force: float = 0.0  # Maximum force in newtons
     min_force: float = 0.0  # Minimum force in newtons
     force_direction: Optional[Vector] = None  # Direction of force application
-    description: str = ""
 
 
 class ObjectData(TypedDict, total=False):
@@ -85,7 +78,7 @@ class ObjectData(TypedDict, total=False):
     confidence: float  # Detection confidence
     class_id: int  # Class ID from the detector
     label: str  # Semantic label (e.g., 'cup', 'table')
-    movement_tolerance: float  # 0-1 value indicating how movable the object is
+    movement_tolerance: float  # (0.0 = immovable, 1.0 = freely movable)
     segmentation_mask: np.ndarray  # Binary mask of the object's pixels
     position: Dict[str, float]  # 3D position {x, y, z}
     rotation: Dict[str, float]  # 3D rotation {roll, pitch, yaw}
