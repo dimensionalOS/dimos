@@ -5,113 +5,99 @@ import os
 import sys
 from PIL import Image, ImageDraw
 from dimos.perception.segmentation import Sam2DSegmenter
+from dimos.types.segmentation import SegmentationType
 from dimos.perception.pointcloud.utils import (
     load_camera_matrix_from_yaml,
     create_masked_point_cloud,
     o3d_point_cloud_to_numpy,
     create_o3d_point_cloud_from_rgbd,
-    segment_and_remove_plane
 )
 from dimos.perception.pointcloud.cuboid_fit import fit_cuboid, visualize_fit
 import torch
 import open3d as o3d
 
-class PointcloudSegmentation:
+class PointcloudFiltering:
     def __init__(
         self,
-        model_path="FastSAM-s.pt",
-        device="cuda",
         color_intrinsics=None,
         depth_intrinsics=None,
-        enable_tracking=True,
-        enable_analysis=True,
+        enable_statistical_filtering=True,
+        enable_cuboid_fitting=True,
+        color_weight=0.3,
+        statistical_neighbors=20,
+        statistical_std_ratio=2.0,
     ):
         """
-        Initialize processor to segment objects in RGB images and extract their point clouds.
+        Initialize processor to filter point clouds from segmented objects.
         
         Args:
-            model_path: Path to the FastSAM model
-            device: Computation device ("cuda" or "cpu")
             color_intrinsics: Path to YAML file or list with color camera intrinsics [fx, fy, cx, cy]
             depth_intrinsics: Path to YAML file or list with depth camera intrinsics [fx, fy, cx, cy]
-            enable_tracking: Whether to enable object tracking
-            enable_analysis: Whether to enable object analysis (labels, etc.)
-            min_analysis_interval: Minimum interval between analysis runs in seconds
+            enable_statistical_filtering: Whether to apply statistical outlier filtering
+            enable_cuboid_fitting: Whether to fit 3D cuboids to objects
+            color_weight: Weight for blending generated color with original color (0.0 = original, 1.0 = generated)
+            statistical_neighbors: Number of neighbors for statistical filtering
+            statistical_std_ratio: Standard deviation ratio for statistical filtering
         """
-        # Initialize segmenter
-        self.segmenter = Sam2DSegmenter(
-            model_path=model_path,
-            device=device,
-            use_tracker=enable_tracking,
-            use_analyzer=enable_analysis,
-        )
-        
         # Store settings
-        self.enable_tracking = enable_tracking
-        self.enable_analysis = enable_analysis
+        self.enable_statistical_filtering = enable_statistical_filtering
+        self.enable_cuboid_fitting = enable_cuboid_fitting
+        self.color_weight = color_weight
+        self.statistical_neighbors = statistical_neighbors
+        self.statistical_std_ratio = statistical_std_ratio
         
         # Load camera matrices
         self.color_camera_matrix = load_camera_matrix_from_yaml(color_intrinsics)
         self.depth_camera_matrix = load_camera_matrix_from_yaml(depth_intrinsics)
     
-    def generate_color_from_id(self, track_id):
-        """Generate a consistent color for a given tracking ID."""
-        np.random.seed(track_id)
+    def generate_color_from_id(self, object_id):
+        """Generate a consistent color for a given object ID."""
+        np.random.seed(object_id)
         color = np.random.randint(0, 255, 3)
         np.random.seed(None)
         return color
     
-    def process_images(self, color_img, depth_img, fit_3d_cuboids=True):
+    def process_images(self, color_img, depth_img, segmentation_result):
         """
-        Process color and depth images to segment objects and extract point clouds.
-        Uses Open3D for point cloud processing.
+        Process color and depth images with segmentation results to create filtered point clouds.
         
         Args:
             color_img: RGB image as numpy array (H, W, 3)
             depth_img: Depth image as numpy array (H, W) in meters
-            fit_3d_cuboids: Whether to fit 3D cuboids to each object
+            segmentation_result: SegmentationType object containing masks and metadata
         
         Returns:
             dict: Dictionary containing:
-                - viz_image: Visualization image with detections
                 - objects: List of dicts for each object with:
+                    - object_id: Object tracking ID
                     - mask: Segmentation mask (H, W, bool)
                     - bbox: Bounding box [x1, y1, x2, y2]
-                    - target_id: Tracking ID
                     - confidence: Detection confidence
-                    - name: Object name (if analyzer enabled)
-                    - point_cloud: Open3D point cloud object
+                    - label: Object label/name
+                    - point_cloud: Open3D point cloud object (filtered and colored)
                     - point_cloud_numpy: Nx6 array of XYZRGB points (for compatibility)
                     - color: RGB color for visualization
-                    - cuboid_params: Cuboid parameters (if fit_3d_cuboids=True)
-                - raw_point_cloud: Open3D point cloud object
-                - plane_removed_point_cloud: Open3D point cloud object with dominant plane removed
+                    - cuboid_params: Cuboid parameters (if enabled)
+                    - filtering_stats: Filtering statistics (if filtering enabled)
         """
         if self.depth_camera_matrix is None:
             raise ValueError("Depth camera matrix must be provided to process images")
         
-        # Run segmentation
-        masks, bboxes, target_ids, probs, names = self.segmenter.process_image(color_img)
-        print(f"Found {len(masks)} segmentation masks")
-        
-        # Run analysis if enabled
-        if self.enable_analysis:
-            self.segmenter.run_analysis(color_img, bboxes, target_ids)
-            names = self.segmenter.get_object_names(target_ids, names)
-        
-        # Create visualization image
-        viz_img = self.segmenter.visualize_results(
-            color_img.copy(),
-            masks,
-            bboxes,
-            target_ids,
-            probs,
-            names
-        )
+        # Extract masks and metadata from segmentation result
+        masks = segmentation_result.masks
+        metadata = segmentation_result.metadata
+        objects_metadata = metadata.get('objects', [])
         
         # Process each object
         objects = []
-        for i, (mask, bbox, target_id, prob, name) in enumerate(zip(masks, bboxes, target_ids, probs, names)):
+        for i, mask in enumerate(masks):
+            # Get object metadata if available
+            obj_meta = objects_metadata[i] if i < len(objects_metadata) else {}
+            object_id = obj_meta.get('object_id', i)
+            bbox = obj_meta.get('bbox', [0, 0, 0, 0])
+            confidence = obj_meta.get('prob', 1.0)
+            label = obj_meta.get('label', '')
+            
             # Convert mask to numpy if it's a tensor
             if hasattr(mask, 'cpu'):
                 mask = mask.cpu().numpy()
@@ -121,12 +107,9 @@ class PointcloudSegmentation:
             
             # Ensure mask has the same shape as the depth image
             if mask.shape != depth_img.shape[:2]:
-                print(f"Warning: Mask shape {mask.shape} doesn't match depth image shape {depth_img.shape[:2]}")
                 if len(mask.shape) > 2:
-                    # If mask has extra dimensions, take the first channel
                     mask = mask[:,:,0] if mask.shape[2] > 0 else mask[:,:,0]
                 
-                # If shapes still don't match, try to resize the mask
                 if mask.shape != depth_img.shape[:2]:
                     mask = cv2.resize(mask.astype(np.uint8), 
                                       (depth_img.shape[1], depth_img.shape[0]), 
@@ -139,67 +122,88 @@ class PointcloudSegmentation:
                     depth_img,
                     mask,
                     self.depth_camera_matrix,
-                    depth_scale=1.0  # Assuming depth is already in meters
+                    depth_scale=1.0
                 )
                 
                 # Skip if no points
                 if len(np.asarray(pcd.points)) == 0:
-                    print(f"Skipping object {i+1}: No points in point cloud")
                     continue
                 
                 # Generate color for visualization
-                rgb_color = self.generate_color_from_id(target_id)
+                rgb_color = self.generate_color_from_id(object_id)
+                
+                # Apply weighted colored mask to the point cloud
+                if len(np.asarray(pcd.colors)) > 0:
+                    original_colors = np.asarray(pcd.colors)
+                    generated_color = np.array(rgb_color) / 255.0
+                    colored_mask = (1.0 - self.color_weight) * original_colors + self.color_weight * generated_color
+                    colored_mask = np.clip(colored_mask, 0.0, 1.0)
+                    pcd.colors = o3d.utility.Vector3dVector(colored_mask)
+                
+                # Apply statistical outlier filtering if enabled
+                filtering_stats = None
+                if self.enable_statistical_filtering:
+                    num_points_before = len(np.asarray(pcd.points))
+                    pcd_filtered, outlier_indices = pcd.remove_statistical_outlier(
+                        nb_neighbors=self.statistical_neighbors,
+                        std_ratio=self.statistical_std_ratio
+                    )
+                    num_points_after = len(np.asarray(pcd_filtered.points))
+                    num_outliers_removed = num_points_before - num_points_after
+                    
+                    pcd = pcd_filtered
+                    
+                    filtering_stats = {
+                        "points_before": num_points_before,
+                        "points_after": num_points_after,
+                        "outliers_removed": num_outliers_removed,
+                        "outlier_percentage": 100.0 * num_outliers_removed / num_points_before if num_points_before > 0 else 0
+                    }
                 
                 # Create object data
                 obj_data = {
+                    "object_id": object_id,
                     "mask": mask,
                     "bbox": bbox,
-                    "target_id": target_id,
-                    "confidence": float(prob),
-                    "name": name if name else "",
+                    "confidence": float(confidence),
+                    "label": label,
                     "point_cloud": pcd,
                     "point_cloud_numpy": o3d_point_cloud_to_numpy(pcd),
-                    "color": rgb_color
+                    "color": rgb_color,
                 }
                 
-                # Fit 3D cuboid if requested
-                if fit_3d_cuboids:
+                # Add optional data if available
+                if filtering_stats is not None:
+                    obj_data["filtering_stats"] = filtering_stats
+                
+                # Fit 3D cuboid if enabled
+                if self.enable_cuboid_fitting:
                     points = np.asarray(pcd.points)
                     cuboid_params = fit_cuboid(points)
-                    obj_data["cuboid_params"] = cuboid_params
-                    
-                    # Update visualization with cuboid if available
-                    if cuboid_params is not None and self.color_camera_matrix is not None:
-                        viz_img = visualize_fit(viz_img, cuboid_params, self.color_camera_matrix)
+                    if cuboid_params is not None:
+                        obj_data["cuboid_params"] = cuboid_params
                 
                 objects.append(obj_data)
                 
             except Exception as e:
-                print(f"Error processing object {i+1}: {e}")
                 continue
 
-        raw_point_cloud = create_o3d_point_cloud_from_rgbd(color_img, depth_img, self.depth_camera_matrix)
-        plane_removed_point_cloud = segment_and_remove_plane(raw_point_cloud)
-        
         # Clean up GPU memory if using CUDA
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         
         return {
-            "viz_image": viz_img,
             "objects": objects,
-            "raw_point_cloud": raw_point_cloud,
-            "plane_removed_point_cloud": plane_removed_point_cloud
         }
     
     def cleanup(self):
         """Clean up resources."""
-        if hasattr(self, 'segmenter'):
-            self.segmenter.cleanup()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 def main():
     """
-    Main function to test the PointcloudSegmentation class with data from rgbd_data folder.
+    Main function to test the PointcloudFiltering class with data from rgbd_data folder.
     """
 
     def find_first_image(directory):
@@ -229,132 +233,118 @@ def main():
         print(f"Error: Could not find color or depth images in {data_dir}")
         return
     
-    print(f"Found color image: {color_img_path}")
-    print(f"Found depth image: {depth_img_path}")
-    
     # Load images
     color_img = cv2.imread(color_img_path)
     if color_img is None:
         print(f"Error: Could not load color image from {color_img_path}")
         return
         
-    color_img = cv2.cvtColor(color_img, cv2.COLOR_BGR2RGB)  # Convert to RGB
+    color_img = cv2.cvtColor(color_img, cv2.COLOR_BGR2RGB)
     
     depth_img = cv2.imread(depth_img_path, cv2.IMREAD_UNCHANGED)
     if depth_img is None:
         print(f"Error: Could not load depth image from {depth_img_path}")
         return
     
-    # Convert depth to meters if needed (adjust scale as needed for your data)
+    # Convert depth to meters if needed
     if depth_img.dtype == np.uint16:
-        # Convert from mm to meters for typical depth cameras
         depth_img = depth_img.astype(np.float32) / 1000.0
     
-    # Verify image shapes for debugging
-    print(f"Color image shape: {color_img.shape}")
-    print(f"Depth image shape: {depth_img.shape}")
-    
-    # Initialize segmentation with direct camera matrices
-    seg = PointcloudSegmentation(
-        model_path="FastSAM-s.pt",  # Adjust path as needed
+    # Run segmentation
+    segmenter = Sam2DSegmenter(
+        model_path="FastSAM-s.pt",
         device="cuda" if torch.cuda.is_available() else "cpu",
-        color_intrinsics=color_info_path,
-        depth_intrinsics=depth_info_path,
-        enable_tracking=False,
-        enable_analysis=True
+        use_tracker=False,
+        use_analyzer=True
     )
     
-    # Process images
-    print("Processing images...")
+    masks, bboxes, target_ids, probs, names = segmenter.process_image(color_img)
+    segmenter.run_analysis(color_img, bboxes, target_ids)
+    names = segmenter.get_object_names(target_ids, names)
+    
+    # Create metadata
+    objects_metadata = []
+    for i in range(len(bboxes)):
+        obj_data = {
+            "object_id": target_ids[i] if i < len(target_ids) else i,
+            "bbox": bboxes[i],
+            "prob": probs[i] if i < len(probs) else 1.0,
+            "label": names[i] if i < len(names) else "",
+        }
+        objects_metadata.append(obj_data)
+    
+    metadata = {
+        "frame": color_img,
+        "objects": objects_metadata
+    }
+    
+    numpy_masks = [mask.cpu().numpy() if hasattr(mask, 'cpu') else mask for mask in masks]
+    segmentation_result = SegmentationType(masks=numpy_masks, metadata=metadata)
+    
+    # Initialize filtering pipeline
+    filter_pipeline = PointcloudFiltering(
+        color_intrinsics=color_info_path,
+        depth_intrinsics=depth_info_path,
+        enable_statistical_filtering=True,
+        enable_cuboid_fitting=True,
+        color_weight=0.3,
+        statistical_neighbors=20,
+        statistical_std_ratio=2.0,
+    )
+    
+    # Process images through filtering pipeline
     try:
-        results = seg.process_images(color_img, depth_img, fit_3d_cuboids=True)
+        results = filter_pipeline.process_images(color_img, depth_img, segmentation_result)
         
-        # Show segmentation results using PIL instead of OpenCV
-        viz_img = results["viz_image"]
-        
-        # Convert OpenCV image (BGR) to PIL image (RGB)
-        pil_img = Image.fromarray(cv2.cvtColor(viz_img, cv2.COLOR_BGR2RGB))
-        
-        # Display the image using PIL
-        pil_img.show(title="Segmentation Results")
-        
-        # Add a short pause to ensure the image has time to display
-        import time
-        time.sleep(0.5)
-        
-        print(f"Found {len(results['objects'])} objects with valid point clouds")
-        
-        # Visualize all point clouds in a single window
+        # Visualize filtered point clouds
         all_pcds = []
         for i, obj in enumerate(results['objects']):
             pcd = obj['point_cloud']
             
-            # Optionally add axis-aligned bounding box visualization
+            # Add cuboid visualization if available
             if 'cuboid_params' in obj and obj['cuboid_params'] is not None:
                 cuboid = obj['cuboid_params']
-                
-                # Create oriented bounding box using the rotation matrix instead of axis-aligned box
                 center = cuboid['center']
                 dimensions = cuboid['dimensions']
                 rotation = cuboid['rotation']
                 
-                # Create oriented bounding box
                 obb = o3d.geometry.OrientedBoundingBox(
                     center=center,
                     R=rotation,
                     extent=dimensions
                 )
-                obb.color = [1, 0, 0]  # Red bounding box
+                obb.color = [1, 0, 0]
                 all_pcds.append(obb)
                 
-                # Add a small coordinate frame at the center of each object to show orientation
                 coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
                     size=min(dimensions) * 0.5,
                     origin=center
                 )
                 all_pcds.append(coord_frame)
             
-            # Add the point cloud
             all_pcds.append(pcd)
         
         # Add coordinate frame at origin
         coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
         all_pcds.append(coordinate_frame)
         
-        # Show point clouds
+        # Show filtered point clouds
         if all_pcds:
             o3d.visualization.draw_geometries(all_pcds,
-                                             window_name="Segmented Objects",
+                                             window_name="Filtered Point Clouds",
                                              width=1280,
                                              height=720,
                                              left=50,
                                              top=50)
-        else:
-            print("No objects with valid point clouds found.")
-
-        # Show raw point cloud
-        o3d.visualization.draw_geometries([results['raw_point_cloud']],
-                                         window_name="Raw Point Cloud",
-                                         width=1280,
-                                         height=720,
-                                         left=50,
-                                         top=50)
-
-        # Show plane removed point cloud
-        o3d.visualization.draw_geometries([results['plane_removed_point_cloud']],
-                                         window_name="Plane Removed Point Cloud",
-                                         width=1280,
-                                         height=720,
-                                         left=50,
-                                         top=50)
+        
     except Exception as e:
         print(f"Error during processing: {str(e)}")
         import traceback
         traceback.print_exc()
     
     # Clean up resources
-    seg.cleanup()
-    print("Done!")
+    segmenter.cleanup()
+    filter_pipeline.cleanup()
 
 
 if __name__ == "__main__":
