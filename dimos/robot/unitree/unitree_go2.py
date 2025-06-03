@@ -26,8 +26,7 @@ import os
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from reactivex.scheduler import ThreadPoolScheduler
 from dimos.utils.logging_config import setup_logger
-from dimos.perception.person_tracker import PersonTrackingStream
-from dimos.perception.object_tracker import ObjectTrackingStream
+from dimos.robot.stream import RobotStreamManager
 from dimos.robot.local_planner import VFHPurePursuitPlanner, navigate_path_local
 from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.types.costmap import Costmap
@@ -136,24 +135,17 @@ class UnitreeGo2(Robot):
         else:
             self.video_stream = None
 
-        # Initialize visual servoing if enabled
+        # Initialize stream manager but do not create streams until requested
+        video_obs = None
         if self.video_stream is not None:
-            self.video_stream_ros = self.get_ros_video_stream(fps=8)
-            self.person_tracker = PersonTrackingStream(
-                camera_intrinsics=self.camera_intrinsics,
-                camera_pitch=self.camera_pitch,
-                camera_height=self.camera_height,
-            )
-            self.object_tracker = ObjectTrackingStream(
-                camera_intrinsics=self.camera_intrinsics,
-                camera_pitch=self.camera_pitch,
-                camera_height=self.camera_height,
-            )
-            person_tracking_stream = self.person_tracker.create_stream(self.video_stream_ros)
-            object_tracking_stream = self.object_tracker.create_stream(self.video_stream_ros)
+            video_obs = self.get_ros_video_stream(fps=8)
 
-            self.person_tracking_stream = person_tracking_stream
-            self.object_tracking_stream = object_tracking_stream
+        self.streams = RobotStreamManager(
+            video_stream=video_obs,
+            camera_intrinsics=self.camera_intrinsics,
+            camera_pitch=self.camera_pitch,
+            camera_height=self.camera_height,
+        )
 
         # Initialize the local planner and create BEV visualization stream
         self.local_planner = VFHPurePursuitPlanner(
@@ -194,3 +186,25 @@ class UnitreeGo2(Robot):
         [position, rotation] = self.ros_control.transform_euler("base_link")
 
         return position, rotation
+
+    # ------------------------------------------------------------------
+    # Stream helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def person_tracking_stream(self):
+        """Return the person tracking stream if enabled."""
+        return self.streams.person_tracking_stream
+
+    def enable_person_tracking(self):
+        """Enable and return the person tracking stream."""
+        return self.streams.enable_person_tracking()
+
+    @property
+    def object_tracking_stream(self):
+        """Return the object tracking stream if enabled."""
+        return self.streams.object_tracking_stream
+
+    def enable_object_tracking(self):
+        """Enable and return the object tracking stream."""
+        return self.streams.enable_object_tracking()

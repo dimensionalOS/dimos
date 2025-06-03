@@ -73,7 +73,7 @@ def main():
     robot_skills.create_instance("Navigate", robot=robot)
 
     # Set up tracking and visualization streams
-    object_tracking_stream = robot.object_tracking_stream
+    object_tracking_stream = robot.enable_object_tracking()
     viz_stream = object_tracking_stream.pipe(
         RxOps.share(),
         RxOps.map(lambda x: x["viz_frame"] if x is not None else None),

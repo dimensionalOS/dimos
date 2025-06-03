@@ -40,7 +40,7 @@ def main():
         skills=MyUnitreeSkills(),
     )
 
-    tracking_stream = robot.person_tracking_stream
+    tracking_stream = robot.enable_person_tracking()
     viz_stream = tracking_stream.pipe(
         RxOps.share(),
         RxOps.map(lambda x: x["viz_frame"] if x is not None else None),
