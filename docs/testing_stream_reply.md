@@ -54,8 +54,8 @@ total_rad = (
     .stream()
     .pipe(
         ops.map(lambda odom: odom.rot.z),
-        ops.pairwise(),            # → [(v₀,v₁), (v₁,v₂), …]
-        ops.starmap(sub),          # → [v₁−v₀, v₂−v₁, …]
+        ops.pairwise(),  # [1,2,3,4] -> [[1,2], [2,3], [3,4]]
+        ops.starmap(sub),  # [sub(1,2), sub(2,3), sub(3,4)]
         ops.reduce(add),
     )
     .run()
