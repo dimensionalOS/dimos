@@ -192,7 +192,10 @@ class SensorReplay(Generic[T]):
         for file_path in sorted(glob.glob(pattern)):
             yield self.load_one(file_path)
 
-    def stream(self, rate_hz: float = 10.0) -> Observable[Union[T, Any]]:
+    def stream(self, rate_hz: Optional[float] = None) -> Observable[Union[T, Any]]:
+        if rate_hz is None:
+            return from_iterable(self.iterate())
+
         sleep_time = 1.0 / rate_hz
 
         return from_iterable(self.iterate()).pipe(
