@@ -44,7 +44,7 @@ def test_robot_vis():
 def test_robot_mapping():
     lidar_stream = SensorReplay("office_lidar", autocast=lambda x: LidarMessage.from_msg(x))
     map = Map(voxel_size=0.5)
-    map.consume(lidar_stream.stream(rate_hz=100.0)).run()
+    map.consume(lidar_stream.stream(rate_hz=1000.0)).run()
 
     costmap = map.costmap
 

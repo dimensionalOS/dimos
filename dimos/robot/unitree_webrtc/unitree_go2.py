@@ -11,6 +11,7 @@ import os
 from go2_webrtc_driver.constants import VUI_COLOR
 from dimos.robot.local_planner.vfh.vfh_local_planner import VFHPurePursuitPlanner
 from dimos.robot.local_planner.vfh.local_planner import navigate_path_local
+from reactivex import operators as ops
 
 
 class Color(VUI_COLOR): ...
@@ -31,9 +32,11 @@ class UnitreeGo2(WebRTCRobot):
 
         self.map = Map(voxel_size=0.5)
         self.map_stream = self.map.consume(self.lidar_stream())
+        self.get_local_lidar_frame = getter_streaming(self.lidar_stream())
+        self.get_local_costmap = lambda: self.get_local_lidar_frame().costmap()
 
         self.local_planner = SimplePlanner(
-            get_costmap=lambda: self.map.costmap, get_robot_pos=self.odom
+            get_costmap=self.get_local_costmap, get_robot_pos=self.odom
         )
 
         def set_path(path, *args, **kwargs):

@@ -30,6 +30,7 @@ robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
 websocket_vis = WebsocketVis()
 websocket_vis.start()
 websocket_vis.connect(robot.global_planner.vis_stream())
+websocket_vis.connect(robot.local_planner.vis_stream())
 
 
 def msg_handler(msgtype, data):

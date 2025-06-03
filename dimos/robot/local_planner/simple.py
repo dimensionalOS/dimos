@@ -19,6 +19,8 @@ from dimos.utils.threadpool import get_scheduler
 logger = setup_logger("dimos.robot.unitree.global_planner")
 
 
+# experimental stream based vector based planner
+# not production ready - just a sketch
 @dataclass
 class SimplePlanner(LocalPlanner):
     get_costmap: Callable[[], Costmap]
