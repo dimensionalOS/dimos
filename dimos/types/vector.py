@@ -116,36 +116,18 @@ class Vector:
         return np.allclose(self._data, other._data)
 
     def __add__(self: T, other) -> T:
-        if isinstance(other, Vector):
-            # Handle different dimensions by padding the smaller vector
-            if len(self._data) != len(other._data):
-                max_dim = max(len(self._data), len(other._data))
-                return self.pad(max_dim) + other.pad(max_dim)
-            return self.__class__(self._data + other._data)
-
-        # For non-Vector types, convert to array and handle potential dimension mismatch
-        other_arr = np.array(other, dtype=float)
-        if len(self._data) != len(other_arr):
-            max_dim = max(len(self._data), len(other_arr))
-            other_vec = self.__class__(other_arr)
-            return self.pad(max_dim) + other_vec.pad(max_dim)
-        return self.__class__(self._data + other_arr)
+        other = to_vector(other)
+        if self.dim != other.dim:
+            max_dim = max(self.dim, other.dim)
+            return self.pad(max_dim) + other.pad(max_dim)
+        return self.__class__(self._data + other._data)
 
     def __sub__(self: T, other) -> T:
-        if isinstance(other, Vector):
-            # Handle different dimensions by padding the smaller vector
-            if len(self._data) != len(other._data):
-                max_dim = max(len(self._data), len(other._data))
-                return self.pad(max_dim) - other.pad(max_dim)
-            return self.__class__(self._data - other._data)
-
-        # For non-Vector types, convert to array and handle potential dimension mismatch
-        other_arr = np.array(other, dtype=float)
-        if len(self._data) != len(other_arr):
-            max_dim = max(len(self._data), len(other_arr))
-            other_vec = self.__class__(other_arr)
-            return self.pad(max_dim) - other_vec.pad(max_dim)
-        return self.__class__(self._data - other_arr)
+        other = to_vector(other)
+        if self.dim != other.dim:
+            max_dim = max(self.dim, other.dim)
+            return self.pad(max_dim) - other.pad(max_dim)
+        return self.__class__(self._data - other._data)
 
     def __mul__(self: T, scalar: float) -> T:
         return self.__class__(self._data * scalar)
@@ -161,24 +143,19 @@ class Vector:
 
     def dot(self, other) -> float:
         """Compute dot product."""
-        if isinstance(other, Vector):
-            return float(np.dot(self._data, other._data))
-        return float(np.dot(self._data, np.array(other, dtype=float)))
+        other = to_vector(other)
+        return float(np.dot(self._data, other._data))
 
     def cross(self: T, other) -> T:
         """Compute cross product (3D vectors only)."""
         if self.dim != 3:
             raise ValueError("Cross product is only defined for 3D vectors")
 
-        if isinstance(other, Vector):
-            other_data = other._data
-        else:
-            other_data = np.array(other, dtype=float)
-
-        if len(other_data) != 3:
+        other = to_vector(other)
+        if other.dim != 3:
             raise ValueError("Cross product requires two 3D vectors")
 
-        return self.__class__(np.cross(self._data, other_data))
+        return self.__class__(np.cross(self._data, other._data))
 
     def length(self) -> float:
         """Compute the Euclidean length (magnitude) of the vector."""
@@ -213,31 +190,24 @@ class Vector:
 
     def distance(self, other) -> float:
         """Compute Euclidean distance to another vector."""
-        if isinstance(other, Vector):
-            return float(np.linalg.norm(self._data - other._data))
-        return float(np.linalg.norm(self._data - np.array(other, dtype=float)))
+        other = to_vector(other)
+        return float(np.linalg.norm(self._data - other._data))
 
     def distance_squared(self, other) -> float:
         """Compute squared Euclidean distance to another vector (faster than distance())."""
-        if isinstance(other, Vector):
-            diff = self._data - other._data
-        else:
-            diff = self._data - np.array(other, dtype=float)
+        other = to_vector(other)
+        diff = self._data - other._data
         return float(np.sum(diff * diff))
 
     def angle(self, other) -> float:
         """Compute the angle (in radians) between this vector and another."""
-        if self.length() < 1e-10 or (isinstance(other, Vector) and other.length() < 1e-10):
+        other = to_vector(other)
+        if self.length() < 1e-10 or other.length() < 1e-10:
             return 0.0
 
-        if isinstance(other, Vector):
-            other_data = other._data
-        else:
-            other_data = np.array(other, dtype=float)
-
         cos_angle = np.clip(
-            np.dot(self._data, other_data)
-            / (np.linalg.norm(self._data) * np.linalg.norm(other_data)),
+            np.dot(self._data, other._data)
+            / (np.linalg.norm(self._data) * np.linalg.norm(other._data)),
             -1.0,
             1.0,
         )
@@ -245,17 +215,13 @@ class Vector:
 
     def project(self: T, onto) -> T:
         """Project this vector onto another vector."""
-        if isinstance(onto, Vector):
-            onto_data = onto._data
-        else:
-            onto_data = np.array(onto, dtype=float)
-
-        onto_length_sq = np.sum(onto_data * onto_data)
+        onto = to_vector(onto)
+        onto_length_sq = np.sum(onto._data * onto._data)
         if onto_length_sq < 1e-10:
             return self.__class__(np.zeros_like(self._data))
 
-        scalar_projection = np.dot(self._data, onto_data) / onto_length_sq
-        return self.__class__(scalar_projection * onto_data)
+        scalar_projection = np.dot(self._data, onto._data) / onto_length_sq
+        return self.__class__(scalar_projection * onto._data)
 
     # this is here to test ros_observable_topic
     # doesn't happen irl afaik that we want a vector from ros message
