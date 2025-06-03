@@ -36,8 +36,8 @@ class ZEDCameraStream:
     def __init__(
         self,
         camera_id: int = 0,
-        resolution: Optional['sl.RESOLUTION'] = None,
-        depth_mode: Optional['sl.DEPTH_MODE'] = None,
+        resolution: Optional["sl.RESOLUTION"] = None,
+        depth_mode: Optional["sl.DEPTH_MODE"] = None,
         fps: int = 30,
     ):
         """
@@ -54,24 +54,21 @@ class ZEDCameraStream:
 
         self.camera_id = camera_id
         self.fps = fps
-        
+
         # Set default values if not provided
         if resolution is None:
             resolution = sl.RESOLUTION.HD720
         if depth_mode is None:
             depth_mode = sl.DEPTH_MODE.NEURAL
-            
+
         self.resolution = resolution
         self.depth_mode = depth_mode
-        
+
         # Initialize ZED camera
         self.zed_camera = ZEDCamera(
-            camera_id=camera_id,
-            resolution=resolution,
-            depth_mode=depth_mode,
-            fps=fps
+            camera_id=camera_id, resolution=resolution, depth_mode=depth_mode, fps=fps
         )
-        
+
         self.is_opened = False
 
     def _initialize_camera(self) -> None:
@@ -89,6 +86,7 @@ class ZEDCameraStream:
         Returns:
             Observable: An observable emitting dictionaries with 'rgb' and 'depth' keys.
         """
+
         def emit_frames(observer, scheduler):
             try:
                 # Initialize camera
@@ -101,10 +99,10 @@ class ZEDCameraStream:
 
                     if left_img is not None and depth_img is not None:
                         frame_data = {
-                            'rgb': left_img,
-                            'depth': depth_img,
-                            'right': right_img,
-                            'timestamp': time.time()
+                            "rgb": left_img,
+                            "depth": depth_img,
+                            "right": right_img,
+                            "timestamp": time.time(),
                         }
 
                         observer.on_next(frame_data)
@@ -124,22 +122,22 @@ class ZEDCameraStream:
     def get_camera_info(self) -> Dict[str, float]:
         """
         Get ZED camera intrinsics (fx, fy, cx, cy).
-        
+
         Returns:
             Dictionary containing camera intrinsics: fx, fy, cx, cy
         """
         if not self.is_opened:
             self._initialize_camera()
-            
+
         try:
             camera_info = self.zed_camera.get_camera_info()
             left_cam = camera_info.get("left_cam", {})
-            
+
             return {
                 "fx": left_cam.get("fx", 0.0),
                 "fy": left_cam.get("fy", 0.0),
                 "cx": left_cam.get("cx", 0.0),
-                "cy": left_cam.get("cy", 0.0)
+                "cy": left_cam.get("cy", 0.0),
             }
         except Exception as e:
             logger.error(f"Error getting camera info: {e}")
