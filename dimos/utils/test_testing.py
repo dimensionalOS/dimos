@@ -124,7 +124,7 @@ def test_sensor_replay():
 def test_sensor_replay_cast():
     counter = 0
     for message in testing.SensorReplay(
-        name="office_lidar", autocast=lambda x: LidarMessage.from_msg(x)
+        name="office_lidar", autocast=LidarMessage.from_msg
     ).iterate():
         counter += 1
         assert isinstance(message, LidarMessage)
