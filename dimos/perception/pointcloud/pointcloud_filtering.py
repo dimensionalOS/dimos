@@ -443,8 +443,8 @@ def run_segmentation(color_img: np.ndarray, device: str = "auto") -> List[Object
 
 def visualize_results(objects: List[ObjectData]):
     """
-    Visualize point cloud filtering results.
-
+    Visualize point cloud filtering results with 3D bounding boxes.
+    
     Args:
         objects: List of ObjectData with point clouds
     """
@@ -454,15 +454,70 @@ def visualize_results(objects: List[ObjectData]):
         if "point_cloud" in obj and obj["point_cloud"] is not None:
             pcd = obj["point_cloud"]
             all_pcds.append(pcd)
-
+            
+            # Draw 3D bounding box if position, rotation, and size are available
+            if ('position' in obj and 'rotation' in obj and 'size' in obj and 
+                obj['position'] is not None and obj['rotation'] is not None and obj['size'] is not None):
+                
+                try:
+                    position = obj['position']
+                    rotation = obj['rotation']
+                    size = obj['size']
+                    
+                    # Convert position to numpy array
+                    if hasattr(position, 'x'):  # Vector object
+                        center = np.array([position.x, position.y, position.z])
+                    else:  # Dictionary
+                        center = np.array([position['x'], position['y'], position['z']])
+                    
+                    # Convert rotation (euler angles) to rotation matrix
+                    if hasattr(rotation, 'x'):  # Vector object (roll, pitch, yaw)
+                        roll, pitch, yaw = rotation.x, rotation.y, rotation.z
+                    else:  # Dictionary
+                        roll, pitch, yaw = rotation['roll'], rotation['pitch'], rotation['yaw']
+                    
+                    # Create rotation matrix from euler angles (ZYX order)
+                    # Roll (X), Pitch (Y), Yaw (Z)
+                    cos_r, sin_r = np.cos(roll), np.sin(roll)
+                    cos_p, sin_p = np.cos(pitch), np.sin(pitch)
+                    cos_y, sin_y = np.cos(yaw), np.sin(yaw)
+                    
+                    # Rotation matrix for ZYX euler angles
+                    R = np.array([
+                        [cos_y * cos_p, cos_y * sin_p * sin_r - sin_y * cos_r, cos_y * sin_p * cos_r + sin_y * sin_r],
+                        [sin_y * cos_p, sin_y * sin_p * sin_r + cos_y * cos_r, sin_y * sin_p * cos_r - cos_y * sin_r],
+                        [-sin_p, cos_p * sin_r, cos_p * cos_r]
+                    ])
+                    
+                    # Get dimensions
+                    width = size.get('width', 0.1)
+                    height = size.get('height', 0.1) 
+                    depth = size.get('depth', 0.1)
+                    extent = np.array([width, height, depth])
+                    
+                    # Create oriented bounding box
+                    obb = o3d.geometry.OrientedBoundingBox(
+                        center=center,
+                        R=R,
+                        extent=extent
+                    )
+                    obb.color = [1, 0, 0]  # Red bounding boxes
+                    all_pcds.append(obb)
+                    
+                except Exception as e:
+                    print(f"Warning: Failed to create bounding box for object {obj.get('object_id', 'unknown')}: {e}")
+    
     # Add coordinate frame
     coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
     all_pcds.append(coordinate_frame)
-
+    
     # Visualize
     if all_pcds:
         o3d.visualization.draw_geometries(
-            all_pcds, window_name="Filtered Point Clouds", width=1280, height=720
+            all_pcds,
+            window_name="Filtered Point Clouds with 3D Bounding Boxes",
+            width=1280,
+            height=720
         )
 
 
