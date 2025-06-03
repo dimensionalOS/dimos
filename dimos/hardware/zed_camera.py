@@ -30,16 +30,18 @@ logger = logging.getLogger(__name__)
 
 class ZEDCamera(StereoCamera):
     """ZED Camera capture node with neural depth processing."""
-    
-    def __init__(self, 
-                 camera_id: int = 0,
-                 resolution: sl.RESOLUTION = sl.RESOLUTION.HD720,
-                 depth_mode: sl.DEPTH_MODE = sl.DEPTH_MODE.NEURAL,
-                 fps: int = 30,
-                 **kwargs):
+
+    def __init__(
+        self,
+        camera_id: int = 0,
+        resolution: sl.RESOLUTION = sl.RESOLUTION.HD720,
+        depth_mode: sl.DEPTH_MODE = sl.DEPTH_MODE.NEURAL,
+        fps: int = 30,
+        **kwargs,
+    ):
         """
         Initialize ZED Camera.
-        
+
         Args:
             camera_id: Camera ID (0 for first ZED)
             resolution: ZED camera resolution
@@ -48,14 +50,14 @@ class ZEDCamera(StereoCamera):
         """
         if sl is None:
             raise ImportError("ZED SDK not installed. Please install pyzed package.")
-        
+
         super().__init__(**kwargs)
-        
+
         self.camera_id = camera_id
         self.resolution = resolution
         self.depth_mode = depth_mode
         self.fps = fps
-        
+
         # Initialize ZED camera
         self.zed = sl.Camera()
         self.init_params = sl.InitParameters()
@@ -63,26 +65,26 @@ class ZEDCamera(StereoCamera):
         self.init_params.depth_mode = depth_mode
         self.init_params.coordinate_units = sl.UNIT.METER
         self.init_params.camera_fps = fps
-        
+
         # Set camera ID using the correct parameter name
-        if hasattr(self.init_params, 'set_from_camera_id'):
+        if hasattr(self.init_params, "set_from_camera_id"):
             self.init_params.set_from_camera_id(camera_id)
-        elif hasattr(self.init_params, 'input'):
+        elif hasattr(self.init_params, "input"):
             self.init_params.input.set_from_camera_id(camera_id)
-        
+
         # Use enable_fill_mode instead of SENSING_MODE.STANDARD
         self.runtime_params = sl.RuntimeParameters()
         self.runtime_params.enable_fill_mode = True  # False = STANDARD mode, True = FILL mode
-        
+
         # Image containers
         self.image_left = sl.Mat()
         self.image_right = sl.Mat()
         self.depth_map = sl.Mat()
         self.point_cloud = sl.Mat()
         self.confidence_map = sl.Mat()
-        
+
         self.is_opened = False
-        
+
     def open(self) -> bool:
         """Open the ZED camera."""
         try:
@@ -90,133 +92,135 @@ class ZEDCamera(StereoCamera):
             if err != sl.ERROR_CODE.SUCCESS:
                 logger.error(f"Failed to open ZED camera: {err}")
                 return False
-            
+
             self.is_opened = True
             logger.info("ZED camera opened successfully")
-            
+
             # Get camera information
             info = self.zed.get_camera_information()
             logger.info(f"ZED Camera Model: {info.camera_model}")
             logger.info(f"Serial Number: {info.serial_number}")
             logger.info(f"Firmware: {info.camera_configuration.firmware_version}")
-            
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Error opening ZED camera: {e}")
             return False
-    
+
     def close(self):
         """Close the ZED camera."""
         if self.is_opened:
             self.zed.close()
             self.is_opened = False
             logger.info("ZED camera closed")
-    
-    def capture_frame(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
+
+    def capture_frame(
+        self,
+    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
         """
         Capture a frame from ZED camera.
-        
+
         Returns:
             Tuple of (left_image, right_image, depth_map) as numpy arrays
         """
         if not self.is_opened:
             logger.error("ZED camera not opened")
             return None, None, None
-        
+
         try:
             # Grab frame
             if self.zed.grab(self.runtime_params) == sl.ERROR_CODE.SUCCESS:
                 # Retrieve left image
                 self.zed.retrieve_image(self.image_left, sl.VIEW.LEFT)
                 left_img = self.image_left.get_data()[:, :, :3]  # Remove alpha channel
-                
+
                 # Retrieve right image
                 self.zed.retrieve_image(self.image_right, sl.VIEW.RIGHT)
                 right_img = self.image_right.get_data()[:, :, :3]  # Remove alpha channel
-                
+
                 # Retrieve depth map
                 self.zed.retrieve_measure(self.depth_map, sl.MEASURE.DEPTH)
                 depth = self.depth_map.get_data()
-                
+
                 return left_img, right_img, depth
             else:
                 logger.warning("Failed to grab frame from ZED camera")
                 return None, None, None
-                
+
         except Exception as e:
             logger.error(f"Error capturing frame: {e}")
             return None, None, None
-    
+
     def capture_pointcloud(self) -> Optional[np.ndarray]:
         """
         Capture point cloud from ZED camera.
-        
+
         Returns:
             Point cloud as numpy array (N, 4) - [x, y, z, confidence]
         """
         if not self.is_opened:
             logger.error("ZED camera not opened")
             return None
-        
+
         try:
             if self.zed.grab(self.runtime_params) == sl.ERROR_CODE.SUCCESS:
                 # Retrieve point cloud
                 self.zed.retrieve_measure(self.point_cloud, sl.MEASURE.XYZRGBA)
                 point_cloud_data = self.point_cloud.get_data()
-                
+
                 # Retrieve confidence map
                 self.zed.retrieve_measure(self.confidence_map, sl.MEASURE.CONFIDENCE)
                 confidence_data = self.confidence_map.get_data()
-                
+
                 # Convert to numpy array format
                 height, width = point_cloud_data.shape[:2]
                 points = point_cloud_data.reshape(-1, 4)
                 confidence = confidence_data.reshape(-1)
-                
+
                 # Filter out invalid points (NaN or inf)
                 valid = np.isfinite(points[:, :3]).all(axis=1)
                 points = points[valid]
                 confidence = confidence[valid]
-                
+
                 # Combine points with confidence
                 result = np.column_stack([points[:, :3], confidence])
-                
+
                 return result
             else:
                 logger.warning("Failed to grab frame for point cloud")
                 return None
-                
+
         except Exception as e:
             logger.error(f"Error capturing point cloud: {e}")
             return None
-    
+
     def get_camera_info(self) -> Dict[str, Any]:
         """Get ZED camera information and calibration parameters."""
         if not self.is_opened:
             return {}
-        
+
         try:
             info = self.zed.get_camera_information()
             calibration = info.camera_configuration.calibration_parameters
-            
+
             # In ZED SDK 4.0+, the baseline calculation has changed
             # Try to get baseline from the stereo parameters
             try:
                 # Method 1: Try to get from stereo parameters if available
-                if hasattr(calibration, 'getCameraBaseline'):
+                if hasattr(calibration, "getCameraBaseline"):
                     baseline = calibration.getCameraBaseline()
                 else:
                     # Method 2: Calculate from left and right camera positions
                     # The baseline is the distance between left and right cameras
                     left_cam = calibration.left_cam
                     right_cam = calibration.right_cam
-                    
+
                     # Try different ways to get baseline in SDK 4.0+
-                    if hasattr(info.camera_configuration, 'calibration_parameters_raw'):
+                    if hasattr(info.camera_configuration, "calibration_parameters_raw"):
                         # Use raw calibration if available
                         raw_calib = info.camera_configuration.calibration_parameters_raw
-                        if hasattr(raw_calib, 'T'):
+                        if hasattr(raw_calib, "T"):
                             baseline = abs(raw_calib.T[0])
                         else:
                             baseline = 0.12  # Default ZED-M baseline approximation
@@ -225,14 +229,14 @@ class ZEDCamera(StereoCamera):
                         baseline = 0.12  # ZED-M baseline is approximately 120mm
             except:
                 baseline = 0.12  # Fallback to approximate ZED-M baseline
-            
+
             return {
                 "model": str(info.camera_model),
                 "serial_number": info.serial_number,
                 "firmware": info.camera_configuration.firmware_version,
                 "resolution": {
                     "width": info.camera_configuration.resolution.width,
-                    "height": info.camera_configuration.resolution.height
+                    "height": info.camera_configuration.resolution.height,
                 },
                 "fps": info.camera_configuration.fps,
                 "left_cam": {
@@ -262,16 +266,16 @@ class ZEDCamera(StereoCamera):
         except Exception as e:
             logger.error(f"Error getting camera info: {e}")
             return {}
-    
+
     def calculate_intrinsics(self):
         """Calculate camera intrinsics from ZED calibration."""
         info = self.get_camera_info()
         if not info:
             return super().calculate_intrinsics()
-        
+
         left_cam = info.get("left_cam", {})
         resolution = info.get("resolution", {})
-        
+
         return {
             "focal_length_x": left_cam.get("fx", 0),
             "focal_length_y": left_cam.get("fy", 0),
@@ -281,13 +285,13 @@ class ZEDCamera(StereoCamera):
             "resolution_width": resolution.get("width", 0),
             "resolution_height": resolution.get("height", 0),
         }
-    
+
     def __enter__(self):
         """Context manager entry."""
         if not self.open():
             raise RuntimeError("Failed to open ZED camera")
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
-        self.close() 
+        self.close()
