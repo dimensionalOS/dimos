@@ -1,156 +1,164 @@
-# Stream replying for testing
+# Sensor Replay & Storage Toolkit
+
+A lightweight framework for **recording, storing, and replaying binary data streams for automated tests**.  It keeps your repository small (data lives in Git LFS) while giving you Python‑first ergonomics for working with RxPY streams, point‑clouds, videos, command logs—anything you can pickle.
+
+---
+
+## 1 At a Glance
+
+| Need                           | One liner                                                     |
+| ------------------------------ | ------------------------------------------------------------- |
+| **Iterate over every message** | `SensorReplay("raw_odometry_rotate_walk").iterate(print)`     |
+| **RxPY stream for piping**     | `SensorReplay("raw_odometry_rotate_walk").stream().pipe(...)` |
+| **Throttle replay rate**       | `SensorReplay("raw_odometry_rotate_walk").stream(rate_hz=10)` |
+| **Raw path to a blob/dir**     | `path = testData("raw_odometry_rotate_walk")`                 |
+| **Store a new stream**         | see [`SensorStorage`](#5-storing-new-streams)                 |
+
+> If the requested blob is missing locally, it is transparently downloaded from Git LFS, extracted to `tests/data/<name>/`, and cached for subsequent runs.
+
+---
+
+## 2 Goals
+
+* **Zero setup for CI & collaborators** – data is fetched on demand.
+* **No repo bloat** – binaries live in Git LFS; the working tree stays trim.
+* **Symmetric API** – `SensorReplay` ↔︎ `SensorStorage`; same name, different direction.
+* **Format agnostic** – replay *anything* you can pickle (protobuf, numpy, JPEG, …).
+* **Data type agnostic** – with testData("raw_odometry_rotate_walk") you get a Path object back, can be a raw video file, whole codebase, ML model etc 
 
 
-## Goals
-- super easy binary data delivery for testing, no data stored in git but lfs
-- super easy data stream storage
+---
 
-## Usage
+## 3 Replaying Data
 
-you get this SensorReply class that you can use to stream previously stored rxpy streams.
-(example below will auto download and extract `raw_odometry_rotate_walk` directory and load & reply a stream stored within it: 
-
-to simply print all messages:
-
-```python
-    SensorReplay(name="raw_odometry_rotate_walk").iterate(print)
-```
-
-or to get an rxpy stream
-
-```python
-    SensorReplay(name="raw_odometry_rotate_walk").stream().pipe(...)
-```
-
-to set the rate
-
-```python
-    SensorReplay(name="raw_odometry_rotate_walk").stream(rate_hz=10).pipe(...)
-```
-
-```sh
-ls tests/data/raw_odometry_rotate_walk/
- 000.pickle   019.pickle   005.pickle   032.pickle   023.pickle   052.pickle   056.pickle   045.pickle   065.pickle   071.pickle   091.pickle   088.pickle   110.pickle   105.pickle   108.pickle   118.pickle   119.pickle   140.pickle   151.pickle   142.pickle   165.pickle   159.pickle   172.pickle 012.pickle   010.pickle   016.pickle   027.pickle   030.pickle   043.pickle   044.pickle   039.pickle   062.pickle   076.pickle   079.pickle   092.pickle   112.pickle   106.pickle   111.pickle   126.pickle   123.pickle   135.pickle   143.pickle  # etc etc
-```
-
-TODO - some smarter reply that actually takes into account message timestamps.
-can easily be done as a stream processor.
-
-Slightly fancier test that calculates total change in radians of some odometry stream:
+### 3.1 Iterating Messages
 
 ```python
-def test_total_rotation_travel_rxpy() -> None:
-    total_rad = (
-        SensorReplay(name="raw_odometry_rotate_walk", autocast=Odometry.from_msg)
-        .stream()
-        .pipe(
-            ops.map(lambda odom: odom.rot.z),
-            ops.pairwise(),  # [1,2,3,4] -> [[1,2], [2,3], [3,4]]
-            ops.starmap(sub),  # [sub(1,2), sub(2,3), sub(3,4)]
-            ops.reduce(add),
-        )
-        .run()
+from sensor_tools import SensorReplay
+
+# Print every stored Odometry message
+SensorReplay(name="raw_odometry_rotate_walk").iterate(print)
+```
+
+### 3.2 RxPY Streaming
+
+```python
+from rx import operators as ops
+from operator import sub, add
+from sensor_tools import SensorReplay, Odometry
+
+# Compute total yaw rotation (radians)
+
+total_rad = (
+    SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
+    .stream()
+    .pipe(
+        ops.map(lambda odom: odom.rot.z),
+        ops.pairwise(),            # → [(v₀,v₁), (v₁,v₂), …]
+        ops.starmap(sub),          # → [v₁−v₀, v₂−v₁, …]
+        ops.reduce(add),
     )
+    .run()
+)
 
-    assert total_rad == pytest.approx(4.05, abs=0.01)
+assert total_rad == pytest.approx(4.05, abs=0.01)
 ```
 
-Lidar data reply example (200mb dir)
+### 3.3 Lidar Mapping Example (200MB blob)
 
 ```python
-def test_robot_mapping():
-    lidar_stream = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
-    map = Map(voxel_size=0.5)
-    # this will block until map has consumed the whole stream
-    map.consume(lidar_stream.stream()).run()
+from sensor_tools import SensorReplay, LidarMessage
+from mapping import Map
 
-    # we investigate built map
-    costmap = map.costmap
+lidar_stream = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
+map_ = Map(voxel_size=0.5)
 
-    assert costmap.grid.shape == (404, 276)
-    
-    # etc etc 
+# Blocks until the stream is consumed
+map_.consume(lidar_stream.stream()).run()
+
+assert map_.costmap.grid.shape == (404, 276)
 ```
 
+---
 
-lower level acces to data is
+## 4 Low Level Access
+
+If you want complete control, call **`testData(name)`** to get a `Path` to the extracted file or directory — no pickling assumptions:
 
 ```python
-
-absolute_path: Path = testData("some_name") 
-
+absolute_path: Path = testData("some_name")
 ```
-it will return a Path, that either points to a file or a dir, and you can do whatever you want with it (could be a video file, a directory with a model or some code even, etc)
 
-# Implementation
+Do whatever you like: open a video file, load a model checkpoint, etc.
 
-Anything new you add to `tests/data/*` will be autodetected and you are prompted to push into our LFS store. 
-It can then be pulled on-demand programatically when/if needed like described above (so that we don't make dimos repo checkout large by default)
+---
 
-IRL Usage examples:
-    - `dimos/robot/unitree_webrtc/type/test_odometry.py`
-    - `dimos/robot/unitree_webrtc/type/test_map.py`
+## 5 Storing New Streams
 
-# Message storage
-
-if you mark your test with `tool` it will not be ran by default but is a convinient place for codebase specific tooling? not super set on this but convinient for now.
-Below uses SensorStorage (as opposed to SensorReplay) to store new messages in `tests/data/*.pickle`
+1. **Write a test marked `@pytest.mark.tool`** so CI skips it by default.
+2. Use `SensorStorage` to persist the stream into `tests/data/<name>/*.pickle`.
 
 ```python
 @pytest.mark.tool
-def test_store_odometry_stream() -> None:
+def test_store_odometry_stream():
     load_dotenv()
 
     robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
     robot.standup()
 
-    storage = SensorStorage("raw_odometry_rotate_walk")
-    storage.save_stream(robot.raw_odom_stream())
-
-    shutdown = threading.Event()
+    storage = SensorStorage("raw_odometry_rotate_walk2")
+    storage.save_stream(robot.raw_odom_stream())  # ← records until interrupted
 
     try:
-        while not shutdown.wait(0.1):
-            pass
+        while True:
+            time.sleep(0.1)
     except KeyboardInterrupt:
-        shutdown.set()
-    finally:
         robot.liedown()
 ```
 
-Anything new that you add to tests/data (can be a directory or file) will be considered "a data blob" and is automatically compressed into `tests/data/.lfs/*.tar.gz` and pushed to LFS. raw data in `tests/data/` is not commited anywhere and is .gitignored. This data is then pulled on demand when needed by others. Upload is done by a simple tool `./bin/lfs_push`. will autodetect new stuff in tests/data/ and automatically compress to `tests/data/.lfs` and push to lfs. You can then commit this new file in `.lfs/` into your PR. 
+### 5.1 Behind the Scenes
 
-Below is not neccessary but recommended, if you install pre-commit
+* Any new file/dir under `tests/data/` is treated as a **data blob**.
+* `./bin/lfs_push` compresses it into `tests/data/.lfs/<name>.tar.gz` *and* uploads it to Git LFS.
+* Only the `.lfs/` archive is committed; raw binaries remain `.gitignored`.
+
+---
+
+## 6 Developer Workflow Checklist
+
+1. **Drop new data** into `tests/data/`.
+2. Run `./bin/lfs_push` (or let the pre commit hook nag you).
+3. Commit the resulting `tests/data/.lfs/<name>.tar.gz`.
+4. Open PR — reviewers pull only what they need, when they need it.
+
+### 6.1 Pre commit Setup (optional but recommended)
 
 ```sh
-apt install pre-commit
-cd $REPO
-pre-commit install
+sudo apt install pre-commit
+pre-commit install   # inside repo root
 ```
 
-This will register hooks that will auto-detect changes in `tests/data` (among other things like formatting etc) so you don't forget to add stuff on your commits
+Now each commit checks formatting, linting, *and* whether you forgot to push new blobs:
 
-```sh
-echo blabla > tests/data/bla.txt
-pre-commit run
-
-CRLF end-lines checker...............................(no files to check)Skipped
-CRLF end-lines remover...............................(no files to check)Skipped
-Insert license in comments...........................(no files to check)Skipped
-ruff format..........................................(no files to check)Skipped
-check for case conflicts.............................(no files to check)Skipped
-check json...........................................(no files to check)Skipped
-check toml...........................................(no files to check)Skipped
-check yaml...........................................(no files to check)Skipped
-format json..........................................(no files to check)Skipped
-LFS data.................................................................Failed
-- hook id: lfs_check
-- exit code: 1
-
+```
+$ echo test > tests/data/foo.txt
+$ git add tests/data/foo.txt && git commit -m "demo"
+LFS data ......................................................... Failed
 ✗ New test data detected at /tests/data:
-  bla.txt
-
+  foo.txt
 Either delete or run ./bin/lfs_push
-(lfs_push will compress the files into /tests/data/.lfs/, upload to LFS, and add them to your commit)
 ```
+
+---
+
+## 7 Future Work
+
+A replay rate that mirrors the **original message timestamps** can be implemented downstream (e.g., an RxPY operator). Contributions welcome!
+
+---
+
+## 8 In the Wild Examples
+
+* `dimos/robot/unitree_webrtc/type/test_odometry.py`
+* `dimos/robot/unitree_webrtc/type/test_map.py`
 
