@@ -1,6 +1,24 @@
 default_stages: [pre-commit]
 exclude: (dimos/models/.*)|(deprecated)
 repos:
+
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.5
+    hooks:
+      - id: forbid-crlf
+      - id: remove-crlf
+      - id: insert-license
+        files: \.py$
+        exclude: __init__\.py$
+        args:
+          # use if you want to remove licences from all files
+          # (for globally changing wording or something)
+          #- --remove-header
+          - --license-filepath
+          - LICENSE_HEADER
+          - --use-current-year
+
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.11
     hooks:
