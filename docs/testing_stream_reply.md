@@ -119,19 +119,26 @@ def test_store_odometry_stream():
 ### 5.1 Behind the Scenes
 
 * Any new file/dir under `tests/data/` is treated as a **data blob**.
-* `./bin/lfs_push` compresses it into `tests/data/.lfs/<name>.tar.gz` *and* uploads it to Git LFS.
-* Only the `.lfs/` archive is committed; raw binaries remain `.gitignored`.
+* `./bin/lfs_push` compresses it into `tests/data/.lfs/<name>.tar.gz` *and* uploads it to Git LFS.
+* Only the `.lfs/` archive is committed; raw binaries remain `.gitignored`.
 
 ---
 
-## 6 Developer Workflow Checklist
+## 6 Storing Arbitrary Binary Data
+
+Just copy to `tests/data/whatever`
+* `./bin/lfs_push` compresses it into `tests/data/.lfs/<name>.tar.gz` *and* uploads it to Git LFS.
+
+---
+
+## 7 Developer Workflow Checklist
 
 1. **Drop new data** into `tests/data/`.
 2. Run `./bin/lfs_push` (or let the pre commit hook nag you).
 3. Commit the resulting `tests/data/.lfs/<name>.tar.gz`.
 4. Open PR — reviewers pull only what they need, when they need it.
 
-### 6.1 Pre commit Setup (optional but recommended)
+### 7.1 Pre commit Setup (optional but recommended)
 
 ```sh
 sudo apt install pre-commit
@@ -151,13 +158,14 @@ Either delete or run ./bin/lfs_push
 
 ---
 
-## 7 Future Work
+## 8 Future Work
 
-A replay rate that mirrors the **original message timestamps** can be implemented downstream (e.g., an RxPY operator). Contributions welcome!
+- A replay rate that mirrors the **original message timestamps** can be implemented downstream (e.g., an RxPY operator). Contributions welcome!
+- Likely this same system should be used for production binary data delivery as well (Models etc)
 
 ---
 
-## 8 In the Wild Examples
+## 9 Existing Examples
 
 * `dimos/robot/unitree_webrtc/type/test_odometry.py`
 * `dimos/robot/unitree_webrtc/type/test_map.py`
