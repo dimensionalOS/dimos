@@ -26,6 +26,8 @@ import copy
 from typing import Any, Dict, List, Optional, Union, Tuple
 import logging
 import json
+import re
+import time
 
 from cerebras.cloud.sdk import Cerebras
 from dotenv import load_dotenv
@@ -343,11 +345,15 @@ class CerebrasAgent(LLMAgent):
 
         # Create the tool call object
         if name and arguments is not None:
+            timestamp = int(time.time() * 1000000)  # microsecond precision
+            tool_id = f"call_{timestamp}"
+            
+            logger.info(f"Creating tool call with timestamp ID: {tool_id}")
             return type(
                 "ToolCall",
                 (),
                 {
-                    "id": "1",
+                    "id": tool_id,
                     "function": type(
                         "Function", (), {"name": name, "arguments": json.dumps(arguments)}
                     ),
@@ -408,11 +414,22 @@ class CerebrasAgent(LLMAgent):
             tool_calls = getattr(raw_message, "tool_calls", None)
 
             # If no structured tool calls from API, try parsing content as JSON tool call
-            if not tool_calls and content and content.strip().startswith("{"):
-                parsed_tool_call = self.create_tool_call(content=content)
-                if parsed_tool_call:
-                    tool_calls = [parsed_tool_call]
-                    content = None
+            if not tool_calls and content and content.strip():
+                # Look for JSON tool call anywhere in the content
+                json_pattern = r'\{"name":\s*"[^"]+",\s*"arguments":\s*\{[^}]+\}\}'
+                json_matches = re.findall(json_pattern, content)
+                
+                if json_matches:
+                    tool_calls = []
+                    for json_content in json_matches:  # Handle multiple JSON objects
+                        logger.info(f"Found JSON tool call in content: {json_content}")
+                        parsed_tool_call = self.create_tool_call(content=json_content)
+                        if parsed_tool_call:
+                            tool_calls.append(parsed_tool_call)
+                            content = content.replace(json_content, "").strip()
+                    
+                    if not content:
+                        content = None
 
             return CerebrasResponseMessage(content=content, tool_calls=tool_calls)
 
@@ -509,7 +526,7 @@ class CerebrasAgent(LLMAgent):
                 self.skill_library is None
                 or self.skill_library.get_tools() is None
                 or not hasattr(response_message, "tool_calls")
-                or response_message.tool_calls is None
+                or not response_message.tool_calls
             ):
                 # Just use the content directly since JSON parsing is already handled in _send_query
                 final_msg = response_message.content or ""
@@ -596,7 +613,17 @@ class CerebrasAgent(LLMAgent):
                 logger.info("Sending Another Query.")
                 try:
                     response_2 = self._send_query(messages)
-                    return response_2
+                    
+                    # Check if the follow-up response also has tool calls
+                    if (hasattr(response_2, 'tool_calls') and 
+                        response_2.tool_calls and 
+                        len(response_2.tool_calls) > 0):
+                        logger.info("Follow-up response has more tool calls, processing recursively...")
+                        return self._handle_tooling(response_2, messages)
+                    else:
+                        # No more tool calls, return the final response
+                        return response_2
+                        
                 except Exception as e:
                     logger.error(f"Error in follow-up query: {e}")
                     return None
