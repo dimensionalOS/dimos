@@ -347,7 +347,7 @@ class CerebrasAgent(LLMAgent):
         if name and arguments is not None:
             timestamp = int(time.time() * 1000000)  # microsecond precision
             tool_id = f"call_{timestamp}"
-            
+
             logger.info(f"Creating tool call with timestamp ID: {tool_id}")
             return type(
                 "ToolCall",
@@ -418,7 +418,7 @@ class CerebrasAgent(LLMAgent):
                 # Look for JSON tool call anywhere in the content
                 json_pattern = r'\{"name":\s*"[^"]+",\s*"arguments":\s*\{[^}]+\}\}'
                 json_matches = re.findall(json_pattern, content)
-                
+
                 if json_matches:
                     tool_calls = []
                     for json_content in json_matches:  # Handle multiple JSON objects
@@ -427,7 +427,7 @@ class CerebrasAgent(LLMAgent):
                         if parsed_tool_call:
                             tool_calls.append(parsed_tool_call)
                             content = content.replace(json_content, "").strip()
-                    
+
                     if not content:
                         content = None
 
@@ -613,17 +613,21 @@ class CerebrasAgent(LLMAgent):
                 logger.info("Sending Another Query.")
                 try:
                     response_2 = self._send_query(messages)
-                    
+
                     # Check if the follow-up response also has tool calls
-                    if (hasattr(response_2, 'tool_calls') and 
-                        response_2.tool_calls and 
-                        len(response_2.tool_calls) > 0):
-                        logger.info("Follow-up response has more tool calls, processing recursively...")
+                    if (
+                        hasattr(response_2, "tool_calls")
+                        and response_2.tool_calls
+                        and len(response_2.tool_calls) > 0
+                    ):
+                        logger.info(
+                            "Follow-up response has more tool calls, processing recursively..."
+                        )
                         return self._handle_tooling(response_2, messages)
                     else:
                         # No more tool calls, return the final response
                         return response_2
-                        
+
                 except Exception as e:
                     logger.error(f"Error in follow-up query: {e}")
                     return None
