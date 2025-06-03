@@ -160,7 +160,7 @@ Either delete or run ./bin/lfs_push
 
 ## 8 Future Work
 
-- A replay rate that mirrors the **original message timestamps** can be implemented downstream (e.g., an RxPY operator). Contributions welcome!
+- A replay rate that mirrors the **original message timestamps** can be implemented downstream (e.g., an RxPY operator)
 - Likely this same system should be used for production binary data delivery as well (Models etc)
 
 ---
