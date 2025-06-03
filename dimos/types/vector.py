@@ -115,14 +115,14 @@ class Vector:
             return False
         return np.allclose(self._data, other._data)
 
-    def __add__(self: T, other) -> T:
+    def __add__(self: T, other: VectorLike) -> T:
         other = to_vector(other)
         if self.dim != other.dim:
             max_dim = max(self.dim, other.dim)
             return self.pad(max_dim) + other.pad(max_dim)
         return self.__class__(self._data + other._data)
 
-    def __sub__(self: T, other) -> T:
+    def __sub__(self: T, other: VectorLike) -> T:
         other = to_vector(other)
         if self.dim != other.dim:
             max_dim = max(self.dim, other.dim)
@@ -141,12 +141,12 @@ class Vector:
     def __neg__(self: T) -> T:
         return self.__class__(-self._data)
 
-    def dot(self, other) -> float:
+    def dot(self, other: VectorLike) -> float:
         """Compute dot product."""
         other = to_vector(other)
         return float(np.dot(self._data, other._data))
 
-    def cross(self: T, other) -> T:
+    def cross(self: T, other: VectorLike) -> T:
         """Compute cross product (3D vectors only)."""
         if self.dim != 3:
             raise ValueError("Cross product is only defined for 3D vectors")
@@ -188,18 +188,18 @@ class Vector:
         padded[: len(self._data)] = self._data
         return self.__class__(padded)
 
-    def distance(self, other) -> float:
+    def distance(self, other: VectorLike) -> float:
         """Compute Euclidean distance to another vector."""
         other = to_vector(other)
         return float(np.linalg.norm(self._data - other._data))
 
-    def distance_squared(self, other) -> float:
+    def distance_squared(self, other: VectorLike) -> float:
         """Compute squared Euclidean distance to another vector (faster than distance())."""
         other = to_vector(other)
         diff = self._data - other._data
         return float(np.sum(diff * diff))
 
-    def angle(self, other) -> float:
+    def angle(self, other: VectorLike) -> float:
         """Compute the angle (in radians) between this vector and another."""
         other = to_vector(other)
         if self.length() < 1e-10 or other.length() < 1e-10:
@@ -213,7 +213,7 @@ class Vector:
         )
         return float(np.arccos(cos_angle))
 
-    def project(self: T, onto) -> T:
+    def project(self: T, onto: VectorLike) -> T:
         """Project this vector onto another vector."""
         onto = to_vector(onto)
         onto_length_sq = np.sum(onto._data * onto._data)
