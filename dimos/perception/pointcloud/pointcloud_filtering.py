@@ -19,8 +19,8 @@ import torch
 import open3d as o3d
 from typing import Dict, List, Optional, Union
 
-from dimos.perception.segmentation import Sam2DSegmenter
-from dimos.types.segmentation import SegmentationType
+from dimos.types.manipulation import ObjectData
+from dimos.types.vector import Vector
 from dimos.perception.pointcloud.utils import (
     load_camera_matrix_from_yaml,
     create_point_cloud_and_extract_masks,
@@ -108,21 +108,17 @@ class PointcloudFiltering:
         color = np.random.randint(0, 255, 3, dtype=np.uint8)
         np.random.seed(None)
         return color
-
-    def _validate_inputs(
-        self, color_img: np.ndarray, depth_img: np.ndarray, segmentation_result: SegmentationType
-    ):
+    
+    def _validate_inputs(self, color_img: np.ndarray, depth_img: np.ndarray, objects: List[ObjectData]):
         """Validate input parameters."""
         if not isinstance(color_img, np.ndarray) or len(color_img.shape) != 3:
             raise ValueError("color_img must be a 3D numpy array")
         if not isinstance(depth_img, np.ndarray) or len(depth_img.shape) != 2:
             raise ValueError("depth_img must be a 2D numpy array")
         if color_img.shape[:2] != depth_img.shape:
-            raise ValueError(
-                f"Color and depth image dimensions don't match: {color_img.shape[:2]} vs {depth_img.shape}"
-            )
-        if not isinstance(segmentation_result, SegmentationType):
-            raise ValueError("segmentation_result must be a SegmentationType object")
+            raise ValueError(f"Color and depth image dimensions don't match: {color_img.shape[:2]} vs {depth_img.shape}")
+        if not isinstance(objects, list):
+            raise ValueError("objects must be a list of ObjectData")
         if self.depth_camera_matrix is None:
             raise ValueError("Depth camera matrix must be provided")
 
@@ -184,37 +180,42 @@ class PointcloudFiltering:
         )
 
         return pcd_filtered
-
-    def process_images(
-        self, color_img: np.ndarray, depth_img: np.ndarray, segmentation_result: SegmentationType
-    ) -> Dict:
+    
+    def _extract_masks_from_objects(self, objects: List[ObjectData]) -> List[np.ndarray]:
+        """Extract segmentation masks from ObjectData objects."""
+        masks = []
+        for i, obj in enumerate(objects):
+            if 'segmentation_mask' not in obj or obj['segmentation_mask'] is None:
+                raise ValueError(f"Object {i} is missing segmentation_mask")
+            masks.append(obj['segmentation_mask'])
+        return masks
+    
+    def process_images(self, color_img: np.ndarray, depth_img: np.ndarray, objects: List[ObjectData]) -> List[ObjectData]:
         """
-        Process color and depth images with segmentation results to create filtered point clouds.
-
+        Process color and depth images with object detection results to create filtered point clouds.
+        
         Args:
             color_img: RGB image as numpy array (H, W, 3)
             depth_img: Depth image as numpy array (H, W) in meters
-            segmentation_result: SegmentationType object containing masks and metadata
-
+            objects: List of ObjectData from object detection stream
+        
         Returns:
-            Dictionary containing:
-                - objects: List of object dictionaries with point clouds and metadata
-                - full_point_cloud: Complete Open3D point cloud for reference
-                - processing_stats: Overall processing statistics
-
+            List of updated ObjectData with pointcloud and 3D information
+        
         Raises:
             ValueError: If inputs are invalid
             RuntimeError: If processing fails
         """
         # Validate inputs
-        self._validate_inputs(color_img, depth_img, segmentation_result)
-
+        self._validate_inputs(color_img, depth_img, objects)
+        
+        if not objects:
+            return []
+        
         try:
-            # Extract data from segmentation result
-            masks = segmentation_result.masks
-            metadata = segmentation_result.metadata
-            objects_metadata = metadata.get("objects", [])
-
+            # Extract masks from ObjectData
+            masks = self._extract_masks_from_objects(objects)
+            
             # Prepare masks
             processed_masks = self._prepare_masks(masks, depth_img.shape)
 
@@ -222,24 +223,20 @@ class PointcloudFiltering:
             full_pcd, masked_pcds = create_point_cloud_and_extract_masks(
                 color_img, depth_img, processed_masks, self.depth_camera_matrix, depth_scale=1.0
             )
-
-            # Process each object
-            objects = []
-            total_points_processed = 0
-
-            for i, (mask, pcd) in enumerate(zip(processed_masks, masked_pcds)):
+            
+            # Process each object and update ObjectData
+            updated_objects = []
+            
+            for i, (obj, mask, pcd) in enumerate(zip(objects, processed_masks, masked_pcds)):
                 # Skip empty point clouds
                 if len(np.asarray(pcd.points)) == 0:
                     continue
-
-                # Get object metadata
-                obj_meta = objects_metadata[i] if i < len(objects_metadata) else {}
-                object_id = obj_meta.get("object_id", i)
-                bbox = obj_meta.get("bbox", [0, 0, 0, 0])
-                confidence = obj_meta.get("prob", 1.0)
-                label = obj_meta.get("label", "")
-
+                
+                # Create a copy of the object data to avoid modifying the original
+                updated_obj = obj.copy()
+                
                 # Generate consistent color
+                object_id = obj.get('object_id', i)
                 rgb_color = self.generate_color_from_id(object_id)
 
                 # Apply color mask
@@ -247,49 +244,58 @@ class PointcloudFiltering:
 
                 # Apply filtering
                 pcd_filtered = self._apply_filtering(pcd)
-
-                # Fit cuboid if enough points
-                cuboid_params = None
+                
+                # Fit cuboid and extract 3D information
                 points = np.asarray(pcd_filtered.points)
                 if len(points) >= self.min_points_for_cuboid:
                     try:
                         cuboid_params = fit_cuboid(points, method=self.cuboid_method)
+                        if cuboid_params is not None:
+                            # Update position, rotation, and size from cuboid
+                            center = cuboid_params['center']
+                            dimensions = cuboid_params['dimensions']
+                            rotation_matrix = cuboid_params['rotation']
+                            
+                            # Convert rotation matrix to euler angles (roll, pitch, yaw)
+                            # Using ZYX rotation order (yaw, pitch, roll)
+                            sy = np.sqrt(rotation_matrix[0,0] * rotation_matrix[0,0] + rotation_matrix[1,0] * rotation_matrix[1,0])
+                            singular = sy < 1e-6
+                            
+                            if not singular:
+                                roll = np.arctan2(rotation_matrix[2,1], rotation_matrix[2,2])
+                                pitch = np.arctan2(-rotation_matrix[2,0], sy)
+                                yaw = np.arctan2(rotation_matrix[1,0], rotation_matrix[0,0])
+                            else:
+                                roll = np.arctan2(-rotation_matrix[1,2], rotation_matrix[1,1])
+                                pitch = np.arctan2(-rotation_matrix[2,0], sy)
+                                yaw = 0
+                            
+                            # Update position, rotation, and size from cuboid
+                            updated_obj['position'] = Vector(center[0], center[1], center[2])
+                            updated_obj['rotation'] = Vector(roll, pitch, yaw)
+                            updated_obj['size'] = {
+                                'width': float(dimensions[0]),
+                                'height': float(dimensions[1]),
+                                'depth': float(dimensions[2])
+                            }
+                            
                     except Exception as e:
-                        # Log warning but don't fail the entire process
                         print(f"Warning: Cuboid fitting failed for object {object_id}: {e}")
-
-                # Create object data
-                obj_data = {
-                    "object_id": object_id,
-                    "mask": mask,
-                    "bbox": bbox,
-                    "confidence": float(confidence),
-                    "label": label,
-                    "point_cloud": pcd_filtered,
-                    "point_cloud_numpy": o3d_point_cloud_to_numpy(pcd_filtered),
-                    "color": rgb_color,
-                }
-
-                if cuboid_params is not None:
-                    obj_data["cuboid_params"] = cuboid_params
-
-                objects.append(obj_data)
-                total_points_processed += len(points)
-
-            # Processing statistics
-            processing_stats = {
-                "total_objects_processed": len(objects),
-                "total_input_objects": len(masks),
-                "total_points_processed": total_points_processed,
-                "full_point_cloud_size": len(np.asarray(full_pcd.points)),
-            }
-
-            return {
-                "objects": objects,
-                "full_point_cloud": full_pcd,
-                "processing_stats": processing_stats,
-            }
-
+                        # Set default values if cuboid fitting fails
+                        updated_obj['position'] = Vector(0, 0, 0)
+                        updated_obj['rotation'] = Vector(0, 0, 0)
+                        if 'size' not in updated_obj:
+                            updated_obj['size'] = {'width': 0.0, 'height': 0.0, 'depth': 0.0}
+                
+                # Add point cloud data to ObjectData
+                updated_obj['point_cloud'] = pcd_filtered
+                updated_obj['point_cloud_numpy'] = o3d_point_cloud_to_numpy(pcd_filtered)
+                updated_obj['color'] = rgb_color
+                
+                updated_objects.append(updated_obj)
+            
+            return updated_objects
+            
         except Exception as e:
             raise RuntimeError(f"Failed to process images: {e}")
         finally:
@@ -373,68 +379,67 @@ def load_test_images(data_dir: str) -> tuple:
     return color_img, depth_img
 
 
-def run_segmentation(color_img: np.ndarray, device: str = "auto") -> SegmentationType:
+def run_segmentation(color_img: np.ndarray, device: str = "auto") -> List[ObjectData]:
     """
-    Run segmentation on color image.
-
+    Run segmentation on color image and return ObjectData objects.
+    
     Args:
         color_img: RGB color image
         device: Device to use ('auto', 'cuda', or 'cpu')
 
     Returns:
-        SegmentationType object with segmentation results
+        List of ObjectData objects with segmentation results
     """
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
-
+    
+    # Import here to avoid circular imports
+    from dimos.perception.segmentation import Sam2DSegmenter
+    
     segmenter = Sam2DSegmenter(
         model_path="FastSAM-s.pt", device=device, use_tracker=False, use_analyzer=False
     )
 
     try:
         masks, bboxes, target_ids, probs, names = segmenter.process_image(np.array(color_img))
-
-        # Create metadata
-        objects_metadata = []
+        
+        # Create ObjectData objects
+        objects = []
         for i in range(len(bboxes)):
-            obj_data = {
+            obj_data: ObjectData = {
                 "object_id": target_ids[i] if i < len(target_ids) else i,
                 "bbox": bboxes[i],
-                "prob": probs[i] if i < len(probs) else 1.0,
+                "depth": -1.0,  # Will be populated by pointcloud filtering
+                "confidence": probs[i] if i < len(probs) else 1.0,
+                "class_id": i,
                 "label": names[i] if i < len(names) else "",
+                "segmentation_mask": masks[i].cpu().numpy() if hasattr(masks[i], 'cpu') else masks[i],
+                "position": Vector(0, 0, 0),  # Will be populated by pointcloud filtering
+                "rotation": Vector(0, 0, 0),  # Will be populated by pointcloud filtering
+                "size": {"width": 0.0, "height": 0.0, "depth": 0.0}  # Will be populated by pointcloud filtering
             }
-            objects_metadata.append(obj_data)
-
-        metadata = {"frame": color_img, "objects": objects_metadata}
-
-        numpy_masks = [mask.cpu().numpy() if hasattr(mask, "cpu") else mask for mask in masks]
-        return SegmentationType(masks=numpy_masks, metadata=metadata)
-
+            objects.append(obj_data)
+        
+        return objects
+        
     finally:
         segmenter.cleanup()
 
 
-def visualize_results(results: Dict):
+def visualize_results(objects: List[ObjectData]):
     """
     Visualize point cloud filtering results.
 
     Args:
-        results: Results dictionary from process_images
+        objects: List of ObjectData with point clouds
     """
     all_pcds = []
-
-    for obj in results["objects"]:
-        pcd = obj["point_cloud"]
-        all_pcds.append(pcd)
-
-        # Add cuboid visualization if available
-        if "cuboid_params" in obj:
-            cuboid = obj["cuboid_params"]
-            if "bounding_box" in cuboid:
-                obb = cuboid["bounding_box"]
-                obb.color = [1, 0, 0]  # Red bounding boxes
-                all_pcds.append(obb)
-
+    
+    for obj in objects:
+        if 'point_cloud' in obj and obj['point_cloud'] is not None:
+            pcd = obj['point_cloud']
+            all_pcds.append(pcd)
+    
     # Add coordinate frame
     coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
     all_pcds.append(coordinate_frame)
@@ -461,35 +466,35 @@ def main():
 
         # Run segmentation
         print("Running segmentation...")
-        segmentation_result = run_segmentation(color_img)
-        print(f"Found {len(segmentation_result.masks)} objects")
-
+        objects = run_segmentation(color_img)
+        print(f"Found {len(objects)} objects")
+        
         # Create filtering pipeline
         print("Creating filtering pipeline...")
         filter_pipeline, _, _ = create_test_pipeline(data_dir)
 
         # Process images
         print("Processing point clouds...")
-        results = filter_pipeline.process_images(color_img, depth_img, segmentation_result)
-
+        updated_objects = filter_pipeline.process_images(color_img, depth_img, objects)
+        
         # Print results
-        stats = results["processing_stats"]
         print(f"Processing complete:")
-        print(
-            f"  Objects processed: {stats['total_objects_processed']}/{stats['total_input_objects']}"
-        )
-        print(f"  Total points: {stats['total_points_processed']}")
-
+        print(f"  Objects processed: {len(updated_objects)}/{len(objects)}")
+        
         # Print per-object stats
-        for i, obj in enumerate(results["objects"]):
-            print(
-                f"  Object {i + 1} (ID: {obj['object_id']}): {len(np.asarray(obj['point_cloud'].points))} points"
-            )
-
+        for i, obj in enumerate(updated_objects):
+            if 'point_cloud' in obj and obj['point_cloud'] is not None:
+                num_points = len(np.asarray(obj['point_cloud'].points))
+                position = obj.get('position', Vector(0, 0, 0))
+                size = obj.get('size', {})
+                print(f"  Object {i+1} (ID: {obj['object_id']}): {num_points} points")
+                print(f"    Position: ({position.x:.2f}, {position.y:.2f}, {position.z:.2f})")
+                print(f"    Size: {size.get('width', 0):.3f} x {size.get('height', 0):.3f} x {size.get('depth', 0):.3f}")
+        
         # Visualize results
         print("Visualizing results...")
-        visualize_results(results)
-
+        visualize_results(updated_objects)
+        
     except Exception as e:
         print(f"Error: {e}")
         import traceback
