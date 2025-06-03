@@ -41,46 +41,43 @@ def colorize_depth(depth_img, max_depth=5.0):
     depth_norm[valid_mask] = np.clip(depth_img[valid_mask] / max_depth, 0, 1)
     depth_colored = cv2.applyColorMap((depth_norm * 255).astype(np.uint8), cv2.COLORMAP_JET)
     depth_rgb = cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB)
-    
+
     # Make the depth image less bright by scaling down the values
     depth_rgb = (depth_rgb * 0.6).astype(np.uint8)
-    
+
     return depth_rgb
 
 
 def main():
     print("Initializing ZED camera with object detection and point cloud filtering...")
-    
+
     # Configuration
     min_confidence = 0.6
     web_port = 5555
-    
+
     try:
         # Initialize ZED camera stream
-        zed_stream = ZEDCameraStream(
-            resolution=sl.RESOLUTION.HD1080,
-            fps=10
-        )
-        
+        zed_stream = ZEDCameraStream(resolution=sl.RESOLUTION.HD1080, fps=10)
+
         # Get camera intrinsics
         camera_intrinsics_dict = zed_stream.get_camera_info()
         camera_intrinsics = [
-            camera_intrinsics_dict["fx"], 
-            camera_intrinsics_dict["fy"], 
-            camera_intrinsics_dict["cx"], 
-            camera_intrinsics_dict["cy"]
+            camera_intrinsics_dict["fx"],
+            camera_intrinsics_dict["fy"],
+            camera_intrinsics_dict["cx"],
+            camera_intrinsics_dict["cy"],
         ]
-        
+
         # Create ZED streams
         zed_frame_stream = zed_stream.create_stream().pipe(ops.share())
-        
+
         # RGB stream for object detection
         video_stream = zed_frame_stream.pipe(
             ops.map(lambda x: x.get("rgb") if x is not None else None),
             ops.filter(lambda x: x is not None),
-            ops.share()
+            ops.share(),
         )
-        
+
         # Initialize object detection
         detector = Detic2DDetector(vocabulary=None, threshold=min_confidence)
         object_detector = ObjectDetectionStream(
@@ -91,13 +88,13 @@ def main():
             video_stream=video_stream,
             disable_depth=True,
         )
-        
+
         # Initialize point cloud filtering
         pointcloud_filter = PointcloudFiltering(
             color_intrinsics=camera_intrinsics,
             depth_intrinsics=camera_intrinsics,  # ZED uses same intrinsics for RGB and depth
         )
-        
+
     except ImportError:
         print("Error: ZED SDK not installed. Please install pyzed package.")
         sys.exit(1)
@@ -123,21 +120,19 @@ def main():
     def get_depth_or_overlay(zed_data):
         if zed_data is None:
             return None
-        
+
         # Check if we have a point cloud overlay available
         with frame_lock:
             overlay = latest_point_cloud_overlay
-        
+
         if overlay is not None:
             return overlay
         else:
             # Return regular colorized depth
             return colorize_depth(zed_data.get("depth"), max_depth=10.0)
-    
+
     depth_stream = zed_frame_stream.pipe(
-        ops.map(get_depth_or_overlay),
-        ops.filter(lambda x: x is not None),
-        ops.share()
+        ops.map(get_depth_or_overlay), ops.filter(lambda x: x is not None), ops.share()
     )
 
     # Process object detection results with point cloud filtering
@@ -148,26 +143,28 @@ def main():
             with frame_lock:
                 rgb = latest_rgb
                 depth = latest_depth
-            
+
             if rgb is not None and depth is not None:
                 try:
-                    filtered_objects = pointcloud_filter.process_images(rgb, depth, result["objects"])
-                    
+                    filtered_objects = pointcloud_filter.process_images(
+                        rgb, depth, result["objects"]
+                    )
+
                     if filtered_objects:
                         # Create base image (colorized depth)
                         base_image = colorize_depth(depth, max_depth=10.0)
-                        
+
                         # Create point cloud overlay visualization
                         overlay_viz = create_point_cloud_overlay_visualization(
                             base_image=base_image,
                             filtered_objects=filtered_objects,
-                            camera_matrix=camera_intrinsics
+                            camera_matrix=camera_intrinsics,
                         )
-                        
+
                         # Store the overlay for the stream
                         with frame_lock:
                             latest_point_cloud_overlay = overlay_viz
-                        
+
                         # # Print object stats for debugging
                         # print(f"\nProcessed {len(filtered_objects)} objects with point clouds:")
                         # for i, obj in enumerate(filtered_objects):
@@ -181,7 +178,7 @@ def main():
                         # No filtered objects, clear overlay
                         with frame_lock:
                             latest_point_cloud_overlay = None
-                
+
                 except Exception as e:
                     print(f"Error in point cloud filtering: {e}")
                     with frame_lock:
@@ -206,9 +203,7 @@ def main():
 
         # Subscribe to object detection stream
         object_detector.get_stream().subscribe(
-            on_next=on_detection_next,
-            on_error=on_error, 
-            on_completed=on_completed
+            on_next=on_detection_next, on_error=on_error, on_completed=on_completed
         )
 
         # Create visualization stream for web interface
@@ -220,10 +215,10 @@ def main():
         # Set up web interface
         print("Initializing web interface...")
         web_interface = RobotWebInterface(
-            port=web_port, 
+            port=web_port,
             zed_video=video_stream,
             object_detection=viz_stream,
-            depth_stream=depth_stream  # Use the simplified depth stream that includes overlays
+            depth_stream=depth_stream,  # Use the simplified depth stream that includes overlays
         )
 
         print("\nZED Stream + Object Detection + Point Cloud Filtering Test Running:")
@@ -242,9 +237,9 @@ def main():
         print(f"Error during test: {e}")
     finally:
         print("Cleaning up resources...")
-        if 'zed_stream' in locals():
+        if "zed_stream" in locals():
             zed_stream.cleanup()
-        if 'pointcloud_filter' in locals():
+        if "pointcloud_filter" in locals():
             pointcloud_filter.cleanup()
         print("Test completed")
 
