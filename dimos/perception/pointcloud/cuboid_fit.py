@@ -13,289 +13,398 @@
 # limitations under the License.
 
 import numpy as np
-from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
+import open3d as o3d
 import cv2
+from typing import Dict, Optional, Union, Tuple
 
 
-def fit_cuboid(points, n_iterations=5, inlier_thresh=2.0):
+def fit_cuboid(
+    points: Union[np.ndarray, o3d.geometry.PointCloud], 
+    method: str = 'minimal'
+) -> Optional[Dict]:
     """
-    Fit a cuboid to a point cloud using iteratively refined PCA.
+    Fit a cuboid to a point cloud using Open3D's built-in methods.
 
     Args:
-        points: Nx3 array of points
-        n_iterations: Number of refinement iterations
-        inlier_thresh: Threshold for inlier detection in standard deviations
+        points: Nx3 array of points or Open3D PointCloud
+        method: Fitting method:
+            - 'minimal': Minimal oriented bounding box (best fit)
+            - 'oriented': PCA-based oriented bounding box
+            - 'axis_aligned': Axis-aligned bounding box
 
     Returns:
-        dict containing:
+        Dictionary containing:
             - center: 3D center point
-            - dimensions: 3D dimensions
+            - dimensions: 3D dimensions (extent)
             - rotation: 3x3 rotation matrix
-            - error: fitting error
+            - error: Fitting error
+            - bounding_box: Open3D OrientedBoundingBox object
+        Returns None if insufficient points or fitting fails.
+        
+    Raises:
+        ValueError: If method is invalid or inputs are malformed
     """
-    points = np.asarray(points)
-    if len(points) < 4:
+    # Validate method
+    valid_methods = ['minimal', 'oriented', 'axis_aligned']
+    if method not in valid_methods:
+        raise ValueError(f"method must be one of {valid_methods}, got '{method}'")
+    
+    # Convert to point cloud if needed
+    if isinstance(points, np.ndarray):
+        points = np.asarray(points)
+        if len(points.shape) != 2 or points.shape[1] != 3:
+            raise ValueError(f"points array must be Nx3, got shape {points.shape}")
+        if len(points) < 4:
+            return None
+            
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+    elif isinstance(points, o3d.geometry.PointCloud):
+        pcd = points
+        points = np.asarray(pcd.points)
+        if len(points) < 4:
+            return None
+    else:
+        raise ValueError(f"points must be numpy array or Open3D PointCloud, got {type(points)}")
+    
+    try:
+        # Get bounding box based on method
+        if method == 'minimal':
+            obb = pcd.get_minimal_oriented_bounding_box(robust=True)
+        elif method == 'oriented':
+            obb = pcd.get_oriented_bounding_box(robust=True)
+        elif method == 'axis_aligned':
+            # Convert axis-aligned to oriented format for consistency
+            aabb = pcd.get_axis_aligned_bounding_box()
+            obb = o3d.geometry.OrientedBoundingBox()
+            obb.center = aabb.get_center()
+            obb.extent = aabb.get_extent()
+            obb.R = np.eye(3)  # Identity rotation for axis-aligned
+        
+        # Extract parameters
+        center = np.asarray(obb.center)
+        dimensions = np.asarray(obb.extent)
+        rotation = np.asarray(obb.R)
+        
+        # Calculate fitting error
+        error = _compute_fitting_error(points, center, dimensions, rotation)
+        
+        return {
+            "center": center,
+            "dimensions": dimensions,
+            "rotation": rotation,
+            "error": error,
+            "bounding_box": obb,
+            "method": method
+        }
+        
+    except Exception as e:
+        # Log error but don't crash - return None for graceful handling
+        print(f"Warning: Cuboid fitting failed with method '{method}': {e}")
         return None
 
-    # Initial center estimate using median for robustness
-    best_error = float("inf")
-    best_params = None
-    center = np.median(points, axis=0)
-    current_points = points - center
 
-    for iteration in range(n_iterations):
-        if len(current_points) < 4:  # Need at least 4 points for PCA
-            break
-
-        # Perform PCA
-        pca = PCA(n_components=3)
-        pca.fit(current_points)
-
-        # Get rotation matrix from PCA
-        # Open3D expects eigenvectors as columns, but PCA.components_ gives rows
-        rotation = pca.components_.T
-
-        # Ensure rotation matrix is right-handed
-        if np.linalg.det(rotation) < 0:
-            rotation[:, 2] = -rotation[:, 2]  # Flip the third column to make right-handed
-
-        # Transform points to PCA space
-        local_points = current_points @ rotation
-
-        # Initialize mask for this iteration
-        inlier_mask = np.ones(len(current_points), dtype=bool)
-        dimensions = np.zeros(3)
-
-        # Filter points along each dimension
-        for dim in range(3):
-            points_1d = local_points[inlier_mask, dim]
-            if len(points_1d) < 4:
-                break
-
-            median = np.median(points_1d)
-            mad = np.median(np.abs(points_1d - median))
-            sigma = mad * 1.4826  # Convert MAD to standard deviation estimate
-
-            # Avoid issues with constant values
-            if sigma < 1e-6:
-                continue
-
-            # Update mask for this dimension
-            dim_inliers = np.abs(points_1d - median) < (inlier_thresh * sigma)
-            inlier_mask[inlier_mask] = dim_inliers
-
-            # Calculate dimension based on robust statistics
-            valid_points = points_1d[dim_inliers]
-            if len(valid_points) > 0:
-                dimensions[dim] = np.max(valid_points) - np.min(valid_points)
-
-        # Skip if we don't have enough inliers
-        if np.sum(inlier_mask) < 4:
-            continue
-
-        # Calculate error for this iteration
-        # Mean squared distance from points to cuboid surface
-        half_dims = dimensions / 2
-        dx = np.abs(local_points[:, 0]) - half_dims[0]
-        dy = np.abs(local_points[:, 1]) - half_dims[1]
-        dz = np.abs(local_points[:, 2]) - half_dims[2]
-
-        outside_dist = np.sqrt(
-            np.maximum(dx, 0) ** 2 + np.maximum(dy, 0) ** 2 + np.maximum(dz, 0) ** 2
-        )
-        inside_dist = np.minimum(np.maximum(np.maximum(dx, dy), dz), 0)
-        distances = outside_dist + inside_dist
-        error = np.mean(distances**2)
-
-        if error < best_error:
-            best_error = error
-            best_params = {
-                "center": center,
-                "rotation": rotation,
-                "dimensions": dimensions,
-                "error": error,
-            }
-
-        # Update points for next iteration
-        current_points = current_points[inlier_mask]
-
-    return best_params
+def fit_cuboid_simple(points: Union[np.ndarray, o3d.geometry.PointCloud]) -> Optional[Dict]:
+    """
+    Simple wrapper for minimal oriented bounding box fitting.
+    
+    Args:
+        points: Nx3 array of points or Open3D PointCloud
+        
+    Returns:
+        Dictionary with center, dimensions, rotation, and bounding_box, 
+        or None if insufficient points
+    """
+    return fit_cuboid(points, method='minimal')
 
 
-def compute_fitting_error(local_points, dimensions):
-    """Compute mean squared distance from points to cuboid surface."""
+def _compute_fitting_error(
+    points: np.ndarray, 
+    center: np.ndarray, 
+    dimensions: np.ndarray, 
+    rotation: np.ndarray
+) -> float:
+    """
+    Compute fitting error as mean squared distance from points to cuboid surface.
+    
+    Args:
+        points: Nx3 array of points
+        center: 3D center point
+        dimensions: 3D dimensions
+        rotation: 3x3 rotation matrix
+        
+    Returns:
+        Mean squared error
+    """
+    if len(points) == 0:
+        return 0.0
+    
+    # Transform points to local coordinates
+    local_points = (points - center) @ rotation
     half_dims = dimensions / 2
+    
+    # Calculate distance to cuboid surface
     dx = np.abs(local_points[:, 0]) - half_dims[0]
     dy = np.abs(local_points[:, 1]) - half_dims[1]
     dz = np.abs(local_points[:, 2]) - half_dims[2]
-
-    outside_dist = np.sqrt(np.maximum(dx, 0) ** 2 + np.maximum(dy, 0) ** 2 + np.maximum(dz, 0) ** 2)
-    inside_dist = np.minimum(np.maximum(np.maximum(dx, dy), dz), 0)
-
-    distances = outside_dist + inside_dist
-    return np.mean(distances**2)
-
-
-def get_cuboid_corners(center, dimensions, rotation):
-    """Get the 8 corners of a cuboid."""
-    half_dims = dimensions / 2
-    corners_local = (
-        np.array(
-            [
-                [-1, -1, -1],  # 0: left  bottom back
-                [-1, -1, 1],  # 1: left  bottom front
-                [-1, 1, -1],  # 2: left  top    back
-                [-1, 1, 1],  # 3: left  top    front
-                [1, -1, -1],  # 4: right bottom back
-                [1, -1, 1],  # 5: right bottom front
-                [1, 1, -1],  # 6: right top    back
-                [1, 1, 1],  # 7: right top    front
-            ]
-        )
-        * half_dims
+    
+    # Points outside: distance to nearest face
+    # Points inside: negative distance to nearest face
+    outside_dist = np.sqrt(
+        np.maximum(dx, 0) ** 2 + 
+        np.maximum(dy, 0) ** 2 + 
+        np.maximum(dz, 0) ** 2
     )
+    inside_dist = np.minimum(np.minimum(dx, dy), dz)
+    distances = np.where(
+        (dx > 0) | (dy > 0) | (dz > 0), 
+        outside_dist, 
+        -inside_dist
+    )
+    
+    return float(np.mean(distances ** 2))
 
-    # Apply transpose to rotation matrix to be consistent with Open3D convention
+
+def get_cuboid_corners(
+    center: np.ndarray, 
+    dimensions: np.ndarray, 
+    rotation: np.ndarray
+) -> np.ndarray:
+    """
+    Get the 8 corners of a cuboid.
+    
+    Args:
+        center: 3D center point
+        dimensions: 3D dimensions
+        rotation: 3x3 rotation matrix
+        
+    Returns:
+        8x3 array of corner coordinates
+    """
+    half_dims = dimensions / 2
+    corners_local = np.array([
+        [-1, -1, -1],  # 0: left  bottom back
+        [-1, -1,  1],  # 1: left  bottom front
+        [-1,  1, -1],  # 2: left  top    back
+        [-1,  1,  1],  # 3: left  top    front
+        [ 1, -1, -1],  # 4: right bottom back
+        [ 1, -1,  1],  # 5: right bottom front
+        [ 1,  1, -1],  # 6: right top    back
+        [ 1,  1,  1]   # 7: right top    front
+    ]) * half_dims
+    
+    # Apply rotation and translation
     return corners_local @ rotation.T + center
 
 
-def visualize_fit(image, cuboid_params, camera_matrix, R=None, t=None):
+def visualize_cuboid_on_image(
+    image: np.ndarray,
+    cuboid_params: Dict,
+    camera_matrix: np.ndarray,
+    extrinsic_rotation: Optional[np.ndarray] = None,
+    extrinsic_translation: Optional[np.ndarray] = None,
+    color: Tuple[int, int, int] = (0, 255, 0),
+    thickness: int = 2,
+    show_dimensions: bool = True
+) -> np.ndarray:
     """
-    Draw the fitted cuboid on the image.
-
+    Draw a fitted cuboid on an image using camera projection.
+    
     Args:
         image: Input image to draw on
-        cuboid_params: Dictionary containing cuboid parameters (center, dimensions, rotation)
+        cuboid_params: Dictionary containing cuboid parameters
         camera_matrix: Camera intrinsic matrix (3x3)
-        R: Optional external rotation (3x3)
-        t: Optional external translation (3x1)
+        extrinsic_rotation: Optional external rotation (3x3)
+        extrinsic_translation: Optional external translation (3x1)
+        color: Line color as (B, G, R) tuple
+        thickness: Line thickness
+        show_dimensions: Whether to display dimension text
+    
+    Returns:
+        Image with cuboid visualization
+        
+    Raises:
+        ValueError: If required parameters are missing or invalid
     """
+    # Validate inputs
+    required_keys = ['center', 'dimensions', 'rotation']
+    if not all(key in cuboid_params for key in required_keys):
+        raise ValueError(f"cuboid_params must contain keys: {required_keys}")
+    
+    if camera_matrix.shape != (3, 3):
+        raise ValueError(f"camera_matrix must be 3x3, got {camera_matrix.shape}")
+    
     # Get corners in world coordinates
     corners = get_cuboid_corners(
-        cuboid_params["center"], cuboid_params["dimensions"], cuboid_params["rotation"]
+        cuboid_params["center"], 
+        cuboid_params["dimensions"], 
+        cuboid_params["rotation"]
     )
 
-    # Transform corners if R and t are provided
-    if R is not None and t is not None:
-        corners = (R @ corners.T).T + t
+    # Transform corners if extrinsic parameters are provided
+    if extrinsic_rotation is not None and extrinsic_translation is not None:
+        if extrinsic_rotation.shape != (3, 3):
+            raise ValueError(f"extrinsic_rotation must be 3x3, got {extrinsic_rotation.shape}")
+        if extrinsic_translation.shape not in [(3,), (3, 1)]:
+            raise ValueError(f"extrinsic_translation must be (3,) or (3,1), got {extrinsic_translation.shape}")
+        
+        extrinsic_translation = extrinsic_translation.flatten()
+        corners = (extrinsic_rotation @ corners.T).T + extrinsic_translation
 
-    # Ensure corners are in the right format
-    corners = corners.astype(np.float32)
+    try:
+        # Project 3D corners to image coordinates
+        corners_img, _ = cv2.projectPoints(
+            corners.astype(np.float32), 
+            np.zeros(3), np.zeros(3),  # No additional rotation/translation
+            camera_matrix.astype(np.float32), 
+            None  # No distortion
+        )
+        corners_img = corners_img.reshape(-1, 2).astype(int)
+        
+        # Check if corners are within image bounds
+        h, w = image.shape[:2]
+        valid_corners = (
+            (corners_img[:, 0] >= 0) & (corners_img[:, 0] < w) &
+            (corners_img[:, 1] >= 0) & (corners_img[:, 1] < h)
+        )
+        
+        if not np.any(valid_corners):
+            print("Warning: All cuboid corners are outside image bounds")
+            return image.copy()
+        
+    except Exception as e:
+        print(f"Warning: Failed to project cuboid corners: {e}")
+        return image.copy()
 
-    # Use OpenCV's projectPoints for simplicity - handles projection properly
-    # We pass zeros for rotation and translation since our points are already in camera frame
-    corners_img, _ = cv2.projectPoints(
-        corners,
-        np.zeros(3),
-        np.zeros(3),  # No additional rotation/translation
-        camera_matrix,
-        None,  # No distortion
-    )
-    corners_img = corners_img.reshape(-1, 2).astype(int)
-
-    # Define edges for visualization
+    # Define edges for wireframe visualization
     edges = [
         # Bottom face
-        (0, 1),
-        (1, 5),
-        (5, 4),
-        (4, 0),
+        (0, 1), (1, 5), (5, 4), (4, 0),
         # Top face
-        (2, 3),
-        (3, 7),
-        (7, 6),
-        (6, 2),
+        (2, 3), (3, 7), (7, 6), (6, 2),
         # Vertical edges
-        (0, 2),
-        (1, 3),
-        (5, 7),
-        (4, 6),
+        (0, 2), (1, 3), (5, 7), (4, 6),
     ]
 
     # Draw edges
     vis_img = image.copy()
     for i, j in edges:
-        cv2.line(vis_img, tuple(corners_img[i]), tuple(corners_img[j]), (0, 255, 0), 2)
+        # Only draw edge if both corners are valid
+        if valid_corners[i] and valid_corners[j]:
+            cv2.line(vis_img, tuple(corners_img[i]), tuple(corners_img[j]), color, thickness)
 
-    # Add text with dimensions
-    dims = cuboid_params["dimensions"]
-    dim_text = f"Dims: {dims[0]:.3f} x {dims[1]:.3f} x {dims[2]:.3f}"
-    cv2.putText(vis_img, dim_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    # Add dimension text if requested
+    if show_dimensions and np.any(valid_corners):
+        dims = cuboid_params["dimensions"]
+        dim_text = f"Dims: {dims[0]:.3f} x {dims[1]:.3f} x {dims[2]:.3f}"
+        
+        # Find a good position for text (top-left of image)
+        text_pos = (10, 30)
+        font_scale = 0.7
+        
+        # Add background rectangle for better readability
+        text_size = cv2.getTextSize(dim_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 2)[0]
+        cv2.rectangle(vis_img, 
+                     (text_pos[0] - 5, text_pos[1] - text_size[1] - 5),
+                     (text_pos[0] + text_size[0] + 5, text_pos[1] + 5),
+                     (0, 0, 0), -1)
+        
+        cv2.putText(vis_img, dim_text, text_pos, cv2.FONT_HERSHEY_SIMPLEX, 
+                   font_scale, color, 2)
 
     return vis_img
 
 
-def plot_3d_fit(points, cuboid_params, title="3D Cuboid Fit"):
-    """Plot points and fitted cuboid in 3D."""
-    fig = plt.figure(figsize=(10, 10))
-    ax = fig.add_subplot(111, projection="3d")
+def compute_cuboid_volume(cuboid_params: Dict) -> float:
+    """
+    Compute the volume of a cuboid.
+    
+    Args:
+        cuboid_params: Dictionary containing cuboid parameters
+        
+    Returns:
+        Volume in cubic units
+    """
+    if 'dimensions' not in cuboid_params:
+        raise ValueError("cuboid_params must contain 'dimensions' key")
+    
+    dims = cuboid_params['dimensions']
+    return float(np.prod(dims))
 
-    # Plot points
-    ax.scatter(
-        points[:, 0], points[:, 1], points[:, 2], c="b", marker=".", alpha=0.1, label="Points"
-    )
 
-    # Plot fitted cuboid
-    corners = get_cuboid_corners(
-        cuboid_params["center"], cuboid_params["dimensions"], cuboid_params["rotation"]
-    )
+def compute_cuboid_surface_area(cuboid_params: Dict) -> float:
+    """
+    Compute the surface area of a cuboid.
+    
+    Args:
+        cuboid_params: Dictionary containing cuboid parameters
+        
+    Returns:
+        Surface area in square units
+    """
+    if 'dimensions' not in cuboid_params:
+        raise ValueError("cuboid_params must contain 'dimensions' key")
+    
+    dims = cuboid_params['dimensions']
+    return 2.0 * (dims[0] * dims[1] + dims[1] * dims[2] + dims[2] * dims[0])
 
-    # Define edges
-    edges = [
-        # Bottom face
-        (0, 1),
-        (1, 5),
-        (5, 4),
-        (4, 0),
-        # Top face
-        (2, 3),
-        (3, 7),
-        (7, 6),
-        (6, 2),
-        # Vertical edges
-        (0, 2),
-        (1, 3),
-        (5, 7),
-        (4, 6),
+
+def check_cuboid_quality(cuboid_params: Dict, points: np.ndarray) -> Dict:
+    """
+    Assess the quality of a cuboid fit.
+    
+    Args:
+        cuboid_params: Dictionary containing cuboid parameters
+        points: Original points used for fitting
+        
+    Returns:
+        Dictionary with quality metrics
+    """
+    if len(points) == 0:
+        return {"error": "No points provided"}
+    
+    # Basic metrics
+    volume = compute_cuboid_volume(cuboid_params)
+    surface_area = compute_cuboid_surface_area(cuboid_params)
+    error = cuboid_params.get('error', 0.0)
+    
+    # Aspect ratio analysis
+    dims = cuboid_params['dimensions']
+    aspect_ratios = [
+        dims[0] / dims[1] if dims[1] > 0 else float('inf'),
+        dims[1] / dims[2] if dims[2] > 0 else float('inf'),
+        dims[2] / dims[0] if dims[0] > 0 else float('inf')
     ]
+    max_aspect_ratio = max(aspect_ratios)
+    
+    # Volume ratio (cuboid volume vs convex hull volume)
+    try:
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        hull, _ = pcd.compute_convex_hull()
+        hull_volume = hull.get_volume()
+        volume_ratio = volume / hull_volume if hull_volume > 0 else float('inf')
+    except:
+        volume_ratio = None
+    
+    return {
+        "fitting_error": error,
+        "volume": volume,
+        "surface_area": surface_area,
+        "max_aspect_ratio": max_aspect_ratio,
+        "volume_ratio": volume_ratio,
+        "num_points": len(points),
+        "method": cuboid_params.get('method', 'unknown')
+    }
 
-    # Plot edges
-    for i, j in edges:
-        ax.plot3D(
-            [corners[i, 0], corners[j, 0]],
-            [corners[i, 1], corners[j, 1]],
-            [corners[i, 2], corners[j, 2]],
-            "r-",
-        )
 
-    # Set labels and title
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-    ax.set_title(title)
-
-    # Make scaling uniform
-    all_points = np.vstack([points, corners])
-    max_range = (
-        np.array(
-            [
-                all_points[:, 0].max() - all_points[:, 0].min(),
-                all_points[:, 1].max() - all_points[:, 1].min(),
-                all_points[:, 2].max() - all_points[:, 2].min(),
-            ]
-        ).max()
-        / 2.0
+# Backward compatibility
+def visualize_fit(image, cuboid_params, camera_matrix, R=None, t=None):
+    """
+    Legacy function for backward compatibility.
+    Use visualize_cuboid_on_image instead.
+    """
+    return visualize_cuboid_on_image(
+        image, cuboid_params, camera_matrix, R, t,
+        show_dimensions=True
     )
-
-    mid_x = (all_points[:, 0].max() + all_points[:, 0].min()) * 0.5
-    mid_y = (all_points[:, 1].max() + all_points[:, 1].min()) * 0.5
-    mid_z = (all_points[:, 2].max() + all_points[:, 2].min()) * 0.5
-
-    ax.set_xlim(mid_x - max_range, mid_x + max_range)
-    ax.set_ylim(mid_y - max_range, mid_y + max_range)
-    ax.set_zlim(mid_z - max_range, mid_z + max_range)
-
-    ax.set_box_aspect([1, 1, 1])
-    plt.legend()
-    return fig, ax
