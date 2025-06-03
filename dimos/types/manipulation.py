@@ -84,12 +84,12 @@ class ObjectData(TypedDict, total=False):
     label: str  # Semantic label (e.g., 'cup', 'table')
     movement_tolerance: float  # (0.0 = immovable, 1.0 = freely movable)
     segmentation_mask: np.ndarray  # Binary mask of the object's pixels
-    
+
     # 3D pose and dimensions
     position: Union[Dict[str, float], Vector]  # 3D position {x, y, z} or Vector
     rotation: Union[Dict[str, float], Vector]  # 3D rotation {roll, pitch, yaw} or Vector
     size: Dict[str, float]  # Object dimensions {width, height, depth}
-    
+
     # Point cloud data
     point_cloud: "o3d.geometry.PointCloud"  # Open3D point cloud object
     point_cloud_numpy: np.ndarray  # Nx6 array of XYZRGB points
