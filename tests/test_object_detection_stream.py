@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import time
 import sys
@@ -72,8 +86,8 @@ class ResultPrinter:
                 print(
                     f"{i + 1}. {obj['label']} (ID: {obj['object_id']}, Conf: {obj['confidence']:.2f})"
                 )
-                print(f"   Position: x={pos['x']:.2f}, y={pos['y']:.2f}, z={pos['z']:.2f} m")
-                print(f"   Rotation: yaw={rot['yaw']:.2f} rad")
+                print(f"   Position: x={pos.x:.2f}, y={pos.y:.2f}, z={pos.z:.2f} m")
+                print(f"   Rotation: yaw={rot.z:.2f} rad")
                 print(f"   Size: width={size['width']:.2f}, height={size['height']:.2f} m")
                 print(f"   Depth: {obj['depth']:.2f} m")
                 print("-" * 30)
@@ -121,6 +135,7 @@ def main():
             transform_to_map=robot.ros_control.transform_pose,
             detector=detector,
             video_stream=video_stream,
+            disable_depth=True,
         )
 
     else:  # webcam mode
@@ -155,6 +170,7 @@ def main():
             class_filter=class_filter,
             detector=detector,
             video_stream=video_stream,
+            disable_depth=True,
         )
 
         # Set placeholder robot for cleanup

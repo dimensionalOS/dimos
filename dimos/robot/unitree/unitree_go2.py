@@ -53,8 +53,6 @@ class UnitreeGo2(Robot):
         disable_video_stream: bool = False,
         mock_connection: bool = False,
         skills: Optional[Union[MyUnitreeSkills, AbstractSkill]] = None,
-        spatial_memory_dir: str = None,
-        spatial_memory_collection: str = "spatial_memory",
         new_memory: bool = False,
     ):
         """Initialize the UnitreeGo2 robot.
@@ -94,8 +92,6 @@ class UnitreeGo2(Robot):
             ros_control=ros_control,
             output_dir=output_dir,
             skill_library=skills,
-            spatial_memory_dir=spatial_memory_dir,
-            spatial_memory_collection=spatial_memory_collection,
             new_memory=new_memory,
         )
 

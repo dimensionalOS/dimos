@@ -1,17 +1,28 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from dimos.types.vector import Vector
 from typing import Union, Optional
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.connection import WebRTCRobot
 from dimos.robot.global_planner.planner import AstarPlanner
-from dimos.robot.local_planner.simple import SimplePlanner
 from dimos.utils.reactive import getter_streaming
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 import os
 from go2_webrtc_driver.constants import VUI_COLOR
-from dimos.robot.local_planner.vfh.vfh_local_planner import VFHPurePursuitPlanner
-from dimos.robot.local_planner.vfh.local_planner import navigate_path_local
-from reactivex import operators as ops
+from dimos.robot.local_planner import navigate_path_local
 
 
 class Color(VUI_COLOR): ...
@@ -29,46 +40,16 @@ class UnitreeGo2(WebRTCRobot):
         super().__init__(ip=ip, mode=mode)
 
         self.odom = getter_streaming(self.odom_stream())
-
-        self.map = Map(voxel_size=0.5)
+        self.map = Map()
         self.map_stream = self.map.consume(self.lidar_stream())
-        self.get_local_lidar_frame = getter_streaming(self.lidar_stream())
-        self.get_local_costmap = lambda: self.get_local_lidar_frame().costmap()
-
-        self.local_planner = SimplePlanner(
-            get_costmap=self.get_local_costmap, get_robot_pos=self.odom
-        )
-
-        def set_path(path, *args, **kwargs):
-            self.local_planner.set_path(path)
 
         self.global_planner = AstarPlanner(
-            set_local_nav=set_path,
+            set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(
+                self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event
+            ),
             get_costmap=lambda: self.map.costmap,
             get_robot_pos=lambda: self.odom().pos,
         )
-
-        self.local_planner.get_move_stream().subscribe(on_next=self.move, on_error=print)
-
-        # #self.local_planner.get_move_stream().subscribe(on_next=self.move, on_error=print)
-        # self.local_planner = VFHPurePursuitPlanner(
-        #     get_costmap=lambda: self.map.costmap,
-        #     get_robot_pose=lambda: self.odom(),
-        #     move=self.move,
-        #     robot_width=0.36,  # Unitree Go2 width in meters
-        #     robot_length=0.6,  # Unitree Go2 length in meters
-        #     max_linear_vel=0.5,
-        #     lookahead_distance=2.0,
-        #     visualization_size=500,  # 500x500 pixel visualization
-        #   )
-
-        # self.global_planner = AstarPlanner(
-        #      set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(
-        #          self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event
-        #      ),
-        #      get_costmap=lambda: self.map.costmap,
-        #      get_robot_pos=lambda: self.odom().pos,
-        #  )
 
         # # Initialize skills
         # if skills is None:
