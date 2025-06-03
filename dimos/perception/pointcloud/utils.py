@@ -22,6 +22,7 @@ from RGBD images using Open3D.
 import numpy as np
 import yaml
 import os
+import cv2
 import open3d as o3d
 from typing import List, Optional, Tuple, Union
 
@@ -39,6 +40,15 @@ def depth_to_point_cloud(depth_image, camera_matrix, subsample_factor=4):
     Returns:
         Nx3 array of 3D points
     """
+    # Filter out inf and nan values from depth image
+    depth_filtered = depth_image.copy()
+    
+    # Create mask for valid depth values (finite, positive, non-zero)
+    valid_mask = np.isfinite(depth_filtered) & (depth_filtered > 0)
+    
+    # Set invalid values to 0
+    depth_filtered[~valid_mask] = 0.0
+    
     # Get focal length and principal point from camera matrix
     fx = camera_matrix[0, 0]
     fy = camera_matrix[1, 1]
@@ -46,7 +56,7 @@ def depth_to_point_cloud(depth_image, camera_matrix, subsample_factor=4):
     cy = camera_matrix[1, 2]
 
     # Create pixel coordinate grid
-    rows, cols = depth_image.shape
+    rows, cols = depth_filtered.shape
     x_grid, y_grid = np.meshgrid(
         np.arange(0, cols, subsample_factor), np.arange(0, rows, subsample_factor)
     )
@@ -54,9 +64,9 @@ def depth_to_point_cloud(depth_image, camera_matrix, subsample_factor=4):
     # Flatten grid and depth
     x = x_grid.flatten()
     y = y_grid.flatten()
-    z = depth_image[y_grid, x_grid].flatten()
+    z = depth_filtered[y_grid, x_grid].flatten()
 
-    # Remove points with invalid depth
+    # Remove points with invalid depth (after filtering, this catches zeros)
     valid = z > 0
     x = x[valid]
     y = y[valid]
@@ -197,7 +207,17 @@ def create_o3d_point_cloud_from_rgbd(
 
     # Convert to Open3D format
     color_o3d = o3d.geometry.Image(color_img.astype(np.uint8))
-    depth_o3d = o3d.geometry.Image(depth_img.astype(np.float32))
+    
+    # Filter out inf and nan values from depth image
+    depth_filtered = depth_img.copy()
+    
+    # Create mask for valid depth values (finite, positive, non-zero)
+    valid_mask = np.isfinite(depth_filtered) & (depth_filtered > 0)
+    
+    # Set invalid values to 0 (which Open3D treats as no depth)
+    depth_filtered[~valid_mask] = 0.0
+    
+    depth_o3d = o3d.geometry.Image(depth_filtered.astype(np.float32))
 
     # Create Open3D intrinsic object
     height, width = color_img.shape[:2]
@@ -296,9 +316,18 @@ def create_masked_point_cloud(color_img, depth_img, mask, intrinsic, depth_scale
     Returns:
         Open3D point cloud object for the masked region
     """
+    # Filter out inf and nan values from depth image
+    depth_filtered = depth_img.copy()
+    
+    # Create mask for valid depth values (finite, positive, non-zero)
+    valid_depth_mask = np.isfinite(depth_filtered) & (depth_filtered > 0)
+    
+    # Set invalid values to 0
+    depth_filtered[~valid_depth_mask] = 0.0
+    
     # Create masked color and depth images
     masked_color = color_img.copy()
-    masked_depth = depth_img.copy()
+    masked_depth = depth_filtered.copy()
 
     # Apply mask
     if not mask.shape[:2] == color_img.shape[:2]:
@@ -344,9 +373,6 @@ def create_point_cloud_and_extract_masks(
     """
     Efficiently create a point cloud once and extract multiple masked regions.
 
-    This is much more efficient than creating individual point clouds for each mask,
-    especially when dealing with many objects.
-
     Args:
         color_img: RGB image (H, W, 3)
         depth_img: Depth image (H, W)
@@ -357,55 +383,50 @@ def create_point_cloud_and_extract_masks(
 
     Returns:
         Tuple of (full_point_cloud, list_of_masked_point_clouds)
-
-    Raises:
-        ValueError: If inputs are invalid
     """
-    # Validate inputs
     if not masks:
-        raise ValueError("masks list cannot be empty")
+        return o3d.geometry.PointCloud(), []
 
-    for i, mask in enumerate(masks):
-        if mask.shape != depth_img.shape:
-            raise ValueError(
-                f"Mask {i} shape {mask.shape} doesn't match depth image shape {depth_img.shape}"
-            )
-
-    # Create the full point cloud once
+    # Create the full point cloud
     full_pcd = create_o3d_point_cloud_from_rgbd(
         color_img, depth_img, intrinsic, depth_scale, depth_trunc
     )
-
-    # Early return if no points generated
+    
     if len(np.asarray(full_pcd.points)) == 0:
-        empty_pcds = [o3d.geometry.PointCloud() for _ in masks]
-        return full_pcd, empty_pcds
+        return full_pcd, [o3d.geometry.PointCloud() for _ in masks]
 
-    # Create mapping from pixel coordinates to point indices
-    height, width = depth_img.shape
-    valid_depth = depth_img.flatten() > 0
+    # Create pixel-to-point mapping
+    valid_depth_mask = (
+        np.isfinite(depth_img) & 
+        (depth_img > 0) & 
+        (depth_img <= depth_trunc)
+    )
+    
+    valid_depth = valid_depth_mask.flatten()
+    if not np.any(valid_depth):
+        return full_pcd, [o3d.geometry.PointCloud() for _ in masks]
 
-    # Map from pixel index to point index (only for valid pixels)
-    pixel_to_point = np.cumsum(valid_depth) - 1
-    pixel_to_point[~valid_depth] = -1  # Mark invalid pixels
-
+    pixel_to_point = np.full(len(valid_depth), -1, dtype=np.int32)
+    pixel_to_point[valid_depth] = np.arange(np.sum(valid_depth))
+    
     # Extract point clouds for each mask
     masked_pcds = []
+    max_points = len(np.asarray(full_pcd.points))
+    
     for mask in masks:
+        if mask.shape != depth_img.shape:
+            masked_pcds.append(o3d.geometry.PointCloud())
+            continue
+            
         mask_flat = mask.flatten()
-
-        # Find pixels that are both valid (have depth) and in the mask
         valid_mask_indices = mask_flat & valid_depth
-
-        # Get the point indices for these pixels
         point_indices = pixel_to_point[valid_mask_indices]
-
-        # Remove any -1 indices (shouldn't happen but safety check)
-        point_indices = point_indices[point_indices >= 0]
-
-        # Extract the masked point cloud
-        if len(point_indices) > 0:
-            masked_pcd = full_pcd.select_by_index(point_indices)
+        valid_point_indices = point_indices[point_indices >= 0]
+        
+        if len(valid_point_indices) > 0:
+            valid_point_indices = np.clip(valid_point_indices, 0, max_points - 1)
+            valid_point_indices = np.unique(valid_point_indices)
+            masked_pcd = full_pcd.select_by_index(valid_point_indices.tolist())
         else:
             masked_pcd = o3d.geometry.PointCloud()
 
@@ -564,3 +585,165 @@ def compute_point_cloud_bounds(pcd: o3d.geometry.PointCloud) -> dict:
     volume = np.prod(size)
 
     return {"min": min_bound, "max": max_bound, "center": center, "size": size, "volume": volume}
+
+
+def project_3d_points_to_2d(points_3d: np.ndarray, camera_matrix: np.ndarray) -> np.ndarray:
+    """
+    Project 3D points to 2D image coordinates using camera intrinsics.
+    
+    Args:
+        points_3d: Nx3 array of 3D points (X, Y, Z)
+        camera_matrix: 3x3 camera intrinsic matrix
+        
+    Returns:
+        Nx2 array of 2D image coordinates (u, v)
+    """
+    if len(points_3d) == 0:
+        return np.zeros((0, 2), dtype=np.int32)
+    
+    # Filter out points with zero or negative depth
+    valid_mask = points_3d[:, 2] > 0
+    if not np.any(valid_mask):
+        return np.zeros((0, 2), dtype=np.int32)
+    
+    valid_points = points_3d[valid_mask]
+    
+    # Extract camera parameters
+    fx = camera_matrix[0, 0]
+    fy = camera_matrix[1, 1]
+    cx = camera_matrix[0, 2]
+    cy = camera_matrix[1, 2]
+    
+    # Project to image coordinates
+    u = (valid_points[:, 0] * fx / valid_points[:, 2]) + cx
+    v = (valid_points[:, 1] * fy / valid_points[:, 2]) + cy
+    
+    # Round to integer pixel coordinates
+    points_2d = np.column_stack([u, v]).astype(np.int32)
+    
+    return points_2d
+
+
+def overlay_point_clouds_on_image(
+    base_image: np.ndarray,
+    point_clouds: List[o3d.geometry.PointCloud], 
+    camera_matrix: np.ndarray,
+    colors: List[Tuple[int, int, int]],
+    point_size: int = 2,
+    alpha: float = 0.7
+) -> np.ndarray:
+    """
+    Overlay multiple colored point clouds onto an image.
+    
+    Args:
+        base_image: Base image to overlay onto (H, W, 3) - assumed to be RGB
+        point_clouds: List of Open3D point cloud objects  
+        camera_matrix: 3x3 camera intrinsic matrix
+        colors: List of RGB color tuples for each point cloud. If None, generates distinct colors.
+        point_size: Size of points to draw (in pixels)
+        alpha: Blending factor for overlay (0.0 = fully transparent, 1.0 = fully opaque)
+        
+    Returns:
+        Image with overlaid point clouds (H, W, 3)
+    """
+    if len(point_clouds) == 0:
+        return base_image.copy()
+    
+    # Create overlay image
+    overlay = base_image.copy()
+    height, width = base_image.shape[:2]
+    
+    # Process each point cloud
+    for i, pcd in enumerate(point_clouds):
+        if pcd is None:
+            continue
+            
+        points_3d = np.asarray(pcd.points)
+        if len(points_3d) == 0:
+            continue
+        
+        # Project 3D points to 2D
+        points_2d = project_3d_points_to_2d(points_3d, camera_matrix)
+        
+        if len(points_2d) == 0:
+            continue
+        
+        # Filter points within image bounds
+        valid_mask = (
+            (points_2d[:, 0] >= 0) & (points_2d[:, 0] < width) &
+            (points_2d[:, 1] >= 0) & (points_2d[:, 1] < height)
+        )
+        valid_points_2d = points_2d[valid_mask]
+        
+        if len(valid_points_2d) == 0:
+            continue
+        
+        # Get color for this point cloud
+        color = colors[i % len(colors)]
+        
+        # Ensure color is a tuple of integers for OpenCV
+        if isinstance(color, (list, tuple, np.ndarray)):
+            color = tuple(int(c) for c in color[:3])
+        else:
+            color = (255, 255, 255)
+        
+        # Draw points on overlay
+        for point in valid_points_2d:
+            u, v = point
+            # Draw a small filled circle for each point
+            cv2.circle(overlay, (u, v), point_size, color, -1)
+    
+    # Blend overlay with base image
+    result = cv2.addWeighted(base_image, 1 - alpha, overlay, alpha, 0)
+    
+    return result
+
+
+def create_point_cloud_overlay_visualization(
+    base_image: np.ndarray,
+    filtered_objects: List[dict],
+    camera_matrix: np.ndarray,
+) -> np.ndarray:
+    """
+    Create a visualization showing object point clouds overlaid on a base image.
+    
+    Args:
+        base_image: Base image to overlay onto (H, W, 3)
+        filtered_objects: List of object dictionaries containing 'point_cloud' and 'color' keys
+        camera_matrix: 3x3 camera intrinsic matrix or list [fx, fy, cx, cy]
+        
+    Returns:
+        Visualization image with overlaid point clouds (H, W, 3)
+    """
+    # Convert camera matrix if needed
+    if isinstance(camera_matrix, list) and len(camera_matrix) == 4:
+        fx, fy, cx, cy = camera_matrix
+        camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
+    
+    # Extract point clouds and colors from filtered objects
+    point_clouds = []
+    colors = []
+    for obj in filtered_objects:
+        if "point_cloud" in obj and obj["point_cloud"] is not None:
+            point_clouds.append(obj["point_cloud"])
+            
+            # Convert color to tuple of integers for OpenCV
+            color = obj["color"]
+            if isinstance(color, (list, tuple)):
+                color = tuple(int(c) for c in color[:3])
+            colors.append(color)
+    
+    if not point_clouds:
+        return base_image
+    
+    # Create overlay visualization
+    result = overlay_point_clouds_on_image(
+        base_image=base_image,
+        point_clouds=point_clouds,
+        camera_matrix=camera_matrix,
+        colors=colors,
+        point_size=3,
+        alpha=0.8
+    )
+    
+    return result

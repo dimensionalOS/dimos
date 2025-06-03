@@ -18,7 +18,7 @@ import os
 import torch
 import open3d as o3d
 from typing import Dict, List, Optional, Union
-
+import time
 from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
 from dimos.perception.pointcloud.utils import (
@@ -42,12 +42,18 @@ class PointcloudFiltering:
         color_intrinsics: Optional[Union[str, List[float], np.ndarray]] = None,
         depth_intrinsics: Optional[Union[str, List[float], np.ndarray]] = None,
         color_weight: float = 0.3,
-        statistical_neighbors: int = 40,
+        enable_statistical_filtering: bool = True,
+        statistical_neighbors: int = 20,
         statistical_std_ratio: float = 1.5,
+        enable_radius_filtering: bool = True,
         radius_filtering_radius: float = 0.015,
-        radius_filtering_min_neighbors: int = 100,
+        radius_filtering_min_neighbors: int = 25,
+        enable_subsampling: bool = True,
+        voxel_size: float = 0.005,
+        max_num_objects: int = 10,
         min_points_for_cuboid: int = 10,
         cuboid_method: str = "oriented",
+        max_bbox_size_percent: float = 30.0,
     ):
         """
         Initialize the point cloud filtering pipeline.
@@ -56,12 +62,18 @@ class PointcloudFiltering:
             color_intrinsics: Camera intrinsics for color image
             depth_intrinsics: Camera intrinsics for depth image
             color_weight: Weight for blending generated color with original (0.0-1.0)
+            enable_statistical_filtering: Enable/disable statistical outlier filtering
             statistical_neighbors: Number of neighbors for statistical filtering
             statistical_std_ratio: Standard deviation ratio for statistical filtering
+            enable_radius_filtering: Enable/disable radius outlier filtering
             radius_filtering_radius: Search radius for radius filtering (meters)
             radius_filtering_min_neighbors: Min neighbors within radius
+            enable_subsampling: Enable/disable point cloud subsampling
+            voxel_size: Voxel size for downsampling (meters, when subsampling enabled)
+            max_num_objects: Maximum number of objects to process (top N by confidence)
             min_points_for_cuboid: Minimum points required for cuboid fitting
             cuboid_method: Method for cuboid fitting ('minimal', 'oriented', 'axis_aligned')
+            max_bbox_size_percent: Maximum percentage of image size for object bboxes (0-100)
 
         Raises:
             ValueError: If invalid parameters are provided
@@ -69,38 +81,27 @@ class PointcloudFiltering:
         # Validate parameters
         if not 0.0 <= color_weight <= 1.0:
             raise ValueError(f"color_weight must be between 0.0 and 1.0, got {color_weight}")
-        if statistical_neighbors < 1:
-            raise ValueError(f"statistical_neighbors must be >= 1, got {statistical_neighbors}")
-        if statistical_std_ratio <= 0:
-            raise ValueError(f"statistical_std_ratio must be > 0, got {statistical_std_ratio}")
-        if radius_filtering_radius <= 0:
-            raise ValueError(f"radius_filtering_radius must be > 0, got {radius_filtering_radius}")
-        if radius_filtering_min_neighbors < 1:
-            raise ValueError(
-                f"radius_filtering_min_neighbors must be >= 1, got {radius_filtering_min_neighbors}"
-            )
-        if min_points_for_cuboid < 4:
-            raise ValueError(f"min_points_for_cuboid must be >= 4, got {min_points_for_cuboid}")
-        if cuboid_method not in ["minimal", "oriented", "axis_aligned"]:
-            raise ValueError(
-                f"cuboid_method must be 'minimal', 'oriented', or 'axis_aligned', got {cuboid_method}"
-            )
+        if not 0.0 <= max_bbox_size_percent <= 100.0:
+            raise ValueError(f"max_bbox_size_percent must be between 0.0 and 100.0, got {max_bbox_size_percent}")
 
         # Store settings
         self.color_weight = color_weight
+        self.enable_statistical_filtering = enable_statistical_filtering
         self.statistical_neighbors = statistical_neighbors
         self.statistical_std_ratio = statistical_std_ratio
+        self.enable_radius_filtering = enable_radius_filtering
         self.radius_filtering_radius = radius_filtering_radius
         self.radius_filtering_min_neighbors = radius_filtering_min_neighbors
+        self.enable_subsampling = enable_subsampling
+        self.voxel_size = voxel_size
+        self.max_num_objects = max_num_objects
         self.min_points_for_cuboid = min_points_for_cuboid
         self.cuboid_method = cuboid_method
+        self.max_bbox_size_percent = max_bbox_size_percent
 
         # Load camera matrices
-        try:
-            self.color_camera_matrix = load_camera_matrix_from_yaml(color_intrinsics)
-            self.depth_camera_matrix = load_camera_matrix_from_yaml(depth_intrinsics)
-        except Exception as e:
-            raise ValueError(f"Failed to load camera matrices: {e}")
+        self.color_camera_matrix = load_camera_matrix_from_yaml(color_intrinsics)
+        self.depth_camera_matrix = load_camera_matrix_from_yaml(depth_intrinsics)
 
     def generate_color_from_id(self, object_id: int) -> np.ndarray:
         """Generate a consistent color for a given object ID."""
@@ -113,46 +114,32 @@ class PointcloudFiltering:
         self, color_img: np.ndarray, depth_img: np.ndarray, objects: List[ObjectData]
     ):
         """Validate input parameters."""
-        if not isinstance(color_img, np.ndarray) or len(color_img.shape) != 3:
-            raise ValueError("color_img must be a 3D numpy array")
-        if not isinstance(depth_img, np.ndarray) or len(depth_img.shape) != 2:
-            raise ValueError("depth_img must be a 2D numpy array")
         if color_img.shape[:2] != depth_img.shape:
-            raise ValueError(
-                f"Color and depth image dimensions don't match: {color_img.shape[:2]} vs {depth_img.shape}"
-            )
-        if not isinstance(objects, list):
-            raise ValueError("objects must be a list of ObjectData")
-        if self.depth_camera_matrix is None:
-            raise ValueError("Depth camera matrix must be provided")
+            raise ValueError("Color and depth image dimensions don't match")
 
     def _prepare_masks(self, masks: List[np.ndarray], target_shape: tuple) -> List[np.ndarray]:
         """Prepare and validate masks to match target shape."""
         processed_masks = []
-        for i, mask in enumerate(masks):
-            try:
-                # Convert mask to numpy if it's a tensor
-                if hasattr(mask, "cpu"):
-                    mask = mask.cpu().numpy()
+        for mask in masks:
+            # Convert mask to numpy if it's a tensor
+            if hasattr(mask, "cpu"):
+                mask = mask.cpu().numpy()
 
-                # Ensure mask is proper boolean array
-                mask = mask.astype(bool)
+            mask = mask.astype(bool)
 
-                # Handle shape mismatches
+            # Handle shape mismatches
+            if mask.shape != target_shape:
+                if len(mask.shape) > 2:
+                    mask = mask[:, :, 0]
+
                 if mask.shape != target_shape:
-                    if len(mask.shape) > 2:
-                        mask = mask[:, :, 0]
+                    mask = cv2.resize(
+                        mask.astype(np.uint8),
+                        (target_shape[1], target_shape[0]),
+                        interpolation=cv2.INTER_NEAREST,
+                    ).astype(bool)
 
-                    if mask.shape != target_shape:
-                        mask = cv2.resize(
-                            mask.astype(np.uint8),
-                            (target_shape[1], target_shape[0]),
-                            interpolation=cv2.INTER_NEAREST,
-                        ).astype(bool)
-
-                processed_masks.append(mask)
-            except Exception as e:
-                raise ValueError(f"Failed to process mask {i}: {e}")
+            processed_masks.append(mask)
 
         return processed_masks
 
@@ -171,28 +158,34 @@ class PointcloudFiltering:
         return pcd
 
     def _apply_filtering(self, pcd: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
-        """Apply statistical and radius filtering to point cloud."""
-        # Statistical filtering
-        pcd_filtered, _ = pcd.remove_statistical_outlier(
-            nb_neighbors=self.statistical_neighbors, std_ratio=self.statistical_std_ratio
-        )
-        pcd = pcd_filtered
+        """Apply optional filtering to point cloud based on enabled flags."""
+        current_pcd = pcd
+        
+        # Apply statistical filtering if enabled
+        if self.enable_statistical_filtering:
+            current_pcd, _ = current_pcd.remove_statistical_outlier(
+                nb_neighbors=self.statistical_neighbors, 
+                std_ratio=self.statistical_std_ratio
+            )
+        
+        # Apply radius filtering if enabled
+        if self.enable_radius_filtering:
+            current_pcd, _ = current_pcd.remove_radius_outlier(
+                nb_points=self.radius_filtering_min_neighbors, 
+                radius=self.radius_filtering_radius
+            )
+        
+        return current_pcd
 
-        # Radius filtering
-        pcd_filtered, _ = pcd.remove_radius_outlier(
-            nb_points=self.radius_filtering_min_neighbors, radius=self.radius_filtering_radius
-        )
-
-        return pcd_filtered
+    def _apply_subsampling(self, pcd: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
+        """Apply subsampling to limit point cloud size using Open3D's voxel downsampling."""
+        if self.enable_subsampling:
+            return pcd.voxel_down_sample(self.voxel_size)
+        return pcd
 
     def _extract_masks_from_objects(self, objects: List[ObjectData]) -> List[np.ndarray]:
         """Extract segmentation masks from ObjectData objects."""
-        masks = []
-        for i, obj in enumerate(objects):
-            if "segmentation_mask" not in obj or obj["segmentation_mask"] is None:
-                raise ValueError(f"Object {i} is missing segmentation_mask")
-            masks.append(obj["segmentation_mask"])
-        return masks
+        return [obj["segmentation_mask"] for obj in objects]
 
     def process_images(
         self, color_img: np.ndarray, depth_img: np.ndarray, objects: List[ObjectData]
@@ -218,99 +211,110 @@ class PointcloudFiltering:
         if not objects:
             return []
 
-        try:
-            # Extract masks from ObjectData
-            masks = self._extract_masks_from_objects(objects)
-
-            # Prepare masks
-            processed_masks = self._prepare_masks(masks, depth_img.shape)
-
-            # Create point clouds efficiently
-            full_pcd, masked_pcds = create_point_cloud_and_extract_masks(
-                color_img, depth_img, processed_masks, self.depth_camera_matrix, depth_scale=1.0
+        # Filter to top N objects by confidence
+        if len(objects) > self.max_num_objects:
+            # Sort objects by confidence (highest first), handle None confidences
+            sorted_objects = sorted(
+                objects, 
+                key=lambda obj: obj.get("confidence", 0.0) if obj.get("confidence") is not None else 0.0,
+                reverse=True
             )
+            objects = sorted_objects[:self.max_num_objects]
 
-            # Process each object and update ObjectData
-            updated_objects = []
+        # Filter out objects with bboxes too large
+        image_area = color_img.shape[0] * color_img.shape[1]
+        max_bbox_area = image_area * (self.max_bbox_size_percent / 100.0)
+        
+        filtered_objects = []
+        for obj in objects:
+            if "bbox" in obj and obj["bbox"] is not None:
+                bbox = obj["bbox"]
+                # Calculate bbox area (assuming bbox format [x1, y1, x2, y2])
+                bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+                if bbox_area <= max_bbox_area:
+                    filtered_objects.append(obj)
+            else:
+                filtered_objects.append(obj)
+        
+        objects = filtered_objects
 
-            for i, (obj, mask, pcd) in enumerate(zip(objects, processed_masks, masked_pcds)):
-                # Skip empty point clouds
-                if len(np.asarray(pcd.points)) == 0:
-                    continue
+        # Extract masks from ObjectData
+        masks = self._extract_masks_from_objects(objects)
 
-                # Create a copy of the object data to avoid modifying the original
-                updated_obj = obj.copy()
+        # Prepare masks
+        processed_masks = self._prepare_masks(masks, depth_img.shape)
 
-                # Generate consistent color
-                object_id = obj.get("object_id", i)
-                rgb_color = self.generate_color_from_id(object_id)
+        # Create point clouds efficiently
+        full_pcd, masked_pcds = create_point_cloud_and_extract_masks(
+            color_img, depth_img, processed_masks, self.depth_camera_matrix, depth_scale=1.0
+        )
+        
+        # Process each object and update ObjectData
+        updated_objects = []
 
-                # Apply color mask
-                pcd = self._apply_color_mask(pcd, rgb_color)
+        for i, (obj, mask, pcd) in enumerate(zip(objects, processed_masks, masked_pcds)):
+            # Skip empty point clouds
+            if len(np.asarray(pcd.points)) == 0:
+                continue
 
-                # Apply filtering
-                pcd_filtered = self._apply_filtering(pcd)
+            # Create a copy of the object data to avoid modifying the original
+            updated_obj = obj.copy()
 
-                # Fit cuboid and extract 3D information
-                points = np.asarray(pcd_filtered.points)
-                if len(points) >= self.min_points_for_cuboid:
-                    try:
-                        cuboid_params = fit_cuboid(points, method=self.cuboid_method)
-                        if cuboid_params is not None:
-                            # Update position, rotation, and size from cuboid
-                            center = cuboid_params["center"]
-                            dimensions = cuboid_params["dimensions"]
-                            rotation_matrix = cuboid_params["rotation"]
+            # Generate consistent color
+            object_id = obj.get("object_id", i)
+            rgb_color = self.generate_color_from_id(object_id)
 
-                            # Convert rotation matrix to euler angles (roll, pitch, yaw)
-                            # Using ZYX rotation order (yaw, pitch, roll)
-                            sy = np.sqrt(
-                                rotation_matrix[0, 0] * rotation_matrix[0, 0]
-                                + rotation_matrix[1, 0] * rotation_matrix[1, 0]
-                            )
-                            singular = sy < 1e-6
+            # Apply color mask
+            pcd = self._apply_color_mask(pcd, rgb_color)
 
-                            if not singular:
-                                roll = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2])
-                                pitch = np.arctan2(-rotation_matrix[2, 0], sy)
-                                yaw = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
-                            else:
-                                roll = np.arctan2(-rotation_matrix[1, 2], rotation_matrix[1, 1])
-                                pitch = np.arctan2(-rotation_matrix[2, 0], sy)
-                                yaw = 0
+            # Apply subsampling to control point cloud size
+            pcd = self._apply_subsampling(pcd)
 
-                            # Update position, rotation, and size from cuboid
-                            updated_obj["position"] = Vector(center[0], center[1], center[2])
-                            updated_obj["rotation"] = Vector(roll, pitch, yaw)
-                            updated_obj["size"] = {
-                                "width": float(dimensions[0]),
-                                "height": float(dimensions[1]),
-                                "depth": float(dimensions[2]),
-                            }
+            # Apply filtering (optional based on flags)
+            pcd_filtered = self._apply_filtering(pcd)
 
-                    except Exception as e:
-                        print(f"Warning: Cuboid fitting failed for object {object_id}: {e}")
-                        # Set default values if cuboid fitting fails
-                        updated_obj["position"] = Vector(0, 0, 0)
-                        updated_obj["rotation"] = Vector(0, 0, 0)
-                        if "size" not in updated_obj:
-                            updated_obj["size"] = {"width": 0.0, "height": 0.0, "depth": 0.0}
+            # Fit cuboid and extract 3D information
+            points = np.asarray(pcd_filtered.points)
+            if len(points) >= self.min_points_for_cuboid:
+                cuboid_params = fit_cuboid(points, method=self.cuboid_method)
+                if cuboid_params is not None:
+                    # Update position, rotation, and size from cuboid
+                    center = cuboid_params["center"]
+                    dimensions = cuboid_params["dimensions"]
+                    rotation_matrix = cuboid_params["rotation"]
 
-                # Add point cloud data to ObjectData
-                updated_obj["point_cloud"] = pcd_filtered
-                updated_obj["point_cloud_numpy"] = o3d_point_cloud_to_numpy(pcd_filtered)
-                updated_obj["color"] = rgb_color
+                    # Convert rotation matrix to euler angles (roll, pitch, yaw)
+                    sy = np.sqrt(
+                        rotation_matrix[0, 0] * rotation_matrix[0, 0]
+                        + rotation_matrix[1, 0] * rotation_matrix[1, 0]
+                    )
+                    singular = sy < 1e-6
 
-                updated_objects.append(updated_obj)
+                    if not singular:
+                        roll = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2])
+                        pitch = np.arctan2(-rotation_matrix[2, 0], sy)
+                        yaw = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
+                    else:
+                        roll = np.arctan2(-rotation_matrix[1, 2], rotation_matrix[1, 1])
+                        pitch = np.arctan2(-rotation_matrix[2, 0], sy)
+                        yaw = 0
 
-            return updated_objects
+                    # Update position, rotation, and size from cuboid
+                    updated_obj["position"] = Vector(center[0], center[1], center[2])
+                    updated_obj["rotation"] = Vector(roll, pitch, yaw)
+                    updated_obj["size"] = {
+                        "width": float(dimensions[0]),
+                        "height": float(dimensions[1]),
+                        "depth": float(dimensions[2]),
+                    }
 
-        except Exception as e:
-            raise RuntimeError(f"Failed to process images: {e}")
-        finally:
-            # Clean up GPU memory
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            # Add point cloud data to ObjectData
+            updated_obj["point_cloud"] = pcd_filtered
+            updated_obj["color"] = rgb_color
+
+            updated_objects.append(updated_obj)
+
+        return updated_objects
 
     def cleanup(self):
         """Clean up resources."""
@@ -331,6 +335,7 @@ def create_test_pipeline(data_dir: str) -> tuple:
     color_info_path = os.path.join(data_dir, "color_camera_info.yaml")
     depth_info_path = os.path.join(data_dir, "depth_camera_info.yaml")
 
+    # Default pipeline with subsampling disabled by default
     filter_pipeline = PointcloudFiltering(
         color_intrinsics=color_info_path,
         depth_intrinsics=depth_info_path,
