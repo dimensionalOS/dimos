@@ -264,7 +264,7 @@ class ObjectDetectionStream:
 
                 # Draw bounding box with metadata
                 try:
-                    cv2.rectangle(viz_frame, (x1, y1), (x2, y2), color, 1)
+                    cv2.rectangle(viz_frame, (x1, y1), (x2, y2), color, 2)
 
                     # Add text for class only (removed position data)
                     # Handle possible None values for class_name or track_ids[i]
@@ -275,7 +275,7 @@ class ObjectDetectionStream:
                     text = f"{class_text}, ID: {id_text}"
 
                     # Draw text background with smaller font
-                    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)[0]
+                    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 1)[0]
                     cv2.rectangle(
                         viz_frame,
                         (x1, y1 - text_size[1] - 5),
@@ -288,9 +288,9 @@ class ObjectDetectionStream:
                     cv2.putText(
                         viz_frame,
                         text,
-                        (x1, y1 - 5),
+                        (x1, y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        0.3,
+                        1.5,
                         (255, 255, 255),
                         1,
                     )
