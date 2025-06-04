@@ -44,6 +44,7 @@ class Planner(Visualizable):
         if not path:
             logger.warning("No path found to the goal.")
             return False
+
         print("pathing success", path)
         return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
 
@@ -58,7 +59,7 @@ class AstarPlanner(Planner):
     def plan(self, goal: VectorLike) -> Path:
         goal = to_vector(goal).to_2d()
         pos = self.get_robot_pos().to_2d()
-        costmap = self.get_costmap().smudge(preserve_unknown=False)
+        costmap = self.get_costmap().smudge()
 
         # self.vis("costmap", costmap)
         self.vis("target", goal)

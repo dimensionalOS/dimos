@@ -178,7 +178,6 @@ class SensorReplay(Generic[T]):
     def __init__(self, name: str, autocast: Optional[Callable[[Any], T]] = None):
         self.root_dir = testData(name)
         self.autocast = autocast
-        self.cnt = 0
 
     def load(self, *names: Union[int, str]) -> Union[T, Any, list[T], list[Any]]:
         if len(names) == 1:
@@ -204,7 +203,10 @@ class SensorReplay(Generic[T]):
         for file_path in sorted(glob.glob(pattern)):
             yield self.load_one(file_path)
 
-    def stream(self, rate_hz: float = 10.0) -> Observable[Union[T, Any]]:
+    def stream(self, rate_hz: Optional[float] = None) -> Observable[Union[T, Any]]:
+        if rate_hz is None:
+            return from_iterable(self.iterate())
+
         sleep_time = 1.0 / rate_hz
 
         return from_iterable(self.iterate()).pipe(
@@ -212,27 +214,65 @@ class SensorReplay(Generic[T]):
             ops.map(lambda x: x[0] if isinstance(x, tuple) else x),
         )
 
+
+class SensorStorage(Generic[T]):
+    """Generic sensor data storage utility.
+
+    Creates a directory in the test data directory and stores pickled sensor data.
+
+    Args:
+        name: The name of the storage directory
+        autocast: Optional function that takes data and returns a processed result before storage.
+    """
+
+    def __init__(self, name: str, autocast: Optional[Callable[[T], Any]] = None):
+        self.name = name
+        self.autocast = autocast
+        self.cnt = 0
+
+        # Create storage directory in the data dir
+        self.root_dir = _get_data_dir() / name
+
+        # Check if directory exists and is not empty
+        if self.root_dir.exists():
+            existing_files = list(self.root_dir.glob("*.pickle"))
+            if existing_files:
+                raise RuntimeError(
+                    f"Storage directory '{name}' already exists and contains {len(existing_files)} files. "
+                    f"Please use a different name or clean the directory first."
+                )
+        else:
+            # Create the directory
+            self.root_dir.mkdir(parents=True, exist_ok=True)
+
     def save_stream(self, observable: Observable[Union[T, Any]]) -> Observable[int]:
+        """Save an observable stream of sensor data to pickle files."""
         return observable.pipe(ops.map(lambda frame: self.save_one(frame)))
 
     def save(self, *frames) -> int:
-        [self.save_one(frame) for frame in frames]
+        """Save one or more frames to pickle files."""
+        for frame in frames:
+            self.save_one(frame)
         return self.cnt
 
     def save_one(self, frame) -> int:
-        file_name = f"/{self.cnt:03d}.pickle"
-        full_path = self.root_dir + file_name
+        """Save a single frame to a pickle file."""
+        file_name = f"{self.cnt:03d}.pickle"
+        full_path = self.root_dir / file_name
 
-        self.cnt += 1
+        if full_path.exists():
+            raise RuntimeError(f"File {full_path} already exists")
 
-        if os.path.isfile(full_path):
-            raise Exception(f"file {full_path} exists")
-
+        # Apply autocast if provided
+        data_to_save = frame
+        if self.autocast:
+            data_to_save = self.autocast(frame)
         # Convert to raw message if frame has a raw_msg attribute
-        if hasattr(frame, "raw_msg"):
-            frame = frame.raw_msg
+        elif hasattr(frame, "raw_msg"):
+            data_to_save = frame.raw_msg
 
         with open(full_path, "wb") as f:
-            pickle.dump(frame, f)
+            pickle.dump(data_to_save, f)
 
+        self.cnt += 1
         return self.cnt

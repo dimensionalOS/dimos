@@ -351,3 +351,34 @@ def test_vector_bool_conversion():
         pass  # Expected path
     else:
         assert False, "Non-zero vector should be True in boolean context"
+
+
+def test_vector_add():
+    """Test vector addition operator."""
+    v1 = Vector(1.0, 2.0, 3.0)
+    v2 = Vector(4.0, 5.0, 6.0)
+
+    # Using __add__ method
+    v_add = v1.__add__(v2)
+    assert v_add.x == 5.0
+    assert v_add.y == 7.0
+    assert v_add.z == 9.0
+
+    # Using + operator
+    v_add_op = v1 + v2
+    assert v_add_op.x == 5.0
+    assert v_add_op.y == 7.0
+    assert v_add_op.z == 9.0
+
+    # Adding zero vector should return original vector
+    v_zero = Vector.zeros(3)
+    assert (v1 + v_zero) == v1
+
+
+def test_vector_add_dim_mismatch():
+    """Test vector addition operator."""
+    v1 = Vector(1.0, 2.0)
+    v2 = Vector(4.0, 5.0, 6.0)
+
+    # Using + operator
+    v_add_op = v1 + v2

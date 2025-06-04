@@ -56,10 +56,13 @@ def test_robot_vis():
 
 
 def test_robot_mapping():
-    lidar_stream = SensorReplay("office_lidar", autocast=lambda x: LidarMessage.from_msg(x))
+    lidar_stream = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
     map = Map(voxel_size=0.5)
-    map.consume(lidar_stream.stream(rate_hz=100.0)).run()
 
+    # this will block until map has consumed the whole stream
+    map.consume(lidar_stream.stream()).run()
+
+    # we investigate built map
     costmap = map.costmap
 
     assert costmap.grid.shape == (404, 276)

@@ -15,6 +15,7 @@
 from dimos.robot.unitree_webrtc.testing.helpers import color
 from datetime import datetime
 from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_datetime, to_human_readable
+from dimos.types.costmap import Costmap, pointcloud_to_costmap
 from dimos.types.vector import Vector
 from dataclasses import dataclass, field
 from typing import List, TypedDict
@@ -54,6 +55,7 @@ class LidarMessage(Timestamped):
     resolution: float
     pointcloud: o3d.geometry.PointCloud
     raw_msg: RawLidarMsg = field(repr=False, default=None)
+    _costmap: Costmap = field(init=False, repr=False, default=None)
 
     @classmethod
     def from_msg(cls, raw_message: RawLidarMsg) -> "LidarMessage":
@@ -153,3 +155,10 @@ class LidarMessage(Timestamped):
         # Looks like we'll be displaying so might as well?
         self.estimate_normals()
         return self
+
+    def costmap(self) -> Costmap:
+        if not self._costmap:
+            grid, origin_xy = pointcloud_to_costmap(self.pointcloud, resolution=self.resolution)
+            self._costmap = Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.resolution)
+
+        return self._costmap

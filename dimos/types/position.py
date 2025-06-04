@@ -15,6 +15,7 @@
 from typing import TypeVar, Union, Sequence
 import numpy as np
 from plum import dispatch
+import math
 
 from dimos.types.vector import Vector, to_vector, to_numpy, VectorLike
 
@@ -22,6 +23,12 @@ from dimos.types.vector import Vector, to_vector, to_numpy, VectorLike
 T = TypeVar("T", bound="Position")
 
 PositionLike = Union["Position", VectorLike, Sequence[VectorLike]]
+
+
+def yaw_to_matrix(yaw: float) -> np.ndarray:
+    """2-D yaw (about Z) to a 3×3 rotation matrix."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
 
 
 class Position(Vector):
@@ -59,6 +66,17 @@ class Position(Vector):
         """Serialize the position to a dictionary."""
         return {"type": "position", "pos": self.to_list(), "rot": self.rot.to_list()}
 
+    def vector_to(self, target: Vector) -> Vector:
+        direction = target - self.pos.to_2d()
+
+        cos_y = math.cos(-self.yaw)
+        sin_y = math.sin(-self.yaw)
+
+        x = cos_y * direction.x - sin_y * direction.y
+        y = sin_y * direction.x + cos_y * direction.y
+
+        return Vector(x, y)
+
     def __eq__(self, other) -> bool:
         """Check if two positions are equal using numpy's allclose for floating point comparison."""
         if not isinstance(other, Position):
@@ -92,6 +110,11 @@ class Position(Vector):
         else:
             # For other types, just use Vector's addition
             return Position(super().__add__(other), self.rot)
+
+    @property
+    def yaw(self) -> float:
+        """Get the yaw (rotation around Z-axis) from the rotation vector."""
+        return self.rot.z
 
     def __sub__(self: T, other) -> T:
         """Override Vector's __sub__ to handle Position objects specially.

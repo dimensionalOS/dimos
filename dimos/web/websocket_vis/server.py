@@ -105,7 +105,7 @@ async def update_state(new_data):
 
 
 class WebsocketVis:
-    def __init__(self, port=7778, use_reload=False, msg_handler=None):
+    def __init__(self, port=7779, use_reload=False, msg_handler=None):
         self.port = port
         self.server = None
         self.server_thread = None

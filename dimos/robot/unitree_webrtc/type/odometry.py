@@ -12,12 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TypedDict, Literal
+import math
 from datetime import datetime
-from dataclasses import dataclass
-from dimos.types.vector import Vector
+from typing import Literal, TypedDict
+
+from dimos.robot.unitree_webrtc.type.timeseries import (
+    EpochLike,
+    to_datetime,
+    to_human_readable,
+)
 from dimos.types.position import Position
-from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_human_readable
+from dimos.types.vector import VectorLike
 
 raw_odometry_msg_sample = {
     "type": "msg",
@@ -71,18 +76,41 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-@dataclass
-class Odometry(Timestamped, Position):
-    ts: datetime
+class Odometry(Position):
+    def __init__(self, pos: VectorLike, rot: VectorLike, ts: EpochLike):
+        super().__init__(pos, rot)
+        self.ts = to_datetime(ts) if ts else datetime.now()
+
+    @staticmethod
+    def quaternion_to_yaw(x: float, y: float, z: float, w: float) -> float:
+        """Convert quaternion to yaw angle (rotation around z-axis) in radians."""
+        # Calculate yaw (rotation around z-axis)
+        siny_cosp = 2 * (w * z + x * y)
+        cosy_cosp = 1 - 2 * (y * y + z * z)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+        return yaw
 
     @classmethod
     def from_msg(cls, msg: RawOdometryMessage) -> "Odometry":
         pose = msg["data"]["pose"]
         orientation = pose["orientation"]
         position = pose["position"]
-        pos = Vector(position.get("x"), position.get("y"), position.get("z"))
-        rot = Vector(orientation.get("x"), orientation.get("y"), orientation.get("z"))
-        return cls(pos=pos, rot=rot, ts=msg["data"]["header"]["stamp"])
+
+        # Extract position
+        pos = [position.get("x"), position.get("y"), position.get("z")]
+
+        # Extract quaternion components
+        qx = orientation.get("x")
+        qy = orientation.get("y")
+        qz = orientation.get("z")
+        qw = orientation.get("w")
+
+        # Convert quaternion to yaw angle and store in rot.z
+        # Keep x,y as quaternion components for now, but z becomes the actual yaw angle
+        yaw_radians = cls.quaternion_to_yaw(qx, qy, qz, qw)
+        rot = [qx, qy, yaw_radians]
+
+        return cls(pos, rot, msg["data"]["header"]["stamp"])
 
     def __repr__(self) -> str:
-        return f"Odom ts({to_human_readable(self.ts)}) pos({self.pos}), rot({self.rot})"
+        return f"Odom ts({to_human_readable(self.ts)}) pos({self.pos}), rot({self.rot}) yaw({math.degrees(self.rot.z):.1f}°)"

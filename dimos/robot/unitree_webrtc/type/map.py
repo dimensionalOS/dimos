@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Tuple, Optional
 
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.costmap import Costmap
+from dimos.types.costmap import Costmap, pointcloud_to_costmap
 
 from reactivex.observable import Observable
 import reactivex.operators as ops
@@ -117,68 +117,3 @@ def _inflate_lethal(costmap: np.ndarray, radius: int, lethal_val: int = 100) -> 
     out = costmap.copy()
     out[dilated] = lethal_val
     return out
-
-
-def pointcloud_to_costmap(
-    pcd: o3d.geometry.PointCloud,
-    *,
-    resolution: float = 0.05,
-    ground_z: float = 0.0,
-    obs_min_height: float = 0.15,
-    max_height: Optional[float] = 0.5,
-    inflate_radius_m: Optional[float] = None,
-    default_unknown: int = -1,
-    cost_free: int = 0,
-    cost_lethal: int = 100,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Rasterise *pcd* into a 2-D int8 cost-map with optional obstacle inflation.
-
-    Grid origin is **aligned** to the `resolution` lattice so that when
-    `resolution == voxel_size` every voxel centroid lands squarely inside a cell
-    (no alternating blank lines).
-    """
-
-    pts = np.asarray(pcd.points, dtype=np.float32)
-    if pts.size == 0:
-        return np.full((1, 1), default_unknown, np.int8), np.zeros(2, np.float32)
-
-    # 0. Ceiling filter --------------------------------------------------------
-    if max_height is not None:
-        pts = pts[pts[:, 2] <= max_height]
-        if pts.size == 0:
-            return np.full((1, 1), default_unknown, np.int8), np.zeros(2, np.float32)
-
-    # 1. Bounding box & aligned origin ---------------------------------------
-    xy_min = pts[:, :2].min(axis=0)
-    xy_max = pts[:, :2].max(axis=0)
-
-    # Align origin to the resolution grid (anchor = 0,0)
-    origin = np.floor(xy_min / resolution) * resolution
-
-    # Grid dimensions (inclusive) -------------------------------------------
-    Nx, Ny = (np.ceil((xy_max - origin) / resolution).astype(int) + 1).tolist()
-
-    # 2. Bin points ------------------------------------------------------------
-    idx_xy = np.floor((pts[:, :2] - origin) / resolution).astype(np.int32)
-    np.clip(idx_xy[:, 0], 0, Nx - 1, out=idx_xy[:, 0])
-    np.clip(idx_xy[:, 1], 0, Ny - 1, out=idx_xy[:, 1])
-
-    lin = idx_xy[:, 1] * Nx + idx_xy[:, 0]
-    z_max = np.full(Nx * Ny, -np.inf, np.float32)
-    np.maximum.at(z_max, lin, pts[:, 2])
-    z_max = z_max.reshape(Ny, Nx)
-
-    # 3. Cost rules -----------------------------------------------------------
-    costmap = np.full_like(z_max, default_unknown, np.int8)
-    known = z_max != -np.inf
-    costmap[known] = cost_free
-
-    lethal = z_max >= (ground_z + obs_min_height)
-    costmap[lethal] = cost_lethal
-
-    # 4. Optional inflation ----------------------------------------------------
-    if inflate_radius_m and inflate_radius_m > 0:
-        cells = int(np.ceil(inflate_radius_m / resolution))
-        costmap = _inflate_lethal(costmap, cells, lethal_val=cost_lethal)
-
-    return costmap, origin.astype(np.float32)

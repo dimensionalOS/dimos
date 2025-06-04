@@ -161,3 +161,11 @@ def callback_to_observable(
         return Disposable(lambda: stop(_on_msg))
 
     return rx.create(_subscribe)
+
+
+def spy(name: str):
+    def spyfun(x):
+        print(f"SPY {name}:", x)
+        return x
+
+    return ops.map(spyfun)

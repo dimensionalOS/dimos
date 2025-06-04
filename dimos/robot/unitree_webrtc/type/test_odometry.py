@@ -12,13 +12,99 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
+from functools import reduce
+import math
+from operator import sub, add
+import os
+import threading
+from typing import Iterable, Optional
+import reactivex.operators as ops
+
 import pytest
-from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from dimos.robot.unitree_webrtc.testing.multimock import Multimock
+from dotenv import load_dotenv
+
+from dimos.robot.unitree_webrtc.type.odometry import Odometry, RawOdometryMessage
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.utils.testing import SensorReplay, SensorStorage
+
+_EXPECTED_TOTAL_RAD = -4.05212
 
 
-@pytest.mark.needsdata
-def test_odometry_time():
-    (timestamp, odom_raw) = Multimock("athens_odom").load_one(33)
-    print("RAW MSG", odom_raw)
-    print(Odometry.from_msg(odom_raw))
+def test_dataset_size() -> None:
+    """Ensure the replay contains the expected number of messages."""
+    assert sum(1 for _ in SensorReplay(name="raw_odometry_rotate_walk").iterate()) == 179
+
+
+def test_odometry_conversion_and_count() -> None:
+    """Each replay entry converts to :class:`Odometry` and count is correct."""
+    for raw in SensorReplay(name="raw_odometry_rotate_walk").iterate():
+        odom = Odometry.from_msg(raw)
+        assert isinstance(raw, dict)
+        assert isinstance(odom, Odometry)
+
+
+def test_last_yaw_value() -> None:
+    """Verify yaw of the final message (regression guard)."""
+    last_msg = SensorReplay(name="raw_odometry_rotate_walk").stream().pipe(ops.last()).run()
+
+    assert last_msg is not None, "Replay is empty"
+    assert last_msg["data"]["pose"]["orientation"] == {
+        "x": 0.01077,
+        "y": 0.008505,
+        "z": 0.499171,
+        "w": -0.866395,
+    }
+
+
+def test_total_rotation_travel_iterate() -> None:
+    total_rad = 0.0
+    prev_yaw: Optional[float] = None
+
+    for odom in SensorReplay(name="raw_odometry_rotate_walk", autocast=Odometry.from_msg).iterate():
+        yaw = odom.rot.z
+        if prev_yaw is not None:
+            diff = yaw - prev_yaw
+            total_rad += diff
+        prev_yaw = yaw
+
+    assert total_rad == pytest.approx(_EXPECTED_TOTAL_RAD, abs=0.001)
+
+
+def test_total_rotation_travel_rxpy() -> None:
+    total_rad = (
+        SensorReplay(name="raw_odometry_rotate_walk", autocast=Odometry.from_msg)
+        .stream()
+        .pipe(
+            ops.map(lambda odom: odom.rot.z),
+            ops.pairwise(),  # [1,2,3,4] -> [[1,2], [2,3], [3,4]]
+            ops.starmap(sub),  # [sub(1,2), sub(2,3), sub(3,4)]
+            ops.reduce(add),
+        )
+        .run()
+    )
+
+    assert total_rad == pytest.approx(4.05, abs=0.01)
+
+
+# data collection tool
+@pytest.mark.tool
+def test_store_odometry_stream() -> None:
+    load_dotenv()
+
+    robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
+    robot.standup()
+
+    storage = SensorStorage("raw_odometry_rotate_walk")
+    storage.save_stream(robot.raw_odom_stream())
+
+    shutdown = threading.Event()
+
+    try:
+        while not shutdown.wait(0.1):
+            pass
+    except KeyboardInterrupt:
+        shutdown.set()
+    finally:
+        robot.liedown()

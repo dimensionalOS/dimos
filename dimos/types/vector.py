@@ -107,10 +107,6 @@ class Vector:
         """Serialize the vector to a tuple."""
         return {"type": "vector", "c": self._data.tolist()}
 
-    def __len__(self) -> int:
-        """Return the dimension of the vector."""
-        return len(self._data)
-
     def __eq__(self, other) -> bool:
         """Check if two vectors are equal using numpy's allclose for floating point comparison."""
         if not isinstance(other, Vector):
@@ -119,15 +115,19 @@ class Vector:
             return False
         return np.allclose(self._data, other._data)
 
-    def __add__(self: T, other) -> T:
-        if isinstance(other, Vector):
-            return self.__class__(self._data + other._data)
-        return self.__class__(self._data + np.array(other, dtype=float))
+    def __add__(self: T, other: VectorLike) -> T:
+        other = to_vector(other)
+        if self.dim != other.dim:
+            max_dim = max(self.dim, other.dim)
+            return self.pad(max_dim) + other.pad(max_dim)
+        return self.__class__(self._data + other._data)
 
-    def __sub__(self: T, other) -> T:
-        if isinstance(other, Vector):
-            return self.__class__(self._data - other._data)
-        return self.__class__(self._data - np.array(other, dtype=float))
+    def __sub__(self: T, other: VectorLike) -> T:
+        other = to_vector(other)
+        if self.dim != other.dim:
+            max_dim = max(self.dim, other.dim)
+            return self.pad(max_dim) - other.pad(max_dim)
+        return self.__class__(self._data - other._data)
 
     def __mul__(self: T, scalar: float) -> T:
         return self.__class__(self._data * scalar)
@@ -141,26 +141,21 @@ class Vector:
     def __neg__(self: T) -> T:
         return self.__class__(-self._data)
 
-    def dot(self, other) -> float:
+    def dot(self, other: VectorLike) -> float:
         """Compute dot product."""
-        if isinstance(other, Vector):
-            return float(np.dot(self._data, other._data))
-        return float(np.dot(self._data, np.array(other, dtype=float)))
+        other = to_vector(other)
+        return float(np.dot(self._data, other._data))
 
-    def cross(self: T, other) -> T:
+    def cross(self: T, other: VectorLike) -> T:
         """Compute cross product (3D vectors only)."""
         if self.dim != 3:
             raise ValueError("Cross product is only defined for 3D vectors")
 
-        if isinstance(other, Vector):
-            other_data = other._data
-        else:
-            other_data = np.array(other, dtype=float)
-
-        if len(other_data) != 3:
+        other = to_vector(other)
+        if other.dim != 3:
             raise ValueError("Cross product requires two 3D vectors")
 
-        return self.__class__(np.cross(self._data, other_data))
+        return self.__class__(np.cross(self._data, other._data))
 
     def length(self) -> float:
         """Compute the Euclidean length (magnitude) of the vector."""
@@ -181,51 +176,52 @@ class Vector:
         """Convert a vector to a 2D vector by taking only the x and y components."""
         return self.__class__(self._data[:2])
 
-    def distance(self, other) -> float:
-        """Compute Euclidean distance to another vector."""
-        if isinstance(other, Vector):
-            return float(np.linalg.norm(self._data - other._data))
-        return float(np.linalg.norm(self._data - np.array(other, dtype=float)))
+    def pad(self: T, dim: int) -> T:
+        """Pad a vector with zeros to reach the specified dimension.
 
-    def distance_squared(self, other) -> float:
+        If vector already has dimension >= dim, it is returned unchanged.
+        """
+        if self.dim >= dim:
+            return self
+
+        padded = np.zeros(dim, dtype=float)
+        padded[: len(self._data)] = self._data
+        return self.__class__(padded)
+
+    def distance(self, other: VectorLike) -> float:
+        """Compute Euclidean distance to another vector."""
+        other = to_vector(other)
+        return float(np.linalg.norm(self._data - other._data))
+
+    def distance_squared(self, other: VectorLike) -> float:
         """Compute squared Euclidean distance to another vector (faster than distance())."""
-        if isinstance(other, Vector):
-            diff = self._data - other._data
-        else:
-            diff = self._data - np.array(other, dtype=float)
+        other = to_vector(other)
+        diff = self._data - other._data
         return float(np.sum(diff * diff))
 
-    def angle(self, other) -> float:
+    def angle(self, other: VectorLike) -> float:
         """Compute the angle (in radians) between this vector and another."""
-        if self.length() < 1e-10 or (isinstance(other, Vector) and other.length() < 1e-10):
+        other = to_vector(other)
+        if self.length() < 1e-10 or other.length() < 1e-10:
             return 0.0
 
-        if isinstance(other, Vector):
-            other_data = other._data
-        else:
-            other_data = np.array(other, dtype=float)
-
         cos_angle = np.clip(
-            np.dot(self._data, other_data)
-            / (np.linalg.norm(self._data) * np.linalg.norm(other_data)),
+            np.dot(self._data, other._data)
+            / (np.linalg.norm(self._data) * np.linalg.norm(other._data)),
             -1.0,
             1.0,
         )
         return float(np.arccos(cos_angle))
 
-    def project(self: T, onto) -> T:
+    def project(self: T, onto: VectorLike) -> T:
         """Project this vector onto another vector."""
-        if isinstance(onto, Vector):
-            onto_data = onto._data
-        else:
-            onto_data = np.array(onto, dtype=float)
-
-        onto_length_sq = np.sum(onto_data * onto_data)
+        onto = to_vector(onto)
+        onto_length_sq = np.sum(onto._data * onto._data)
         if onto_length_sq < 1e-10:
             return self.__class__(np.zeros_like(self._data))
 
-        scalar_projection = np.dot(self._data, onto_data) / onto_length_sq
-        return self.__class__(scalar_projection * onto_data)
+        scalar_projection = np.dot(self._data, onto._data) / onto_length_sq
+        return self.__class__(scalar_projection * onto._data)
 
     # this is here to test ros_observable_topic
     # doesn't happen irl afaik that we want a vector from ros message

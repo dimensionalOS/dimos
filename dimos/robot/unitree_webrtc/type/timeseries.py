@@ -54,8 +54,10 @@ def to_datetime(ts: EpochLike, tz: timezone = None) -> datetime:
 class Timestamped(ABC):
     """Abstract class for an event with a timestamp."""
 
-    def __init__(self, timestamp: EpochLike):
-        self.ts = to_datetime(timestamp)
+    ts: datetime
+
+    def __init__(self, ts: EpochLike):
+        self.ts = to_datetime(ts)
 
 
 class TEvent(Timestamped, Generic[PAYLOAD]):
