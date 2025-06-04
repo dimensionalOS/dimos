@@ -18,11 +18,12 @@ Dev containers give us a reproducible, container-based workspace identical to CI
 
 ### IDE quick start
 
-Install the *Dev Containers* plug-in for VS Code, Cursor, or your IDE of choice (you’ll likely be prompted automatically).
+Install the *Dev Containers* plug-in for VS Code, Cursor, or your IDE of choice (you’ll likely be prompted automatically when you open our repo).
 
 ### Shell only quick start
 
-Clone the repo and run:
+Terminal within your IDE should use devcontainer transparently given you installed the plugin, but in case you want to run our shell without an IDE, you can use `./bin/dev` 
+(it depends on npm/node being installed)
 
 ```sh
 ./bin/dev
@@ -57,7 +58,8 @@ You’ll land in the workspace as **root** with all project tooling available.
 
 ## Pre-Commit Hooks
 
-We use [pre-commit](https://pre-commit.com) (config in `.pre-commit-config.yaml`) to enforce formatting, licence headers, EOLs, LFS checks, etc. Hooks run in **milliseconds**.
+We use [pre-commit](https://pre-commit.com) (config in `.pre-commit-config.yaml`) to enforce formatting, licence headers, EOLs, LFS checks, etc. Hooks run in **milliseconds**. 
+Hooks also run in CI; any auto-fixes are committed back to your PR, so local installation is optional — but gives faster feedback.
 
 ```sh
 CRLF end-lines checker...................................................Passed
@@ -72,8 +74,11 @@ format json..............................................................Passed
 LFS data.................................................................Passed
 
 ```
+Given your editor uses ruff via devcontainers (which it should) actual auto-commit hook won't ever reformat your code - IDE will have already done this. 
 
-### Running hooks
+### Running hooks manually
+
+Given your editor uses git via devcontainers (which it should) auto-commit hooks will run automatically, this is in case you want to run them manually. 
 
 Inside the dev container (Your IDE will likely run this transparently for each commit if using devcontainer plugin):
 
@@ -89,7 +94,6 @@ pre-commit install          # install git hook
 pre-commit run --all-files
 ```
 
-Hooks also run in CI; any auto-fixes are committed back to your branch, so local installation is optional—but gives faster feedback.
 
 ---
 
