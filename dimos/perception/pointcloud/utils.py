@@ -700,66 +700,78 @@ def overlay_point_clouds_on_image(
 def create_3d_bounding_box_corners(position, rotation, size):
     """
     Create 8 corners of a 3D bounding box from position, rotation, and size.
-    
+
     Args:
         position: Vector or dict with x, y, z coordinates
         rotation: Vector or dict with roll, pitch, yaw angles
         size: Dict with width, height, depth
-        
+
     Returns:
         8x3 numpy array of corner coordinates
     """
     # Convert position to numpy array
-    if hasattr(position, 'x'):  # Vector object
+    if hasattr(position, "x"):  # Vector object
         center = np.array([position.x, position.y, position.z])
     else:  # Dictionary
-        center = np.array([position['x'], position['y'], position['z']])
-    
+        center = np.array([position["x"], position["y"], position["z"]])
+
     # Convert rotation (euler angles) to rotation matrix
-    if hasattr(rotation, 'x'):  # Vector object (roll, pitch, yaw)
+    if hasattr(rotation, "x"):  # Vector object (roll, pitch, yaw)
         roll, pitch, yaw = rotation.x, rotation.y, rotation.z
     else:  # Dictionary
-        roll, pitch, yaw = rotation['roll'], rotation['pitch'], rotation['yaw']
-    
+        roll, pitch, yaw = rotation["roll"], rotation["pitch"], rotation["yaw"]
+
     # Create rotation matrix from euler angles (ZYX order)
     cos_r, sin_r = np.cos(roll), np.sin(roll)
     cos_p, sin_p = np.cos(pitch), np.sin(pitch)
     cos_y, sin_y = np.cos(yaw), np.sin(yaw)
-    
+
     # Rotation matrix for ZYX euler angles
-    R = np.array([
-        [cos_y * cos_p, cos_y * sin_p * sin_r - sin_y * cos_r, cos_y * sin_p * cos_r + sin_y * sin_r],
-        [sin_y * cos_p, sin_y * sin_p * sin_r + cos_y * cos_r, sin_y * sin_p * cos_r - cos_y * sin_r],
-        [-sin_p, cos_p * sin_r, cos_p * cos_r]
-    ])
-    
+    R = np.array(
+        [
+            [
+                cos_y * cos_p,
+                cos_y * sin_p * sin_r - sin_y * cos_r,
+                cos_y * sin_p * cos_r + sin_y * sin_r,
+            ],
+            [
+                sin_y * cos_p,
+                sin_y * sin_p * sin_r + cos_y * cos_r,
+                sin_y * sin_p * cos_r - cos_y * sin_r,
+            ],
+            [-sin_p, cos_p * sin_r, cos_p * cos_r],
+        ]
+    )
+
     # Get dimensions
-    width = size.get('width', 0.1)
-    height = size.get('height', 0.1) 
-    depth = size.get('depth', 0.1)
-    
+    width = size.get("width", 0.1)
+    height = size.get("height", 0.1)
+    depth = size.get("depth", 0.1)
+
     # Create 8 corners of the bounding box (before rotation)
-    corners = np.array([
-        [-width/2, -height/2, -depth/2],  # 0
-        [ width/2, -height/2, -depth/2],  # 1
-        [ width/2,  height/2, -depth/2],  # 2
-        [-width/2,  height/2, -depth/2],  # 3
-        [-width/2, -height/2,  depth/2],  # 4
-        [ width/2, -height/2,  depth/2],  # 5
-        [ width/2,  height/2,  depth/2],  # 6
-        [-width/2,  height/2,  depth/2],  # 7
-    ])
-    
+    corners = np.array(
+        [
+            [-width / 2, -height / 2, -depth / 2],  # 0
+            [width / 2, -height / 2, -depth / 2],  # 1
+            [width / 2, height / 2, -depth / 2],  # 2
+            [-width / 2, height / 2, -depth / 2],  # 3
+            [-width / 2, -height / 2, depth / 2],  # 4
+            [width / 2, -height / 2, depth / 2],  # 5
+            [width / 2, height / 2, depth / 2],  # 6
+            [-width / 2, height / 2, depth / 2],  # 7
+        ]
+    )
+
     # Apply rotation and translation
     rotated_corners = corners @ R.T + center
-    
+
     return rotated_corners
 
 
 def draw_3d_bounding_box_on_image(image, corners_2d, color, thickness=2):
     """
     Draw a 3D bounding box on an image using projected 2D corners.
-    
+
     Args:
         image: Image to draw on
         corners_2d: 8x2 array of 2D corner coordinates
@@ -768,11 +780,20 @@ def draw_3d_bounding_box_on_image(image, corners_2d, color, thickness=2):
     """
     # Define the 12 edges of a cube (connecting corner indices)
     edges = [
-        (0, 1), (1, 2), (2, 3), (3, 0),  # Bottom face
-        (4, 5), (5, 6), (6, 7), (7, 4),  # Top face
-        (0, 4), (1, 5), (2, 6), (3, 7),  # Vertical edges
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 0),  # Bottom face
+        (4, 5),
+        (5, 6),
+        (6, 7),
+        (7, 4),  # Top face
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7),  # Vertical edges
     ]
-    
+
     # Draw each edge
     for start_idx, end_idx in edges:
         start_point = tuple(corners_2d[start_idx].astype(int))
@@ -787,7 +808,7 @@ def create_point_cloud_overlay_visualization(
 ) -> np.ndarray:
     """
     Create a visualization showing object point clouds and bounding boxes overlaid on a base image.
-    
+
     Args:
         base_image: Base image to overlay onto (H, W, 3)
         filtered_objects: List of object dictionaries containing 'point_cloud', 'color', 'position', 'rotation', 'size' keys
@@ -818,7 +839,7 @@ def create_point_cloud_overlay_visualization(
 
     if not point_clouds:
         return base_image
-    
+
     # Create overlay visualization with point clouds
     result = overlay_point_clouds_on_image(
         base_image=base_image,
@@ -828,26 +849,35 @@ def create_point_cloud_overlay_visualization(
         point_size=3,
         alpha=0.8,
     )
-    
+
     # Draw 3D bounding boxes
     height, width = result.shape[:2]
     for i, obj in enumerate(filtered_objects):
-        if ("position" in obj and "rotation" in obj and "size" in obj and 
-            obj["position"] is not None and obj["rotation"] is not None and obj["size"] is not None):
-            
+        if (
+            "position" in obj
+            and "rotation" in obj
+            and "size" in obj
+            and obj["position"] is not None
+            and obj["rotation"] is not None
+            and obj["size"] is not None
+        ):
             try:
                 # Create 3D bounding box corners
-                corners_3d = create_3d_bounding_box_corners(obj["position"], obj["rotation"], obj["size"])
-                
+                corners_3d = create_3d_bounding_box_corners(
+                    obj["position"], obj["rotation"], obj["size"]
+                )
+
                 # Project to 2D
                 corners_2d = project_3d_points_to_2d(corners_3d, camera_matrix)
-                
+
                 # Filter corners within image bounds
                 valid_mask = (
-                    (corners_2d[:, 0] >= 0) & (corners_2d[:, 0] < width) &
-                    (corners_2d[:, 1] >= 0) & (corners_2d[:, 1] < height)
+                    (corners_2d[:, 0] >= 0)
+                    & (corners_2d[:, 0] < width)
+                    & (corners_2d[:, 1] >= 0)
+                    & (corners_2d[:, 1] < height)
                 )
-                
+
                 # Only draw if at least some corners are visible
                 if np.any(valid_mask):
                     # Get color for this object
@@ -855,12 +885,12 @@ def create_point_cloud_overlay_visualization(
                         bbox_color = colors[i]
                     else:
                         bbox_color = (255, 255, 255)  # Default white
-                    
+
                     # Draw the bounding box
                     draw_3d_bounding_box_on_image(result, corners_2d, bbox_color, thickness=2)
-                    
+
             except Exception:
                 # Skip bounding box drawing if there's an error
                 continue
-    
+
     return result
