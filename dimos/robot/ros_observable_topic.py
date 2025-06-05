@@ -20,11 +20,11 @@ from reactivex.disposable import Disposable
 from reactivex.scheduler import ThreadPoolScheduler
 from rxpy_backpressure import BackPressure
 
-from nav_msgs import msg
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import get_scheduler
 from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector
+from dimos.types.ros_polyfill import OccupancyGrid, Odometry
 
 from typing import Union, Callable, Any
 
@@ -38,7 +38,7 @@ from rclpy.qos import (
 __all__ = ["ROSObservableTopicAbility", "QOS"]
 
 ConversionType = Costmap
-TopicType = Union[ConversionType, msg.OccupancyGrid, msg.Odometry]
+TopicType = Union[ConversionType, OccupancyGrid, Odometry]
 
 
 class QOS(enum.Enum):
@@ -91,10 +91,10 @@ class ROSObservableTopicAbility:
 
     def _sub_msg_type(self, msg_type):
         if msg_type == Costmap:
-            return msg.OccupancyGrid
+            return OccupancyGrid
 
         if msg_type == Vector:
-            return msg.Odometry
+            return Odometry
 
         return msg_type
 

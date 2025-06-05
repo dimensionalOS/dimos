@@ -15,12 +15,16 @@
 
 import threading
 import time
-from nav_msgs import msg
 import pytest
 from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
 from dimos.utils.logging_config import setup_logger
 from dimos.types.vector import Vector
+from dimos.types.ros_polyfill import Odometry
 import asyncio
+
+
+class msg:
+    Odometry = Odometry
 
 
 class MockROSNode:
