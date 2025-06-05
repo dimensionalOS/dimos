@@ -56,6 +56,15 @@ jobs:
           echo "branch tag determined: ${branch_tag}"
           echo branch_tag="${branch_tag}" >> "$GITHUB_OUTPUT"
 
+  # just a debugger
+  inspect-needs:
+    needs: [check-changes, ros]
+    runs-on: dimos-runner-ubuntu-2204
+    if: always()
+    steps:
+      - run: |
+          echo '${{ toJSON(needs) }}'
+
   ros:
     needs: [check-changes]
     if: needs.check-changes.outputs.ros == 'true'
