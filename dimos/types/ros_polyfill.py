@@ -27,8 +27,8 @@ except ImportError:
 
 
 try:
-    from nav_msgs.msg import OccupancyGrid
-    from geometry_msgs.msg import Pose, Point, Quaternion
+    from nav_msgs.msg import OccupancyGrid, Odometry
+    from geometry_msgs.msg import Pose, Point, Quaternion, Twist
     from std_msgs.msg import Header
 except ImportError:
 
@@ -75,6 +75,14 @@ except ImportError:
         def __repr__(self) -> str:
             return f"MapMetaData(resolution={self.resolution}, width={self.width}, height={self.height}, origin={self.origin})"
 
+    class Twist:
+        def __init__(self):
+            self.linear = Vector3()
+            self.angular = Vector3()
+
+        def __repr__(self) -> str:
+            return f"Twist(linear={self.linear}, angular={self.angular})"
+
     class OccupancyGrid:
         def __init__(self):
             self.header = Header()
@@ -83,3 +91,13 @@ except ImportError:
 
         def __repr__(self) -> str:
             return f"OccupancyGrid(info={self.info}, data_length={len(self.data)})"
+
+    class Odometry:
+        def __init__(self):
+            self.header = Header()
+            self.child_frame_id = ""
+            self.pose = Pose()
+            self.twist = Twist()
+
+        def __repr__(self) -> str:
+            return f"Odometry(pose={self.pose}, twist={self.twist})"
