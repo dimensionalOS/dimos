@@ -3,11 +3,11 @@ on:
   workflow_call:
     inputs:
       from-image:  { type: string, required: true }
-      to-image:  { type: string, required: true }
-      dockerfile:      { type: string, required: true }
+      to-image:    { type: string, required: true }
+      dockerfile:  { type: string, required: true }
       freespace:   { type: boolean, default: false }
-      context:     { type: string, default: '.' }
       should-run:  { type: boolean, default: false }
+      context:     { type: string, default: '.' }
 
 # you can run this locally as well via
 # ./bin/dockerbuild [image-name]
