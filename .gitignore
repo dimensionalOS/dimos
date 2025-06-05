@@ -8,6 +8,10 @@ __pycache__/
 venv*
 .ssh/
 
+# Ignore python tooling dirs
+*.egg-info/
+__pycache__
+
 .env
 **/.DS_Store
 

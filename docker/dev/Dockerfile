@@ -23,7 +23,7 @@ COPY docker/dev/dev-requirements.txt /app/
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r dev-requirements.txt
 
 # Copy files and add version to motd
-COPY motd /etc/motd
+COPY /assets/dimensionalascii.txt /etc/motd
 COPY /docker/dev/bash.sh /root/.bash.sh
 COPY /docker/dev/tmux.conf /root/.tmux.conf
 

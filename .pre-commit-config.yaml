@@ -15,9 +15,8 @@ repos:
           # (for globally changing wording or something)
           #- --remove-header
           - --license-filepath
-          - LICENSE_HEADER
+          - assets/license_file_header.txt
           - --use-current-year
-
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.11
