@@ -16,7 +16,6 @@
 import threading
 import time
 import pytest
-from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
 from dimos.utils.logging_config import setup_logger
 from dimos.types.vector import Vector
 import asyncio
@@ -67,11 +66,18 @@ class MockROSNode:
             self.logger.info(f"Unknown subscription: {subscription}")
 
 
-class MockRobot(ROSObservableTopicAbility):
-    def __init__(self):
-        self.logger = setup_logger("ROBOT")
-        # Initialize the mock ROS node
-        self._node = MockROSNode()
+# we are doing this in order to avoid importing ROS dependencies
+@pytest.fixture
+def robot():
+    from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
+
+    class MockRobot(ROSObservableTopicAbility):
+        def __init__(self):
+            self.logger = setup_logger("ROBOT")
+            # Initialize the mock ROS node
+            self._node = MockROSNode()
+
+    return MockRobot()
 
 
 # This test verifies a bunch of basics:
@@ -82,10 +88,9 @@ class MockRobot(ROSObservableTopicAbility):
 # 4. that the system replays the last message to new observers,
 #    before the new ROS sub starts producing
 @pytest.mark.ros
-def test_parallel_and_cleanup():
+def test_parallel_and_cleanup(robot):
     from nav_msgs import msg
 
-    robot = MockRobot()
     received_messages = []
 
     obs1 = robot.topic("/odom", msg.Odometry)
@@ -155,10 +160,8 @@ def test_parallel_and_cleanup():
 #                          ├──► observe_on(pool) ─► backpressure.latest ─► sub2 (slow)
 #                          └──► observe_on(pool) ─► backpressure.latest ─► sub3 (slower)
 @pytest.mark.ros
-def test_parallel_and_hog():
+def test_parallel_and_hog(robot):
     from nav_msgs import msg
-
-    robot = MockRobot()
 
     obs1 = robot.topic("/odom", msg.Odometry)
     obs2 = robot.topic("/odom", msg.Odometry)
@@ -197,10 +200,8 @@ def test_parallel_and_hog():
 
 @pytest.mark.asyncio
 @pytest.mark.ros
-async def test_topic_latest_async():
+async def test_topic_latest_async(robot):
     from nav_msgs import msg
-
-    robot = MockRobot()
 
     odom = await robot.topic_latest_async("/odom", msg.Odometry)
     assert odom() == 1
@@ -212,18 +213,15 @@ async def test_topic_latest_async():
 
 
 @pytest.mark.ros
-def test_topic_auto_conversion():
-    robot = MockRobot()
+def test_topic_auto_conversion(robot):
     odom = robot.topic("/vector", Vector).subscribe(lambda x: print(x))
     time.sleep(0.5)
     odom.dispose()
 
 
 @pytest.mark.ros
-def test_topic_latest_sync():
+def test_topic_latest_sync(robot):
     from nav_msgs import msg
-
-    robot = MockRobot()
 
     odom = robot.topic_latest("/odom", msg.Odometry)
     assert odom() == 1
@@ -235,10 +233,8 @@ def test_topic_latest_sync():
 
 
 @pytest.mark.ros
-def test_topic_latest_sync_benchmark():
+def test_topic_latest_sync_benchmark(robot):
     from nav_msgs import msg
-
-    robot = MockRobot()
 
     odom = robot.topic_latest("/odom", msg.Odometry)
 
