@@ -98,7 +98,7 @@ find_devcontainer_bin() {
     bin_path=$(command -v devcontainer)
 
     if [[ -z "$bin_path" ]]; then
-        bin_path="$REPO_ROOT/dev/node_modules/.bin/devcontainer"
+        bin_path="$REPO_ROOT/bin/node_modules/.bin/devcontainer"
     fi
 
     if [[ -x "$bin_path" ]]; then
