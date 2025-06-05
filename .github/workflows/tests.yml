@@ -3,10 +3,10 @@ name: tests
 on:
  workflow_call:
    inputs:
-     branch-tag:
+     dev-image:
        required: true
        type: string
-       default: "latest"
+       default: "dev:dev"
 
 permissions:
   contents: read
@@ -17,7 +17,7 @@ jobs:
     runs-on: dimos-runner-ubuntu-2204
 
     container:
-      image: ghcr.io/dimensionalos/dev:${{ inputs.branch-tag }}
+      image: ghcr.io/dimensionalos/${{ inputs.dev-image }}
 
     steps:
       - uses: actions/checkout@v4

@@ -128,7 +128,7 @@ jobs:
       branch-tag:   ${{ needs.check-changes.outputs.branch-tag }}
       target: dev
 
-  run-tests:
+  run-ros-tests:
     needs: [check-changes, dev]
     if: |
       ${{
@@ -140,4 +140,18 @@ jobs:
       }}
     uses: ./.github/workflows/tests.yml
     with:
-      branch-tag: ${{ needs.dev.result != 'success' && 'dev' || needs.check-changes.outputs.branch-tag }}
+      dev-image: dev:${{ needs.dev.result != 'success' && 'dev' || needs.check-changes.outputs.branch-tag }}
+
+  run-noros-tests:
+    needs: [check-changes, noros-dev]
+    if: |
+      ${{
+      always() && !cancelled() &&
+      needs.check-changes.result == 'success' &&
+      ((needs.noros-dev.result == 'success') ||
+      (needs.noros-dev.result == 'skipped' &&
+      needs.check-changes.outputs.tests == 'true'))
+      }}
+    uses: ./.github/workflows/tests.yml
+    with:
+      dev-image: ${{ needs.noros-dev.result != 'success' && 'dev' || needs.check-changes.outputs.branch-tag }}
