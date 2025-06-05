@@ -73,7 +73,7 @@ jobs:
       - run: |
           echo '${{ toJSON(needs) }}'
 
-  python:
+  ros-python:
     needs: [check-changes, ros]
     if: |
       ${{
@@ -89,14 +89,38 @@ jobs:
       target:  base-ros-python
       freespace: true
 
-  dev:
-    needs: [check-changes, python]
+  python:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.python == 'true'
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      branch-tag:   ${{ needs.check-changes.outputs.branch-tag }}
+      target:  base-python
+      freespace: true
+
+  noros-dev:
+    needs: [check-changes, ros-python]
     if: |
       ${{
       always() && !cancelled() &&
       needs.check-changes.result == 'success' &&
       ((needs.python.result == 'success') ||
       (needs.python.result == 'skipped' &&
+      needs.check-changes.outputs.dev == 'true'))
+      }}
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      branch-tag:   ${{ needs.check-changes.outputs.branch-tag }}
+      target: noros-dev
+
+  dev:
+    needs: [check-changes, ros-python]
+    if: |
+      ${{
+      always() && !cancelled() &&
+      needs.check-changes.result == 'success' &&
+      ((needs.ros-python.result == 'success') ||
+      (needs.ros-python.result == 'skipped' &&
       needs.check-changes.outputs.dev == 'true'))
       }}
     uses: ./.github/workflows/_docker-build-template.yml
