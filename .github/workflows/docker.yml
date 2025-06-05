@@ -80,7 +80,6 @@ jobs:
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       should-run: ${{
-        !cancelled() &&
         needs.check-changes.outputs.python == 'true' &&
         needs.check-changes.result != 'error' &&
         needs.ros.result != 'error'
@@ -108,7 +107,7 @@ jobs:
 
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      should-run: ${{ !cancelled() &&
+      should-run: ${{
         needs.check-changes.result == 'success' &&
         ((needs.python.result == 'success') ||
         (needs.python.result == 'skipped' &&
@@ -122,7 +121,7 @@ jobs:
     if: always()
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      should-run: ${{ !cancelled() &&
+      should-run: ${{
         needs.check-changes.result == 'success' &&
         ((needs.ros-python.result == 'success') ||
         (needs.ros-python.result == 'skipped' &&
@@ -137,7 +136,7 @@ jobs:
     if: always()
     uses: ./.github/workflows/tests.yml
     with:
-      should-run: ${{ !cancelled() &&
+      should-run: ${{
         needs.check-changes.result == 'success' &&
         ((needs.ros-dev.result == 'success') ||
         (needs.ros-dev.result == 'skipped' &&
@@ -151,7 +150,7 @@ jobs:
     if: always()
     uses: ./.github/workflows/tests.yml
     with:
-      should-run: ${{ !cancelled() &&
+      should-run: ${{
         needs.check-changes.result == 'success' &&
         ((needs.dev.result == 'success') ||
         (needs.dev.result == 'skipped' &&
