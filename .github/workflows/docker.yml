@@ -99,7 +99,7 @@ jobs:
       freespace: true
 
   noros-dev:
-    needs: [check-changes, ros-python]
+    needs: [check-changes, python]
     if: |
       ${{
       always() && !cancelled() &&
