@@ -24,3 +24,62 @@ except ImportError:
 
         def __repr__(self) -> str:
             return f"Vector3(x={self.x}, y={self.y}, z={self.z})"
+
+
+try:
+    from nav_msgs.msg import OccupancyGrid
+    from geometry_msgs.msg import Pose, Point, Quaternion
+    from std_msgs.msg import Header
+except ImportError:
+
+    class Header:
+        def __init__(self):
+            self.stamp = None
+            self.frame_id = ""
+
+    class Point:
+        def __init__(self, x: float = 0.0, y: float = 0.0, z: float = 0.0):
+            self.x = float(x)
+            self.y = float(y)
+            self.z = float(z)
+
+        def __repr__(self) -> str:
+            return f"Point(x={self.x}, y={self.y}, z={self.z})"
+
+    class Quaternion:
+        def __init__(self, x: float = 0.0, y: float = 0.0, z: float = 0.0, w: float = 1.0):
+            self.x = float(x)
+            self.y = float(y)
+            self.z = float(z)
+            self.w = float(w)
+
+        def __repr__(self) -> str:
+            return f"Quaternion(x={self.x}, y={self.y}, z={self.z}, w={self.w})"
+
+    class Pose:
+        def __init__(self):
+            self.position = Point()
+            self.orientation = Quaternion()
+
+        def __repr__(self) -> str:
+            return f"Pose(position={self.position}, orientation={self.orientation})"
+
+    class MapMetaData:
+        def __init__(self):
+            self.map_load_time = None
+            self.resolution = 0.05
+            self.width = 0
+            self.height = 0
+            self.origin = Pose()
+
+        def __repr__(self) -> str:
+            return f"MapMetaData(resolution={self.resolution}, width={self.width}, height={self.height}, origin={self.origin})"
+
+    class OccupancyGrid:
+        def __init__(self):
+            self.header = Header()
+            self.info = MapMetaData()
+            self.data = []
+
+        def __repr__(self) -> str:
+            return f"OccupancyGrid(info={self.info}, data_length={len(self.data)})"

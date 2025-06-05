@@ -17,7 +17,7 @@ import math
 import numpy as np
 from typing import Optional
 from scipy import ndimage
-from nav_msgs.msg import OccupancyGrid
+from dimos.types.ros_polyfill import OccupancyGrid
 from dimos.types.vector import Vector, VectorLike, x, y, to_vector
 import open3d as o3d
 
