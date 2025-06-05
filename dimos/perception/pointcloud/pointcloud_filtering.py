@@ -17,6 +17,8 @@ import cv2
 import os
 import torch
 import open3d as o3d
+import argparse
+import pickle
 from typing import Dict, List, Optional, Union
 import time
 from dimos.types.manipulation import ObjectData
@@ -314,6 +316,19 @@ class PointcloudFiltering:
             updated_obj["point_cloud"] = pcd_filtered
             updated_obj["color"] = rgb_color
 
+            # Extract numpy arrays for grasp generation (anygrasp format)
+            points_array = np.asarray(pcd_filtered.points).astype(np.float32)  # Nx3 XYZ coordinates
+            if pcd_filtered.has_colors():
+                colors_array = np.asarray(pcd_filtered.colors).astype(
+                    np.float32
+                )  # Nx3 RGB (0-1 range)
+            else:
+                # If no colors, create array of zeros
+                colors_array = np.zeros((len(points_array), 3), dtype=np.float32)
+
+            updated_obj["point_cloud_numpy"] = points_array
+            updated_obj["colors_numpy"] = colors_array
+
             updated_objects.append(updated_obj)
 
         return updated_objects
@@ -543,11 +558,25 @@ def visualize_results(objects: List[ObjectData]):
 
 def main():
     """Main function to demonstrate the PointcloudFiltering pipeline."""
+    parser = argparse.ArgumentParser(description="Point cloud filtering pipeline demonstration")
+    parser.add_argument(
+        "--save-pickle",
+        type=str,
+        help="Save generated ObjectData to pickle file (provide filename)",
+    )
+    parser.add_argument(
+        "--data-dir", type=str, help="Directory containing RGBD data (default: auto-detect)"
+    )
+    args = parser.parse_args()
+
     try:
         # Setup paths
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        dimos_dir = os.path.abspath(os.path.join(script_dir, "../../../"))
-        data_dir = os.path.join(dimos_dir, "assets/rgbd_data")
+        if args.data_dir:
+            data_dir = args.data_dir
+        else:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            dimos_dir = os.path.abspath(os.path.join(script_dir, "../../../"))
+            data_dir = os.path.join(dimos_dir, "assets/rgbd_data")
 
         # Load test data
         print("Loading test images...")
@@ -582,6 +611,32 @@ def main():
                 print(
                     f"    Size: {size.get('width', 0):.3f} x {size.get('height', 0):.3f} x {size.get('depth', 0):.3f}"
                 )
+
+        # Save to pickle file if requested
+        if args.save_pickle:
+            pickle_path = args.save_pickle
+            if not pickle_path.endswith(".pkl"):
+                pickle_path += ".pkl"
+
+            print(f"Saving ObjectData to {pickle_path}...")
+
+            # Create serializable objects (exclude Open3D point clouds)
+            serializable_objects = []
+            for obj in updated_objects:
+                obj_copy = obj.copy()
+                # Remove the Open3D point cloud object (can't be pickled)
+                if "point_cloud" in obj_copy:
+                    del obj_copy["point_cloud"]
+                serializable_objects.append(obj_copy)
+
+            with open(pickle_path, "wb") as f:
+                pickle.dump(serializable_objects, f)
+
+            print(f"Successfully saved {len(serializable_objects)} objects to {pickle_path}")
+            print("To load: objects = pickle.load(open('filename.pkl', 'rb'))")
+            print(
+                "Note: Open3D point clouds excluded - use point_cloud_numpy and colors_numpy for processing"
+            )
 
         # Visualize results
         print("Visualizing results...")
