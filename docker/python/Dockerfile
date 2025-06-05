@@ -1,6 +1,5 @@
-# trigger rebuild: 1
-ARG FROM_TAG=latest
-FROM ghcr.io/dimensionalos/base-ros:${FROM_TAG}
+ARG FROM_IMAGE
+FROM ${FROM_IMAGE}
 
 RUN mkdir -p /app/dimos
 

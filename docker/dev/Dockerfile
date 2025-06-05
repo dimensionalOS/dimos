@@ -1,5 +1,5 @@
-ARG FROM_TAG=latest
-FROM ghcr.io/dimensionalos/base-ros-python:${FROM_TAG}
+ARG FROM_TAG
+FROM ${FROM_IMAGE}
 
 ARG GIT_COMMIT=unknown
 ARG GIT_BRANCH=unknown
