@@ -74,7 +74,7 @@ def create_point_cloud(color_img, depth_img, intrinsics):
     return o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, o3d_intrinsics)
 
 
-def run_pipeline(color_img, depth_img, intrinsics, wait_time=5.0):
+def run_pipeline(color_img, depth_img, intrinsics):
     """Run pipeline and collect results."""
     # Create pipeline
     pipeline = ManipulationPipeline(
@@ -83,9 +83,13 @@ def run_pipeline(color_img, depth_img, intrinsics, wait_time=5.0):
         enable_grasp_generation=True,
     )
 
-    # Create single-frame stream
-    subject = Subject()
-    streams = pipeline.create_streams(subject)
+    # Create ZED-like stream from single frame
+    from reactivex.subject import Subject
+
+    zed_subject = Subject()
+
+    # Get streams (providing the required zed_stream parameter)
+    streams = pipeline.create_streams(zed_subject)
 
     # Debug: print available streams
     print(f"Available streams: {list(streams.keys())}")
@@ -100,24 +104,27 @@ def run_pipeline(color_img, depth_img, intrinsics, wait_time=5.0):
 
         return on_next
 
-    # Subscribe to streams
+    # Subscribe to streams with longer timeout to catch all emissions
     for key, stream in streams.items():
         if stream:
-            stream.pipe(ops.take(1)).subscribe(on_next=collect(key))
+            stream.pipe(ops.take(1), ops.timeout(5.0)).subscribe(
+                on_next=collect(key),
+                on_error=lambda e: logger.warning(f"Stream {key} timeout: {e}"),
+            )
 
-    # Send frame
-    threading.Timer(
-        0.5,
-        lambda: subject.on_next({"rgb": color_img, "depth": depth_img, "timestamp": time.time()}),
-    ).start()
+    # Send frame to ZED stream (using the expected format)
+    frame_data = {"rgb": color_img, "depth": depth_img, "timestamp": time.time()}
+    zed_subject.on_next(frame_data)
 
-    # Wait for results
-    time.sleep(wait_time)
+    # Wait longer for all streams to emit
+    time.sleep(3.0)
 
     # If grasp generation is enabled, also check for latest grasps
-    if pipeline.latest_grasps:
-        results["grasps"] = pipeline.latest_grasps
-        logger.info(f"Retrieved latest grasps: {len(pipeline.latest_grasps)} grasps")
+    if pipeline.enable_grasp_generation:
+        grasps = pipeline.get_latest_grasps(timeout=3.0)
+        if grasps:
+            results["grasps"] = grasps
+            logger.info(f"Retrieved latest grasps: {len(grasps)} grasps")
 
     pipeline.cleanup()
 
@@ -135,7 +142,7 @@ def main():
     logger.info(f"Loaded images: color {color_img.shape}, depth {depth_img.shape}")
 
     # Run pipeline
-    results = run_pipeline(color_img, depth_img, intrinsics, args.wait_time)
+    results = run_pipeline(color_img, depth_img, intrinsics)
 
     # Debug: Print what we received
     print(f"\n✅ Pipeline Results:")
@@ -158,7 +165,7 @@ def main():
         print("   Grasps: None generated")
 
     # Visualize 2D results
-    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 
     if "detection_viz" in results and results["detection_viz"] is not None:
         axes[0].imshow(results["detection_viz"])
@@ -169,6 +176,11 @@ def main():
         axes[1].imshow(results["pointcloud_viz"])
         axes[1].set_title("Point Cloud Overlay")
     axes[1].axis("off")
+
+    if "grasp_overlay" in results:
+        axes[2].imshow(results["grasp_overlay"])
+        axes[2].set_title("Grasp Overlay")
+        axes[2].axis("off")
 
     plt.tight_layout()
     plt.show()
