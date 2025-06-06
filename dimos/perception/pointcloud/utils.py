@@ -24,7 +24,7 @@ import yaml
 import os
 import cv2
 import open3d as o3d
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Dict
 
 
 def depth_to_point_cloud(depth_image, camera_matrix, subsample_factor=4):
@@ -697,6 +697,86 @@ def overlay_point_clouds_on_image(
     return result
 
 
+def create_point_cloud_overlay_visualization(
+    base_image: np.ndarray,
+    objects: List[dict],
+    intrinsics: np.ndarray,
+) -> np.ndarray:
+    """
+    Create a visualization showing object point clouds and bounding boxes overlaid on a base image.
+
+    Args:
+        base_image: Base image to overlay onto (H, W, 3)
+        objects: List of object dictionaries containing 'point_cloud', 'color', 'position', 'rotation', 'size' keys
+        intrinsics: Camera intrinsics as [fx, fy, cx, cy] or 3x3 matrix
+
+    Returns:
+        Visualization image with overlaid point clouds and bounding boxes (H, W, 3)
+    """
+    # Convert intrinsics to matrix if needed
+    if isinstance(intrinsics, list) and len(intrinsics) == 4:
+        fx, fy, cx, cy = intrinsics
+        camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
+    else:
+        camera_matrix = intrinsics
+
+    # Extract point clouds and colors from objects
+    point_clouds = []
+    colors = []
+    for obj in objects:
+        if "point_cloud" in obj and obj["point_cloud"] is not None:
+            point_clouds.append(obj["point_cloud"])
+
+            # Convert color to tuple
+            color = obj["color"]
+            if isinstance(color, np.ndarray):
+                color = tuple(int(c) for c in color)
+            elif isinstance(color, (list, tuple)):
+                color = tuple(int(c) for c in color[:3])
+            colors.append(color)
+
+    # Create visualization
+    if point_clouds:
+        result = overlay_point_clouds_on_image(
+            base_image=base_image,
+            point_clouds=point_clouds,
+            camera_matrix=camera_matrix,
+            colors=colors,
+            point_size=3,
+            alpha=0.8,
+        )
+    else:
+        result = base_image.copy()
+
+    # Draw 3D bounding boxes
+    height_img, width_img = result.shape[:2]
+    for i, obj in enumerate(objects):
+        if all(key in obj and obj[key] is not None for key in ["position", "rotation", "size"]):
+            try:
+                # Create and project 3D bounding box
+                corners_3d = create_3d_bounding_box_corners(
+                    obj["position"], obj["rotation"], obj["size"]
+                )
+                corners_2d = project_3d_points_to_2d(corners_3d, camera_matrix)
+
+                # Check if any corners are visible
+                valid_mask = (
+                    (corners_2d[:, 0] >= 0)
+                    & (corners_2d[:, 0] < width_img)
+                    & (corners_2d[:, 1] >= 0)
+                    & (corners_2d[:, 1] < height_img)
+                )
+
+                if np.any(valid_mask):
+                    # Get color
+                    bbox_color = colors[i] if i < len(colors) else (255, 255, 255)
+                    draw_3d_bounding_box_on_image(result, corners_2d, bbox_color, thickness=2)
+            except:
+                continue
+
+    return result
+
+
 def create_3d_bounding_box_corners(position, rotation, size):
     """
     Create 8 corners of a 3D bounding box from position, rotation, and size.
@@ -799,98 +879,3 @@ def draw_3d_bounding_box_on_image(image, corners_2d, color, thickness=2):
         start_point = tuple(corners_2d[start_idx].astype(int))
         end_point = tuple(corners_2d[end_idx].astype(int))
         cv2.line(image, start_point, end_point, color, thickness)
-
-
-def create_point_cloud_overlay_visualization(
-    base_image: np.ndarray,
-    filtered_objects: List[dict],
-    camera_matrix: np.ndarray,
-) -> np.ndarray:
-    """
-    Create a visualization showing object point clouds and bounding boxes overlaid on a base image.
-
-    Args:
-        base_image: Base image to overlay onto (H, W, 3)
-        filtered_objects: List of object dictionaries containing 'point_cloud', 'color', 'position', 'rotation', 'size' keys
-        camera_matrix: 3x3 camera intrinsic matrix or list [fx, fy, cx, cy]
-
-    Returns:
-        Visualization image with overlaid point clouds and bounding boxes (H, W, 3)
-    """
-    # Convert camera matrix if needed
-    if isinstance(camera_matrix, list) and len(camera_matrix) == 4:
-        fx, fy, cx, cy = camera_matrix
-        camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
-
-    # Extract point clouds and colors from filtered objects
-    point_clouds = []
-    colors = []
-    for obj in filtered_objects:
-        if "point_cloud" in obj and obj["point_cloud"] is not None:
-            point_clouds.append(obj["point_cloud"])
-
-            # Convert color to tuple of integers for OpenCV
-            color = obj["color"]
-            if isinstance(color, np.ndarray):
-                color = tuple(int(c) for c in color)
-            elif isinstance(color, (list, tuple)):
-                color = tuple(int(c) for c in color[:3])
-            colors.append(color)
-
-    if not point_clouds:
-        return base_image
-
-    # Create overlay visualization with point clouds
-    result = overlay_point_clouds_on_image(
-        base_image=base_image,
-        point_clouds=point_clouds,
-        camera_matrix=camera_matrix,
-        colors=colors,
-        point_size=3,
-        alpha=0.8,
-    )
-
-    # Draw 3D bounding boxes
-    height, width = result.shape[:2]
-    for i, obj in enumerate(filtered_objects):
-        if (
-            "position" in obj
-            and "rotation" in obj
-            and "size" in obj
-            and obj["position"] is not None
-            and obj["rotation"] is not None
-            and obj["size"] is not None
-        ):
-            try:
-                # Create 3D bounding box corners
-                corners_3d = create_3d_bounding_box_corners(
-                    obj["position"], obj["rotation"], obj["size"]
-                )
-
-                # Project to 2D
-                corners_2d = project_3d_points_to_2d(corners_3d, camera_matrix)
-
-                # Filter corners within image bounds
-                valid_mask = (
-                    (corners_2d[:, 0] >= 0)
-                    & (corners_2d[:, 0] < width)
-                    & (corners_2d[:, 1] >= 0)
-                    & (corners_2d[:, 1] < height)
-                )
-
-                # Only draw if at least some corners are visible
-                if np.any(valid_mask):
-                    # Get color for this object
-                    if i < len(colors):
-                        bbox_color = colors[i]
-                    else:
-                        bbox_color = (255, 255, 255)  # Default white
-
-                    # Draw the bounding box
-                    draw_3d_bounding_box_on_image(result, corners_2d, bbox_color, thickness=2)
-
-            except Exception:
-                # Skip bounding box drawing if there's an error
-                continue
-
-    return result
