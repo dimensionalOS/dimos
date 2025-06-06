@@ -27,14 +27,14 @@ import open3d as o3d
 from typing import List, Optional, Tuple, Union, Dict
 
 
-def depth_to_point_cloud(depth_image, camera_matrix, subsample_factor=4):
+def depth_to_point_cloud(depth_image, camera_intrinsics, subsample_factor=4):
     """
     Convert depth image to point cloud using camera intrinsics.
     Subsamples points to reduce density.
 
     Args:
         depth_image: HxW depth image in meters
-        camera_matrix: 3x3 camera intrinsic matrix
+        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] list or 3x3 matrix
         subsample_factor: Factor to subsample points (higher = fewer points)
 
     Returns:
@@ -49,11 +49,14 @@ def depth_to_point_cloud(depth_image, camera_matrix, subsample_factor=4):
     # Set invalid values to 0
     depth_filtered[~valid_mask] = 0.0
 
-    # Get focal length and principal point from camera matrix
-    fx = camera_matrix[0, 0]
-    fy = camera_matrix[1, 1]
-    cx = camera_matrix[0, 2]
-    cy = camera_matrix[1, 2]
+    # Extract camera parameters
+    if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
+        fx, fy, cx, cy = camera_intrinsics
+    else:
+        fx = camera_intrinsics[0, 0]
+        fy = camera_intrinsics[1, 1]
+        cx = camera_intrinsics[0, 2]
+        cy = camera_intrinsics[1, 2]
 
     # Create pixel coordinate grid
     rows, cols = depth_filtered.shape
@@ -221,13 +224,15 @@ def create_o3d_point_cloud_from_rgbd(
 
     # Create Open3D intrinsic object
     height, width = color_img.shape[:2]
+    fx, fy = intrinsic[0, 0], intrinsic[1, 1]
+    cx, cy = intrinsic[0, 2], intrinsic[1, 2]
     intrinsic_o3d = o3d.camera.PinholeCameraIntrinsic(
         width,
         height,
-        intrinsic[0, 0],
-        intrinsic[1, 1],  # fx, fy
-        intrinsic[0, 2],
-        intrinsic[1, 2],  # cx, cy
+        fx,
+        fy,  # fx, fy
+        cx,
+        cy,  # cx, cy
     )
 
     # Create RGBD image
@@ -583,13 +588,15 @@ def compute_point_cloud_bounds(pcd: o3d.geometry.PointCloud) -> dict:
     return {"min": min_bound, "max": max_bound, "center": center, "size": size, "volume": volume}
 
 
-def project_3d_points_to_2d(points_3d: np.ndarray, camera_matrix: np.ndarray) -> np.ndarray:
+def project_3d_points_to_2d(
+    points_3d: np.ndarray, camera_intrinsics: Union[List[float], np.ndarray]
+) -> np.ndarray:
     """
     Project 3D points to 2D image coordinates using camera intrinsics.
 
     Args:
         points_3d: Nx3 array of 3D points (X, Y, Z)
-        camera_matrix: 3x3 camera intrinsic matrix
+        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] list or 3x3 matrix
 
     Returns:
         Nx2 array of 2D image coordinates (u, v)
@@ -605,10 +612,13 @@ def project_3d_points_to_2d(points_3d: np.ndarray, camera_matrix: np.ndarray) ->
     valid_points = points_3d[valid_mask]
 
     # Extract camera parameters
-    fx = camera_matrix[0, 0]
-    fy = camera_matrix[1, 1]
-    cx = camera_matrix[0, 2]
-    cy = camera_matrix[1, 2]
+    if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
+        fx, fy, cx, cy = camera_intrinsics
+    else:
+        fx = camera_intrinsics[0, 0]
+        fy = camera_intrinsics[1, 1]
+        cx = camera_intrinsics[0, 2]
+        cy = camera_intrinsics[1, 2]
 
     # Project to image coordinates
     u = (valid_points[:, 0] * fx / valid_points[:, 2]) + cx
@@ -623,7 +633,7 @@ def project_3d_points_to_2d(points_3d: np.ndarray, camera_matrix: np.ndarray) ->
 def overlay_point_clouds_on_image(
     base_image: np.ndarray,
     point_clouds: List[o3d.geometry.PointCloud],
-    camera_matrix: np.ndarray,
+    camera_intrinsics: Union[List[float], np.ndarray],
     colors: List[Tuple[int, int, int]],
     point_size: int = 2,
     alpha: float = 0.7,
@@ -634,7 +644,7 @@ def overlay_point_clouds_on_image(
     Args:
         base_image: Base image to overlay onto (H, W, 3) - assumed to be RGB
         point_clouds: List of Open3D point cloud objects
-        camera_matrix: 3x3 camera intrinsic matrix
+        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] list or 3x3 matrix
         colors: List of RGB color tuples for each point cloud. If None, generates distinct colors.
         point_size: Size of points to draw (in pixels)
         alpha: Blending factor for overlay (0.0 = fully transparent, 1.0 = fully opaque)
@@ -659,7 +669,7 @@ def overlay_point_clouds_on_image(
             continue
 
         # Project 3D points to 2D
-        points_2d = project_3d_points_to_2d(points_3d, camera_matrix)
+        points_2d = project_3d_points_to_2d(points_3d, camera_intrinsics)
 
         if len(points_2d) == 0:
             continue
@@ -713,13 +723,6 @@ def create_point_cloud_overlay_visualization(
     Returns:
         Visualization image with overlaid point clouds and bounding boxes (H, W, 3)
     """
-    # Convert intrinsics to matrix if needed
-    if isinstance(intrinsics, list) and len(intrinsics) == 4:
-        fx, fy, cx, cy = intrinsics
-        camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
-    else:
-        camera_matrix = intrinsics
-
     # Extract point clouds and colors from objects
     point_clouds = []
     colors = []
@@ -740,7 +743,7 @@ def create_point_cloud_overlay_visualization(
         result = overlay_point_clouds_on_image(
             base_image=base_image,
             point_clouds=point_clouds,
-            camera_matrix=camera_matrix,
+            camera_intrinsics=intrinsics,
             colors=colors,
             point_size=3,
             alpha=0.8,
@@ -757,7 +760,7 @@ def create_point_cloud_overlay_visualization(
                 corners_3d = create_3d_bounding_box_corners(
                     obj["position"], obj["rotation"], obj["size"]
                 )
-                corners_2d = project_3d_points_to_2d(corners_3d, camera_matrix)
+                corners_2d = project_3d_points_to_2d(corners_3d, intrinsics)
 
                 # Check if any corners are visible
                 valid_mask = (
