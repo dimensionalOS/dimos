@@ -66,9 +66,8 @@ class MockROSNode:
             self.logger.info(f"Unknown subscription: {subscription}")
 
 
-# we are doing this in order to avoid importing ROS dependencies
-@pytest.fixture
-def robot():
+# we are doing this in order to avoid importing ROS dependencies if ros tests aren't runnin
+def init_robot():
     from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
 
     class MockRobot(ROSObservableTopicAbility):
@@ -88,7 +87,8 @@ def robot():
 # 4. that the system replays the last message to new observers,
 #    before the new ROS sub starts producing
 @pytest.mark.ros
-def test_parallel_and_cleanup(robot):
+def test_parallel_and_cleanup():
+    robot = init_robot()
     from nav_msgs import msg
 
     received_messages = []
@@ -160,7 +160,8 @@ def test_parallel_and_cleanup(robot):
 #                          ├──► observe_on(pool) ─► backpressure.latest ─► sub2 (slow)
 #                          └──► observe_on(pool) ─► backpressure.latest ─► sub3 (slower)
 @pytest.mark.ros
-def test_parallel_and_hog(robot):
+def test_parallel_and_hog():
+    robot = init_robot()
     from nav_msgs import msg
 
     obs1 = robot.topic("/odom", msg.Odometry)
@@ -200,7 +201,8 @@ def test_parallel_and_hog(robot):
 
 @pytest.mark.asyncio
 @pytest.mark.ros
-async def test_topic_latest_async(robot):
+async def test_topic_latest_async():
+    robot = init_robot()
     from nav_msgs import msg
 
     odom = await robot.topic_latest_async("/odom", msg.Odometry)
@@ -213,14 +215,16 @@ async def test_topic_latest_async(robot):
 
 
 @pytest.mark.ros
-def test_topic_auto_conversion(robot):
+def test_topic_auto_conversion():
+    robot = init_robot()
     odom = robot.topic("/vector", Vector).subscribe(lambda x: print(x))
     time.sleep(0.5)
     odom.dispose()
 
 
 @pytest.mark.ros
-def test_topic_latest_sync(robot):
+def test_topic_latest_sync():
+    robot = init_robot()
     from nav_msgs import msg
 
     odom = robot.topic_latest("/odom", msg.Odometry)
@@ -233,7 +237,8 @@ def test_topic_latest_sync(robot):
 
 
 @pytest.mark.ros
-def test_topic_latest_sync_benchmark(robot):
+def test_topic_latest_sync_benchmark():
+    robot = init_robot()
     from nav_msgs import msg
 
     odom = robot.topic_latest("/odom", msg.Odometry)
