@@ -18,20 +18,24 @@ Asynchronous, reactive manipulation pipeline for realtime detection, filtering, 
 
 import asyncio
 import json
+import logging
 import threading
 import time
-from typing import Dict, List, Optional
+import traceback
+import websockets
+from typing import Dict, List, Optional, Any
 import numpy as np
 import reactivex as rx
 import reactivex.operators as ops
-import websockets
 from dimos.utils.logging_config import setup_logger
 from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
 from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
 from dimos.perception.object_detection_stream import ObjectDetectionStream
+from dimos.perception.grasp_generation.utils import draw_grasps_on_image
 from dimos.perception.pointcloud.utils import create_point_cloud_overlay_visualization
 from dimos.perception.common.utils import colorize_depth
 from dimos.utils.logging_config import setup_logger
+import cv2
 
 logger = setup_logger("dimos.perception.manip_aio_pipeline")
 
@@ -78,7 +82,9 @@ class ManipulationPipeline:
 
         # Storage for grasp results and filtered objects
         self.latest_grasps: List[dict] = []  # Simplified: just a list of grasps
+        self.grasps_consumed = False
         self.latest_filtered_objects = []
+        self.latest_rgb_for_grasps = None  # Store RGB image for grasp overlay
         self.grasp_lock = threading.Lock()
 
         # Track pending requests - simplified to single task
@@ -87,6 +93,7 @@ class ManipulationPipeline:
         # Reactive subjects for streaming filtered objects and grasps
         self.filtered_objects_subject = rx.subject.Subject()
         self.grasps_subject = rx.subject.Subject()
+        self.grasp_overlay_subject = rx.subject.Subject()  # Add grasp overlay subject
 
         # Initialize grasp client if enabled
         if self.enable_grasp_generation and self.grasp_server_url:
@@ -180,36 +187,6 @@ class ManipulationPipeline:
                                 self.latest_filtered_objects = filtered_objects
                             self.filtered_objects_subject.on_next(filtered_objects)
 
-                            # Request grasps if enabled
-                            if self.enable_grasp_generation and filtered_objects:
-                                logger.debug(
-                                    f"Requesting grasps for {len(filtered_objects)} filtered objects"
-                                )
-                                task = self.request_scene_grasps(filtered_objects)
-                                if task:
-                                    logger.debug(
-                                        "Grasp request task created, waiting for results..."
-                                    )
-
-                                    # Check for results after a delay
-                                    def check_grasps_later():
-                                        logger.debug("Starting delayed grasp check...")
-                                        time.sleep(2.0)  # Wait for grasp processing
-                                        grasps = self.get_latest_grasps()
-                                        if grasps:
-                                            logger.debug(
-                                                f"Found {len(grasps)} grasps in delayed check"
-                                            )
-                                            self.grasps_subject.on_next(grasps)
-                                            logger.info(f"Received {len(grasps)} grasps for scene")
-                                            logger.debug(f"Grasps for scene: {grasps}")
-                                        else:
-                                            logger.debug("No grasps found in delayed check")
-
-                                    threading.Thread(target=check_grasps_later, daemon=True).start()
-                                else:
-                                    logger.debug("Failed to create grasp request task")
-
                             # Create base image (colorized depth)
                             base_image = colorize_depth(depth, max_depth=10.0)
 
@@ -223,11 +200,59 @@ class ManipulationPipeline:
                             # Store the overlay for the stream
                             with frame_lock:
                                 latest_point_cloud_overlay = overlay_viz
-                        else:
-                            # No filtered objects, clear overlay
-                            with frame_lock:
-                                latest_point_cloud_overlay = None
 
+                            # Request grasps if enabled
+                            if self.enable_grasp_generation and len(filtered_objects) > 0:
+                                # Save RGB image for later grasp overlay
+                                with frame_lock:
+                                    self.latest_rgb_for_grasps = rgb.copy()
+
+                                task = self.request_scene_grasps(filtered_objects)
+                                if task:
+                                    # Check for results after a delay
+                                    def check_grasps_later():
+                                        time.sleep(2.0)  # Wait for grasp processing
+                                        # Wait for task to complete
+                                        if hasattr(self, "grasp_task") and self.grasp_task:
+                                            try:
+                                                result = self.grasp_task.result(
+                                                    timeout=3.0
+                                                )  # Get result with timeout
+                                            except Exception as e:
+                                                logger.warning(f"Grasp task failed or timeout: {e}")
+
+                                        # Try to get latest grasps and create overlay
+                                        with self.grasp_lock:
+                                            grasps = self.latest_grasps
+
+                                        if grasps and hasattr(self, "latest_rgb_for_grasps"):
+                                            # Create grasp overlay on the saved RGB image
+                                            try:
+                                                bgr_image = cv2.cvtColor(
+                                                    self.latest_rgb_for_grasps, cv2.COLOR_RGB2BGR
+                                                )
+                                                result_bgr = draw_grasps_on_image(
+                                                    bgr_image,
+                                                    grasps,
+                                                    self.camera_intrinsics,
+                                                    max_grasps=-1,  # Show all grasps
+                                                )
+                                                result_rgb = cv2.cvtColor(
+                                                    result_bgr, cv2.COLOR_BGR2RGB
+                                                )
+
+                                                # Emit grasp overlay immediately
+                                                self.grasp_overlay_subject.on_next(result_rgb)
+
+                                            except Exception as e:
+                                                logger.error(f"Error creating grasp overlay: {e}")
+
+                                            # Emit grasps to stream
+                                            self.grasps_subject.on_next(grasps)
+
+                                    threading.Thread(target=check_grasps_later, daemon=True).start()
+                                else:
+                                    logger.warning("Failed to create grasp task")
                     except Exception as e:
                         logger.error(f"Error in point cloud filtering: {e}")
                         with frame_lock:
@@ -266,12 +291,16 @@ class ManipulationPipeline:
         # Create grasps stream
         grasps_stream = self.grasps_subject
 
+        # Create grasp overlay subject for immediate emission
+        grasp_overlay_stream = self.grasp_overlay_subject
+
         return {
             "detection_viz": viz_stream,
             "pointcloud_viz": depth_stream,
             "objects": object_detector.get_stream().pipe(ops.map(lambda x: x.get("objects", []))),
             "filtered_objects": filtered_objects_stream,
             "grasps": grasps_stream,
+            "grasp_overlay": grasp_overlay_stream,
         }
 
     def _start_grasp_loop(self):
@@ -293,100 +322,203 @@ class ManipulationPipeline:
         self, points: np.ndarray, colors: Optional[np.ndarray]
     ) -> Optional[List[dict]]:
         """Send grasp request to AnyGrasp server."""
-        logger.debug(f"_send_grasp_request called with {len(points)} points")
-
         try:
-            logger.debug(f"Connecting to WebSocket: {self.grasp_server_url}")
-            async with websockets.connect(self.grasp_server_url) as websocket:
-                logger.debug("WebSocket connected successfully")
+            # Comprehensive client-side validation to prevent server errors
 
-                # Use the correct format expected by AnyGrasp server
+            # Validate points array
+            if points is None:
+                logger.error("Points array is None")
+                return None
+            if not isinstance(points, np.ndarray):
+                logger.error(f"Points is not numpy array: {type(points)}")
+                return None
+            if points.size == 0:
+                logger.error("Points array is empty")
+                return None
+            if len(points.shape) != 2 or points.shape[1] != 3:
+                logger.error(f"Points has invalid shape {points.shape}, expected (N, 3)")
+                return None
+            if points.shape[0] < 100:  # Minimum points for stable grasp detection
+                logger.error(f"Insufficient points for grasp detection: {points.shape[0]} < 100")
+                return None
+
+            # Validate and prepare colors
+            if colors is not None:
+                if not isinstance(colors, np.ndarray):
+                    colors = None
+                elif colors.size == 0:
+                    colors = None
+                elif len(colors.shape) != 2 or colors.shape[1] != 3:
+                    colors = None
+                elif colors.shape[0] != points.shape[0]:
+                    colors = None
+
+            # If no valid colors, create default colors (required by server)
+            if colors is None:
+                # Create default white colors for all points
+                colors = np.ones((points.shape[0], 3), dtype=np.float32) * 0.5
+
+            # Ensure data types are correct (server expects float32)
+            points = points.astype(np.float32)
+            colors = colors.astype(np.float32)
+
+            # Validate ranges (basic sanity checks)
+            if np.any(np.isnan(points)) or np.any(np.isinf(points)):
+                logger.error("Points contain NaN or Inf values")
+                return None
+            if np.any(np.isnan(colors)) or np.any(np.isinf(colors)):
+                logger.error("Colors contain NaN or Inf values")
+                return None
+
+            # Clamp color values to valid range [0, 1]
+            colors = np.clip(colors, 0.0, 1.0)
+
+            async with websockets.connect(self.grasp_server_url) as websocket:
                 request = {
                     "points": points.tolist(),
-                    "colors": colors.tolist() if colors is not None else None,
+                    "colors": colors.tolist(),  # Always send colors array
                     "lims": [-0.19, 0.12, 0.02, 0.15, 0.0, 1.0],  # Default workspace limits
                 }
 
-                logger.debug(f"Sending grasp request with {len(points)} points")
                 await websocket.send(json.dumps(request))
 
-                logger.debug("Waiting for response...")
                 response = await websocket.recv()
-                logger.debug(f"Received response: {len(response)} characters")
-
-                # Parse response - server returns list of grasps directly
                 grasps = json.loads(response)
-                logger.debug(f"Received {len(grasps) if grasps else 0} grasps from server")
 
-                if grasps and len(grasps) > 0:
-                    # Convert to our format and store
-                    converted_grasps = self._convert_grasp_format(grasps)
-                    logger.debug(f"Converted to {len(converted_grasps)} grasps")
+                # Handle server response validation
+                if isinstance(grasps, dict) and "error" in grasps:
+                    logger.error(f"Server returned error: {grasps['error']}")
+                    return None
+                elif isinstance(grasps, (int, float)) and grasps == 0:
+                    return None
+                elif not isinstance(grasps, list):
+                    logger.error(
+                        f"Server returned unexpected response type: {type(grasps)}, value: {grasps}"
+                    )
+                    return None
+                elif len(grasps) == 0:
+                    return None
 
-                    with self.grasp_lock:
-                        self.latest_grasps = converted_grasps
-                    logger.debug(f"Stored {len(converted_grasps)} grasps")
-                    return converted_grasps
-                else:
-                    logger.warning("No grasps returned from server")
+                converted_grasps = self._convert_grasp_format(grasps)
+                with self.grasp_lock:
+                    self.latest_grasps = converted_grasps
+                    self.grasps_consumed = False  # Reset consumed flag
 
+                # Emit to reactive stream
+                self.grasps_subject.on_next(self.latest_grasps)
+
+                return converted_grasps
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.error(f"WebSocket connection closed: {e}")
+        except websockets.exceptions.WebSocketException as e:
+            logger.error(f"WebSocket error: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse server response as JSON: {e}")
         except Exception as e:
             logger.error(f"Error requesting grasps: {e}")
-            logger.debug(f"Error details: {e}")
 
         return None
 
     def request_scene_grasps(self, objects: List[dict]) -> Optional[asyncio.Task]:
         """Request grasps for entire scene by combining all object point clouds."""
-        logger.debug(f"request_scene_grasps called with {len(objects)} objects")
-
         if not self.grasp_loop or not objects:
-            logger.debug(
-                f"Cannot request grasps: grasp_loop={self.grasp_loop is not None}, objects={len(objects) if objects else 0}"
-            )
             return None
 
-        # Combine all object point clouds
         all_points = []
         all_colors = []
+        valid_objects = 0
 
-        for obj in objects:
-            if "point_cloud_numpy" in obj and len(obj["point_cloud_numpy"]) > 0:
-                all_points.append(obj["point_cloud_numpy"])
-                if "colors_numpy" in obj and obj["colors_numpy"] is not None:
-                    all_colors.append(obj["colors_numpy"])
-                logger.debug(f"Added object with {len(obj['point_cloud_numpy'])} points")
+        for i, obj in enumerate(objects):
+            # Validate point cloud data
+            if "point_cloud_numpy" not in obj or obj["point_cloud_numpy"] is None:
+                continue
+
+            points = obj["point_cloud_numpy"]
+            if not isinstance(points, np.ndarray) or points.size == 0:
+                continue
+
+            # Ensure points have correct shape (N, 3)
+            if len(points.shape) != 2 or points.shape[1] != 3:
+                continue
+
+            # Validate colors if present
+            colors = None
+            if "colors_numpy" in obj and obj["colors_numpy"] is not None:
+                colors = obj["colors_numpy"]
+                if isinstance(colors, np.ndarray) and colors.size > 0:
+                    # Ensure colors match points count and have correct shape
+                    if colors.shape[0] != points.shape[0]:
+                        colors = None  # Ignore colors for this object
+                    elif len(colors.shape) != 2 or colors.shape[1] != 3:
+                        colors = None  # Ignore colors for this object
+
+            all_points.append(points)
+            if colors is not None:
+                all_colors.append(colors)
+            valid_objects += 1
 
         if not all_points:
-            logger.debug("No points found in objects, cannot request grasps")
             return None
 
-        # Concatenate all points and colors
-        combined_points = np.vstack(all_points)
-        combined_colors = np.vstack(all_colors) if all_colors else None
-
-        logger.debug(
-            f"Requesting scene grasps for combined point cloud with {len(combined_points)} points"
-        )
-        logger.debug(f"Grasp server URL: {self.grasp_server_url}")
-
-        # Create and schedule the task
         try:
+            combined_points = np.vstack(all_points)
+
+            # Only combine colors if ALL objects have valid colors
+            combined_colors = None
+            if len(all_colors) == valid_objects and len(all_colors) > 0:
+                combined_colors = np.vstack(all_colors)
+
+            # Validate final combined data
+            if combined_points.size == 0:
+                logger.warning("Combined point cloud is empty")
+                return None
+
+            if combined_colors is not None and combined_colors.shape[0] != combined_points.shape[0]:
+                logger.warning(
+                    f"Color/point count mismatch: {combined_colors.shape[0]} colors vs {combined_points.shape[0]} points, dropping colors"
+                )
+                combined_colors = None
+
+        except Exception as e:
+            logger.error(f"Failed to combine point clouds: {e}")
+            return None
+
+        try:
+            # Check if there's already a grasp task running
+            if hasattr(self, "grasp_task") and self.grasp_task and not self.grasp_task.done():
+                return self.grasp_task
+
             task = asyncio.run_coroutine_threadsafe(
                 self._send_grasp_request(combined_points, combined_colors), self.grasp_loop
             )
 
             self.grasp_task = task
-            logger.debug("Successfully created grasp request task")
             return task
         except Exception as e:
-            logger.error(f"Failed to create grasp request task: {e}")
+            logger.warning("Failed to create grasp task")
             return None
 
-    def get_latest_grasps(self) -> Optional[List[dict]]:
-        """Get latest grasp results."""
+    def get_latest_grasps(self, timeout: float = 5.0) -> Optional[List[dict]]:
+        """Get latest grasp results, waiting for new ones if current ones have been consumed."""
+        # Mark current grasps as consumed and get a reference
         with self.grasp_lock:
-            return self.latest_grasps
+            current_grasps = self.latest_grasps
+            self.grasps_consumed = True
+
+        # If we already have grasps and they haven't been consumed, return them
+        if current_grasps is not None and not getattr(self, "grasps_consumed", False):
+            return current_grasps
+
+        # Wait for new grasps
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            with self.grasp_lock:
+                # Check if we have new grasps (different from what we marked as consumed)
+                if self.latest_grasps is not None and not getattr(self, "grasps_consumed", False):
+                    return self.latest_grasps
+            time.sleep(0.1)  # Check every 100ms
+
+        return None  # Timeout reached
 
     def clear_grasps(self) -> None:
         """Clear all stored grasp results."""
@@ -398,7 +530,6 @@ class ManipulationPipeline:
         if colors is None:
             return None
 
-        # Convert from 0-255 to 0-1 range if needed
         if colors.max() > 1.0:
             colors = colors / 255.0
 
@@ -409,7 +540,6 @@ class ManipulationPipeline:
         converted = []
 
         for i, grasp in enumerate(anygrasp_grasps):
-            # Extract rotation matrix and convert to Euler angles
             rotation_matrix = np.array(grasp.get("rotation_matrix", np.eye(3)))
             euler_angles = self._rotation_matrix_to_euler(rotation_matrix)
 
@@ -425,14 +555,12 @@ class ManipulationPipeline:
             }
             converted.append(converted_grasp)
 
-        # Sort by score descending
         converted.sort(key=lambda x: x["score"], reverse=True)
 
         return converted
 
     def _rotation_matrix_to_euler(self, rotation_matrix: np.ndarray) -> Dict[str, float]:
         """Convert rotation matrix to Euler angles (in radians)."""
-        # Check for gimbal lock
         sy = np.sqrt(rotation_matrix[0, 0] ** 2 + rotation_matrix[1, 0] ** 2)
 
         singular = sy < 1e-6
@@ -453,7 +581,6 @@ class ManipulationPipeline:
         if hasattr(self.detector, "cleanup"):
             self.detector.cleanup()
 
-        # Stop the grasp event loop
         if self.grasp_loop and self.grasp_loop_thread:
             self.grasp_loop.call_soon_threadsafe(self.grasp_loop.stop)
             self.grasp_loop_thread.join(timeout=1.0)
