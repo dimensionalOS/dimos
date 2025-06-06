@@ -17,6 +17,7 @@ __pycache__
 
 # Ignore default runtime output folder
 /assets/output/
+/assets/rgbd_data/
 /assets/model-cache/
 assets/agent/memory.txt
 
