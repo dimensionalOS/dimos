@@ -14,19 +14,16 @@
 
 from __future__ import annotations
 
-from functools import reduce
-import math
 from operator import sub, add
 import os
 import threading
-from typing import Iterable, Optional
+from typing import Optional
 import reactivex.operators as ops
 
 import pytest
 from dotenv import load_dotenv
 
-from dimos.robot.unitree_webrtc.type.odometry import Odometry, RawOdometryMessage
-from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.testing import SensorReplay, SensorStorage
 
 _EXPECTED_TOTAL_RAD = -4.05212
@@ -91,6 +88,8 @@ def test_total_rotation_travel_rxpy() -> None:
 # data collection tool
 @pytest.mark.tool
 def test_store_odometry_stream() -> None:
+    from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+
     load_dotenv()
 
     robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
