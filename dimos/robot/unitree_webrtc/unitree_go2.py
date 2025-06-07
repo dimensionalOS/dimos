@@ -45,6 +45,7 @@ class UnitreeGo2(Robot):
         robot_capabilities: List[RobotCapability] = None,
         spatial_memory_collection: str = "spatial_memory",
         new_memory: bool = True,
+        enable_perception: bool = True,
     ):
         """Initialize Unitree Go2 robot with WebRTC control interface.
 
@@ -56,6 +57,7 @@ class UnitreeGo2(Robot):
             robot_capabilities: List of robot capabilities
             spatial_memory_collection: Collection name for spatial memory
             new_memory: Whether to create new spatial memory
+            enable_perception: Whether to enable perception streams and spatial memory
         """
         # Create WebRTC connection interface
         webrtc_connection = WebRTCRobot(
@@ -84,6 +86,7 @@ class UnitreeGo2(Robot):
             ],
             spatial_memory_collection=spatial_memory_collection,
             new_memory=new_memory,
+            enable_perception=enable_perception,
         )
 
         # Initialize skills with robot reference
@@ -101,7 +104,7 @@ class UnitreeGo2(Robot):
 
         # Initialize visual servoing using connection interface
         video_stream = self.get_video_stream()
-        if video_stream is not None:
+        if video_stream is not None and enable_perception:
             self.person_tracker = PersonTrackingStream(
                 camera_intrinsics=self.camera_intrinsics,
                 camera_pitch=self.camera_pitch,
@@ -118,6 +121,7 @@ class UnitreeGo2(Robot):
             self.person_tracking_stream = person_tracking_stream
             self.object_tracking_stream = object_tracking_stream
         else:
+            # Video stream not available or perception disabled
             self.person_tracker = None
             self.object_tracker = None
             self.person_tracking_stream = None

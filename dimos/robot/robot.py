@@ -119,19 +119,24 @@ class Robot(ABC):
 
         # Only create video stream if connection interface is available
         if self.connection_interface is not None:
-            # Get video stream
+            # Get video stream - always create this, regardless of enable_perception
             self._video_stream = self.get_video_stream(fps=10)  # Lower FPS for processing
 
-        # Create SpatialMemory instance - it will handle all initialization internally
-        self._spatial_memory = SpatialMemory(
-            collection_name=self.spatial_memory_collection,
-            db_path=self.db_path,
-            visual_memory_path=self.visual_memory_path,
-            new_memory=new_memory,
-            output_dir=self.spatial_memory_dir,
-            video_stream=self._video_stream,
-            get_pose=self.get_pose,
-        )
+        # Create SpatialMemory instance only if perception is enabled
+        if self.enable_perception:
+            self._spatial_memory = SpatialMemory(
+                collection_name=self.spatial_memory_collection,
+                db_path=self.db_path,
+                visual_memory_path=self.visual_memory_path,
+                new_memory=new_memory,
+                output_dir=self.spatial_memory_dir,
+                video_stream=self._video_stream,
+                get_pose=self.get_pose,
+            )
+            logger.info("Spatial memory initialized")
+        else:
+            self._spatial_memory = None
+            logger.info("Spatial memory disabled (enable_perception=False)")
 
         # Initialize manipulation interface if the robot has manipulation capability
         self._manipulation_interface = None
