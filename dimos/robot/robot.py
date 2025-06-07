@@ -69,6 +69,7 @@ class Robot(ABC):
         new_memory: bool = False,
         capabilities: List[RobotCapability] = None,
         video_stream: Optional[Observable] = None,
+        enable_perception: bool = True,
     ):
         """Initialize a Robot instance.
 
@@ -80,6 +81,9 @@ class Robot(ABC):
             skill_library: Skill library instance. If None, one will be created.
             spatial_memory_collection: Name of the collection in the ChromaDB database.
             new_memory: If True, creates a new spatial memory from scratch. Defaults to False.
+            capabilities: List of robot capabilities. Defaults to None.
+            video_stream: Optional video stream. Defaults to None.
+            enable_perception: If True, enables perception streams and spatial memory. Defaults to True.
         """
         self.hardware_interface = hardware_interface
         self.connection_interface = connection_interface
@@ -87,6 +91,7 @@ class Robot(ABC):
         self.disposables = CompositeDisposable()
         self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
         self.skill_library = skill_library if skill_library else SkillLibrary()
+        self.enable_perception = enable_perception
 
         # Initialize robot capabilities
         self.capabilities = capabilities or []
@@ -109,24 +114,29 @@ class Robot(ABC):
         os.makedirs(self.spatial_memory_dir, exist_ok=True)
         os.makedirs(self.db_path, exist_ok=True)
 
-        # Initialize spatial memory - this will be handled by SpatialMemory class
+        # Initialize spatial memory properties
         self._video_stream = video_stream
 
         # Only create video stream if connection interface is available
         if self.connection_interface is not None:
-            # Get video stream
+            # Get video stream - always create this, regardless of enable_perception
             self._video_stream = self.get_video_stream(fps=10)  # Lower FPS for processing
 
-        # Create SpatialMemory instance - it will handle all initialization internally
-        self._spatial_memory = SpatialMemory(
-            collection_name=self.spatial_memory_collection,
-            db_path=self.db_path,
-            visual_memory_path=self.visual_memory_path,
-            new_memory=new_memory,
-            output_dir=self.spatial_memory_dir,
-            video_stream=self._video_stream,
-            get_pose=self.get_pose,
-        )
+        # Create SpatialMemory instance only if perception is enabled
+        if self.enable_perception:
+            self._spatial_memory = SpatialMemory(
+                collection_name=self.spatial_memory_collection,
+                db_path=self.db_path,
+                visual_memory_path=self.visual_memory_path,
+                new_memory=new_memory,
+                output_dir=self.spatial_memory_dir,
+                video_stream=self._video_stream,
+                get_pose=self.get_pose,
+            )
+            logger.info("Spatial memory initialized")
+        else:
+            self._spatial_memory = None
+            logger.info("Spatial memory disabled (enable_perception=False)")
 
         # Initialize manipulation interface if the robot has manipulation capability
         self._manipulation_interface = None
@@ -322,11 +332,11 @@ class Robot(ABC):
         self.hardware_interface.set_configuration(configuration)
 
     @property
-    def spatial_memory(self) -> SpatialMemory:
+    def spatial_memory(self) -> Optional[SpatialMemory]:
         """Get the robot's spatial memory.
 
         Returns:
-            SpatialMemory: The robot's spatial memory system.
+            SpatialMemory: The robot's spatial memory system, or None if perception is disabled.
         """
         return self._spatial_memory
 

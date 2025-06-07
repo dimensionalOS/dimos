@@ -46,8 +46,8 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         max_linear_vel: float = 0.8,
         max_angular_vel: float = 1.0,
         lookahead_distance: float = 1.0,
-        goal_tolerance: float = 0.2,
-        angle_tolerance: float = 0.1,  # ~5.7 degrees
+        goal_tolerance: float = 0.4,
+        angle_tolerance: float = 0.25,  # ~5.7 degrees
         robot_width: float = 0.5,
         robot_length: float = 0.7,
         visualization_size: int = 400,
@@ -119,7 +119,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             Dict[str, float]: Velocity commands with 'x_vel' and 'angular_vel' keys
         """
         # Get necessary data for planning
-        costmap = self.get_costmap()
+        costmap = self._get_costmap()
         if costmap is None:
             logger.warning("No costmap available for planning")
             return {"x_vel": 0.0, "angular_vel": 0.0}
@@ -338,7 +338,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             return False
 
         # Get the latest costmap and robot pose
-        costmap = self.get_costmap()
+        costmap = self._get_costmap()
         if costmap is None:
             return False  # No costmap available
 
@@ -374,7 +374,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
     def update_visualization(self) -> np.ndarray:
         """Generate visualization of the planning state."""
         try:
-            costmap = self.get_costmap()
+            costmap = self._get_costmap()
             if costmap is None:
                 raise ValueError("Costmap is None")
 

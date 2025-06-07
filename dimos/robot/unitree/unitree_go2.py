@@ -61,6 +61,7 @@ class UnitreeGo2(Robot):
         video_fps: int = 30,
         disable_video_stream: bool = False,
         mock_connection: bool = False,
+        enable_perception: bool = True,
     ):
         """Initialize UnitreeGo2 robot with ROS control interface.
 
@@ -76,6 +77,7 @@ class UnitreeGo2(Robot):
             video_fps: Frame rate for video capture
             disable_video_stream: Whether to disable video streaming
             mock_connection: Whether to use mock connection for testing
+            enable_perception: Whether to enable perception streams and spatial memory
         """
         # Create ROS control interface
         ros_control = UnitreeROSControl(
@@ -102,6 +104,7 @@ class UnitreeGo2(Robot):
             ],
             spatial_memory_collection=spatial_memory_collection,
             new_memory=new_memory,
+            enable_perception=enable_perception,
         )
 
         if self.skill_library is not None:
@@ -129,21 +132,35 @@ class UnitreeGo2(Robot):
         # Initialize visual servoing if enabled
         if not disable_video_stream:
             self.video_stream_ros = self.get_video_stream(fps=8)
-            self.person_tracker = PersonTrackingStream(
-                camera_intrinsics=self.camera_intrinsics,
-                camera_pitch=self.camera_pitch,
-                camera_height=self.camera_height,
-            )
-            self.object_tracker = ObjectTrackingStream(
-                camera_intrinsics=self.camera_intrinsics,
-                camera_pitch=self.camera_pitch,
-                camera_height=self.camera_height,
-            )
-            person_tracking_stream = self.person_tracker.create_stream(self.video_stream_ros)
-            object_tracking_stream = self.object_tracker.create_stream(self.video_stream_ros)
+            if enable_perception:
+                self.person_tracker = PersonTrackingStream(
+                    camera_intrinsics=self.camera_intrinsics,
+                    camera_pitch=self.camera_pitch,
+                    camera_height=self.camera_height,
+                )
+                self.object_tracker = ObjectTrackingStream(
+                    camera_intrinsics=self.camera_intrinsics,
+                    camera_pitch=self.camera_pitch,
+                    camera_height=self.camera_height,
+                )
+                person_tracking_stream = self.person_tracker.create_stream(self.video_stream_ros)
+                object_tracking_stream = self.object_tracker.create_stream(self.video_stream_ros)
 
-            self.person_tracking_stream = person_tracking_stream
-            self.object_tracking_stream = object_tracking_stream
+                self.person_tracking_stream = person_tracking_stream
+                self.object_tracking_stream = object_tracking_stream
+            else:
+                # Video stream is available but perception tracking is disabled
+                self.person_tracker = None
+                self.object_tracker = None
+                self.person_tracking_stream = None
+                self.object_tracking_stream = None
+        else:
+            # Video stream is disabled
+            self.video_stream_ros = None
+            self.person_tracker = None
+            self.object_tracker = None
+            self.person_tracking_stream = None
+            self.object_tracking_stream = None
 
         # Initialize the local planner and create BEV visualization stream
         # Note: These features require ROS-specific methods that may not be available on all connection interfaces
