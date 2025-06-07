@@ -123,7 +123,7 @@ class BaseLocalPlanner(ABC):
         self.is_recovery_active = False  # Whether recovery behavior is active
         self.recovery_start_time = 0.0  # When recovery behavior started
         self.recovery_duration = (
-            12.0  # How long to run recovery before giving up (seconds) - increased
+            8.0  # How long to run recovery before giving up (seconds) - increased
         )
         self.last_update_time = time.time()  # Last time position was updated
         self.navigation_failed = False  # Flag indicating if navigation should be terminated
@@ -137,6 +137,23 @@ class BaseLocalPlanner(ABC):
             None  # Position when recovery started (for better stuck detection)
         )
         self.backup_duration = 4.0  # How long to backup when stuck (seconds)
+
+        # Cached data updated periodically for consistent plan() execution time
+        self._robot_pose = None
+        self._costmap = None
+        self._update_frequency = 10.0  # Hz - how often to update cached data
+        self._update_timer = None
+        self._start_periodic_updates()
+
+    def _start_periodic_updates(self):
+        self._update_timer = threading.Thread(target=self._periodic_update, daemon=True)
+        self._update_timer.start()
+
+    def _periodic_update(self):
+        while True:
+            self._robot_pose = self.get_robot_pose()
+            self._costmap = self.get_costmap()
+            time.sleep(1.0 / self._update_frequency)
 
     def reset(self):
         """
@@ -160,6 +177,29 @@ class BaseLocalPlanner(ABC):
         self.pre_recovery_position = None
 
         logger.info("Local planner state has been reset")
+
+    def _get_robot_pose(self) -> Tuple[Tuple[float, float], float]:
+        """
+        Get the current robot position and orientation.
+
+        Returns:
+            Tuple containing:
+            - position as (x, y) tuple
+            - orientation (theta) in radians
+        """
+        if self._robot_pose is None:
+            return ((0.0, 0.0), 0.0)  # Fallback if not yet initialized
+        pos, rot = self._robot_pose.pos, self._robot_pose.rot
+        return (pos.x, pos.y), rot.z
+
+    def _get_costmap(self):
+        """Get cached costmap data."""
+        return self._costmap
+
+    def clear_cache(self):
+        """Clear all cached data to force fresh retrieval on next access."""
+        self._robot_pose = None
+        self._costmap = None
 
     def set_goal(
         self, goal_xy: VectorLike, is_relative: bool = False, goal_theta: Optional[float] = None
@@ -186,7 +226,10 @@ class BaseLocalPlanner(ABC):
         # Transform goal to absolute frame if it's relative
         if is_relative:
             # Get current robot pose
-            odom = self.get_robot_pose()
+            odom = self._robot_pose
+            if odom is None:
+                logger.warning("Robot pose not yet available, cannot set relative goal")
+                return
             robot_pos, robot_rot = odom.pos, odom.rot
 
             # Extract current position and orientation
@@ -225,7 +268,12 @@ class BaseLocalPlanner(ABC):
         if goal_theta is not None:
             if is_relative:
                 # Transform the orientation to absolute frame
-                odom = self.get_robot_pose()
+                odom = self._robot_pose
+                if odom is None:
+                    logger.warning(
+                        "Robot pose not yet available, cannot set relative goal orientation"
+                    )
+                    return
                 robot_theta = odom.rot.z
                 self.goal_theta = normalize_angle(goal_theta + robot_theta)
             else:
@@ -271,19 +319,6 @@ class BaseLocalPlanner(ABC):
         # Set goal orientation if provided
         if goal_theta is not None:
             self.goal_theta = goal_theta
-
-    def _get_robot_pose(self) -> Tuple[Tuple[float, float], float]:
-        """
-        Get the current robot position and orientation.
-
-        Returns:
-            Tuple containing:
-            - position as (x, y) tuple
-            - orientation (theta) in radians
-        """
-        odom = self.get_robot_pose()
-        pos, rot = odom.pos, odom.rot
-        return (pos.x, pos.y), rot.z
 
     def _get_final_goal_position(self) -> Optional[Tuple[float, float]]:
         """
@@ -394,7 +429,7 @@ class BaseLocalPlanner(ABC):
             return {"x_vel": 0.0, "angular_vel": 0.0}
 
         # Get necessary data for planning
-        costmap = self.get_costmap()
+        costmap = self._get_costmap()
         if costmap is None:
             logger.warning("Local costmap is None. Cannot plan.")
             return {"x_vel": 0.0, "angular_vel": 0.0}
@@ -616,7 +651,7 @@ class BaseLocalPlanner(ABC):
             bool: True if goal is in collision, False if goal is safe or cannot be checked
         """
 
-        costmap = self.get_costmap()
+        costmap = self._get_costmap()
         if costmap is None:
             logger.warning("Cannot check collision: No costmap available")
             return False
@@ -636,7 +671,7 @@ class BaseLocalPlanner(ABC):
         Returns:
             bool: True if the goal is within the costmap bounds, False otherwise
         """
-        costmap = self.get_costmap()
+        costmap = self._get_costmap()
         if costmap is None:
             logger.warning("Cannot check bounds: No costmap available")
             return False
@@ -1056,7 +1091,10 @@ def navigate_path_local(
                 break
 
             # Get planned velocity towards the current waypoint target
+            start_time = time.time()
             vel_command = robot.local_planner.plan()
+            end_time = time.time()
+            logger.info(f"Plan time: {end_time - start_time:.2f}s")
             x_vel = vel_command.get("x_vel", 0.0)
             angular_vel = vel_command.get("angular_vel", 0.0)
 
