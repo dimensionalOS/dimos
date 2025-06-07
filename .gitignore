@@ -30,3 +30,6 @@ tests/data/*
 node_modules
 package.json
 package-lock.json
+
+# Ignore build artifacts
+dist/
