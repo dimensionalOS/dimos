@@ -46,8 +46,8 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         max_linear_vel: float = 0.8,
         max_angular_vel: float = 1.0,
         lookahead_distance: float = 1.0,
-        goal_tolerance: float = 0.2,
-        angle_tolerance: float = 0.1,  # ~5.7 degrees
+        goal_tolerance: float = 0.4,
+        angle_tolerance: float = 0.25,  # ~5.7 degrees
         robot_width: float = 0.5,
         robot_length: float = 0.7,
         visualization_size: int = 400,
