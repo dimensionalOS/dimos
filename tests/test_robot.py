@@ -24,16 +24,13 @@ import tests.test_header
 
 def main():
     print("Initializing Unitree Go2 robot with local planner visualization...")
-    
+
     # Initialize the robot with webrtc interface
-    robot = UnitreeGo2(
-        ip=os.getenv('ROBOT_IP'),
-        mode="ai"
-    )
+    robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
 
     # Get the camera stream
     video_stream = robot.get_video_stream()
-    
+
     # The local planner visualization stream is created during robot initialization
     local_planner_stream = robot.local_planner_viz_stream
 

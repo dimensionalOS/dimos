@@ -55,7 +55,7 @@ class Map:
             inflate_radius_m=inflate_radius_m,
         )
         return Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution)
-    
+
     @property
     def local_costmap(self) -> Costmap:
         """Return a local costmap centered at *origin* with radius *radius*."""
