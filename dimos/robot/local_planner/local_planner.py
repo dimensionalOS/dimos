@@ -53,7 +53,7 @@ class BaseLocalPlanner(ABC):
         max_angular_vel: float = 1.0,
         lookahead_distance: float = 1.0,
         goal_tolerance: float = 0.75,
-        angle_tolerance: float = 0.15,
+        angle_tolerance: float = 0.5,
         robot_width: float = 0.5,
         robot_length: float = 0.7,
         visualization_size: int = 400,
