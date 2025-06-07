@@ -35,23 +35,25 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
     A local planner that combines Vector Field Histogram (VFH) for obstacle avoidance
     with Pure Pursuit for goal tracking.
     """
-    
-    def __init__(self, 
-                 get_costmap: Callable[[], Optional[OccupancyGrid]],
-                 get_robot_pose: Callable[[], Any],
-                 move: Callable[[Vector], None],
-                 safety_threshold: float = 0.8,
-                 histogram_bins: int = 144,
-                 max_linear_vel: float = 0.8,
-                 max_angular_vel: float = 1.0,
-                 lookahead_distance: float = 1.0,
-                 goal_tolerance: float = 0.2,
-                 angle_tolerance: float = 0.1,  # ~5.7 degrees
-                 robot_width: float = 0.5,
-                 robot_length: float = 0.7,
-                 visualization_size: int = 400,
-                 control_frequency: float = 10.0,
-                 safe_goal_distance: float = 1.0):
+
+    def __init__(
+        self,
+        get_costmap: Callable[[], Optional[OccupancyGrid]],
+        get_robot_pose: Callable[[], Any],
+        move: Callable[[Vector], None],
+        safety_threshold: float = 0.8,
+        histogram_bins: int = 144,
+        max_linear_vel: float = 0.8,
+        max_angular_vel: float = 1.0,
+        lookahead_distance: float = 1.0,
+        goal_tolerance: float = 0.2,
+        angle_tolerance: float = 0.1,  # ~5.7 degrees
+        robot_width: float = 0.5,
+        robot_length: float = 0.7,
+        visualization_size: int = 400,
+        control_frequency: float = 10.0,
+        safe_goal_distance: float = 1.0,
+    ):
         """
         Initialize the VFH + Pure Pursuit planner.
 
@@ -120,8 +122,8 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         costmap = self.get_costmap()
         if costmap is None:
             logger.warning("No costmap available for planning")
-            return {'x_vel': 0.0, 'angular_vel': 0.0}
-            
+            return {"x_vel": 0.0, "angular_vel": 0.0}
+
         robot_pos, robot_theta = self._get_robot_pose()
         robot_x, robot_y = robot_pos
         robot_pose = (robot_x, robot_y, robot_theta)
@@ -339,10 +341,10 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         costmap = self.get_costmap()
         if costmap is None:
             return False  # No costmap available
-            
+
         robot_pos, robot_theta = self._get_robot_pose()
         robot_x, robot_y = robot_pos
-        
+
         # Direction in world frame
         direction_world = robot_theta + selected_direction
 
@@ -375,7 +377,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             costmap = self.get_costmap()
             if costmap is None:
                 raise ValueError("Costmap is None")
-                
+
             robot_pos, robot_theta = self._get_robot_pose()
             robot_x, robot_y = robot_pos
             robot_pose = (robot_x, robot_y, robot_theta)
@@ -388,7 +390,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
 
             # Get waypoint data if in waypoint mode
             waypoints_to_draw = self.waypoints_in_absolute
-            current_wp_index_to_draw = self.current_waypoint_index if self.waypoints_in_absolute is not None else None
+            current_wp_index_to_draw = (
+                self.current_waypoint_index if self.waypoints_in_absolute is not None else None
+            )
             # Ensure index is valid before passing
             if waypoints_to_draw is not None and current_wp_index_to_draw is not None:
                 if not (0 <= current_wp_index_to_draw < len(waypoints_to_draw)):
