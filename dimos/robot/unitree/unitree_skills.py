@@ -270,7 +270,7 @@ class MyUnitreeSkills(SkillLibrary):
 
         def __call__(self):
             super().__call__()
-            return self._robot.move_vel(x=self.x, y=self.y, yaw=self.yaw, duration=self.duration)
+            return self._robot.move(x=self.x, y=self.y, yaw=self.yaw, duration=self.duration)
 
     class Reverse(AbstractRobotSkill):
         """Reverse the robot using direct velocity commands. Determine duration required based on user distance instructions."""
@@ -282,8 +282,8 @@ class MyUnitreeSkills(SkillLibrary):
 
         def __call__(self):
             super().__call__()
-            # Use move_vel with negative x for backward movement
-            return self._robot.move_vel(x=-self.x, y=self.y, yaw=self.yaw, duration=self.duration)
+            # Use move with negative x for backward movement
+            return self._robot.move(x=-self.x, y=self.y, yaw=self.yaw, duration=self.duration)
 
     class SpinLeft(AbstractRobotSkill):
         """Spin the robot left using degree commands."""

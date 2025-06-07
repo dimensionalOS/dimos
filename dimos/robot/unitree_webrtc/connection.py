@@ -29,13 +29,13 @@ import numpy as np
 from reactivex import operators as ops
 from aiortc import MediaStreamTrack
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
-from dimos.robot.abstract_robot import AbstractRobot
-
+from dimos.robot.connection_interface import ConnectionInterface
+import time
 
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
 
-class WebRTCRobot(AbstractRobot):
+class WebRTCRobot(ConnectionInterface):
     def __init__(self, ip: str, mode: str = "ai"):
         self.ip = ip
         self.mode = mode
@@ -74,18 +74,45 @@ class WebRTCRobot(AbstractRobot):
         self.thread.start()
         self.connection_ready.wait()
 
-    def move(self, vector: Vector):
+    def move(self, x: float, y: float, yaw: float, duration: float = 0.0) -> bool:
+        """Send movement command to the robot using velocity commands.
+
+        Args:
+            x: Forward/backward velocity (m/s)
+            y: Left/right velocity (m/s)
+            yaw: Rotational velocity (rad/s)
+            duration: How long to move (seconds). If 0, command is continuous
+
+        Returns:
+            bool: True if command was sent successfully
+        """
+
+        # WebRTC coordinate mapping:
         # x - Positive right, negative left
         # y - positive forward, negative backwards
-        # z - Positive rotate right, negative rotate left
+        # yaw - Positive rotate right, negative rotate left
         async def async_move():
             self.conn.datachannel.pub_sub.publish_without_callback(
                 RTC_TOPIC["WIRELESS_CONTROLLER"],
-                data={"lx": vector.y, "ly": vector.x, "rx": -vector.z, "ry": 0},
+                data={"lx": y, "ly": x, "rx": -yaw, "ry": 0},
             )
 
-        future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
-        return future.result()
+        try:
+            if duration > 0:
+                # Send move command
+                future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
+                future.result()
+
+                # Wait for duration then stop
+                time.sleep(duration)
+                self.stop()
+            else:
+                future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
+                future.result()
+            return True
+        except Exception as e:
+            print(f"Failed to send movement command: {e}")
+            return False
 
     # Generic conversion of unitree subscription to Subject (used for all subs)
     def unitree_sub_stream(self, topic_name: str):
@@ -178,7 +205,7 @@ class WebRTCRobot(AbstractRobot):
             self.conn.video.track_callbacks.remove(accept_track)
             self.conn.video.switchVideoChannel(False)
 
-        return backpressure(subject.pipe(ops.finally_action(stop)))
+        return subject.pipe(ops.finally_action(stop))
 
     def get_video_stream(self, fps: int = 30) -> Observable[VideoMessage]:
         """Get the video stream from the robot's camera.
@@ -202,19 +229,28 @@ class WebRTCRobot(AbstractRobot):
             print(f"Error getting video stream: {e}")
             return None
 
-    def stop(self):
+    def stop(self) -> bool:
+        """Stop the robot's movement.
+
+        Returns:
+            bool: True if stop command was sent successfully
+        """
+        return self.move(0.0, 0.0, 0.0)
+
+    def disconnect(self) -> None:
+        """Disconnect from the robot and clean up resources."""
         if hasattr(self, "task") and self.task:
             self.task.cancel()
         if hasattr(self, "conn"):
 
-            async def disconnect():
+            async def async_disconnect():
                 try:
                     await self.conn.disconnect()
                 except:
                     pass
 
             if hasattr(self, "loop") and self.loop.is_running():
-                asyncio.run_coroutine_threadsafe(disconnect(), self.loop)
+                asyncio.run_coroutine_threadsafe(async_disconnect(), self.loop)
 
         if hasattr(self, "loop") and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.loop.stop)

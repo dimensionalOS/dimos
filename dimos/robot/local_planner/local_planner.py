@@ -986,7 +986,7 @@ def navigate_to_goal_local(
             angular_vel = vel_command.get("angular_vel", 0.0)
 
             # Send velocity command
-            robot.local_planner.move(Vector(x_vel, 0, angular_vel))
+            robot.local_planner.move(x=x_vel, y=0, yaw=angular_vel)
 
             # Control loop frequency - use robot's control frequency
             time.sleep(control_period)
@@ -1002,7 +1002,7 @@ def navigate_to_goal_local(
         goal_reached = False  # Consider error as failure
     finally:
         logger.info("Stopping robot after navigation attempt.")
-        robot.local_planner.move(Vector(0, 0, 0))  # Stop the robot
+        robot.local_planner.move(x=0, y=0, yaw=0)  # Stop the robot
 
     return goal_reached
 
@@ -1061,7 +1061,7 @@ def navigate_path_local(
             angular_vel = vel_command.get("angular_vel", 0.0)
 
             # Send velocity command
-            robot.local_planner.move(Vector(x_vel, 0, angular_vel))
+            robot.local_planner.move(x=x_vel, y=0, yaw=angular_vel)
 
             # Control loop frequency - use robot's control frequency
             time.sleep(control_period)
@@ -1079,7 +1079,7 @@ def navigate_path_local(
         path_completed = False
     finally:
         logger.info("Stopping robot after path navigation attempt.")
-        robot.local_planner.move(Vector(0, 0, 0))  # Stop the robot
+        robot.local_planner.move(x=0, y=0, yaw=0)  # Stop the robot
 
     return path_completed
 

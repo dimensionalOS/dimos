@@ -111,8 +111,8 @@ class NavigateWithText(AbstractRobotSkill):
             # Try to get a bounding box from Qwen - only try once
             bbox = None
             try:
-                # Capture a single frame from the video stream
-                frame = self._robot.get_ros_video_stream().pipe(ops.take(1)).run()
+                # Use the robot's existing video stream instead of creating a new one
+                frame = self._robot.get_video_stream().pipe(ops.take(1)).run()
                 # Use the frame-based function
                 bbox, object_size = get_bbox_from_qwen_frame(frame, object_name=self.query)
             except Exception as e:
@@ -223,7 +223,6 @@ class NavigateWithText(AbstractRobotSkill):
             return {"success": False, "failure_reason": "Code Error", "error": f"Error: {e}"}
         finally:
             # Clean up
-            self._robot.ros_control.stop()
             self._robot.object_tracker.cleanup()
 
     def _navigate_using_semantic_map(self):
@@ -416,9 +415,6 @@ class NavigateWithText(AbstractRobotSkill):
             self._spatial_memory.cleanup()
             self._spatial_memory = None
 
-        # Stop robot motion
-        self._robot.ros_control.stop()
-
         return "Navigate skill stopped successfully."
 
 
@@ -465,17 +461,21 @@ class GetPose(AbstractRobotSkill):
 
         try:
             # Get the current pose using the robot's get_pose method
-            position, rotation = self._robot.get_pose()
+            pose_data = self._robot.get_pose()
+
+            # Extract position and rotation from the new dictionary format
+            position = pose_data["position"]
+            rotation = pose_data["rotation"]
 
             # Format the response
             result = {
                 "success": True,
                 "position": {
-                    "x": position[0],
-                    "y": position[1],
-                    "z": position[2] if len(position) > 2 else 0.0,
+                    "x": position.x,
+                    "y": position.y,
+                    "z": position.z,
                 },
-                "rotation": {"roll": rotation[0], "pitch": rotation[1], "yaw": rotation[2]},
+                "rotation": {"roll": rotation.x, "pitch": rotation.y, "yaw": rotation.z},
             }
 
             # If location_name is provided, remember this location
@@ -485,7 +485,9 @@ class GetPose(AbstractRobotSkill):
 
                 # Create a RobotLocation object
                 location = RobotLocation(
-                    name=self.location_name, position=position, rotation=rotation
+                    name=self.location_name,
+                    position=(position.x, position.y, position.z),
+                    rotation=(rotation.x, rotation.y, rotation.z),
                 )
 
                 # Add to spatial memory
