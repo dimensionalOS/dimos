@@ -86,7 +86,7 @@ Inside the dev container (Your IDE will likely run this transparently for each c
 pre-commit run --all-files
 ```
 
-On your host (I sometimes find it convinient to run via my host)
+### Installing pre-commit on your host
 
 ```sh
 apt install pre-commit      # or brew install pre-commit
