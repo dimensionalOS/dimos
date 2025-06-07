@@ -44,7 +44,7 @@ class UnitreeGo2(Robot):
         skill_library: SkillLibrary = None,
         robot_capabilities: List[RobotCapability] = None,
         spatial_memory_collection: str = "spatial_memory",
-        new_memory: bool = False,
+        new_memory: bool = True,
     ):
         """Initialize Unitree Go2 robot with WebRTC control interface.
 

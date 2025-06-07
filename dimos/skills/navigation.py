@@ -169,12 +169,10 @@ class NavigateWithText(AbstractRobotSkill):
                         break
 
                     else:
-                        logger.warning(f"No valid target tracking data found. target: {target}")
+                        logger.warning("No valid target tracking data found.")
 
                 else:
-                    logger.warning(
-                        f"No valid target tracking data found. tracking_data: {tracking_data}"
-                    )
+                    logger.warning("No valid target tracking data found.")
 
                 time.sleep(0.1)
 

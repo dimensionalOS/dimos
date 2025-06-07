@@ -277,7 +277,7 @@ text_streams = {
 
 web_interface = RobotWebInterface(port=5555, text_streams=text_streams, **streams)
 
-stt_node = stt()
+# stt_node = stt()
 
 # Read system query from prompt.txt file
 with open(
@@ -288,8 +288,8 @@ with open(
 # Create a ClaudeAgent instance
 agent = ClaudeAgent(
     dev_name="test_agent",
-    input_query_stream=stt_node.emit_text(),
-    # input_query_stream=web_interface.query_stream,
+    # input_query_stream=stt_node.emit_text(),
+    input_query_stream=web_interface.query_stream,
     # input_data_stream=enhanced_data_stream,  # Commented out - no enhanced data stream
     skills=robot.get_skills(),
     system_query=system_query,
