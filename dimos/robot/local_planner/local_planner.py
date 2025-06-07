@@ -42,22 +42,24 @@ class BaseLocalPlanner(ABC):
     This class defines the common interface and shared functionality that all local planners
     must implement, regardless of the specific algorithm used.
     """
-    
-    def __init__(self, 
-                 get_costmap: Callable[[], Optional[OccupancyGrid]],
-                 get_robot_pose: Callable[[], Any],
-                 move: Callable[[Vector], None],
-                 safety_threshold: float = 0.5,
-                 max_linear_vel: float = 0.8,
-                 max_angular_vel: float = 1.0,
-                 lookahead_distance: float = 1.0,
-                 goal_tolerance: float = 0.75,
-                 angle_tolerance: float = 0.15,
-                 robot_width: float = 0.5,
-                 robot_length: float = 0.7,
-                 visualization_size: int = 400,
-                 control_frequency: float = 10.0,
-                 safe_goal_distance: float = 1.5):  # Control frequency in Hz
+
+    def __init__(
+        self,
+        get_costmap: Callable[[], Optional[OccupancyGrid]],
+        get_robot_pose: Callable[[], Any],
+        move: Callable[[Vector], None],
+        safety_threshold: float = 0.5,
+        max_linear_vel: float = 0.8,
+        max_angular_vel: float = 1.0,
+        lookahead_distance: float = 1.0,
+        goal_tolerance: float = 0.75,
+        angle_tolerance: float = 0.15,
+        robot_width: float = 0.5,
+        robot_length: float = 0.7,
+        visualization_size: int = 400,
+        control_frequency: float = 10.0,
+        safe_goal_distance: float = 1.5,
+    ):  # Control frequency in Hz
         """
         Initialize the base local planner.
 
@@ -83,7 +85,7 @@ class BaseLocalPlanner(ABC):
         self.get_costmap = get_costmap
         self.get_robot_pose = get_robot_pose
         self.move = move
-        
+
         # Store parameters
         self.safety_threshold = safety_threshold
         self.max_linear_vel = max_linear_vel
@@ -105,29 +107,39 @@ class BaseLocalPlanner(ABC):
         self.goal_xy: Optional[Tuple[float, float]] = None  # Current target for planning
         self.goal_theta: Optional[float] = None  # Goal orientation in odom frame
         self.position_reached: bool = False  # Flag indicating if position goal is reached
-        self.waypoints: Optional[Path] = None             # Full path if following waypoints
-        self.waypoints_in_absolute: Optional[Path] = None     # Full path in absolute frame
-        self.waypoint_is_relative: bool = False         # Whether waypoints are in relative frame
-        self.current_waypoint_index: int = 0              # Index of the next waypoint to reach
-        self.final_goal_reached: bool = False             # Flag indicating if the final waypoint is reached
+        self.waypoints: Optional[Path] = None  # Full path if following waypoints
+        self.waypoints_in_absolute: Optional[Path] = None  # Full path in absolute frame
+        self.waypoint_is_relative: bool = False  # Whether waypoints are in relative frame
+        self.current_waypoint_index: int = 0  # Index of the next waypoint to reach
+        self.final_goal_reached: bool = False  # Flag indicating if the final waypoint is reached
 
         # Stuck detection
         self.stuck_detection_window_seconds = 8.0  # Time window for stuck detection (seconds)
         self.position_history_size = int(self.stuck_detection_window_seconds * control_frequency)
-        self.position_history = deque(maxlen=self.position_history_size)  # History of recent positions
+        self.position_history = deque(
+            maxlen=self.position_history_size
+        )  # History of recent positions
         self.stuck_distance_threshold = 0.15  # Distance threshold for stuck detection (meters)
-        self.unstuck_distance_threshold = 0.5  # Distance threshold for unstuck detection (meters) - increased hysteresis
+        self.unstuck_distance_threshold = (
+            0.5  # Distance threshold for unstuck detection (meters) - increased hysteresis
+        )
         self.stuck_time_threshold = 5.0  # Time threshold for stuck detection (seconds) - increased
         self.is_recovery_active = False  # Whether recovery behavior is active
         self.recovery_start_time = 0.0  # When recovery behavior started
-        self.recovery_duration = 12.0  # How long to run recovery before giving up (seconds) - increased
+        self.recovery_duration = (
+            12.0  # How long to run recovery before giving up (seconds) - increased
+        )
         self.last_update_time = time.time()  # Last time position was updated
         self.navigation_failed = False  # Flag indicating if navigation should be terminated
-        
+
         # Recovery improvements
-        self.recovery_cooldown_time = 3.0  # Seconds to wait after recovery before checking stuck again
+        self.recovery_cooldown_time = (
+            3.0  # Seconds to wait after recovery before checking stuck again
+        )
         self.last_recovery_end_time = 0.0  # When the last recovery ended
-        self.pre_recovery_position = None  # Position when recovery started (for better stuck detection)
+        self.pre_recovery_position = (
+            None  # Position when recovery started (for better stuck detection)
+        )
         self.backup_duration = 4.0  # How long to backup when stuck (seconds)
 
         # Recovery improvements
@@ -173,14 +185,16 @@ class BaseLocalPlanner(ABC):
         self.position_reached = False
         self.final_goal_reached = False
         self.ignore_obstacles = False
-        
+
         # Reset recovery improvements
         self.last_recovery_end_time = 0.0
         self.pre_recovery_position = None
-        
+
         logger.info("Local planner state has been reset")
 
-    def set_goal(self, goal_xy: VectorLike, is_relative: bool = False, goal_theta: Optional[float] = None):
+    def set_goal(
+        self, goal_xy: VectorLike, is_relative: bool = False, goal_theta: Optional[float] = None
+    ):
         """Set a single goal position, converting to absolute frame if necessary.
            This clears any existing waypoints being followed.
 
@@ -244,11 +258,11 @@ class BaseLocalPlanner(ABC):
             # Get current robot pose
             odom = self.get_robot_pose()
             robot_pos, robot_rot = odom.pos, odom.rot
-            
+
             # Extract current position and orientation
             robot_x, robot_y = robot_pos.x, robot_pos.y
             robot_theta = robot_rot.z  # Assuming rotation is euler angles
-            
+
             # Transform the relative goal into absolute coordinates
             goal_x, goal_y = to_tuple(goal_xy)
             # Rotate
@@ -256,12 +270,16 @@ class BaseLocalPlanner(ABC):
             abs_y = goal_x * math.sin(robot_theta) + goal_y * math.cos(robot_theta)
             # Translate
             target_goal_xy = (robot_x + abs_x, robot_y + abs_y)
-            
-            logger.info(f"Goal set in relative frame, converted to absolute: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})")
+
+            logger.info(
+                f"Goal set in relative frame, converted to absolute: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})"
+            )
         else:
             target_goal_xy = to_tuple(goal_xy)
-            logger.info(f"Goal set directly in absolute frame: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})")
-        
+            logger.info(
+                f"Goal set directly in absolute frame: ({target_goal_xy[0]:.2f}, {target_goal_xy[1]:.2f})"
+            )
+
         # Check if goal is valid (in bounds and not colliding)
         if not self.is_goal_in_costmap_bounds(target_goal_xy) or self.check_goal_collision(
             target_goal_xy
@@ -284,7 +302,7 @@ class BaseLocalPlanner(ABC):
                 self.goal_theta = goal_theta
 
     def set_goal_waypoints(self, waypoints: Path, goal_theta: Optional[float] = None):
-        """Sets a path of waypoints for the robot to follow. 
+        """Sets a path of waypoints for the robot to follow.
 
         Args:
             waypoints: A list of waypoints to follow. Each waypoint is a tuple of (x, y) coordinates in absolute frame.
@@ -309,10 +327,12 @@ class BaseLocalPlanner(ABC):
 
         # Waypoints are always in absolute frame
         self.waypoints_in_absolute = waypoints
-        
+
         # Set the initial target to the first waypoint, adjusting if necessary
         first_waypoint = self.waypoints_in_absolute[0]
-        if not self.is_goal_in_costmap_bounds(first_waypoint) or self.check_goal_collision(first_waypoint):
+        if not self.is_goal_in_costmap_bounds(first_waypoint) or self.check_goal_collision(
+            first_waypoint
+        ):
             logger.warning("First waypoint is invalid. Adjusting...")
             self.goal_xy = self.adjust_goal_to_valid_position(first_waypoint)
         else:
@@ -334,7 +354,7 @@ class BaseLocalPlanner(ABC):
         odom = self.get_robot_pose()
         pos, rot = odom.pos, odom.rot
         return (pos.x, pos.y), rot.z
-        
+
     def _get_final_goal_position(self) -> Optional[Tuple[float, float]]:
         """
         Get the final goal position (either last waypoint or direct goal).
@@ -543,7 +563,7 @@ class BaseLocalPlanner(ABC):
         """
         if self.waypoints is None or len(self.waypoints) == 0:
             return False  # Not in waypoint mode or empty path
-        
+
         # Waypoints are always in absolute frame
         self.waypoints_in_absolute = self.waypoints
 
@@ -579,7 +599,7 @@ class BaseLocalPlanner(ABC):
         if lookahead_point is None:
             lookahead_point = self.waypoints_in_absolute[-1]
             self.current_waypoint_index = len(self.waypoints_in_absolute) - 1
-        
+
         # Set the lookahead point as the immediate target, adjusting if needed
         if not self.is_goal_in_costmap_bounds(lookahead_point) or self.check_goal_collision(
             lookahead_point
@@ -723,9 +743,9 @@ class BaseLocalPlanner(ABC):
 
         Returns:
             Tuple[float, float]: A valid goal position, or the original goal if already valid
-        """    
+        """
         [pos, rot] = self._get_robot_pose()
-        
+
         robot_x, robot_y = pos[0], pos[1]
 
         # Original goal
@@ -823,7 +843,7 @@ class BaseLocalPlanner(ABC):
         """
         Check if the robot is stuck by analyzing movement history.
         Includes improvements to prevent oscillation between stuck and recovered states.
-        
+
         Returns:
             bool: True if the robot is determined to be stuck, False otherwise
         """
@@ -833,48 +853,56 @@ class BaseLocalPlanner(ABC):
         # Get current robot position
         [pos, _] = self._get_robot_pose()
         current_position = (pos[0], pos[1], current_time)
-        
+
         # If we're already in recovery, don't add movements to history (they're intentional)
         # Instead, check if we should continue or end recovery
         if self.is_recovery_active:
             # Check if we've moved far enough from our pre-recovery position to consider unstuck
             if self.pre_recovery_position is not None:
                 pre_recovery_x, pre_recovery_y = self.pre_recovery_position[:2]
-                displacement_from_start = np.sqrt((pos[0] - pre_recovery_x)**2 + (pos[1] - pre_recovery_y)**2)
-                
+                displacement_from_start = np.sqrt(
+                    (pos[0] - pre_recovery_x) ** 2 + (pos[1] - pre_recovery_y) ** 2
+                )
+
                 # If we've moved far enough, we're unstuck
                 if displacement_from_start > self.unstuck_distance_threshold:
-                    logger.info(f"Robot has escaped from stuck state (moved {displacement_from_start:.3f}m from start)")
+                    logger.info(
+                        f"Robot has escaped from stuck state (moved {displacement_from_start:.3f}m from start)"
+                    )
                     self.is_recovery_active = False
                     self.last_recovery_end_time = current_time
                     # Clear position history to start fresh tracking
                     self.position_history.clear()
                     return False
-                    
+
             # Check if we've been trying to recover for too long
             recovery_time = current_time - self.recovery_start_time
             if recovery_time > self.recovery_duration:
-                logger.error(f"Recovery behavior has been active for {self.recovery_duration}s without success")
+                logger.error(
+                    f"Recovery behavior has been active for {self.recovery_duration}s without success"
+                )
                 self.navigation_failed = True
                 return True
-                
+
             # Continue recovery
             return True
-        
+
         # Check cooldown period - don't immediately check for stuck after recovery
         if current_time - self.last_recovery_end_time < self.recovery_cooldown_time:
             # Add position to history but don't check for stuck yet
             self.position_history.append(current_position)
             return False
-        
+
         # Add current position to history (newest is appended at the end)
         self.position_history.append(current_position)
 
         # Need enough history to make a determination
-        min_history_size = int(self.stuck_detection_window_seconds * self.control_frequency * 0.6)  # 60% of window
+        min_history_size = int(
+            self.stuck_detection_window_seconds * self.control_frequency * 0.6
+        )  # 60% of window
         if len(self.position_history) < min_history_size:
             return False
-            
+
         # Find positions within our detection window
         window_start_time = current_time - self.stuck_detection_window_seconds
         window_positions = []
@@ -894,69 +922,76 @@ class BaseLocalPlanner(ABC):
         # Get the oldest and newest positions in the window
         oldest_x, oldest_y, oldest_time = window_positions[0]
         newest_x, newest_y, newest_time = window_positions[-1]
-        
+
         # Calculate time range in the window
         time_range = newest_time - oldest_time
 
         # Calculate displacement from oldest to newest position
-        displacement = np.sqrt((newest_x - oldest_x)**2 + (newest_y - oldest_y)**2)
-        
+        displacement = np.sqrt((newest_x - oldest_x) ** 2 + (newest_y - oldest_y) ** 2)
+
         # Also check average displacement over multiple sub-windows to avoid false positives
         sub_window_size = max(3, len(window_positions) // 3)
         avg_displacement = 0.0
         displacement_count = 0
-        
+
         for i in range(0, len(window_positions) - sub_window_size, sub_window_size // 2):
             start_pos = window_positions[i]
             end_pos = window_positions[min(i + sub_window_size, len(window_positions) - 1)]
-            sub_displacement = np.sqrt((end_pos[0] - start_pos[0])**2 + (end_pos[1] - start_pos[1])**2)
+            sub_displacement = np.sqrt(
+                (end_pos[0] - start_pos[0]) ** 2 + (end_pos[1] - start_pos[1]) ** 2
+            )
             avg_displacement += sub_displacement
             displacement_count += 1
-            
+
         if displacement_count > 0:
             avg_displacement /= displacement_count
-        
+
         # Check if we're stuck - moved less than threshold over minimum time
-        is_currently_stuck = (time_range >= self.stuck_time_threshold and 
-                             time_range <= self.stuck_detection_window_seconds and 
-                             displacement < self.stuck_distance_threshold and
-                             avg_displacement < self.stuck_distance_threshold * 1.5)
-        
+        is_currently_stuck = (
+            time_range >= self.stuck_time_threshold
+            and time_range <= self.stuck_detection_window_seconds
+            and displacement < self.stuck_distance_threshold
+            and avg_displacement < self.stuck_distance_threshold * 1.5
+        )
+
         if is_currently_stuck:
-            logger.warning(f"Robot appears to be stuck! Total displacement: {displacement:.3f}m, "
-                          f"avg displacement: {avg_displacement:.3f}m over {time_range:.1f}s")
-            
+            logger.warning(
+                f"Robot appears to be stuck! Total displacement: {displacement:.3f}m, "
+                f"avg displacement: {avg_displacement:.3f}m over {time_range:.1f}s"
+            )
+
             # Start recovery behavior
             self.is_recovery_active = True
             self.recovery_start_time = current_time
             self.pre_recovery_position = current_position
-            
+
             # Clear position history to avoid contamination during recovery
             self.position_history.clear()
-            
+
             return True
-        
+
         return False
-        
+
     def execute_recovery_behavior(self) -> Dict[str, float]:
         """
         Execute a simple recovery behavior when the robot is stuck.
         Just backs up for a set duration.
-        
+
         Returns:
             Dict[str, float]: Velocity commands for the recovery behavior
         """
         current_time = time.time()
         recovery_time = current_time - self.recovery_start_time
-        
+
         # Simple backup for the specified duration
         if recovery_time < self.backup_duration:
             logger.debug(f"Recovery: backing up ({recovery_time:.1f}s/{self.backup_duration:.1f}s)")
-            return {'x_vel': -0.5, 'angular_vel': 0.0}  # Backup at moderate speed
+            return {"x_vel": -0.5, "angular_vel": 0.0}  # Backup at moderate speed
         else:
             # Recovery completed - let the stuck detection logic handle the rest
             logger.info("Recovery backup completed")
-            return {'x_vel': 0.0, 'angular_vel': 0.0}
+            return {"x_vel": 0.0, "angular_vel": 0.0}
+
 
 def navigate_to_goal_local(
     robot,
@@ -1005,7 +1040,7 @@ def navigate_to_goal_local(
 
     # Set the goal in the robot's frame with orientation to face the original target
     robot.local_planner.set_goal((goal_x, goal_y), is_relative=True, goal_theta=goal_theta)
-    
+
     # Get control period from robot's local planner for consistent timing
     control_period = 1.0 / robot.local_planner.control_frequency
 
@@ -1133,12 +1168,12 @@ def navigate_path_local(
 
 
 def visualize_local_planner_state(
-    occupancy_grid: np.ndarray, 
-    grid_resolution: float, 
-    grid_origin: Tuple[float, float], 
-    robot_pose: Tuple[float, float, float], 
-    visualization_size: int = 400, 
-    robot_width: float = 0.5, 
+    occupancy_grid: np.ndarray,
+    grid_resolution: float,
+    grid_origin: Tuple[float, float],
+    robot_pose: Tuple[float, float, float],
+    visualization_size: int = 400,
+    robot_width: float = 0.5,
     robot_length: float = 0.7,
     map_size_meters: float = 10.0,
     goal_xy: Optional[Tuple[float, float]] = None,
