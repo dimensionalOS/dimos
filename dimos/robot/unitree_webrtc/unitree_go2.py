@@ -21,15 +21,15 @@ from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.connection import WebRTCRobot
 from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.utils.reactive import getter_streaming
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.skills.skills import AbstractSkill, SkillLibrary
-import os
-import numpy as np
+from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from go2_webrtc_driver.constants import VUI_COLOR
+from go2_webrtc_driver.webrtc_driver import WebRTCConnectionMethod
 from dimos.perception.person_tracker import PersonTrackingStream
 from dimos.perception.object_tracker import ObjectTrackingStream
 from dimos.robot.local_planner.local_planner import navigate_path_local
 from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
+from dimos.types.robot_capabilities import RobotCapability
+from dimos.types.vector import Vector
 
 
 class Color(VUI_COLOR): ...
@@ -40,59 +40,94 @@ class UnitreeGo2(Robot):
         self,
         ip: str,
         mode: str = "ai",
-        skills: Optional[Union[MyUnitreeSkills, AbstractSkill]] = None,
+        output_dir: str = os.path.join(os.getcwd(), "assets", "output"),
+        skill_library: SkillLibrary = None,
+        robot_capabilities: List[RobotCapability] = None,
+        spatial_memory_collection: str = "spatial_memory",
+        new_memory: bool = False,
     ):
+        """Initialize Unitree Go2 robot with WebRTC control interface.
 
-        super().__init__(ip=ip, mode=mode)
+        Args:
+            ip: IP address of the robot
+            mode: Robot mode (ai, etc.)
+            output_dir: Directory for output files
+            skill_library: Skill library instance
+            robot_capabilities: List of robot capabilities
+            spatial_memory_collection: Collection name for spatial memory
+            new_memory: Whether to create new spatial memory
+        """
+        # Create WebRTC connection interface
+        webrtc_connection = WebRTCRobot(
+            ip=ip,
+            mode=mode,
+        )
 
-        self.odom = getter_streaming(self.odom_stream())
+        # Store the WebRTC connection for direct access to WebRTC-specific features
+        self.webrtc_connection = webrtc_connection
+
+        # Initialize WebRTC-specific features
+        self.odom = getter_streaming(self.webrtc_connection.odom_stream())
         self.map = Map(voxel_size=0.2)
-        self.map_stream = self.map.consume(self.lidar_stream())
+        self.map_stream = self.map.consume(self.webrtc_connection.lidar_stream())
 
-        # # Initialize skills
-        # if skills is None:
-        #     skills = MyUnitreeSkills(robot=self)
+        # Initialize base robot with connection interface
+        super().__init__(
+            connection_interface=webrtc_connection,
+            output_dir=output_dir,
+            skill_library=skill_library,
+            capabilities=robot_capabilities
+            or [
+                RobotCapability.LOCOMOTION,
+                RobotCapability.VISION,
+                RobotCapability.AUDIO,
+            ],
+            spatial_memory_collection=spatial_memory_collection,
+            new_memory=new_memory,
+        )
 
-        # self.skill_library = skills if skills else SkillLibrary()
+        # Initialize skills with robot reference
+        if self.skill_library is not None:
+            for skill in self.skill_library:
+                if isinstance(skill, AbstractRobotSkill):
+                    self.skill_library.create_instance(skill.__name__, robot=self)
+        else:
+            self.skill_library = SkillLibrary()
 
-        # if self.skill_library is not None:
-        #     for skill in self.skill_library:
-        #         if isinstance(skill, AbstractRobotSkill):
-        #             self.skill_library.create_instance(skill.__name__, robot=self)
-        #     if isinstance(self.skill_library, MyUnitreeSkills):
-        #         self.skill_library._robot = self
-        #         self.skill_library.init()
-        #         self.skill_library.initialize_skills()
+        # Camera configuration
+        self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
+        self.camera_pitch = np.deg2rad(0)  # negative for downward pitch
+        self.camera_height = 0.44  # meters
 
-        # # Camera stuff
-        # self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
-        # self.camera_pitch = np.deg2rad(0)  # negative for downward pitch
-        # self.camera_height = 0.44  # meters
+        # Initialize visual servoing using connection interface
+        video_stream = self.get_video_stream()
+        if video_stream is not None:
+            self.person_tracker = PersonTrackingStream(
+                camera_intrinsics=self.camera_intrinsics,
+                camera_pitch=self.camera_pitch,
+                camera_height=self.camera_height,
+            )
+            self.object_tracker = ObjectTrackingStream(
+                camera_intrinsics=self.camera_intrinsics,
+                camera_pitch=self.camera_pitch,
+                camera_height=self.camera_height,
+            )
+            person_tracking_stream = self.person_tracker.create_stream(video_stream)
+            object_tracking_stream = self.object_tracker.create_stream(video_stream)
 
-        # # Initialize visual servoing if enabled
-        # if self.get_video_stream() is not None:
-        #     self.person_tracker = PersonTrackingStream(
-        #         camera_intrinsics=self.camera_intrinsics,
-        #         camera_pitch=self.camera_pitch,
-        #         camera_height=self.camera_height,
-        #     )
-        #     # self.object_tracker = ObjectTrackingStream(
-        #     #     camera_intrinsics=self.camera_intrinsics,
-        #     #     camera_pitch=self.camera_pitch,
-        #     #     camera_height=self.camera_height,
-        #     # )
-        #     person_tracking_stream = self.person_tracker.create_stream(self.get_video_stream())
-        #     #object_tracking_stream = self.object_tracker.create_stream(self.get_video_stream())
+            self.person_tracking_stream = person_tracking_stream
+            self.object_tracking_stream = object_tracking_stream
+        else:
+            self.person_tracker = None
+            self.object_tracker = None
+            self.person_tracking_stream = None
+            self.object_tracking_stream = None
 
-        #     self.person_tracking_stream = person_tracking_stream
-        #     #self.object_tracking_stream = object_tracking_stream
-
-
-        # Initialize the local planner and create BEV visualization stream
+        # Initialize the local planner using WebRTC-specific methods
         self.local_planner = VFHPurePursuitPlanner(
             get_costmap=lambda: self.map.local_costmap,
             get_robot_pose=lambda: self.odom(),
-            move=self.move,
+            move=self.move,  # Use the robot's move method directly
             robot_width=0.36,  # Unitree Go2 width in meters
             robot_length=0.6,  # Unitree Go2 length in meters
             max_linear_vel=0.7,
