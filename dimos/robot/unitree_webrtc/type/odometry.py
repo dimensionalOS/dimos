@@ -22,6 +22,7 @@ from dimos.robot.unitree_webrtc.type.timeseries import (
     to_human_readable,
 )
 from dimos.types.position import Position
+from dimos.types.vector import VectorLike, Vector
 from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_human_readable
 from scipy.spatial.transform import Rotation as R
 
@@ -97,7 +98,9 @@ class Odometry(Position):
         orientation = pose["orientation"]
         position = pose["position"]
         pos = Vector(position.get("x"), position.get("y"), position.get("z"))
-        rotation = R.from_quat([orientation.get("x"), orientation.get("y"), orientation.get("z"), orientation.get("w")])
+        rotation = R.from_quat(
+            [orientation.get("x"), orientation.get("y"), orientation.get("z"), orientation.get("w")]
+        )
         rot = Vector(rotation.as_euler("xyz", degrees=False))
         return cls(pos=pos, rot=rot, ts=msg["data"]["header"]["stamp"])
 
