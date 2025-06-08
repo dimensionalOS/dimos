@@ -98,9 +98,21 @@ class Odometry(Position):
         orientation = pose["orientation"]
         position = pose["position"]
         pos = Vector(position.get("x"), position.get("y"), position.get("z"))
-        rotation = R.from_quat(
-            [orientation.get("x"), orientation.get("y"), orientation.get("z"), orientation.get("w")]
-        )
+        # Get quaternion values
+        quat = [
+            orientation.get("x"),
+            orientation.get("y"),
+            orientation.get("z"),
+            orientation.get("w"),
+        ]
+
+        # Check if quaternion has zero norm (invalid)
+        quat_norm = sum(x**2 for x in quat) ** 0.5
+        if quat_norm < 1e-8:  # Very small threshold for zero norm
+            # Use identity quaternion as fallback
+            quat = [0.0, 0.0, 0.0, 1.0]
+
+        rotation = R.from_quat(quat)
         rot = Vector(rotation.as_euler("xyz", degrees=False))
         return cls(pos=pos, rot=rot, ts=msg["data"]["header"]["stamp"])
 

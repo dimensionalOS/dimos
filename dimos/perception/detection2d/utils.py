@@ -14,7 +14,6 @@
 
 import numpy as np
 import cv2
-from dimos.types.vector import Vector
 from dimos.utils.transform_utils import distance_angle_to_goal_xy
 
 

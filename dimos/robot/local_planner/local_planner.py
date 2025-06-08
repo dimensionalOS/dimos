@@ -1147,10 +1147,7 @@ def navigate_path_local(
                 break
 
             # Get planned velocity towards the current waypoint target
-            start_time = time.time()
             vel_command = robot.local_planner.plan()
-            end_time = time.time()
-            logger.info(f"Plan time: {end_time - start_time:.2f}s")
             x_vel = vel_command.get("x_vel", 0.0)
             angular_vel = vel_command.get("angular_vel", 0.0)
 

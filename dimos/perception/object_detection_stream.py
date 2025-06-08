@@ -167,7 +167,10 @@ class ObjectDetectionStream:
                     # Transform to map frame if a transform function is provided
                     try:
                         if self.get_pose:
-                            # position and rotation are already Vector objects, no need to convert
+                            position = Vector([position["x"], position["y"], position["z"]])
+                            rotation = Vector(
+                                [rotation["roll"], rotation["pitch"], rotation["yaw"]]
+                            )
                             robot_pose = self.get_pose()
                             position, rotation = transform_robot_to_map(
                                 robot_pose, position, rotation
