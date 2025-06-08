@@ -22,7 +22,10 @@ import logging
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.ros_utils import normalize_angle
 
-from dimos.robot.local_planner.local_planner import BaseLocalPlanner, visualize_local_planner_state
+from dimos.robot.local_planner.vfh.local_planner import (
+    BaseLocalPlanner,
+    visualize_local_planner_state,
+)
 from dimos.types.costmap import Costmap
 from nav_msgs.msg import OccupancyGrid
 
