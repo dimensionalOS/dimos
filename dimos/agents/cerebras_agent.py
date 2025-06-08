@@ -381,7 +381,7 @@ class CerebrasAgent(LLMAgent):
             api_params = {
                 "model": self.model_name,
                 "messages": messages,
-                "max_tokens": self.max_output_tokens_per_request,
+                # "max_tokens": self.max_output_tokens_per_request,
             }
 
             # Add tools if available
@@ -414,22 +414,11 @@ class CerebrasAgent(LLMAgent):
             tool_calls = getattr(raw_message, "tool_calls", None)
 
             # If no structured tool calls from API, try parsing content as JSON tool call
-            if not tool_calls and content and content.strip():
-                # Look for JSON tool call anywhere in the content
-                json_pattern = r'\{"name":\s*"[^"]+",\s*"arguments":\s*\{[^}]+\}\}'
-                json_matches = re.findall(json_pattern, content)
-
-                if json_matches:
-                    tool_calls = []
-                    for json_content in json_matches:  # Handle multiple JSON objects
-                        logger.info(f"Found JSON tool call in content: {json_content}")
-                        parsed_tool_call = self.create_tool_call(content=json_content)
-                        if parsed_tool_call:
-                            tool_calls.append(parsed_tool_call)
-                            content = content.replace(json_content, "").strip()
-
-                    if not content:
-                        content = None
+            if not tool_calls and content and content.strip().startswith("{"):
+                parsed_tool_call = self.create_tool_call(content=content)
+                if parsed_tool_call:
+                    tool_calls = [parsed_tool_call]
+                    content = None
 
             return CerebrasResponseMessage(content=content, tool_calls=tool_calls)
 
