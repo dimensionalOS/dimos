@@ -13,19 +13,16 @@
 # limitations under the License.
 
 import math
-import time
-from datetime import datetime
 from dataclasses import dataclass
 from typing import Callable, Optional
 
 import reactivex as rx
 from reactivex.observable import Observable
-from plum import dispatch
 from reactivex import operators as ops
 
 from dimos.robot.local_planner.local_planner import LocalPlanner
 from dimos.types.costmap import Costmap
-from dimos.types.path import Path
+from dimos.types.path import Path, PathLike
 from dimos.types.position import Position
 from dimos.types.vector import Vector, VectorLike, to_vector
 from dimos.utils.logging_config import setup_logger
@@ -49,9 +46,12 @@ class SimplePlanner(LocalPlanner):
         observable.subscribe(self.set_path)
         return True
 
-    def set_path(self, path: Path) -> bool:
-        logger.info(f"Received new path: {path}")
-        self.path = path
+    def consume_path_stream(self, path_stream: rx.Observable[PathLike]) -> bool:
+        path_stream.subscribe(self.set_path)
+
+    def set_path(self, path: PathLike) -> bool:
+        self.path = path if isinstance(path, Path) else Path(path)
+        logger.info(f"Received new path: {self.path}")
         if self.path:
             self.set_goal(path.head())
 

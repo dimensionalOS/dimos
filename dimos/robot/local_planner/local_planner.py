@@ -13,15 +13,15 @@
 # limitations under the License.
 
 from abc import abstractclass, abstractmethod
-from dimos.types.vector import Vector, VectorLike, to_vector
-from dimos.types.path import Path
+from dimos.types.vector import Vector
+from dimos.types.path import PathLike
 from reactivex.observable import Observable
 
 
 @abstractclass
 class LocalPlanner:
     @abstractmethod
-    def consume_path_stream(self, observable: Observable[Path]) -> bool: ...
+    def consume_path_stream(self, observable: Observable[PathLike]) -> bool: ...
 
     @abstractmethod
     def get_move_stream(self) -> Observable[Vector]: ...

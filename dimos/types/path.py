@@ -13,46 +13,67 @@
 # limitations under the License.
 
 import numpy as np
-from typing import List, Union, Tuple, Iterator, TypeVar
-from dimos.types.vector import Vector
+from typing import List, Union, Tuple, Iterator, TypeVar, Sequence
+from dimos.types.vector import Vector, to_tuple, to_vector, VectorLike
+from plum import dispatch
 
 T = TypeVar("T", bound="Path")
 
 
+PathLike = Union["Path", Sequence[VectorLike], np.ndarray, None]
+
+
 class Path:
-    """A class representing a path as a sequence of points."""
+    """A class representing a path as a sequence of points
 
-    def __init__(
-        self,
-        points: Union[List[Vector], List[np.ndarray], List[Tuple], np.ndarray, None] = None,
-    ):
-        """Initialize a path from a list of points.
+    Args:
+        points: List of Vector objects, numpy arrays, tuples, or a 2D numpy array where each row is a point.
+               If None, creates an empty path.
 
-        Args:
-            points: List of Vector objects, numpy arrays, tuples, or a 2D numpy array where each row is a point.
-                   If None, creates an empty path.
+    Examples:
+        Path([Vector(1, 2), Vector(3, 4)])  # from Vector objects
+        Path([(1, 2), (3, 4)])              # from tuples
+        Path(np.array([[1, 2], [3, 4]]))    # from 2D numpy array
+    """
 
-        Examples:
-            Path([Vector(1, 2), Vector(3, 4)])  # from Vector objects
-            Path([(1, 2), (3, 4)])              # from tuples
-            Path(np.array([[1, 2], [3, 4]]))    # from 2D numpy array
-        """
-        if points is None:
+    @dispatch
+    def __init__(self):
+        """Initialize an empty path."""
+        self._points = np.zeros((0, 0), dtype=float)
+
+    @dispatch
+    def __init__(self, points: type(None)):
+        """Initialize an empty path from None."""
+        self._points = np.zeros((0, 0), dtype=float)
+
+    @dispatch
+    def __init__(self, pathLike: "Path"):
+        """Initialize from another Path (copy constructor)."""
+        self._points = pathLike.points.copy()
+
+    @dispatch
+    def __init__(self, points: Sequence[VectorLike]):
+        """Initialize from a sequence of VectorLike objects."""
+        if len(points) == 0:
             self._points = np.zeros((0, 0), dtype=float)
-            return
+        else:
+            self._points = np.array([to_tuple(p) for p in points], dtype=float)
 
-        if isinstance(points, np.ndarray) and points.ndim == 2:
-            # If already a 2D numpy array, use it directly
+    @dispatch
+    def __init__(self, points: np.ndarray):
+        """Initialize from a numpy array."""
+        if points.ndim == 1:
+            if len(points) == 0:
+                # Empty array
+                self._points = np.zeros((0, 0), dtype=float)
+            else:
+                # Single point
+                self._points = np.array([points], dtype=float)
+        elif points.ndim == 2:
+            # Multiple points
             self._points = points.astype(float)
         else:
-            # Convert various input types to numpy array
-            converted = []
-            for p in points:
-                if isinstance(p, Vector):
-                    converted.append(p.data)
-                else:
-                    converted.append(p)
-            self._points = np.array(converted, dtype=float)
+            raise ValueError("points must be a 1D or 2D numpy array")
 
     def serialize(self) -> Tuple:
         """Serialize the vector to a tuple."""
@@ -385,30 +406,40 @@ class Path:
         """Return a new Path containing only the last `max_len` points."""
         if max_len < 0:
             raise ValueError("max_len must be ≥ 0")
+        if max_len == 0:
+            return self.__class__()
         return self.__class__(self._points[-max_len:])
 
     def __add__(self, point):
-        """path + vec  ->  path.pushed(vec)"""
-        return self.pushed(point)
+        """path + vec  ->  path.ipush(vec)"""
+        return self.ipush(point)
 
 
-if __name__ == "__main__":
-    # Test vectors in various directions
-    print(
-        Path(
-            [
-                Vector(1, 0),  # Right
-                Vector(1, 1),  # Up-Right
-                Vector(0, 1),  # Up
-                Vector(-1, 1),  # Up-Left
-                Vector(-1, 0),  # Left
-                Vector(-1, -1),  # Down-Left
-                Vector(0, -1),  # Down
-                Vector(1, -1),  # Down-Right
-                Vector(0.5, 0.5),  # Up-Right (shorter)
-                Vector(-3, 4),  # Up-Left (longer)
-            ]
-        )
-    )
+@dispatch
+def to_path(pathLike: Path) -> Path:
+    """Convert a Path to a Path (identity function)."""
+    return pathLike
 
-    print(Path())
+
+@dispatch
+def to_path(vectorLike: VectorLike) -> Path:
+    """Convert a VectorLike to a Path with a single point."""
+    return Path([vectorLike])
+
+
+@dispatch
+def to_path(points: Sequence[VectorLike]) -> Path:
+    """Convert a sequence of VectorLike objects to a Path."""
+    return Path(points)
+
+
+@dispatch
+def to_path(points: np.ndarray) -> Path:
+    """Convert a numpy array to a Path."""
+    return Path(points)
+
+
+@dispatch
+def to_path(points: type(None)) -> Path:
+    """Convert None to an empty Path."""
+    return Path()
