@@ -15,7 +15,7 @@
 import numpy as np
 import cv2
 
-from dimos.utils.ros_utils import distance_angle_to_goal_xy
+from dimos.utils.transform_utils import distance_angle_to_goal_xy
 
 
 def filter_detections(

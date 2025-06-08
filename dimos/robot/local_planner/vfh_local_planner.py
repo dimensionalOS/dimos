@@ -20,7 +20,7 @@ import cv2
 import logging
 
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.ros_utils import normalize_angle
+from dimos.utils.transform_utils import normalize_angle
 
 from dimos.robot.local_planner.local_planner import BaseLocalPlanner, visualize_local_planner_state
 from dimos.types.costmap import Costmap
