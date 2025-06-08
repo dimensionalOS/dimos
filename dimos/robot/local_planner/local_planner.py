@@ -26,7 +26,7 @@ import time
 import logging
 from collections import deque
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.ros_utils import normalize_angle, distance_angle_to_goal_xy
+from dimos.utils.transform_utils import normalize_angle, distance_angle_to_goal_xy
 
 from dimos.types.vector import VectorLike, Vector, to_tuple
 from dimos.types.path import Path
@@ -1091,10 +1091,7 @@ def navigate_path_local(
                 break
 
             # Get planned velocity towards the current waypoint target
-            start_time = time.time()
             vel_command = robot.local_planner.plan()
-            end_time = time.time()
-            logger.info(f"Plan time: {end_time - start_time:.2f}s")
             x_vel = vel_command.get("x_vel", 0.0)
             angular_vel = vel_command.get("angular_vel", 0.0)
 
