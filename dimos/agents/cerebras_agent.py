@@ -591,18 +591,18 @@ class CerebrasAgent(LLMAgent):
         def _tooling_callback(message, messages, response_message, skill_library: SkillLibrary):
             has_called_tools = False
             new_messages = []
-            
+
             # Process tool calls sequentially
             for tool_call in message.tool_calls:
                 has_called_tools = True
                 name = tool_call.function.name
                 args = json.loads(tool_call.function.arguments)
-                
+
                 # Execute the tool call
                 logger.info(f"Executing tool call: {name} with args: {args}")
                 result = skill_library.call(name, **args)
                 logger.info(f"Tool call completed: {name} with result: {result}")
-                
+
                 # Add the result to messages
                 new_messages.append(
                     {
@@ -612,7 +612,7 @@ class CerebrasAgent(LLMAgent):
                         "name": name,
                     }
                 )
-                
+
                 # Wait for the tool call to complete by running a follow-up query
                 self.run_observable_query(
                     query_text=f"Tool {name}, ID: {tool_call.id} execution complete. Please summarize the results and continue."
@@ -647,5 +647,5 @@ class CerebrasAgent(LLMAgent):
                     logger.error(f"Error in follow-up query: {e}")
                     return None
             return None
-        return _tooling_callback(response_message, messages, response_message, self.skill_library)
 
+        return _tooling_callback(response_message, messages, response_message, self.skill_library)
