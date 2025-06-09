@@ -180,45 +180,6 @@ class BaseLocalPlanner(ABC):
         self.last_recovery_end_time = 0.0
         self.pre_recovery_position = None
 
-        logger.info("Local planner state has been reset")
-
-    def _get_robot_pose(self) -> Tuple[Tuple[float, float], float]:
-        """
-        Get the current robot position and orientation.
-
-        Returns:
-            Tuple containing:
-            - position as (x, y) tuple
-            - orientation (theta) in radians
-        """
-        if self._robot_pose is None:
-            return ((0.0, 0.0), 0.0)  # Fallback if not yet initialized
-        pos, rot = self._robot_pose.pos, self._robot_pose.rot
-        return (pos.x, pos.y), rot.z
-
-    def _get_costmap(self):
-        """Get cached costmap data."""
-        return self._costmap
-
-    def clear_cache(self):
-        """Clear all cached data to force fresh retrieval on next access."""
-        self._robot_pose = None
-        self._costmap = None
-
-    def set_goal(
-        self, goal_xy: VectorLike, is_relative: bool = False, goal_theta: Optional[float] = None
-    ):
-        """Set a single goal position, converting to absolute frame if necessary.
-           This clears any existing waypoints being followed.
-
-        Args:
-            goal_xy: The goal position to set.
-            is_relative: Whether the goal is in the robot's relative frame.
-            goal_theta: Optional goal orientation in radians
-        """
-        # Reset all state variables
-        self.reset()
-
         # Clear waypoint following state
         self.waypoints = None
         self.current_waypoint_index = 0
