@@ -35,10 +35,13 @@ from pydantic import BaseModel
 from reactivex import Observable
 from reactivex.observer import Observer
 from reactivex.scheduler import ThreadPoolScheduler
+from dimos.agents.prompt_builder.impl import PromptBuilder
+from dimos.agents.tokenizer.base import AbstractTokenizer
 
 # Local imports
 from dimos.agents.agent import LLMAgent
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
+from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.utils.logging_config import setup_logger
@@ -118,6 +121,8 @@ class CerebrasAgent(LLMAgent):
         max_input_tokens_per_request: int = 128000,
         max_output_tokens_per_request: int = 16384,
         model_name: str = "llama-4-scout-17b-16e-instruct",
+        prompt_builder: Optional[PromptBuilder] = None,
+        tokenizer: Optional[AbstractTokenizer] = None,
         skills: Optional[Union[AbstractSkill, list[AbstractSkill], SkillLibrary]] = None,
         response_model: Optional[BaseModel] = None,
         frame_processor: Optional[FrameProcessor] = None,
@@ -199,9 +204,14 @@ class CerebrasAgent(LLMAgent):
 
         self.response_model = response_model
         self.model_name = model_name
+        self.tokenizer = tokenizer or HuggingFaceTokenizer(model_name=self.model_name)
+        self.prompt_builder = prompt_builder or PromptBuilder(
+            self.model_name, tokenizer=self.tokenizer
+        )
         self.image_detail = image_detail
         self.max_output_tokens_per_request = max_output_tokens_per_request
         self.max_input_tokens_per_request = max_input_tokens_per_request
+        self.max_tokens_per_request = max_input_tokens_per_request + max_output_tokens_per_request
 
         # Add static context to memory.
         self._add_context_to_memory()
@@ -429,6 +439,8 @@ class CerebrasAgent(LLMAgent):
             logger.error(f"Invalid parameters for Cerebras API: {ve}")
             raise
         except Exception as e:
+            # Print the raw API parameters when an error occurs
+            logger.error(f"Raw API parameters: {json.dumps(api_params, indent=2)}")
             logger.error(f"Unexpected error in Cerebras API call: {e}")
             raise
 
@@ -565,7 +577,8 @@ class CerebrasAgent(LLMAgent):
         """Handles tooling callbacks in the response message.
 
         If tool calls are present, the corresponding functions are executed and
-        a follow-up query is sent.
+        a follow-up query is sent. Tool calls are executed sequentially, waiting
+        for each one to complete before starting the next.
 
         Args:
             response_message: The response message containing tool calls.
@@ -578,12 +591,19 @@ class CerebrasAgent(LLMAgent):
         def _tooling_callback(message, messages, response_message, skill_library: SkillLibrary):
             has_called_tools = False
             new_messages = []
+            
+            # Process tool calls sequentially
             for tool_call in message.tool_calls:
                 has_called_tools = True
                 name = tool_call.function.name
                 args = json.loads(tool_call.function.arguments)
+                
+                # Execute the tool call
+                logger.info(f"Executing tool call: {name} with args: {args}")
                 result = skill_library.call(name, **args)
-                logger.info(f"Function Call Results: {result}")
+                logger.info(f"Tool call completed: {name} with result: {result}")
+                
+                # Add the result to messages
                 new_messages.append(
                     {
                         "role": "tool",
@@ -592,6 +612,11 @@ class CerebrasAgent(LLMAgent):
                         "name": name,
                     }
                 )
+                
+                # Wait for the tool call to complete by running a follow-up query
+                self.run_observable_query(
+                    query_text=f"Tool {name}, ID: {tool_call.id} execution complete. Please summarize the results and continue."
+                ).run()
 
             if has_called_tools:
                 # Convert response_message to dict format for JSON serialization
@@ -599,7 +624,7 @@ class CerebrasAgent(LLMAgent):
                 messages.append(response_dict)
                 messages.extend(new_messages)
 
-                logger.info("Sending Another Query.")
+                logger.info("Sending follow-up query after tool calls completed.")
                 try:
                     response_2 = self._send_query(messages)
 
@@ -614,6 +639,7 @@ class CerebrasAgent(LLMAgent):
                         )
                         return self._handle_tooling(response_2, messages)
                     else:
+                        logger.info(f"No more tool calls, returning final response: {response_2}")
                         # No more tool calls, return the final response
                         return response_2
 
@@ -621,5 +647,5 @@ class CerebrasAgent(LLMAgent):
                     logger.error(f"Error in follow-up query: {e}")
                     return None
             return None
-
         return _tooling_callback(response_message, messages, response_message, self.skill_library)
+
