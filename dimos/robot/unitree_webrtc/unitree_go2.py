@@ -30,6 +30,7 @@ from dimos.robot.local_planner.local_planner import navigate_path_local
 from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.types.vector import Vector
+from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 
 
 class Color(VUI_COLOR): ...
@@ -73,6 +74,9 @@ class UnitreeGo2(Robot):
         self.map = Map(voxel_size=0.2)
         self.map_stream = self.map.consume(self.webrtc_connection.lidar_stream())
 
+        if skill_library is None:
+            skill_library = MyUnitreeSkills()
+
         # Initialize base robot with connection interface
         super().__init__(
             connection_interface=webrtc_connection,
@@ -89,13 +93,14 @@ class UnitreeGo2(Robot):
             enable_perception=enable_perception,
         )
 
-        # Initialize skills with robot reference
         if self.skill_library is not None:
             for skill in self.skill_library:
                 if isinstance(skill, AbstractRobotSkill):
                     self.skill_library.create_instance(skill.__name__, robot=self)
-        else:
-            self.skill_library = SkillLibrary()
+            if isinstance(self.skill_library, MyUnitreeSkills):
+                self.skill_library._robot = self
+                self.skill_library.init()
+                self.skill_library.initialize_skills()
 
         # Camera configuration
         self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]

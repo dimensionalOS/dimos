@@ -176,6 +176,12 @@ class BaseLocalPlanner(ABC):
         self.last_recovery_end_time = 0.0
         self.pre_recovery_position = None
 
+        # Clear waypoint following state
+        self.waypoints = None
+        self.current_waypoint_index = 0
+        self.goal_xy = None  # Clear previous goal
+        self.goal_theta = None  # Clear previous goal orientation
+
         logger.info("Local planner state has been reset")
 
     def _get_robot_pose(self) -> Tuple[Tuple[float, float], float]:
@@ -214,12 +220,6 @@ class BaseLocalPlanner(ABC):
         """
         # Reset all state variables
         self.reset()
-
-        # Clear waypoint following state
-        self.waypoints = None
-        self.current_waypoint_index = 0
-        self.goal_xy = None  # Clear previous goal
-        self.goal_theta = None  # Clear previous goal orientation
 
         target_goal_xy: Optional[Tuple[float, float]] = None
 
@@ -977,6 +977,8 @@ def navigate_to_goal_local(
         f"Starting navigation to local goal {goal_xy_robot} with distance {distance}m and timeout {timeout}s."
     )
 
+    robot.local_planner.reset()
+
     goal_x, goal_y = goal_xy_robot
 
     # Calculate goal orientation to face the target
@@ -1066,6 +1068,8 @@ def navigate_path_local(
     logger.info(
         f"Starting navigation along path with {len(path)} waypoints and timeout {timeout}s."
     )
+
+    robot.local_planner.reset()
 
     # Set the path in the local planner
     robot.local_planner.set_goal_waypoints(path, goal_theta=goal_theta)

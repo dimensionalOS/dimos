@@ -97,16 +97,24 @@ class WebRTCRobot(ConnectionInterface):
                 data={"lx": y, "ly": x, "rx": -yaw, "ry": 0},
             )
 
+        async def async_move_duration():
+            """Send movement commands continuously for the specified duration."""
+            start_time = time.time()
+            sleep_time = 0.01
+
+            while time.time() - start_time < duration:
+                await async_move()
+                await asyncio.sleep(sleep_time)
+
         try:
             if duration > 0:
-                # Send move command
-                future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
+                # Send continuous move commands for the duration
+                future = asyncio.run_coroutine_threadsafe(async_move_duration(), self.loop)
                 future.result()
-
-                # Wait for duration then stop
-                time.sleep(duration)
+                # Stop after duration
                 self.stop()
             else:
+                # Single command for continuous movement
                 future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
                 future.result()
             return True
