@@ -63,7 +63,7 @@ class CerebrasResponseMessage(dict):
         self.content = content
         self.tool_calls = tool_calls or []
         self.parsed = None
-        
+
         # Initialize as dict with the proper structure
         super().__init__(self.to_dict())
 
@@ -101,6 +101,7 @@ class CerebrasResponseMessage(dict):
                 )
 
         return result
+
 
 class CerebrasAgent(LLMAgent):
     """Cerebras agent implementation using the official Cerebras Python SDK.
@@ -217,11 +218,13 @@ class CerebrasAgent(LLMAgent):
         self._add_context_to_memory()
 
         # Initialize tokenizer and prompt builder
-        self.tokenizer = tokenizer or OpenAITokenizer(model_name="gpt-4o")  # Use GPT-4 tokenizer for better accuracy
+        self.tokenizer = tokenizer or OpenAITokenizer(
+            model_name="gpt-4o"
+        )  # Use GPT-4 tokenizer for better accuracy
         self.prompt_builder = prompt_builder or PromptBuilder(
             model_name=self.model_name,
             max_tokens=self.max_input_tokens_per_request,
-            tokenizer=self.tokenizer
+            tokenizer=self.tokenizer,
         )
 
         logger.info("Cerebras Agent Initialized.")
@@ -306,22 +309,22 @@ class CerebrasAgent(LLMAgent):
 
         # Use new truncation function
         messages = self._truncate_messages(messages, override_token_limit)
-        
+
         return messages
 
     def _truncate_messages(self, messages: list, override_token_limit: bool = False) -> list:
         """Truncate messages if total tokens exceed 16k using existing truncate_tokens method.
-        
+
         Args:
             messages (list): List of message dictionaries
             override_token_limit (bool): Whether to skip truncation
-            
+
         Returns:
             list: Messages with content truncated if needed
         """
         if override_token_limit:
             return messages
-            
+
         total_tokens = 0
         for message in messages:
             if isinstance(message.get("content"), str):
@@ -332,39 +335,41 @@ class CerebrasAgent(LLMAgent):
                         total_tokens += self.prompt_builder.tokenizer.token_count(item["text"])
                     elif item.get("type") == "image_url":
                         total_tokens += 85
-        
+
         if total_tokens > 16000:
             excess_tokens = total_tokens - 16000
             current_tokens = total_tokens
-            
+
             # Start from oldest messages and truncate until under 16k
             for i in range(len(messages)):
                 if current_tokens <= 16000:
                     break
-                    
+
                 msg = messages[i]
                 if msg.get("role") == "system":
-                    continue 
-                    
+                    continue
+
                 if isinstance(msg.get("content"), str):
                     original_tokens = self.prompt_builder.tokenizer.token_count(msg["content"])
                     # Calculate how much to truncate from this message
-                    tokens_to_remove = min(excess_tokens, original_tokens // 3) 
-                    new_max_tokens = max(50, original_tokens - tokens_to_remove) 
-                    
+                    tokens_to_remove = min(excess_tokens, original_tokens // 3)
+                    new_max_tokens = max(50, original_tokens - tokens_to_remove)
+
                     msg["content"] = self.prompt_builder.truncate_tokens(
                         msg["content"], new_max_tokens, "truncate_end"
                     )
-                    
+
                     new_tokens = self.prompt_builder.tokenizer.token_count(msg["content"])
                     tokens_saved = original_tokens - new_tokens
                     current_tokens -= tokens_saved
                     excess_tokens -= tokens_saved
-            
-            logger.info(f"Truncated older messages using truncate_tokens, final tokens: {current_tokens}")
+
+            logger.info(
+                f"Truncated older messages using truncate_tokens, final tokens: {current_tokens}"
+            )
         else:
             logger.info(f"No truncation needed, total tokens: {total_tokens}")
-            
+
         return messages
 
     def clean_cerebras_schema(self, schema: dict) -> dict:
@@ -579,7 +584,7 @@ class CerebrasAgent(LLMAgent):
 
                 logger.info(f"Assistant requested {len(response_message.tool_calls)} tool call(s)")
                 next_response = self._handle_tooling(response_message, messages)
-                
+
                 if next_response is None:
                     final_msg = response_message.content or ""
                     break
@@ -591,7 +596,7 @@ class CerebrasAgent(LLMAgent):
                 logger.info(
                     f"Updated conversation history (total: {len(self.conversation_history)} messages)"
                 )
-            
+
             # Emit the final message content to the observer
             observer.on_next(final_msg)
             self.response_subject.on_next(final_msg)
@@ -601,5 +606,3 @@ class CerebrasAgent(LLMAgent):
             logger.error(f"Query failed in {self.dev_name}: {e}")
             observer.on_error(e)
             self.response_subject.on_error(e)
-
-

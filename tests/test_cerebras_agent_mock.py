@@ -28,10 +28,10 @@ from pydantic import Field
 
 class MockSkill(AbstractSkill):
     """A mock skill for testing."""
-    
+
     execution_count: int = Field(default=0, description="Number of times skill has been executed")
     last_params: Optional[dict] = Field(default=None, description="Last parameters passed to skill")
-    
+
     # Class-level tracking to persist across instances for testing
     _class_execution_count: int = 0
     _class_last_params: Optional[dict] = None
@@ -40,13 +40,13 @@ class MockSkill(AbstractSkill):
         # Update instance values
         self.execution_count += 1
         self.last_params = kwargs
-        
+
         # Update class-level tracking for tests
         MockSkill._class_execution_count += 1
         MockSkill._class_last_params = kwargs
-        
+
         return f"MockSkill executed with params: {kwargs}"
-    
+
     @classmethod
     def reset_tracking(cls):
         """Reset class-level tracking for clean tests."""
@@ -61,21 +61,21 @@ class TestCerebrasAgentMock(unittest.TestCase):
         """Set up test fixtures with proper MockRobot integration."""
         # Reset MockSkill tracking for clean tests
         MockSkill.reset_tracking()
-        
+
         # Create mock robot (properly initialized)
         self.robot = MockRobot()
-        
+
         # Create skill library with the robot
         self.skill_library = MyUnitreeSkills(robot=self.robot)
         self.skill_library.initialize_skills()
-        
+
         # Add our custom mock skill
         self.mock_skill = MockSkill
         self.skill_library.add(self.mock_skill)
-        
+
         # Create skill instance with robot reference
         self.skill_library.create_instance("MockSkill", robot=self.robot)
-        
+
         # Create agent with the skill library
         self.agent = CerebrasAgent(
             dev_name="MockTestAgent",
@@ -94,7 +94,7 @@ class TestCerebrasAgentMock(unittest.TestCase):
             if name == skill.__name__:
                 skill_class = skill
                 break
-        
+
         if skill_class is None:
             raise ValueError(f"Skill class not found: {name}")
 
@@ -107,40 +107,40 @@ class TestCerebrasAgentMock(unittest.TestCase):
         # Create mock Cerebras client
         mock_client_instance = mock.MagicMock()
         mock_cerebras_client.return_value = mock_client_instance
-        
+
         # Create mock response for tool call
         mock_tool_call = mock.MagicMock()
         mock_tool_call.id = "call_123"
         mock_tool_call.function.name = "MockSkill"
         mock_tool_call.function.arguments = '{"param1": "test_value"}'
-        
+
         # First response with tool call
         mock_response_1 = mock.MagicMock()
         mock_response_1.choices = [mock.MagicMock()]
         mock_response_1.choices[0].message.content = "I'll execute the MockSkill"
         mock_response_1.choices[0].message.tool_calls = [mock_tool_call]
-        
+
         # Second response after tool execution
         mock_response_2 = mock.MagicMock()
         mock_response_2.choices = [mock.MagicMock()]
         mock_response_2.choices[0].message.content = "Task completed successfully!"
         mock_response_2.choices[0].message.tool_calls = None
-        
+
         # Set up client to return our mock responses
         mock_client_instance.chat.completions.create.side_effect = [
             mock_response_1,
-            mock_response_2
+            mock_response_2,
         ]
-        
+
         # Replace the client in our agent
         self.agent.client = mock_client_instance
-        
+
         # Execute the test
         response = self.agent.run_observable_query("Execute MockSkill with param1=test_value").run()
-        
+
         # Verify the response
         self.assertEqual(response, "Task completed successfully!")
-        
+
         # Verify the skill was executed with correct parameters
         skill_instance = self.get_skill_instance("MockSkill")
         self.assertEqual(MockSkill._class_execution_count, 1)
@@ -151,10 +151,10 @@ class TestCerebrasAgentMock(unittest.TestCase):
         # Verify robot is properly set up
         self.assertIsInstance(self.robot, MockRobot)
         self.assertIsNotNone(self.robot.skill_library)
-        
+
         # Verify skill library has the robot reference
         self.assertEqual(self.skill_library._robot, self.robot)
-        
+
         # Verify skill instance can be created
         skill_instance = self.get_skill_instance("MockSkill")
         self.assertIsInstance(skill_instance, MockSkill)
@@ -165,34 +165,34 @@ class TestCerebrasAgentMock(unittest.TestCase):
         # Setup mock client
         mock_client_instance = mock.MagicMock()
         mock_cerebras_client.return_value = mock_client_instance
-        
+
         # Create tool calls for multi-tooling test
         mock_tool_call_1 = mock.MagicMock()
         mock_tool_call_1.id = "call_1"
         mock_tool_call_1.function.name = "MockSkill"
         mock_tool_call_1.function.arguments = '{"step": 1}'
-        
+
         mock_tool_call_2 = mock.MagicMock()
         mock_tool_call_2.id = "call_2"
         mock_tool_call_2.function.name = "MockSkill"
         mock_tool_call_2.function.arguments = '{"step": 2}'
-        
+
         # Response sequence for multi-tooling
         responses = [
             # First response: tool call 1
             self._create_mock_response("Executing step 1", [mock_tool_call_1]),
-            # Second response: tool call 2  
+            # Second response: tool call 2
             self._create_mock_response("Executing step 2", [mock_tool_call_2]),
             # Final response: no more tools
-            self._create_mock_response("All steps completed!", None)
+            self._create_mock_response("All steps completed!", None),
         ]
-        
+
         mock_client_instance.chat.completions.create.side_effect = responses
         self.agent.client = mock_client_instance
-        
+
         # Execute multi-tool test
         response = self.agent.run_observable_query("Execute MockSkill in multiple steps").run()
-        
+
         # Verify multi-tooling worked
         self.assertEqual(response, "All steps completed!")
         skill_instance = self.get_skill_instance("MockSkill")
@@ -204,23 +204,23 @@ class TestCerebrasAgentMock(unittest.TestCase):
         # Setup mock client
         mock_client_instance = mock.MagicMock()
         mock_cerebras_client.return_value = mock_client_instance
-        
+
         # Create a tool call that would loop infinitely
         mock_tool_call = mock.MagicMock()
         mock_tool_call.id = "call_loop"
         mock_tool_call.function.name = "MockSkill"
         mock_tool_call.function.arguments = '{"loop": "forever"}'
-        
+
         # Create response that always has tool calls (would loop forever)
         loop_response = self._create_mock_response("Looping...", [mock_tool_call])
-        
+
         # Set up client to always return the looping response
         mock_client_instance.chat.completions.create.return_value = loop_response
         self.agent.client = mock_client_instance
-        
+
         # Execute test - should stop due to max iterations
         response = self.agent.run_observable_query("Start infinite loop").run()
-        
+
         # Verify it stopped with the safety message
         self.assertEqual(response, "Tool execution stopped due to maximum iteration limit.")
 
@@ -239,20 +239,17 @@ class TestCerebrasAgentMock(unittest.TestCase):
         mock_tool_call.id = "call_123"
         mock_tool_call.function.name = "test_function"
         mock_tool_call.function.arguments = '{"test": "value"}'
-        
+
         # Create CerebrasResponseMessage
-        response_msg = CerebrasResponseMessage(
-            content="Test content",
-            tool_calls=[mock_tool_call]
-        )
-        
+        response_msg = CerebrasResponseMessage(content="Test content", tool_calls=[mock_tool_call])
+
         # Test serialization
         serialized = response_msg.to_dict()
         self.assertEqual(serialized["role"], "assistant")
         self.assertEqual(serialized["content"], "Test content")
         self.assertEqual(len(serialized["tool_calls"]), 1)
         self.assertEqual(serialized["tool_calls"][0]["id"], "call_123")
-        
+
         # Test that it inherits from dict
         self.assertIsInstance(response_msg, dict)
 
@@ -263,13 +260,13 @@ class TestCerebrasAgentMock(unittest.TestCase):
         mock_client_instance = mock.MagicMock()
         mock_cerebras_client.return_value = mock_client_instance
         mock_client_instance.chat.completions.create.side_effect = Exception("API Error")
-        
+
         self.agent.client = mock_client_instance
-        
+
         # Test error handling
         with self.assertRaises(Exception) as context:
             self.agent.run_observable_query("Execute MockSkill").run()
-        
+
         self.assertEqual(str(context.exception), "API Error")
 
     def test_skill_library_integration(self):
@@ -277,16 +274,16 @@ class TestCerebrasAgentMock(unittest.TestCase):
         # Verify skill library setup
         self.assertIsNotNone(self.agent.skill_library)
         self.assertEqual(self.agent.skill_library, self.skill_library)
-        
+
         # Verify tools are available
         tools = self.skill_library.get_tools()
         self.assertIsNotNone(tools)
         self.assertGreater(len(tools), 0)
-        
+
         # Verify MockSkill is in the tools
         skill_names = [tool["function"]["name"] for tool in tools]
         self.assertIn("MockSkill", skill_names)
 
 
 if __name__ == "__main__":
-    unittest.main() 
+    unittest.main()
