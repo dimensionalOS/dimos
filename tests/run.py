@@ -216,7 +216,7 @@ class_filter = None  # No class filtering
 detector = Detic2DDetector(vocabulary=None, threshold=min_confidence)
 
 # Create video stream from robot's camera
-video_stream = backpressure(robot.get_video_stream())  # WebRTC doesn't use ROS video stream
+video_stream = robot.get_video_stream()  # WebRTC doesn't use ROS video stream
 
 # Initialize ObjectDetectionStream with robot
 object_detector = ObjectDetectionStream(
