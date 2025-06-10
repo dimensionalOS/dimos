@@ -20,8 +20,6 @@ import threading
 from typing import List, Dict, Any
 from reactivex import Subject, operators as ops
 
-from dimos.robot.unitree.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.utils.logging_config import logger
@@ -135,7 +133,7 @@ def main():
             transform_to_map=robot.ros_control.transform_pose,
             detector=detector,
             video_stream=video_stream,
-            disable_depth=True,
+            disable_depth=False,
         )
 
     else:  # webcam mode
@@ -170,7 +168,7 @@ def main():
             class_filter=class_filter,
             detector=detector,
             video_stream=video_stream,
-            disable_depth=True,
+            disable_depth=False,
         )
 
         # Set placeholder robot for cleanup

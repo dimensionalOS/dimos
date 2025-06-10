@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import cv2
+import time
 import numpy as np
 from reactivex import Observable
 from reactivex import operators as ops
@@ -132,6 +133,11 @@ class ObjectDetectionStream:
 
             # Process detections
             objects = []
+            if not self.disable_depth:
+                depth_map = self.depth_model.infer_depth(frame)
+                depth_map = np.array(depth_map)
+            else:
+                depth_map = None
 
             for i, bbox in enumerate(bboxes):
                 # Skip if confidence is too low
@@ -143,9 +149,9 @@ class ObjectDetectionStream:
                 if self.class_filter and class_name not in self.class_filter:
                     continue
 
-                if not self.disable_depth:
+                if not self.disable_depth and depth_map is not None:
                     # Get depth for this object
-                    depth = calculate_depth_from_bbox(self.depth_model, frame, bbox)
+                    depth = calculate_depth_from_bbox(depth_map, bbox)
                     if depth is None:
                         # Skip objects with invalid depth
                         continue
