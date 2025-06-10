@@ -35,16 +35,16 @@ from pydantic import BaseModel
 from reactivex import Observable
 from reactivex.observer import Observer
 from reactivex.scheduler import ThreadPoolScheduler
-from dimos.agents.prompt_builder.impl import PromptBuilder
-from dimos.agents.tokenizer.base import AbstractTokenizer
 
 # Local imports
 from dimos.agents.agent import LLMAgent
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
-from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
+from dimos.agents.prompt_builder.impl import PromptBuilder
+from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.utils.logging_config import setup_logger
+from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
 
 # Initialize environment variables
 load_dotenv()
@@ -54,7 +54,7 @@ logger = setup_logger("dimos.agents.cerebras")
 
 
 # Response object compatible with LLMAgent
-class CerebrasResponseMessage:
+class CerebrasResponseMessage(dict):
     def __init__(
         self,
         content="",
@@ -63,6 +63,9 @@ class CerebrasResponseMessage:
         self.content = content
         self.tool_calls = tool_calls or []
         self.parsed = None
+        
+        # Initialize as dict with the proper structure
+        super().__init__(self.to_dict())
 
     def __str__(self):
         # Return a string representation for logging
@@ -99,7 +102,6 @@ class CerebrasResponseMessage:
 
         return result
 
-
 class CerebrasAgent(LLMAgent):
     """Cerebras agent implementation using the official Cerebras Python SDK.
 
@@ -121,14 +123,14 @@ class CerebrasAgent(LLMAgent):
         max_input_tokens_per_request: int = 128000,
         max_output_tokens_per_request: int = 16384,
         model_name: str = "llama-4-scout-17b-16e-instruct",
-        prompt_builder: Optional[PromptBuilder] = None,
-        tokenizer: Optional[AbstractTokenizer] = None,
         skills: Optional[Union[AbstractSkill, list[AbstractSkill], SkillLibrary]] = None,
         response_model: Optional[BaseModel] = None,
         frame_processor: Optional[FrameProcessor] = None,
         image_detail: str = "low",
         pool_scheduler: Optional[ThreadPoolScheduler] = None,
         process_all_inputs: Optional[bool] = None,
+        tokenizer: Optional[AbstractTokenizer] = None,
+        prompt_builder: Optional[PromptBuilder] = None,
     ):
         """
         Initializes a new instance of the CerebrasAgent.
@@ -157,6 +159,8 @@ class CerebrasAgent(LLMAgent):
             image_detail (str): Detail level for images ("low", "high", "auto").
             pool_scheduler (ThreadPoolScheduler): The scheduler to use for thread pool operations.
             process_all_inputs (bool): Whether to process all inputs or skip when busy.
+            tokenizer (AbstractTokenizer): The tokenizer for the agent.
+            prompt_builder (PromptBuilder): The prompt builder for the agent.
         """
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
@@ -204,10 +208,6 @@ class CerebrasAgent(LLMAgent):
 
         self.response_model = response_model
         self.model_name = model_name
-        self.tokenizer = tokenizer or HuggingFaceTokenizer(model_name=self.model_name)
-        self.prompt_builder = prompt_builder or PromptBuilder(
-            self.model_name, tokenizer=self.tokenizer
-        )
         self.image_detail = image_detail
         self.max_output_tokens_per_request = max_output_tokens_per_request
         self.max_input_tokens_per_request = max_input_tokens_per_request
@@ -215,6 +215,14 @@ class CerebrasAgent(LLMAgent):
 
         # Add static context to memory.
         self._add_context_to_memory()
+
+        # Initialize tokenizer and prompt builder
+        self.tokenizer = tokenizer or OpenAITokenizer(model_name="gpt-4o")  # Use GPT-4 tokenizer for better accuracy
+        self.prompt_builder = prompt_builder or PromptBuilder(
+            model_name=self.model_name,
+            max_tokens=self.max_input_tokens_per_request,
+            tokenizer=self.tokenizer
+        )
 
         logger.info("Cerebras Agent Initialized.")
 
@@ -262,7 +270,6 @@ class CerebrasAgent(LLMAgent):
         Returns:
             list: Messages formatted for Cerebras API.
         """
-
         # Add system message if provided and not already in history
         if self.system_query and (not messages or messages[0].get("role") != "system"):
             messages.insert(0, {"role": "system", "content": self.system_query})
@@ -297,6 +304,67 @@ class CerebrasAgent(LLMAgent):
 
             logger.info(f"Added {len(images)} image(s) to conversation")
 
+        # Use new truncation function
+        messages = self._truncate_messages(messages, override_token_limit)
+        
+        return messages
+
+    def _truncate_messages(self, messages: list, override_token_limit: bool = False) -> list:
+        """Truncate messages if total tokens exceed 16k using existing truncate_tokens method.
+        
+        Args:
+            messages (list): List of message dictionaries
+            override_token_limit (bool): Whether to skip truncation
+            
+        Returns:
+            list: Messages with content truncated if needed
+        """
+        if override_token_limit:
+            return messages
+            
+        total_tokens = 0
+        for message in messages:
+            if isinstance(message.get("content"), str):
+                total_tokens += self.prompt_builder.tokenizer.token_count(message["content"])
+            elif isinstance(message.get("content"), list):
+                for item in message["content"]:
+                    if item.get("type") == "text":
+                        total_tokens += self.prompt_builder.tokenizer.token_count(item["text"])
+                    elif item.get("type") == "image_url":
+                        total_tokens += 85
+        
+        if total_tokens > 16000:
+            excess_tokens = total_tokens - 16000
+            current_tokens = total_tokens
+            
+            # Start from oldest messages and truncate until under 16k
+            for i in range(len(messages)):
+                if current_tokens <= 16000:
+                    break
+                    
+                msg = messages[i]
+                if msg.get("role") == "system":
+                    continue 
+                    
+                if isinstance(msg.get("content"), str):
+                    original_tokens = self.prompt_builder.tokenizer.token_count(msg["content"])
+                    # Calculate how much to truncate from this message
+                    tokens_to_remove = min(excess_tokens, original_tokens // 3) 
+                    new_max_tokens = max(50, original_tokens - tokens_to_remove) 
+                    
+                    msg["content"] = self.prompt_builder.truncate_tokens(
+                        msg["content"], new_max_tokens, "truncate_end"
+                    )
+                    
+                    new_tokens = self.prompt_builder.tokenizer.token_count(msg["content"])
+                    tokens_saved = original_tokens - new_tokens
+                    current_tokens -= tokens_saved
+                    excess_tokens -= tokens_saved
+            
+            logger.info(f"Truncated older messages using truncate_tokens, final tokens: {current_tokens}")
+        else:
+            logger.info(f"No truncation needed, total tokens: {total_tokens}")
+            
         return messages
 
     def clean_cerebras_schema(self, schema: dict) -> dict:
@@ -473,7 +541,6 @@ class CerebrasAgent(LLMAgent):
 
             # Create a local copy of conversation history and record its length
             messages = copy.deepcopy(self.conversation_history)
-            base_len = len(messages)
 
             # Update query and get context
             self._update_query(incoming_query)
@@ -484,88 +551,50 @@ class CerebrasAgent(LLMAgent):
                 messages, base64_image, dimensions, override_token_limit, condensed_results
             )
 
-            # Send query and get response
-            logger.info("Sending Query.")
-            response_message = self._send_query(messages)
-            logger.info(f"Received Response: {response_message}")
+            while True:
+                logger.info("Sending Query.")
+                response_message = self._send_query(messages)
+                logger.info(f"Received Response: {response_message}")
 
-            if response_message is None:
-                logger.error("Received None response from Cerebras API")
-                observer.on_next("")
-                observer.on_completed()
-                return
+                if response_message is None:
+                    raise Exception("Response message does not exist.")
 
-            # Add assistant response to local messages (always)
-            assistant_message = {"role": "assistant"}
-
-            if response_message.content:
-                assistant_message["content"] = response_message.content
-            else:
-                assistant_message["content"] = ""  # Ensure content is never None
-
-            if hasattr(response_message, "tool_calls") and response_message.tool_calls:
-                assistant_message["tool_calls"] = []
-                for tool_call in response_message.tool_calls:
-                    assistant_message["tool_calls"].append(
-                        {
-                            "id": tool_call.id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments,
-                            },
-                        }
+                # If no skill library or no tool calls, we're done
+                if (
+                    self.skill_library is None
+                    or self.skill_library.get_tools() is None
+                    or response_message.tool_calls is None
+                ):
+                    final_msg = (
+                        response_message.parsed
+                        if hasattr(response_message, "parsed") and response_message.parsed
+                        else (
+                            response_message.content
+                            if hasattr(response_message, "content")
+                            else response_message
+                        )
                     )
+                    messages.append(response_message)
+                    break
+
+                logger.info(f"Assistant requested {len(response_message.tool_calls)} tool call(s)")
+                next_response = self._handle_tooling(response_message, messages)
+                
+                if next_response is None:
+                    final_msg = response_message.content or ""
+                    break
+
+                response_message = next_response
+
+            with self._history_lock:
+                self.conversation_history = messages
                 logger.info(
-                    f"Assistant response includes {len(response_message.tool_calls)} tool call(s)"
+                    f"Updated conversation history (total: {len(self.conversation_history)} messages)"
                 )
-
-            messages.append(assistant_message)
-
-            # If no skill library is provided or there are no tool calls, emit the response directly
-            if (
-                self.skill_library is None
-                or self.skill_library.get_tools() is None
-                or not hasattr(response_message, "tool_calls")
-                or not response_message.tool_calls
-            ):
-                # Just use the content directly since JSON parsing is already handled in _send_query
-                final_msg = response_message.content or ""
-
-                observer.on_next(final_msg)
-                self.response_subject.on_next(final_msg)
-            else:
-                # Handle tool calls if present
-                response_message_2 = self._handle_tooling(response_message, messages)
-
-                # Update conversation history
-                if not hasattr(self, "_history_lock"):
-                    self._history_lock = threading.Lock()
-                with self._history_lock:
-                    for msg in messages[base_len:]:
-                        self.conversation_history.append(msg)
-                    logger.info(
-                        f"Updated conversation history (total: {len(self.conversation_history)} messages)"
-                    )
-
-                # For tool call responses, show what was executed
-                if response_message_2 is not None:
-                    # Handle different types of responses from skill execution
-                    if hasattr(response_message_2, "content"):
-                        final_msg = response_message_2.content
-                    else:
-                        # Skill result is not a response object, just convert to string
-                        final_msg = f"Skill executed successfully. Result: {response_message_2}"
-                else:
-                    # Create a summary of executed commands
-                    final_msg = "Executed commands: " + ", ".join(
-                        f"{tc.function.name}({tc.function.arguments})"
-                        for tc in response_message.tool_calls
-                    )
-
+            
+            # Emit the final message content to the observer
             observer.on_next(final_msg)
             self.response_subject.on_next(final_msg)
-
             observer.on_completed()
 
         except Exception as e:
@@ -573,79 +602,4 @@ class CerebrasAgent(LLMAgent):
             observer.on_error(e)
             self.response_subject.on_error(e)
 
-    def _handle_tooling(self, response_message, messages):
-        """Handles tooling callbacks in the response message.
-
-        If tool calls are present, the corresponding functions are executed and
-        a follow-up query is sent. Tool calls are executed sequentially, waiting
-        for each one to complete before starting the next.
-
-        Args:
-            response_message: The response message containing tool calls.
-            messages (list): The original list of messages sent.
-
-        Returns:
-            The final response message after processing tool calls, if any.
-        """
-
-        def _tooling_callback(message, messages, response_message, skill_library: SkillLibrary):
-            has_called_tools = False
-            new_messages = []
-            
-            # Process tool calls sequentially
-            for tool_call in message.tool_calls:
-                has_called_tools = True
-                name = tool_call.function.name
-                args = json.loads(tool_call.function.arguments)
-                
-                # Execute the tool call
-                logger.info(f"Executing tool call: {name} with args: {args}")
-                result = skill_library.call(name, **args)
-                logger.info(f"Tool call completed: {name} with result: {result}")
-                
-                # Add the result to messages
-                new_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": str(result),
-                        "name": name,
-                    }
-                )
-                
-                # Wait for the tool call to complete by running a follow-up query
-                self.run_observable_query(
-                    query_text=f"Tool {name}, ID: {tool_call.id} execution complete. Please summarize the results and continue."
-                ).run()
-
-            if has_called_tools:
-                # Convert response_message to dict format for JSON serialization
-                response_dict = response_message.to_dict()
-                messages.append(response_dict)
-                messages.extend(new_messages)
-
-                logger.info("Sending follow-up query after tool calls completed.")
-                try:
-                    response_2 = self._send_query(messages)
-
-                    # Check if the follow-up response also has tool calls
-                    if (
-                        hasattr(response_2, "tool_calls")
-                        and response_2.tool_calls
-                        and len(response_2.tool_calls) > 0
-                    ):
-                        logger.info(
-                            "Follow-up response has more tool calls, processing recursively..."
-                        )
-                        return self._handle_tooling(response_2, messages)
-                    else:
-                        logger.info(f"No more tool calls, returning final response: {response_2}")
-                        # No more tool calls, return the final response
-                        return response_2
-
-                except Exception as e:
-                    logger.error(f"Error in follow-up query: {e}")
-                    return None
-            return None
-        return _tooling_callback(response_message, messages, response_message, self.skill_library)
 

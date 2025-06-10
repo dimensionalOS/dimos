@@ -581,7 +581,7 @@ class LLMAgent(Agent):
         Returns:
             Disposable: A disposable representing the subscription.
         """
-        print_emission_args = {"enabled": True, "dev_name": self.dev_name, "counts": {}}
+        print_emission_args = {"enabled": False, "dev_name": self.dev_name, "counts": {}}
 
         def _process_query(query) -> Observable:
             """
