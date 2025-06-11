@@ -13,19 +13,28 @@ permissions:
   packages: read
 
 jobs:
-  run-tests:
-    strategy:
-      matrix:
-        runner: [dimos-runner-ubuntu-2204, macos-latest]
-    runs-on: ${{ matrix.runner }}
-
+  run-tests-ubuntu:
+    runs-on: dimos-runner-ubuntu-2204
     container:
       image: ghcr.io/dimensionalos/dev:${{ inputs.branch-tag }}
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Run tests
         run: |
           git config --global --add safe.directory '*'
           /entrypoint.sh bash -c "pytest"
+
+  run-tests-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Docker (macOS)
+        run: |
+          brew install docker
+          colima start
+
+      - name: Run tests
+        run: |
+          git config --global --add safe.directory '*'
+          docker run --rm -v $PWD:/workspace -w /workspace ghcr.io/dimensionalos/dev:${{ inputs.branch-tag }} bash -c "pytest"
