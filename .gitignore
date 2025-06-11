@@ -8,6 +8,10 @@ __pycache__/
 venv*
 .ssh/
 
+# Ignore python tooling dirs
+*.egg-info/
+__pycache__
+
 .env
 **/.DS_Store
 
@@ -26,3 +30,6 @@ tests/data/*
 node_modules
 package.json
 package-lock.json
+
+# Ignore build artifacts
+dist/
