@@ -23,7 +23,6 @@ from typing import List, Tuple, Optional
 from collections import deque
 import numpy as np
 from dataclasses import dataclass
-import time
 from enum import IntFlag
 
 from dimos.types.costmap import Costmap, CostValues, smooth_costmap_for_frontiers
@@ -52,18 +51,6 @@ class GridPoint:
     x: int
     y: int
     classification: int = PointClassification.NoInformation
-
-
-@dataclass
-class PersistentFrontier:
-    """Represents a persistent frontier with metadata."""
-
-    centroid: Vector
-    size: int
-    last_seen: float  # timestamp
-    attempts: int = 0  # number of exploration attempts
-    accessible: bool = True  # whether frontier is reachable
-    map_hash: int = 0  # hash of local map region for change detection
 
 
 class FrontierCache:
@@ -122,7 +109,7 @@ class WavefrontFrontierExplorer:
         self.use_filtered_costmap = use_filtered_costmap
         self.costmap_save_dir = costmap_save_dir
         self._cache = FrontierCache()
-        self.persistent_frontiers = {}  # map of frontier centroids to PersistentFrontier objects
+        self.explored_goals = []  # list of explored goals
         self.exploration_direction = Vector([0.0, 0.0])  # current exploration direction
         self._costmap_save_counter = 0  # Counter for costmap file naming
 
@@ -230,9 +217,7 @@ class WavefrontFrontierExplorer:
         # Apply filtered costmap if enabled
         working_costmap = costmap
         if self.use_filtered_costmap:
-            working_costmap = smooth_costmap_for_frontiers(
-                costmap, alpha=4.0, free_space_dilation_size=2
-            )
+            working_costmap = smooth_costmap_for_frontiers(costmap, alpha=4.0)
             print(f"DEBUG: Applied costmap filtering for frontier exploration")
 
         # Save costmap if directory is specified
@@ -388,9 +373,6 @@ class WavefrontFrontierExplorer:
         if not frontier_centroids:
             return []
 
-        # Update persistent frontiers
-        self._update_persistent_frontiers(frontier_centroids, time.time())
-
         # Rank frontiers using original costmap for proper filtering
         ranked_frontiers = self._rank_frontiers_by_information_gain(
             frontier_centroids, [1] * len(frontier_centroids), robot_pose, costmap
@@ -435,146 +417,18 @@ class WavefrontFrontierExplorer:
         # Return momentum score (higher for same direction, lower for opposite)
         return max(0.0, dot_product)  # Only positive momentum, no penalty for different directions
 
-    def _update_persistent_frontiers(self, new_frontiers: List[Vector], current_time: float):
-        """Update the persistent frontier database with newly detected frontiers."""
-        # Convert new frontiers to set for efficient lookups
-        new_frontier_positions = set((round(f.x, 2), round(f.y, 2)) for f in new_frontiers)
+    def _compute_distance_to_explored_goals(self, frontier: Vector) -> float:
+        """Compute distance from frontier to the nearest explored goal."""
+        if not self.explored_goals:
+            return 0.0  # No explored goals, no penalty
 
-        # Update existing frontiers
-        to_remove = []
-        for key, persistent_frontier in self.persistent_frontiers.items():
-            rounded_pos = (
-                round(persistent_frontier.centroid.x, 2),
-                round(persistent_frontier.centroid.y, 2),
-            )
-            if rounded_pos in new_frontier_positions:
-                # Frontier still exists, update timestamp
-                persistent_frontier.last_seen = current_time
-                new_frontier_positions.remove(rounded_pos)  # Mark as processed
-            else:
-                # Frontier no longer exists, check if it should be removed
-                if current_time - persistent_frontier.last_seen > 30.0:  # Remove after 30 seconds
-                    to_remove.append(key)
+        # Calculate distance to nearest explored goal
+        min_distance = float("inf")
+        for goal in self.explored_goals:
+            distance = np.sqrt((frontier.x - goal.x) ** 2 + (frontier.y - goal.y) ** 2)
+            min_distance = min(min_distance, distance)
 
-        # Remove outdated frontiers
-        for key in to_remove:
-            del self.persistent_frontiers[key]
-
-        # Add new frontiers
-        for frontier in new_frontiers:
-            key = f"{frontier.x:.2f},{frontier.y:.2f}"
-            if key not in self.persistent_frontiers:
-                self.persistent_frontiers[key] = PersistentFrontier(
-                    centroid=frontier,
-                    size=1,  # We lost size info in current implementation, could be improved
-                    last_seen=current_time,
-                    attempts=0,
-                    accessible=True,
-                )
-
-    def _get_persistent_frontiers(
-        self, robot_pose: Vector, max_age: float = 60.0
-    ) -> List[PersistentFrontier]:
-        """Get valid persistent frontiers that haven't been attempted too many times."""
-        current_time = time.time()
-        valid_frontiers = []
-
-        for persistent_frontier in self.persistent_frontiers.values():
-            # Check age
-            if current_time - persistent_frontier.last_seen > max_age:
-                continue
-
-            # Check attempt count (avoid frontiers that have failed multiple times)
-            if persistent_frontier.attempts > 3:
-                continue
-
-            # Check accessibility
-            if not persistent_frontier.accessible:
-                continue
-
-            valid_frontiers.append(persistent_frontier)
-
-        return valid_frontiers
-
-    def mark_frontier_attempted(
-        self, frontier_goal: Vector, success: bool = False, radius: float = 4.0
-    ):
-        """Mark frontiers in an area around the attempted goal and update their accessibility."""
-        marked_count = 0
-
-        for key, persistent_frontier in self.persistent_frontiers.items():
-            # Calculate distance from attempted goal to this persistent frontier
-            distance = np.sqrt(
-                (persistent_frontier.centroid.x - frontier_goal.x) ** 2
-                + (persistent_frontier.centroid.y - frontier_goal.y) ** 2
-            )
-
-            # Mark all frontiers within radius as attempted
-            if distance <= radius:
-                persistent_frontier.attempts += 1
-                marked_count += 1
-
-                if not success:
-                    # If exploration failed multiple times, mark as potentially inaccessible
-                    if persistent_frontier.attempts >= 2:
-                        persistent_frontier.accessible = False
-
-        print(
-            f"DEBUG: Marked {marked_count} frontiers within {radius}m of attempted goal (success: {success})"
-        )
-
-    def _is_in_explored_area(self, frontier: Vector, costmap: Costmap) -> bool:
-        """Check if a frontier is in a significantly explored area (requires high density of free cells)."""
-        # Convert frontier to grid coordinates
-        grid_pos = costmap.world_to_grid(frontier)
-        grid_x, grid_y = int(grid_pos.x), int(grid_pos.y)
-
-        # Check neighborhood around frontier
-        buffer_cells = int(self.explored_area_buffer / costmap.resolution)
-
-        free_count = 0
-        total_count = 0
-
-        for dx in range(-buffer_cells, buffer_cells + 1):
-            for dy in range(-buffer_cells, buffer_cells + 1):
-                check_x, check_y = grid_x + dx, grid_y + dy
-
-                # Check bounds
-                if 0 <= check_x < costmap.width and 0 <= check_y < costmap.height:
-                    world_pos = costmap.grid_to_world(Vector([float(check_x), float(check_y)]))
-                    cell_value = costmap.get_value(world_pos)
-
-                    total_count += 1
-                    if cell_value == CostValues.FREE:
-                        free_count += 1
-
-        # Only consider it "explored" if significant portion (>60%) is free space
-        if total_count > 0:
-            free_ratio = free_count / total_count
-            is_explored = free_ratio > 0.6
-            if is_explored:
-                print(f"DEBUG: Frontier {frontier} in explored area - {free_ratio:.2f} free ratio")
-            return is_explored
-
-        return False
-
-    def _compute_distance_to_costmap_border(self, frontier: Vector, costmap: Costmap) -> float:
-        """Compute distance from frontier to the nearest unknown border of the costmap."""
-        grid_pos = costmap.world_to_grid(frontier)
-        grid_x, grid_y = int(grid_pos.x), int(grid_pos.y)
-
-        # Distance to physical edges of costmap
-        edge_distances = [
-            grid_x,  # distance to left edge
-            costmap.width - grid_x,  # distance to right edge
-            grid_y,  # distance to bottom edge
-            costmap.height - grid_y,  # distance to top edge
-        ]
-
-        min_edge_distance = min(edge_distances)
-
-        # Convert to world units
-        return min_edge_distance * costmap.resolution
+        return min_distance
 
     def _compute_comprehensive_frontier_score(
         self, frontier: Vector, frontier_size: int, robot_pose: Vector, costmap: Costmap
@@ -596,9 +450,9 @@ class WavefrontFrontierExplorer:
         # 2. Information gain (frontier size)
         info_gain_score = frontier_size
 
-        # 3. Border proximity (prefer frontiers closer to unexplored edges)
-        border_distance = self._compute_distance_to_costmap_border(frontier, costmap)
-        border_score = 1.0 / (1.0 + border_distance)  # Higher score for closer to border
+        # 3. Distance to explored goals (bonus for being far from explored areas)
+        explored_goals_distance = self._compute_distance_to_explored_goals(frontier)
+        explored_goals_score = explored_goals_distance
 
         # 4. Direction momentum (if we have a current direction)
         momentum_score = self._compute_direction_momentum_score(frontier, robot_pose)
@@ -606,7 +460,9 @@ class WavefrontFrontierExplorer:
         # Combine scores with weights
         total_score = (
             0.4 * info_gain_score  # 40% information gain
-            + 0.3 * border_score * 100  # 30% border proximity (scaled up)
+            + 0.3
+            * explored_goals_score
+            * 100  # 30% bonus for distance from explored goals (scaled up)
             + 0.2 * distance_score * 50  # 20% distance optimization (scaled up)
             + 0.1 * momentum_score * 20  # 10% direction momentum (scaled up)
         )
@@ -645,12 +501,7 @@ class WavefrontFrontierExplorer:
             )
             print(f"DEBUG: Evaluating frontier {i}: {frontier}, distance: {robot_distance:.2f}m")
 
-            # Filter 1: Skip frontiers too close to explored areas (TEMPORARILY DISABLED for debugging)
-            # if self._is_in_explored_area(frontier, costmap):
-            #     print(f"DEBUG: Skipping frontier {frontier} - too close to explored area")
-            #     continue
-
-            # Filter 2: Skip frontiers too close to robot
+            # Filter 1: Skip frontiers too close to robot
             if robot_distance < self.min_distance_from_robot:
                 print(
                     f"DEBUG: Skipping frontier {frontier} - too close to robot ({robot_distance:.2f}m < {self.min_distance_from_robot}m)"
@@ -711,19 +562,16 @@ class WavefrontFrontierExplorer:
         frontier_distances.sort(key=lambda x: x[1])
         return frontier_distances
 
-    def get_exploration_goals(
-        self, robot_pose: Vector, costmap: Costmap, num_goals: int = 1
-    ) -> List[Vector]:
+    def get_exploration_goal(self, robot_pose: Vector, costmap: Costmap) -> Optional[Vector]:
         """
         Get the single best exploration goal using comprehensive frontier scoring.
 
         Args:
             robot_pose: Current robot position in world coordinates (Vector with x, y)
             costmap: Costmap for additional analysis
-            num_goals: Ignored - always returns 0 or 1 goals
 
         Returns:
-            List with single best frontier goal, or empty list if no suitable frontiers found
+            Single best frontier goal in world coordinates, or None if no suitable frontiers found
         """
         # Always detect new frontiers to get most up-to-date information
         # The new algorithm filters out explored areas and returns only the best frontier
@@ -731,28 +579,25 @@ class WavefrontFrontierExplorer:
 
         if not frontiers:
             print("DEBUG: No suitable frontiers found")
-            return []
+            return None
 
         # Update exploration direction based on best goal selection
         if frontiers:
             self._update_exploration_direction(robot_pose, frontiers[0])
             print(f"DEBUG: Updated exploration direction toward {frontiers[0]}")
 
-        return frontiers  # Already contains only the single best frontier
+            # Store the selected goal as explored
+            selected_goal = frontiers[0]
+            self.mark_explored_goal(selected_goal)
+            print(f"DEBUG: Marked goal as explored: {selected_goal}")
 
-    def get_best_exploration_goal(self, robot_pose: Vector, costmap: Costmap) -> Optional[Vector]:
-        """
-        Get the single best exploration goal (highest information gain frontier).
+            return selected_goal
 
-        Args:
-            robot_pose: Current robot position in world coordinates (Vector with x, y)
-            costmap: Costmap for additional analysis
+        return None
 
-        Returns:
-            Best frontier goal position in world coordinates, or None if no frontiers found
-        """
-        goals = self.get_exploration_goals(robot_pose, costmap, num_goals=1)
-        return goals[0] if goals else None
+    def mark_explored_goal(self, goal: Vector):
+        """Mark a goal as explored."""
+        self.explored_goals.append(goal)
 
 
 def test_frontier_detection_visual():

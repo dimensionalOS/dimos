@@ -53,6 +53,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         visualization_size: int = 400,
         control_frequency: float = 10.0,
         safe_goal_distance: float = 1.0,
+        max_recovery_attempts: int = 3,
     ):
         """
         Initialize the VFH + Pure Pursuit planner.
