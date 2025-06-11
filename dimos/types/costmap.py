@@ -560,9 +560,12 @@ def smooth_costmap_for_frontiers(
     # Morphological closing to fill small gaps
     closed = cv2.morphologyEx(dilated, cv2.MORPH_CLOSE, kernel, iterations=1)
 
+    # Erode to remove small noise
+    eroded = cv2.erode(closed, kernel, iterations=1)
+
     # Apply the smoothed free space back to costmap
     # Only change unknown areas to free, don't override obstacles
-    smoothed_free = closed == 255
+    smoothed_free = eroded == 255
     unknown_mask = grid == CostValues.UNKNOWN
     filtered_grid[smoothed_free & unknown_mask] = CostValues.FREE
 

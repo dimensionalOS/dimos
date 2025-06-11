@@ -21,6 +21,57 @@ from PIL import Image, ImageDraw
 from typing import List, Tuple
 from dimos.types.costmap import Costmap, CostValues
 from dimos.types.vector import Vector
+import os
+import pickle
+
+
+class CostmapSaver:
+    """Utility class for saving costmaps to disk with sequential numbering."""
+
+    def __init__(self, save_dir: str):
+        """
+        Initialize costmap saver with target directory.
+
+        Args:
+            save_dir: Directory to save costmap files
+        """
+        self.save_dir = save_dir
+        self._counter = 0
+
+        # Create save directory if it doesn't exist
+        if not os.path.exists(self.save_dir):
+            os.makedirs(self.save_dir)
+
+    def save_costmap(self, costmap: Costmap, prefix: str = "") -> int:
+        """
+        Save costmap as both pickle and image files with sequential numbering.
+
+        Args:
+            costmap: Costmap to save
+            prefix: Optional prefix for filenames
+
+        Returns:
+            Counter number used for this save
+        """
+        self._counter += 1
+
+        # Build filename with optional prefix
+        if prefix:
+            base_filename = f"{prefix}_{self._counter:04d}"
+        else:
+            base_filename = f"{self._counter:04d}"
+
+        # Save pickle file
+        pickle_path = os.path.join(self.save_dir, f"{base_filename}.pickle")
+        with open(pickle_path, "wb") as f:
+            pickle.dump(costmap, f)
+
+        # Save image file
+        image_path = os.path.join(self.save_dir, f"{base_filename}.jpg")
+        costmap.costmap_to_image(image_path)
+
+        print(f"DEBUG: Saved costmap #{self._counter} to {self.save_dir}")
+        return self._counter
 
 
 def costmap_to_pil_image(costmap: Costmap, scale_factor: int = 2) -> Image.Image:

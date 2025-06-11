@@ -25,6 +25,7 @@ from dimos.types.vector import VectorLike, to_vector, Vector
 from dimos.robot.global_planner.algo import astar
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.helpers import Visualizable
+from dimos.robot.frontier_exploration.utils import CostmapSaver
 
 logger = setup_logger("dimos.robot.unitree.global_planner")
 
@@ -48,6 +49,10 @@ class Planner(Visualizable):
             return False
 
         print("pathing success", path)
+
+        current_costmap = self.get_costmap()
+        self.costmap_saver.save_costmap(current_costmap)
+
         navigation_successful = self.set_local_nav(
             path, stop_event=stop_event, goal_theta=goal_theta
         )
@@ -66,6 +71,15 @@ class AstarPlanner(Planner):
     set_local_nav: Callable[[Path], bool]
     get_frontiers: Optional[Callable[[], Vector]] = None
     conservativism: int = 8
+    save_costmaps: bool = False
+    costmap_save_dir: Optional[str] = None
+
+    def __post_init__(self):
+        """Initialize costmap saver if saving is enabled."""
+        if self.save_costmaps and self.costmap_save_dir:
+            self.costmap_saver = CostmapSaver(self.costmap_save_dir)
+        else:
+            self.costmap_saver = None
 
     def plan(self, goal: VectorLike) -> Path:
         goal = to_vector(goal).to_2d()

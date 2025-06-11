@@ -32,6 +32,9 @@ from dimos.types.robot_capabilities import RobotCapability
 from dimos.types.vector import Vector
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.robot.frontier_exploration.qwen_frontier_predictor import QwenFrontierPredictor
+from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
+    WavefrontFrontierExplorer,
+)
 
 
 class Color(VUI_COLOR): ...
@@ -151,7 +154,7 @@ class UnitreeGo2(Robot):
         )
 
         # Initialize frontier exploration
-        self.frontier_explorer = QwenFrontierPredictor()
+        self.frontier_explorer = WavefrontFrontierExplorer()
 
         # Create costmap save directory if saving is enabled
         if save_costmaps and not os.path.exists(costmap_save_dir):
@@ -166,6 +169,8 @@ class UnitreeGo2(Robot):
             get_frontiers=lambda: self.frontier_explorer.get_exploration_goal(
                 self.odom().pos, self.map.costmap
             ),
+            save_costmaps=save_costmaps,
+            costmap_save_dir=costmap_save_dir,
         )
 
         # Create the visualization stream at 5Hz
