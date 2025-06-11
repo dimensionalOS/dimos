@@ -14,7 +14,10 @@ permissions:
 
 jobs:
   run-tests:
-    runs-on: dimos-runner-ubuntu-2204
+    strategy:
+      matrix:
+        runner: [dimos-runner-ubuntu-2204, macos-latest]
+    runs-on: ${{ matrix.runner }}
 
     container:
       image: ghcr.io/dimensionalos/dev:${{ inputs.branch-tag }}
