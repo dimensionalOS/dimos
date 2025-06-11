@@ -31,9 +31,7 @@ from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.types.vector import Vector
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
-    WavefrontFrontierExplorer,
-)
+from dimos.robot.frontier_exploration.qwen_frontier_predictor import QwenFrontierPredictor
 
 
 class Color(VUI_COLOR): ...
@@ -153,9 +151,7 @@ class UnitreeGo2(Robot):
         )
 
         # Initialize frontier exploration
-        self.frontier_explorer = WavefrontFrontierExplorer(
-            use_filtered_costmap=True, costmap_save_dir=costmap_save_dir if save_costmaps else None
-        )
+        self.frontier_explorer = QwenFrontierPredictor()
 
         # Create costmap save directory if saving is enabled
         if save_costmaps and not os.path.exists(costmap_save_dir):
@@ -167,7 +163,7 @@ class UnitreeGo2(Robot):
             ),
             get_costmap=lambda: self.map.costmap,
             get_robot_pos=lambda: self.odom().pos,
-            get_frontiers=lambda: self.frontier_explorer.get_exploration_goals(
+            get_frontiers=lambda: self.frontier_explorer.get_exploration_goal(
                 self.odom().pos, self.map.costmap
             ),
         )

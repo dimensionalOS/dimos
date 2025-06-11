@@ -53,6 +53,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         visualization_size: int = 400,
         control_frequency: float = 10.0,
         safe_goal_distance: float = 1.0,
+        max_recovery_attempts: int = 3,
     ):
         """
         Initialize the VFH + Pure Pursuit planner.
@@ -73,6 +74,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             visualization_size: Size of the visualization image in pixels
             control_frequency: Frequency at which the planner is called (Hz)
             safe_goal_distance: Distance at which to adjust the goal and ignore obstacles (meters)
+            max_recovery_attempts: Maximum number of recovery attempts
         """
         # Initialize base class
         super().__init__(
@@ -90,6 +92,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             visualization_size=visualization_size,
             control_frequency=control_frequency,
             safe_goal_distance=safe_goal_distance,
+            max_recovery_attempts=max_recovery_attempts,
         )
 
         # VFH specific parameters

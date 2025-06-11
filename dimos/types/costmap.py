@@ -525,19 +525,17 @@ def pointcloud_to_costmap(
 def smooth_costmap_for_frontiers(
     costmap: Costmap,
     alpha: float = 4.0,
-    free_space_dilation_size: int = 3,
 ) -> Costmap:
     """
     Smooth a costmap using morphological operations for frontier exploration.
 
     This function applies OpenCV morphological operations to smooth free space
     areas and improve connectivity for better frontier detection. It's designed
-    specifically for frontier exploration, not real-time mapping.
+    specifically for frontier exploration.
 
     Args:
         costmap: Input Costmap object
         alpha: Controls morphological kernel size (larger = more smoothing)
-        free_space_dilation_size: Size of dilation kernel for free space
 
     Returns:
         Smoothed Costmap object with enhanced free space connectivity
@@ -545,11 +543,9 @@ def smooth_costmap_for_frontiers(
     # Extract grid data and metadata from costmap
     grid = costmap.grid
     resolution = costmap.resolution
-    origin = np.array(costmap.origin[:2], dtype=np.float32)  # Take only x, y from origin
 
     # Work with a copy to avoid modifying input
     filtered_grid = grid.copy()
-    Ny, Nx = grid.shape
 
     # 1. Create binary mask for free space
     free_mask = (grid == CostValues.FREE).astype(np.uint8) * 255
@@ -569,14 +565,6 @@ def smooth_costmap_for_frontiers(
     smoothed_free = closed == 255
     unknown_mask = grid == CostValues.UNKNOWN
     filtered_grid[smoothed_free & unknown_mask] = CostValues.FREE
-
-    # 3. Optional additional free space dilation
-    if free_space_dilation_size > 0:
-        final_free_mask = filtered_grid == CostValues.FREE
-        dilation_kernel = np.ones((free_space_dilation_size, free_space_dilation_size))
-        dilated_free = binary_dilation(final_free_mask, structure=dilation_kernel)
-        # Only dilate into unknown areas
-        filtered_grid[(filtered_grid == CostValues.UNKNOWN) & dilated_free] = CostValues.FREE
 
     return Costmap(grid=filtered_grid, origin=costmap.origin, resolution=resolution)
 

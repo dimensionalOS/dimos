@@ -59,6 +59,7 @@ class BaseLocalPlanner(ABC):
         visualization_size: int = 400,
         control_frequency: float = 10.0,
         safe_goal_distance: float = 1.5,
+        max_recovery_attempts: int = 3,
     ):  # Control frequency in Hz
         """
         Initialize the base local planner.
@@ -78,6 +79,8 @@ class BaseLocalPlanner(ABC):
             visualization_size: Size of the visualization image in pixels
             control_frequency: Frequency at which the planner is called (Hz)
             safe_goal_distance: Distance at which to adjust the goal and ignore obstacles (meters)
+            max_recovery_attempts: Maximum number of recovery attempts before failing navigation.
+                If the robot gets stuck and cannot recover within this many attempts, navigation will fail.
         """
         # Store callables for robot interactions
         self.get_costmap = get_costmap
@@ -98,6 +101,8 @@ class BaseLocalPlanner(ABC):
         self.control_period = 1.0 / control_frequency  # Period in seconds
         self.safe_goal_distance = safe_goal_distance  # Distance to ignore obstacles at goal
         self.ignore_obstacles = False  # Flag for derived classes to check
+        self.max_recovery_attempts = max_recovery_attempts  # Maximum recovery attempts
+        self.recovery_attempts = 0  # Current number of recovery attempts
 
         # Goal and Waypoint Tracking
         self.goal_xy: Optional[Tuple[float, float]] = None  # Current target for planning
@@ -175,6 +180,9 @@ class BaseLocalPlanner(ABC):
         # Reset recovery improvements
         self.last_recovery_end_time = 0.0
         self.pre_recovery_position = None
+
+        # Reset recovery attempts
+        self.recovery_attempts = 0
 
         # Clear waypoint following state
         self.waypoints = None
@@ -452,6 +460,8 @@ class BaseLocalPlanner(ABC):
             # First check position
             if goal_distance < self.goal_tolerance or self.position_reached:
                 self.position_reached = True
+                # Reset recovery attempts since we reached the goal successfully
+                self.recovery_attempts = 0
 
             else:
                 self.position_reached = False
@@ -834,6 +844,8 @@ class BaseLocalPlanner(ABC):
                     )
                     self.is_recovery_active = False
                     self.last_recovery_end_time = current_time
+                    self.recovery_attempts = 0
+                    logger.info("Recovery attempts reset after successful recovery")
                     # Clear position history to start fresh tracking
                     self.position_history.clear()
                     return False
@@ -930,6 +942,19 @@ class BaseLocalPlanner(ABC):
 
             # Clear position history to avoid contamination during recovery
             self.position_history.clear()
+
+            # Increment recovery attempts
+            self.recovery_attempts += 1
+            logger.warning(
+                f"Starting recovery attempt {self.recovery_attempts}/{self.max_recovery_attempts}"
+            )
+
+            # Check if maximum recovery attempts have been exceeded
+            if self.recovery_attempts >= self.max_recovery_attempts:
+                logger.error(
+                    f"Maximum recovery attempts ({self.max_recovery_attempts}) exceeded. Navigation failed."
+                )
+                self.navigation_failed = True
 
             return True
 
