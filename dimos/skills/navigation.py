@@ -73,10 +73,6 @@ class NavigateWithText(AbstractRobotSkill):
     limit: int = Field(1, description="Maximum number of results to return")
     distance: float = Field(1.0, description="Desired distance to maintain from object in meters")
     timeout: float = Field(40.0, description="Maximum time to spend navigating in seconds")
-    similarity_threshold: float = Field(
-        0.25,
-        description="Minimum similarity score required for semantic map results to be considered valid",
-    )
 
     def __init__(self, robot=None, **data):
         """
@@ -92,6 +88,7 @@ class NavigateWithText(AbstractRobotSkill):
         self._scheduler = get_scheduler()  # Use the shared DiMOS thread pool
         self._navigation_disposable = None  # Disposable returned by scheduler.schedule()
         self._tracking_subscriber = None  # For object tracking
+        self._similarity_threshold = 0.25
 
     def _navigate_to_object(self):
         """
@@ -274,9 +271,9 @@ class NavigateWithText(AbstractRobotSkill):
                 )
 
                 # Check if similarity is below the threshold
-                if similarity < self.similarity_threshold:
+                if similarity < self._similarity_threshold:
                     logger.warning(
-                        f"Match found but similarity score ({similarity:.4f}) is below threshold ({self.similarity_threshold})"
+                        f"Match found but similarity score ({similarity:.4f}) is below threshold ({self._similarity_threshold})"
                     )
                     return {
                         "success": False,
@@ -284,7 +281,7 @@ class NavigateWithText(AbstractRobotSkill):
                         "position": (pos_x, pos_y),
                         "rotation": theta,
                         "similarity": similarity,
-                        "error": f"Match found but similarity score ({similarity:.4f}) is below threshold ({self.similarity_threshold})",
+                        "error": f"Match found but similarity score ({similarity:.4f}) is below threshold ({self._similarity_threshold})",
                     }
 
                 # Reset the stop event before starting navigation
