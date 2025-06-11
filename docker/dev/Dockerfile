@@ -1,4 +1,4 @@
-ARG FROM_IMAGE
+ARG FROM_IMAGE=ghcr.io/dimensionalos/ros-python:dev
 FROM ${FROM_IMAGE}
 
 ARG GIT_COMMIT=unknown
@@ -14,7 +14,9 @@ RUN apt-get install -y \
     htop \
     python-is-python3 \
     iputils-ping \
-    wget
+    wget \
+    pre-commit
+
 
 # Configure git to trust any directory (resolves dubious ownership issues in containers)
 RUN git config --global --add safe.directory '*'
@@ -27,6 +29,12 @@ COPY motd /etc/motd
 COPY /docker/dev/bash.sh /root/.bash.sh
 COPY /docker/dev/tmux.conf /root/.tmux.conf
 
+# Install nodejs (for random devtooling like copilot etc)
+RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
+RUN /root/.nvm/nvm.sh
+RUN nvm install node # v24 atm
+
+# This doesn't work atm
 RUN echo "  v_${GIT_BRANCH}:${GIT_COMMIT} | $(date)" >> /etc/motd
 RUN echo "echo -e '\033[34m$(cat /etc/motd)\033[0m\n'" >> /root/.bashrc
 

@@ -1,4 +1,3 @@
-# trigger build: 1
 name: docker
 on: workflow_call
 
