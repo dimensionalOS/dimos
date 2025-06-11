@@ -365,6 +365,10 @@ class BaseLocalPlanner(ABC):
         ):
             logger.info("Position goal reached. Rotating to target orientation.")
             return self._rotate_to_goal_orientation()
+        elif self.position_reached and self.goal_theta is None:
+            self.final_goal_reached = True
+            logger.info("Position goal reached. Stopping.")
+            return {"x_vel": 0.0, "angular_vel": 0.0}
 
         # Check if the robot is stuck and handle accordingly
         if self.check_if_stuck() and not self.position_reached:
@@ -375,8 +379,8 @@ class BaseLocalPlanner(ABC):
             if final_goal_pos is not None:
                 distance_to_goal = self._distance_to_position(final_goal_pos)
 
-                # If we're stuck but within 2x safe_goal_distance of the goal, consider it a success
-                if distance_to_goal < 2.0 * self.safe_goal_distance:
+                # If we're stuck but within 3x safe_goal_distance of the goal, consider it a success
+                if distance_to_goal < 3.0 * self.safe_goal_distance:
                     logger.info(
                         f"Robot is stuck but within {distance_to_goal:.2f}m of goal (< {2.0 * self.safe_goal_distance:.2f}m). Considering navigation successful."
                     )
@@ -641,6 +645,9 @@ class BaseLocalPlanner(ABC):
             # Single goal mode: check distance to the single goal and orientation
             if self.goal_xy is None:
                 return False  # No goal set
+
+            if self.goal_theta is None:
+                return self.position_reached
 
             return self.position_reached and self._is_goal_orientation_reached()
 
