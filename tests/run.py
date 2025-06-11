@@ -17,6 +17,7 @@ import os
 
 import time
 from dotenv import load_dotenv
+from dimos.agents.cerebras_agent import CerebrasAgent
 from dimos.agents.claude_agent import ClaudeAgent
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 
@@ -212,8 +213,8 @@ agent_response_stream = agent_response_subject.pipe(ops.share())
 local_planner_viz_stream = robot.local_planner_viz_stream.pipe(ops.share())
 
 # Initialize object detection stream
-min_confidence = 0.6
 class_filter = None  # No class filtering
+min_confidence = 0.99  # temporarily disable detections
 detector = Detic2DDetector(vocabulary=None, threshold=min_confidence)
 
 # Create video stream from robot's camera
@@ -291,30 +292,29 @@ with open(
 ) as f:
     system_query = f.read()
 
-# Create a ClaudeAgent instance
-agent = ClaudeAgent(
+# Create a CerebrasAgent instance
+agent = CerebrasAgent(
     dev_name="test_agent",
     # input_query_stream=stt_node.emit_text(),
     input_query_stream=web_interface.query_stream,
-    input_data_stream=enhanced_data_stream,  # Uncommented enhanced data stream
+    input_data_stream=enhanced_data_stream,
     skills=robot.get_skills(),
     system_query=system_query,
-    model_name="claude-3-7-sonnet-latest",
-    thinking_budget_tokens=0,
+    model_name="llama-4-scout-17b-16e-instruct",
 )
 
 # tts_node = tts()
 # tts_node.consume_text(agent.get_response_observable())
 
 robot_skills = robot.get_skills()
-robot_skills.add(ObserveStream)
+# robot_skills.add(ObserveStream)
 robot_skills.add(KillSkill)
 robot_skills.add(NavigateWithText)
 robot_skills.add(FollowHuman)
 robot_skills.add(GetPose)
 # robot_skills.add(Speak)
 robot_skills.add(NavigateToGoal)
-robot_skills.create_instance("ObserveStream", robot=robot, agent=agent)
+# robot_skills.create_instance("ObserveStream", robot=robot, agent=agent)
 robot_skills.create_instance("KillSkill", robot=robot, skill_library=robot_skills)
 robot_skills.create_instance("NavigateWithText", robot=robot)
 robot_skills.create_instance("FollowHuman", robot=robot)
