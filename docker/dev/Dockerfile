@@ -31,8 +31,8 @@ COPY /docker/dev/tmux.conf /root/.tmux.conf
 
 # Install nodejs (for random devtooling like copilot etc)
 RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
-RUN /root/.nvm/nvm.sh
-RUN nvm install node # v24 atm
+ENV NVM_DIR=/root/.nvm
+RUN bash -c "source $NVM_DIR/nvm.sh && nvm install 24"
 
 # This doesn't work atm
 RUN echo "  v_${GIT_BRANCH}:${GIT_COMMIT} | $(date)" >> /etc/motd
