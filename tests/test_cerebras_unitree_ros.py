@@ -53,11 +53,9 @@ robot = UnitreeGo2(
 # Create a subject for agent responses
 agent_response_subject = rx.subject.Subject()
 agent_response_stream = agent_response_subject.pipe(ops.share())
-local_planner_viz_stream = robot.local_planner_viz_stream.pipe(ops.share())
 
 streams = {
     "unitree_video": robot.get_ros_video_stream(),
-    "local_planner_viz": local_planner_viz_stream,
 }
 text_streams = {
     "agent_responses": agent_response_stream,
