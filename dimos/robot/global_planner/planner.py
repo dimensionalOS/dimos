@@ -14,8 +14,10 @@
 
 from dataclasses import dataclass
 from abc import abstractmethod
-from typing import Callable, Optional
+from typing import Callable, Optional, List
 import threading
+import os
+import time
 
 from dimos.types.path import Path
 from dimos.types.costmap import Costmap
@@ -46,7 +48,46 @@ class Planner(Visualizable):
             return False
 
         print("pathing success", path)
-        return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
+        navigation_successful = self.set_local_nav(
+            path, stop_event=stop_event, goal_theta=goal_theta
+        )
+
+        # Provide feedback to frontier explorer if this was a frontier goal
+        if hasattr(self, "get_frontiers") and self.get_frontiers is not None:
+            # Mark the goal as attempted (success or failure) for frontier persistence
+            try:
+                # Get the frontier explorer instance from the get_frontiers callable
+                import inspect
+
+                if hasattr(self.get_frontiers, "__self__"):
+                    frontier_explorer = self.get_frontiers.__self__
+                    if hasattr(frontier_explorer, "mark_frontier_attempted"):
+                        frontier_explorer.mark_frontier_attempted(goal, True)
+            except Exception as e:
+                logger.warning(f"Could not provide frontier feedback: {e}")
+
+        # AFTER navigation is complete, detect and visualize frontiers for future exploration
+        if (
+            navigation_successful
+            and hasattr(self, "get_frontiers")
+            and self.get_frontiers is not None
+        ):
+            try:
+                logger.info("Goal reached! Detecting frontiers for future exploration...")
+                frontiers = self.get_frontiers()
+                if frontiers:
+                    # Visualize all detected frontiers
+                    for i, frontier in enumerate(frontiers):
+                        self.vis(f"frontier_{i}", frontier)
+                    logger.info(
+                        f"Post-goal completion: Detected {len(frontiers)} frontiers for exploration"
+                    )
+                else:
+                    logger.info("Post-goal completion: No frontiers detected")
+            except Exception as e:
+                logger.error(f"Failed to detect frontiers after goal completion: {e}")
+
+        return navigation_successful
 
 
 @dataclass
@@ -54,6 +95,7 @@ class AstarPlanner(Planner):
     get_costmap: Callable[[], Costmap]
     get_robot_pos: Callable[[], Vector]
     set_local_nav: Callable[[Path], bool]
+    get_frontiers: Optional[Callable[[], List[Vector]]] = None
     conservativism: int = 8
 
     def plan(self, goal: VectorLike) -> Path:

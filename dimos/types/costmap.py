@@ -17,9 +17,13 @@ import math
 import numpy as np
 from typing import Optional
 from scipy import ndimage
-from dimos.types.ros_polyfill import OccupancyGrid
+from scipy.ndimage import binary_dilation
+from nav_msgs.msg import OccupancyGrid
 from dimos.types.vector import Vector, VectorLike, x, y, to_vector
 import open3d as o3d
+from matplotlib.path import Path
+from PIL import Image
+import cv2
 
 DTYPE2STR = {
     np.float32: "f32",
@@ -29,6 +33,14 @@ DTYPE2STR = {
 }
 
 STR2DTYPE = {v: k for k, v in DTYPE2STR.items()}
+
+
+class CostValues:
+    """Standard cost values for occupancy grid cells."""
+
+    FREE = 0  # Free space
+    UNKNOWN = -1  # Unknown space
+    OCCUPIED = 100  # Occupied/lethal space
 
 
 def encode_ndarray(arr: np.ndarray, compress: bool = False):
@@ -118,11 +130,17 @@ class Costmap:
 
     @classmethod
     def from_pickle(cls, pickle_path: str) -> "Costmap":
-        """Load costmap from a pickle file containing a ROS OccupancyGrid message."""
+        """Load costmap from a pickle file containing either a Costmap object or constructor arguments."""
         with open(pickle_path, "rb") as f:
             data = pickle.load(f)
-            costmap = cls(*data)
-        return costmap
+
+            # Check if data is already a Costmap object
+            if isinstance(data, cls):
+                return data
+            else:
+                # Assume it's constructor arguments
+                costmap = cls(*data)
+                return costmap
 
     @classmethod
     def create_empty(
@@ -172,14 +190,14 @@ class Costmap:
         point = self.world_to_grid(point)
 
         if 0 <= point.x < self.width and 0 <= point.y < self.height:
-            return int(self.grid[point.y, point.x])
+            return int(self.grid[int(point.y), int(point.x)])
         return None
 
     def set_value(self, point: VectorLike, value: int = 0) -> bool:
         point = self.world_to_grid(point)
 
         if 0 <= point.x < self.width and 0 <= point.y < self.height:
-            self.grid[point.y, point.x] = value
+            self.grid[int(point.y), int(point.x)] = value
             return value
         return False
 
@@ -289,6 +307,56 @@ class Costmap:
             origin_theta=self.origin_theta,
         )
 
+    def subsample(self, subsample_factor: int = 2) -> "Costmap":
+        """
+        Create a subsampled (lower resolution) version of the costmap.
+
+        Args:
+            subsample_factor: Factor by which to reduce resolution (e.g., 2 = half resolution, 4 = quarter resolution)
+
+        Returns:
+            New Costmap instance with reduced resolution
+        """
+        if subsample_factor <= 1:
+            return self  # No subsampling needed
+
+        # Calculate new grid dimensions
+        new_height = self.height // subsample_factor
+        new_width = self.width // subsample_factor
+
+        # Create new grid by subsampling
+        subsampled_grid = np.zeros((new_height, new_width), dtype=self.grid.dtype)
+
+        # Sample every subsample_factor-th point
+        for i in range(new_height):
+            for j in range(new_width):
+                orig_i = i * subsample_factor
+                orig_j = j * subsample_factor
+
+                # Take a small neighborhood and use the most conservative value
+                # (prioritize occupied > unknown > free for safety)
+                neighborhood = self.grid[
+                    orig_i : min(orig_i + subsample_factor, self.height),
+                    orig_j : min(orig_j + subsample_factor, self.width),
+                ]
+
+                # Priority: Occupied (100) > Unknown (-1) > Free (0)
+                if np.any(neighborhood == CostValues.OCCUPIED):
+                    subsampled_grid[i, j] = CostValues.OCCUPIED
+                elif np.any(neighborhood == CostValues.UNKNOWN):
+                    subsampled_grid[i, j] = CostValues.UNKNOWN
+                else:
+                    subsampled_grid[i, j] = CostValues.FREE
+
+        # Create new costmap with adjusted resolution and origin
+        new_resolution = self.resolution * subsample_factor
+
+        return Costmap(
+            grid=subsampled_grid,
+            resolution=new_resolution,
+            origin=self.origin,  # Origin stays the same
+        )
+
     @property
     def total_cells(self) -> int:
         return self.width * self.height
@@ -337,6 +405,38 @@ class Costmap:
         ]
 
         return " ".join(cell_info)
+
+    def costmap_to_image(self, image_path: str) -> None:
+        """
+        Convert costmap to JPEG image with ROS-style coloring.
+        Free space: light grey, Obstacles: black, Unknown: dark gray
+
+        Args:
+            image_path: Path to save the JPEG image
+        """
+        # Create image array (height, width, 3 for RGB)
+        img_array = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+
+        # Apply ROS-style coloring based on costmap values
+        for i in range(self.height):
+            for j in range(self.width):
+                value = self.grid[i, j]
+                if value == CostValues.FREE:  # Free space = light grey (205, 205, 205)
+                    img_array[i, j] = [205, 205, 205]
+                elif value == CostValues.UNKNOWN:  # Unknown = dark gray (128, 128, 128)
+                    img_array[i, j] = [128, 128, 128]
+                elif value >= CostValues.OCCUPIED:  # Occupied/obstacles = black (0, 0, 0)
+                    img_array[i, j] = [0, 0, 0]
+                else:  # Any other values (low cost) = light grey
+                    img_array[i, j] = [205, 205, 205]
+
+        # Flip vertically to match ROS convention (origin at bottom-left)
+        img_array = np.flipud(img_array)
+
+        # Create PIL image and save as JPEG
+        img = Image.fromarray(img_array, "RGB")
+        img.save(image_path, "JPEG", quality=95)
+        print(f"Costmap image saved to: {image_path}")
 
 
 def _inflate_lethal(costmap: np.ndarray, radius: int, lethal_val: int = 100) -> np.ndarray:
@@ -420,6 +520,65 @@ def pointcloud_to_costmap(
         costmap = _inflate_lethal(costmap, cells, lethal_val=cost_lethal)
 
     return costmap, origin.astype(np.float32)
+
+
+def smooth_costmap_for_frontiers(
+    costmap: Costmap,
+    alpha: float = 4.0,
+    free_space_dilation_size: int = 3,
+) -> Costmap:
+    """
+    Smooth a costmap using morphological operations for frontier exploration.
+
+    This function applies OpenCV morphological operations to smooth free space
+    areas and improve connectivity for better frontier detection. It's designed
+    specifically for frontier exploration, not real-time mapping.
+
+    Args:
+        costmap: Input Costmap object
+        alpha: Controls morphological kernel size (larger = more smoothing)
+        free_space_dilation_size: Size of dilation kernel for free space
+
+    Returns:
+        Smoothed Costmap object with enhanced free space connectivity
+    """
+    # Extract grid data and metadata from costmap
+    grid = costmap.grid
+    resolution = costmap.resolution
+    origin = np.array(costmap.origin[:2], dtype=np.float32)  # Take only x, y from origin
+
+    # Work with a copy to avoid modifying input
+    filtered_grid = grid.copy()
+    Ny, Nx = grid.shape
+
+    # 1. Create binary mask for free space
+    free_mask = (grid == CostValues.FREE).astype(np.uint8) * 255
+
+    # 2. Apply morphological operations for smoothing
+    kernel_size = max(1, int(alpha))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+
+    # Dilate free space to connect nearby areas
+    dilated = cv2.dilate(free_mask, kernel, iterations=1)
+
+    # Morphological closing to fill small gaps
+    closed = cv2.morphologyEx(dilated, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+    # Apply the smoothed free space back to costmap
+    # Only change unknown areas to free, don't override obstacles
+    smoothed_free = closed == 255
+    unknown_mask = grid == CostValues.UNKNOWN
+    filtered_grid[smoothed_free & unknown_mask] = CostValues.FREE
+
+    # 3. Optional additional free space dilation
+    if free_space_dilation_size > 0:
+        final_free_mask = filtered_grid == CostValues.FREE
+        dilation_kernel = np.ones((free_space_dilation_size, free_space_dilation_size))
+        dilated_free = binary_dilation(final_free_mask, structure=dilation_kernel)
+        # Only dilate into unknown areas
+        filtered_grid[(filtered_grid == CostValues.UNKNOWN) & dilated_free] = CostValues.FREE
+
+    return Costmap(grid=filtered_grid, origin=costmap.origin, resolution=resolution)
 
 
 if __name__ == "__main__":

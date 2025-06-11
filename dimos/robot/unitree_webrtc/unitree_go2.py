@@ -31,6 +31,9 @@ from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.types.vector import Vector
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
+from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
+    WavefrontFrontierExplorer,
+)
 
 
 class Color(VUI_COLOR): ...
@@ -47,6 +50,8 @@ class UnitreeGo2(Robot):
         spatial_memory_collection: str = "spatial_memory",
         new_memory: bool = True,
         enable_perception: bool = True,
+        save_costmaps: bool = False,
+        costmap_save_dir: str = os.path.join(os.getcwd(), "assets", "saved_maps"),
     ):
         """Initialize Unitree Go2 robot with WebRTC control interface.
 
@@ -59,6 +64,8 @@ class UnitreeGo2(Robot):
             spatial_memory_collection: Collection name for spatial memory
             new_memory: Whether to create new spatial memory
             enable_perception: Whether to enable perception streams and spatial memory
+            save_costmaps: Whether to save costmaps on successful goal completion
+            costmap_save_dir: Directory to save costmap files
         """
         # Create WebRTC connection interface
         webrtc_connection = WebRTCRobot(
@@ -140,10 +147,19 @@ class UnitreeGo2(Robot):
             robot_width=0.36,  # Unitree Go2 width in meters
             robot_length=0.6,  # Unitree Go2 length in meters
             max_linear_vel=0.7,
-            max_angular_vel=0.8,
+            max_angular_vel=0.65,
             lookahead_distance=1.5,
             visualization_size=500,  # 500x500 pixel visualization
         )
+
+        # Initialize frontier exploration
+        self.frontier_explorer = WavefrontFrontierExplorer(
+            use_filtered_costmap=True, costmap_save_dir=costmap_save_dir if save_costmaps else None
+        )
+
+        # Create costmap save directory if saving is enabled
+        if save_costmaps and not os.path.exists(costmap_save_dir):
+            os.makedirs(costmap_save_dir)
 
         self.global_planner = AstarPlanner(
             set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(
@@ -151,6 +167,9 @@ class UnitreeGo2(Robot):
             ),
             get_costmap=lambda: self.map.costmap,
             get_robot_pos=lambda: self.odom().pos,
+            get_frontiers=lambda: self.frontier_explorer.get_exploration_goals(
+                self.odom().pos, self.map.costmap
+            ),
         )
 
         # Create the visualization stream at 5Hz

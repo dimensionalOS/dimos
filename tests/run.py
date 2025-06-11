@@ -79,6 +79,7 @@ args = parse_arguments()
 robot = UnitreeGo2(
     ip=os.getenv("ROBOT_IP"),
     mode="normal",
+    save_costmaps=True,
 )
 
 
