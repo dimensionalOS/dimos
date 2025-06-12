@@ -1,5 +1,5 @@
-# trigger rebuild: 1
-FROM ubuntu:22.04
+ARG FROM_IMAGE=ubuntu:22.04
+FROM ${FROM_IMAGE}
 
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive

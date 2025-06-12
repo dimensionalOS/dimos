@@ -2,9 +2,11 @@ name: docker-build-template
 on:
   workflow_call:
     inputs:
-      branch-tag:  { type: string, required: true }
-      target:      { type: string, required: true }
+      from-image:  { type: string, required: true }
+      to-image:    { type: string, required: true }
+      dockerfile:  { type: string, required: true }
       freespace:   { type: boolean, default: false }
+      should-run:  { type: boolean, default: false }
       context:     { type: string, default: '.' }
 
 # you can run this locally as well via
@@ -17,6 +19,10 @@ jobs:
       packages: write
 
     steps:
+      - name: exit early
+        if: ${{ !inputs.should-run }}
+        run: |
+          exit 0
       - name: free up disk space
         # takes a bit of time, so disabled by default
         # explicitly enable this for large builds
@@ -37,34 +43,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check base image tag
-        id: tagcheck
-        env:
-          BRANCH_TAG: ${{ inputs.branch-tag }}
-          DOCKERFILE_PATH: docker/${{ inputs.target }}/Dockerfile
-          DOCKER_CLI_EXPERIMENTAL: enabled  # required for `docker buildx imagetools`
-        run: |
-          BASE_REPO=$(grep -Eo '^FROM[[:space:]]+ghcr\.io/dimensionalos/[a-zA-Z0-9._-]+' "$DOCKERFILE_PATH" | head -n1 | awk -F/ '{print $NF}')
-
-          if [[ -z "$BASE_REPO" ]]; then
-            echo "Could not determine base repo from $DOCKERFILE_PATH, reverting to 'dev'"
-            FROM_TAG="dev"
-          else
-            IMAGE="ghcr.io/dimensionalos/${BASE_REPO}:${BRANCH_TAG}"
-            echo "Checking if $IMAGE exists…"
-            if docker buildx imagetools inspect "$IMAGE" > /dev/null 2>&1; then
-              echo "Found $IMAGE"
-              FROM_TAG="$BRANCH_TAG"
-            else
-              echo "Tag '$BRANCH_TAG' not found for $BASE_REPO; falling back to 'dev'"
-              FROM_TAG="dev"
-            fi
-          fi
-
-          echo "from_tag=$FROM_TAG" >> "$GITHUB_OUTPUT"
-
-
-
       # required for github cache of docker layers
       - uses: crazy-max/ghaction-github-runtime@v3
 
@@ -79,9 +57,8 @@ jobs:
         with:
           push: true
           context: ${{ inputs.context }}
-          file:   docker/${{ inputs.target }}/Dockerfile
-          tags:   ghcr.io/dimensionalos/${{ inputs.target }}:${{ inputs.branch-tag }}
-          cache-from: type=gha,scope=${{ inputs.target }}
-          cache-to:   type=gha,mode=max,scope=${{ inputs.target }}
-          build-args: |
-            FROM_TAG=${{ steps.tagcheck.outputs.from_tag }}
+          file:   docker/${{ inputs.dockerfile }}/Dockerfile
+          tags:   ${{ inputs.to-image }}
+          cache-from: type=gha,scope=${{ inputs.dockerfile }}-${{ inputs.from-image }}
+          cache-to:   type=gha,mode=max,scope=${{ inputs.dockerfile }}-${{ inputs.from-image }}
+          build-args: FROM_IMAGE=${{ inputs.from-image }}
