@@ -33,6 +33,7 @@ logger = setup_logger("dimos.robot.unitree.global_planner")
 @dataclass
 class Planner(Visualizable):
     set_local_nav: Callable[[Path, Optional[threading.Event]], bool]
+    get_frontiers: Callable[[], Vector]
 
     @abstractmethod
     def plan(self, goal: VectorLike) -> Path: ...
@@ -50,18 +51,52 @@ class Planner(Visualizable):
 
         print("pathing success", path)
 
-        current_costmap = self.get_costmap()
-        self.costmap_saver.save_costmap(current_costmap)
+        # Save costmap if saving is enabled
+        if self.costmap_saver:
+            current_costmap = self.get_costmap()
+            self.costmap_saver.save_costmap(current_costmap)
 
         navigation_successful = self.set_local_nav(
             path, stop_event=stop_event, goal_theta=goal_theta
         )
 
-        next_goal = self.get_frontiers()
-        if next_goal:
+        return navigation_successful
+
+    def explore(self, stop_event: Optional[threading.Event] = None):
+        """
+        Perform autonomous frontier exploration by continuously finding and navigating to frontiers.
+
+        Args:
+            stop_event: Optional threading.Event to signal when exploration should stop
+
+        Returns:
+            bool: True if exploration completed successfully, False if stopped or failed
+        """
+        logger.info("Starting autonomous frontier exploration")
+
+        while True:
+            # Check if stop event is set
+            if stop_event and stop_event.is_set():
+                logger.info("Exploration stopped by stop event")
+                return False
+
+            # Get the next frontier goal
+            next_goal = self.get_frontiers()
+            if not next_goal:
+                logger.info("No more frontiers found, exploration complete")
+                return True
+
+            # Visualize the frontier goal
             self.vis("frontier_goal", next_goal)
 
-        return navigation_successful
+            # Navigate to the frontier
+            logger.info(f"Navigating to frontier at {next_goal}")
+            navigation_successful = self.set_goal(next_goal, stop_event=stop_event)
+
+            if not navigation_successful:
+                logger.warning("Failed to navigate to frontier, continuing exploration")
+                # Continue to try other frontiers instead of stopping
+                continue
 
 
 @dataclass
@@ -69,7 +104,7 @@ class AstarPlanner(Planner):
     get_costmap: Callable[[], Costmap]
     get_robot_pos: Callable[[], Vector]
     set_local_nav: Callable[[Path], bool]
-    get_frontiers: Optional[Callable[[], Vector]] = None
+    get_frontiers: Callable[[], Vector]
     conservativism: int = 8
     save_costmaps: bool = False
     costmap_save_dir: Optional[str] = None

@@ -27,7 +27,7 @@ from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.web.websocket_vis.server import WebsocketVis
 from dimos.skills.observe_stream import ObserveStream
 from dimos.skills.kill_skill import KillSkill
-from dimos.skills.navigation import NavigateWithText, GetPose, NavigateToGoal
+from dimos.skills.navigation import NavigateWithText, GetPose, NavigateToGoal, Explore
 from dimos.skills.visual_navigation_skills import FollowHuman
 import reactivex as rx
 import reactivex.operators as ops
@@ -315,14 +315,15 @@ robot_skills.add(FollowHuman)
 robot_skills.add(GetPose)
 # robot_skills.add(Speak)
 robot_skills.add(NavigateToGoal)
-robot_skills.create_instance("ObserveStream", robot=robot, agent=agent)
+robot_skills.add(Explore)
+#robot_skills.create_instance("ObserveStream", robot=robot, agent=agent)
 robot_skills.create_instance("KillSkill", robot=robot, skill_library=robot_skills)
 robot_skills.create_instance("NavigateWithText", robot=robot)
 robot_skills.create_instance("FollowHuman", robot=robot)
 robot_skills.create_instance("GetPose", robot=robot)
 # robot_skills.create_instance("Speak", tts_node=tts_node)
 robot_skills.create_instance("NavigateToGoal", robot=robot)
-
+robot_skills.create_instance("Explore", robot=robot)
 # Subscribe to agent responses and send them to the subject
 agent.get_response_observable().subscribe(lambda x: agent_response_subject.on_next(x))
 

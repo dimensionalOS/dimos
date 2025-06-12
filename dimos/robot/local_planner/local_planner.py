@@ -41,6 +41,26 @@ class BaseLocalPlanner(ABC):
 
     This class defines the common interface and shared functionality that all local planners
     must implement, regardless of the specific algorithm used.
+
+    Args:
+        get_costmap: Function to get the latest local costmap
+        get_robot_pose: Function to get the latest robot pose (returning odom object)
+        move: Function to send velocity commands
+        safety_threshold: Distance to maintain from obstacles (meters)
+        max_linear_vel: Maximum linear velocity (m/s)
+        max_angular_vel: Maximum angular velocity (rad/s)
+        lookahead_distance: Lookahead distance for path following (meters)
+        goal_tolerance: Distance at which the goal is considered reached (meters)
+        angle_tolerance: Angle at which the goal orientation is considered reached (radians)
+        robot_width: Width of the robot for visualization (meters)
+        robot_length: Length of the robot for visualization (meters)
+        visualization_size: Size of the visualization image in pixels
+        control_frequency: Frequency at which the planner is called (Hz)
+        safe_goal_distance: Distance at which to adjust the goal and ignore obstacles (meters)
+        max_recovery_attempts: Maximum number of recovery attempts before failing navigation.
+            If the robot gets stuck and cannot recover within this many attempts, navigation will fail.
+        global_planner_plan: Optional callable to plan a global path to the goal.
+            If provided, this will be used to generate a path to the goal before local planning.
     """
 
     def __init__(
@@ -60,28 +80,8 @@ class BaseLocalPlanner(ABC):
         control_frequency: float = 10.0,
         safe_goal_distance: float = 1.5,
         max_recovery_attempts: int = 3,
+        global_planner_plan: Optional[Callable[[VectorLike], Optional[Any]]] = None,
     ):  # Control frequency in Hz
-        """
-        Initialize the base local planner.
-
-        Args:
-            get_costmap: Function to get the latest local costmap
-            get_robot_pose: Function to get the latest robot pose (returning odom object)
-            move: Function to send velocity commands
-            safety_threshold: Distance to maintain from obstacles (meters)
-            max_linear_vel: Maximum linear velocity (m/s)
-            max_angular_vel: Maximum angular velocity (rad/s)
-            lookahead_distance: Lookahead distance for path following (meters)
-            goal_tolerance: Distance at which the goal is considered reached (meters)
-            angle_tolerance: Angle at which the goal orientation is considered reached (radians)
-            robot_width: Width of the robot for visualization (meters)
-            robot_length: Length of the robot for visualization (meters)
-            visualization_size: Size of the visualization image in pixels
-            control_frequency: Frequency at which the planner is called (Hz)
-            safe_goal_distance: Distance at which to adjust the goal and ignore obstacles (meters)
-            max_recovery_attempts: Maximum number of recovery attempts before failing navigation.
-                If the robot gets stuck and cannot recover within this many attempts, navigation will fail.
-        """
         # Store callables for robot interactions
         self.get_costmap = get_costmap
         self.get_robot_pose = get_robot_pose
@@ -103,19 +103,20 @@ class BaseLocalPlanner(ABC):
         self.ignore_obstacles = False  # Flag for derived classes to check
         self.max_recovery_attempts = max_recovery_attempts  # Maximum recovery attempts
         self.recovery_attempts = 0  # Current number of recovery attempts
+        self.global_planner_plan = global_planner_plan  # Global planner function for replanning
 
         # Goal and Waypoint Tracking
         self.goal_xy: Optional[Tuple[float, float]] = None  # Current target for planning
-        self.goal_theta: Optional[float] = None  # Goal orientation in odom frame
-        self.position_reached: bool = False  # Flag indicating if position goal is reached
-        self.waypoints: Optional[Path] = None  # Full path if following waypoints
+        self.goal_theta: Optional[float] = None  # Goal orientation (radians)
+        self.waypoints: Optional[Path] = None  # List of waypoints to follow
         self.waypoints_in_absolute: Optional[Path] = None  # Full path in absolute frame
         self.waypoint_is_relative: bool = False  # Whether waypoints are in relative frame
         self.current_waypoint_index: int = 0  # Index of the next waypoint to reach
         self.final_goal_reached: bool = False  # Flag indicating if the final waypoint is reached
+        self.position_reached: bool = False  # Flag indicating if position goal is reached
 
         # Stuck detection
-        self.stuck_detection_window_seconds = 8.0  # Time window for stuck detection (seconds)
+        self.stuck_detection_window_seconds = 12.0  # Time window for stuck detection (seconds)
         self.position_history_size = int(self.stuck_detection_window_seconds * control_frequency)
         self.position_history = deque(
             maxlen=self.position_history_size
@@ -128,7 +129,7 @@ class BaseLocalPlanner(ABC):
         self.is_recovery_active = False  # Whether recovery behavior is active
         self.recovery_start_time = 0.0  # When recovery behavior started
         self.recovery_duration = (
-            8.0  # How long to run recovery before giving up (seconds) - increased
+            10.0  # How long to run recovery before giving up (seconds) - increased
         )
         self.last_update_time = time.time()  # Last time position was updated
         self.navigation_failed = False  # Flag indicating if navigation should be terminated
@@ -371,7 +372,6 @@ class BaseLocalPlanner(ABC):
             and self.goal_theta is not None
             and not self._is_goal_orientation_reached()
         ):
-            logger.info("Position goal reached. Rotating to target orientation.")
             return self._rotate_to_goal_orientation()
         elif self.position_reached and self.goal_theta is None:
             self.final_goal_reached = True
@@ -387,8 +387,8 @@ class BaseLocalPlanner(ABC):
             if final_goal_pos is not None:
                 distance_to_goal = self._distance_to_position(final_goal_pos)
 
-                # If we're stuck but within 3x safe_goal_distance of the goal, consider it a success
-                if distance_to_goal < 3.0 * self.safe_goal_distance:
+                # If we're stuck but within 2x safe_goal_distance of the goal, consider it a success
+                if distance_to_goal < 2.0 * self.safe_goal_distance:
                     logger.info(
                         f"Robot is stuck but within {distance_to_goal:.2f}m of goal (< {2.0 * self.safe_goal_distance:.2f}m). Considering navigation successful."
                     )
@@ -405,7 +405,6 @@ class BaseLocalPlanner(ABC):
         # --- Waypoint Following Mode ---
         if self.waypoints is not None:
             if self.final_goal_reached:
-                logger.info("Final waypoint reached. Stopping.")
                 return {"x_vel": 0.0, "angular_vel": 0.0}
 
             # Get current robot pose
@@ -426,7 +425,6 @@ class BaseLocalPlanner(ABC):
                     new_waypoints.append(adjusted_goal)  # Append the adjusted goal
                     self.waypoints_in_absolute = new_waypoints
                     self.ignore_obstacles = True
-                    logger.debug("Within safe distance of final waypoint. Ignoring obstacles.")
 
             # Update the target goal based on waypoint progression
             just_reached_final = self._update_waypoint_target(robot_pos_np)
@@ -455,7 +453,6 @@ class BaseLocalPlanner(ABC):
             if goal_distance < self.safe_goal_distance:
                 self.goal_xy = self.adjust_goal_to_valid_position(self.goal_xy)
                 self.ignore_obstacles = True
-                logger.debug("Within safe distance of goal. Ignoring obstacles.")
 
             # First check position
             if goal_distance < self.goal_tolerance or self.position_reached:
@@ -502,7 +499,6 @@ class BaseLocalPlanner(ABC):
         direction = 1.0 if angle_diff > 0 else -1.0
         angular_vel = direction * min(abs(angle_diff), self.max_angular_vel)
 
-        # logger.debug(f"Rotating to goal orientation: angle_diff={angle_diff:.4f}, angular_vel={angular_vel:.4f}")
         return {"x_vel": 0.0, "angular_vel": angular_vel}
 
     def _is_goal_orientation_reached(self) -> bool:
@@ -520,9 +516,6 @@ class BaseLocalPlanner(ABC):
         # Calculate the angle difference and normalize
         angle_diff = abs(normalize_angle(self.goal_theta - robot_theta))
 
-        logger.debug(
-            f"Orientation error: {angle_diff:.4f} rad, tolerance: {self.angle_tolerance:.4f} rad"
-        )
         return angle_diff <= self.angle_tolerance
 
     def _update_waypoint_target(self, robot_pos_np: np.ndarray) -> bool:
@@ -544,18 +537,19 @@ class BaseLocalPlanner(ABC):
         final_waypoint = self.waypoints_in_absolute[-1]
         dist_to_final = np.linalg.norm(robot_pos_np - final_waypoint)
 
-        if dist_to_final < self.goal_tolerance:
-            self.position_reached = True
-            self.goal_xy = to_tuple(final_waypoint)
-
-            # If goal orientation is not specified or achieved, consider fully reached
-            if self.goal_theta is None or self._is_goal_orientation_reached():
-                self.final_goal_reached = True
-                logger.info("Reached final waypoint with correct orientation.")
-                return True
-            else:
-                logger.info("Reached final waypoint position, rotating to target orientation.")
+        if dist_to_final <= self.goal_tolerance:
+            # Final waypoint position reached
+            if self.goal_theta is not None:
+                # Check orientation if specified
+                if self._is_goal_orientation_reached():
+                    self.final_goal_reached = True
+                    return True
+                # Continue rotating
                 return False
+            else:
+                # No orientation goal, mark as reached
+                self.final_goal_reached = True
+                return True
 
         # Always find the lookahead point
         lookahead_point = None
@@ -577,7 +571,6 @@ class BaseLocalPlanner(ABC):
         if not self.is_goal_in_costmap_bounds(lookahead_point) or self.check_goal_collision(
             lookahead_point
         ):
-            logger.debug("Lookahead point is invalid. Adjusting...")
             adjusted_lookahead = self.adjust_goal_to_valid_position(lookahead_point)
             # Only update if adjustment didn't fail completely
             if adjusted_lookahead is not None:
@@ -785,26 +778,17 @@ class BaseLocalPlanner(ABC):
                     clearance_x = current_x + dx * clearance
                     clearance_y = current_y + dy * clearance
 
-                    logger.info(
-                        f"Checking clearance position at ({clearance_x:.2f}, {clearance_y:.2f})"
-                    )
-
                     # Check if the clearance position is also valid
                     if not self.check_goal_collision(
                         (clearance_x, clearance_y)
                     ) and self.is_goal_in_costmap_bounds((clearance_x, clearance_y)):
-                        logger.info(
-                            f"Found valid goal with clearance at ({clearance_x:.2f}, {clearance_y:.2f})"
-                        )
                         return (clearance_x, clearance_y)
 
                 # Return the valid position without clearance
-                logger.info(f"Found valid goal at ({current_x:.2f}, {current_y:.2f})")
                 return (current_x, current_y)
 
         # If we found a valid position earlier but couldn't add clearance
         if valid_found:
-            logger.info(f"Using valid goal found at ({valid_x:.2f}, {valid_y:.2f})")
             return (valid_x, valid_y)
 
         logger.warning(
@@ -844,8 +828,7 @@ class BaseLocalPlanner(ABC):
                     )
                     self.is_recovery_active = False
                     self.last_recovery_end_time = current_time
-                    self.recovery_attempts = 0
-                    logger.info("Recovery attempts reset after successful recovery")
+                    # Do not reset recovery attempts here - only reset during replanning or goal reaching
                     # Clear position history to start fresh tracking
                     self.position_history.clear()
                     return False
@@ -962,8 +945,9 @@ class BaseLocalPlanner(ABC):
 
     def execute_recovery_behavior(self) -> Dict[str, float]:
         """
-        Execute a simple recovery behavior when the robot is stuck.
-        Just backs up for a set duration.
+        Execute enhanced recovery behavior when the robot is stuck.
+        - First attempt: Backup for a set duration
+        - Second+ attempts: Replan to the original goal using global planner
 
         Returns:
             Dict[str, float]: Velocity commands for the recovery behavior
@@ -971,14 +955,42 @@ class BaseLocalPlanner(ABC):
         current_time = time.time()
         recovery_time = current_time - self.recovery_start_time
 
-        # Simple backup for the specified duration
-        if recovery_time < self.backup_duration:
-            logger.debug(f"Recovery: backing up ({recovery_time:.1f}s/{self.backup_duration:.1f}s)")
-            return {"x_vel": -0.5, "angular_vel": 0.0}  # Backup at moderate speed
-        else:
-            # Recovery completed - let the stuck detection logic handle the rest
-            logger.info("Recovery backup completed")
+        # First recovery attempt: Simple backup behavior
+        if self.recovery_attempts == 1:
+            if recovery_time < self.backup_duration:
+                return {"x_vel": -0.5, "angular_vel": 0.0}  # Backup at moderate speed
+            else:
+                logger.info("Recovery attempt 1: backup completed")
+                self.recovery_attempts += 1
+                return {"x_vel": 0.0, "angular_vel": 0.0}
+
+        # Second+ recovery attempts: Replan using global planner
+        # Check if we have valid waypoints to replan to
+        if self.waypoints_in_absolute is None or len(self.waypoints_in_absolute) == 0:
+            logger.warning("No waypoints available for replanning. Recovery failed.")
+            self.navigation_failed = True
             return {"x_vel": 0.0, "angular_vel": 0.0}
+
+        final_goal = self.waypoints_in_absolute[-1]
+        logger.info(
+            f"Recovery attempt {self.recovery_attempts}: replanning to final waypoint {final_goal}"
+        )
+
+        new_path = self.global_planner_plan(Vector([final_goal[0], final_goal[1]]))
+
+        if new_path is not None:
+            logger.info("Replanning successful. Setting new waypoints.")
+            self.set_goal_waypoints(new_path, self.goal_theta)
+            # Reset recovery attempts since replanning was successful
+            self.recovery_attempts = 0
+            self.is_recovery_active = False
+            self.last_recovery_end_time = current_time
+            logger.info("Recovery attempts reset after successful replanning")
+        else:
+            logger.error("Global planner could not find a path to the goal. Recovery failed.")
+            self.navigation_failed = True
+
+        return {"x_vel": 0.0, "angular_vel": 0.0}
 
 
 def navigate_to_goal_local(

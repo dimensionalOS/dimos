@@ -26,12 +26,15 @@ import os
 import glob
 from dataclasses import dataclass
 from enum import IntFlag
+from dimos.utils.logging_config import setup_logger
 
 from dimos.types.costmap import Costmap, CostValues, smooth_costmap_for_frontiers
 from dimos.types.vector import Vector
 
 from dimos.robot.frontier_exploration.utils import costmap_to_pil_image, draw_frontiers_on_image
 from PIL import Image, ImageDraw
+
+logger = setup_logger("dimos.robot.unitree.frontier_exploration")
 
 
 class PointClassification(IntFlag):
@@ -84,9 +87,11 @@ class WavefrontFrontierExplorer:
         min_frontier_size: int = 10,
         occupancy_threshold: int = 65,
         subsample_resolution: int = 3,
-        min_distance_from_robot: float = 1.0,
+        min_distance_from_robot: float = 0.5,
         explored_area_buffer: float = 0.5,
         min_distance_from_obstacles: float = 0.6,
+        info_gain_threshold: float = 0.05,
+        num_no_gain_attempts: int = 2,
     ):
         """
         Initialize the frontier explorer.
@@ -98,6 +103,7 @@ class WavefrontFrontierExplorer:
             min_distance_from_robot: Minimum distance frontier must be from robot (meters)
             explored_area_buffer: Buffer distance around free areas to consider as explored (meters)
             min_distance_from_obstacles: Minimum distance frontier must be from obstacles (meters)
+            info_gain_threshold: Minimum percentage increase in costmap information required to continue exploration (0.05 = 5%)
         """
         self.min_frontier_size = min_frontier_size
         self.occupancy_threshold = occupancy_threshold
@@ -105,9 +111,26 @@ class WavefrontFrontierExplorer:
         self.min_distance_from_robot = min_distance_from_robot
         self.explored_area_buffer = explored_area_buffer
         self.min_distance_from_obstacles = min_distance_from_obstacles
+        self.info_gain_threshold = info_gain_threshold
         self._cache = FrontierCache()
         self.explored_goals = []  # list of explored goals
         self.exploration_direction = Vector([0.0, 0.0])  # current exploration direction
+        self.last_costmap = None  # store last costmap for information comparison
+        self.num_no_gain_attempts = 0
+
+    def _count_costmap_information(self, costmap: Costmap) -> int:
+        """
+        Count the amount of information in a costmap (free space + obstacles).
+
+        Args:
+            costmap: Costmap to analyze
+
+        Returns:
+            Number of cells that are free space or obstacles (not unknown)
+        """
+        free_count = np.sum(costmap.grid == CostValues.FREE)
+        obstacle_count = np.sum(costmap.grid >= self.occupancy_threshold)
+        return int(free_count + obstacle_count)
 
     def _get_neighbors(self, point: GridPoint, costmap: Costmap) -> List[GridPoint]:
         """Get valid neighboring points for a given grid point."""
@@ -481,31 +504,22 @@ class WavefrontFrontierExplorer:
             List containing single best frontier, or empty list if none suitable
         """
         if not frontier_centroids:
-            print("DEBUG: No frontier centroids provided to ranking")
             return []
 
-        print(f"DEBUG: Starting frontier ranking with {len(frontier_centroids)} candidates")
         valid_frontiers = []
 
         for i, frontier in enumerate(frontier_centroids):
             robot_distance = np.sqrt(
                 (frontier.x - robot_pose.x) ** 2 + (frontier.y - robot_pose.y) ** 2
             )
-            print(f"DEBUG: Evaluating frontier {i}: {frontier}, distance: {robot_distance:.2f}m")
 
             # Filter 1: Skip frontiers too close to robot
             if robot_distance < self.min_distance_from_robot:
-                print(
-                    f"DEBUG: Skipping frontier {frontier} - too close to robot ({robot_distance:.2f}m < {self.min_distance_from_robot}m)"
-                )
                 continue
 
             # Filter 2: Skip frontiers too close to obstacles
             obstacle_distance = self._compute_distance_to_obstacles(frontier, costmap)
             if obstacle_distance < self.min_distance_from_obstacles:
-                print(
-                    f"DEBUG: Skipping frontier {frontier} - too close to obstacles ({obstacle_distance:.2f}m < {self.min_distance_from_obstacles}m)"
-                )
                 continue
 
             # Compute comprehensive score
@@ -515,21 +529,14 @@ class WavefrontFrontierExplorer:
             )
 
             valid_frontiers.append((frontier, score))
-            print(
-                f"DEBUG: Frontier {frontier} - Score: {score:.2f}, Size: {frontier_size}, Distance: {robot_distance:.2f}m"
-            )
 
         if not valid_frontiers:
-            print("DEBUG: No valid frontiers found after filtering")
             return []
 
         # Sort by score and return only the best one
         valid_frontiers.sort(key=lambda x: x[1], reverse=True)
         best_frontier = valid_frontiers[0][0]
 
-        print(
-            f"DEBUG: Selected best frontier: {best_frontier} with score {valid_frontiers[0][1]:.2f}"
-        )
         return [best_frontier]  # Return list with single best frontier
 
     def _rank_frontiers_by_distance(
@@ -573,26 +580,54 @@ class WavefrontFrontierExplorer:
         Returns:
             Single best frontier goal in world coordinates, or None if no suitable frontiers found
         """
+        # Check if we should compare costmaps for information gain
+        if len(self.explored_goals) > 5 and self.last_costmap is not None:
+            current_info = self._count_costmap_information(costmap)
+            last_info = self._count_costmap_information(self.last_costmap)
+
+            # Check if information increase meets minimum percentage threshold
+            if last_info > 0:  # Avoid division by zero
+                info_increase_percent = (current_info - last_info) / last_info
+                if info_increase_percent < self.info_gain_threshold:
+                    logger.info(
+                        f"Information increase ({info_increase_percent:.2f}) below threshold ({self.info_gain_threshold:.2f})"
+                    )
+                    logger.info(
+                        f"Current information: {current_info}, Last information: {last_info}"
+                    )
+                    self.num_no_gain_attempts += 1
+                    if self.num_no_gain_attempts >= self.num_no_gain_attempts:
+                        logger.info(
+                            "No information gain for {} consecutive attempts, skipping frontier selection".format(
+                                self.num_no_gain_attempts
+                            )
+                        )
+                        return None
+
         # Always detect new frontiers to get most up-to-date information
         # The new algorithm filters out explored areas and returns only the best frontier
         frontiers = self.detect_frontiers(robot_pose, costmap)
 
         if not frontiers:
-            print("DEBUG: No suitable frontiers found")
+            # Store current costmap before returning
+            self.last_costmap = costmap
             return None
 
         # Update exploration direction based on best goal selection
         if frontiers:
             self._update_exploration_direction(robot_pose, frontiers[0])
-            print(f"DEBUG: Updated exploration direction toward {frontiers[0]}")
 
             # Store the selected goal as explored
             selected_goal = frontiers[0]
             self.mark_explored_goal(selected_goal)
-            print(f"DEBUG: Marked goal as explored: {selected_goal}")
+
+            # Store current costmap for next comparison
+            self.last_costmap = costmap
 
             return selected_goal
 
+        # Store current costmap before returning
+        self.last_costmap = costmap
         return None
 
     def mark_explored_goal(self, goal: Vector):
