@@ -116,7 +116,7 @@ class BaseLocalPlanner(ABC):
         self.position_reached: bool = False  # Flag indicating if position goal is reached
 
         # Stuck detection
-        self.stuck_detection_window_seconds = 12.0  # Time window for stuck detection (seconds)
+        self.stuck_detection_window_seconds = 4.0  # Time window for stuck detection (seconds)
         self.position_history_size = int(self.stuck_detection_window_seconds * control_frequency)
         self.position_history = deque(
             maxlen=self.position_history_size
@@ -125,7 +125,7 @@ class BaseLocalPlanner(ABC):
         self.unstuck_distance_threshold = (
             0.5  # Distance threshold for unstuck detection (meters) - increased hysteresis
         )
-        self.stuck_time_threshold = 5.0  # Time threshold for stuck detection (seconds) - increased
+        self.stuck_time_threshold = 3.0  # Time threshold for stuck detection (seconds) - increased
         self.is_recovery_active = False  # Whether recovery behavior is active
         self.recovery_start_time = 0.0  # When recovery behavior started
         self.recovery_duration = (
@@ -457,8 +457,6 @@ class BaseLocalPlanner(ABC):
             # First check position
             if goal_distance < self.goal_tolerance or self.position_reached:
                 self.position_reached = True
-                # Reset recovery attempts since we reached the goal successfully
-                self.recovery_attempts = 0
 
             else:
                 self.position_reached = False
@@ -958,6 +956,7 @@ class BaseLocalPlanner(ABC):
         # First recovery attempt: Simple backup behavior
         if self.recovery_attempts == 1:
             if recovery_time < self.backup_duration:
+                logger.warning(f"Recovery attempt 1: backup for {recovery_time:.1f}s")
                 return {"x_vel": -0.5, "angular_vel": 0.0}  # Backup at moderate speed
             else:
                 logger.info("Recovery attempt 1: backup completed")
@@ -981,8 +980,6 @@ class BaseLocalPlanner(ABC):
         if new_path is not None:
             logger.info("Replanning successful. Setting new waypoints.")
             self.set_goal_waypoints(new_path, self.goal_theta)
-            # Reset recovery attempts since replanning was successful
-            self.recovery_attempts = 0
             self.is_recovery_active = False
             self.last_recovery_end_time = current_time
             logger.info("Recovery attempts reset after successful replanning")

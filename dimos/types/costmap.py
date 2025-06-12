@@ -524,7 +524,6 @@ def pointcloud_to_costmap(
 
 def smooth_costmap_for_frontiers(
     costmap: Costmap,
-    alpha: float = 4.0,
 ) -> Costmap:
     """
     Smooth a costmap using morphological operations for frontier exploration.
@@ -535,7 +534,6 @@ def smooth_costmap_for_frontiers(
 
     Args:
         costmap: Input Costmap object
-        alpha: Controls morphological kernel size (larger = more smoothing)
 
     Returns:
         Smoothed Costmap object with enhanced free space connectivity
@@ -551,7 +549,7 @@ def smooth_costmap_for_frontiers(
     free_mask = (grid == CostValues.FREE).astype(np.uint8) * 255
 
     # 2. Apply morphological operations for smoothing
-    kernel_size = max(1, int(alpha))
+    kernel_size = 7
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
 
     # Dilate free space to connect nearby areas
@@ -560,7 +558,6 @@ def smooth_costmap_for_frontiers(
     # Morphological closing to fill small gaps
     closed = cv2.morphologyEx(dilated, cv2.MORPH_CLOSE, kernel, iterations=1)
 
-    # Erode to remove small noise
     eroded = cv2.erode(closed, kernel, iterations=1)
 
     # Apply the smoothed free space back to costmap

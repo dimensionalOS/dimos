@@ -90,8 +90,8 @@ class WavefrontFrontierExplorer:
         min_distance_from_robot: float = 0.5,
         explored_area_buffer: float = 0.5,
         min_distance_from_obstacles: float = 0.6,
-        info_gain_threshold: float = 0.05,
-        num_no_gain_attempts: int = 2,
+        info_gain_threshold: float = 0.03,
+        num_no_gain_attempts: int = 4,
     ):
         """
         Initialize the frontier explorer.
@@ -116,7 +116,7 @@ class WavefrontFrontierExplorer:
         self.explored_goals = []  # list of explored goals
         self.exploration_direction = Vector([0.0, 0.0])  # current exploration direction
         self.last_costmap = None  # store last costmap for information comparison
-        self.num_no_gain_attempts = 0
+        self.num_no_gain_attempts = num_no_gain_attempts
 
     def _count_costmap_information(self, costmap: Costmap) -> int:
         """
@@ -230,7 +230,7 @@ class WavefrontFrontierExplorer:
         self._cache.clear()
 
         # Apply filtered costmap (now default)
-        working_costmap = smooth_costmap_for_frontiers(costmap, alpha=3.0)
+        working_costmap = smooth_costmap_for_frontiers(costmap)
 
         # Subsample the costmap for faster processing
         if self.subsample_resolution > 1:
@@ -339,7 +339,7 @@ class WavefrontFrontierExplorer:
             return []
 
         # Rank frontiers using original costmap for proper filtering
-        ranked_frontiers = self._rank_frontiers_by_information_gain(
+        ranked_frontiers = self._rank_frontiers(
             frontier_centroids, frontier_sizes, robot_pose, costmap
         )
 
@@ -385,8 +385,7 @@ class WavefrontFrontierExplorer:
     def _compute_distance_to_explored_goals(self, frontier: Vector) -> float:
         """Compute distance from frontier to the nearest explored goal."""
         if not self.explored_goals:
-            return 0.0  # No explored goals, no penalty
-
+            return 5.0  # Default consistent value when no explored goals
         # Calculate distance to nearest explored goal
         min_distance = float("inf")
         for goal in self.explored_goals:
@@ -447,13 +446,10 @@ class WavefrontFrontierExplorer:
     ) -> float:
         """Compute comprehensive score considering multiple criteria."""
 
-        # 1. Distance from robot (penalty for being too close, bonus for reasonable distance)
+        # 1. Distance from robot (preference for moderate distances)
         robot_distance = np.sqrt(
             (frontier.x - robot_pose.x) ** 2 + (frontier.y - robot_pose.y) ** 2
         )
-
-        if robot_distance < self.min_distance_from_robot:
-            return -1000.0  # Heavy penalty for being too close
 
         # Distance score: prefer moderate distances (not too close, not too far)
         optimal_distance = 4.0  # meters
@@ -473,20 +469,18 @@ class WavefrontFrontierExplorer:
         # 5. Direction momentum (if we have a current direction)
         momentum_score = self._compute_direction_momentum_score(frontier, robot_pose)
 
-        # Combine scores with weights
+        # Combine scores with consistent scaling (no arbitrary multipliers)
         total_score = (
             0.3 * info_gain_score  # 30% information gain
-            + 0.3
-            * explored_goals_score
-            * 100  # 30% bonus for distance from explored goals (scaled up)
-            + 0.2 * distance_score * 50  # 20% distance optimization (scaled up)
-            + 0.15 * obstacles_score * 50  # 15% penalty for distance to obstacles (scaled up)
-            + 0.05 * momentum_score * 20  # 5% direction momentum (scaled up)
+            + 0.3 * explored_goals_score  # 30% distance from explored goals
+            + 0.2 * distance_score  # 20% distance optimization
+            + 0.15 * obstacles_score  # 15% distance from obstacles
+            + 0.05 * momentum_score  # 5% direction momentum
         )
 
         return total_score
 
-    def _rank_frontiers_by_information_gain(
+    def _rank_frontiers(
         self,
         frontier_centroids: List[Vector],
         frontier_sizes: List[int],
@@ -532,44 +526,16 @@ class WavefrontFrontierExplorer:
 
             valid_frontiers.append((frontier, score))
 
+        logger.info(f"Valid frontiers: {len(valid_frontiers)}")
+
         if not valid_frontiers:
             return []
 
-        # Sort by score and return only the best one
+        # Sort by score and return all valid frontiers (highest scores first)
         valid_frontiers.sort(key=lambda x: x[1], reverse=True)
-        best_frontier = valid_frontiers[0][0]
 
-        return [best_frontier]  # Return list with single best frontier
-
-    def _rank_frontiers_by_distance(
-        self, frontiers: List[Vector], robot_pose: Vector
-    ) -> List[Tuple[Vector, float]]:
-        """
-        Rank frontiers by distance from robot position.
-
-        Args:
-            frontiers: List of frontier centroids
-            robot_pose: Current robot position
-
-        Returns:
-            List of (frontier, distance) pairs sorted by distance (closest first)
-        """
-        if not frontiers:
-            return []
-
-        # Vectorized distance calculation using numpy
-        frontiers_array = np.array([[frontier.x, frontier.y] for frontier in frontiers])
-        robot_array = np.array([robot_pose.x, robot_pose.y])
-
-        # Compute all distances at once using broadcasting
-        distances = np.linalg.norm(frontiers_array - robot_array, axis=1)
-
-        # Create list of (frontier, distance) pairs
-        frontier_distances = list(zip(frontiers, distances))
-
-        # Sort by distance (closest first)
-        frontier_distances.sort(key=lambda x: x[1])
-        return frontier_distances
+        # Extract just the frontiers (remove scores) and return as list
+        return [frontier for frontier, _ in valid_frontiers]
 
     def get_exploration_goal(self, robot_pose: Vector, costmap: Costmap) -> Optional[Vector]:
         """
@@ -604,6 +570,7 @@ class WavefrontFrontierExplorer:
                                 self.num_no_gain_attempts
                             )
                         )
+                        self.reset_exploration_session()
                         return None
 
         # Always detect new frontiers to get most up-to-date information
@@ -613,6 +580,7 @@ class WavefrontFrontierExplorer:
         if not frontiers:
             # Store current costmap before returning
             self.last_costmap = costmap
+            self.reset_exploration_session()
             return None
 
         # Update exploration direction based on best goal selection
@@ -635,6 +603,21 @@ class WavefrontFrontierExplorer:
     def mark_explored_goal(self, goal: Vector):
         """Mark a goal as explored."""
         self.explored_goals.append(goal)
+
+    def reset_exploration_session(self):
+        """
+        Reset all exploration state variables for a new exploration session.
+
+        Call this method when starting a new exploration or when the robot
+        needs to forget its previous exploration history.
+        """
+        self.explored_goals.clear()  # Clear all previously explored goals
+        self.exploration_direction = Vector([0.0, 0.0])  # Reset exploration direction
+        self.last_costmap = None  # Clear last costmap comparison
+        self.num_no_gain_attempts = 0  # Reset no-gain attempt counter
+        self._cache.clear()  # Clear frontier point cache
+
+        logger.info("Exploration session reset - all state variables cleared")
 
 
 def test_frontier_detection_visual():
@@ -789,15 +772,9 @@ def test_frontier_detection_visual():
             if all_frontiers:
                 print(f"Found {len(all_frontiers)} frontier candidates")
 
-                # Get ranked frontiers for top 20 visualization
-                ranked_frontiers = explorer._rank_frontiers_by_information_gain(
-                    all_frontiers, [1] * len(all_frontiers), robot_pose, costmap
-                )
-
-                # Take top 20 for visualization
-                top_candidates = (
-                    ranked_frontiers[:20] if len(ranked_frontiers) >= 20 else ranked_frontiers
-                )
+                # Use all detected frontiers for gray dot visualization
+                # (limit to top 20 if there are many)
+                top_candidates = all_frontiers[:20] if len(all_frontiers) >= 20 else all_frontiers
 
                 if selected_goal:
                     distance = np.sqrt(
@@ -805,10 +782,10 @@ def test_frontier_detection_visual():
                         + (selected_goal.y - robot_pose.y) ** 2
                     )
                     print(f"Selected goal: {selected_goal}, Distance: {distance:.2f}m")
-                    print(f"Showing top {len(top_candidates)} candidates for visualization")
+                    print(f"Showing {len(top_candidates)} candidates for visualization")
 
                     # Create visualization with filtered costmap
-                    costmap = smooth_costmap_for_frontiers(costmap, alpha=4.0)
+                    costmap = smooth_costmap_for_frontiers(costmap)
                     base_image = costmap_to_pil_image(costmap, image_scale_factor)
                     final_image = draw_goals_on_image(
                         base_image, robot_pose, costmap, top_candidates, selected_goal
