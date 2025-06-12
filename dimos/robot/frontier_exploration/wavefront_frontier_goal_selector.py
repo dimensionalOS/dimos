@@ -222,7 +222,7 @@ class WavefrontFrontierExplorer:
 
         Args:
             robot_pose: Current robot position in world coordinates (Vector with x, y)
-            costmap: Occupancy grid costmap (dimos Costmap)
+            costmap: Costmap for additional analysis
 
         Returns:
             List of frontier centroids in world coordinates
@@ -230,7 +230,7 @@ class WavefrontFrontierExplorer:
         self._cache.clear()
 
         # Apply filtered costmap (now default)
-        working_costmap = smooth_costmap_for_frontiers(costmap, alpha=4.0)
+        working_costmap = smooth_costmap_for_frontiers(costmap, alpha=3.0)
 
         # Subsample the costmap for faster processing
         if self.subsample_resolution > 1:
@@ -250,6 +250,7 @@ class WavefrontFrontierExplorer:
         # Main exploration queue - explore ALL reachable free space
         map_queue = deque([start_point])
         frontiers = []
+        frontier_sizes = []
 
         points_checked = 0
         frontier_candidates = 0
@@ -310,6 +311,7 @@ class WavefrontFrontierExplorer:
                     # Compute centroid in world coordinates (already correctly scaled)
                     centroid = self._compute_centroid(world_points)
                     frontiers.append(centroid)  # Store centroid
+                    frontier_sizes.append(len(new_frontier))  # Store frontier size
 
             # Add ALL neighbors to main exploration queue to explore entire free space
             for neighbor in self._get_neighbors(current_point, subsampled_costmap):
@@ -338,7 +340,7 @@ class WavefrontFrontierExplorer:
 
         # Rank frontiers using original costmap for proper filtering
         ranked_frontiers = self._rank_frontiers_by_information_gain(
-            frontier_centroids, [1] * len(frontier_centroids), robot_pose, costmap
+            frontier_centroids, frontier_sizes, robot_pose, costmap
         )
 
         return ranked_frontiers
