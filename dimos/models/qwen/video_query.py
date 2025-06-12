@@ -236,4 +236,4 @@ def get_bbox_from_qwen_frame(frame, object_name: Optional[str] = None) -> Option
         print(f"Error parsing Qwen response: {e}")
         print(f"Raw response: {response}")
 
-    return None
+    return None, None
