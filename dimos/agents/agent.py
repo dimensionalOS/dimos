@@ -190,6 +190,7 @@ class LLMAgent(Agent):
 
         # Conversation history for maintaining context between calls
         self.conversation_history = []
+        self._history_lock = threading.Lock()
 
         # Initialize input streams
         self.input_video_stream = input_video_stream
@@ -337,20 +338,36 @@ class LLMAgent(Agent):
         def _tooling_callback(message, messages, response_message, skill_library: SkillLibrary):
             has_called_tools = False
             new_messages = []
-            for tool_call in message.tool_calls:
-                has_called_tools = True
-                name = tool_call.function.name
-                args = json.loads(tool_call.function.arguments)
-                result = skill_library.call(name, **args)
-                logger.info(f"Function Call Results: {result}")
-                new_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": str(result),
-                        "name": name,
-                    }
-                )
+
+            # Open memory.txt file for logging tool calls
+            with open(os.path.join(self.output_dir, "memory.txt"), "a") as memory_file:
+                for tool_call in message.tool_calls:
+                    has_called_tools = True
+                    name = tool_call.function.name
+                    args = json.loads(tool_call.function.arguments)
+
+                    # Log the tool call to memory.txt
+                    memory_file.write(f"\n\nTOOL CALL: {name}\n")
+                    memory_file.write(f"ARGUMENTS: {json.dumps(args, indent=2)}\n")
+                    memory_file.flush()
+
+                    # Execute the tool call
+                    result = skill_library.call(name, **args)
+                    logger.info(f"Function Call Results: {result}")
+
+                    # Log the result to memory.txt
+                    memory_file.write(f"RESULT: {result}\n")
+                    memory_file.flush()
+
+                    new_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": str(result),
+                            "name": name,
+                        }
+                    )
+
             if has_called_tools:
                 logger.info("Sending Another Query.")
                 messages.append(response_message)
@@ -393,6 +410,12 @@ class LLMAgent(Agent):
             messages = self._build_prompt(
                 base64_image, dimensions, override_token_limit, condensed_results
             )
+
+            # Log the query to memory.txt
+            with open(os.path.join(self.output_dir, "memory.txt"), "a") as f:
+                f.write(f"\n\nQUERY: {self.query}\n\n")
+                f.flush()
+
             # logger.debug(f"Sending Query: {messages}")
             logger.info("Sending Query.")
             response_message = self._send_query(messages)
@@ -669,6 +692,19 @@ class LLMAgent(Agent):
                 observer, incoming_query=query_text, **kwargs
             )
         )
+
+    def append_to_history(self, content: str, role: str = "assistant") -> None:
+        """Appends a message to the conversation history.
+
+        Args:
+            content (str): The message content to append
+            role (str): The role of the message sender (default: 'assistant')
+                       Valid values are 'assistant', 'user', 'system'
+        """
+        with self._history_lock:
+            message = {"role": role, "content": content}
+            self.conversation_history.append(message)
+            logger.info(f"Added {role} message to conversation history: {content[:100]}...")
 
     def dispose_all(self):
         """Disposes of all active subscriptions managed by this agent."""
