@@ -164,7 +164,10 @@ class WebRTCRobot(ConnectionInterface):
         return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
 
     def standup_normal(self):
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]})
+        self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]})
+        time.sleep(0.5)
+        self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["RecoveryStand"]})
+        return True
 
     def standup(self):
         if self.mode == "ai":
