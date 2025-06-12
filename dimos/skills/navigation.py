@@ -341,6 +341,7 @@ class NavigateWithText(AbstractRobotSkill):
                     "query": self.query,
                     "error": "No valid position data found in semantic map",
                 }
+
         except Exception as e:
             logger.error(f"Error in semantic map navigation: {e}")
             return {"success": False, "error": f"Semantic map error: {e}"}
@@ -601,3 +602,96 @@ class NavigateToGoal(AbstractRobotSkill):
         self.unregister_as_running("NavigateToGoal", skill_library)
         self._stop_event.set()
         return "Navigation stopped"
+
+
+class Explore(AbstractRobotSkill):
+    """
+    A skill that performs autonomous frontier exploration.
+
+    This skill continuously finds and navigates to unknown frontiers in the environment
+    until no more frontiers are found or the exploration is stopped.
+
+    Don't save GetPose locations when frontier exploring. Don't call any other skills except stop skill when needed.
+    """
+
+    timeout: float = Field(60.0, description="Maximum time (in seconds) allowed for exploration")
+
+    def __init__(self, robot=None, **data):
+        """
+        Initialize the Explore skill.
+
+        Args:
+            robot: The robot instance
+            **data: Additional data for configuration
+        """
+        super().__init__(robot=robot, **data)
+        self._stop_event = threading.Event()
+
+    def __call__(self):
+        """
+        Start autonomous frontier exploration.
+
+        Returns:
+            A dictionary containing the result of the exploration
+        """
+        super().__call__()
+
+        if self._robot is None:
+            error_msg = "No robot instance provided to Explore skill"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
+
+        # Reset stop event to make sure we don't immediately abort
+        self._stop_event.clear()
+
+        skill_library = self._robot.get_skills()
+        self.register_as_running("Explore", skill_library)
+
+        logger.info("Starting autonomous frontier exploration")
+
+        try:
+            # Start exploration using the robot's explore method
+            result = self._robot.explore(stop_event=self._stop_event)
+
+            if result:
+                logger.info("Exploration completed successfully - no more frontiers found")
+                return {
+                    "success": True,
+                    "message": "Exploration completed - all accessible areas explored",
+                }
+            else:
+                if self._stop_event.is_set():
+                    logger.info("Exploration stopped by user")
+                    return {
+                        "success": False,
+                        "message": "Exploration stopped by user",
+                    }
+                else:
+                    logger.warning("Exploration did not complete successfully")
+                    return {
+                        "success": False,
+                        "message": "Exploration failed or was interrupted",
+                    }
+
+        except Exception as e:
+            error_msg = f"Error during exploration: {e}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+            }
+        finally:
+            self.stop()
+
+    def stop(self):
+        """
+        Stop the exploration.
+
+        Returns:
+            A message indicating that the exploration was stopped
+        """
+        logger.info("Stopping Explore")
+        skill_library = self._robot.get_skills()
+        self.unregister_as_running("Explore", skill_library)
+        self._stop_event.set()
+        return "Exploration stopped"

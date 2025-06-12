@@ -24,7 +24,7 @@ from dimos.utils.transform_utils import normalize_angle
 
 from dimos.robot.local_planner.local_planner import BaseLocalPlanner, visualize_local_planner_state
 from dimos.types.costmap import Costmap
-from dimos.types.vector import Vector
+from dimos.types.vector import Vector, VectorLike
 from nav_msgs.msg import OccupancyGrid
 
 logger = setup_logger("dimos.robot.unitree.vfh_local_planner", level=logging.DEBUG)
@@ -54,6 +54,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         control_frequency: float = 10.0,
         safe_goal_distance: float = 1.0,
         max_recovery_attempts: int = 3,
+        global_planner_plan: Optional[Callable[[VectorLike], Optional[Any]]] = None,
     ):
         """
         Initialize the VFH + Pure Pursuit planner.
@@ -75,6 +76,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             control_frequency: Frequency at which the planner is called (Hz)
             safe_goal_distance: Distance at which to adjust the goal and ignore obstacles (meters)
             max_recovery_attempts: Maximum number of recovery attempts
+            global_planner_plan: Optional function to get the global plan
         """
         # Initialize base class
         super().__init__(
@@ -93,6 +95,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             control_frequency=control_frequency,
             safe_goal_distance=safe_goal_distance,
             max_recovery_attempts=max_recovery_attempts,
+            global_planner_plan=global_planner_plan,
         )
 
         # VFH specific parameters
@@ -179,7 +182,6 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             )
 
         if self.check_collision(0.0, safety_threshold=self.safety_threshold):
-            logger.warning("Collision detected ahead. Stopping.")
             linear_vel = 0.0
 
         self.prev_linear_vel = linear_vel

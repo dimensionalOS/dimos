@@ -35,6 +35,7 @@ from dimos.robot.frontier_exploration.qwen_frontier_predictor import QwenFrontie
 from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
+import threading
 
 
 class Color(VUI_COLOR): ...
@@ -140,26 +141,6 @@ class UnitreeGo2(Robot):
             self.person_tracking_stream = None
             self.object_tracking_stream = None
 
-        # Initialize the local planner using WebRTC-specific methods
-        self.local_planner = VFHPurePursuitPlanner(
-            get_costmap=lambda: self.map.local_costmap,
-            get_robot_pose=lambda: self.odom(),
-            move=self.move,  # Use the robot's move method directly
-            robot_width=0.36,  # Unitree Go2 width in meters
-            robot_length=0.6,  # Unitree Go2 length in meters
-            max_linear_vel=0.7,
-            max_angular_vel=0.65,
-            lookahead_distance=1.5,
-            visualization_size=500,  # 500x500 pixel visualization
-        )
-
-        # Initialize frontier exploration
-        self.frontier_explorer = WavefrontFrontierExplorer()
-
-        # Create costmap save directory if saving is enabled
-        if save_costmaps and not os.path.exists(costmap_save_dir):
-            os.makedirs(costmap_save_dir)
-
         self.global_planner = AstarPlanner(
             set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(
                 self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event
@@ -172,6 +153,27 @@ class UnitreeGo2(Robot):
             save_costmaps=save_costmaps,
             costmap_save_dir=costmap_save_dir,
         )
+
+        # Initialize the local planner using WebRTC-specific methods
+        self.local_planner = VFHPurePursuitPlanner(
+            get_costmap=lambda: self.map.local_costmap,
+            get_robot_pose=lambda: self.odom(),
+            move=self.move,  # Use the robot's move method directly
+            robot_width=0.36,  # Unitree Go2 width in meters
+            robot_length=0.6,  # Unitree Go2 length in meters
+            max_linear_vel=0.7,
+            max_angular_vel=0.65,
+            lookahead_distance=1.5,
+            visualization_size=500,  # 500x500 pixel visualization
+            global_planner_plan=self.global_planner.plan,
+        )
+
+        # Initialize frontier exploration
+        self.frontier_explorer = WavefrontFrontierExplorer()
+
+        # Create costmap save directory if saving is enabled
+        if save_costmaps and not os.path.exists(costmap_save_dir):
+            os.makedirs(costmap_save_dir)
 
         # Create the visualization stream at 5Hz
         self.local_planner_viz_stream = self.local_planner.create_stream(frequency_hz=5.0)
@@ -188,6 +190,18 @@ class UnitreeGo2(Robot):
         position = Vector(self.odom().pos.x, self.odom().pos.y, self.odom().pos.z)
         orientation = Vector(self.odom().rot.x, self.odom().rot.y, self.odom().rot.z)
         return {"position": position, "rotation": orientation}
+
+    def explore(self, stop_event: Optional[threading.Event] = None) -> bool:
+        """
+        Start autonomous frontier exploration.
+
+        Args:
+            stop_event: Optional threading.Event to signal when exploration should stop
+
+        Returns:
+            bool: True if exploration completed successfully, False if stopped or failed
+        """
+        return self.global_planner.explore(stop_event=stop_event)
 
     def odom_stream(self):
         """Get the odometry stream from the robot.
