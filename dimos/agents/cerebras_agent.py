@@ -190,10 +190,6 @@ class CerebrasAgent(LLMAgent):
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
 
-        # Initialize conversation history for multi-turn conversations
-        self.conversation_history = []
-        self._history_lock = threading.Lock()
-
         # Configure skills
         self.skills = skills
         self.skill_library = None
@@ -484,6 +480,8 @@ class CerebrasAgent(LLMAgent):
                     "schema": self.response_model,
                 }
 
+            logger.debug(f"API Params: {json.dumps(api_params, indent=2)}")
+
             # Make the API call
             response = self.client.chat.completions.create(**api_params)
 
@@ -555,6 +553,11 @@ class CerebrasAgent(LLMAgent):
             messages = self._build_prompt(
                 messages, base64_image, dimensions, override_token_limit, condensed_results
             )
+
+            # Log the query to memory.txt
+            with open(os.path.join(self.output_dir, "memory.txt"), "a") as f:
+                f.write(f"\n\nQUERY: {self.query}\n\n")
+                f.flush()
 
             while True:
                 logger.info("Sending Query.")
