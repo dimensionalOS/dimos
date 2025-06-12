@@ -79,7 +79,7 @@ class BaseLocalPlanner(ABC):
         visualization_size: int = 400,
         control_frequency: float = 10.0,
         safe_goal_distance: float = 1.5,
-        max_recovery_attempts: int = 3,
+        max_recovery_attempts: int = 4,
         global_planner_plan: Optional[Callable[[VectorLike], Optional[Any]]] = None,
     ):  # Control frequency in Hz
         # Store callables for robot interactions
@@ -394,6 +394,9 @@ class BaseLocalPlanner(ABC):
                     )
                     self.position_reached = True
                     return {"x_vel": 0.0, "angular_vel": 0.0}
+
+            if self.navigation_failed:
+                return {"x_vel": 0.0, "angular_vel": 0.0}
 
             # Otherwise, execute normal recovery behavior
             logger.warning("Robot is stuck - executing recovery behavior")
@@ -954,7 +957,7 @@ class BaseLocalPlanner(ABC):
         recovery_time = current_time - self.recovery_start_time
 
         # First recovery attempt: Simple backup behavior
-        if self.recovery_attempts == 1:
+        if self.recovery_attempts % 2 == 1:
             if recovery_time < self.backup_duration:
                 logger.warning(f"Recovery attempt 1: backup for {recovery_time:.1f}s")
                 return {"x_vel": -0.5, "angular_vel": 0.0}  # Backup at moderate speed
@@ -962,13 +965,6 @@ class BaseLocalPlanner(ABC):
                 logger.info("Recovery attempt 1: backup completed")
                 self.recovery_attempts += 1
                 return {"x_vel": 0.0, "angular_vel": 0.0}
-
-        # Second+ recovery attempts: Replan using global planner
-        # Check if we have valid waypoints to replan to
-        if self.waypoints_in_absolute is None or len(self.waypoints_in_absolute) == 0:
-            logger.warning("No waypoints available for replanning. Recovery failed.")
-            self.navigation_failed = True
-            return {"x_vel": 0.0, "angular_vel": 0.0}
 
         final_goal = self.waypoints_in_absolute[-1]
         logger.info(
