@@ -52,12 +52,40 @@ class FrameProcessor:
         self.stream.emit(frame)
 
 
-def camera_loop(total=100, *processors):
-    n = 0
-    while True:
-        for proc in processors:
-            proc.receive_frame((time.time(), n))
-        n += 1
-        if n >= total:
-            break
-        time.sleep(1.0 / 60)
+class CameraLoop:
+    def __init__(self, fps=60):
+        self.client = get_client()
+        self.fps = fps
+        self.frame_interval = 1.0 / fps
+
+    async def run(self, total=100, *processors):
+        """Run the camera loop, sending frames to the specified processors."""
+        n = 0
+        while True:
+            frame = (time.time(), n)
+
+            # Send frame to all processors
+            for proc in processors:
+                await proc.receive_frame(frame)
+
+            n += 1
+            if n >= total:
+                break
+
+            time.sleep(self.frame_interval)
+
+    async def run_sync(self, total=100, *processors):
+        """Synchronous version for backwards compatibility."""
+        n = 0
+        while True:
+            frame = (time.time(), n)
+
+            # Send frame to all processors
+            for proc in processors:
+                proc.receive_frame(frame)
+
+            n += 1
+            if n >= total:
+                break
+
+            time.sleep(self.frame_interval)

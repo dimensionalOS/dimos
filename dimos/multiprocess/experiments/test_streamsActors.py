@@ -17,7 +17,7 @@ import multiprocessing as mp
 import pytest
 from dask.distributed import Client, LocalCluster
 
-from dimos.multiprocess.experiments.streamsActors import FrameProcessor, camera_loop
+from dimos.multiprocess.experiments.streamsActors import CameraLoop, FrameProcessor
 
 
 @pytest.fixture
@@ -32,10 +32,18 @@ def dask_client():
 
 @pytest.mark.asyncio
 async def test_frame_processing(dask_client):
-    # Create two frame processors
+    # Create two frame processors as actors
     actor_a = dask_client.submit(FrameProcessor, "A", actor=True).result()
     actor_b = dask_client.submit(FrameProcessor, "B", actor=True).result()
 
-    print(f"\nActor A: {actor_a}, Actor B: {actor_b}")
-    camera_loop(100, actor_a, actor_b)
-    print(f"Latency A: {actor_a.latency}, Latency B: {actor_b.latency}")
+    # Create camera loop as an actor
+    camera_actor = dask_client.submit(CameraLoop, fps=60, actor=True).result()
+
+    print(f"\nActor A: {actor_a}, Actor B: {actor_b}, Camera: {camera_actor}")
+
+    # Run the camera loop actor
+    camera_actor.run(100, actor_a, actor_b).result()
+
+    # Check latencies
+    print(f"Messages received by actor A: {actor_a.frame_count}, Latency A: {actor_a.latency}")
+    print(f"Messages received by actor B: {actor_b.frame_count}, Latency B: {actor_b.latency}")
