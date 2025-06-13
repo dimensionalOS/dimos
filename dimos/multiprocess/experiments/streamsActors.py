@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import time
 from datetime import datetime
 
@@ -45,47 +46,34 @@ class FrameProcessor:
         return frame
 
     async def get_latency(self) -> float:
-        print(f"{self.name}: GET LATENCY CALLED Latency: {self.latency}")
         return self.latency
 
     async def receive_frame(self, frame) -> float:
+        """Legacy method for backwards compatibility"""
         self.stream.emit(frame)
 
 
 class CameraLoop:
+    stream: Stream = Stream(asynchronous=True)
+
     def __init__(self, fps=60):
         self.client = get_client()
         self.fps = fps
         self.frame_interval = 1.0 / fps
 
-    async def run(self, total=100, *processors):
-        """Run the camera loop, sending frames to the specified processors."""
+    def add_processor(self, processor):
+        self.stream.sink(processor.receive_frame)
+
+    def add_processors(self, *processors):
+        for processor in processors:
+            self.add_processor(processor)
+
+    async def run(self, total=100):
         n = 0
         while True:
             frame = (time.time(), n)
-
-            # Send frame to all processors
-            for proc in processors:
-                await proc.receive_frame(frame)
-
+            self.stream.emit(frame)
             n += 1
             if n >= total:
                 break
-
-            time.sleep(self.frame_interval)
-
-    async def run_sync(self, total=100, *processors):
-        """Synchronous version for backwards compatibility."""
-        n = 0
-        while True:
-            frame = (time.time(), n)
-
-            # Send frame to all processors
-            for proc in processors:
-                proc.receive_frame(frame)
-
-            n += 1
-            if n >= total:
-                break
-
-            time.sleep(self.frame_interval)
+            await asyncio.sleep(self.frame_interval)

@@ -13,11 +13,31 @@
 # limitations under the License.
 
 import multiprocessing as mp
+from datetime import datetime
+from typing import Any, Callable, Tuple
 
 import pytest
 from dask.distributed import Client, LocalCluster
 
 from dimos.multiprocess.experiments.streamsActors import CameraLoop, FrameProcessor
+
+
+def time_call(func: Callable, *args, **kwargs) -> Tuple[Any, float]:
+    """
+    Time any function call and return both the result and execution time.
+
+    Args:
+        func: The function to call
+        *args: Positional arguments to pass to the function
+        **kwargs: Keyword arguments to pass to the function
+
+    Returns:
+        Tuple of (result, execution_time_in_seconds)
+    """
+    start_time = datetime.now()
+    func(*args, **kwargs)
+    execution_time = (datetime.now() - start_time).total_seconds() * 1_000
+    return execution_time
 
 
 @pytest.fixture
@@ -31,7 +51,7 @@ def dask_client():
 
 
 @pytest.mark.asyncio
-async def test_frame_processing(dask_client):
+async def test_frame_processing_actor_latency(dask_client):
     # Create two frame processors as actors
     actor_a = dask_client.submit(FrameProcessor, "A", actor=True).result()
     actor_b = dask_client.submit(FrameProcessor, "B", actor=True).result()
@@ -41,9 +61,24 @@ async def test_frame_processing(dask_client):
 
     print(f"\nActor A: {actor_a}, Actor B: {actor_b}, Camera: {camera_actor}")
 
+    camera_actor.add_processors(actor_a, actor_b)
+
     # Run the camera loop actor
-    camera_actor.run(100, actor_a, actor_b).result()
+    camera_actor.run(50).result()
+    # we are not awaiting but calling result() in order to block while this is executing
+
+    print(f"Attribute access latency {time_call(lambda: actor_a.latency)}ms")
+    print(f"Function call latency {time_call(lambda: actor_a.get_latency().result())}ms")
 
     # Check latencies
-    print(f"Messages received by actor A: {actor_a.frame_count}, Latency A: {actor_a.latency}")
-    print(f"Messages received by actor B: {actor_b.frame_count}, Latency B: {actor_b.latency}")
+    print(
+        f"Messages received by actor A: {actor_a.frame_count}, Average latency A: {actor_a.latency}"
+    )
+    print(
+        f"Messages received by actor B: {actor_b.frame_count}, Average latency B: {actor_b.latency}"
+    )
+
+    assert actor_a.frame_count == 50
+    assert actor_b.frame_count == 50
+    assert 0 < actor_a.latency < 10
+    assert 0 < actor_b.latency < 10
