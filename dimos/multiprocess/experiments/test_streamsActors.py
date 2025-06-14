@@ -82,3 +82,13 @@ async def test_frame_processing_actor_latency(dask_client):
     assert actor_b.frame_count == 50
     assert 0 < actor_a.latency < 10
     assert 0 < actor_b.latency < 10
+
+
+@pytest.mark.asyncio
+async def _test_actor_api_design(dask_client):
+    camera = CameraLoop(fps=60)
+    objects = FrameProcessor(name="Objects", input=camera)
+    people = FrameProcessor(name="People", input=camera.stream_main)
+
+    joined = JoinStreams(objects, people)
+    joined.sink(print)
