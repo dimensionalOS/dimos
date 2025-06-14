@@ -67,21 +67,21 @@ async def test_frame_processing_actor_latency(dask_client):
     camera_actor.run(50).result()
     # we are not awaiting but calling result() in order to block while this is executing
 
-    print(f"Attribute access latency {time_call(lambda: actor_a.latency)}ms")
+    print(f"Attribute access latency {time_call(lambda: actor_a.avg_latency)}ms")
     print(f"Function call latency {time_call(lambda: actor_a.get_latency().result())}ms")
 
     # Check latencies
     print(
-        f"Messages received by actor A: {actor_a.frame_count}, Average latency A: {actor_a.latency}"
+        f"Messages received by actor A: {actor_a.frame_count}, Average latency A: {actor_a.avg_latency}"
     )
     print(
-        f"Messages received by actor B: {actor_b.frame_count}, Average latency B: {actor_b.latency}"
+        f"Messages received by actor B: {actor_b.frame_count}, Average latency B: {actor_b.avg_latency}"
     )
 
     assert actor_a.frame_count == 50
     assert actor_b.frame_count == 50
-    assert 0 < actor_a.latency < 10
-    assert 0 < actor_b.latency < 10
+    assert 0 < actor_a.avg_latency < 10
+    assert 0 < actor_b.avg_latency < 10
 
 
 @pytest.mark.asyncio

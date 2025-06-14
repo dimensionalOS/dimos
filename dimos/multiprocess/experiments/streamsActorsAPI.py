@@ -101,7 +101,7 @@ class TimedFrame(Frame):
 
 
 class LatencyActor:
-    latency: float = 0
+    avg_latency: float = 0
     frame_count: int = 0
 
     def __init__(self, name, verbose=False):
@@ -131,12 +131,14 @@ class LatencyActor:
         time_diff = timed_frame["latency"]
 
         self.frame_count += 1
-        self.latency = (self.latency * (self.frame_count - 1) + time_diff) / self.frame_count
+        self.avg_latency = (
+            self.avg_latency * (self.frame_count - 1) + time_diff
+        ) / self.frame_count
 
         return timed_frame
 
     async def get_latency(self) -> float:
-        return self.latency
+        return self.avg_latency
 
     async def receive_frame(self, frame: Frame) -> None:
         # print("LatencyActor received frame", frame)

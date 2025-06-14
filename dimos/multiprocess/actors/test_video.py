@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 
 import pytest
 
@@ -34,6 +33,6 @@ async def test_api(dask_client):
     camera_actor.add_processor(frame_actor)
     camera_actor.run(70).result()
     print("Camera actor run finished")
+    print(f"Average latency: {frame_actor.avg_latency}")
 
-    await asyncio.sleep(2)
-    # print(f"Frame actor received {frame_actor.frame_count} frames")
+    assert 0 < frame_actor.avg_latency < 10

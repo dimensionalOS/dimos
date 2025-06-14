@@ -21,7 +21,7 @@ from streamz import Stream
 
 
 class FrameProcessor:
-    latency: float = 0
+    avg_latency: float = 0
     frame_count: int = 0
 
     def __init__(self, name, verbose=False):
@@ -42,11 +42,13 @@ class FrameProcessor:
         (timestamp, n, time_diff) = frame
         # Update running average
         self.frame_count += 1
-        self.latency = (self.latency * (self.frame_count - 1) + time_diff) / self.frame_count
+        self.avg_latency = (
+            self.avg_latency * (self.frame_count - 1) + time_diff
+        ) / self.frame_count
         return frame
 
     async def get_latency(self) -> float:
-        return self.latency
+        return self.avg_latency
 
     async def receive_frame(self, frame) -> float:
         """Legacy method for backwards compatibility"""
