@@ -63,7 +63,7 @@ class Sam2DSegmenter:
         self.use_tracker = use_tracker
         self.use_analyzer = use_analyzer
         self.use_rich_labeling = use_rich_labeling
-        
+
         # Determine model type automatically if needed
         if model_type == "auto":
             if "sam2" in model_path.lower() or "sam_2" in model_path.lower():
@@ -75,7 +75,7 @@ class Sam2DSegmenter:
                 self.model_type = "fastsam"
         else:
             self.model_type = model_type
-        
+
         # Initialize the appropriate model
         if self.model_type == "sam2":
             self.model = SAM(model_path)

@@ -21,14 +21,15 @@ import numpy as np
 import time
 import argparse
 import matplotlib
+
 # Try to use TkAgg backend for live display, fallback to Agg if not available
 try:
-    matplotlib.use('TkAgg')
+    matplotlib.use("TkAgg")
 except:
     try:
-        matplotlib.use('Qt5Agg')
+        matplotlib.use("Qt5Agg")
     except:
-        matplotlib.use('Agg')  # Fallback to non-interactive
+        matplotlib.use("Agg")  # Fallback to non-interactive
 import matplotlib.pyplot as plt
 import open3d as o3d
 from typing import Dict, List
@@ -119,20 +120,20 @@ def main():
     print(f"\n✅ Processor Results:")
     print(f"   Available results: {list(results.keys())}")
     print(f"   Processing time: {results.get('processing_time', 0):.3f}s")
-    
+
     # Show timing breakdown if available
-    if 'timing_breakdown' in results:
-        breakdown = results['timing_breakdown']
+    if "timing_breakdown" in results:
+        breakdown = results["timing_breakdown"]
         print(f"   Timing breakdown:")
         print(f"     - Detection: {breakdown.get('detection', 0):.3f}s")
-        print(f"     - Segmentation: {breakdown.get('segmentation', 0):.3f}s") 
+        print(f"     - Segmentation: {breakdown.get('segmentation', 0):.3f}s")
         print(f"     - Point cloud: {breakdown.get('pointcloud', 0):.3f}s")
 
     # Print object information
-    detected_count = len(results.get('detected_objects', []))
-    segmentation_count = len(results.get('segmentation_objects', []))
-    all_count = len(results.get('all_objects', []))
-    
+    detected_count = len(results.get("detected_objects", []))
+    segmentation_count = len(results.get("segmentation_objects", []))
+    all_count = len(results.get("all_objects", []))
+
     print(f"   Detection objects: {detected_count}")
     print(f"   Segmentation objects: {segmentation_count}")
     print(f"   All objects processed: {all_count}")
@@ -153,63 +154,63 @@ def main():
     # Determine number of subplots based on what results we have
     num_plots = 0
     plot_configs = []
-    
+
     if "detection_viz" in results and results["detection_viz"] is not None:
         plot_configs.append(("detection_viz", "Object Detection"))
         num_plots += 1
-    
+
     if "segmentation_viz" in results and results["segmentation_viz"] is not None:
         plot_configs.append(("segmentation_viz", "Semantic Segmentation"))
         num_plots += 1
-        
+
     if "pointcloud_viz" in results and results["pointcloud_viz"] is not None:
         plot_configs.append(("pointcloud_viz", "All Objects Point Cloud"))
         num_plots += 1
-    
+
     if "detected_pointcloud_viz" in results and results["detected_pointcloud_viz"] is not None:
         plot_configs.append(("detected_pointcloud_viz", "Detection Objects Point Cloud"))
         num_plots += 1
-        
+
     if "grasp_overlay" in results and results["grasp_overlay"] is not None:
         plot_configs.append(("grasp_overlay", "Grasp Overlay"))
         num_plots += 1
-    
+
     if num_plots == 0:
         print("No visualization results to display")
         return
-    
+
     # Create subplot layout
     if num_plots <= 3:
-        fig, axes = plt.subplots(1, num_plots, figsize=(6*num_plots, 5))
+        fig, axes = plt.subplots(1, num_plots, figsize=(6 * num_plots, 5))
     else:
         rows = 2
         cols = (num_plots + 1) // 2
-        fig, axes = plt.subplots(rows, cols, figsize=(6*cols, 5*rows))
-    
+        fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows))
+
     # Ensure axes is always a list for consistent indexing
     if num_plots == 1:
         axes = [axes]
     elif num_plots > 2:
         axes = axes.flatten()
-    
+
     # Plot each result
     for i, (key, title) in enumerate(plot_configs):
         axes[i].imshow(results[key])
         axes[i].set_title(title)
         axes[i].axis("off")
-    
+
     # Hide unused subplots if any
     if num_plots > 3:
         for i in range(num_plots, len(axes)):
             axes[i].axis("off")
 
     plt.tight_layout()
-    
+
     # Save and show the plot
     output_path = "manipulation_results.png"
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
     print(f"Results visualization saved to: {output_path}")
-    
+
     # Show plot live as well
     plt.show(block=True)
     plt.close()
@@ -224,19 +225,19 @@ def main():
             visualize_grasps_3d(pcd, all_grasps)
     else:
         logger.info("Grasp generation disabled - skipping 3D grasp visualization")
-    
+
     # Visualize full point cloud if available
     if "full_pointcloud" in results and results["full_pointcloud"] is not None:
         full_pcd = results["full_pointcloud"]
         print(f"Visualizing full point cloud with {len(np.asarray(full_pcd.points))} points")
-        
+
         # Ask user if they want to see the full point cloud
         try:
             visualize_pcd(
-                full_pcd, 
+                full_pcd,
                 window_name="Full Scene Point Cloud",
                 point_size=2.0,
-                show_coordinate_frame=True
+                show_coordinate_frame=True,
             )
         except (KeyboardInterrupt, EOFError):
             print("\nSkipping full point cloud visualization")

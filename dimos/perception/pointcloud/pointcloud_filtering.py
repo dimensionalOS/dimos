@@ -191,7 +191,7 @@ class PointcloudFiltering:
     def _extract_masks_from_objects(self, objects: List[ObjectData]) -> List[np.ndarray]:
         """Extract segmentation masks from ObjectData objects."""
         return [obj["segmentation_mask"] for obj in objects]
-    
+
     def get_full_point_cloud(self) -> o3d.geometry.PointCloud:
         """Get the full point cloud."""
         return self.full_pcd
@@ -210,16 +210,16 @@ class PointcloudFiltering:
         Returns:
             List of updated ObjectData with pointcloud and 3D information. Each ObjectData
             dictionary is enhanced with the following new fields:
-            
+
             **3D Spatial Information** (added when sufficient points for cuboid fitting):
             - "position": Vector(x, y, z) - 3D center position in world coordinates (meters)
             - "rotation": Vector(roll, pitch, yaw) - 3D orientation as Euler angles (radians)
             - "size": {"width": float, "height": float, "depth": float} - 3D bounding box dimensions (meters)
-            
+
             **Point Cloud Data**:
             - "point_cloud": o3d.geometry.PointCloud - Filtered Open3D point cloud with colors
             - "color": np.ndarray - Consistent RGB color [R,G,B] (0-255) generated from object_id
-            
+
             **Grasp Generation Arrays** (AnyGrasp format):
             - "point_cloud_numpy": np.ndarray - Nx3 XYZ coordinates as float32 (meters)
             - "colors_numpy": np.ndarray - Nx3 RGB colors as float32 (0.0-1.0 range)
