@@ -107,6 +107,9 @@ class PointcloudFiltering:
         self.color_camera_matrix = load_camera_matrix_from_yaml(color_intrinsics)
         self.depth_camera_matrix = load_camera_matrix_from_yaml(depth_intrinsics)
 
+        # Store the full point cloud
+        self.full_pcd = None
+
     def generate_color_from_id(self, object_id: int) -> np.ndarray:
         """Generate a consistent color for a given object ID."""
         np.random.seed(object_id)
@@ -188,6 +191,10 @@ class PointcloudFiltering:
     def _extract_masks_from_objects(self, objects: List[ObjectData]) -> List[np.ndarray]:
         """Extract segmentation masks from ObjectData objects."""
         return [obj["segmentation_mask"] for obj in objects]
+    
+    def get_full_point_cloud(self) -> o3d.geometry.PointCloud:
+        """Get the full point cloud."""
+        return self.full_pcd
 
     def process_images(
         self, color_img: np.ndarray, depth_img: np.ndarray, objects: List[ObjectData]
@@ -201,7 +208,21 @@ class PointcloudFiltering:
             objects: List of ObjectData from object detection stream
 
         Returns:
-            List of updated ObjectData with pointcloud and 3D information
+            List of updated ObjectData with pointcloud and 3D information. Each ObjectData
+            dictionary is enhanced with the following new fields:
+            
+            **3D Spatial Information** (added when sufficient points for cuboid fitting):
+            - "position": Vector(x, y, z) - 3D center position in world coordinates (meters)
+            - "rotation": Vector(roll, pitch, yaw) - 3D orientation as Euler angles (radians)
+            - "size": {"width": float, "height": float, "depth": float} - 3D bounding box dimensions (meters)
+            
+            **Point Cloud Data**:
+            - "point_cloud": o3d.geometry.PointCloud - Filtered Open3D point cloud with colors
+            - "color": np.ndarray - Consistent RGB color [R,G,B] (0-255) generated from object_id
+            
+            **Grasp Generation Arrays** (AnyGrasp format):
+            - "point_cloud_numpy": np.ndarray - Nx3 XYZ coordinates as float32 (meters)
+            - "colors_numpy": np.ndarray - Nx3 RGB colors as float32 (0.0-1.0 range)
 
         Raises:
             ValueError: If inputs are invalid
@@ -249,7 +270,7 @@ class PointcloudFiltering:
         processed_masks = self._prepare_masks(masks, depth_img.shape)
 
         # Create point clouds efficiently
-        full_pcd, masked_pcds = create_point_cloud_and_extract_masks(
+        self.full_pcd, masked_pcds = create_point_cloud_and_extract_masks(
             color_img, depth_img, processed_masks, self.depth_camera_matrix, depth_scale=1.0
         )
 
