@@ -231,11 +231,11 @@ def detection_results_to_object_data(
     confidences: List[float],
     names: List[str],
     masks: Optional[List[np.ndarray]] = None,
-    source: str = "detection"
+    source: str = "detection",
 ) -> List[ObjectData]:
     """
     Convert detection/segmentation results to ObjectData format.
-    
+
     Args:
         bboxes: List of bounding boxes [x1, y1, x2, y2]
         track_ids: List of tracking IDs
@@ -244,12 +244,12 @@ def detection_results_to_object_data(
         names: List of class names
         masks: Optional list of segmentation masks
         source: Source type ("detection" or "segmentation")
-    
+
     Returns:
         List of ObjectData dictionaries
     """
     objects = []
-    
+
     for i in range(len(bboxes)):
         # Calculate basic properties from bbox
         bbox = bboxes[i]
@@ -257,7 +257,7 @@ def detection_results_to_object_data(
         height = bbox[3] - bbox[1]
         center_x = bbox[0] + width / 2
         center_y = bbox[1] + height / 2
-        
+
         # Create ObjectData
         object_data: ObjectData = {
             "object_id": track_ids[i] if i < len(track_ids) else i,
@@ -268,7 +268,6 @@ def detection_results_to_object_data(
             "label": names[i] if i < len(names) else f"{source}_object",
             "movement_tolerance": 1.0,  # Default to freely movable
             "segmentation_mask": masks[i] if masks and i < len(masks) else None,
-            
             # Initialize 3D properties (will be populated by point cloud processing)
             "position": Vector(0, 0, 0),
             "rotation": Vector(0, 0, 0),
@@ -279,5 +278,5 @@ def detection_results_to_object_data(
             },
         }
         objects.append(object_data)
-    
+
     return objects
