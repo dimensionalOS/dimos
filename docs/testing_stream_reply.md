@@ -45,7 +45,8 @@ SensorReplay(name="raw_odometry_rotate_walk").iterate(print)
 ```python
 from rx import operators as ops
 from operator import sub, add
-from sensor_tools import SensorReplay, Odometry
+from dimos.utils.testing import SensorReplay, SensorStorage
+from dimos.robot.unitree_webrtc.type.odometry import Odometry
 
 # Compute total yaw rotation (radians)
 
@@ -67,8 +68,8 @@ assert total_rad == pytest.approx(4.05, abs=0.01)
 ### 3.3 Lidar Mapping Example (200MB blob)
 
 ```python
-from sensor_tools import SensorReplay, LidarMessage
-from mapping import Map
+from dimos.utils.testing import SensorReplay, SensorStorage
+from dimos.robot.unitree_webrtc.type.map import Map
 
 lidar_stream = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
 map_ = Map(voxel_size=0.5)
@@ -134,9 +135,11 @@ Just copy to `tests/data/whatever`
 ## 7 Developer Workflow Checklist
 
 1. **Drop new data** into `tests/data/`.
-2. Run `./bin/lfs_push` (or let the pre commit hook nag you).
-3. Commit the resulting `tests/data/.lfs/<name>.tar.gz`.
-4. Open PR — reviewers pull only what they need, when they need it.
+2. Run your new tests that use SensorReplay or testData calls, make sure all works
+3. Run `./bin/lfs_push` (or let the pre commit hook nag you).
+4. Commit the resulting `tests/data/.lfs/<name>.tar.gz`.
+5. Optional - you can delete `tests/data/your_new_stuff` and re-run the test to ensure it gets downloaded from LFS correclty
+6. Push/PR
 
 ### 7.1 Pre commit Setup (optional but recommended)
 
