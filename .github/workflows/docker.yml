@@ -44,7 +44,7 @@ jobs:
         id: set-tag
         run: |
           case "${GITHUB_REF_NAME}" in
-            master) branch_tag="latest" ;;
+            main) branch_tag="latest" ;;
             dev)    branch_tag="dev"    ;;
             *)
               branch_tag=$(echo "${GITHUB_REF_NAME}" \
@@ -56,14 +56,6 @@ jobs:
           echo "branch tag determined: ${branch_tag}"
           echo branch_tag="${branch_tag}" >> "$GITHUB_OUTPUT"
 
-  ros:
-    needs: [check-changes]
-    if: needs.check-changes.outputs.ros == 'true'
-    uses: ./.github/workflows/_docker-build-template.yml
-    with:
-      branch-tag: ${{ needs.check-changes.outputs.branch-tag }}
-      target:  base-ros
-
   # just a debugger
   inspect-needs:
     needs: [check-changes, ros]
@@ -73,47 +65,105 @@ jobs:
       - run: |
           echo '${{ toJSON(needs) }}'
 
-  python:
-    needs: [check-changes, ros]
-    if: |
-      ${{
-      always() && !cancelled() &&
-      needs.check-changes.result == 'success' &&
-      ((needs.ros.result == 'success') ||
-      (needs.ros.result == 'skipped' &&
-      needs.check-changes.outputs.python == 'true'))
-      }}
+  ros:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      branch-tag:   ${{ needs.check-changes.outputs.branch-tag }}
-      target:  base-ros-python
+      from-image: ubuntu:22.04
+      to-image: ghcr.io/dimensionalos/ros:${{ needs.check-changes.outputs.branch-tag }}
+      dockerfile:  ros
+
+  # # just a debugger
+  # inspect-needs:
+  #   needs: [check-changes, ros]
+  #   runs-on: dimos-runner-ubuntu-2204
+  #   if: always()
+  #   steps:
+  #     - run: |
+  #         echo '${{ toJSON(needs) }}'
+
+  ros-python:
+    needs: [check-changes, ros]
+    if: always()
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      should-run: ${{
+        needs.check-changes.outputs.python == 'true' &&
+        needs.check-changes.result != 'error' &&
+        needs.ros.result != 'error'
+        }}
+
+      from-image: ghcr.io/dimensionalos/ros:${{ needs.ros.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      to-image: ghcr.io/dimensionalos/ros-python:${{ needs.check-changes.outputs.branch-tag }}
+      dockerfile:  python
       freespace: true
+
+  python:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.python == 'true'
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      should-run: true
+      freespace: true
+      dockerfile:  python
+      from-image: ubuntu:22.04
+      to-image: ghcr.io/dimensionalos/python:${{ needs.check-changes.outputs.branch-tag }}
 
   dev:
     needs: [check-changes, python]
-    if: |
-      ${{
-      always() && !cancelled() &&
-      needs.check-changes.result == 'success' &&
-      ((needs.python.result == 'success') ||
-      (needs.python.result == 'skipped' &&
-      needs.check-changes.outputs.dev == 'true'))
-      }}
+    if: always()
+
     uses: ./.github/workflows/_docker-build-template.yml
     with:
-      branch-tag:   ${{ needs.check-changes.outputs.branch-tag }}
-      target: dev
+      should-run: ${{
+        needs.check-changes.result == 'success' &&
+        ((needs.python.result == 'success') ||
+        (needs.python.result == 'skipped' &&
+        needs.check-changes.outputs.dev == 'true')) }}
+      from-image: ghcr.io/dimensionalos/python:${{ needs.python.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      to-image: ghcr.io/dimensionalos/dev:${{ needs.check-changes.outputs.branch-tag }}
+      dockerfile: dev
+
+  ros-dev:
+    needs: [check-changes, ros-python]
+    if: always()
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      should-run: ${{
+        needs.check-changes.result == 'success' &&
+        ((needs.ros-python.result == 'success') ||
+        (needs.ros-python.result == 'skipped' &&
+        needs.check-changes.outputs.dev == 'true'))
+        }}
+      from-image: ghcr.io/dimensionalos/ros-python:${{ needs.ros-python.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      to-image: ghcr.io/dimensionalos/ros-dev:${{ needs.check-changes.outputs.branch-tag }}
+      dockerfile: dev
+
+  run-ros-tests:
+    needs: [check-changes, ros-dev]
+    if: always()
+    uses: ./.github/workflows/tests.yml
+    with:
+      should-run: ${{
+        needs.check-changes.result == 'success' &&
+        ((needs.ros-dev.result == 'success') ||
+        (needs.ros-dev.result == 'skipped' &&
+        needs.check-changes.outputs.tests == 'true'))
+        }}
+      cmd: "pytest && pytest -m ros" # run tests that depend on ros as well
+      dev-image: ros-dev:${{ needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-tests:
     needs: [check-changes, dev]
-    if: |
-      ${{
-      always() && !cancelled() &&
-      needs.check-changes.result == 'success' &&
-      ((needs.dev.result == 'success') ||
-      (needs.dev.result == 'skipped' &&
-      needs.check-changes.outputs.tests == 'true'))
-      }}
+    if: always()
     uses: ./.github/workflows/tests.yml
     with:
-      branch-tag: ${{ needs.dev.result != 'success' && 'dev' || needs.check-changes.outputs.branch-tag }}
+      should-run: ${{
+        needs.check-changes.result == 'success' &&
+        ((needs.dev.result == 'success') ||
+        (needs.dev.result == 'skipped' &&
+        needs.check-changes.outputs.tests == 'true'))
+        }}
+      cmd: "pytest"
+      dev-image: dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}

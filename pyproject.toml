@@ -34,6 +34,7 @@ markers = [
     "benchmark: benchmark, executes something multiple times, calculates avg, prints to console",
     "exclude: arbitrary exclusion from CI and default test exec",
     "tool: dev tooling",
-    "needsdata: needs test data to be downloaded"]
+    "needsdata: needs test data to be downloaded",
+    "ros: depend on ros"]
 
-addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata'"
+addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not ros'"
