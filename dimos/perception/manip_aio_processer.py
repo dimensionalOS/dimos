@@ -39,7 +39,7 @@ logger = setup_logger("dimos.perception.manip_aio_processor")
 class ManipulationProcessor:
     """
     Sequential manipulation processor for single-frame processing.
-    
+
     Processes RGB-D frames through object detection, point cloud filtering,
     and optional grasp generation in a single thread without reactive streams.
     """
@@ -99,10 +99,7 @@ class ManipulationProcessor:
         logger.info(f"Initialized ManipulationProcessor with confidence={min_confidence}")
 
     def process_frame(
-        self, 
-        rgb_image: np.ndarray, 
-        depth_image: np.ndarray,
-        generate_grasps: bool = None
+        self, rgb_image: np.ndarray, depth_image: np.ndarray, generate_grasps: bool = None
     ) -> Dict[str, Any]:
         """
         Process a single RGB-D frame through the complete pipeline.
@@ -134,9 +131,9 @@ class ManipulationProcessor:
             step_start = time.time()
             logger.debug("Running object detection...")
             detection_results = self._run_object_detection(rgb_image)
-            
-            results['detection2d_objects'] = detection_results.get('objects', [])
-            results['detection_viz'] = detection_results.get('viz_frame')
+
+            results["detection2d_objects"] = detection_results.get("objects", [])
+            results["detection_viz"] = detection_results.get("viz_frame")
             detection_time = time.time() - step_start
 
             # Step 2: Semantic Segmentation (if enabled)
@@ -146,15 +143,15 @@ class ManipulationProcessor:
                 step_start = time.time()
                 logger.debug("Running semantic segmentation...")
                 segmentation_results = self._run_segmentation(rgb_image)
-                results['segmentation2d_objects'] = segmentation_results.get('objects', [])
-                results['segmentation_viz'] = segmentation_results.get('viz_frame')
+                results["segmentation2d_objects"] = segmentation_results.get("objects", [])
+                results["segmentation_viz"] = segmentation_results.get("viz_frame")
                 segmentation_time = time.time() - step_start
 
             # Step 3: Point Cloud Processing
             pointcloud_time = 0
-            detection2d_objects = results.get('detection2d_objects', [])
-            segmentation2d_objects = results.get('segmentation2d_objects', [])
-            
+            detection2d_objects = results.get("detection2d_objects", [])
+            segmentation2d_objects = results.get("segmentation2d_objects", [])
+
             # Process detection objects if available
             detected_objects = []
             if detection2d_objects:
@@ -164,7 +161,7 @@ class ManipulationProcessor:
                     rgb_image, depth_image, detection2d_objects
                 )
                 pointcloud_time += time.time() - step_start
-            
+
             # Process segmentation objects if available
             segmentation_filtered_objects = []
             if segmentation2d_objects:
@@ -174,77 +171,78 @@ class ManipulationProcessor:
                     rgb_image, depth_image, segmentation2d_objects
                 )
                 pointcloud_time += time.time() - step_start
-            
+
             # Combine all objects
             all_objects = segmentation_filtered_objects
-            
+
             # Get full point cloud
             full_pcd = self.pointcloud_filter.get_full_point_cloud()
-            
-            results['detected_objects'] = detected_objects
-            results['all_objects'] = all_objects
-            results['full_pointcloud'] = full_pcd
+
+            results["detected_objects"] = detected_objects
+            results["all_objects"] = all_objects
+            results["full_pointcloud"] = full_pcd
 
             # Create point cloud visualizations
             base_image = colorize_depth(depth_image, max_depth=10.0)
-            
+
             # Main pointcloud visualization (all objects)
             if all_objects:
-                results['pointcloud_viz'] = create_point_cloud_overlay_visualization(
+                results["pointcloud_viz"] = create_point_cloud_overlay_visualization(
                     base_image=base_image,
                     objects=all_objects,
                     intrinsics=self.camera_intrinsics,
                 )
             else:
-                results['pointcloud_viz'] = base_image
-            
+                results["pointcloud_viz"] = base_image
+
             # Detection objects pointcloud visualization
             if detected_objects:
-                results['detected_pointcloud_viz'] = create_point_cloud_overlay_visualization(
+                results["detected_pointcloud_viz"] = create_point_cloud_overlay_visualization(
                     base_image=base_image,
                     objects=detected_objects,
                     intrinsics=self.camera_intrinsics,
                 )
             else:
-                results['detected_pointcloud_viz'] = base_image
+                results["detected_pointcloud_viz"] = base_image
 
             # Step 4: Grasp Generation (if enabled)
             should_generate_grasps = (
-                generate_grasps if generate_grasps is not None 
-                else self.enable_grasp_generation
+                generate_grasps if generate_grasps is not None else self.enable_grasp_generation
             )
-            
+
             if should_generate_grasps and all_objects:
                 logger.debug("Generating grasps...")
                 grasps = self._run_grasp_generation(all_objects)
-                results['grasps'] = grasps
+                results["grasps"] = grasps
 
                 # Create grasp overlay
                 if grasps:
-                    results['grasp_overlay'] = self._create_grasp_overlay(rgb_image, grasps)
+                    results["grasp_overlay"] = self._create_grasp_overlay(rgb_image, grasps)
 
             # Ensure segmentation runs even if no objects detected
-            if self.enable_segmentation and 'segmentation_viz' not in results:
+            if self.enable_segmentation and "segmentation_viz" not in results:
                 logger.debug("Running semantic segmentation (no objects detected)...")
                 segmentation_results = self._run_segmentation(rgb_image)
-                results['segmentation2d_objects'] = segmentation_results.get('objects', [])
-                results['segmentation_viz'] = segmentation_results.get('viz_frame')
+                results["segmentation2d_objects"] = segmentation_results.get("objects", [])
+                results["segmentation_viz"] = segmentation_results.get("viz_frame")
 
         except Exception as e:
             logger.error(f"Error processing frame: {e}")
-            results['error'] = str(e)
+            results["error"] = str(e)
 
         # Add timing information
         total_time = time.time() - start_time
-        results['processing_time'] = total_time
-        results['timing_breakdown'] = {
-            'detection': detection_time if 'detection_time' in locals() else 0,
-            'segmentation': segmentation_time if 'segmentation_time' in locals() else 0,
-            'pointcloud': pointcloud_time if 'pointcloud_time' in locals() else 0,
-            'total': total_time
+        results["processing_time"] = total_time
+        results["timing_breakdown"] = {
+            "detection": detection_time if "detection_time" in locals() else 0,
+            "segmentation": segmentation_time if "segmentation_time" in locals() else 0,
+            "pointcloud": pointcloud_time if "pointcloud_time" in locals() else 0,
+            "total": total_time,
         }
         logger.debug(f"Frame processing completed in {total_time:.3f}s")
-        logger.debug(f"Timing breakdown: detection={detection_time:.3f}s, segmentation={segmentation_time:.3f}s, pointcloud={pointcloud_time:.3f}s")
+        logger.debug(
+            f"Timing breakdown: detection={detection_time:.3f}s, segmentation={segmentation_time:.3f}s, pointcloud={pointcloud_time:.3f}s"
+        )
 
         return results
 
@@ -253,10 +251,12 @@ class ManipulationProcessor:
         try:
             # Convert RGB to BGR for Detic detector
             bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
-            
+
             # Use process_image method from Detic detector
-            bboxes, track_ids, class_ids, confidences, names, masks = self.detector.process_image(bgr_image)
-            
+            bboxes, track_ids, class_ids, confidences, names, masks = self.detector.process_image(
+                bgr_image
+            )
+
             # Convert to ObjectData format using utility function
             objects = detection_results_to_object_data(
                 bboxes=bboxes,
@@ -265,28 +265,22 @@ class ManipulationProcessor:
                 confidences=confidences,
                 names=names,
                 masks=masks,
-                source="detection"
+                source="detection",
             )
-            
+
             # Create visualization using detector's built-in method
             viz_frame = self.detector.visualize_results(
                 rgb_image, bboxes, track_ids, class_ids, confidences, names
             )
-            
-            return {
-                'objects': objects,
-                'viz_frame': viz_frame
-            }
-                
+
+            return {"objects": objects, "viz_frame": viz_frame}
+
         except Exception as e:
             logger.error(f"Object detection failed: {e}")
-            return {'objects': [], 'viz_frame': rgb_image.copy()}
+            return {"objects": [], "viz_frame": rgb_image.copy()}
 
     def _run_pointcloud_filtering(
-        self, 
-        rgb_image: np.ndarray, 
-        depth_image: np.ndarray, 
-        objects: List[Dict]
+        self, rgb_image: np.ndarray, depth_image: np.ndarray, objects: List[Dict]
     ) -> List[Dict]:
         """Run point cloud filtering on detected objects."""
         try:
@@ -301,15 +295,15 @@ class ManipulationProcessor:
     def _run_segmentation(self, rgb_image: np.ndarray) -> Dict[str, Any]:
         """Run semantic segmentation on RGB image."""
         if not self.segmenter:
-            return {'objects': [], 'viz_frame': rgb_image.copy()}
-            
+            return {"objects": [], "viz_frame": rgb_image.copy()}
+
         try:
             # Convert RGB to BGR for segmenter
             bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
-            
+
             # Get segmentation results
             masks, bboxes, track_ids, probs, names = self.segmenter.process_image(bgr_image)
-            
+
             # Convert to ObjectData format using utility function
             objects = detection_results_to_object_data(
                 bboxes=bboxes,
@@ -318,9 +312,9 @@ class ManipulationProcessor:
                 confidences=probs,
                 names=names,
                 masks=masks,
-                source="segmentation"
+                source="segmentation",
             )
-            
+
             # Create visualization
             if masks:
                 viz_bgr = self.segmenter.visualize_results(
@@ -330,15 +324,12 @@ class ManipulationProcessor:
                 viz_frame = cv2.cvtColor(viz_bgr, cv2.COLOR_BGR2RGB)
             else:
                 viz_frame = rgb_image.copy()
-            
-            return {
-                'objects': objects,
-                'viz_frame': viz_frame
-            }
-                
+
+            return {"objects": objects, "viz_frame": viz_frame}
+
         except Exception as e:
             logger.error(f"Segmentation failed: {e}")
-            return {'objects': [], 'viz_frame': rgb_image.copy()}
+            return {"objects": [], "viz_frame": rgb_image.copy()}
 
     def _run_grasp_generation(self, filtered_objects: List[Dict]) -> Optional[List[Dict]]:
         """Run grasp generation on filtered objects."""
@@ -367,7 +358,11 @@ class ManipulationProcessor:
                 if "colors_numpy" in obj and obj["colors_numpy"] is not None:
                     colors = obj["colors_numpy"]
                     if isinstance(colors, np.ndarray) and colors.size > 0:
-                        if colors.shape[0] != points.shape[0] or len(colors.shape) != 2 or colors.shape[1] != 3:
+                        if (
+                            colors.shape[0] != points.shape[0]
+                            or len(colors.shape) != 2
+                            or colors.shape[1] != 3
+                        ):
                             colors = None
 
                 all_points.append(points)
@@ -392,9 +387,7 @@ class ManipulationProcessor:
             return None
 
     def _send_grasp_request_sync(
-        self, 
-        points: np.ndarray, 
-        colors: Optional[np.ndarray]
+        self, points: np.ndarray, colors: Optional[np.ndarray]
     ) -> Optional[List[Dict]]:
         """Send synchronous grasp request to AnyGrasp server."""
         try:
@@ -402,11 +395,11 @@ class ManipulationProcessor:
             if points is None or not isinstance(points, np.ndarray) or points.size == 0:
                 logger.error("Invalid points array")
                 return None
-                
+
             if len(points.shape) != 2 or points.shape[1] != 3:
                 logger.error(f"Points has invalid shape {points.shape}, expected (N, 3)")
                 return None
-                
+
             if points.shape[0] < 100:
                 logger.error(f"Insufficient points for grasp detection: {points.shape[0]} < 100")
                 return None
@@ -441,9 +434,7 @@ class ManipulationProcessor:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                result = loop.run_until_complete(
-                    self._async_grasp_request(points, colors)
-                )
+                result = loop.run_until_complete(self._async_grasp_request(points, colors))
                 return result
             finally:
                 loop.close()
@@ -453,9 +444,7 @@ class ManipulationProcessor:
             return None
 
     async def _async_grasp_request(
-        self, 
-        points: np.ndarray, 
-        colors: np.ndarray
+        self, points: np.ndarray, colors: np.ndarray
     ) -> Optional[List[Dict]]:
         """Async grasp request helper."""
         try:
