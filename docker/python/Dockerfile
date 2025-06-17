@@ -1,4 +1,5 @@
 ARG FROM_IMAGE=ghcr.io/dimensionalos/ros:dev
+ARG PYTHON_VERSION=3.13.5
 FROM ${FROM_IMAGE}
 
 # Install basic requirements
@@ -7,7 +8,6 @@ RUN apt-get install -y \
     curl \
     gnupg2 \
     lsb-release \
-    python3-pip \
     clang \
     portaudio19-dev \
     git \
@@ -29,7 +29,12 @@ RUN apt-get install -y \
     qtchooser \
     qt5-qmake \
     qtbase5-dev-tools \
-    supervisor
+    supervisor \
+    libreadline8 \
+    libreadline-dev
+
+RUN pyenv install ${PYTHON_VERSION}
+RUN pyenv global ${PYTHON_VERSION}
 
 RUN mkdir -p /app/dimos
 
