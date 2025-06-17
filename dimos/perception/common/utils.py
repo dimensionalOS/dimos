@@ -16,6 +16,7 @@ import cv2
 import numpy as np
 from typing import List, Tuple, Optional
 from dimos.types.manipulation import ObjectData
+from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.perception.common.utils")
@@ -221,3 +222,62 @@ def draw_object_detection_visualization(
             logger.warning(f"Error drawing object visualization: {e}")
 
     return viz_image
+
+
+def detection_results_to_object_data(
+    bboxes: List[List[float]],
+    track_ids: List[int],
+    class_ids: List[int],
+    confidences: List[float],
+    names: List[str],
+    masks: Optional[List[np.ndarray]] = None,
+    source: str = "detection"
+) -> List[ObjectData]:
+    """
+    Convert detection/segmentation results to ObjectData format.
+    
+    Args:
+        bboxes: List of bounding boxes [x1, y1, x2, y2]
+        track_ids: List of tracking IDs
+        class_ids: List of class indices
+        confidences: List of detection confidences
+        names: List of class names
+        masks: Optional list of segmentation masks
+        source: Source type ("detection" or "segmentation")
+    
+    Returns:
+        List of ObjectData dictionaries
+    """
+    objects = []
+    
+    for i in range(len(bboxes)):
+        # Calculate basic properties from bbox
+        bbox = bboxes[i]
+        width = bbox[2] - bbox[0]
+        height = bbox[3] - bbox[1]
+        center_x = bbox[0] + width / 2
+        center_y = bbox[1] + height / 2
+        
+        # Create ObjectData
+        object_data: ObjectData = {
+            "object_id": track_ids[i] if i < len(track_ids) else i,
+            "bbox": bbox,
+            "depth": -1.0,  # Will be populated by depth estimation or point cloud processing
+            "confidence": confidences[i] if i < len(confidences) else 1.0,
+            "class_id": class_ids[i] if i < len(class_ids) else 0,
+            "label": names[i] if i < len(names) else f"{source}_object",
+            "movement_tolerance": 1.0,  # Default to freely movable
+            "segmentation_mask": masks[i] if masks and i < len(masks) else None,
+            
+            # Initialize 3D properties (will be populated by point cloud processing)
+            "position": Vector(0, 0, 0),
+            "rotation": Vector(0, 0, 0),
+            "size": {
+                "width": 0.0,
+                "height": 0.0,
+                "depth": 0.0,
+            },
+        }
+        objects.append(object_data)
+    
+    return objects

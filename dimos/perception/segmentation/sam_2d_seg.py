@@ -47,6 +47,7 @@ class Sam2DSegmenter:
         use_tracker=True,
         use_analyzer=True,
         use_rich_labeling=False,
+        model_type="auto",  # "auto", "fastsam", "sam2"
     ):
         self.device = device
         if is_cuda_available():
@@ -62,6 +63,24 @@ class Sam2DSegmenter:
         self.use_tracker = use_tracker
         self.use_analyzer = use_analyzer
         self.use_rich_labeling = use_rich_labeling
+        
+        # Determine model type automatically if needed
+        if model_type == "auto":
+            if "sam2" in model_path.lower() or "sam_2" in model_path.lower():
+                self.model_type = "sam2"
+            elif "fastsam" in model_path.lower():
+                self.model_type = "fastsam"
+            else:
+                # Default to FastSAM for backward compatibility
+                self.model_type = "fastsam"
+        else:
+            self.model_type = model_type
+        
+        # Initialize the appropriate model
+        if self.model_type == "sam2":
+            self.model = SAM(model_path)
+        else:
+            self.model = FastSAM(model_path)
 
         module_dir = os.path.dirname(__file__)
         self.tracker_config = os.path.join(module_dir, "config", "custom_tracker.yaml")
@@ -94,16 +113,28 @@ class Sam2DSegmenter:
 
     def process_image(self, image):
         """Process an image and return segmentation results."""
-        results = self.model.track(
-            source=image,
-            device=self.device,
-            retina_masks=True,
-            conf=0.6,
-            iou=0.9,
-            persist=True,
-            verbose=False,
-            tracker=self.tracker_config,
-        )
+        if self.model_type == "sam2":
+            # For SAM 2, use segment everything mode
+            results = self.model(
+                source=image,
+                device=self.device,
+                save=False,
+                conf=0.4,
+                iou=0.9,
+                verbose=False,
+            )
+        else:
+            # For FastSAM, use the original tracking approach
+            results = self.model.track(
+                source=image,
+                device=self.device,
+                retina_masks=True,
+                conf=0.6,
+                iou=0.9,
+                persist=True,
+                verbose=False,
+                tracker=self.tracker_config,
+            )
 
         if len(results) > 0:
             # Get initial segmentation results
