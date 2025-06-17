@@ -1,5 +1,5 @@
 ARG FROM_IMAGE=ghcr.io/dimensionalos/ros:dev
-ARG PYTHON_VERSION=3.13.5
+ARG PYTHON_VERSION=3.12
 FROM ${FROM_IMAGE}
 
 # Install basic requirements
@@ -33,6 +33,7 @@ RUN apt-get install -y \
     libreadline8 \
     libreadline-dev
 
+RUN curl -fsSL https://pyenv.run | bash
 RUN pyenv install ${PYTHON_VERSION}
 RUN pyenv global ${PYTHON_VERSION}
 
