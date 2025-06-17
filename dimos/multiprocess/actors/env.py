@@ -19,12 +19,12 @@ from dask.distributed import get_worker
 def env():
     worker = get_worker()
     if worker:
-        print("Using worker environment", worker)
+        # print("Using worker environment", worker)
         if not hasattr(worker, "env"):
             worker.env = {}
         return worker.env
     else:
-        print("Using global environment")
+        # print("Using global environment")
         if not globals().get("env"):
             globals()["env"] = {}
         return globals()["env"]
@@ -35,12 +35,12 @@ def getenv(name: str, default_value=None):
     val = e.get(name)
     if val:
         if isinstance(val, threading.Event):
-            print("Event found, waiting for it to be released")
+            # print("Event found, waiting for it to be released")
             val.wait()
             return e.get(name)
         return val
 
-    print("Environment variable not set:", name)
+    # print("Environment variable not set:", name)
 
     # Only use locking for expensive callable functions
     if callable(default_value):
@@ -48,9 +48,9 @@ def getenv(name: str, default_value=None):
         e[name] = lock
 
         try:
-            print("Using F default value for", name)
+            # print("Using F default value for", name)
             computed_val = default_value()
-            print("Setting default value for", name, ":", computed_val)
+            # print("Setting default value for", name, ":", computed_val)
             e[name] = computed_val
             lock.set()
             return computed_val
@@ -61,6 +61,6 @@ def getenv(name: str, default_value=None):
             raise e
     else:
         # For non-callable defaults, just set directly (no locking needed)
-        print("Setting default value for", name, ":", default_value)
+        # print("Setting default value for", name, ":", default_value)
         env()[name] = default_value
         return default_value
