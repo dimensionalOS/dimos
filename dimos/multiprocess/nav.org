@@ -1,0 +1,15 @@
+# /lidar pointcloud
+# /global_map pointcloud
+
+# /move_cmd vector2
+
+# /global_target vector2
+
+# /odometry (vector3, vector3)
+
+
+# global_nav - (global_map, target) -> path
+
+# global_mapper - lidar -> global_map
+# local_nav - odometry,lidar,path -> move_cmd
+

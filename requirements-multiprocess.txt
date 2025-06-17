@@ -1,0 +1,2 @@
+dask[complete]==2025.5.1
+streamz==0.6.4
