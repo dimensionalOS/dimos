@@ -34,8 +34,15 @@ RUN apt-get install -y \
     libreadline-dev
 
 RUN curl -fsSL https://pyenv.run | bash
-RUN pyenv install ${PYTHON_VERSION}
-RUN pyenv global ${PYTHON_VERSION}
+
+# Add pyenv to PATH and initialize it in .bashrc first
+ENV PATH="/root/.pyenv/bin:$PATH"
+RUN echo 'export PATH="/root/.pyenv/bin:$PATH"' >> /root/.bashrc && \
+    echo 'eval "$(pyenv init -)"' >> /root/.bashrc && \
+    echo 'eval "$(pyenv virtualenv-init -)"' >> /root/.bashrc
+
+# Source .bashrc and install Python version
+RUN bash -c "source /root/.bashrc && pyenv install ${PYTHON_VERSION} && pyenv global ${PYTHON_VERSION}"
 
 RUN mkdir -p /app/dimos
 
