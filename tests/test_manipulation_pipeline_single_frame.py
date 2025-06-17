@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test manipulation pipeline with direct visualization and grasp data output."""
+"""Test manipulation processor with direct visualization and grasp data output."""
 
 import os
 import sys
@@ -20,18 +20,24 @@ import cv2
 import numpy as np
 import time
 import argparse
+import matplotlib
+# Try to use TkAgg backend for live display, fallback to Agg if not available
+try:
+    matplotlib.use('TkAgg')
+except:
+    try:
+        matplotlib.use('Qt5Agg')
+    except:
+        matplotlib.use('Agg')  # Fallback to non-interactive
 import matplotlib.pyplot as plt
 import open3d as o3d
 from typing import Dict, List
-import threading
-from reactivex import Observable, operators as ops
-from reactivex.subject import Subject
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dimos.perception.manip_aio_pipeline import ManipulationPipeline
+from dimos.perception.manip_aio_processer import ManipulationProcessor
 from dimos.perception.grasp_generation.utils import visualize_grasps_3d
-from dimos.perception.pointcloud.utils import load_camera_matrix_from_yaml
+from dimos.perception.pointcloud.utils import load_camera_matrix_from_yaml, visualize_pcd
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("test_pipeline_viz")
@@ -40,10 +46,10 @@ logger = setup_logger("test_pipeline_viz")
 def load_first_frame(data_dir: str):
     """Load first RGB-D frame and camera intrinsics."""
     # Load images
-    color_img = cv2.imread(os.path.join(data_dir, "color", "00000.png"))
+    color_img = cv2.imread(os.path.join(data_dir, "color", "00300.png"))
     color_img = cv2.cvtColor(color_img, cv2.COLOR_BGR2RGB)
 
-    depth_img = cv2.imread(os.path.join(data_dir, "depth", "00000.png"), cv2.IMREAD_ANYDEPTH)
+    depth_img = cv2.imread(os.path.join(data_dir, "depth", "00300.png"), cv2.IMREAD_ANYDEPTH)
     if depth_img.dtype == np.uint16:
         depth_img = depth_img.astype(np.float32) / 1000.0
     # Load intrinsics
@@ -74,59 +80,24 @@ def create_point_cloud(color_img, depth_img, intrinsics):
     return o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, o3d_intrinsics)
 
 
-def run_pipeline(color_img, depth_img, intrinsics):
-    """Run pipeline and collect results."""
-    # Create pipeline
-    pipeline = ManipulationPipeline(
+def run_processor(color_img, depth_img, intrinsics):
+    """Run processor and collect results."""
+    # Create processor
+    processor = ManipulationProcessor(
         camera_intrinsics=intrinsics,
         grasp_server_url="ws://10.0.0.125:8000/ws/grasp",
-        enable_grasp_generation=True,
+        enable_grasp_generation=False,
+        enable_segmentation=True,
+        segmentation_model="FastSAM-x.pt",
     )
 
-    # Create ZED-like stream from single frame
-    from reactivex.subject import Subject
+    # Process single frame directly
+    results = processor.process_frame(color_img, depth_img)
 
-    zed_subject = Subject()
+    # Debug: print available results
+    print(f"Available results: {list(results.keys())}")
 
-    # Get streams (providing the required zed_stream parameter)
-    streams = pipeline.create_streams(zed_subject)
-
-    # Debug: print available streams
-    print(f"Available streams: {list(streams.keys())}")
-
-    # Collect results
-    results = {}
-
-    def collect(key):
-        def on_next(value):
-            results[key] = value
-            logger.info(f"Received {key}")
-
-        return on_next
-
-    # Subscribe to streams with longer timeout to catch all emissions
-    for key, stream in streams.items():
-        if stream:
-            stream.pipe(ops.take(1), ops.timeout(5.0)).subscribe(
-                on_next=collect(key),
-                on_error=lambda e: logger.warning(f"Stream {key} timeout: {e}"),
-            )
-
-    # Send frame to ZED stream (using the expected format)
-    frame_data = {"rgb": color_img, "depth": depth_img, "timestamp": time.time()}
-    zed_subject.on_next(frame_data)
-
-    # Wait longer for all streams to emit
-    time.sleep(3.0)
-
-    # If grasp generation is enabled, also check for latest grasps
-    if pipeline.enable_grasp_generation:
-        grasps = pipeline.get_latest_grasps(timeout=3.0)
-        if grasps:
-            results["grasps"] = grasps
-            logger.info(f"Retrieved latest grasps: {len(grasps)} grasps")
-
-    pipeline.cleanup()
+    processor.cleanup()
 
     return results
 
@@ -141,15 +112,30 @@ def main():
     color_img, depth_img, intrinsics = load_first_frame(args.data_dir)
     logger.info(f"Loaded images: color {color_img.shape}, depth {depth_img.shape}")
 
-    # Run pipeline
-    results = run_pipeline(color_img, depth_img, intrinsics)
+    # Run processor
+    results = run_processor(color_img, depth_img, intrinsics)
 
     # Debug: Print what we received
-    print(f"\n✅ Pipeline Results:")
-    print(f"   Available streams: {list(results.keys())}")
+    print(f"\n✅ Processor Results:")
+    print(f"   Available results: {list(results.keys())}")
+    print(f"   Processing time: {results.get('processing_time', 0):.3f}s")
+    
+    # Show timing breakdown if available
+    if 'timing_breakdown' in results:
+        breakdown = results['timing_breakdown']
+        print(f"   Timing breakdown:")
+        print(f"     - Detection: {breakdown.get('detection', 0):.3f}s")
+        print(f"     - Segmentation: {breakdown.get('segmentation', 0):.3f}s") 
+        print(f"     - Point cloud: {breakdown.get('pointcloud', 0):.3f}s")
 
-    if "filtered_objects" in results and results["filtered_objects"]:
-        print(f"   Objects detected: {len(results['filtered_objects'])}")
+    # Print object information
+    detected_count = len(results.get('detected_objects', []))
+    segmentation_count = len(results.get('segmentation_objects', []))
+    all_count = len(results.get('all_objects', []))
+    
+    print(f"   Detection objects: {detected_count}")
+    print(f"   Segmentation objects: {segmentation_count}")
+    print(f"   All objects processed: {all_count}")
 
     # Print grasp summary
     if "grasps" in results and results["grasps"]:
@@ -164,28 +150,71 @@ def main():
     else:
         print("   Grasps: None generated")
 
-    # Visualize 2D results
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-
+    # Determine number of subplots based on what results we have
+    num_plots = 0
+    plot_configs = []
+    
     if "detection_viz" in results and results["detection_viz"] is not None:
-        axes[0].imshow(results["detection_viz"])
-        axes[0].set_title("Object Detection")
-    axes[0].axis("off")
-
+        plot_configs.append(("detection_viz", "Object Detection"))
+        num_plots += 1
+    
+    if "segmentation_viz" in results and results["segmentation_viz"] is not None:
+        plot_configs.append(("segmentation_viz", "Semantic Segmentation"))
+        num_plots += 1
+        
     if "pointcloud_viz" in results and results["pointcloud_viz"] is not None:
-        axes[1].imshow(results["pointcloud_viz"])
-        axes[1].set_title("Point Cloud Overlay")
-    axes[1].axis("off")
-
-    if "grasp_overlay" in results:
-        axes[2].imshow(results["grasp_overlay"])
-        axes[2].set_title("Grasp Overlay")
-        axes[2].axis("off")
+        plot_configs.append(("pointcloud_viz", "All Objects Point Cloud"))
+        num_plots += 1
+    
+    if "detected_pointcloud_viz" in results and results["detected_pointcloud_viz"] is not None:
+        plot_configs.append(("detected_pointcloud_viz", "Detection Objects Point Cloud"))
+        num_plots += 1
+        
+    if "grasp_overlay" in results and results["grasp_overlay"] is not None:
+        plot_configs.append(("grasp_overlay", "Grasp Overlay"))
+        num_plots += 1
+    
+    if num_plots == 0:
+        print("No visualization results to display")
+        return
+    
+    # Create subplot layout
+    if num_plots <= 3:
+        fig, axes = plt.subplots(1, num_plots, figsize=(6*num_plots, 5))
+    else:
+        rows = 2
+        cols = (num_plots + 1) // 2
+        fig, axes = plt.subplots(rows, cols, figsize=(6*cols, 5*rows))
+    
+    # Ensure axes is always a list for consistent indexing
+    if num_plots == 1:
+        axes = [axes]
+    elif num_plots > 2:
+        axes = axes.flatten()
+    
+    # Plot each result
+    for i, (key, title) in enumerate(plot_configs):
+        axes[i].imshow(results[key])
+        axes[i].set_title(title)
+        axes[i].axis("off")
+    
+    # Hide unused subplots if any
+    if num_plots > 3:
+        for i in range(num_plots, len(axes)):
+            axes[i].axis("off")
 
     plt.tight_layout()
-    plt.show()
+    
+    # Save and show the plot
+    output_path = "manipulation_results.png"
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"Results visualization saved to: {output_path}")
+    
+    # Show plot live as well
+    plt.show(block=True)
+    plt.close()
 
-    # 3D visualization with grasps
+    # 3D visualization with grasps (if enabled)
     if "grasps" in results and results["grasps"]:
         pcd = create_point_cloud(color_img, depth_img, intrinsics)
         all_grasps = results["grasps"]
@@ -193,6 +222,26 @@ def main():
         if all_grasps:
             logger.info(f"Visualizing {len(all_grasps)} grasps in 3D")
             visualize_grasps_3d(pcd, all_grasps)
+    else:
+        logger.info("Grasp generation disabled - skipping 3D grasp visualization")
+    
+    # Visualize full point cloud if available
+    if "full_pointcloud" in results and results["full_pointcloud"] is not None:
+        full_pcd = results["full_pointcloud"]
+        print(f"Visualizing full point cloud with {len(np.asarray(full_pcd.points))} points")
+        
+        # Ask user if they want to see the full point cloud
+        try:
+            visualize_pcd(
+                full_pcd, 
+                window_name="Full Scene Point Cloud",
+                point_size=2.0,
+                show_coordinate_frame=True
+            )
+        except (KeyboardInterrupt, EOFError):
+            print("\nSkipping full point cloud visualization")
+    else:
+        print("No full point cloud available for visualization")
 
 
 if __name__ == "__main__":
