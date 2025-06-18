@@ -21,6 +21,8 @@ import numpy as np
 from lcm_msgs.geometry_msgs import Quaternion as LCMQuaternion
 from plum import dispatch
 
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
 # Types that can be converted to/from Quaternion
 QuaternionConvertable: TypeAlias = Sequence[int | float] | LCMQuaternion | np.ndarray
 
@@ -77,6 +79,44 @@ class Quaternion(LCMQuaternion):
     def as_list(self) -> list[float]:
         """List representation of the quaternion (x, y, z, w)."""
         return [self.x, self.y, self.z, self.w]
+
+    def as_numpy(self) -> np.ndarray:
+        """Numpy array representation of the quaternion (x, y, z, w)."""
+        return np.array([self.x, self.y, self.z, self.w])
+
+    @property
+    def radians(self) -> Vector3:
+        """Radians representation of the quaternion (x, y, z, w)."""
+        return self.euler
+
+    @property
+    def euler(self) -> Vector3:
+        """Convert quaternion to Euler angles (roll, pitch, yaw) in radians.
+
+        Returns:
+            Vector3: Euler angles as (roll, pitch, yaw) in radians
+        """
+        # Convert quaternion to Euler angles using ZYX convention (yaw, pitch, roll)
+        # Source: https://en.wikipedia.org/wiki/Conversion_between_quaternions_and_Euler_angles
+
+        # Roll (x-axis rotation)
+        sinr_cosp = 2 * (self.w * self.x + self.y * self.z)
+        cosr_cosp = 1 - 2 * (self.x * self.x + self.y * self.y)
+        roll = np.arctan2(sinr_cosp, cosr_cosp)
+
+        # Pitch (y-axis rotation)
+        sinp = 2 * (self.w * self.y - self.z * self.x)
+        if abs(sinp) >= 1:
+            pitch = np.copysign(np.pi / 2, sinp)  # Use 90 degrees if out of range
+        else:
+            pitch = np.arcsin(sinp)
+
+        # Yaw (z-axis rotation)
+        siny_cosp = 2 * (self.w * self.z + self.x * self.y)
+        cosy_cosp = 1 - 2 * (self.y * self.y + self.z * self.z)
+        yaw = np.arctan2(siny_cosp, cosy_cosp)
+
+        return Vector3(roll, pitch, yaw)
 
     def __getitem__(self, idx: int) -> float:
         """Allow indexing into quaternion components: 0=x, 1=y, 2=z, 3=w."""
