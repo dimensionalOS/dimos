@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING, Any, List, Sequence, Tuple, TypeVar, Union
+from typing import List, Sequence, Tuple, TypeVar, Union
 
 import numpy as np
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
+from plum import dispatch
 
 T = TypeVar("T", bound="Vector3")
 
@@ -26,57 +27,45 @@ VectorLike = Union[Sequence[Union[int, float]], LCMVector3, "Vector3", np.ndarra
 class Vector3(LCMVector3):
     name = "geometry_msgs.Vector3"
 
-    def __init__(self, *args: Any) -> None:
-        """Initialize a vector from components or another iterable.
+    @dispatch
+    def __init__(self) -> None:
+        """Initialize an empty vector."""
+        self._data = np.array([], dtype=float)
 
-        Examples:
-            Vector3()           # Empty vector
-            Vector3(1, 2)       # 2D vector
-            Vector3(1, 2, 3)    # 3D vector
-            Vector3([1, 2, 3])  # From list
-            Vector3(np.array([1, 2, 3])) # From numpy array
-            Vector3(other_vector) # From another Vector3
-        """
-        if len(args) == 0:
-            # Empty vector
-            self._data = np.array([], dtype=float)
+    @dispatch
+    def __init__(self, x: Union[int, float]) -> None:
+        """Initialize a 1D vector from a single numeric value."""
+        self._data = np.array([float(x)], dtype=float)
 
-        elif len(args) == 1:
-            # Single argument - could be VectorLike
-            arg = args[0]
+    @dispatch
+    def __init__(self, x: Union[int, float], y: Union[int, float]) -> None:
+        """Initialize a 2D vector from x, y components."""
+        self._data = np.array([float(x), float(y)], dtype=float)
 
-            # Type guard: Check if it's a sequence/array (has __iter__ and indexable)
-            if hasattr(arg, "__iter__") and hasattr(arg, "__getitem__"):
-                self._data = np.array(arg, dtype=float)
+    @dispatch
+    def __init__(self, x: Union[int, float], y: Union[int, float], z: Union[int, float]) -> None:
+        """Initialize a 3D vector from x, y, z components."""
+        self._data = np.array([float(x), float(y), float(z)], dtype=float)
 
-            # Type guard: Check if it's a vector-like object with x, y, z attributes
-            elif hasattr(arg, "x") and hasattr(arg, "y") and hasattr(arg, "z"):
-                # At this point, mypy knows arg has x, y, z attributes
-                if TYPE_CHECKING:
-                    # Help mypy understand the type
-                    assert hasattr(arg, "x") and hasattr(arg, "y") and hasattr(arg, "z")
-                self._data = np.array([arg.x, arg.y, arg.z], dtype=float)
+    @dispatch
+    def __init__(self, sequence: Sequence[Union[int, float]]) -> None:
+        """Initialize from a sequence (list, tuple) of numbers."""
+        self._data = np.array(sequence, dtype=float)
 
-            # Type guard: Handle single numeric value as x-component
-            elif isinstance(arg, (int, float)):
-                self._data = np.array([float(arg)], dtype=float)
+    @dispatch
+    def __init__(self, array: np.ndarray) -> None:
+        """Initialize from a numpy array."""
+        self._data = np.array(array, dtype=float)
 
-            else:
-                # Fallback: try to convert to array
-                try:
-                    self._data = np.array(arg, dtype=float)
-                except (ValueError, TypeError):
-                    raise TypeError(f"Cannot create Vector3 from argument of type {type(arg)}")
+    @dispatch
+    def __init__(self, vector: "Vector3") -> None:
+        """Initialize from another Vector3 (copy constructor)."""
+        self._data = np.array([vector.x, vector.y, vector.z], dtype=float)
 
-        elif len(args) in (2, 3):
-            # Multiple numeric arguments (x, y) or (x, y, z)
-            if all(isinstance(arg, (int, float)) for arg in args):
-                self._data = np.array(args, dtype=float)
-            else:
-                raise TypeError("Multiple arguments must all be numeric (int or float)")
-
-        else:
-            raise TypeError(f"Vector3 constructor accepts 0-3 arguments, got {len(args)}")
+    @dispatch
+    def __init__(self, lcm_vector: LCMVector3) -> None:
+        """Initialize from an LCM Vector3."""
+        self._data = np.array([lcm_vector.x, lcm_vector.y, lcm_vector.z], dtype=float)
 
     @property
     def yaw(self) -> float:
@@ -326,72 +315,78 @@ class Vector3(LCMVector3):
         """
         return not self.is_zero()
 
-
-def to_numpy(value: VectorLike) -> np.ndarray:
-    """Convert a vector-compatible value to a numpy array.
-
-    Args:
-        value: Any vector-like object (Vector, numpy array, tuple, list)
-
-    Returns:
-        Numpy array representation
-    """
-    if isinstance(value, Vector3):
-        return value.data
-    elif isinstance(value, np.ndarray):
-        return value
-    else:
-        return np.array(value, dtype=float)
+    def __iter__(self):
+        """Make Vector3 iterable so it can be converted to tuple/list."""
+        return iter(self._data)
 
 
-def to_vector(value: VectorLike) -> Vector3:
-    """Convert a vector-compatible value to a Vector object.
-
-    Args:
-        value: Any vector-like object (Vector, numpy array, tuple, list)
-
-    Returns:
-        Vector object
-    """
-    if isinstance(value, Vector3):
-        return value
-    else:
-        return Vector3(value)
+@dispatch
+def to_numpy(value: "Vector3") -> np.ndarray:
+    """Convert a Vector3 to a numpy array."""
+    return value.data
 
 
-def to_tuple(value: VectorLike) -> Tuple[float, ...]:
-    """Convert a vector-compatible value to a tuple.
+@dispatch
+def to_numpy(value: np.ndarray) -> np.ndarray:
+    """Pass through numpy arrays."""
+    return value
 
-    Args:
-        value: Any vector-like object (Vector, numpy array, tuple, list)
 
-    Returns:
-        Tuple of floats
-    """
-    if isinstance(value, Vector3):
-        return tuple(value.data)
-    elif isinstance(value, np.ndarray):
-        return tuple(value.tolist())
-    elif isinstance(value, tuple):
+@dispatch
+def to_numpy(value: Sequence[Union[int, float]]) -> np.ndarray:
+    """Convert a sequence to a numpy array."""
+    return np.array(value, dtype=float)
+
+
+@dispatch
+def to_vector(value: "Vector3") -> "Vector3":
+    """Pass through Vector3 objects."""
+    return value
+
+
+@dispatch
+def to_vector(value: VectorLike) -> "Vector3":
+    """Convert a vector-compatible value to a Vector3 object."""
+    return Vector3(value)
+
+
+@dispatch
+def to_tuple(value: "Vector3") -> Tuple[float, ...]:
+    """Convert a Vector3 to a tuple."""
+    return tuple(value.data)
+
+
+@dispatch
+def to_tuple(value: np.ndarray) -> Tuple[float, ...]:
+    """Convert a numpy array to a tuple."""
+    return tuple(value.tolist())
+
+
+@dispatch
+def to_tuple(value: Sequence[Union[int, float]]) -> Tuple[float, ...]:
+    """Convert a sequence to a tuple."""
+    if isinstance(value, tuple):
         return value
     else:
         return tuple(value)
 
 
-def to_list(value: VectorLike) -> List[float]:
-    """Convert a vector-compatible value to a list.
+@dispatch
+def to_list(value: "Vector3") -> List[float]:
+    """Convert a Vector3 to a list."""
+    return value.data.tolist()
 
-    Args:
-        value: Any vector-like object (Vector, numpy array, tuple, list)
 
-    Returns:
-        List of floats
-    """
-    if isinstance(value, Vector3):
-        return value.data.tolist()
-    elif isinstance(value, np.ndarray):
-        return value.tolist()
-    elif isinstance(value, list):
+@dispatch
+def to_list(value: np.ndarray) -> List[float]:
+    """Convert a numpy array to a list."""
+    return value.tolist()
+
+
+@dispatch
+def to_list(value: Sequence[Union[int, float]]) -> List[float]:
+    """Convert a sequence to a list."""
+    if isinstance(value, list):
         return value
     else:
         return list(value)
