@@ -37,7 +37,7 @@ class TestSam2DSegmenter:
         """Test FastSAM segmenter initializes correctly with default model path."""
         try:
             # Try to initialize with the default model path and existing device setting
-            segmenter = Sam2DSegmenter(device="cuda", use_analyzer=False)
+            segmenter = Sam2DSegmenter(device="cpu", use_analyzer=False)
             assert segmenter is not None
             assert segmenter.model is not None
         except Exception as e:
@@ -49,7 +49,7 @@ class TestSam2DSegmenter:
         try:
             # Initialize segmenter without analyzer for faster testing
             segmenter = Sam2DSegmenter(
-                device="cuda",
+                device="cpu",
                 use_analyzer=False,
                 use_tracker=False,  # Disable tracker for simpler testing
             )

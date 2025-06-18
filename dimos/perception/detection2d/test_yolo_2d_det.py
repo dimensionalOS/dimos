@@ -35,8 +35,8 @@ class TestYolo2DDetector:
         """Test YOLO detector initializes correctly with default model path."""
         try:
             # Try to initialize with the correct path to the model in the root directory
-            model_path = os.path.join(os.getcwd(), "yolo11n.pt")
-            detector = Yolo2DDetector(model_path=model_path, device="cuda")
+            model_path = os.path.join(os.getcwd(), "yolo11n.onnx")
+            detector = Yolo2DDetector(model_path=model_path, device="cpu")
             assert detector is not None
             assert detector.model is not None
         except Exception as e:
@@ -47,8 +47,8 @@ class TestYolo2DDetector:
         """Test YOLO detector can process video frames and return detection results."""
         try:
             # Initialize detector with model from root directory
-            model_path = os.path.join(os.getcwd(), "yolo11n.pt")
-            detector = Yolo2DDetector(model_path=model_path, device="cuda")
+            model_path = os.path.join(os.getcwd(), "yolo11n.onnx")
+            detector = Yolo2DDetector(model_path=model_path, device="cpu")
 
             # Create video provider and directly get a video stream observable
             assert os.path.exists(video_path), f"Test video not found: {video_path}"
@@ -74,6 +74,7 @@ class TestYolo2DDetector:
                         "names": names,
                     }
                 except Exception as e:
+                    print(f"Exception in process_frame: {e}")
                     return {}
 
             # Create the detection stream using pipe and map operator

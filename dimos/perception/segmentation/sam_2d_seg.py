@@ -31,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 class Sam2DSegmenter:
     def __init__(
         self,
-        model_path="FastSAM-s.pt",
+        model_path="FastSAM-s.onnx",
         device="cuda",
         min_analysis_interval=5.0,
         use_tracker=True,
