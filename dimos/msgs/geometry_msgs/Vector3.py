@@ -69,28 +69,32 @@ class Vector3(LCMVector3):
         self._data = np.array([lcm_vector.x, lcm_vector.y, lcm_vector.z], dtype=float)
 
     @property
-    def yaw(self) -> float:
-        return self.x
-
-    @property
     def as_tuple(self) -> tuple[float, ...]:
-        """Tuple representation of the vector."""
         return tuple(self._data)
 
     @property
     def x(self) -> float:
-        """X component of the vector."""
         return self._data[0] if len(self._data) > 0 else 0.0
 
     @property
     def y(self) -> float:
-        """Y component of the vector."""
         return self._data[1] if len(self._data) > 1 else 0.0
 
     @property
     def z(self) -> float:
-        """Z component of the vector."""
         return self._data[2] if len(self._data) > 2 else 0.0
+
+    @property
+    def yaw(self) -> float:
+        return self.z
+
+    @property
+    def pitch(self) -> float:
+        return self.y
+
+    @property
+    def roll(self) -> float:
+        return self.x
 
     @property
     def dim(self) -> int:

@@ -395,3 +395,41 @@ def test_vector_add_dim_mismatch():
 
     # Using + operator
     v_add_op = v1 + v2
+
+
+def test_yaw_pitch_roll_accessors():
+    """Test yaw, pitch, and roll accessor properties."""
+    # Test with a 3D vector
+    v = Vector3(1.0, 2.0, 3.0)
+
+    # According to standard convention:
+    # roll = rotation around x-axis = x component
+    # pitch = rotation around y-axis = y component
+    # yaw = rotation around z-axis = z component
+    assert v.roll == 1.0  # Should return x component
+    assert v.pitch == 2.0  # Should return y component
+    assert v.yaw == 3.0  # Should return z component
+
+    # Test with a 2D vector (z should be 0.0)
+    v_2d = Vector3(4.0, 5.0)
+    assert v_2d.roll == 4.0  # Should return x component
+    assert v_2d.pitch == 5.0  # Should return y component
+    assert v_2d.yaw == 0.0  # Should return z component (defaults to 0 for 2D)
+
+    # Test with empty vector (all should be 0.0)
+    v_empty = Vector3()
+    assert v_empty.roll == 0.0
+    assert v_empty.pitch == 0.0
+    assert v_empty.yaw == 0.0
+
+    # Test with negative values
+    v_neg = Vector3(-1.5, -2.5, -3.5)
+    assert v_neg.roll == -1.5
+    assert v_neg.pitch == -2.5
+    assert v_neg.yaw == -3.5
+
+    # Test with single component vector
+    v_single = Vector3(7.0)
+    assert v_single.roll == 7.0  # x component
+    assert v_single.pitch == 0.0  # y defaults to 0
+    assert v_single.yaw == 0.0  # z defaults to 0

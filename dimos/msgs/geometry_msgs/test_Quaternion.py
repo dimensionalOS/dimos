@@ -185,9 +185,9 @@ def test_quaternion_euler():
     # Test 90 degree rotation around Z-axis (yaw)
     q_z90 = Quaternion(0, 0, np.sin(np.pi / 4), np.cos(np.pi / 4))
     angles_z90 = q_z90.euler
-    assert np.isclose(angles_z90.x, 0.0, atol=1e-10)  # roll should be 0
-    assert np.isclose(angles_z90.y, 0.0, atol=1e-10)  # pitch should be 0
-    assert np.isclose(angles_z90.z, np.pi / 2, atol=1e-10)  # yaw should be π/2 (90 degrees)
+    assert np.isclose(angles_z90.roll, 0.0, atol=1e-10)  # roll should be 0
+    assert np.isclose(angles_z90.pitch, 0.0, atol=1e-10)  # pitch should be 0
+    assert np.isclose(angles_z90.yaw, np.pi / 2, atol=1e-10)  # yaw should be π/2 (90 degrees)
 
     # Test 90 degree rotation around X-axis (roll)
     q_x90 = Quaternion(np.sin(np.pi / 4), 0, 0, np.cos(np.pi / 4))
