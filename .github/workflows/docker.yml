@@ -28,10 +28,10 @@ jobs:
               # this is why check-changes to this workflow trigger ros
               - .github/workflows/_docker-build-template.yml
               - .github/workflows/docker.yml
-              - docker/base-ros/**
+              - docker/ros/**
 
             python:
-              - docker/base-python/**
+              - docker/python/**
               - requirements*.txt
 
             dev:

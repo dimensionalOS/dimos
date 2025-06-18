@@ -15,13 +15,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import ForwardRef, TypeAlias, TypeAliasType
+from typing import TypeAlias
 
 import numpy as np
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
 from plum import dispatch
 
-# Vector-like types that can be converted to/from Vector
+# Types that can be converted to/from Vector
 VectorConvertable: TypeAlias = Sequence[int | float] | LCMVector3 | np.ndarray
 
 
