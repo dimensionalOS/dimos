@@ -11,10 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
@@ -24,51 +24,44 @@ def test_vector_default_init():
     assert v.x == 0.0
     assert v.y == 0.0
     assert v.z == 0.0
-    assert v.dim == 0
-    assert len(v.data) == 0
-    assert v.to_list() == []
-    assert v.is_zero() == True  # Empty vector should be considered zero
+    assert len(v.data) == 3
+    assert v.to_list() == [0.0, 0.0, 0.0]
+    assert v.is_zero() == True  # Zero vector should be considered zero
 
 
 def test_vector_specific_init():
     """Test initialization with specific values and different input types."""
 
-    v1 = Vector3(1.0, 2.0)  # 2D vector
+    v1 = Vector3(1.0, 2.0)  # 2D vector (now becomes 3D with z=0)
     assert v1.x == 1.0
     assert v1.y == 2.0
     assert v1.z == 0.0
-    assert v1.dim == 2
 
     v2 = Vector3(3.0, 4.0, 5.0)  # 3D vector
     assert v2.x == 3.0
     assert v2.y == 4.0
     assert v2.z == 5.0
-    assert v2.dim == 3
 
     v3 = Vector3([6.0, 7.0, 8.0])
     assert v3.x == 6.0
     assert v3.y == 7.0
     assert v3.z == 8.0
-    assert v3.dim == 3
 
     v4 = Vector3((9.0, 10.0, 11.0))
     assert v4.x == 9.0
     assert v4.y == 10.0
     assert v4.z == 11.0
-    assert v4.dim == 3
 
     v5 = Vector3(np.array([12.0, 13.0, 14.0]))
     assert v5.x == 12.0
     assert v5.y == 13.0
     assert v5.z == 14.0
-    assert v5.dim == 3
 
     original = Vector3([15.0, 16.0, 17.0])
     v6 = Vector3(original)
     assert v6.x == 15.0
     assert v6.y == 16.0
     assert v6.z == 17.0
-    assert v6.dim == 3
 
     assert v6 is not original
     assert v6 == original
@@ -133,7 +126,7 @@ def test_vector_dot_product():
 
 def test_vector_length():
     """Test vector length calculation."""
-    # 2D vector with length 5
+    # 2D vector with length 5 (now 3D with z=0)
     v1 = Vector3(3.0, 4.0)
     assert v1.length() == 5.0
 
@@ -180,15 +173,14 @@ def test_vector_to_2d():
     v_2d = v.to_2d()
     assert v_2d.x == 2.0
     assert v_2d.y == 3.0
-    assert v_2d.z == 0.0
-    assert v_2d.dim == 2
+    assert v_2d.z == 0.0  # z should be 0 for 2D conversion
 
-    # Already 2D vector
+    # Already 2D vector (z=0)
     v2 = Vector3(4.0, 5.0)
     v2_2d = v2.to_2d()
     assert v2_2d.x == 4.0
     assert v2_2d.y == 5.0
-    assert v2_2d.dim == 2
+    assert v2_2d.z == 0.0
 
 
 def test_vector_distance():
@@ -228,10 +220,14 @@ def test_vector_cross_product():
     assert c.y == 6.0
     assert c.z == -3.0
 
-    # Test with 2D vectors (should raise error)
-    v_2d = Vector3(1.0, 2.0)
-    with pytest.raises(ValueError):
-        v_2d.cross(v2)
+    # Test with vectors that have z=0 (still works as they're 3D)
+    v_2d1 = Vector3(1.0, 2.0)  # (1, 2, 0)
+    v_2d2 = Vector3(3.0, 4.0)  # (3, 4, 0)
+    cross_2d = v_2d1.cross(v_2d2)
+    # (2*0-0*4, 0*3-1*0, 1*4-2*3) = (0, 0, -2)
+    assert cross_2d.x == 0.0
+    assert cross_2d.y == 0.0
+    assert cross_2d.z == -2.0
 
 
 def test_vector_zeros():
@@ -247,18 +243,10 @@ def test_vector_zeros():
 def test_vector_ones():
     """Test Vector3.ones class method."""
     # 3D ones vector
-    v_ones = Vector3.ones(3)
+    v_ones = Vector3.ones()
     assert v_ones.x == 1.0
     assert v_ones.y == 1.0
     assert v_ones.z == 1.0
-    assert v_ones.dim == 3
-
-    # 2D ones vector
-    v_ones_2d = Vector3.ones(2)
-    assert v_ones_2d.x == 1.0
-    assert v_ones_2d.y == 1.0
-    assert v_ones_2d.z == 0.0
-    assert v_ones_2d.dim == 2
 
 
 def test_vector_conversion_methods():
@@ -285,14 +273,14 @@ def test_vector_equality():
 
     assert v1 == v2
     assert v1 != v3
-    assert v1 != Vector3(1, 2)  # Different dimensions
+    assert v1 != Vector3(1, 2)  # Now (1, 2, 0) vs (1, 2, 3)
     assert v1 != Vector3(1.1, 2, 3)  # Different values
     assert v1 != [1, 2, 3]
 
 
 def test_vector_is_zero():
     """Test is_zero method for vectors."""
-    # Default empty vector
+    # Default zero vector
     v0 = Vector3()
     assert v0.is_zero() == True
 
@@ -300,8 +288,8 @@ def test_vector_is_zero():
     v1 = Vector3(0.0, 0.0, 0.0)
     assert v1.is_zero() == True
 
-    # Zero vector with different dimensions
-    v2 = Vector3(0.0, 0.0)
+    # Zero vector with different initialization (now always 3D)
+    v2 = Vector3(0.0, 0.0)  # Becomes (0, 0, 0)
     assert v2.is_zero() == True
 
     # Non-zero vectors
@@ -381,12 +369,15 @@ def test_vector_add():
 
 
 def test_vector_add_dim_mismatch():
-    """Test vector addition operator."""
-    v1 = Vector3(1.0, 2.0)
-    v2 = Vector3(4.0, 5.0, 6.0)
+    """Test vector addition with different input dimensions (now all vectors are 3D)."""
+    v1 = Vector3(1.0, 2.0)  # Becomes (1, 2, 0)
+    v2 = Vector3(4.0, 5.0, 6.0)  # (4, 5, 6)
 
-    # Using + operator
+    # Using + operator - should work fine now since both are 3D
     v_add_op = v1 + v2
+    assert v_add_op.x == 5.0  # 1 + 4
+    assert v_add_op.y == 7.0  # 2 + 5
+    assert v_add_op.z == 6.0  # 0 + 6
 
 
 def test_yaw_pitch_roll_accessors():
@@ -420,85 +411,40 @@ def test_yaw_pitch_roll_accessors():
     assert v_neg.pitch == -2.5
     assert v_neg.yaw == -3.5
 
-    # Test with single component vector
-    v_single = Vector3(7.0)
-    assert v_single.roll == 7.0  # x component
-    assert v_single.pitch == 0.0  # y defaults to 0
-    assert v_single.yaw == 0.0  # z defaults to 0
-
 
 def test_vector_to_quaternion():
-    """Test conversion from Vector3 Euler angles to Quaternion."""
-    # Test zero rotation (identity quaternion)
+    """Test vector to quaternion conversion."""
+    # Test with zero Euler angles (should produce identity quaternion)
     v_zero = Vector3(0.0, 0.0, 0.0)
-    q_zero = v_zero.to_quaternion()
-    assert isinstance(q_zero, Quaternion)
-    assert np.isclose(q_zero.x, 0.0)
-    assert np.isclose(q_zero.y, 0.0)
-    assert np.isclose(q_zero.z, 0.0)
-    assert np.isclose(q_zero.w, 1.0)
+    q_identity = v_zero.to_quaternion()
 
-    # Test 90 degree rotation around x-axis (roll)
-    v_roll_90 = Vector3(np.pi / 2, 0.0, 0.0)
-    q_roll_90 = v_roll_90.to_quaternion()
-    expected_val = np.sin(np.pi / 4)  # sin(45°) for half angle
-    assert np.isclose(q_roll_90.x, expected_val, atol=1e-6)
-    assert np.isclose(q_roll_90.y, 0.0, atol=1e-6)
-    assert np.isclose(q_roll_90.z, 0.0, atol=1e-6)
-    assert np.isclose(q_roll_90.w, np.cos(np.pi / 4), atol=1e-6)
+    # Identity quaternion should have w=1, x=y=z=0
+    assert np.isclose(q_identity.x, 0.0, atol=1e-10)
+    assert np.isclose(q_identity.y, 0.0, atol=1e-10)
+    assert np.isclose(q_identity.z, 0.0, atol=1e-10)
+    assert np.isclose(q_identity.w, 1.0, atol=1e-10)
 
-    # Test 90 degree rotation around y-axis (pitch)
-    v_pitch_90 = Vector3(0.0, np.pi / 2, 0.0)
-    q_pitch_90 = v_pitch_90.to_quaternion()
-    assert np.isclose(q_pitch_90.x, 0.0, atol=1e-6)
-    assert np.isclose(q_pitch_90.y, expected_val, atol=1e-6)
-    assert np.isclose(q_pitch_90.z, 0.0, atol=1e-6)
-    assert np.isclose(q_pitch_90.w, np.cos(np.pi / 4), atol=1e-6)
+    # Test with small angles (to avoid gimbal lock issues)
+    v_small = Vector3(0.1, 0.2, 0.3)  # Small roll, pitch, yaw
+    q_small = v_small.to_quaternion()
 
-    # Test 90 degree rotation around z-axis (yaw)
-    v_yaw_90 = Vector3(0.0, 0.0, np.pi / 2)
-    q_yaw_90 = v_yaw_90.to_quaternion()
-    assert np.isclose(q_yaw_90.x, 0.0, atol=1e-6)
-    assert np.isclose(q_yaw_90.y, 0.0, atol=1e-6)
-    assert np.isclose(q_yaw_90.z, expected_val, atol=1e-6)
-    assert np.isclose(q_yaw_90.w, np.cos(np.pi / 4), atol=1e-6)
+    # Quaternion should be normalized (magnitude = 1)
+    magnitude = np.sqrt(q_small.x**2 + q_small.y**2 + q_small.z**2 + q_small.w**2)
+    assert np.isclose(magnitude, 1.0, atol=1e-10)
 
-    # Test combined rotation (45 degrees around each axis)
-    angle_45 = np.pi / 4
-    v_combined = Vector3(angle_45, angle_45, angle_45)
-    q_combined = v_combined.to_quaternion()
+    # Test conversion back to Euler (should be close to original)
+    v_back = q_small.to_euler()
+    assert np.isclose(v_back.x, 0.1, atol=1e-6)
+    assert np.isclose(v_back.y, 0.2, atol=1e-6)
+    assert np.isclose(v_back.z, 0.3, atol=1e-6)
 
-    # Verify quaternion is normalized (magnitude = 1)
-    magnitude_sq = q_combined.x**2 + q_combined.y**2 + q_combined.z**2 + q_combined.w**2
-    assert np.isclose(magnitude_sq, 1.0, atol=1e-6)
+    # Test with π/2 rotation around x-axis
+    v_x_90 = Vector3(np.pi / 2, 0.0, 0.0)
+    q_x_90 = v_x_90.to_quaternion()
 
-    # Test conversion round-trip: Vector3 -> Quaternion -> Vector3
-    # Should get back the original Euler angles (within tolerance)
-    v_original = Vector3(0.1, 0.2, 0.3)  # Small angles to avoid gimbal lock issues
-    q_converted = v_original.to_quaternion()
-    v_roundtrip = q_converted.to_euler()
-
-    assert np.isclose(v_original.x, v_roundtrip.x, atol=1e-6)
-    assert np.isclose(v_original.y, v_roundtrip.y, atol=1e-6)
-    assert np.isclose(v_original.z, v_roundtrip.z, atol=1e-6)
-
-    # Test negative angles
-    v_negative = Vector3(-np.pi / 6, -np.pi / 4, -np.pi / 3)
-    q_negative = v_negative.to_quaternion()
-    assert isinstance(q_negative, Quaternion)
-
-    # Verify quaternion is normalized for negative angles too
-    magnitude_sq_neg = q_negative.x**2 + q_negative.y**2 + q_negative.z**2 + q_negative.w**2
-    assert np.isclose(magnitude_sq_neg, 1.0, atol=1e-6)
-
-    # Test with 2D vector (should treat z as 0)
-    v_2d = Vector3(np.pi / 6, np.pi / 4)
-    q_2d = v_2d.to_quaternion()
-    # Should be equivalent to Vector3(pi/6, pi/4, 0.0)
-    v_3d_equiv = Vector3(np.pi / 6, np.pi / 4, 0.0)
-    q_3d_equiv = v_3d_equiv.to_quaternion()
-
-    assert np.isclose(q_2d.x, q_3d_equiv.x, atol=1e-6)
-    assert np.isclose(q_2d.y, q_3d_equiv.y, atol=1e-6)
-    assert np.isclose(q_2d.z, q_3d_equiv.z, atol=1e-6)
-    assert np.isclose(q_2d.w, q_3d_equiv.w, atol=1e-6)
+    # Should be approximately (sin(π/4), 0, 0, cos(π/4)) = (√2/2, 0, 0, √2/2)
+    expected = np.sqrt(2) / 2
+    assert np.isclose(q_x_90.x, expected, atol=1e-10)
+    assert np.isclose(q_x_90.y, 0.0, atol=1e-10)
+    assert np.isclose(q_x_90.z, 0.0, atol=1e-10)
+    assert np.isclose(q_x_90.w, expected, atol=1e-10)

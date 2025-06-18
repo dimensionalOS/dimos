@@ -25,23 +25,35 @@ from plum import dispatch
 VectorConvertable: TypeAlias = Sequence[int | float] | LCMVector3 | np.ndarray
 
 
+def _ensure_3d(data: np.ndarray) -> np.ndarray:
+    """Ensure the data array is exactly 3D by padding with zeros or truncating."""
+    if len(data) == 3:
+        return data
+    elif len(data) < 3:
+        padded = np.zeros(3, dtype=float)
+        padded[: len(data)] = data
+        return padded
+    else:
+        return data[:3]
+
+
 class Vector3(LCMVector3):
     _data: np.ndarray
 
     @dispatch
     def __init__(self) -> None:
-        """Initialize an empty vector."""
-        self._data = np.array([], dtype=float)
+        """Initialize a zero 3D vector."""
+        self._data = np.zeros(3, dtype=float)
 
     @dispatch
     def __init__(self, x: int | float) -> None:
-        """Initialize a 1D vector from a single numeric value."""
-        self._data = np.array([float(x)], dtype=float)
+        """Initialize a 3D vector from a single numeric value (x, 0, 0)."""
+        self._data = np.array([float(x), 0.0, 0.0], dtype=float)
 
     @dispatch
     def __init__(self, x: int | float, y: int | float) -> None:
-        """Initialize a 2D vector from x, y components."""
-        self._data = np.array([float(x), float(y)], dtype=float)
+        """Initialize a 3D vector from x, y components (z=0)."""
+        self._data = np.array([float(x), float(y), 0.0], dtype=float)
 
     @dispatch
     def __init__(self, x: int | float, y: int | float, z: int | float) -> None:
@@ -50,13 +62,13 @@ class Vector3(LCMVector3):
 
     @dispatch
     def __init__(self, sequence: Sequence[int | float]) -> None:
-        """Initialize from a sequence (list, tuple) of numbers."""
-        self._data = np.array(sequence, dtype=float)
+        """Initialize from a sequence (list, tuple) of numbers, ensuring 3D."""
+        self._data = _ensure_3d(np.array(sequence, dtype=float))
 
     @dispatch
     def __init__(self, array: np.ndarray) -> None:
-        """Initialize from a numpy array."""
-        self._data = np.array(array, dtype=float)
+        """Initialize from a numpy array, ensuring 3D."""
+        self._data = _ensure_3d(np.array(array, dtype=float))
 
     @dispatch
     def __init__(self, vector: "Vector3") -> None:
@@ -69,20 +81,20 @@ class Vector3(LCMVector3):
         self._data = np.array([lcm_vector.x, lcm_vector.y, lcm_vector.z], dtype=float)
 
     @property
-    def as_tuple(self) -> tuple[float, ...]:
-        return tuple(self._data)
+    def as_tuple(self) -> tuple[float, float, float]:
+        return (self._data[0], self._data[1], self._data[2])
 
     @property
     def x(self) -> float:
-        return self._data[0] if len(self._data) > 0 else 0.0
+        return self._data[0]
 
     @property
     def y(self) -> float:
-        return self._data[1] if len(self._data) > 1 else 0.0
+        return self._data[1]
 
     @property
     def z(self) -> float:
-        return self._data[2] if len(self._data) > 2 else 0.0
+        return self._data[2]
 
     @property
     def yaw(self) -> float:
@@ -97,11 +109,6 @@ class Vector3(LCMVector3):
         return self.x
 
     @property
-    def dim(self) -> int:
-        """Dimensionality of the vector."""
-        return len(self._data)
-
-    @property
     def data(self) -> np.ndarray:
         """Get the underlying numpy array."""
         return self._data
@@ -113,9 +120,6 @@ class Vector3(LCMVector3):
         return f"Vector({self.data})"
 
     def __str__(self) -> str:
-        if self.dim < 2:
-            return self.__repr__()
-
         def getArrow():
             repr = ["←", "↖", "↑", "↗", "→", "↘", "↓", "↙"]
 
@@ -139,22 +143,14 @@ class Vector3(LCMVector3):
         """Check if two vectors are equal using numpy's allclose for floating point comparison."""
         if not isinstance(other, Vector3):
             return False
-        if len(self._data) != len(other._data):
-            return False
         return np.allclose(self._data, other._data)
 
     def __add__(self, other: VectorConvertable | Vector3) -> Vector3:
         other_vector: Vector3 = to_vector(other)
-        if self.dim != other_vector.dim:
-            max_dim = max(self.dim, other_vector.dim)
-            return self.pad(max_dim) + other_vector.pad(max_dim)
         return self.__class__(self._data + other_vector._data)
 
     def __sub__(self, other: VectorConvertable | Vector3) -> Vector3:
         other_vector = to_vector(other)
-        if self.dim != other_vector.dim:
-            max_dim = max(self.dim, other_vector.dim)
-            return self.pad(max_dim) - other_vector.pad(max_dim)
         return self.__class__(self._data - other_vector._data)
 
     def __mul__(self, scalar: float) -> Vector3:
@@ -176,13 +172,7 @@ class Vector3(LCMVector3):
 
     def cross(self, other: VectorConvertable | Vector3) -> Vector3:
         """Compute cross product (3D vectors only)."""
-        if self.dim != 3:
-            raise ValueError("Cross product is only defined for 3D vectors")
-
         other_vector = to_vector(other)
-        if other_vector.dim != 3:
-            raise ValueError("Cross product requires two 3D vectors")
-
         return self.__class__(np.cross(self._data, other_vector._data))
 
     def length(self) -> float:
@@ -197,24 +187,12 @@ class Vector3(LCMVector3):
         """Return a normalized unit vector in the same direction."""
         length = self.length()
         if length < 1e-10:  # Avoid division by near-zero
-            return self.__class__(np.zeros_like(self._data))
+            return self.__class__(np.zeros(3))
         return self.__class__(self._data / length)
 
     def to_2d(self) -> Vector3:
-        """Convert a vector to a 2D vector by taking only the x and y components."""
-        return self.__class__(self._data[:2])
-
-    def pad(self, dim: int) -> Vector3:
-        """Pad a vector with zeros to reach the specified dimension.
-
-        If vector already has dimension >= dim, it is returned unchanged.
-        """
-        if self.dim >= dim:
-            return self
-
-        padded = np.zeros(dim, dtype=float)
-        padded[: len(self._data)] = self._data
-        return self.__class__(padded)
+        """Convert a vector to a 2D vector by taking only the x and y components (z=0)."""
+        return self.__class__(self._data[0], self._data[1], 0.0)
 
     def distance(self, other: VectorConvertable | Vector3) -> float:
         """Compute Euclidean distance to another vector."""
@@ -246,7 +224,7 @@ class Vector3(LCMVector3):
         onto_vector = to_vector(onto)
         onto_length_sq = np.sum(onto_vector._data * onto_vector._data)
         if onto_length_sq < 1e-10:
-            return self.__class__(np.zeros_like(self._data))
+            return self.__class__(np.zeros(3))
 
         scalar_projection = np.dot(self._data, onto_vector._data) / onto_length_sq
         return self.__class__(scalar_projection * onto_vector._data)
@@ -259,43 +237,36 @@ class Vector3(LCMVector3):
 
     @classmethod
     def zeros(cls) -> Vector3:
-        """Create a zero vector of given dimension."""
+        """Create a zero 3D vector."""
         return cls()
 
     @classmethod
-    def ones(cls, dim: int) -> Vector3:
-        """Create a vector of ones with given dimension."""
-        return cls(np.ones(dim))
+    def ones(cls) -> Vector3:
+        """Create a 3D vector of ones."""
+        return cls(np.ones(3))
 
     @classmethod
-    def unit_x(cls, dim: int = 3) -> Vector3:
+    def unit_x(cls) -> Vector3:
         """Create a unit vector in the x direction."""
-        v = np.zeros(dim)
-        v[0] = 1.0
-        return cls(v)
+        return cls(1.0, 0.0, 0.0)
 
     @classmethod
-    def unit_y(cls, dim: int = 3) -> Vector3:
+    def unit_y(cls) -> Vector3:
         """Create a unit vector in the y direction."""
-        v = np.zeros(dim)
-        v[1] = 1.0
-        return cls(v)
+        return cls(0.0, 1.0, 0.0)
 
     @classmethod
-    def unit_z(cls, dim: int = 3) -> Vector3:
+    def unit_z(cls) -> Vector3:
         """Create a unit vector in the z direction."""
-        v = np.zeros(dim)
-        if dim > 2:
-            v[2] = 1.0
-        return cls(v)
+        return cls(0.0, 0.0, 1.0)
 
     def to_list(self) -> list[float]:
         """Convert the vector to a list."""
         return self._data.tolist()
 
-    def to_tuple(self) -> tuple[float, ...]:
+    def to_tuple(self) -> tuple[float, float, float]:
         """Convert the vector to a tuple."""
-        return tuple(self._data)
+        return (self._data[0], self._data[1], self._data[2])
 
     def to_numpy(self) -> np.ndarray:
         """Convert the vector to a numpy array."""
@@ -394,9 +365,9 @@ def to_vector(value: VectorConvertable | Vector3) -> Vector3:
 
 
 @dispatch
-def to_tuple(value: Vector3) -> tuple[float, ...]:
+def to_tuple(value: Vector3) -> tuple[float, float, float]:
     """Convert a Vector3 to a tuple."""
-    return tuple(value.data)
+    return value.to_tuple()
 
 
 @dispatch
