@@ -26,7 +26,6 @@ VectorConvertable: TypeAlias = Sequence[int | float] | LCMVector3 | np.ndarray
 
 
 class Vector3(LCMVector3):
-    name = "geometry_msgs.Vector3"
     _data: np.ndarray
 
     @dispatch
