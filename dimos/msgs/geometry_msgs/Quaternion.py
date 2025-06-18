@@ -86,7 +86,7 @@ class Quaternion(LCMQuaternion):
 
     def to_radians(self) -> Vector3:
         """Radians representation of the quaternion (x, y, z, w)."""
-        return self.euler()
+        return self.to_euler()
 
     def to_euler(self) -> Vector3:
         """Convert quaternion to Euler angles (roll, pitch, yaw) in radians.

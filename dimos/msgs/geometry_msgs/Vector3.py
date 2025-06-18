@@ -258,9 +258,9 @@ class Vector3(LCMVector3):
         return cls(*msg)
 
     @classmethod
-    def zeros(cls, dim: int) -> Vector3:
+    def zeros(cls) -> Vector3:
         """Create a zero vector of given dimension."""
-        return cls(np.zeros(dim))
+        return cls()
 
     @classmethod
     def ones(cls, dim: int) -> Vector3:

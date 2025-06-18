@@ -237,20 +237,11 @@ def test_vector_cross_product():
 def test_vector_zeros():
     """Test Vector3.zeros class method."""
     # 3D zero vector
-    v_zeros = Vector3.zeros(3)
+    v_zeros = Vector3.zeros()
     assert v_zeros.x == 0.0
     assert v_zeros.y == 0.0
     assert v_zeros.z == 0.0
-    assert v_zeros.dim == 3
     assert v_zeros.is_zero() == True
-
-    # 2D zero vector
-    v_zeros_2d = Vector3.zeros(2)
-    assert v_zeros_2d.x == 0.0
-    assert v_zeros_2d.y == 0.0
-    assert v_zeros_2d.z == 0.0
-    assert v_zeros_2d.dim == 2
-    assert v_zeros_2d.is_zero() == True
 
 
 def test_vector_ones():
@@ -385,7 +376,7 @@ def test_vector_add():
     assert v_add_op.z == 9.0
 
     # Adding zero vector should return original vector
-    v_zero = Vector3.zeros(3)
+    v_zero = Vector3.zeros()
     assert (v1 + v_zero) == v1
 
 
