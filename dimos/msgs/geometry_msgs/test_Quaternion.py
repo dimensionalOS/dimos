@@ -25,7 +25,7 @@ def test_quaternion_default_init():
     assert q.y == 0.0
     assert q.z == 0.0
     assert q.w == 1.0
-    assert q.as_tuple() == (0.0, 0.0, 0.0, 1.0)
+    assert q.to_tuple() == (0.0, 0.0, 0.0, 1.0)
 
 
 def test_quaternion_component_init():
@@ -157,7 +157,7 @@ def test_quaternion_properties():
     assert q.w == 4.0
 
     # Test as_tuple property
-    assert q.as_tuple() == (1.0, 2.0, 3.0, 4.0)
+    assert q.to_tuple() == (1.0, 2.0, 3.0, 4.0)
 
 
 def test_quaternion_indexing():
@@ -177,21 +177,21 @@ def test_quaternion_euler():
 
     # Test identity quaternion (should give zero angles)
     q_identity = Quaternion()
-    angles = q_identity.euler
+    angles = q_identity.to_euler()
     assert np.isclose(angles.x, 0.0, atol=1e-10)  # roll
     assert np.isclose(angles.y, 0.0, atol=1e-10)  # pitch
     assert np.isclose(angles.z, 0.0, atol=1e-10)  # yaw
 
     # Test 90 degree rotation around Z-axis (yaw)
     q_z90 = Quaternion(0, 0, np.sin(np.pi / 4), np.cos(np.pi / 4))
-    angles_z90 = q_z90.euler
+    angles_z90 = q_z90.to_euler()
     assert np.isclose(angles_z90.roll, 0.0, atol=1e-10)  # roll should be 0
     assert np.isclose(angles_z90.pitch, 0.0, atol=1e-10)  # pitch should be 0
     assert np.isclose(angles_z90.yaw, np.pi / 2, atol=1e-10)  # yaw should be π/2 (90 degrees)
 
     # Test 90 degree rotation around X-axis (roll)
     q_x90 = Quaternion(np.sin(np.pi / 4), 0, 0, np.cos(np.pi / 4))
-    angles_x90 = q_x90.euler
+    angles_x90 = q_x90.to_euler()
     assert np.isclose(angles_x90.x, np.pi / 2, atol=1e-10)  # roll should be π/2
     assert np.isclose(angles_x90.y, 0.0, atol=1e-10)  # pitch should be 0
     assert np.isclose(angles_x90.z, 0.0, atol=1e-10)  # yaw should be 0

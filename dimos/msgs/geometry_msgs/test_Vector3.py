@@ -14,6 +14,7 @@
 import numpy as np
 import pytest
 
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
@@ -433,3 +434,80 @@ def test_yaw_pitch_roll_accessors():
     assert v_single.roll == 7.0  # x component
     assert v_single.pitch == 0.0  # y defaults to 0
     assert v_single.yaw == 0.0  # z defaults to 0
+
+
+def test_vector_to_quaternion():
+    """Test conversion from Vector3 Euler angles to Quaternion."""
+    # Test zero rotation (identity quaternion)
+    v_zero = Vector3(0.0, 0.0, 0.0)
+    q_zero = v_zero.to_quaternion()
+    assert isinstance(q_zero, Quaternion)
+    assert np.isclose(q_zero.x, 0.0)
+    assert np.isclose(q_zero.y, 0.0)
+    assert np.isclose(q_zero.z, 0.0)
+    assert np.isclose(q_zero.w, 1.0)
+
+    # Test 90 degree rotation around x-axis (roll)
+    v_roll_90 = Vector3(np.pi / 2, 0.0, 0.0)
+    q_roll_90 = v_roll_90.to_quaternion()
+    expected_val = np.sin(np.pi / 4)  # sin(45°) for half angle
+    assert np.isclose(q_roll_90.x, expected_val, atol=1e-6)
+    assert np.isclose(q_roll_90.y, 0.0, atol=1e-6)
+    assert np.isclose(q_roll_90.z, 0.0, atol=1e-6)
+    assert np.isclose(q_roll_90.w, np.cos(np.pi / 4), atol=1e-6)
+
+    # Test 90 degree rotation around y-axis (pitch)
+    v_pitch_90 = Vector3(0.0, np.pi / 2, 0.0)
+    q_pitch_90 = v_pitch_90.to_quaternion()
+    assert np.isclose(q_pitch_90.x, 0.0, atol=1e-6)
+    assert np.isclose(q_pitch_90.y, expected_val, atol=1e-6)
+    assert np.isclose(q_pitch_90.z, 0.0, atol=1e-6)
+    assert np.isclose(q_pitch_90.w, np.cos(np.pi / 4), atol=1e-6)
+
+    # Test 90 degree rotation around z-axis (yaw)
+    v_yaw_90 = Vector3(0.0, 0.0, np.pi / 2)
+    q_yaw_90 = v_yaw_90.to_quaternion()
+    assert np.isclose(q_yaw_90.x, 0.0, atol=1e-6)
+    assert np.isclose(q_yaw_90.y, 0.0, atol=1e-6)
+    assert np.isclose(q_yaw_90.z, expected_val, atol=1e-6)
+    assert np.isclose(q_yaw_90.w, np.cos(np.pi / 4), atol=1e-6)
+
+    # Test combined rotation (45 degrees around each axis)
+    angle_45 = np.pi / 4
+    v_combined = Vector3(angle_45, angle_45, angle_45)
+    q_combined = v_combined.to_quaternion()
+
+    # Verify quaternion is normalized (magnitude = 1)
+    magnitude_sq = q_combined.x**2 + q_combined.y**2 + q_combined.z**2 + q_combined.w**2
+    assert np.isclose(magnitude_sq, 1.0, atol=1e-6)
+
+    # Test conversion round-trip: Vector3 -> Quaternion -> Vector3
+    # Should get back the original Euler angles (within tolerance)
+    v_original = Vector3(0.1, 0.2, 0.3)  # Small angles to avoid gimbal lock issues
+    q_converted = v_original.to_quaternion()
+    v_roundtrip = q_converted.to_euler()
+
+    assert np.isclose(v_original.x, v_roundtrip.x, atol=1e-6)
+    assert np.isclose(v_original.y, v_roundtrip.y, atol=1e-6)
+    assert np.isclose(v_original.z, v_roundtrip.z, atol=1e-6)
+
+    # Test negative angles
+    v_negative = Vector3(-np.pi / 6, -np.pi / 4, -np.pi / 3)
+    q_negative = v_negative.to_quaternion()
+    assert isinstance(q_negative, Quaternion)
+
+    # Verify quaternion is normalized for negative angles too
+    magnitude_sq_neg = q_negative.x**2 + q_negative.y**2 + q_negative.z**2 + q_negative.w**2
+    assert np.isclose(magnitude_sq_neg, 1.0, atol=1e-6)
+
+    # Test with 2D vector (should treat z as 0)
+    v_2d = Vector3(np.pi / 6, np.pi / 4)
+    q_2d = v_2d.to_quaternion()
+    # Should be equivalent to Vector3(pi/6, pi/4, 0.0)
+    v_3d_equiv = Vector3(np.pi / 6, np.pi / 4, 0.0)
+    q_3d_equiv = v_3d_equiv.to_quaternion()
+
+    assert np.isclose(q_2d.x, q_3d_equiv.x, atol=1e-6)
+    assert np.isclose(q_2d.y, q_3d_equiv.y, atol=1e-6)
+    assert np.isclose(q_2d.z, q_3d_equiv.z, atol=1e-6)
+    assert np.isclose(q_2d.w, q_3d_equiv.w, atol=1e-6)

@@ -72,25 +72,23 @@ class Quaternion(LCMQuaternion):
             lcm_quaternion.w,
         )
 
-    def as_tuple(self) -> tuple[float, float, float, float]:
+    def to_tuple(self) -> tuple[float, float, float, float]:
         """Tuple representation of the quaternion (x, y, z, w)."""
         return (self.x, self.y, self.z, self.w)
 
-    def as_list(self) -> list[float]:
+    def to_list(self) -> list[float]:
         """List representation of the quaternion (x, y, z, w)."""
         return [self.x, self.y, self.z, self.w]
 
-    def as_numpy(self) -> np.ndarray:
+    def to_numpy(self) -> np.ndarray:
         """Numpy array representation of the quaternion (x, y, z, w)."""
         return np.array([self.x, self.y, self.z, self.w])
 
-    @property
-    def radians(self) -> Vector3:
+    def to_radians(self) -> Vector3:
         """Radians representation of the quaternion (x, y, z, w)."""
-        return self.euler
+        return self.euler()
 
-    @property
-    def euler(self) -> Vector3:
+    def to_euler(self) -> Vector3:
         """Convert quaternion to Euler angles (roll, pitch, yaw) in radians.
 
         Returns:
