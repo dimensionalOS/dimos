@@ -13,7 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import Sequence, TypeVar
+from collections.abc import Sequence
+from typing import ForwardRef, TypeVar
 
 import numpy as np
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
@@ -22,7 +23,7 @@ from plum import dispatch
 T = TypeVar("T", bound="Vector3")
 
 # Vector-like types that can be converted to/from Vector
-VectorLike = Sequence[int | float] | LCMVector3 | "Vector3" | np.ndarray
+VectorLike = Sequence[int | float] | LCMVector3 | ForwardRef("Vector3") | np.ndarray
 
 
 class Vector3(LCMVector3):
@@ -73,7 +74,7 @@ class Vector3(LCMVector3):
         return self.x
 
     @property
-    def tuple(self) -> tuple[float, ...]:
+    def as_tuple(self) -> tuple[float, ...]:
         """Tuple representation of the vector."""
         return tuple(self._data)
 

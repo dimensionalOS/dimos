@@ -32,7 +32,6 @@ def test_vector_default_init():
 def test_vector_specific_init():
     """Test initialization with specific values and different input types."""
 
-    print("Testing multiple args...")
     v1 = Vector3(1.0, 2.0)  # 2D vector
     assert v1.x == 1.0
     assert v1.y == 2.0
