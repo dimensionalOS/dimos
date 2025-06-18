@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
-from typing import List, Sequence, Tuple, TypeVar, Union
+from typing import Sequence, TypeVar
 
 import numpy as np
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
@@ -21,7 +22,7 @@ from plum import dispatch
 T = TypeVar("T", bound="Vector3")
 
 # Vector-like types that can be converted to/from Vector
-VectorLike = Union[Sequence[Union[int, float]], LCMVector3, "Vector3", np.ndarray]
+VectorLike = Sequence[int | float] | LCMVector3 | "Vector3" | np.ndarray
 
 
 class Vector3(LCMVector3):
@@ -33,22 +34,22 @@ class Vector3(LCMVector3):
         self._data = np.array([], dtype=float)
 
     @dispatch
-    def __init__(self, x: Union[int, float]) -> None:
+    def __init__(self, x: int | float) -> None:
         """Initialize a 1D vector from a single numeric value."""
         self._data = np.array([float(x)], dtype=float)
 
     @dispatch
-    def __init__(self, x: Union[int, float], y: Union[int, float]) -> None:
+    def __init__(self, x: int | float, y: int | float) -> None:
         """Initialize a 2D vector from x, y components."""
         self._data = np.array([float(x), float(y)], dtype=float)
 
     @dispatch
-    def __init__(self, x: Union[int, float], y: Union[int, float], z: Union[int, float]) -> None:
+    def __init__(self, x: int | float, y: int | float, z: int | float) -> None:
         """Initialize a 3D vector from x, y, z components."""
         self._data = np.array([float(x), float(y), float(z)], dtype=float)
 
     @dispatch
-    def __init__(self, sequence: Sequence[Union[int, float]]) -> None:
+    def __init__(self, sequence: Sequence[int | float]) -> None:
         """Initialize from a sequence (list, tuple) of numbers."""
         self._data = np.array(sequence, dtype=float)
 
@@ -72,7 +73,7 @@ class Vector3(LCMVector3):
         return self.x
 
     @property
-    def tuple(self) -> Tuple[float, ...]:
+    def tuple(self) -> tuple[float, ...]:
         """Tuple representation of the vector."""
         return tuple(self._data)
 
@@ -284,11 +285,11 @@ class Vector3(LCMVector3):
             v[2] = 1.0
         return cls(v)
 
-    def to_list(self) -> List[float]:
+    def to_list(self) -> list[float]:
         """Convert the vector to a list."""
         return self._data.tolist()
 
-    def to_tuple(self) -> Tuple[float, ...]:
+    def to_tuple(self) -> tuple[float, ...]:
         """Convert the vector to a tuple."""
         return tuple(self._data)
 
@@ -333,7 +334,7 @@ def to_numpy(value: np.ndarray) -> np.ndarray:
 
 
 @dispatch
-def to_numpy(value: Sequence[Union[int, float]]) -> np.ndarray:
+def to_numpy(value: Sequence[int | float]) -> np.ndarray:
     """Convert a sequence to a numpy array."""
     return np.array(value, dtype=float)
 
@@ -351,19 +352,19 @@ def to_vector(value: VectorLike) -> "Vector3":
 
 
 @dispatch
-def to_tuple(value: "Vector3") -> Tuple[float, ...]:
+def to_tuple(value: "Vector3") -> tuple[float, ...]:
     """Convert a Vector3 to a tuple."""
     return tuple(value.data)
 
 
 @dispatch
-def to_tuple(value: np.ndarray) -> Tuple[float, ...]:
+def to_tuple(value: np.ndarray) -> tuple[float, ...]:
     """Convert a numpy array to a tuple."""
     return tuple(value.tolist())
 
 
 @dispatch
-def to_tuple(value: Sequence[Union[int, float]]) -> Tuple[float, ...]:
+def to_tuple(value: Sequence[int | float]) -> tuple[float, ...]:
     """Convert a sequence to a tuple."""
     if isinstance(value, tuple):
         return value
@@ -372,69 +373,21 @@ def to_tuple(value: Sequence[Union[int, float]]) -> Tuple[float, ...]:
 
 
 @dispatch
-def to_list(value: "Vector3") -> List[float]:
+def to_list(value: "Vector3") -> list[float]:
     """Convert a Vector3 to a list."""
     return value.data.tolist()
 
 
 @dispatch
-def to_list(value: np.ndarray) -> List[float]:
+def to_list(value: np.ndarray) -> list[float]:
     """Convert a numpy array to a list."""
     return value.tolist()
 
 
 @dispatch
-def to_list(value: Sequence[Union[int, float]]) -> List[float]:
+def to_list(value: Sequence[int | float]) -> list[float]:
     """Convert a sequence to a list."""
     if isinstance(value, list):
         return value
     else:
         return list(value)
-
-
-# Extraction functions for XYZ components
-def x(value: VectorLike) -> float:
-    """Get the X component of a vector-compatible value.
-
-    Args:
-        value: Any vector-like object (Vector, numpy array, tuple, list)
-
-    Returns:
-        X component as a float
-    """
-    if isinstance(value, Vector3):
-        return value.x
-    else:
-        return float(to_numpy(value)[0])
-
-
-def y(value: VectorLike) -> float:
-    """Get the Y component of a vector-compatible value.
-
-    Args:
-        value: Any vector-like object (Vector, numpy array, tuple, list)
-
-    Returns:
-        Y component as a float
-    """
-    if isinstance(value, Vector3):
-        return value.y
-    else:
-        arr = to_numpy(value)
-        return float(arr[1]) if len(arr) > 1 else 0.0
-
-
-def z(value: VectorLike) -> float:
-    """Get the Z component of a vector-compatible value.
-
-    Args:
-        value: Any vector-like object (Vector, numpy array, tuple, list)
-
-    Returns:
-        Z component as a float
-    """
-    if isinstance(value, Vector3):
-        return value.z
-    else:
-        arr = to_numpy(value)
-        return float(arr[2]) if len(arr) > 2 else 0.0
