@@ -30,34 +30,48 @@ def test_vector_default_init():
 
 
 def test_vector_specific_init():
-    """Test initialization with specific values."""
-    # 2D vector
-    v1 = Vector3(1.0, 2.0)
+    """Test initialization with specific values and different input types."""
+
+    print("Testing multiple args...")
+    v1 = Vector3(1.0, 2.0)  # 2D vector
     assert v1.x == 1.0
     assert v1.y == 2.0
     assert v1.z == 0.0
     assert v1.dim == 2
 
-    # 3D vector
-    v2 = Vector3(3.0, 4.0, 5.0)
+    v2 = Vector3(3.0, 4.0, 5.0)  # 3D vector
     assert v2.x == 3.0
     assert v2.y == 4.0
     assert v2.z == 5.0
     assert v2.dim == 3
 
-    # From list
     v3 = Vector3([6.0, 7.0, 8.0])
     assert v3.x == 6.0
     assert v3.y == 7.0
     assert v3.z == 8.0
     assert v3.dim == 3
 
-    # From numpy array
-    v4 = Vector3(np.array([9.0, 10.0, 11.0]))
+    v4 = Vector3((9.0, 10.0, 11.0))
     assert v4.x == 9.0
     assert v4.y == 10.0
     assert v4.z == 11.0
     assert v4.dim == 3
+
+    v5 = Vector3(np.array([12.0, 13.0, 14.0]))
+    assert v5.x == 12.0
+    assert v5.y == 13.0
+    assert v5.z == 14.0
+    assert v5.dim == 3
+
+    original = Vector3([15.0, 16.0, 17.0])
+    v6 = Vector3(original)
+    assert v6.x == 15.0
+    assert v6.y == 16.0
+    assert v6.z == 17.0
+    assert v6.dim == 3
+
+    assert v6 is not original
+    assert v6 == original
 
 
 def test_vector_addition():
