@@ -26,6 +26,11 @@ exclude = [
     "src"
 ]
 
+[tool.mypy]
+# mypy doesn't understand plum @dispatch decorator
+# so we gave up on this check globally
+disable_error_code = ["no-redef", "import-untyped"]
+
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
 norecursedirs = ["dimos/robot/unitree/external"]

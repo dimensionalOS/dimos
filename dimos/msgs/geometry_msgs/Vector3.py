@@ -11,10 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import ForwardRef
+from typing import ForwardRef, overload
 
 import numpy as np
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
@@ -26,6 +27,7 @@ VectorLike = Sequence[int | float] | LCMVector3 | ForwardRef("Vector3") | np.nda
 
 class Vector3(LCMVector3):
     name = "geometry_msgs.Vector3"
+    _data: np.ndarray
 
     @dispatch
     def __init__(self) -> None:
@@ -139,7 +141,7 @@ class Vector3(LCMVector3):
         return np.allclose(self._data, other._data)
 
     def __add__(self: Vector3, other: VectorLike) -> Vector3:
-        other = to_vector(other)
+        other: Vector3 = to_vector(other)
         if self.dim != other.dim:
             max_dim = max(self.dim, other.dim)
             return self.pad(max_dim) + other.pad(max_dim)
@@ -339,19 +341,19 @@ def to_numpy(value: Sequence[int | float]) -> np.ndarray:
 
 
 @dispatch
-def to_vector(value: "Vector3") -> "Vector3":
+def to_vector(value: "Vector3") -> Vector3:
     """Pass through Vector3 objects."""
     return value
 
 
 @dispatch
-def to_vector(value: VectorLike) -> "Vector3":
+def to_vector(value: VectorLike) -> Vector3:
     """Convert a vector-compatible value to a Vector3 object."""
     return Vector3(value)
 
 
 @dispatch
-def to_tuple(value: "Vector3") -> tuple[float, ...]:
+def to_tuple(value: Vector3) -> tuple[float, ...]:
     """Convert a Vector3 to a tuple."""
     return tuple(value.data)
 
@@ -372,7 +374,7 @@ def to_tuple(value: Sequence[int | float]) -> tuple[float, ...]:
 
 
 @dispatch
-def to_list(value: "Vector3") -> list[float]:
+def to_list(value: Vector3) -> list[float]:
     """Convert a Vector3 to a list."""
     return value.data.tolist()
 
