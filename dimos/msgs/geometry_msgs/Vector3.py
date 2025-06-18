@@ -15,14 +15,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import ForwardRef, overload
+from typing import ForwardRef, TypeAlias, TypeAliasType
 
 import numpy as np
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
 from plum import dispatch
 
 # Vector-like types that can be converted to/from Vector
-VectorLike = Sequence[int | float] | LCMVector3 | ForwardRef("Vector3") | np.ndarray
+VectorConvertable: TypeAlias = Sequence[int | float] | LCMVector3 | np.ndarray
 
 
 class Vector3(LCMVector3):
@@ -140,19 +140,19 @@ class Vector3(LCMVector3):
             return False
         return np.allclose(self._data, other._data)
 
-    def __add__(self: Vector3, other: VectorLike) -> Vector3:
-        other: Vector3 = to_vector(other)
-        if self.dim != other.dim:
-            max_dim = max(self.dim, other.dim)
-            return self.pad(max_dim) + other.pad(max_dim)
-        return self.__class__(self._data + other._data)
+    def __add__(self, other: VectorConvertable | Vector3) -> Vector3:
+        other_vector: Vector3 = to_vector(other)
+        if self.dim != other_vector.dim:
+            max_dim = max(self.dim, other_vector.dim)
+            return self.pad(max_dim) + other_vector.pad(max_dim)
+        return self.__class__(self._data + other_vector._data)
 
-    def __sub__(self, other: VectorLike) -> Vector3:
-        other = to_vector(other)
-        if self.dim != other.dim:
-            max_dim = max(self.dim, other.dim)
-            return self.pad(max_dim) - other.pad(max_dim)
-        return self.__class__(self._data - other._data)
+    def __sub__(self, other: VectorConvertable | Vector3) -> Vector3:
+        other_vector = to_vector(other)
+        if self.dim != other_vector.dim:
+            max_dim = max(self.dim, other_vector.dim)
+            return self.pad(max_dim) - other_vector.pad(max_dim)
+        return self.__class__(self._data - other_vector._data)
 
     def __mul__(self, scalar: float) -> Vector3:
         return self.__class__(self._data * scalar)
@@ -166,21 +166,21 @@ class Vector3(LCMVector3):
     def __neg__(self) -> Vector3:
         return self.__class__(-self._data)
 
-    def dot(self, other: VectorLike) -> float:
+    def dot(self, other: VectorConvertable | Vector3) -> float:
         """Compute dot product."""
-        other = to_vector(other)
-        return float(np.dot(self._data, other._data))
+        other_vector = to_vector(other)
+        return float(np.dot(self._data, other_vector._data))
 
-    def cross(self, other: VectorLike) -> Vector3:
+    def cross(self, other: VectorConvertable | Vector3) -> Vector3:
         """Compute cross product (3D vectors only)."""
         if self.dim != 3:
             raise ValueError("Cross product is only defined for 3D vectors")
 
-        other = to_vector(other)
-        if other.dim != 3:
+        other_vector = to_vector(other)
+        if other_vector.dim != 3:
             raise ValueError("Cross product requires two 3D vectors")
 
-        return self.__class__(np.cross(self._data, other._data))
+        return self.__class__(np.cross(self._data, other_vector._data))
 
     def length(self) -> float:
         """Compute the Euclidean length (magnitude) of the vector."""
@@ -213,40 +213,40 @@ class Vector3(LCMVector3):
         padded[: len(self._data)] = self._data
         return self.__class__(padded)
 
-    def distance(self, other: VectorLike) -> float:
+    def distance(self, other: VectorConvertable | Vector3) -> float:
         """Compute Euclidean distance to another vector."""
-        other = to_vector(other)
-        return float(np.linalg.norm(self._data - other._data))
+        other_vector = to_vector(other)
+        return float(np.linalg.norm(self._data - other_vector._data))
 
-    def distance_squared(self, other: VectorLike) -> float:
+    def distance_squared(self, other: VectorConvertable | Vector3) -> float:
         """Compute squared Euclidean distance to another vector (faster than distance())."""
-        other = to_vector(other)
-        diff = self._data - other._data
+        other_vector = to_vector(other)
+        diff = self._data - other_vector._data
         return float(np.sum(diff * diff))
 
-    def angle(self, other: VectorLike) -> float:
+    def angle(self, other: VectorConvertable | Vector3) -> float:
         """Compute the angle (in radians) between this vector and another."""
-        other = to_vector(other)
-        if self.length() < 1e-10 or other.length() < 1e-10:
+        other_vector = to_vector(other)
+        if self.length() < 1e-10 or other_vector.length() < 1e-10:
             return 0.0
 
         cos_angle = np.clip(
-            np.dot(self._data, other._data)
-            / (np.linalg.norm(self._data) * np.linalg.norm(other._data)),
+            np.dot(self._data, other_vector._data)
+            / (np.linalg.norm(self._data) * np.linalg.norm(other_vector._data)),
             -1.0,
             1.0,
         )
         return float(np.arccos(cos_angle))
 
-    def project(self, onto: VectorLike) -> Vector3:
+    def project(self, onto: VectorConvertable | Vector3) -> Vector3:
         """Project this vector onto another vector."""
-        onto = to_vector(onto)
-        onto_length_sq = np.sum(onto._data * onto._data)
+        onto_vector = to_vector(onto)
+        onto_length_sq = np.sum(onto_vector._data * onto_vector._data)
         if onto_length_sq < 1e-10:
             return self.__class__(np.zeros_like(self._data))
 
-        scalar_projection = np.dot(self._data, onto._data) / onto_length_sq
-        return self.__class__(scalar_projection * onto._data)
+        scalar_projection = np.dot(self._data, onto_vector._data) / onto_length_sq
+        return self.__class__(scalar_projection * onto_vector._data)
 
     # this is here to test ros_observable_topic
     # doesn't happen irl afaik that we want a vector from ros message
@@ -347,7 +347,7 @@ def to_vector(value: "Vector3") -> Vector3:
 
 
 @dispatch
-def to_vector(value: VectorLike) -> Vector3:
+def to_vector(value: VectorConvertable | Vector3) -> Vector3:
     """Convert a vector-compatible value to a Vector3 object."""
     return Vector3(value)
 
@@ -392,3 +392,6 @@ def to_list(value: Sequence[int | float]) -> list[float]:
         return value
     else:
         return list(value)
+
+
+VectorLike: TypeAlias = VectorConvertable | Vector3
