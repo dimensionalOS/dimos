@@ -309,6 +309,44 @@ class Vector3(LCMVector3):
         """
         return np.allclose(self._data, 0.0)
 
+    def to_quaternion(self):
+        """Convert Vector3 representing Euler angles (roll, pitch, yaw) to a Quaternion.
+
+        Assumes this Vector3 contains Euler angles in radians:
+        - x component: roll (rotation around x-axis)
+        - y component: pitch (rotation around y-axis)
+        - z component: yaw (rotation around z-axis)
+
+        Returns:
+            Quaternion: The equivalent quaternion representation
+        """
+        # Import here to avoid circular imports
+        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+
+        # Extract Euler angles
+        roll = self.x
+        pitch = self.y
+        yaw = self.z
+
+        # Convert Euler angles to quaternion using ZYX convention
+        # Source: https://en.wikipedia.org/wiki/Conversion_between_quaternions_and_Euler_angles
+
+        # Compute half angles
+        cy = np.cos(yaw * 0.5)
+        sy = np.sin(yaw * 0.5)
+        cp = np.cos(pitch * 0.5)
+        sp = np.sin(pitch * 0.5)
+        cr = np.cos(roll * 0.5)
+        sr = np.sin(roll * 0.5)
+
+        # Compute quaternion components
+        w = cr * cp * cy + sr * sp * sy
+        x = sr * cp * cy - cr * sp * sy
+        y = cr * sp * cy + sr * cp * sy
+        z = cr * cp * sy - sr * sp * cy
+
+        return Quaternion(x, y, z, w)
+
     def __bool__(self) -> bool:
         """Boolean conversion for Vector.
 
