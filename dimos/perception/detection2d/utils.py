@@ -17,6 +17,14 @@ import cv2
 
 from dimos.utils.ros_utils import distance_angle_to_goal_xy
 
+def is_cuda_available():
+    try:
+        import pycuda.driver as cuda
+        import pycuda.autoinit  # implicitly initializes the CUDA driver
+        cuda.init()
+        return cuda.Device.count() > 0
+    except Exception:
+        return False
 
 def filter_detections(
     bboxes,

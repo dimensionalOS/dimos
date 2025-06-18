@@ -15,12 +15,13 @@
 import cv2
 from ultralytics import YOLO
 from dimos.perception.detection2d.utils import (
+    is_cuda_available,
     extract_detection_results,
     plot_results,
     filter_detections,
 )
 import os
-
+import onnxruntime
 
 class Yolo2DDetector:
     def __init__(self, model_path="models/yolo11n.engine", device="cuda"):
@@ -36,6 +37,8 @@ class Yolo2DDetector:
 
         module_dir = os.path.dirname(__file__)
         self.tracker_config = os.path.join(module_dir, "config", "custom_tracker.yaml")
+        if is_cuda_available():
+            onnxruntime.preload_dlls(cuda=True, cudnn=True)
 
     def process_image(self, image):
         """
