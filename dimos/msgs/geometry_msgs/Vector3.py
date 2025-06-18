@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Sequence, Tuple, TypeVar, Union
+from typing import TYPE_CHECKING, Any, List, Sequence, Tuple, TypeVar, Union
 
 import numpy as np
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
@@ -26,23 +26,57 @@ VectorLike = Union[Sequence[Union[int, float]], LCMVector3, "Vector3", np.ndarra
 class Vector3(LCMVector3):
     name = "geometry_msgs.Vector3"
 
-    def __init__(self, *args: VectorLike):
+    def __init__(self, *args: Any) -> None:
         """Initialize a vector from components or another iterable.
 
         Examples:
+            Vector3()           # Empty vector
             Vector3(1, 2)       # 2D vector
             Vector3(1, 2, 3)    # 3D vector
             Vector3([1, 2, 3])  # From list
             Vector3(np.array([1, 2, 3])) # From numpy array
+            Vector3(other_vector) # From another Vector3
         """
-        if len(args) == 1 and hasattr(args[0], "__iter__"):
-            self._data = np.array(args[0], dtype=float)
+        if len(args) == 0:
+            # Empty vector
+            self._data = np.array([], dtype=float)
 
         elif len(args) == 1:
-            self._data = np.array([args[0].x, args[0].y, args[0].z], dtype=float)
+            # Single argument - could be VectorLike
+            arg = args[0]
+
+            # Type guard: Check if it's a sequence/array (has __iter__ and indexable)
+            if hasattr(arg, "__iter__") and hasattr(arg, "__getitem__"):
+                self._data = np.array(arg, dtype=float)
+
+            # Type guard: Check if it's a vector-like object with x, y, z attributes
+            elif hasattr(arg, "x") and hasattr(arg, "y") and hasattr(arg, "z"):
+                # At this point, mypy knows arg has x, y, z attributes
+                if TYPE_CHECKING:
+                    # Help mypy understand the type
+                    assert hasattr(arg, "x") and hasattr(arg, "y") and hasattr(arg, "z")
+                self._data = np.array([arg.x, arg.y, arg.z], dtype=float)
+
+            # Type guard: Handle single numeric value as x-component
+            elif isinstance(arg, (int, float)):
+                self._data = np.array([float(arg)], dtype=float)
+
+            else:
+                # Fallback: try to convert to array
+                try:
+                    self._data = np.array(arg, dtype=float)
+                except (ValueError, TypeError):
+                    raise TypeError(f"Cannot create Vector3 from argument of type {type(arg)}")
+
+        elif len(args) in (2, 3):
+            # Multiple numeric arguments (x, y) or (x, y, z)
+            if all(isinstance(arg, (int, float)) for arg in args):
+                self._data = np.array(args, dtype=float)
+            else:
+                raise TypeError("Multiple arguments must all be numeric (int or float)")
 
         else:
-            self._data = np.array(args, dtype=float)
+            raise TypeError(f"Vector3 constructor accepts 0-3 arguments, got {len(args)}")
 
     @property
     def yaw(self) -> float:
@@ -103,9 +137,9 @@ class Vector3(LCMVector3):
 
         return f"{getArrow()} Vector {self.__repr__()}"
 
-    def serialize(self) -> Tuple:
+    def serialize(self) -> dict:
         """Serialize the vector to a tuple."""
-        return {"type": "vector", "c": self._data.tolist()}
+        return {"type": "vector", "c": tuple(self._data.tolist())}
 
     def __eq__(self, other) -> bool:
         """Check if two vectors are equal using numpy's allclose for floating point comparison."""
