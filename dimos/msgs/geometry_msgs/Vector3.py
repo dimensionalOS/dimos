@@ -14,8 +14,10 @@
 
 from __future__ import annotations
 
+import struct
 from collections.abc import Sequence
-from typing import TypeAlias
+from io import BytesIO
+from typing import BinaryIO, TypeAlias
 
 import numpy as np
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
@@ -43,6 +45,18 @@ class Vector3(LCMVector3):
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
+
+    @classmethod
+    def decode(cls, data: bytes | BinaryIO):
+        if not hasattr(data, "read"):
+            data = BytesIO(data)
+        if data.read(8) != cls._get_packed_fingerprint():
+            raise ValueError("Decode error")
+        return cls._decode_one(data)
+
+    @classmethod
+    def _decode_one(cls, buf):
+        return cls(struct.unpack(">ddd", buf.read(24)))
 
     @dispatch
     def __init__(self) -> None:

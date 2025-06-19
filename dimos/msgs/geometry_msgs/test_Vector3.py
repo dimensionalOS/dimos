@@ -448,3 +448,15 @@ def test_vector_to_quaternion():
     assert np.isclose(q_x_90.y, 0.0, atol=1e-10)
     assert np.isclose(q_x_90.z, 0.0, atol=1e-10)
     assert np.isclose(q_x_90.w, expected, atol=1e-10)
+
+
+def test_lcm_encode_decode():
+    v_source = Vector3(1.0, 2.0, 3.0)
+
+    binary_msg = v_source.encode()
+
+    v_dest = Vector3.decode(binary_msg)
+
+    assert isinstance(v_dest, Vector3)
+    assert v_dest is not v_source
+    assert v_dest == v_source
