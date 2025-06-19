@@ -150,11 +150,6 @@ class Pose(LCMPose):
         """Yaw angle in radians."""
         return self.orientation.to_euler().yaw
 
-    @property
-    def euler(self) -> Vector3:
-        """Euler angles (roll, pitch, yaw) in radians."""
-        return self.orientation.to_euler()
-
     def __repr__(self) -> str:
         return f"Pose(position={self.position!r}, orientation={self.orientation!r})"
 
