@@ -12,12 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 from abc import ABC, abstractmethod
+from typing import Generic, Type, TypeVar
+
+# Generic type for service configuration
+ConfigT = TypeVar("ConfigT")
 
 
-class Service(ABC):
+class Service(ABC, Generic[ConfigT]):
+    default_config: Type[ConfigT]
+
+    def __init__(self, **kwargs) -> None:
+        self.config: ConfigT = self.default_config(**kwargs)
+
     @abstractmethod
-    def start(self) -> None: ...
+    def start(self) -> None:
+        """Start the service."""
+        ...
+
     @abstractmethod
-    def stop(self) -> None: ...
+    def stop(self) -> None:
+        """Stop the service."""
+        ...

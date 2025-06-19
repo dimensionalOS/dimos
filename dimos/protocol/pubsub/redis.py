@@ -16,26 +16,30 @@ import json
 import threading
 import time
 from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List
 
 import redis
 
 from dimos.protocol.pubsub.spec import PubSub
+from dimos.protocol.service.spec import Service
 
 
-class Redis(PubSub[str, Any]):
+@dataclass
+class RedisConfig:
+    host: str = "localhost"
+    port: int = 6379
+    db: int = 0
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+
+
+class Redis(PubSub[str, Any], Service[RedisConfig]):
     """Redis-based pub/sub implementation."""
 
-    def __init__(self, host: str = "localhost", port: int = 6379, db: int = 0, **kwargs):
-        if redis is None:
-            raise ImportError(
-                "redis package is required for Redis PubSub. Install with: pip install redis"
-            )
+    default_config = RedisConfig
 
-        self.host = host
-        self.port = port
-        self.db = db
-        self.kwargs = kwargs
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
 
         # Redis connections
         self._client = None
@@ -46,14 +50,25 @@ class Redis(PubSub[str, Any]):
         self._listener_thread = None
         self._running = False
 
-        # Connect to Redis
+    def start(self) -> None:
+        """Start the Redis pub/sub service."""
+        if self._running:
+            return
         self._connect()
+
+    def stop(self) -> None:
+        """Stop the Redis pub/sub service."""
+        self.close()
 
     def _connect(self):
         """Connect to Redis and set up pub/sub."""
         try:
             self._client = redis.Redis(
-                host=self.host, port=self.port, db=self.db, decode_responses=True, **self.kwargs
+                host=self.config.host,
+                port=self.config.port,
+                db=self.config.db,
+                decode_responses=True,
+                **self.config.kwargs,
             )
             # Test connection
             self._client.ping()
@@ -66,12 +81,16 @@ class Redis(PubSub[str, Any]):
             self._listener_thread.start()
 
         except Exception as e:
-            raise ConnectionError(f"Failed to connect to Redis at {self.host}:{self.port}: {e}")
+            raise ConnectionError(
+                f"Failed to connect to Redis at {self.config.host}:{self.config.port}: {e}"
+            )
 
     def _listen_loop(self):
         """Listen for messages from Redis and dispatch to callbacks."""
         while self._running:
             try:
+                if not self._pubsub:
+                    break
                 message = self._pubsub.get_message(timeout=0.1)
                 if message and message["type"] == "message":
                     topic = message["channel"]

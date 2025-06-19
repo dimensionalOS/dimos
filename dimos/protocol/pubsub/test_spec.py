@@ -41,13 +41,14 @@ def redis_context():
         from dimos.protocol.pubsub.redis import Redis
 
         redis_pubsub = Redis()
+        redis_pubsub.start()
         yield redis_pubsub
     except (ConnectionError, ImportError):
         # either redis is not installed or the server is not running
         pytest.skip("Redis not available")
     finally:
         if "redis_pubsub" in locals():
-            redis_pubsub.close()
+            redis_pubsub.stop()
 
 
 # Use Any for context manager type to accommodate both Memory and Redis
