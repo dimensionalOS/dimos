@@ -23,6 +23,8 @@ import numpy as np
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
 from plum import dispatch
 
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+
 # Types that can be converted to/from Vector
 VectorConvertable: TypeAlias = Sequence[int | float] | LCMVector3 | np.ndarray
 
@@ -334,7 +336,11 @@ class Vector3(LCMVector3):
         """
         return np.allclose([self.x, self.y, self.z], 0.0)
 
-    def to_quaternion(self):
+    @property
+    def quaternion(self) -> Quaternion:
+        return self.to_quaternion()
+
+    def to_quaternion(self) -> Quaternion:
         """Convert Vector3 representing Euler angles (roll, pitch, yaw) to a Quaternion.
 
         Assumes this Vector3 contains Euler angles in radians:

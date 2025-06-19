@@ -98,6 +98,14 @@ class Quaternion(LCMQuaternion):
         """Numpy array representation of the quaternion (x, y, z, w)."""
         return np.array([self.x, self.y, self.z, self.w])
 
+    @property
+    def euler(self) -> Vector3:
+        return self.to_euler()
+
+    @property
+    def radians(self) -> Vector3:
+        return self.to_euler()
+
     def to_radians(self) -> Vector3:
         """Radians representation of the quaternion (x, y, z, w)."""
         return self.to_euler()
