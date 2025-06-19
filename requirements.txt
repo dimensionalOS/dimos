@@ -96,4 +96,4 @@ git+https://github.com/facebookresearch/detectron2.git@v0.6
 open3d
 
 # lcm_msgs
-git+https://github.com/dimensionalOS/python_lcm_msgs#egg=lcm_msgs
+-e git+https://github.com/dimensionalOS/python_lcm_msgs@main#egg=lcm_msgs
