@@ -14,8 +14,10 @@
 
 from __future__ import annotations
 
+import struct
 from collections.abc import Sequence
-from typing import TypeAlias
+from io import BytesIO
+from typing import BinaryIO, TypeAlias
 
 import numpy as np
 from lcm_msgs.geometry_msgs import Quaternion as LCMQuaternion
@@ -32,6 +34,18 @@ class Quaternion(LCMQuaternion):
     y: float = 0.0
     z: float = 0.0
     w: float = 1.0
+
+    @classmethod
+    def decode(cls, data: bytes | BinaryIO):
+        if not hasattr(data, "read"):
+            data = BytesIO(data)
+        if data.read(8) != cls._get_packed_fingerprint():
+            raise ValueError("Decode error")
+        return cls._decode_one(data)
+
+    @classmethod
+    def _decode_one(cls, buf):
+        return cls(struct.unpack(">dddd", buf.read(32)))
 
     @dispatch
     def __init__(self) -> None: ...

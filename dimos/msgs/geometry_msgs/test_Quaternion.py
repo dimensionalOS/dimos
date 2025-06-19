@@ -195,3 +195,16 @@ def test_quaternion_euler():
     assert np.isclose(angles_x90.x, np.pi / 2, atol=1e-10)  # roll should be π/2
     assert np.isclose(angles_x90.y, 0.0, atol=1e-10)  # pitch should be 0
     assert np.isclose(angles_x90.z, 0.0, atol=1e-10)  # yaw should be 0
+
+
+def test_lcm_encode_decode():
+    """Test encoding and decoding of Quaternion to/from binary LCM format."""
+    q_source = Quaternion(1.0, 2.0, 3.0, 4.0)
+
+    binary_msg = q_source.encode()
+
+    q_dest = Quaternion.decode(binary_msg)
+
+    assert isinstance(q_dest, Quaternion)
+    assert q_dest is not q_source
+    assert q_dest == q_source

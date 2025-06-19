@@ -101,13 +101,6 @@ def test_pose_vector_position_init():
     assert pose.orientation.w == 1.0
 
 
-def test_pose_quaternion_orientation_init():
-    """Test initialization with Quaternion orientation (origin position)."""
-    # Note: This test is currently skipped due to implementation issues with @dispatch
-    # The current implementation has issues with single-argument constructors
-    pytest.skip("Skipping due to @dispatch implementation issues")
-
-
 def test_pose_vector_quaternion_init():
     """Test initialization with Vector3 position and Quaternion orientation."""
     position = Vector3(1.0, 2.0, 3.0)
@@ -531,3 +524,16 @@ def test_pose_parametrized_orientations(qx, qy, qz, qw):
     assert pose.orientation.y == qy
     assert pose.orientation.z == qz
     assert pose.orientation.w == qw
+
+
+def test_lcm_encode_decode():
+    """Test encoding and decoding of Pose to/from binary LCM format."""
+    pose_source = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
+
+    binary_msg = pose_source.encode()
+
+    pose_dest = Pose.decode(binary_msg)
+
+    assert isinstance(pose_dest, Pose)
+    assert pose_dest is not pose_source
+    assert pose_dest == pose_source

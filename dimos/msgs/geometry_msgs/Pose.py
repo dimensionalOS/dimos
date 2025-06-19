@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
-from typing import TypeAlias
+import struct
+from io import BytesIO
+from typing import BinaryIO, TypeAlias
 
 from lcm_msgs.geometry_msgs import Pose as LCMPose
 from plum import dispatch
@@ -33,6 +35,18 @@ PoseConvertable: TypeAlias = (
 class Pose(LCMPose):
     position: Vector3
     orientation: Quaternion
+
+    @classmethod
+    def decode(cls, data: bytes | BinaryIO):
+        if not hasattr(data, "read"):
+            data = BytesIO(data)
+        if data.read(8) != cls._get_packed_fingerprint():
+            raise ValueError("Decode error")
+        return cls._decode_one(data)
+
+    @classmethod
+    def _decode_one(cls, buf):
+        return cls(Vector3._decode_one(buf), Quaternion._decode_one(buf))
 
     @dispatch
     def __init__(self) -> None:
