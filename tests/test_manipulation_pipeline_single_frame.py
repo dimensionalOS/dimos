@@ -131,16 +131,18 @@ def main():
         print(f"     - Misc extraction: {breakdown.get('misc_extraction', 0):.3f}s")
 
     # Print object information
-    detected_count = len(results.get('detected_objects', []))
-    all_count = len(results.get('all_objects', []))
-    
+    detected_count = len(results.get("detected_objects", []))
+    all_count = len(results.get("all_objects", []))
+
     print(f"   Detection objects: {detected_count}")
     print(f"   All objects processed: {all_count}")
-    
+
     # Print misc clusters information
     if "misc_clusters" in results and results["misc_clusters"]:
         cluster_count = len(results["misc_clusters"])
-        total_misc_points = sum(len(np.asarray(cluster.points)) for cluster in results["misc_clusters"])
+        total_misc_points = sum(
+            len(np.asarray(cluster.points)) for cluster in results["misc_clusters"]
+        )
         print(f"   Misc clusters: {cluster_count} clusters with {total_misc_points} total points")
     else:
         print(f"   Misc clusters: None")
@@ -177,11 +179,11 @@ def main():
     if "detected_pointcloud_viz" in results and results["detected_pointcloud_viz"] is not None:
         plot_configs.append(("detected_pointcloud_viz", "Detection Objects Point Cloud"))
         num_plots += 1
-    
+
     if "misc_pointcloud_viz" in results and results["misc_pointcloud_viz"] is not None:
         plot_configs.append(("misc_pointcloud_viz", "Misc/Background Points"))
         num_plots += 1
-        
+
     if "grasp_overlay" in results and results["grasp_overlay"] is not None:
         plot_configs.append(("grasp_overlay", "Grasp Overlay"))
         num_plots += 1
@@ -241,7 +243,7 @@ def main():
     if "full_pointcloud" in results and results["full_pointcloud"] is not None:
         full_pcd = results["full_pointcloud"]
         print(f"Visualizing full point cloud with {len(np.asarray(full_pcd.points))} points")
-        
+
         try:
             visualize_pcd(
                 full_pcd,
@@ -253,21 +255,24 @@ def main():
             print("\nSkipping full point cloud visualization")
     else:
         print("No full point cloud available for visualization")
-    
+
     # Visualize misc/background clusters if available
     if "misc_clusters" in results and results["misc_clusters"]:
         misc_clusters = results["misc_clusters"]
         cluster_count = len(misc_clusters)
         total_misc_points = sum(len(np.asarray(cluster.points)) for cluster in misc_clusters)
-        print(f"Visualizing {cluster_count} misc/background clusters with {total_misc_points} total points")
-        
+        print(
+            f"Visualizing {cluster_count} misc/background clusters with {total_misc_points} total points"
+        )
+
         try:
             from dimos.perception.pointcloud.utils import visualize_clustered_point_clouds
+
             visualize_clustered_point_clouds(
-                misc_clusters, 
+                misc_clusters,
                 window_name="Misc/Background Clusters (DBSCAN)",
                 point_size=3.0,
-                show_coordinate_frame=True
+                show_coordinate_frame=True,
             )
         except (KeyboardInterrupt, EOFError):
             print("\nSkipping misc clusters visualization")

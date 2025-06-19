@@ -179,23 +179,24 @@ class ManipulationProcessor:
 
             # Get full point cloud
             full_pcd = self.pointcloud_filter.get_full_point_cloud()
-            
+
             # Calculate misc_points clusters (full point cloud minus all object points)
             misc_start = time.time()
             from dimos.perception.pointcloud.utils import extract_and_cluster_misc_points
+
             misc_clusters = extract_and_cluster_misc_points(
-                full_pcd, 
+                full_pcd,
                 all_objects,
                 eps=0.05,  # 5cm cluster distance
                 min_points=50,  # Minimum 50 points per cluster
-                enable_filtering=True
+                enable_filtering=True,
             )
             misc_time = time.time() - misc_start
-            
-            results['detected_objects'] = detected_objects
-            results['all_objects'] = all_objects
-            results['full_pointcloud'] = full_pcd
-            results['misc_clusters'] = misc_clusters
+
+            results["detected_objects"] = detected_objects
+            results["all_objects"] = all_objects
+            results["full_pointcloud"] = full_pcd
+            results["misc_clusters"] = misc_clusters
 
             # Create point cloud visualizations
             base_image = colorize_depth(depth_image, max_depth=10.0)
@@ -218,19 +219,20 @@ class ManipulationProcessor:
                     intrinsics=self.camera_intrinsics,
                 )
             else:
-                results['detected_pointcloud_viz'] = base_image
-            
+                results["detected_pointcloud_viz"] = base_image
+
             # Misc clusters visualization overlay
             if misc_clusters:
                 from dimos.perception.pointcloud.utils import overlay_point_clouds_on_image
+
                 # Generate random colors for each cluster
                 cluster_colors = []
                 for i in range(len(misc_clusters)):
                     np.random.seed(i + 100)  # Consistent colors
                     color = tuple((np.random.rand(3) * 255).astype(int))
                     cluster_colors.append(color)
-                
-                results['misc_pointcloud_viz'] = overlay_point_clouds_on_image(
+
+                results["misc_pointcloud_viz"] = overlay_point_clouds_on_image(
                     base_image=base_image,
                     point_clouds=misc_clusters,
                     camera_intrinsics=self.camera_intrinsics,
@@ -239,7 +241,7 @@ class ManipulationProcessor:
                     alpha=0.6,
                 )
             else:
-                results['misc_pointcloud_viz'] = base_image
+                results["misc_pointcloud_viz"] = base_image
 
             # Step 4: Grasp Generation (if enabled)
             should_generate_grasps = (
@@ -268,13 +270,13 @@ class ManipulationProcessor:
 
         # Add timing information
         total_time = time.time() - start_time
-        results['processing_time'] = total_time
-        results['timing_breakdown'] = {
-            'detection': detection_time if 'detection_time' in locals() else 0,
-            'segmentation': segmentation_time if 'segmentation_time' in locals() else 0,
-            'pointcloud': pointcloud_time if 'pointcloud_time' in locals() else 0,
-            'misc_extraction': misc_time if 'misc_time' in locals() else 0,
-            'total': total_time
+        results["processing_time"] = total_time
+        results["timing_breakdown"] = {
+            "detection": detection_time if "detection_time" in locals() else 0,
+            "segmentation": segmentation_time if "segmentation_time" in locals() else 0,
+            "pointcloud": pointcloud_time if "pointcloud_time" in locals() else 0,
+            "misc_extraction": misc_time if "misc_time" in locals() else 0,
+            "total": total_time,
         }
         logger.debug(f"Frame processing completed in {total_time:.3f}s")
         logger.debug(
@@ -567,8 +569,6 @@ class ManipulationProcessor:
             z = 0
 
         return {"roll": x, "pitch": y, "yaw": z}
-
-
 
     def cleanup(self):
         """Clean up resources."""
