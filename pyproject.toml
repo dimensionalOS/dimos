@@ -31,7 +31,8 @@ exclude = [
 # so we gave up on this check globally
 disable_error_code = ["no-redef", "import-untyped"]
 files = [
-    "dimos/msgs/**/*.py"
+    "dimos/msgs/**/*.py",
+    "dimos/protocol/**/*.py"
 ]
 
 [tool.pytest.ini_options]
