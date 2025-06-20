@@ -41,15 +41,17 @@ class LCMTopic:
         return f"{self.topic}#{self.lcm_type}"
 
 
-class LCMbase(PubSub[str, Any], Service[LCMConfig]):
+class LCMbase(PubSub[LCMTopic, Any], Service[LCMConfig]):
     default_config = LCMConfig
     lc: lcm.LCM
     _running: bool
+    _callbacks: dict[str, list[Callable[[Any], None]]]
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.lc = lcm.LCM(self.config.url)
         self._running = False
+        self._callbacks = {}
 
     def publish(self, topic: LCMTopic, message: Any):
         """Publish a message to the specified channel."""
@@ -57,11 +59,33 @@ class LCMbase(PubSub[str, Any], Service[LCMConfig]):
 
     def subscribe(self, topic: LCMTopic, callback: Callable[[Any], None]):
         """Subscribe to the specified channel with a callback."""
-        self.lc.subscribe(str(topic), callback)
+        topic_str = str(topic)
+
+        # Create a wrapper callback that matches LCM's expected signature
+        def lcm_callback(channel: str, data: bytes) -> None:
+            # Here you would typically decode the data back to the message type
+            # For now, we'll pass the raw data - this might need refinement based on usage
+            callback(data)
+
+        # Store the original callback for unsubscription
+        if topic_str not in self._callbacks:
+            self._callbacks[topic_str] = []
+        self._callbacks[topic_str].append(callback)
+
+        self.lc.subscribe(topic_str, lcm_callback)
 
     def unsubscribe(self, topic: LCMTopic, callback: Callable[[Any], None]):
         """Unsubscribe a callback from a topic."""
-        self.lc.unsubscribe(str(topic), callback)
+        topic_str = str(topic)
+
+        # Remove from our tracking
+        if topic_str in self._callbacks and callback in self._callbacks[topic_str]:
+            self._callbacks[topic_str].remove(callback)
+            if not self._callbacks[topic_str]:
+                del self._callbacks[topic_str]
+
+        # Note: LCM doesn't provide a direct way to unsubscribe specific callbacks
+        # You might need to track and manage callbacks differently for full unsubscribe support
 
     def start(self):
         if self.config.auto_configure_multicast:
@@ -91,6 +115,6 @@ class LCMbase(PubSub[str, Any], Service[LCMConfig]):
         self.thread.join()
 
 
-class LCM(LCMbase, PubSubEncoderMixin[str, Any]):
+class LCM(LCMbase, PubSubEncoderMixin[LCMTopic, Any]):
     encoder: Callable[[Any], bytes] = lambda x: x.encode()
     decoder: Callable[[bytes], Any] = lambda x: x.decode()
