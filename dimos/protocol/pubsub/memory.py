@@ -15,7 +15,8 @@
 from collections import defaultdict
 from typing import Any, Callable, DefaultDict, List
 
-from dimos.protocol.pubsub.spec import JSONEncoder, PubSub
+from dimos.protocol import encode
+from dimos.protocol.pubsub.spec import PubSub, PubSubEncoderMixin
 
 
 class Memory(PubSub[str, Any]):
@@ -38,7 +39,7 @@ class Memory(PubSub[str, Any]):
             pass
 
 
-class MemoryWithJSONEncoder(JSONEncoder, Memory):
+class MemoryWithJSONEncoder(PubSubEncoderMixin, encode.json, Memory):
     """Memory pubsub with JSON encoding - just specify encoder/decoder."""
 
     ...
