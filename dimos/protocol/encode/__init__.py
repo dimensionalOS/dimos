@@ -20,7 +20,7 @@ class Encoder(ABC, Generic[MsgT, EncodingT]):
         raise NotImplementedError("Subclasses must implement this method.")
 
 
-class JSONEncoder:
+class JSON(Encoder[MsgT, str]):
     @staticmethod
     def encode(msg: MsgT) -> str:
         return json.dumps(msg).encode("utf-8")

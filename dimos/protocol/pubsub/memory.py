@@ -39,7 +39,4 @@ class Memory(PubSub[str, Any]):
             pass
 
 
-class MemoryWithJSONEncoder(PubSubEncoderMixin, encode.json, Memory):
-    """Memory pubsub with JSON encoding - just specify encoder/decoder."""
-
-    ...
+class MemoryWithJSONEncoder(encode.JSON, PubSubEncoderMixin, Memory): ...
