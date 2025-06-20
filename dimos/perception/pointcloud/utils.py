@@ -889,9 +889,10 @@ def extract_and_cluster_misc_points(
     full_pcd: o3d.geometry.PointCloud,
     all_objects: List[dict],
     eps: float = 0.03,
-    min_points: int = 50,
+    min_points: int = 100,
     enable_filtering: bool = True,
-) -> List[o3d.geometry.PointCloud]:
+    voxel_size: float = 0.02
+) -> Tuple[List[o3d.geometry.PointCloud], o3d.geometry.VoxelGrid]:
     """
     Extract miscellaneous/background points and cluster them using DBSCAN.
 
@@ -901,17 +902,20 @@ def extract_and_cluster_misc_points(
         eps: DBSCAN epsilon parameter (max distance between points in cluster)
         min_points: DBSCAN min_samples parameter (min points to form cluster)
         enable_filtering: Whether to apply statistical and radius filtering
-
+        voxel_size: Size of voxels for voxel grid generation
+        
     Returns:
-        List of clustered point clouds (each cluster as separate point cloud)
+        Tuple of (clustered_point_clouds, voxel_grid)
     """
     if full_pcd is None or len(np.asarray(full_pcd.points)) == 0:
-        return []
-
+        return [], o3d.geometry.VoxelGrid()
+        
     if not all_objects:
         # If no objects detected, cluster the full point cloud
-        return _cluster_point_cloud_dbscan(full_pcd, eps, min_points)
-
+        clusters = _cluster_point_cloud_dbscan(full_pcd, eps, min_points)
+        voxel_grid = _create_voxel_grid_from_clusters(clusters, voxel_size)
+        return clusters, voxel_grid
+        
     try:
         # Start with a copy of the full point cloud
         misc_pcd = o3d.geometry.PointCloud(full_pcd)
@@ -926,8 +930,10 @@ def extract_and_cluster_misc_points(
 
         if not all_object_points:
             # No object points to remove, cluster full point cloud
-            return _cluster_point_cloud_dbscan(misc_pcd, eps, min_points)
-
+            clusters = _cluster_point_cloud_dbscan(misc_pcd, eps, min_points)
+            voxel_grid = _create_voxel_grid_from_clusters(clusters, voxel_size)
+            return clusters, voxel_grid
+        
         # Combine all object points
         combined_obj_points = np.vstack(all_object_points)
 
@@ -943,8 +949,10 @@ def extract_and_cluster_misc_points(
         obj_points_down = np.asarray(obj_downsampled.points)
 
         if len(misc_points) == 0 or len(obj_points_down) == 0:
-            return _cluster_point_cloud_dbscan(misc_downsampled, eps, min_points)
-
+            clusters = _cluster_point_cloud_dbscan(misc_downsampled, eps, min_points)
+            voxel_grid = _create_voxel_grid_from_clusters(clusters, voxel_size)
+            return clusters, voxel_grid
+        
         # Build tree for object points
         obj_tree = cKDTree(obj_points_down)
 
@@ -956,15 +964,15 @@ def extract_and_cluster_misc_points(
         keep_mask = distances > threshold
 
         if not np.any(keep_mask):
-            return []
-
+            return [], o3d.geometry.VoxelGrid()
+        
         # Filter misc points
         misc_indices = np.where(keep_mask)[0]
         final_misc_pcd = misc_downsampled.select_by_index(misc_indices)
 
         if len(np.asarray(final_misc_pcd.points)) == 0:
-            return []
-
+            return [], o3d.geometry.VoxelGrid()
+        
         # Apply additional filtering if enabled
         if enable_filtering:
             # Apply statistical outlier filtering
@@ -973,8 +981,8 @@ def extract_and_cluster_misc_points(
             )
 
             if len(np.asarray(filtered_misc_pcd.points)) == 0:
-                return []
-
+                return [], o3d.geometry.VoxelGrid()
+            
             # Apply radius outlier filtering
             final_filtered_misc_pcd, _ = filter_point_cloud_radius(
                 filtered_misc_pcd,
@@ -983,21 +991,98 @@ def extract_and_cluster_misc_points(
             )
 
             if len(np.asarray(final_filtered_misc_pcd.points)) == 0:
-                return []
-
+                return [], o3d.geometry.VoxelGrid()
+                
             final_misc_pcd = final_filtered_misc_pcd
 
         # Cluster the misc points using DBSCAN
-        return _cluster_point_cloud_dbscan(final_misc_pcd, eps, min_points)
-
+        clusters = _cluster_point_cloud_dbscan(final_misc_pcd, eps, min_points)
+        
+        # Create voxel grid from all misc points (before clustering)
+        voxel_grid = _create_voxel_grid_from_point_cloud(final_misc_pcd, voxel_size)
+        
+        return clusters, voxel_grid
+        
     except Exception as e:
         print(f"Error in misc point extraction and clustering: {e}")
         # Fallback: return downsampled full point cloud as single cluster
         try:
             downsampled = full_pcd.voxel_down_sample(voxel_size=0.02)
-            return [downsampled] if len(np.asarray(downsampled.points)) > 0 else []
+            if len(np.asarray(downsampled.points)) > 0:
+                voxel_grid = _create_voxel_grid_from_point_cloud(downsampled, voxel_size)
+                return [downsampled], voxel_grid
+            else:
+                return [], o3d.geometry.VoxelGrid()
         except:
-            return []
+            return [], o3d.geometry.VoxelGrid()
+
+
+def _create_voxel_grid_from_point_cloud(
+    pcd: o3d.geometry.PointCloud,
+    voxel_size: float = 0.02
+) -> o3d.geometry.VoxelGrid:
+    """
+    Create a voxel grid from a point cloud.
+    
+    Args:
+        pcd: Input point cloud
+        voxel_size: Size of each voxel
+        
+    Returns:
+        Open3D VoxelGrid object
+    """
+    if len(np.asarray(pcd.points)) == 0:
+        return o3d.geometry.VoxelGrid()
+    
+    try:
+        # Create voxel grid from point cloud
+        voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, voxel_size)
+        
+        # Color the voxels with a semi-transparent gray
+        for voxel in voxel_grid.get_voxels():
+            voxel.color = [0.5, 0.5, 0.5]  # Gray color
+            
+        print(f"Created voxel grid with {len(voxel_grid.get_voxels())} voxels (voxel_size={voxel_size})")
+        return voxel_grid
+        
+    except Exception as e:
+        print(f"Error creating voxel grid: {e}")
+        return o3d.geometry.VoxelGrid()
+
+
+def _create_voxel_grid_from_clusters(
+    clusters: List[o3d.geometry.PointCloud],
+    voxel_size: float = 0.02
+) -> o3d.geometry.VoxelGrid:
+    """
+    Create a voxel grid from multiple clustered point clouds.
+    
+    Args:
+        clusters: List of clustered point clouds
+        voxel_size: Size of each voxel
+        
+    Returns:
+        Open3D VoxelGrid object
+    """
+    if not clusters:
+        return o3d.geometry.VoxelGrid()
+    
+    # Combine all clusters into one point cloud
+    combined_points = []
+    for cluster in clusters:
+        points = np.asarray(cluster.points)
+        if len(points) > 0:
+            combined_points.append(points)
+    
+    if not combined_points:
+        return o3d.geometry.VoxelGrid()
+    
+    # Create combined point cloud
+    all_points = np.vstack(combined_points)
+    combined_pcd = o3d.geometry.PointCloud()
+    combined_pcd.points = o3d.utility.Vector3dVector(all_points)
+    
+    return _create_voxel_grid_from_point_cloud(combined_pcd, voxel_size)
 
 
 def _cluster_point_cloud_dbscan(
@@ -1169,6 +1254,68 @@ def visualize_pcd(
         # Set render options
         render_option = vis.get_render_option()
         render_option.point_size = point_size
+
+        # Run visualization
+        vis.run()
+        vis.destroy_window()
+
+    except Exception as e:
+        print(f"Failed to create interactive visualization: {e}")
+        print("Falling back to simple visualization...")
+        # Fallback to simple visualization
+        o3d.visualization.draw_geometries(
+            geometries, window_name=window_name, width=1280, height=720
+        )
+
+
+def visualize_voxel_grid(
+    voxel_grid: o3d.geometry.VoxelGrid,
+    window_name: str = "Voxel Grid Visualization",
+    show_coordinate_frame: bool = True,
+    coordinate_frame_size: float = 0.1
+) -> None:
+    """
+    Visualize an Open3D voxel grid.
+
+    Args:
+        voxel_grid: Open3D voxel grid to visualize
+        window_name: Name of the visualization window
+        show_coordinate_frame: Whether to show coordinate frame
+        coordinate_frame_size: Size of the coordinate frame
+    """
+    if voxel_grid is None:
+        print("Warning: Voxel grid is None, nothing to visualize")
+        return
+
+    if len(voxel_grid.get_voxels()) == 0:
+        print("Warning: Voxel grid is empty, nothing to visualize")
+        return
+
+    # Create list of geometries to visualize
+    geometries = [voxel_grid]
+
+    # Add coordinate frame if requested
+    if show_coordinate_frame:
+        coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
+            size=coordinate_frame_size
+        )
+        geometries.append(coordinate_frame)
+
+    voxel_count = len(voxel_grid.get_voxels())
+    print(f"Visualizing voxel grid with {voxel_count} voxels")
+
+    try:
+        # Create visualizer
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(window_name=window_name, width=1280, height=720)
+
+        # Add geometries
+        for geom in geometries:
+            vis.add_geometry(geom)
+
+        # Set render options for better voxel visualization
+        render_option = vis.get_render_option()
+        render_option.show_coordinate_frame = show_coordinate_frame
 
         # Run visualization
         vis.run()
