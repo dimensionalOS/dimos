@@ -95,6 +95,8 @@ git+https://github.com/facebookresearch/detectron2.git@v0.6
 # Mapping
 open3d
 
+onnxruntime
+
 # CUDA-specific requirements
 extras_require={
     "cuda": ["pycuda", "onnxruntime-gpu[cuda,cudnn]"]
