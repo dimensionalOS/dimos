@@ -277,20 +277,20 @@ def main():
             print("\nSkipping misc clusters visualization")
     else:
         print("No misc clusters available for visualization")
-    
+
     # Visualize voxel grid separately
     if "misc_voxel_grid" in results and results["misc_voxel_grid"] is not None:
         misc_voxel_grid = results["misc_voxel_grid"]
         misc_clusters = results.get("misc_clusters", [])
-        
+
         voxel_count = len(misc_voxel_grid.get_voxels())
         print(f"Visualizing voxel grid with {voxel_count} voxels")
-        
+
         try:
             visualize_voxel_grid(
                 misc_voxel_grid,
                 window_name="Misc/Background Voxel Grid",
-                show_coordinate_frame=True
+                show_coordinate_frame=True,
             )
         except (KeyboardInterrupt, EOFError):
             print("\nSkipping voxel grid visualization")
