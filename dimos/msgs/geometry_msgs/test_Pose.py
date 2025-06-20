@@ -235,11 +235,6 @@ def test_pose_properties():
     assert pose.pitch == euler.y
     assert pose.yaw == euler.z
 
-    # Test euler property
-    assert pose.euler.x == euler.x
-    assert pose.euler.y == euler.y
-    assert pose.euler.z == euler.z
-
 
 def test_pose_euler_properties_identity():
     """Test pose Euler angle properties with identity orientation."""
@@ -251,9 +246,9 @@ def test_pose_euler_properties_identity():
     assert np.isclose(pose.yaw, 0.0, atol=1e-10)
 
     # Euler property should also be zeros
-    assert np.isclose(pose.euler.x, 0.0, atol=1e-10)
-    assert np.isclose(pose.euler.y, 0.0, atol=1e-10)
-    assert np.isclose(pose.euler.z, 0.0, atol=1e-10)
+    assert np.isclose(pose.orientation.euler.x, 0.0, atol=1e-10)
+    assert np.isclose(pose.orientation.euler.y, 0.0, atol=1e-10)
+    assert np.isclose(pose.orientation.euler.z, 0.0, atol=1e-10)
 
 
 def test_pose_repr():
@@ -407,7 +402,7 @@ def test_pose_euler_roundtrip():
     pose = Pose(Vector3(0, 0, 0), quaternion)
 
     # Convert back to Euler angles
-    result_euler = pose.euler
+    result_euler = pose.orientation.euler
 
     # Should get back the original Euler angles (within tolerance)
     assert np.isclose(result_euler.x, roll, atol=1e-6)
