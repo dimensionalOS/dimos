@@ -1,0 +1,96 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import os
+import threading
+from dataclasses import dataclass
+from typing import Any, Callable
+
+import lcm
+
+from dimos.protocol.pubsub.spec import PubSub, PubSubEncoderMixin
+from dimos.protocol.service.spec import Service
+
+
+@dataclass
+class LCMConfig:
+    ttl: int = 0
+    url: str | None = None
+    # auto configure routing
+    auto_configure_multicast: bool = True
+    auto_configure_buffers: bool = False
+
+
+@dataclass
+class LCMTopic:
+    topic: str = ""
+    lcm_type: str = ""
+
+    def __str__(self) -> str:
+        return f"{self.topic}#{self.lcm_type}"
+
+
+class LCMbase(PubSub[str, Any], Service[LCMConfig]):
+    default_config = LCMConfig
+    lc: lcm.LCM
+    _running: bool
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.lc = lcm.LCM(self.config.url)
+        self._running = False
+
+    def publish(self, topic: LCMTopic, message: Any):
+        """Publish a message to the specified channel."""
+        self.lc.publish(str(topic), message.encode())
+
+    def subscribe(self, topic: LCMTopic, callback: Callable[[Any], None]):
+        """Subscribe to the specified channel with a callback."""
+        self.lc.subscribe(str(topic), callback)
+
+    def unsubscribe(self, topic: LCMTopic, callback: Callable[[Any], None]):
+        """Unsubscribe a callback from a topic."""
+        self.lc.unsubscribe(str(topic), callback)
+
+    def start(self):
+        if self.config.auto_configure_multicast:
+            os.system("sudo ifconfig lo multicast")
+            os.system("sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
+
+        if self.config.auto_configure_buffers:
+            os.system("sudo sysctl -w net.core.rmem_max=2097152")
+            os.system("sudo sysctl -w net.core.rmem_default=2097152")
+
+        self._running = True
+        self.thread = threading.Thread(target=self._loop)
+        self.thread.daemon = True
+        self.thread.start()
+
+    def _loop(self) -> None:
+        """LCM message handling loop."""
+        while self._running:
+            try:
+                self.lc.handle()
+            except Exception as e:
+                print(f"Error in LCM handling: {e}")
+
+    def stop(self):
+        """Stop the LCM loop."""
+        self._running = False
+        self.thread.join()
+
+
+class LCM(LCMbase, PubSubEncoderMixin[str, Any]):
+    encoder: Callable[[Any], bytes] = lambda x: x.encode()
+    decoder: Callable[[bytes], Any] = lambda x: x.decode()

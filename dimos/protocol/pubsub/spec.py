@@ -85,3 +85,21 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
             yield q
         finally:
             self.unsubscribe(topic, q.put_nowait)
+
+
+class PubSubEncoderMixin(PubSub, Generic[TopicT, MsgT]):
+    """Mixin that encodes messages before publishing. and decodes them after receiving."""
+
+    encoder: Callable[[MsgT], bytes]
+    decoder: Callable[[bytes], MsgT]
+
+    def publish(self, topic: TopicT, message: MsgT) -> None:
+        encoded_message = self.encoder(message)
+        super().publish(topic, encoded_message)
+
+    def subscribe(self, topic: TopicT, callback: Callable[[MsgT], None]) -> None:
+        def _cb(msg: bytes):
+            decoded_message = self.decoder(msg)
+            callback(decoded_message)
+
+        super().subscribe(topic, _cb)
