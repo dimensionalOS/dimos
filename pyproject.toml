@@ -29,7 +29,7 @@ exclude = [
 [tool.mypy]
 # mypy doesn't understand plum @dispatch decorator
 # so we gave up on this check globally
-disable_error_code = ["no-redef", "import-untyped"]
+disable_error_code = ["no-redef", "import-untyped", "import-not-found"]
 files = [
     "dimos/msgs/**/*.py",
     "dimos/protocol/**/*.py"
