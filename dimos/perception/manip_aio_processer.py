@@ -178,28 +178,30 @@ class ManipulationProcessor:
 
             # Get full point cloud
             full_pcd = self.pointcloud_filter.get_full_point_cloud()
-            
+
             # Extract misc/background points and create voxel grid
             misc_start = time.time()
             all_filtered_objects = segmentation_filtered_objects + detected_objects
             misc_clusters, misc_voxel_grid = extract_and_cluster_misc_points(
-                full_pcd, 
+                full_pcd,
                 all_filtered_objects,
                 eps=0.03,
                 min_points=100,
                 enable_filtering=True,
-                voxel_size=0.02
+                voxel_size=0.02,
             )
             misc_time = time.time() - misc_start
-            
+
             # Store results
-            results.update({
-                'detected_objects': detected_objects,
-                'all_objects': all_objects,
-                'full_pointcloud': full_pcd,
-                'misc_clusters': misc_clusters,
-                'misc_voxel_grid': misc_voxel_grid
-            })
+            results.update(
+                {
+                    "detected_objects": detected_objects,
+                    "all_objects": all_objects,
+                    "full_pointcloud": full_pcd,
+                    "misc_clusters": misc_clusters,
+                    "misc_voxel_grid": misc_voxel_grid,
+                }
+            )
 
             # Create point cloud visualizations
             base_image = colorize_depth(depth_image, max_depth=10.0)
@@ -210,24 +212,28 @@ class ManipulationProcessor:
                     base_image=base_image,
                     objects=all_objects,
                     intrinsics=self.camera_intrinsics,
-                ) if all_objects else base_image
+                )
+                if all_objects
+                else base_image
             )
-            
+
             results["detected_pointcloud_viz"] = (
                 create_point_cloud_overlay_visualization(
                     base_image=base_image,
                     objects=detected_objects,
                     intrinsics=self.camera_intrinsics,
-                ) if detected_objects else base_image
+                )
+                if detected_objects
+                else base_image
             )
-            
+
             if misc_clusters:
                 # Generate consistent colors for clusters
                 cluster_colors = [
                     tuple((np.random.RandomState(i + 100).rand(3) * 255).astype(int))
                     for i in range(len(misc_clusters))
                 ]
-                results['misc_pointcloud_viz'] = overlay_point_clouds_on_image(
+                results["misc_pointcloud_viz"] = overlay_point_clouds_on_image(
                     base_image=base_image,
                     point_clouds=misc_clusters,
                     camera_intrinsics=self.camera_intrinsics,
@@ -261,16 +267,18 @@ class ManipulationProcessor:
 
         # Add timing information
         total_time = time.time() - start_time
-        results.update({
-            'processing_time': total_time,
-            'timing_breakdown': {
-                'detection': detection_time if 'detection_time' in locals() else 0,
-                'segmentation': segmentation_time if 'segmentation_time' in locals() else 0,
-                'pointcloud': pointcloud_time if 'pointcloud_time' in locals() else 0,
-                'misc_extraction': misc_time if 'misc_time' in locals() else 0,
-                'total': total_time
+        results.update(
+            {
+                "processing_time": total_time,
+                "timing_breakdown": {
+                    "detection": detection_time if "detection_time" in locals() else 0,
+                    "segmentation": segmentation_time if "segmentation_time" in locals() else 0,
+                    "pointcloud": pointcloud_time if "pointcloud_time" in locals() else 0,
+                    "misc_extraction": misc_time if "misc_time" in locals() else 0,
+                    "total": total_time,
+                },
             }
-        })
+        )
 
         return results
 
