@@ -36,6 +36,7 @@ from typing import Dict, List
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dimos.perception.pointcloud.utils import visualize_clustered_point_clouds, visualize_voxel_grid
 from dimos.perception.manip_aio_processer import ManipulationProcessor
 from dimos.perception.grasp_generation.utils import visualize_grasps_3d
 from dimos.perception.pointcloud.utils import load_camera_matrix_from_yaml, visualize_pcd
@@ -47,10 +48,10 @@ logger = setup_logger("test_pipeline_viz")
 def load_first_frame(data_dir: str):
     """Load first RGB-D frame and camera intrinsics."""
     # Load images
-    color_img = cv2.imread(os.path.join(data_dir, "color", "00300.png"))
+    color_img = cv2.imread(os.path.join(data_dir, "color", "00000.png"))
     color_img = cv2.cvtColor(color_img, cv2.COLOR_BGR2RGB)
 
-    depth_img = cv2.imread(os.path.join(data_dir, "depth", "00300.png"), cv2.IMREAD_ANYDEPTH)
+    depth_img = cv2.imread(os.path.join(data_dir, "depth", "00000.png"), cv2.IMREAD_ANYDEPTH)
     if depth_img.dtype == np.uint16:
         depth_img = depth_img.astype(np.float32) / 1000.0
     # Load intrinsics
@@ -266,8 +267,6 @@ def main():
         )
 
         try:
-            from dimos.perception.pointcloud.utils import visualize_clustered_point_clouds
-
             visualize_clustered_point_clouds(
                 misc_clusters,
                 window_name="Misc/Background Clusters (DBSCAN)",
@@ -278,6 +277,27 @@ def main():
             print("\nSkipping misc clusters visualization")
     else:
         print("No misc clusters available for visualization")
+    
+    # Visualize voxel grid separately
+    if "misc_voxel_grid" in results and results["misc_voxel_grid"] is not None:
+        misc_voxel_grid = results["misc_voxel_grid"]
+        misc_clusters = results.get("misc_clusters", [])
+        
+        voxel_count = len(misc_voxel_grid.get_voxels())
+        print(f"Visualizing voxel grid with {voxel_count} voxels")
+        
+        try:
+            visualize_voxel_grid(
+                misc_voxel_grid,
+                window_name="Misc/Background Voxel Grid",
+                show_coordinate_frame=True
+            )
+        except (KeyboardInterrupt, EOFError):
+            print("\nSkipping voxel grid visualization")
+        except Exception as e:
+            print(f"Error in voxel grid visualization: {e}")
+    else:
+        print("No voxel grid available for visualization")
 
 
 if __name__ == "__main__":
