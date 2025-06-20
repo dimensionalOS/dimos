@@ -23,21 +23,21 @@ from reactivex import operators as ops
 from dimos.stream.video_provider import VideoProvider
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.perception.segmentation.utils import extract_masks_bboxes_probs_names
+from dimos.utils.path_utils import get_project_root
 
 
 class TestSam2DSegmenter:
     @pytest.fixture(scope="class")
     def video_path(self):
         # Use a video file from assets directory
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../assets"))
         video_file = "trimmed_video_office.mov"
-        return os.path.join(base_dir, video_file)
+        return os.path.join(get_project_root(), "assets", video_file)
 
     def test_sam_segmenter_initialization(self):
         """Test FastSAM segmenter initializes correctly with default model path."""
         try:
             # Try to initialize with the default model path and existing device setting
-            segmenter = Sam2DSegmenter(device="cuda", use_analyzer=False)
+            segmenter = Sam2DSegmenter(use_analyzer=False)
             assert segmenter is not None
             assert segmenter.model is not None
         except Exception as e:
@@ -48,11 +48,7 @@ class TestSam2DSegmenter:
         """Test FastSAM segmenter can process video frames and return segmentation masks."""
         try:
             # Initialize segmenter without analyzer for faster testing
-            segmenter = Sam2DSegmenter(
-                device="cuda",
-                use_analyzer=False,
-                use_tracker=False,  # Disable tracker for simpler testing
-            )
+            segmenter = Sam2DSegmenter(use_analyzer=False)
 
             # Note: conf and iou are parameters for process_image, not constructor
             # We'll monkey patch the process_image method to use lower thresholds
