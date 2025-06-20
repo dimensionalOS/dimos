@@ -34,9 +34,7 @@ class TestYolo2DDetector:
     def test_yolo_detector_initialization(self):
         """Test YOLO detector initializes correctly with default model path."""
         try:
-            # Try to initialize with the correct path to the model in the root directory
-            model_path = os.path.join(os.getcwd(), "yolo11n.onnx")
-            detector = Yolo2DDetector(model_path=model_path, device="cpu")
+            detector = Yolo2DDetector()
             assert detector is not None
             assert detector.model is not None
         except Exception as e:
@@ -46,9 +44,7 @@ class TestYolo2DDetector:
     def test_yolo_detector_process_image(self, video_path):
         """Test YOLO detector can process video frames and return detection results."""
         try:
-            # Initialize detector with model from root directory
-            model_path = os.path.join(os.getcwd(), "yolo11n.onnx")
-            detector = Yolo2DDetector(model_path=model_path, device="cpu")
+            detector = Yolo2DDetector()
 
             # Create video provider and directly get a video stream observable
             assert os.path.exists(video_path), f"Test video not found: {video_path}"
