@@ -30,7 +30,11 @@ from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
 from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.perception.grasp_generation.utils import draw_grasps_on_image
-from dimos.perception.pointcloud.utils import create_point_cloud_overlay_visualization
+from dimos.perception.pointcloud.utils import (
+    create_point_cloud_overlay_visualization,
+    extract_and_cluster_misc_points,
+    overlay_point_clouds_on_image,
+)
 from dimos.perception.common.utils import colorize_depth, detection_results_to_object_data
 
 logger = setup_logger("dimos.perception.manip_aio_processor")
@@ -120,6 +124,7 @@ class ManipulationProcessor:
                 - all_objects: All objects (including misc objects) (SAM segmentation) with point clouds filtered
                 - full_pointcloud: Complete scene point cloud (if point cloud processing enabled)
                 - misc_clusters: List of clustered background/miscellaneous point clouds (DBSCAN)
+                - misc_voxel_grid: Open3D voxel grid approximating all misc/background points
                 - misc_pointcloud_viz: Visualization of misc/background cluster overlay
                 - grasps: Grasp results (if enabled)
                 - grasp_overlay: Grasp visualization (if enabled)
@@ -131,19 +136,15 @@ class ManipulationProcessor:
         try:
             # Step 1: Object Detection
             step_start = time.time()
-            logger.debug("Running object detection...")
             detection_results = self._run_object_detection(rgb_image)
-
             results["detection2d_objects"] = detection_results.get("objects", [])
             results["detection_viz"] = detection_results.get("viz_frame")
             detection_time = time.time() - step_start
 
             # Step 2: Semantic Segmentation (if enabled)
             segmentation_time = 0
-            segmentation_results = None
             if self.enable_segmentation:
                 step_start = time.time()
-                logger.debug("Running semantic segmentation...")
                 segmentation_results = self._run_segmentation(rgb_image)
                 results["segmentation2d_objects"] = segmentation_results.get("objects", [])
                 results["segmentation_viz"] = segmentation_results.get("viz_frame")
@@ -158,7 +159,6 @@ class ManipulationProcessor:
             detected_objects = []
             if detection2d_objects:
                 step_start = time.time()
-                logger.debug(f"Processing {len(detection2d_objects)} detection2d_objects...")
                 detected_objects = self._run_pointcloud_filtering(
                     rgb_image, depth_image, detection2d_objects
                 )
@@ -168,7 +168,6 @@ class ManipulationProcessor:
             segmentation_filtered_objects = []
             if segmentation2d_objects:
                 step_start = time.time()
-                logger.debug(f"Processing {len(segmentation2d_objects)} segmentation objects...")
                 segmentation_filtered_objects = self._run_pointcloud_filtering(
                     rgb_image, depth_image, segmentation2d_objects
                 )
@@ -179,60 +178,56 @@ class ManipulationProcessor:
 
             # Get full point cloud
             full_pcd = self.pointcloud_filter.get_full_point_cloud()
-
-            # Calculate misc_points clusters (full point cloud minus all object points)
+            
+            # Extract misc/background points and create voxel grid
             misc_start = time.time()
-            from dimos.perception.pointcloud.utils import extract_and_cluster_misc_points
-
-            misc_clusters = extract_and_cluster_misc_points(
-                full_pcd,
-                all_objects,
-                eps=0.05,  # 5cm cluster distance
-                min_points=50,  # Minimum 50 points per cluster
+            all_filtered_objects = segmentation_filtered_objects + detected_objects
+            misc_clusters, misc_voxel_grid = extract_and_cluster_misc_points(
+                full_pcd, 
+                all_filtered_objects,
+                eps=0.03,
+                min_points=100,
                 enable_filtering=True,
+                voxel_size=0.02
             )
             misc_time = time.time() - misc_start
-
-            results["detected_objects"] = detected_objects
-            results["all_objects"] = all_objects
-            results["full_pointcloud"] = full_pcd
-            results["misc_clusters"] = misc_clusters
+            
+            # Store results
+            results.update({
+                'detected_objects': detected_objects,
+                'all_objects': all_objects,
+                'full_pointcloud': full_pcd,
+                'misc_clusters': misc_clusters,
+                'misc_voxel_grid': misc_voxel_grid
+            })
 
             # Create point cloud visualizations
             base_image = colorize_depth(depth_image, max_depth=10.0)
 
-            # Main pointcloud visualization (all objects)
-            if all_objects:
-                results["pointcloud_viz"] = create_point_cloud_overlay_visualization(
+            # Create visualizations
+            results["pointcloud_viz"] = (
+                create_point_cloud_overlay_visualization(
                     base_image=base_image,
                     objects=all_objects,
                     intrinsics=self.camera_intrinsics,
-                )
-            else:
-                results["pointcloud_viz"] = base_image
-
-            # Detection objects pointcloud visualization
-            if detected_objects:
-                results["detected_pointcloud_viz"] = create_point_cloud_overlay_visualization(
+                ) if all_objects else base_image
+            )
+            
+            results["detected_pointcloud_viz"] = (
+                create_point_cloud_overlay_visualization(
                     base_image=base_image,
                     objects=detected_objects,
                     intrinsics=self.camera_intrinsics,
-                )
-            else:
-                results["detected_pointcloud_viz"] = base_image
-
-            # Misc clusters visualization overlay
+                ) if detected_objects else base_image
+            )
+            
             if misc_clusters:
-                from dimos.perception.pointcloud.utils import overlay_point_clouds_on_image
-
-                # Generate random colors for each cluster
-                cluster_colors = []
-                for i in range(len(misc_clusters)):
-                    np.random.seed(i + 100)  # Consistent colors
-                    color = tuple((np.random.rand(3) * 255).astype(int))
-                    cluster_colors.append(color)
-
-                results["misc_pointcloud_viz"] = overlay_point_clouds_on_image(
+                # Generate consistent colors for clusters
+                cluster_colors = [
+                    tuple((np.random.RandomState(i + 100).rand(3) * 255).astype(int))
+                    for i in range(len(misc_clusters))
+                ]
+                results['misc_pointcloud_viz'] = overlay_point_clouds_on_image(
                     base_image=base_image,
                     point_clouds=misc_clusters,
                     camera_intrinsics=self.camera_intrinsics,
@@ -249,17 +244,13 @@ class ManipulationProcessor:
             )
 
             if should_generate_grasps and all_objects:
-                logger.debug("Generating grasps...")
                 grasps = self._run_grasp_generation(all_objects)
                 results["grasps"] = grasps
-
-                # Create grasp overlay
                 if grasps:
                     results["grasp_overlay"] = self._create_grasp_overlay(rgb_image, grasps)
 
             # Ensure segmentation runs even if no objects detected
             if self.enable_segmentation and "segmentation_viz" not in results:
-                logger.debug("Running semantic segmentation (no objects detected)...")
                 segmentation_results = self._run_segmentation(rgb_image)
                 results["segmentation2d_objects"] = segmentation_results.get("objects", [])
                 results["segmentation_viz"] = segmentation_results.get("viz_frame")
@@ -270,18 +261,16 @@ class ManipulationProcessor:
 
         # Add timing information
         total_time = time.time() - start_time
-        results["processing_time"] = total_time
-        results["timing_breakdown"] = {
-            "detection": detection_time if "detection_time" in locals() else 0,
-            "segmentation": segmentation_time if "segmentation_time" in locals() else 0,
-            "pointcloud": pointcloud_time if "pointcloud_time" in locals() else 0,
-            "misc_extraction": misc_time if "misc_time" in locals() else 0,
-            "total": total_time,
-        }
-        logger.debug(f"Frame processing completed in {total_time:.3f}s")
-        logger.debug(
-            f"Timing breakdown: detection={detection_time:.3f}s, segmentation={segmentation_time:.3f}s, pointcloud={pointcloud_time:.3f}s"
-        )
+        results.update({
+            'processing_time': total_time,
+            'timing_breakdown': {
+                'detection': detection_time if 'detection_time' in locals() else 0,
+                'segmentation': segmentation_time if 'segmentation_time' in locals() else 0,
+                'pointcloud': pointcloud_time if 'pointcloud_time' in locals() else 0,
+                'misc_extraction': misc_time if 'misc_time' in locals() else 0,
+                'total': total_time
+            }
+        })
 
         return results
 
