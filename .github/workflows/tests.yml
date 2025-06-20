@@ -36,7 +36,7 @@ jobs:
         
       - name: Validate typing
         run: |
-          /entrypoint.sh bash -c "mypy"
+          /entrypoint.sh bash -c "mypy -v"
 
       - name: Run tests
         run: |
