@@ -212,7 +212,7 @@ class ObserveStream(AbstractRobotSkill):
                 pil_image = frame
 
             # Use Qwen to process the frame
-            model_name = "qwen-vl-max"  # Using the most capable model
+            model_name = "qwen2.5-vl-72b-instruct"  # Using the most capable model
             response = query_single_frame(pil_image, self.query_text, model_name=model_name)
 
             logger.info(f"Qwen response received: {response[:100]}...")

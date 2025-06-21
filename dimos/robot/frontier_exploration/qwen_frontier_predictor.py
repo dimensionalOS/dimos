@@ -45,7 +45,7 @@ class QwenFrontierPredictor:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_name: str = "qwen-vl-max",
+        model_name: str = "qwen2.5-vl-72b-instruct",
         use_smoothed_costmap: bool = True,
         image_scale_factor: int = 4,
     ):

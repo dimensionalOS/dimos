@@ -61,7 +61,7 @@ class Observe(AbstractRobotSkill):
         """
         super().__init__(robot=robot, **data)
         self._agent = agent
-        self._model_name = "qwen-vl-max"
+        self._model_name = "qwen2.5-vl-72b-instruct"
 
         # Get the video stream from the robot
         self._video_stream = self._robot.video_stream
