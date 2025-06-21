@@ -22,7 +22,7 @@ from dask.distributed import get_client
 from streamz.dask import Stream
 
 # from streamz import Stream
-from dimos.utils.testing import _get_data_dir
+from dimos.utils.testing import _get_data_dir, testData
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class VideoFrame(TypedDict):
 class VideoActor:
     stream: Stream = Stream(asynchronous=True)
 
-    def __init__(self, video_path=None, width=None, height=None):
+    def __init__(self, video_name="office.mp4", width=None, height=None, camera_index=None):
         """
         Initialize the video player.
 
@@ -46,7 +46,8 @@ class VideoActor:
             height: Frame height in pixels (None to use original video dimensions)
         """
         self.client = get_client()
-        self.video_path = video_path or str(_get_data_dir() / "video" / "office.mp4")
+        self.video_path = testData("video").joinpath(video_name)
+        print("VIDEO", self.video_path)
 
         self.width = width
         self.height = height

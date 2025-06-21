@@ -18,9 +18,10 @@ import multiprocessing as mp
 import pytest
 from dask.distributed import Client, LocalCluster
 
-from dimos.multiprocess.experiments.streamsActorsAPI import (
+from dimos.multiprocess.actors import (
     CameraActor,
     LatencyActor,
+    VideoActor,
     deploy_actor,
 )
 
@@ -38,7 +39,7 @@ def dask_client():
 @pytest.mark.asyncio
 async def test_api(dask_client):
     print("Deploying actors")
-    camera_actor = deploy_actor(dask_client, CameraActor, camera_index=0)
+    camera_actor = deploy_actor(dask_client, VideoActor, camera_index=0)
     frame_actor = deploy_actor(dask_client, LatencyActor, name="LatencyActor", verbose=True)
 
     print(f"Camera actor: {camera_actor}")
