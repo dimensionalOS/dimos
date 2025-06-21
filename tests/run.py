@@ -335,10 +335,6 @@ agent.get_response_observable().subscribe(lambda x: agent_response_subject.on_ne
 print("ObserveStream and Kill skills registered and ready for use")
 print("Created memory.txt file")
 
-print("standing up")
-robot.standup()
-print("robot is up")
-
 # Start web interface in a separate thread to avoid blocking
 web_thread = threading.Thread(target=web_interface.run)
 web_thread.daemon = True

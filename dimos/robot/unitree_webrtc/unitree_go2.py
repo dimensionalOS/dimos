@@ -70,13 +70,13 @@ class UnitreeGo2(Robot):
             costmap_save_dir: Directory to save costmap files
         """
         # Create WebRTC connection interface
-        webrtc_connection = WebRTCRobot(
+        self.webrtc_connection = WebRTCRobot(
             ip=ip,
             mode=mode,
         )
 
-        # Store the WebRTC connection for direct access to WebRTC-specific features
-        self.webrtc_connection = webrtc_connection
+        print("standing up")
+        self.webrtc_connection.standup()
 
         # Initialize WebRTC-specific features
         self.lidar_stream = self.webrtc_connection.lidar_stream()
@@ -90,7 +90,7 @@ class UnitreeGo2(Robot):
 
         # Initialize base robot with connection interface
         super().__init__(
-            connection_interface=webrtc_connection,
+            connection_interface=self.webrtc_connection,
             output_dir=output_dir,
             skill_library=skill_library,
             capabilities=robot_capabilities
