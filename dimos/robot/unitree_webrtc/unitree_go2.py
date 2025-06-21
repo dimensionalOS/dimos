@@ -79,9 +79,11 @@ class UnitreeGo2(Robot):
         self.webrtc_connection = webrtc_connection
 
         # Initialize WebRTC-specific features
+        self.lidar_stream = self.webrtc_connection.lidar_stream()
         self.odom = getter_streaming(self.webrtc_connection.odom_stream())
-        self.map = Map(voxel_size=0.2)
-        self.map_stream = self.map.consume(self.webrtc_connection.lidar_stream())
+        self.map = Map(voxel_size=0.5)
+        self.map_stream = self.map.consume(self.lidar_stream)
+        self.lidar_message = getter_streaming(self.lidar_stream)
 
         if skill_library is None:
             skill_library = MyUnitreeSkills()
@@ -156,7 +158,7 @@ class UnitreeGo2(Robot):
 
         # Initialize the local planner using WebRTC-specific methods
         self.local_planner = VFHPurePursuitPlanner(
-            get_costmap=lambda: self.map.local_costmap,
+            get_costmap=lambda: self.lidar_message().costmap(),
             get_robot_pose=lambda: self.odom(),
             move=self.move,  # Use the robot's move method directly
             robot_width=0.36,  # Unitree Go2 width in meters
