@@ -286,7 +286,7 @@ text_streams = {
 
 web_interface = RobotWebInterface(port=5555, text_streams=text_streams, **streams)
 
-stt_node = stt()
+# stt_node = stt()
 
 # Read system query from prompt.txt file
 with open(
@@ -294,19 +294,19 @@ with open(
 ) as f:
     system_query = f.read()
 
-# Create a CerebrasAgent instance
-agent = CerebrasAgent(
+# Create a ClaudeAgent instance
+agent = ClaudeAgent(
     dev_name="test_agent",
-    input_query_stream=stt_node.emit_text(),
-    # input_query_stream=web_interface.query_stream,
+    # input_query_stream=stt_node.emit_text(),
+    input_query_stream=web_interface.query_stream,
     skills=robot.get_skills(),
     system_query=system_query,
     model_name="claude-3-7-sonnet-latest",
     thinking_budget_tokens=0,
 )
 
-tts_node = tts()
-tts_node.consume_text(agent.get_response_observable())
+# tts_node = tts()
+# tts_node.consume_text(agent.get_response_observable())
 
 robot_skills = robot.get_skills()
 robot_skills.add(ObserveStream)
@@ -315,7 +315,7 @@ robot_skills.add(KillSkill)
 robot_skills.add(NavigateWithText)
 robot_skills.add(FollowHuman)
 robot_skills.add(GetPose)
-robot_skills.add(Speak)
+# robot_skills.add(Speak)
 robot_skills.add(NavigateToGoal)
 robot_skills.add(Explore)
 
@@ -327,7 +327,7 @@ robot_skills.create_instance("FollowHuman", robot=robot)
 robot_skills.create_instance("GetPose", robot=robot)
 robot_skills.create_instance("NavigateToGoal", robot=robot)
 robot_skills.create_instance("Explore", robot=robot)
-robot_skills.create_instance("Speak", tts_node=tts_node)
+# robot_skills.create_instance("Speak", tts_node=tts_node)
 
 # Subscribe to agent responses and send them to the subject
 agent.get_response_observable().subscribe(lambda x: agent_response_subject.on_next(x))

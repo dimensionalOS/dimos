@@ -546,6 +546,7 @@ class BaseLocalPlanner(ABC):
                     self.final_goal_reached = True
                     return True
                 # Continue rotating
+                self.position_reached = True
                 return False
             else:
                 # No orientation goal, mark as reached
@@ -644,7 +645,7 @@ class BaseLocalPlanner(ABC):
         """Check if the final goal (single or last waypoint) is reached, including orientation."""
         if self.waypoints is not None:
             # Waypoint mode: check if the final waypoint and orientation have been reached
-            return self.final_goal_reached
+            return self.final_goal_reached and self._is_goal_orientation_reached()
         else:
             # Single goal mode: check distance to the single goal and orientation
             if self.goal_xy is None:
@@ -957,7 +958,7 @@ class BaseLocalPlanner(ABC):
         recovery_time = current_time - self.recovery_start_time
 
         # First recovery attempt: Simple backup behavior
-        if self.recovery_attempts % 2 == 1:
+        if self.recovery_attempts % 2 == 0:
             if recovery_time < self.backup_duration:
                 logger.warning(f"Recovery attempt 1: backup for {recovery_time:.1f}s")
                 return {"x_vel": -0.5, "angular_vel": 0.0}  # Backup at moderate speed
