@@ -65,7 +65,7 @@ class BaseLocalPlanner(ABC):
 
     def __init__(
         self,
-        get_costmap: Callable[[], Optional[OccupancyGrid]],
+        get_costmap: Callable[[], Optional[Costmap]],
         get_robot_pose: Callable[[], Any],
         move: Callable[[Vector], None],
         safety_threshold: float = 0.5,

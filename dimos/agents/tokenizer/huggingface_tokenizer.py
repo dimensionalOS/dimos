@@ -19,12 +19,12 @@ from dimos.utils.logging_config import setup_logger
 
 class HuggingFaceTokenizer(AbstractTokenizer):
     def __init__(self, model_name: str = "Qwen/Qwen2.5-0.5B", **kwargs):
-        super().__init__()
+        super().__init__(**kwargs)
 
         # Initilize the tokenizer for the huggingface models
         self.model_name = model_name
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, **kwargs)
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         except Exception as e:
             raise ValueError(
                 f"Failed to initialize tokenizer for model {self.model_name}. Error: {str(e)}"

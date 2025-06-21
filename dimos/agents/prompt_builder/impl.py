@@ -188,13 +188,7 @@ class PromptBuilder:
                         component["tokens"] = tokens_after
 
         # Build the `messages` structure (OpenAI specific)
-        # for Qwen VL compatibility. TODO: Add wrapper Qwen specific PromptBuilder
-        messages = [
-            {
-                "role": "system",
-                "content": [{"type": "text", "text": components["system_prompt"]["text"]}],
-            }
-        ]
+        messages = [{"role": "system", "content": components["system_prompt"]["text"]}]
 
         if components["rag"]["text"]:
             user_content = [
@@ -212,6 +206,7 @@ class PromptBuilder:
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:image/jpeg;base64,{base64_image}",
+                        "detail": image_detail,
                     },
                 }
             )
