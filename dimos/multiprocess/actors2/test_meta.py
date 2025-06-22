@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.multiprocess.actors.meta import In, Out, module, rpc
+from dimos.multiprocess.actors2.meta import In, Out, module, rpc
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.path import Path

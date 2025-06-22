@@ -50,4 +50,14 @@ async def test_api(dask_client):
     print("Camera actor run finished")
 
     await asyncio.sleep(2)
-    # print(f"Frame actor received {frame_actor.frame_count} frames")
+
+
+@pytest.mark.asyncio
+async def test_api2(dask_client):
+    print("Deploying actors")
+
+    camera = VideoActor()
+    latency = LatencyActor(camera.video_stream)
+    results = Results(latency.output_stream)
+
+    camera.read_frames(150)

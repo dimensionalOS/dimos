@@ -148,7 +148,7 @@ def module(cls: type) -> type:
             bottom = "└┬" + "─" * (len(name) + 1) + "┘"
             return f"{top}\n{middle}\n{bottom}"
 
-        inputs = list(boundary_iter(map(str, c.inputs.values()), "┌ ", " ├ ", " ├ "))
+        inputs = list(boundary_iter(map(str, c.inputs.values()), "┌─ ", " ├─ ", " ├─ "))
 
         rpcs = []
         for n, fn in c.rpcs.items():
@@ -165,11 +165,11 @@ def module(cls: type) -> type:
             ret_name = getattr(ret_ann, "__name__", repr(ret_ann))
             rpcs.append(f"{n}({', '.join(param_strs)}) → {ret_name}")
 
-        rpcs = list(boundary_iter(rpcs, " ├ ", " ├ ", " └ "))
+        rpcs = list(boundary_iter(rpcs, " ├─ ", " ├─ ", " └─ "))
 
-        outputs = list(boundary_iter(map(str, c.outputs.values()), " ├ ", " ├ ", " ├ "))
+        outputs = list(boundary_iter(map(str, c.outputs.values()), " ├─ ", " ├─ ", " ├─ "))
 
-        return "\n".join(inputs + [box(c.__name__)] + outputs + [" │ rpc"] + rpcs)
+        return "\n".join(inputs + [box(c.__name__)] + outputs + [" │"] + rpcs)
 
     setattr(cls, "io", classmethod(_io_inner))
 
