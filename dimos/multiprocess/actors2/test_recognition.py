@@ -16,15 +16,11 @@ import time
 
 import pytest
 
-from dimos.multiprocess.actors2.video import Video
+from dimos.multiprocess.actors2.recognition import Recognition
 
 
-def test_video_introspection():
-    print("\n" + Video.io())
+def test_introspection():
+    print(Recognition.inputs)
+    print(Recognition.outputs)
 
-
-@pytest.mark.asyncio
-async def test_play():
-    video = Video(video_name="office.mp4")
-    video.video_stream.subscribe(lambda frame: print("frame", frame.get("frame_number")))
-    await video.play(target_frames=10)
+    print("\n\n" + Recognition.io() + "\n\n")

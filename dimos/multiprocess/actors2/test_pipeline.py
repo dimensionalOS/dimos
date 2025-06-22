@@ -16,6 +16,7 @@ import time
 
 import pytest
 
+from dimos.multiprocess.actors2.recognition import Recognition
 from dimos.multiprocess.actors2.video import Video
 
 
@@ -24,7 +25,20 @@ def test_video_introspection():
 
 
 @pytest.mark.asyncio
-async def test_play():
+async def test_play_local():
     video = Video(video_name="office.mp4")
-    video.video_stream.subscribe(lambda frame: print("frame", frame.get("frame_number")))
-    await video.play(target_frames=10)
+    recognition = Recognition(video.video_stream)
+    video.play(frames=10)
+
+
+@pytest.mark.asyncio
+async def test_play_lcm():
+    video = Video(video_name="office.mp4")
+    videoframes = topic("/video/frames")
+    video.video_stream.subscribe(lambda frame: videoframes.on_next(frame.get("frame_number")))
+
+
+@pytest.mark.asyncio
+async def test_play_dask():
+    video = run_remote(Video, video_name="office.mp4")
+    video.video_stream.subscribe(print)

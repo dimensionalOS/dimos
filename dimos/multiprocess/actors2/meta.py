@@ -93,12 +93,11 @@ def module(cls: type) -> type:
     cls.outputs = dict(getattr(cls, "outputs", {}))
     cls.rpcs = dict(getattr(cls, "rpcs", {}))
 
-    # outputs declared as **annotations** (preferred) or as descriptor values
-    # ----------------------------------------------------------------------
     cls_type_hints = get_type_hints(cls, include_extras=True)
 
     for n, ann in cls_type_hints.items():
         origin = get_origin(ann)
+        print(n, ann, origin)
         if origin is Out:
             inner_type, *_ = get_args(ann) or (Any,)
             md = Out(inner_type, n)
@@ -111,7 +110,6 @@ def module(cls: type) -> type:
         if callable(a) and getattr(a, "__rpc__", False):
             cls.rpcs[n] = a
 
-    # inputs ❶ via annotation markers -------------------------------------------------
     sig = inspect.signature(cls.__init__)
     type_hints = get_type_hints(cls.__init__, include_extras=True)
 
@@ -130,7 +128,6 @@ def module(cls: type) -> type:
         if md is not None:
             cls.inputs[pname] = md
 
-    # attach convenience inspector -------------------------------------------------
     def _io_inner(c):
         def boundary_iter(iterable, first, middle, last):
             l = list(iterable)
@@ -148,7 +145,7 @@ def module(cls: type) -> type:
             bottom = "└┬" + "─" * (len(name) + 1) + "┘"
             return f"{top}\n{middle}\n{bottom}"
 
-        inputs = list(boundary_iter(map(str, c.inputs.values()), "┌─ ", " ├─ ", " ├─ "))
+        inputs = list(boundary_iter(map(str, c.inputs.values()), " ┌─ ", " ├─ ", " ├─ "))
 
         rpcs = []
         for n, fn in c.rpcs.items():
@@ -167,9 +164,14 @@ def module(cls: type) -> type:
 
         rpcs = list(boundary_iter(rpcs, " ├─ ", " ├─ ", " └─ "))
 
-        outputs = list(boundary_iter(map(str, c.outputs.values()), " ├─ ", " ├─ ", " ├─ "))
+        outputs = list(
+            boundary_iter(map(str, c.outputs.values()), " ├─ ", " ├─ ", " ├─ " if rpcs else " └─ ")
+        )
 
-        return "\n".join(inputs + [box(c.__name__)] + outputs + [" │"] + rpcs)
+        if rpcs:
+            rpcs = [" │"] + rpcs
+
+        return "\n".join(inputs + [box(c.__name__)] + outputs + rpcs)
 
     setattr(cls, "io", classmethod(_io_inner))
 

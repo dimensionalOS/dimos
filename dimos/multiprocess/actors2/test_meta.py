@@ -46,4 +46,4 @@ def test_introspect():
     assert hasattr(Navigation, "outputs")
     assert hasattr(Navigation, "rpcs")
 
-    print("\n\n\n", Navigation.io(), "\n\n")
+    print("\n\n\n" + Navigation.io(), "\n\n")
