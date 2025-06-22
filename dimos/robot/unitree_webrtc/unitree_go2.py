@@ -52,8 +52,6 @@ class UnitreeGo2(Robot):
         spatial_memory_collection: str = "spatial_memory",
         new_memory: bool = True,
         enable_perception: bool = True,
-        save_costmaps: bool = False,
-        costmap_save_dir: str = os.path.join(os.getcwd(), "assets", "saved_maps"),
     ):
         """Initialize Unitree Go2 robot with WebRTC control interface.
 
@@ -66,8 +64,6 @@ class UnitreeGo2(Robot):
             spatial_memory_collection: Collection name for spatial memory
             new_memory: Whether to create new spatial memory
             enable_perception: Whether to enable perception streams and spatial memory
-            save_costmaps: Whether to save costmaps on successful goal completion
-            costmap_save_dir: Directory to save costmap files
         """
         # Create WebRTC connection interface
         self.webrtc_connection = WebRTCRobot(
@@ -152,8 +148,6 @@ class UnitreeGo2(Robot):
             get_frontiers=lambda: self.frontier_explorer.get_exploration_goal(
                 self.odom().pos, self.map.costmap
             ),
-            save_costmaps=save_costmaps,
-            costmap_save_dir=costmap_save_dir,
         )
 
         # Initialize the local planner using WebRTC-specific methods
@@ -172,10 +166,6 @@ class UnitreeGo2(Robot):
 
         # Initialize frontier exploration
         self.frontier_explorer = WavefrontFrontierExplorer()
-
-        # Create costmap save directory if saving is enabled
-        if save_costmaps and not os.path.exists(costmap_save_dir):
-            os.makedirs(costmap_save_dir)
 
         # Create the visualization stream at 5Hz
         self.local_planner_viz_stream = self.local_planner.create_stream(frequency_hz=5.0)
