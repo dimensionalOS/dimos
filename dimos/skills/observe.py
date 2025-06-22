@@ -107,9 +107,10 @@ class Observe(AbstractRobotSkill):
             response = self._process_frame_with_qwen(frame)
 
             # Add the response to the conversation history
-            self._agent.append_to_history(
-                f"Observation: {response}",
-            )
+            # self._agent.append_to_history(
+            #     f"Observation: {response}",
+            # )
+            response = self._agent.run_observable_query(f"Observation: {response}")
 
             logger.info(f"Added Qwen observation to conversation history")
             return f"Observation complete: {response[:100]}..."

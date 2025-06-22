@@ -218,9 +218,10 @@ class ObserveStream(AbstractRobotSkill):
             logger.info(f"Qwen response received: {response[:100]}...")
 
             # Add the response to the conversation history
-            self._agent.append_to_history(
-                f"Observation: {response}",
-            )
+            # self._agent.append_to_history(
+            #     f"Observation: {response}",
+            # )
+            response = self._agent.run_observable_query(f"Observation: {response}")
 
             logger.info("Added Qwen observation to conversation history")
 
