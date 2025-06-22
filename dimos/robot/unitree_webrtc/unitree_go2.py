@@ -81,7 +81,7 @@ class UnitreeGo2(Robot):
         # Initialize WebRTC-specific features
         self.lidar_stream = self.webrtc_connection.lidar_stream()
         self.odom = getter_streaming(self.webrtc_connection.odom_stream())
-        self.map = Map(voxel_size=0.5)
+        self.map = Map(voxel_size=0.2)
         self.map_stream = self.map.consume(self.lidar_stream)
         self.lidar_message = getter_streaming(self.lidar_stream)
 
