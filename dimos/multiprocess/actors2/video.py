@@ -34,14 +34,13 @@ class VideoFrame(TypedDict):
 
 @module
 class Video:
-    video_stream: Out[VideoFrame]
+    video_stream: Out[VideoFrame] = Subject()
     width: int
     height: int
     total_frames: int
 
     def __init__(self, video_name="office.mp4"):
         self.video_name = video_name
-        self.video_stream = Subject()
 
         self.cap = None
 

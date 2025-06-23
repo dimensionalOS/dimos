@@ -24,6 +24,8 @@ from typing import (
     get_type_hints,
 )
 
+from reactivex.subject import Subject
+
 T = TypeVar("T")
 
 
@@ -113,25 +115,26 @@ def module(cls: type) -> type:
     sig = inspect.signature(cls.__init__)
     type_hints = get_type_hints(cls.__init__, include_extras=True)
 
-    for pname, param in sig.parameters.items():
-        if pname == "self":
+    print(sig.parameters)
+    for name, _ in sig.parameters.items():
+        if name == "self":
             continue
 
         md = None
-        ann = type_hints.get(pname)
+        ann = type_hints.get(name)
         origin = get_origin(ann)
 
         if origin is In:
             inner_type, *_ = get_args(ann) or (Any,)
-            md = In(inner_type, pname)
+            md = In(inner_type, name)
 
         if md is not None:
-            cls.inputs[pname] = md
+            cls.inputs[name] = md
 
     def _io_inner(c):
         def boundary_iter(iterable, first, middle, last):
             l = list(iterable)
-            for idx, sd in enumerate(l):  # idx = 0,1,2…
+            for idx, sd in enumerate(l):
                 if idx == len(l) - 1:
                     yield last + sd
                 elif idx == 0:
@@ -152,7 +155,7 @@ def module(cls: type) -> type:
             sig = inspect.signature(fn)
             hints = get_type_hints(fn, include_extras=True)
             param_strs: list[str] = []
-            for pname, param in sig.parameters.items():
+            for pname, _ in sig.parameters.items():
                 if pname in ("self", "cls"):
                     continue
                 ann = hints.get(pname, Any)

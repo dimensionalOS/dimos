@@ -24,7 +24,9 @@ print(dask_client)
 @pytest.mark.asyncio
 async def test_api(dask_client):
     print("Deploying actors")
-    camera_actor = deploy_actor(dask_client, VideoActor)
+
+    camera_actor1 = VideoActor()
+
     frame_actor = deploy_actor(dask_client, LatencyActor, name="LatencyActor", verbose=True)
 
     print(f"Camera actor: {camera_actor}")
@@ -32,6 +34,7 @@ async def test_api(dask_client):
 
     camera_actor.add_processor(frame_actor)
     camera_actor.run(70).result()
+
     print("Camera actor run finished")
     print(f"Average latency: {frame_actor.avg_latency}")
 
