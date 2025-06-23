@@ -12,20 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.types.vector import Vector
-from typing import Union, Optional
-from dimos.robot.unitree_webrtc.type.map import Map
-from dimos.robot.unitree_webrtc.connection import WebRTCRobot
-from dimos.robot.global_planner.planner import AstarPlanner
-from dimos.utils.reactive import getter_streaming
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.skills.skills import AbstractSkill, SkillLibrary
+import multiprocessing as mp
 import os
+from typing import Optional, Union
+
+from dask.distributed import Client, LocalCluster
 from go2_webrtc_driver.constants import VUI_COLOR
+
+from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.robot.local_planner import navigate_path_local
+from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
+from dimos.robot.unitree_webrtc.connection import WebRTCRobot
+from dimos.robot.unitree_webrtc.type.map import Map
+from dimos.skills.skills import AbstractSkill, SkillLibrary
+from dimos.types.vector import Vector
+from dimos.utils.reactive import getter_streaming
 
 
 class Color(VUI_COLOR): ...
+
+
+def init_dask_client():
+    process_count = mp.cpu_count()
+    cluster = LocalCluster(n_workers=process_count, threads_per_worker=1)
+    client = Client(cluster)
+    return client
 
 
 class UnitreeGo2(WebRTCRobot):
@@ -40,14 +51,16 @@ class UnitreeGo2(WebRTCRobot):
         super().__init__(ip=ip, mode=mode)
 
         self.odom = getter_streaming(self.odom_stream())
-        self.map = Map()
-        self.map_stream = self.map.consume(self.lidar_stream())
+        dask_client = init_dask_client()
+        self.map = dask_client.submit(Map, actor=True).result()
+
+        self.lidar_stream().subscribe(lambda frame: self.map.add_frame(frame).result())
 
         self.global_planner = AstarPlanner(
             set_local_nav=lambda path, stop_event=None, goal_theta=None: navigate_path_local(
                 self, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event
             ),
-            get_costmap=lambda: self.map.costmap,
+            get_costmap=lambda: self.map.costmap().result(),
             get_robot_pos=lambda: self.odom().pos,
         )
 

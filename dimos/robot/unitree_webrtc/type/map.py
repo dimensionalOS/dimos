@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import open3d as o3d
-import numpy as np
 from dataclasses import dataclass
-from typing import Tuple, Optional
+from typing import Optional, Tuple
+
+import numpy as np
+import open3d as o3d
+import reactivex.operators as ops
+from reactivex.observable import Observable
 
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.types.costmap import Costmap, pointcloud_to_costmap
-
-from reactivex.observable import Observable
-import reactivex.operators as ops
 
 
 @dataclass
@@ -44,7 +44,6 @@ class Map:
     def o3d_geometry(self) -> o3d.geometry.PointCloud:
         return self.pointcloud
 
-    @property
     def costmap(self) -> Costmap:
         """Return a fully inflated cost-map in a `Costmap` wrapper."""
         inflate_radius_m = 0.5 * self.voxel_size if self.voxel_size > self.cost_resolution else 0.0
