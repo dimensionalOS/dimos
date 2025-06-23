@@ -15,6 +15,7 @@ class Map:
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
     voxel_size: float = 0.05
     cost_resolution: float = 0.05
+    strategy: str = "cylinder"
 
     def add_frame(self, frame: LidarMessage) -> "Map":
         """Voxelise *frame* and splice it into the running map."""
@@ -40,6 +41,31 @@ class Map:
             inflate_radius_m=inflate_radius_m,
         )
         return Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution)
+
+class ZedMap:
+    """Map class for ZED camera, which uses a different strategy for splicing."""
+    pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
+    voxel_size: float = 0.05
+    cost_resolution: float = 0.05
+
+    def add_frame(self, frame: LidarMessage) -> "ZedMap":
+        """Update the pointcloud with the new LidarMessage data."""
+        self.pointcloud = frame.pointcloud
+        # self.origin = frame.origin
+        return self
+
+
+    @property
+    def costmap(self) -> Costmap:
+        """Return a cost-map for ZED camera with optional inflation."""
+        inflate_radius_m = 0.5 * self.voxel_size if self.voxel_size > self.cost_resolution else 0.0
+        grid, origin_xy = pointcloud_to_costmap(
+            self.pointcloud,
+            resolution=self.cost_resolution,
+            inflate_radius_m=inflate_radius_m,
+        )
+        return Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution)
+    
 
 
 def splice_sphere(
@@ -83,6 +109,7 @@ def splice_cylinder(
 
     survivors = map_pcd.select_by_index(victims, invert=True)
     return survivors + patch_pcd
+    
 
 
 def _inflate_lethal(costmap: np.ndarray, radius: int, lethal_val: int = 100) -> np.ndarray:
