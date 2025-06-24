@@ -23,7 +23,6 @@ from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.utils.reactive import getter_streaming
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from go2_webrtc_driver.constants import VUI_COLOR
-from go2_webrtc_driver.webrtc_driver import WebRTCConnectionMethod
 from dimos.perception.person_tracker import PersonTrackingStream
 from dimos.perception.object_tracker import ObjectTrackingStream
 from dimos.robot.local_planner.local_planner import navigate_path_local
@@ -45,7 +44,7 @@ class UnitreeGo2(Robot):
     def __init__(
         self,
         ip: str,
-        mode: str = "ai",
+        mode: str = "normal",
         output_dir: str = os.path.join(os.getcwd(), "assets", "output"),
         skill_library: SkillLibrary = None,
         robot_capabilities: List[RobotCapability] = None,
@@ -64,29 +63,23 @@ class UnitreeGo2(Robot):
             spatial_memory_collection: Collection name for spatial memory
             new_memory: Whether to create new spatial memory
             enable_perception: Whether to enable perception streams and spatial memory
+
+        Note:
+            This now uses Zenoh for communication. Make sure run_webrtc.py is running
+            to handle the actual WebRTC connection to the robot.
         """
-        # Create WebRTC connection interface
-        self.webrtc_connection = WebRTCRobot(
+        # Create WebRTC control interface (now Zenoh-based)
+        webrtc_control = WebRTCRobot(
             ip=ip,
             mode=mode,
         )
-
-        print("standing up")
-        self.webrtc_connection.standup()
-
-        # Initialize WebRTC-specific features
-        self.lidar_stream = self.webrtc_connection.lidar_stream()
-        self.odom = getter_streaming(self.webrtc_connection.odom_stream())
-        self.map = Map(voxel_size=0.2)
-        self.map_stream = self.map.consume(self.lidar_stream)
-        self.lidar_message = getter_streaming(self.lidar_stream)
 
         if skill_library is None:
             skill_library = MyUnitreeSkills()
 
         # Initialize base robot with connection interface
         super().__init__(
-            connection_interface=self.webrtc_connection,
+            connection_interface=webrtc_control,
             output_dir=output_dir,
             skill_library=skill_library,
             capabilities=robot_capabilities
@@ -113,6 +106,13 @@ class UnitreeGo2(Robot):
         self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
         self.camera_pitch = np.deg2rad(0)  # negative for downward pitch
         self.camera_height = 0.44  # meters
+
+        # Initialize WebRTC-specific features (now via Zenoh)
+        self.lidar_stream = webrtc_control.lidar_stream()
+        self.odom = getter_streaming(webrtc_control.odom_stream())
+        self.map = Map(voxel_size=0.2)
+        self.map_stream = self.map.consume(self.lidar_stream)
+        self.lidar_message = getter_streaming(self.lidar_stream)
 
         # Initialize visual servoing using connection interface
         video_stream = self.get_video_stream()
@@ -201,21 +201,25 @@ class UnitreeGo2(Robot):
         Returns:
             Observable stream of robot odometry data containing position and orientation.
         """
-        return self.webrtc_connection.odom_stream()
+        return self.connection_interface.odom_stream()
 
     def standup(self):
         """Make the robot stand up.
 
         Uses AI mode standup if robot is in AI mode, otherwise uses normal standup.
         """
-        return self.webrtc_connection.standup()
+        return self.connection_interface.standup()
 
     def liedown(self):
         """Make the robot lie down.
 
         Commands the robot to lie down on the ground.
         """
-        return self.webrtc_connection.liedown()
+        return self.connection_interface.liedown()
+
+    def stop(self):
+        """Stop the robot's movement."""
+        return self.connection_interface.stop()
 
     @property
     def costmap(self):

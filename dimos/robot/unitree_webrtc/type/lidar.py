@@ -14,11 +14,13 @@
 
 from dimos.robot.unitree_webrtc.testing.helpers import color
 from datetime import datetime
+import struct
+import json
+from typing import List, TypedDict, Union, Any
 from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_datetime, to_human_readable
 from dimos.types.costmap import Costmap, pointcloud_to_costmap
 from dimos.types.vector import Vector
 from dataclasses import dataclass, field
-from typing import List, TypedDict
 import numpy as np
 import open3d as o3d
 from copy import copy
@@ -168,3 +170,118 @@ class LidarMessage(Timestamped):
             self._costmap = Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.resolution)
 
         return self._costmap
+
+    def to_zenoh_binary(self) -> bytes:
+        """High-performance binary serialization for Zenoh."""
+        # Ensure pointcloud data is on CPU
+        points = np.asarray(self.pointcloud.points, dtype=np.float32)
+        has_normals = self.pointcloud.has_normals()
+        has_colors = self.pointcloud.has_colors()
+
+        normals = (
+            np.asarray(self.pointcloud.normals, dtype=np.float32) if has_normals else np.array([])
+        )
+        colors = (
+            np.asarray(self.pointcloud.colors, dtype=np.float32) if has_colors else np.array([])
+        )
+
+        # Pack header: timestamp(8), origin_x(8), origin_y(8), origin_z(8), resolution(4),
+        # num_points(4), has_normals(1), has_colors(1), reserved(2)
+        timestamp_us = int(self.ts.timestamp() * 1_000_000)
+        header = struct.pack(
+            "!QdddfIBB2x",
+            timestamp_us,
+            float(self.origin.x),
+            float(self.origin.y),
+            float(self.origin.z),
+            self.resolution,
+            len(points),
+            int(has_normals),
+            int(has_colors),
+        )
+
+        # Serialize point data
+        points_bytes = np.ascontiguousarray(points).tobytes()
+        normals_bytes = np.ascontiguousarray(normals).tobytes() if has_normals else b""
+        colors_bytes = np.ascontiguousarray(colors).tobytes() if has_colors else b""
+
+        return header + points_bytes + normals_bytes + colors_bytes
+
+    @classmethod
+    def from_zenoh_binary(cls, data: Union[bytes, Any]) -> "LidarMessage":
+        """Reconstruct LidarMessage from binary Zenoh data.
+
+        Args:
+            data: Binary data from Zenoh (can be bytes or ZBytes)
+
+        Returns:
+            LidarMessage instance reconstructed from binary data
+        """
+        # Handle ZBytes from Zenoh automatically
+        if hasattr(data, "to_bytes"):
+            # Zenoh ZBytes object
+            data_bytes = data.to_bytes()
+        elif hasattr(data, "__bytes__"):
+            # Object that can be converted to bytes
+            data_bytes = bytes(data)
+        else:
+            # Assume it's already bytes
+            data_bytes = data
+
+        # Unpack header (52 bytes total: Q(8) + ddd(24) + f(4) + I(4) + BB(2) + 2x(2) = 44 bytes)
+        header_size = 44
+        if len(data_bytes) < header_size:
+            raise ValueError("Invalid binary data: too short for header")
+
+        (
+            timestamp_us,
+            origin_x,
+            origin_y,
+            origin_z,
+            resolution,
+            num_points,
+            has_normals,
+            has_colors,
+        ) = struct.unpack("!QdddfIBB2x", data_bytes[:header_size])
+
+        # Reconstruct timestamp and origin
+        timestamp = datetime.fromtimestamp(timestamp_us / 1_000_000)
+        origin = Vector(origin_x, origin_y, origin_z)
+
+        # Calculate data sizes
+        points_size = num_points * 3 * 4  # 3 floats per point * 4 bytes per float
+        normals_size = num_points * 3 * 4 if has_normals else 0
+        colors_size = num_points * 3 * 4 if has_colors else 0
+
+        # Extract data sections
+        data_start = header_size
+        points_data = data_bytes[data_start : data_start + points_size]
+
+        normals_data = b""
+        if has_normals:
+            normals_start = data_start + points_size
+            normals_data = data_bytes[normals_start : normals_start + normals_size]
+
+        colors_data = b""
+        if has_colors:
+            colors_start = data_start + points_size + normals_size
+            colors_data = data_bytes[colors_start : colors_start + colors_size]
+
+        # Reconstruct pointcloud
+        pointcloud = o3d.geometry.PointCloud()
+
+        # Reconstruct points
+        points = np.frombuffer(points_data, dtype=np.float32).reshape(-1, 3)
+        pointcloud.points = o3d.utility.Vector3dVector(points)
+
+        # Reconstruct normals if present
+        if has_normals and len(normals_data) > 0:
+            normals = np.frombuffer(normals_data, dtype=np.float32).reshape(-1, 3)
+            pointcloud.normals = o3d.utility.Vector3dVector(normals)
+
+        # Reconstruct colors if present
+        if has_colors and len(colors_data) > 0:
+            colors = np.frombuffer(colors_data, dtype=np.float32).reshape(-1, 3)
+            pointcloud.colors = o3d.utility.Vector3dVector(colors)
+
+        return cls(ts=timestamp, origin=origin, resolution=resolution, pointcloud=pointcloud)

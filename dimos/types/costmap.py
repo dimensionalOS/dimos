@@ -14,8 +14,9 @@
 import base64
 import pickle
 import math
+import struct
 import numpy as np
-from typing import Optional
+from typing import Optional, Union, Any
 from scipy import ndimage
 from dimos.types.ros_polyfill import OccupancyGrid
 from scipy.ndimage import binary_dilation
@@ -437,6 +438,73 @@ class Costmap:
         img = Image.fromarray(img_array, "RGB")
         img.save(image_path, "JPEG", quality=95)
         print(f"Costmap image saved to: {image_path}")
+
+    def to_zenoh_binary(self) -> bytes:
+        """High-performance binary serialization for Zenoh."""
+        # Create header with costmap metadata
+        # Pack: height(4), width(4), resolution(8), origin_x(8), origin_y(8), origin_theta(8), dtype(1), reserved(3)
+        header = struct.pack(
+            "!IIddddB3x",
+            self.height,
+            self.width,
+            self.resolution,
+            float(self.origin.x),
+            float(self.origin.y),
+            self.origin_theta,
+            list(DTYPE2STR.keys()).index(self.grid.dtype.type),
+        )
+
+        # Ensure grid data is contiguous for efficient transfer
+        grid_bytes = np.ascontiguousarray(self.grid).tobytes()
+
+        return header + grid_bytes
+
+    @classmethod
+    def from_zenoh_binary(cls, data: Union[bytes, Any]) -> "Costmap":
+        """Reconstruct Costmap from binary Zenoh data.
+
+        Args:
+            data: Binary data from Zenoh (can be bytes or ZBytes)
+
+        Returns:
+            Costmap instance reconstructed from binary data
+        """
+        # Handle ZBytes from Zenoh automatically
+        if hasattr(data, "to_bytes"):
+            # Zenoh ZBytes object
+            data_bytes = data.to_bytes()
+        elif hasattr(data, "__bytes__"):
+            # Object that can be converted to bytes
+            data_bytes = bytes(data)
+        else:
+            # Assume it's already bytes
+            data_bytes = data
+
+        # Unpack header (40 bytes total)
+        header_size = 40
+        if len(data_bytes) < header_size:
+            raise ValueError("Invalid binary data: too short for header")
+
+        height, width, resolution, origin_x, origin_y, origin_theta, dtype_idx = struct.unpack(
+            "!IIddddB3x", data_bytes[:header_size]
+        )
+
+        # Decode dtype
+        dtype = list(DTYPE2STR.keys())[dtype_idx]
+
+        # Reconstruct grid data
+        grid_bytes = data_bytes[header_size:]
+        grid_data = np.frombuffer(grid_bytes, dtype=dtype).reshape((height, width))
+
+        # Reconstruct origin vector
+        origin = Vector(origin_x, origin_y)
+
+        return cls(
+            grid=grid_data,
+            origin=origin,
+            resolution=resolution,
+            origin_theta=origin_theta,
+        )
 
 
 def _inflate_lethal(costmap: np.ndarray, radius: int, lethal_val: int = 100) -> np.ndarray:
