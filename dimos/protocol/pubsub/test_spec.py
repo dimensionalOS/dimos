@@ -135,10 +135,10 @@ def test_multiple_subscribers(pubsub_context, topic, values):
         received_messages_2 = []
 
         # Define callback functions
-        def callback_1(message):
+        def callback_1(message, topic):
             received_messages_1.append(message)
 
-        def callback_2(message):
+        def callback_2(message, topic):
             received_messages_2.append(message)
 
         # Subscribe both callbacks to the same topic
@@ -191,7 +191,7 @@ def test_multiple_messages(pubsub_context, topic, values):
         received_messages = []
 
         # Define callback function
-        def callback(message):
+        def callback(message, topic):
             received_messages.append(message)
 
         # Subscribe to the topic

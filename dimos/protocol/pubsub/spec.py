@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import asyncio
-import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -33,7 +32,9 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
         ...
 
     @abstractmethod
-    def subscribe(self, topic: TopicT, callback: Callable[[MsgT], None]) -> Callable[[], None]:
+    def subscribe(
+        self, topic: TopicT, callback: Callable[[MsgT, TopicT], None]
+    ) -> Callable[[], None]:
         """Subscribe to a topic with a callback. returns unsubscribe function"""
         ...
 
@@ -41,10 +42,12 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
     class _Subscription:
         _bus: "PubSub[Any, Any]"
         _topic: Any
-        _cb: Callable[[Any], None]
+        _cb: Callable[[Any, Any], None]
 
         def unsubscribe(self) -> None:
-            self._bus.unsubscribe(self._topic, self._cb)
+            # TODO: implement unsubscribe functionality later
+            # self._bus.unsubscribe(self._topic, self._cb)
+            pass
 
         # context-manager helper
         def __enter__(self):
@@ -54,7 +57,7 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
             self.unsubscribe()
 
     # public helper: returns disposable object
-    def sub(self, topic: TopicT, cb: Callable[[MsgT], None]) -> "_Subscription":
+    def sub(self, topic: TopicT, cb: Callable[[MsgT, TopicT], None]) -> "_Subscription":
         self.subscribe(topic, cb)
         return self._Subscription(self, topic, cb)
 
@@ -62,7 +65,7 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
     async def aiter(self, topic: TopicT, *, max_pending: int | None = None) -> AsyncIterator[MsgT]:
         q: asyncio.Queue[MsgT] = asyncio.Queue(maxsize=max_pending or 0)
 
-        def _cb(msg: MsgT):
+        def _cb(msg: MsgT, topic: TopicT):
             q.put_nowait(msg)
 
         self.subscribe(topic, _cb)
@@ -70,17 +73,25 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
             while True:
                 yield await q.get()
         finally:
-            self.unsubscribe(topic, _cb)
+            # TODO: implement unsubscribe functionality later
+            # self.unsubscribe(topic, _cb)
+            pass
 
     # async context manager returning a queue
     @asynccontextmanager
     async def queue(self, topic: TopicT, *, max_pending: int | None = None):
         q: asyncio.Queue[MsgT] = asyncio.Queue(maxsize=max_pending or 0)
-        self.subscribe(topic, q.put_nowait)
+
+        def _queue_cb(msg: MsgT, topic: TopicT):
+            q.put_nowait(msg)
+
+        self.subscribe(topic, _queue_cb)
         try:
             yield q
         finally:
-            self.unsubscribe(topic, q.put_nowait)
+            # TODO: implement unsubscribe functionality later
+            # self.unsubscribe(topic, _queue_cb)
+            pass
 
 
 class PubSubEncoderMixin(ABC, Generic[TopicT, MsgT]):
