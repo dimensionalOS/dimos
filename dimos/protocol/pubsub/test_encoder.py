@@ -24,7 +24,7 @@ def test_json_encoded_pubsub():
     pubsub = MemoryWithJSONEncoder()
     received_messages = []
 
-    def callback(message):
+    def callback(message, topic):
         received_messages.append(message)
 
     # Subscribe to a topic
@@ -56,7 +56,7 @@ def test_json_encoding_edge_cases():
     pubsub = MemoryWithJSONEncoder()
     received_messages = []
 
-    def callback(message):
+    def callback(message, topic):
         received_messages.append(message)
 
     pubsub.subscribe("edge_cases", callback)
@@ -84,10 +84,10 @@ def test_multiple_subscribers_with_encoding():
     received_messages_1 = []
     received_messages_2 = []
 
-    def callback_1(message):
+    def callback_1(message, topic):
         received_messages_1.append(message)
 
-    def callback_2(message):
+    def callback_2(message, topic):
         received_messages_2.append(f"callback_2: {message}")
 
     pubsub.subscribe("json_topic", callback_1)
@@ -144,7 +144,7 @@ def test_data_actually_encoded_in_transit():
     pubsub = SpyMemoryWithJSON()
     received_decoded = []
 
-    def callback(message):
+    def callback(message, topic):
         received_decoded.append(message)
 
     pubsub.subscribe("test_topic", callback)

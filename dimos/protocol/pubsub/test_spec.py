@@ -36,7 +36,7 @@ def memory_context():
 
 
 # Use Any for context manager type to accommodate both Memory and Redis
-testdata: List[Tuple[Callable[[], Any], str, List[str]]] = [
+testdata: List[Tuple[Callable[[], Any], Any, List[Any]]] = [
     (memory_context, "topic", ["value1", "value2", "value3"]),
 ]
 
