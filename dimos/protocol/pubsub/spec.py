@@ -113,20 +113,8 @@ class PubSubEncoderMixin(ABC, Generic[TopicT, MsgT]):
     def subscribe(self, topic: TopicT, callback: Callable[[MsgT], None]) -> None:
         """Subscribe with automatic decoding."""
 
-        def wrapper_cb(encoded_data: bytes):
+        def wrapper_cb(encoded_data: bytes, topic: TopicT):
             decoded_message = self.decode(encoded_data, topic)
-            callback(decoded_message)
-
-        # Store the wrapper callback for proper unsubscribe
-        callback_key = (topic, id(callback))
-        self._encode_callback_map[callback_key] = wrapper_cb
+            callback(decoded_message, topic)
 
         super().subscribe(topic, wrapper_cb)  # type: ignore[misc]
-
-    def unsubscribe(self, topic: TopicT, callback: Callable[[MsgT], None]) -> None:
-        """Unsubscribe a callback."""
-        callback_key = (topic, id(callback))
-        if callback_key in self._encode_callback_map:
-            wrapper_cb = self._encode_callback_map[callback_key]
-            super().unsubscribe(topic, wrapper_cb)  # type: ignore[misc]
-            del self._encode_callback_map[callback_key]

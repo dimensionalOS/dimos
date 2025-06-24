@@ -36,6 +36,8 @@ class LCMConfig:
 
 @runtime_checkable
 class LCMMsg(Protocol):
+    name: str
+
     @classmethod
     def lcm_decode(cls, data: bytes) -> "LCMMsg":
         """Decode bytes into an LCM message instance."""
@@ -49,57 +51,34 @@ class LCMMsg(Protocol):
 @dataclass
 class Topic:
     topic: str = ""
-    lcm_type: Optional[LCMMsg] = None
+    lcm_type: Optional[type[LCMMsg]] = None
 
     def __str__(self) -> str:
-        return f"{self.topic}#{self.lcm_type}"
+        if self.lcm_type is None:
+            return self.topic
+        return f"{self.topic}#{self.lcm_type.name}"
 
 
 class LCMbase(PubSub[Topic, Any], Service[LCMConfig]):
     default_config = LCMConfig
     lc: lcm.LCM
-    _running: bool
+    _stop_event: threading.Event
+    _thread: Optional[threading.Thread]
     _callbacks: dict[str, list[Callable[[Any], None]]]
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.lc = lcm.LCM(self.config.url)
-        self._running = False
+        self.lc = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+        self._stop_event = threading.Event()
+        self._thread = None
         self._callbacks = {}
 
-    def publish(self, topic: Topic, message: Any):
+    def publish(self, topic: Topic, message: bytes):
         """Publish a message to the specified channel."""
-        self.lc.publish(str(topic), message.encode())
+        self.lc.publish(str(topic), message)
 
-    def subscribe(self, topic: Topic, callback: Callable[[Any], None]):
-        """Subscribe to the specified channel with a callback."""
-        topic_str = str(topic)
-
-        # Create a wrapper callback that matches LCM's expected signature
-        def lcm_callback(channel: str, data: bytes) -> None:
-            # Here you would typically decode the data back to the message type
-            # For now, we'll pass the raw data - this might need refinement based on usage
-            callback(data)
-
-        # Store the original callback for unsubscription
-        if topic_str not in self._callbacks:
-            self._callbacks[topic_str] = []
-        self._callbacks[topic_str].append(callback)
-
-        self.lc.subscribe(topic_str, lcm_callback)
-
-    def unsubscribe(self, topic: Topic, callback: Callable[[Any], None]):
-        """Unsubscribe a callback from a topic."""
-        topic_str = str(topic)
-
-        # Remove from our tracking
-        if topic_str in self._callbacks and callback in self._callbacks[topic_str]:
-            self._callbacks[topic_str].remove(callback)
-            if not self._callbacks[topic_str]:
-                del self._callbacks[topic_str]
-
-        # Note: LCM doesn't provide a direct way to unsubscribe specific callbacks
-        # You might need to track and manage callbacks differently for full unsubscribe support
+    def subscribe(self, topic: Topic, callback: Callable[[bytes, Topic], Any]):
+        self.lc.subscribe(str(topic), lambda _, msg: callback(msg, topic))
 
     def start(self):
         if self.config.auto_configure_multicast:
@@ -110,30 +89,34 @@ class LCMbase(PubSub[Topic, Any], Service[LCMConfig]):
             os.system("sudo sysctl -w net.core.rmem_max=2097152")
             os.system("sudo sysctl -w net.core.rmem_default=2097152")
 
-        self._running = True
-        self.thread = threading.Thread(target=self._loop)
-        self.thread.daemon = True
-        self.thread.start()
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._loop)
+        self._thread.daemon = True
+        self._thread.start()
 
     def _loop(self) -> None:
         """LCM message handling loop."""
-        while self._running:
+        while not self._stop_event.is_set():
             try:
-                self.lc.handle()
+                # Use timeout to allow periodic checking of stop_event
+                self.lc.handle_timeout(100)  # 100ms timeout
             except Exception as e:
                 print(f"Error in LCM handling: {e}")
+                if self._stop_event.is_set():
+                    break
 
     def stop(self):
         """Stop the LCM loop."""
-        self._running = False
-        self.thread.join()
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join()
 
 
 class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
-    def encode(msg: LCMMsg, _: Topic) -> bytes:
+    def encode(self, msg: LCMMsg, _: Topic) -> bytes:
         return msg.lcm_encode()
 
-    def decode(msg: bytes, topic: Topic) -> LCMMsg:
+    def decode(self, msg: bytes, topic: Topic) -> LCMMsg:
         if topic.lcm_type is None:
             raise ValueError(
                 f"Cannot decode message for topic '{topic.topic}': no lcm_type specified"
@@ -141,4 +124,7 @@ class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
         return topic.lcm_type.lcm_decode(msg)
 
 
-class LCM(LCMbase, PubSubEncoderMixin[Topic, Any]): ...
+class LCM(
+    LCMEncoderMixin,
+    LCMbase,
+): ...

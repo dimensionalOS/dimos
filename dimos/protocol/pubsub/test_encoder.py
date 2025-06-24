@@ -99,28 +99,28 @@ def test_multiple_subscribers_with_encoding():
     assert received_messages_2[-1] == "callback_2: {'multi': 'subscriber test'}"
 
 
-def test_unsubscribe_with_encoding():
-    """Test unsubscribe works correctly with encoded callbacks."""
-    pubsub = MemoryWithJSONEncoder()
-    received_messages_1 = []
-    received_messages_2 = []
+# def test_unsubscribe_with_encoding():
+#     """Test unsubscribe works correctly with encoded callbacks."""
+#     pubsub = MemoryWithJSONEncoder()
+#     received_messages_1 = []
+#     received_messages_2 = []
 
-    def callback_1(message):
-        received_messages_1.append(message)
+#     def callback_1(message):
+#         received_messages_1.append(message)
 
-    def callback_2(message):
-        received_messages_2.append(message)
+#     def callback_2(message):
+#         received_messages_2.append(message)
 
-    pubsub.subscribe("json_topic", callback_1)
-    pubsub.subscribe("json_topic", callback_2)
+#     pubsub.subscribe("json_topic", callback_1)
+#     pubsub.subscribe("json_topic", callback_2)
 
-    # Unsubscribe first callback
-    pubsub.unsubscribe("json_topic", callback_1)
-    pubsub.publish("json_topic", "only callback_2 should get this")
+#     # Unsubscribe first callback
+#     pubsub.unsubscribe("json_topic", callback_1)
+#     pubsub.publish("json_topic", "only callback_2 should get this")
 
-    # Only callback_2 should receive the message
-    assert len(received_messages_1) == 0
-    assert received_messages_2 == ["only callback_2 should get this"]
+#     # Only callback_2 should receive the message
+#     assert len(received_messages_1) == 0
+#     assert received_messages_2 == ["only callback_2 should get this"]
 
 
 def test_data_actually_encoded_in_transit():

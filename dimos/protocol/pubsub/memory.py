@@ -25,7 +25,7 @@ class Memory(PubSub[str, Any]):
 
     def publish(self, topic: str, message: Any) -> None:
         for cb in self._map[topic]:
-            cb(message)
+            cb(message, topic)
 
     def subscribe(self, topic: str, callback: Callable[[Any], None]) -> None:
         self._map[topic].append(callback)
@@ -39,4 +39,11 @@ class Memory(PubSub[str, Any]):
             pass
 
 
-class MemoryWithJSONEncoder(encode.JSON, PubSubEncoderMixin, Memory): ...
+class MemoryWithJSONEncoder(PubSubEncoderMixin, Memory):
+    """Memory PubSub with JSON encoding/decoding."""
+
+    def encode(self, msg: Any, topic: str) -> bytes:
+        return encode.JSON.encode(msg)
+
+    def decode(self, msg: bytes, topic: str) -> Any:
+        return encode.JSON.decode(msg)
