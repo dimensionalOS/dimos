@@ -77,8 +77,15 @@ class LCMbase(PubSub[Topic, Any], Service[LCMConfig]):
         """Publish a message to the specified channel."""
         self.lc.publish(str(topic), message)
 
-    def subscribe(self, topic: Topic, callback: Callable[[bytes, Topic], Any]):
-        self.lc.subscribe(str(topic), lambda _, msg: callback(msg, topic))
+    def subscribe(
+        self, topic: Topic, callback: Callable[[bytes, Topic], Any]
+    ) -> Callable[[], None]:
+        lcm_subscription = self.lc.subscribe(str(topic), lambda _, msg: callback(msg, topic))
+
+        def unsubscribe():
+            self.lc.unsubscribe(lcm_subscription)
+
+        return unsubscribe
 
     def start(self):
         if self.config.auto_configure_multicast:

@@ -46,7 +46,7 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
         self._pubsub = None
 
         # Subscription management
-        self._callbacks: Dict[str, List[Callable[[Any], None]]] = defaultdict(list)
+        self._callbacks: Dict[str, List[Callable[[Any, str], None]]] = defaultdict(list)
         self._listener_thread = None
         self._running = False
 
@@ -105,7 +105,7 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
                     # Call all callbacks for this topic
                     for callback in self._callbacks.get(topic, []):
                         try:
-                            callback(data)
+                            callback(data, topic)
                         except Exception as e:
                             # Log error but continue processing other callbacks
                             print(f"Error in callback for topic {topic}: {e}")
@@ -128,7 +128,7 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
 
         self._client.publish(topic, data)
 
-    def subscribe(self, topic: str, callback: Callable[[Any], None]) -> None:
+    def subscribe(self, topic: str, callback: Callable[[Any, str], None]) -> Callable[[], None]:
         """Subscribe to a topic with a callback."""
         if not self._pubsub:
             raise RuntimeError("Redis pubsub not initialized")
@@ -140,7 +140,13 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
         # Add callback to our list
         self._callbacks[topic].append(callback)
 
-    def unsubscribe(self, topic: str, callback: Callable[[Any], None]) -> None:
+        # Return unsubscribe function
+        def unsubscribe():
+            self.unsubscribe(topic, callback)
+
+        return unsubscribe
+
+    def unsubscribe(self, topic: str, callback: Callable[[Any, str], None]) -> None:
         """Unsubscribe a callback from a topic."""
         if topic in self._callbacks:
             try:

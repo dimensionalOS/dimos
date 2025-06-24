@@ -43,11 +43,10 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
         _bus: "PubSub[Any, Any]"
         _topic: Any
         _cb: Callable[[Any, Any], None]
+        _unsubscribe_fn: Callable[[], None]
 
         def unsubscribe(self) -> None:
-            # TODO: implement unsubscribe functionality later
-            # self._bus.unsubscribe(self._topic, self._cb)
-            pass
+            self._unsubscribe_fn()
 
         # context-manager helper
         def __enter__(self):
@@ -58,8 +57,8 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
 
     # public helper: returns disposable object
     def sub(self, topic: TopicT, cb: Callable[[MsgT, TopicT], None]) -> "_Subscription":
-        self.subscribe(topic, cb)
-        return self._Subscription(self, topic, cb)
+        unsubscribe_fn = self.subscribe(topic, cb)
+        return self._Subscription(self, topic, cb, unsubscribe_fn)
 
     # async iterator
     async def aiter(self, topic: TopicT, *, max_pending: int | None = None) -> AsyncIterator[MsgT]:
@@ -68,16 +67,15 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
         def _cb(msg: MsgT, topic: TopicT):
             q.put_nowait(msg)
 
-        self.subscribe(topic, _cb)
+        unsubscribe_fn = self.subscribe(topic, _cb)
         try:
             while True:
                 yield await q.get()
         finally:
-            # TODO: implement unsubscribe functionality later
-            # self.unsubscribe(topic, _cb)
-            pass
+            unsubscribe_fn()
 
-    # async context manager returning a queue
+        # async context manager returning a queue
+
     @asynccontextmanager
     async def queue(self, topic: TopicT, *, max_pending: int | None = None):
         q: asyncio.Queue[MsgT] = asyncio.Queue(maxsize=max_pending or 0)
@@ -85,13 +83,11 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
         def _queue_cb(msg: MsgT, topic: TopicT):
             q.put_nowait(msg)
 
-        self.subscribe(topic, _queue_cb)
+        unsubscribe_fn = self.subscribe(topic, _queue_cb)
         try:
             yield q
         finally:
-            # TODO: implement unsubscribe functionality later
-            # self.unsubscribe(topic, _queue_cb)
-            pass
+            unsubscribe_fn()
 
 
 class PubSubEncoderMixin(ABC, Generic[TopicT, MsgT]):
@@ -121,11 +117,13 @@ class PubSubEncoderMixin(ABC, Generic[TopicT, MsgT]):
         encoded_message = self.encode(message, topic)
         super().publish(topic, encoded_message)  # type: ignore[misc]
 
-    def subscribe(self, topic: TopicT, callback: Callable[[MsgT], None]) -> None:
+    def subscribe(
+        self, topic: TopicT, callback: Callable[[MsgT, TopicT], None]
+    ) -> Callable[[], None]:
         """Subscribe with automatic decoding."""
 
         def wrapper_cb(encoded_data: bytes, topic: TopicT):
             decoded_message = self.decode(encoded_data, topic)
             callback(decoded_message, topic)
 
-        super().subscribe(topic, wrapper_cb)  # type: ignore[misc]
+        return super().subscribe(topic, wrapper_cb)  # type: ignore[misc]

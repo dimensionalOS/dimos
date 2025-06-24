@@ -158,29 +158,31 @@ def test_multiple_subscribers(pubsub_context, topic, values):
         assert received_messages_2[0] == values[0]
 
 
-# @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-# def test_unsubscribe(pubsub_context, topic, values):
-#     """Test that unsubscribed callbacks don't receive messages."""
-#     with pubsub_context() as x:
-#         # Create a list to capture received messages
-#         received_messages = []
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_unsubscribe(pubsub_context, topic, values):
+    """Test that unsubscribed callbacks don't receive messages."""
+    with pubsub_context() as x:
+        # Create a list to capture received messages
+        received_messages = []
 
-#         # Define callback function
-#         def callback(message):
-#             received_messages.append(message)
+        # Define callback function
+        def callback(message, topic):
+            received_messages.append(message)
 
-#         # Subscribe and then unsubscribe
-#         x.subscribe(topic, callback)
-#         x.unsubscribe(topic, callback)
+        # Subscribe and get unsubscribe function
+        unsubscribe = x.subscribe(topic, callback)
 
-#         # Publish the first value
-#         x.publish(topic, values[0])
+        # Unsubscribe using the returned function
+        unsubscribe()
 
-#         # Give Redis time to process the message if needed
-#         time.sleep(0.1)
+        # Publish the first value
+        x.publish(topic, values[0])
 
-#         # Verify the callback was not called after unsubscribing
-#         assert len(received_messages) == 0
+        # Give time to process the message if needed
+        time.sleep(0.1)
+
+        # Verify the callback was not called after unsubscribing
+        assert len(received_messages) == 0
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)

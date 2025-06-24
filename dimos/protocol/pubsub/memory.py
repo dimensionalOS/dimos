@@ -27,8 +27,18 @@ class Memory(PubSub[str, Any]):
         for cb in self._map[topic]:
             cb(message, topic)
 
-    def subscribe(self, topic: str, callback: Callable[[Any, str], None]) -> None:
+    def subscribe(self, topic: str, callback: Callable[[Any, str], None]) -> Callable[[], None]:
         self._map[topic].append(callback)
+
+        def unsubscribe():
+            try:
+                self._map[topic].remove(callback)
+                if not self._map[topic]:
+                    del self._map[topic]
+            except (KeyError, ValueError):
+                pass
+
+        return unsubscribe
 
     def unsubscribe(self, topic: str, callback: Callable[[Any, str], None]) -> None:
         try:
