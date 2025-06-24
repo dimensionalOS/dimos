@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import os
 import threading
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 import lcm
 
@@ -32,16 +34,28 @@ class LCMConfig:
     auto_configure_buffers: bool = False
 
 
+@runtime_checkable
+class LCMMsg(Protocol):
+    @classmethod
+    def lcm_decode(cls, data: bytes) -> "LCMMsg":
+        """Decode bytes into an LCM message instance."""
+        ...
+
+    def lcm_encode(self) -> bytes:
+        """Encode this message instance into bytes."""
+        ...
+
+
 @dataclass
-class LCMTopic:
+class Topic:
     topic: str = ""
-    lcm_type: str = ""
+    lcm_type: Optional[LCMMsg] = None
 
     def __str__(self) -> str:
         return f"{self.topic}#{self.lcm_type}"
 
 
-class LCMbase(PubSub[LCMTopic, Any], Service[LCMConfig]):
+class LCMbase(PubSub[Topic, Any], Service[LCMConfig]):
     default_config = LCMConfig
     lc: lcm.LCM
     _running: bool
@@ -53,11 +67,11 @@ class LCMbase(PubSub[LCMTopic, Any], Service[LCMConfig]):
         self._running = False
         self._callbacks = {}
 
-    def publish(self, topic: LCMTopic, message: Any):
+    def publish(self, topic: Topic, message: Any):
         """Publish a message to the specified channel."""
         self.lc.publish(str(topic), message.encode())
 
-    def subscribe(self, topic: LCMTopic, callback: Callable[[Any], None]):
+    def subscribe(self, topic: Topic, callback: Callable[[Any], None]):
         """Subscribe to the specified channel with a callback."""
         topic_str = str(topic)
 
@@ -74,7 +88,7 @@ class LCMbase(PubSub[LCMTopic, Any], Service[LCMConfig]):
 
         self.lc.subscribe(topic_str, lcm_callback)
 
-    def unsubscribe(self, topic: LCMTopic, callback: Callable[[Any], None]):
+    def unsubscribe(self, topic: Topic, callback: Callable[[Any], None]):
         """Unsubscribe a callback from a topic."""
         topic_str = str(topic)
 
@@ -115,6 +129,16 @@ class LCMbase(PubSub[LCMTopic, Any], Service[LCMConfig]):
         self.thread.join()
 
 
-class LCM(LCMbase, PubSubEncoderMixin[LCMTopic, Any]):
-    encoder: Callable[[Any], bytes] = lambda x: x.encode()
-    decoder: Callable[[bytes], Any] = lambda x: x.decode()
+class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
+    def encode(msg: LCMMsg, _: Topic) -> bytes:
+        return msg.lcm_encode()
+
+    def decode(msg: bytes, topic: Topic) -> LCMMsg:
+        if topic.lcm_type is None:
+            raise ValueError(
+                f"Cannot decode message for topic '{topic.topic}': no lcm_type specified"
+            )
+        return topic.lcm_type.lcm_decode(msg)
+
+
+class LCM(LCMbase, PubSubEncoderMixin[Topic, Any]): ...

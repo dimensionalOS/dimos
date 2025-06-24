@@ -33,13 +33,8 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
         ...
 
     @abstractmethod
-    def subscribe(self, topic: TopicT, callback: Callable[[MsgT], None]) -> None:
-        """Subscribe to a topic with a callback."""
-        ...
-
-    @abstractmethod
-    def unsubscribe(self, topic: TopicT, callback: Callable[[MsgT], None]) -> None:
-        """Unsubscribe a callback from a topic."""
+    def subscribe(self, topic: TopicT, callback: Callable[[MsgT], None]) -> Callable[[], None]:
+        """Subscribe to a topic with a callback. returns unsubscribe function"""
         ...
 
     @dataclass(slots=True)
@@ -88,34 +83,38 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
             self.unsubscribe(topic, q.put_nowait)
 
 
-class PubSubEncoderMixin(Generic[TopicT, MsgT]):
+class PubSubEncoderMixin(ABC, Generic[TopicT, MsgT]):
     """Mixin that encodes messages before publishing and decodes them after receiving.
 
-    Usage: Just specify encoder and decoder as class attributes:
+    Usage: Just specify encoder and decoder as a subclass:
 
     class MyPubSubWithJSON(PubSubEncoderMixin, MyPubSub):
-        encoder = lambda msg: json.dumps(msg).encode('utf-8')
-        decoder = lambda data: json.loads(data.decode('utf-8'))
+        def encoder(msg, topic):
+            json.dumps(msg).encode('utf-8')
+        def decoder(msg, topic):
+            data: json.loads(data.decode('utf-8'))
     """
 
-    encode: Callable[[MsgT], bytes]
-    decode: Callable[[bytes], MsgT]
+    @abstractmethod
+    def encode(self, msg: MsgT, topic: TopicT) -> bytes: ...
+
+    @abstractmethod
+    def decode(self, msg: bytes, topic: TopicT) -> MsgT: ...
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Track callback mappings for proper unsubscribe
         self._encode_callback_map: dict = {}
 
     def publish(self, topic: TopicT, message: MsgT) -> None:
         """Encode the message and publish it."""
-        encoded_message = self.encode(message)
+        encoded_message = self.encode(message, topic)
         super().publish(topic, encoded_message)  # type: ignore[misc]
 
     def subscribe(self, topic: TopicT, callback: Callable[[MsgT], None]) -> None:
         """Subscribe with automatic decoding."""
 
         def wrapper_cb(encoded_data: bytes):
-            decoded_message = self.decode(encoded_data)
+            decoded_message = self.decode(encoded_data, topic)
             callback(decoded_message)
 
         # Store the wrapper callback for proper unsubscribe
