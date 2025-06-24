@@ -25,5 +25,8 @@
     },
     "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.formatOnSave": true
-  }
+  },
+  "runArgs": [
+    "--cap-add=NET_ADMIN"
+  ]
 }

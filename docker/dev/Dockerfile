@@ -15,6 +15,8 @@ RUN apt-get install -y \
     python-is-python3 \
     iputils-ping \
     wget \
+    net-tools \
+    sudo \
     pre-commit
 
 
