@@ -201,9 +201,9 @@ def test_lcm_encode_decode():
     """Test encoding and decoding of Quaternion to/from binary LCM format."""
     q_source = Quaternion(1.0, 2.0, 3.0, 4.0)
 
-    binary_msg = q_source.encode()
+    binary_msg = q_source.lcm_encode()
 
-    q_dest = Quaternion.decode(binary_msg)
+    q_dest = Quaternion.lcm_decode(binary_msg)
 
     assert isinstance(q_dest, Quaternion)
     assert q_dest is not q_source

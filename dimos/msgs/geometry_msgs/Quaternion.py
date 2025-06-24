@@ -36,16 +36,19 @@ class Quaternion(LCMQuaternion):
     w: float = 1.0
 
     @classmethod
-    def decode(cls, data: bytes | BinaryIO):
+    def lcm_decode(cls, data: bytes | BinaryIO):
         if not hasattr(data, "read"):
             data = BytesIO(data)
         if data.read(8) != cls._get_packed_fingerprint():
             raise ValueError("Decode error")
-        return cls._decode_one(data)
+        return cls._lcm_decode_one(data)
 
     @classmethod
-    def _decode_one(cls, buf):
+    def _lcm_decode_one(cls, buf):
         return cls(struct.unpack(">dddd", buf.read(32)))
+
+    def lcm_encode(self):
+        return super().encode()
 
     @dispatch
     def __init__(self) -> None: ...

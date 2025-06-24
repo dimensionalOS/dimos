@@ -453,9 +453,9 @@ def test_vector_to_quaternion():
 def test_lcm_encode_decode():
     v_source = Vector3(1.0, 2.0, 3.0)
 
-    binary_msg = v_source.encode()
+    binary_msg = v_source.lcm_encode()
 
-    v_dest = Vector3.decode(binary_msg)
+    v_dest = Vector3.lcm_decode(binary_msg)
 
     assert isinstance(v_dest, Vector3)
     assert v_dest is not v_source
