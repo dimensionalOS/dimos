@@ -21,6 +21,7 @@ from typing import Any, Callable, List, Tuple
 
 import pytest
 
+from dimos.msgs.geometry_msgs import Vector3
 from dimos.protocol.pubsub.memory import Memory
 
 
@@ -62,37 +63,18 @@ except (ConnectionError, ImportError):
 try:
     from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 
-    class MockMsg:
-        """Mock LCM message for testing"""
-
-        name = "geometry_msgs.Mock"
-
-        def __init__(self, data):
-            self.data = data
-
-        def lcm_encode(self) -> bytes:
-            return str(self.data).encode("utf-8")
-
-        @classmethod
-        def lcm_decode(cls, data: bytes) -> "MockMsg":
-            return cls(data.decode("utf-8"))
-
-        def __eq__(self, other):
-            return isinstance(other, MockMsg) and self.data == other.data
-
     @contextmanager
     def lcm_context():
         lcm_pubsub = LCM(auto_configure_multicast=False)
         lcm_pubsub.start()
         yield lcm_pubsub
-        print("PUBSUB STOP")
         lcm_pubsub.stop()
 
     testdata.append(
         (
             lcm_context,
-            Topic(topic="/test_topic", lcm_type=MockMsg),
-            [MockMsg("value1"), MockMsg("value2"), MockMsg("value3")],
+            Topic(topic="/test_topic", lcm_type=Vector3),
+            [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],  # Using Vector3 as mock data,
         )
     )
 

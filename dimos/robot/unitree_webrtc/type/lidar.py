@@ -12,16 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.robot.unitree_webrtc.testing.helpers import color
+from copy import copy
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import List, TypedDict
+
+import numpy as np
+import open3d as o3d
+
+from dimos.robot.unitree_webrtc.testing.helpers import color
 from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_datetime, to_human_readable
 from dimos.types.costmap import Costmap, pointcloud_to_costmap
 from dimos.types.vector import Vector
-from dataclasses import dataclass, field
-from typing import List, TypedDict
-import numpy as np
-import open3d as o3d
-from copy import copy
 
 
 class RawLidarPoints(TypedDict):
@@ -61,7 +63,7 @@ class LidarMessage(Timestamped):
     def from_msg(cls, raw_message: RawLidarMsg) -> "LidarMessage":
         data = raw_message["data"]
         points = data["data"]["points"]
-        point_cloud = o3d.geometry.PointCloud()
+        point_cloud = o3d.geometry.PointCloud().cpu()
         point_cloud.points = o3d.utility.Vector3dVector(points)
         return cls(
             ts=to_datetime(data["stamp"]),
