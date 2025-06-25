@@ -145,9 +145,6 @@ class UnitreeGo2(Robot):
             ),
             get_costmap=lambda: self.map.costmap,
             get_robot_pos=lambda: self.odom().pos,
-            get_frontiers=lambda: self.frontier_explorer.get_exploration_goal(
-                self.odom().pos, self.map.costmap
-            ),
         )
 
         # Initialize the local planner using WebRTC-specific methods
@@ -165,7 +162,11 @@ class UnitreeGo2(Robot):
         )
 
         # Initialize frontier exploration
-        self.frontier_explorer = WavefrontFrontierExplorer()
+        self.frontier_explorer = WavefrontFrontierExplorer(
+            set_goal=self.global_planner.set_goal,
+            get_costmap=lambda: self.map.costmap,
+            get_robot_pos=lambda: self.odom().pos,
+        )
 
         # Create the visualization stream at 5Hz
         self.local_planner_viz_stream = self.local_planner.create_stream(frequency_hz=5.0)
@@ -193,7 +194,7 @@ class UnitreeGo2(Robot):
         Returns:
             bool: True if exploration completed successfully, False if stopped or failed
         """
-        return self.global_planner.explore(stop_event=stop_event)
+        return self.frontier_explorer.explore(stop_event=stop_event)
 
     def odom_stream(self):
         """Get the odometry stream from the robot.
