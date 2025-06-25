@@ -13,84 +13,84 @@
 # limitations under the License.
 import numpy as np
 import math
-from dimos.types.position import Position, to_position
+from dimos.types.pose import Pose, to_pose
 from dimos.types.vector import Vector
 
 
-def test_position_default_init():
-    """Test that default initialization of Position() has zero vectors for pos and rot."""
-    position = Position()
+def test_pose_default_init():
+    """Test that default initialization of Pose() has zero vectors for pos and rot."""
+    pose = Pose()
 
     # Check that pos is a zero vector
-    assert isinstance(position.pos, Vector)
-    assert position.pos.is_zero()
-    assert position.pos.x == 0.0
-    assert position.pos.y == 0.0
-    assert position.pos.z == 0.0
+    assert isinstance(pose.pos, Vector)
+    assert pose.pos.is_zero()
+    assert pose.pos.x == 0.0
+    assert pose.pos.y == 0.0
+    assert pose.pos.z == 0.0
 
     # Check that rot is a zero vector
-    assert isinstance(position.rot, Vector)
-    assert position.rot.is_zero()
-    assert position.rot.x == 0.0
-    assert position.rot.y == 0.0
-    assert position.rot.z == 0.0
+    assert isinstance(pose.rot, Vector)
+    assert pose.rot.is_zero()
+    assert pose.rot.x == 0.0
+    assert pose.rot.y == 0.0
+    assert pose.rot.z == 0.0
 
-    assert position.is_zero()
+    assert pose.is_zero()
 
-    assert not position
+    assert not pose
 
 
-def test_position_vector_init():
+def test_pose_vector_init():
     """Test initialization with custom vectors."""
     pos = Vector(1.0, 2.0, 3.0)
     rot = Vector(4.0, 5.0, 6.0)
 
-    position = Position(pos, rot)
+    pose = Pose(pos, rot)
 
     # Check pos vector
-    assert position.pos == pos
-    assert position.pos.x == 1.0
-    assert position.pos.y == 2.0
-    assert position.pos.z == 3.0
+    assert pose.pos == pos
+    assert pose.pos.x == 1.0
+    assert pose.pos.y == 2.0
+    assert pose.pos.z == 3.0
 
     # Check rot vector
-    assert position.rot == rot
-    assert position.rot.x == 4.0
-    assert position.rot.y == 5.0
-    assert position.rot.z == 6.0
+    assert pose.rot == rot
+    assert pose.rot.x == 4.0
+    assert pose.rot.y == 5.0
+    assert pose.rot.z == 6.0
 
     # even if pos has the same xyz as pos vector
     # it shouldn't accept equality comparisons
     # as both are not the same type
-    assert not position == pos
+    assert not pose == pos
 
 
-def test_position_partial_init():
+def test_pose_partial_init():
     """Test initialization with only one custom vector."""
     pos = Vector(1.0, 2.0, 3.0)
     assert pos
 
     # Only specify pos
-    position1 = Position(pos)
-    assert position1.pos == pos
-    assert position1.pos.x == 1.0
-    assert position1.pos.y == 2.0
-    assert position1.pos.z == 3.0
-    assert not position1.pos.is_zero()
+    pose1 = Pose(pos)
+    assert pose1.pos == pos
+    assert pose1.pos.x == 1.0
+    assert pose1.pos.y == 2.0
+    assert pose1.pos.z == 3.0
+    assert not pose1.pos.is_zero()
 
-    assert isinstance(position1.rot, Vector)
-    assert position1.rot.is_zero()
-    assert position1.rot.x == 0.0
-    assert position1.rot.y == 0.0
-    assert position1.rot.z == 0.0
+    assert isinstance(pose1.rot, Vector)
+    assert pose1.rot.is_zero()
+    assert pose1.rot.x == 0.0
+    assert pose1.rot.y == 0.0
+    assert pose1.rot.z == 0.0
 
 
-def test_position_equality():
+def test_pose_equality():
     """Test equality comparison between positions."""
-    pos1 = Position(Vector(1.0, 2.0, 3.0), Vector(4.0, 5.0, 6.0))
-    pos2 = Position(Vector(1.0, 2.0, 3.0), Vector(4.0, 5.0, 6.0))
-    pos3 = Position(Vector(1.0, 2.0, 3.0), Vector(7.0, 8.0, 9.0))
-    pos4 = Position(Vector(7.0, 8.0, 9.0), Vector(4.0, 5.0, 6.0))
+    pos1 = Pose(Vector(1.0, 2.0, 3.0), Vector(4.0, 5.0, 6.0))
+    pos2 = Pose(Vector(1.0, 2.0, 3.0), Vector(4.0, 5.0, 6.0))
+    pos3 = Pose(Vector(1.0, 2.0, 3.0), Vector(7.0, 8.0, 9.0))
+    pos4 = Pose(Vector(7.0, 8.0, 9.0), Vector(4.0, 5.0, 6.0))
 
     # Same pos and rot values should be equal
     assert pos1 == pos2
@@ -101,18 +101,18 @@ def test_position_equality():
     # Different pos values should not be equal
     assert pos1 != pos4
 
-    # Position should not equal a vector even if values match
+    # Pose should not equal a vector even if values match
     assert pos1 != Vector(1.0, 2.0, 3.0)
 
 
-def test_position_vector_operations():
-    """Test that Position inherits Vector operations."""
-    pos1 = Position(Vector(1.0, 2.0, 3.0), Vector(4.0, 5.0, 6.0))
-    pos2 = Position(Vector(2.0, 3.0, 4.0), Vector(7.0, 8.0, 9.0))
+def test_pose_vector_operations():
+    """Test that Pose inherits Vector operations."""
+    pos1 = Pose(Vector(1.0, 2.0, 3.0), Vector(4.0, 5.0, 6.0))
+    pos2 = Pose(Vector(2.0, 3.0, 4.0), Vector(7.0, 8.0, 9.0))
 
     # Addition should work on both position and rotation components
     sum_pos = pos1 + pos2
-    assert isinstance(sum_pos, Position)
+    assert isinstance(sum_pos, Pose)
     assert sum_pos.x == 3.0
     assert sum_pos.y == 5.0
     assert sum_pos.z == 7.0
@@ -123,7 +123,7 @@ def test_position_vector_operations():
 
     # Subtraction should work on both position and rotation components
     diff_pos = pos2 - pos1
-    assert isinstance(diff_pos, Position)
+    assert isinstance(diff_pos, Pose)
     assert diff_pos.x == 1.0
     assert diff_pos.y == 1.0
     assert diff_pos.z == 1.0
@@ -134,39 +134,39 @@ def test_position_vector_operations():
 
     # Scalar multiplication
     scaled_pos = pos1 * 2.0
-    assert isinstance(scaled_pos, Position)
+    assert isinstance(scaled_pos, Pose)
     assert scaled_pos.x == 2.0
     assert scaled_pos.y == 4.0
     assert scaled_pos.z == 6.0
     assert scaled_pos.rot == pos1.rot  # Rotation not affected by scalar multiplication
 
-    # Adding a Vector to a Position (only affects position component)
+    # Adding a Vector to a Pose (only affects position component)
     vec = Vector(5.0, 6.0, 7.0)
     pos_plus_vec = pos1 + vec
-    assert isinstance(pos_plus_vec, Position)
+    assert isinstance(pos_plus_vec, Pose)
     assert pos_plus_vec.x == 6.0
     assert pos_plus_vec.y == 8.0
     assert pos_plus_vec.z == 10.0
     assert pos_plus_vec.rot == pos1.rot  # Rotation unchanged
 
 
-def test_position_serialization():
-    """Test position serialization."""
-    pos = Position(Vector(1.0, 2.0, 3.0), Vector(4.0, 5.0, 6.0))
+def test_pose_serialization():
+    """Test pose serialization."""
+    pos = Pose(Vector(1.0, 2.0, 3.0), Vector(4.0, 5.0, 6.0))
     serialized = pos.serialize()
 
-    assert serialized["type"] == "position"
+    assert serialized["type"] == "pose"
     assert serialized["pos"] == [1.0, 2.0, 3.0]
     assert serialized["rot"] == [4.0, 5.0, 6.0]
 
 
-def test_position_initialization_with_arrays():
+def test_pose_initialization_with_arrays():
     """Test initialization with numpy arrays, lists and tuples."""
     # Test with numpy arrays
     np_pos = np.array([1.0, 2.0, 3.0])
     np_rot = np.array([4.0, 5.0, 6.0])
 
-    pos1 = Position(np_pos, np_rot)
+    pos1 = Pose(np_pos, np_rot)
 
     assert pos1.x == 1.0
     assert pos1.y == 2.0
@@ -178,7 +178,7 @@ def test_position_initialization_with_arrays():
     # Test with lists
     list_pos = [7.0, 8.0, 9.0]
     list_rot = [10.0, 11.0, 12.0]
-    pos2 = Position(list_pos, list_rot)
+    pos2 = Pose(list_pos, list_rot)
 
     assert pos2.x == 7.0
     assert pos2.y == 8.0
@@ -190,7 +190,7 @@ def test_position_initialization_with_arrays():
     # Test with tuples
     tuple_pos = (13.0, 14.0, 15.0)
     tuple_rot = (16.0, 17.0, 18.0)
-    pos3 = Position(tuple_pos, tuple_rot)
+    pos3 = Pose(tuple_pos, tuple_rot)
 
     assert pos3.x == 13.0
     assert pos3.y == 14.0
@@ -200,13 +200,13 @@ def test_position_initialization_with_arrays():
     assert pos3.rot.z == 18.0
 
 
-def test_to_position_with_position():
-    """Test to_position with Position input."""
-    # Create a position
-    original_pos = Position(Vector(1.0, 2.0, 3.0), Vector(4.0, 5.0, 6.0))
+def test_to_pose_with_pose():
+    """Test to_pose with Pose input."""
+    # Create a pose
+    original_pos = Pose(Vector(1.0, 2.0, 3.0), Vector(4.0, 5.0, 6.0))
 
-    # Convert using to_position
-    converted_pos = to_position(original_pos)
+    # Convert using to_pose
+    converted_pos = to_pose(original_pos)
 
     # Should return the exact same object
     assert converted_pos is original_pos
@@ -221,16 +221,16 @@ def test_to_position_with_position():
     assert converted_pos.rot.z == 6.0
 
 
-def test_to_position_with_vector():
-    """Test to_position with Vector input."""
+def test_to_pose_with_vector():
+    """Test to_pose with Vector input."""
     # Create a vector
     vec = Vector(1.0, 2.0, 3.0)
 
-    # Convert using to_position
-    pos = to_position(vec)
+    # Convert using to_pose
+    pos = to_pose(vec)
 
-    # Should return a Position with the vector as position and zero rotation
-    assert isinstance(pos, Position)
+    # Should return a Pose with the vector as position and zero rotation
+    assert isinstance(pos, Pose)
     assert pos.pos == vec
     assert pos.x == 1.0
     assert pos.y == 2.0
@@ -244,13 +244,13 @@ def test_to_position_with_vector():
     assert pos.rot.z == 0.0
 
 
-def test_to_position_with_vectorlike():
-    """Test to_position with VectorLike inputs (arrays, lists, tuples)."""
+def test_to_pose_with_vectorlike():
+    """Test to_pose with VectorLike inputs (arrays, lists, tuples)."""
     # Test with numpy arrays
     np_arr = np.array([1.0, 2.0, 3.0])
-    pos1 = to_position(np_arr)
+    pos1 = to_pose(np_arr)
 
-    assert isinstance(pos1, Position)
+    assert isinstance(pos1, Pose)
     assert pos1.x == 1.0
     assert pos1.y == 2.0
     assert pos1.z == 3.0
@@ -258,9 +258,9 @@ def test_to_position_with_vectorlike():
 
     # Test with lists
     list_val = [4.0, 5.0, 6.0]
-    pos2 = to_position(list_val)
+    pos2 = to_pose(list_val)
 
-    assert isinstance(pos2, Position)
+    assert isinstance(pos2, Pose)
     assert pos2.x == 4.0
     assert pos2.y == 5.0
     assert pos2.z == 6.0
@@ -268,23 +268,23 @@ def test_to_position_with_vectorlike():
 
     # Test with tuples
     tuple_val = (7.0, 8.0, 9.0)
-    pos3 = to_position(tuple_val)
+    pos3 = to_pose(tuple_val)
 
-    assert isinstance(pos3, Position)
+    assert isinstance(pos3, Pose)
     assert pos3.x == 7.0
     assert pos3.y == 8.0
     assert pos3.z == 9.0
     assert pos3.rot.is_zero()
 
 
-def test_to_position_with_sequence():
-    """Test to_position with Sequence of VectorLike inputs."""
+def test_to_pose_with_sequence():
+    """Test to_pose with Sequence of VectorLike inputs."""
     # Test with sequence of two vectors
     pos_vec = Vector(1.0, 2.0, 3.0)
     rot_vec = Vector(4.0, 5.0, 6.0)
-    pos1 = to_position([pos_vec, rot_vec])
+    pos1 = to_pose([pos_vec, rot_vec])
 
-    assert isinstance(pos1, Position)
+    assert isinstance(pos1, Pose)
     assert pos1.pos == pos_vec
     assert pos1.rot == rot_vec
     assert pos1.x == 1.0
@@ -295,9 +295,9 @@ def test_to_position_with_sequence():
     assert pos1.rot.z == 6.0
 
     # Test with sequence of lists
-    pos2 = to_position([[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]])
+    pos2 = to_pose([[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]])
 
-    assert isinstance(pos2, Position)
+    assert isinstance(pos2, Pose)
     assert pos2.x == 7.0
     assert pos2.y == 8.0
     assert pos2.z == 9.0
@@ -306,9 +306,9 @@ def test_to_position_with_sequence():
     assert pos2.rot.z == 12.0
 
     # Test with mixed sequence (tuple and numpy array)
-    pos3 = to_position([(13.0, 14.0, 15.0), np.array([16.0, 17.0, 18.0])])
+    pos3 = to_pose([(13.0, 14.0, 15.0), np.array([16.0, 17.0, 18.0])])
 
-    assert isinstance(pos3, Position)
+    assert isinstance(pos3, Pose)
     assert pos3.x == 13.0
     assert pos3.y == 14.0
     assert pos3.z == 15.0
@@ -318,6 +318,6 @@ def test_to_position_with_sequence():
 
 
 def test_vector_transform():
-    robot_position = Position(Vector(4.0, 2.0, 0.5), Vector(0.0, 0.0, math.pi / 2))
+    robot_pose = Pose(Vector(4.0, 2.0, 0.5), Vector(0.0, 0.0, math.pi / 2))
     target = Vector(1.0, 3.0, 0.0)
-    print(robot_position.vector_to(target))
+    print(robot_pose.vector_to(target))
