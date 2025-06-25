@@ -1328,3 +1328,45 @@ def visualize_voxel_grid(
         o3d.visualization.draw_geometries(
             geometries, window_name=window_name, width=1280, height=720
         )
+
+
+def combine_object_pointclouds(
+    point_clouds: Union[List[np.ndarray], List[o3d.geometry.PointCloud]],
+    colors: Optional[List[np.ndarray]] = None,
+) -> o3d.geometry.PointCloud:
+    """
+    Combine multiple point clouds into a single Open3D point cloud.
+
+    Args:
+        point_clouds: List of point clouds as numpy arrays or Open3D point clouds
+        colors: List of colors as numpy arrays
+    Returns:
+        Combined Open3D point cloud
+    """
+    all_points = []
+    all_colors = []
+
+    for i, pcd in enumerate(point_clouds):
+        if isinstance(pcd, np.ndarray):
+            points = pcd[:, :3]
+            all_points.append(points)
+            if colors:
+                all_colors.append(colors[i])
+
+        elif isinstance(pcd, o3d.geometry.PointCloud):
+            points = np.asarray(pcd.points)
+            all_points.append(points)
+            if pcd.has_colors():
+                colors = np.asarray(pcd.colors)
+                all_colors.append(colors)
+
+    if not all_points:
+        return o3d.geometry.PointCloud()
+
+    combined_pcd = o3d.geometry.PointCloud()
+    combined_pcd.points = o3d.utility.Vector3dVector(np.vstack(all_points))
+
+    if all_colors:
+        combined_pcd.colors = o3d.utility.Vector3dVector(np.vstack(all_colors))
+
+    return combined_pcd
