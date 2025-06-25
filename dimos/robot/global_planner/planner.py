@@ -14,10 +14,8 @@
 
 from dataclasses import dataclass
 from abc import abstractmethod
-from typing import Callable, Optional, List
+from typing import Callable, Optional
 import threading
-import os
-import time
 
 from dimos.types.path import Path
 from dimos.types.costmap import Costmap
@@ -25,7 +23,6 @@ from dimos.types.vector import VectorLike, to_vector, Vector
 from dimos.robot.global_planner.algo import astar
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.helpers import Visualizable
-from dimos.robot.frontier_exploration.utils import CostmapSaver
 
 logger = setup_logger("dimos.robot.unitree.global_planner")
 
@@ -49,12 +46,7 @@ class Planner(Visualizable):
             return False
 
         print("pathing success", path)
-
-        navigation_successful = self.set_local_nav(
-            path, stop_event=stop_event, goal_theta=goal_theta
-        )
-
-        return navigation_successful
+        return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
 
 
 @dataclass
