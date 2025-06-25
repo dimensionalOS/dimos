@@ -78,7 +78,7 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-class Odometry(Position):
+class Odometry(Pose):
     def __init__(self, pos: VectorLike, rot: VectorLike, ts: EpochLike):
         super().__init__(pos, rot)
         self.ts = to_datetime(ts) if ts else datetime.now()

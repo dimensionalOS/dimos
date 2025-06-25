@@ -18,7 +18,7 @@ import threading
 from typing import TypeAlias, Literal
 from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.types.vector import Vector
-from dimos.types.position import Position
+from dimos.types.pose import Pose
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
@@ -143,7 +143,7 @@ class WebRTCRobot(ConnectionInterface):
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]))
 
     @functools.cache
-    def raw_odom_stream(self) -> Subject[Position]:
+    def raw_odom_stream(self) -> Subject[Pose]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]))
 
     @functools.cache
@@ -155,7 +155,7 @@ class WebRTCRobot(ConnectionInterface):
         )
 
     @functools.cache
-    def odom_stream(self) -> Subject[Position]:
+    def odom_stream(self) -> Subject[Pose]:
         return backpressure(self.raw_odom_stream().pipe(ops.map(Odometry.from_msg)))
 
     @functools.cache
