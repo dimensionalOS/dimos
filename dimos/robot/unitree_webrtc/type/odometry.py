@@ -21,7 +21,7 @@ from dimos.robot.unitree_webrtc.type.timeseries import (
     to_datetime,
     to_human_readable,
 )
-from dimos.types.position import Position
+from dimos.types.pose import Pose
 from dimos.types.vector import VectorLike
 
 raw_odometry_msg_sample = {
@@ -76,7 +76,7 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-class Odometry(Position):
+class Odometry(Pose):
     def __init__(self, pos: VectorLike, rot: VectorLike, ts: EpochLike):
         super().__init__(pos, rot)
         self.ts = to_datetime(ts) if ts else datetime.now()
