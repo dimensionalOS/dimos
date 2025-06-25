@@ -18,6 +18,8 @@ import numpy as np
 import open3d as o3d
 import cv2
 from typing import List, Dict, Tuple, Optional, Union
+from dimos.types.pose import Pose
+from dimos.types.vector import Vector
 
 
 def project_3d_points_to_2d(
@@ -498,3 +500,101 @@ def visualize_grasps_3d(
         geom.transform(trans_mat)
 
     o3d.visualization.draw_geometries(geometries, window_name="3D Grasp Visualization")
+
+
+def rotation_matrix_to_euler(rotation_matrix: np.ndarray) -> Tuple[float, float, float]:
+    """
+    Convert 3x3 rotation matrix to Euler angles (roll, pitch, yaw).
+
+    Args:
+        rotation_matrix: 3x3 rotation matrix
+
+    Returns:
+        Tuple of (roll, pitch, yaw) in radians
+    """
+    sy = np.sqrt(rotation_matrix[0, 0] ** 2 + rotation_matrix[1, 0] ** 2)
+    singular = sy < 1e-6
+
+    if not singular:
+        x = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2])  # roll
+        y = np.arctan2(-rotation_matrix[2, 0], sy)  # pitch
+        z = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])  # yaw
+    else:
+        x = np.arctan2(-rotation_matrix[1, 2], rotation_matrix[1, 1])  # roll
+        y = np.arctan2(-rotation_matrix[2, 0], sy)  # pitch
+        z = 0  # yaw
+
+    return x, y, z
+
+
+def parse_contactgraspnet_results(
+    pred_grasps_cam: Dict,
+    scores: Dict,
+    contact_pts: Dict,
+    gripper_openings: Dict,
+) -> Dict[int, Dict[str, List]]:
+    """
+    Parse ContactGraspNet results into a clean dictionary format.
+
+    Args:
+        pred_grasps_cam: Dictionary mapping object_id to 4x4 transformation matrices
+        scores: Dictionary mapping object_id to confidence scores
+        contact_pts: Dictionary mapping object_id to contact points
+        gripper_openings: Dictionary mapping object_id to gripper widths
+
+    Returns:
+        Dictionary mapping object_id to dictionary of lists containing:
+        - poses: List of Pose objects with position and rotation in camera frame
+        - scores: List of confidence scores (float)
+        - grasp_widths: List of gripper opening widths (float)
+        - contact_points: List of 3D contact points (Vector, optional)
+    """
+
+    parsed_grasps = {}
+
+    for obj_id in pred_grasps_cam.keys():
+        if obj_id not in scores:
+            continue
+
+        obj_grasps = pred_grasps_cam[obj_id]
+        obj_scores = scores[obj_id]
+        obj_openings = gripper_openings.get(obj_id, [])
+        obj_contacts = contact_pts.get(obj_id, [])
+
+        poses = []
+        score_list = []
+        width_list = []
+        contact_list = []
+
+        for i, grasp_matrix in enumerate(obj_grasps):
+            # Extract rotation matrix (3x3) and translation vector (3x1) from 4x4 matrix
+            rotation_matrix = grasp_matrix[:3, :3]
+            translation = grasp_matrix[:3, 3]
+
+            # Convert rotation matrix to euler angles
+            roll, pitch, yaw = rotation_matrix_to_euler(rotation_matrix)
+
+            # Create Pose object
+            position = Vector(translation[0], translation[1], translation[2])
+            rotation = Vector(roll, pitch, yaw)
+            pose = Pose(position, rotation)
+
+            poses.append(pose)
+            score_list.append(float(obj_scores[i]) if i < len(obj_scores) else 0.0)
+            width_list.append(float(obj_openings[i]) if i < len(obj_openings) else 0.08)
+
+            # Add contact point if available
+            if i < len(obj_contacts):
+                contact_point = obj_contacts[i]
+                contact_list.append(Vector(contact_point[0], contact_point[1], contact_point[2]))
+            else:
+                contact_list.append(None)
+
+        parsed_grasps[obj_id] = {
+            "poses": poses,
+            "scores": score_list,
+            "grasp_widths": width_list,
+            "contact_points": contact_list,
+        }
+
+    return parsed_grasps

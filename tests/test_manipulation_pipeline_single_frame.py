@@ -49,6 +49,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.models.manipulation.contact_graspnet_pytorch.contact_graspnet_pytorch.visualization_utils_o3d import (
     visualize_grasps,
 )
+from dimos.perception.grasp_generation.utils import parse_contactgraspnet_results
 
 logger = setup_logger("test_pipeline_viz")
 
@@ -255,6 +256,15 @@ def main():
                 scores = grasp_data.get("scores", {})
                 contact_pts = grasp_data.get("contact_pts", {})
                 gripper_openings = grasp_data.get("gripper_openings", {})
+
+                # =====================================================================
+                # =                    PARSE CONTACTGRASPNET RESULTS                  =
+                # =                    ===========================                    =
+                # =        Converting raw grasp data into clean dictionary format    =
+                # =====================================================================
+                parsed_grasps = parse_contactgraspnet_results(
+                    pred_grasps_cam, scores, contact_pts, gripper_openings
+                )
 
                 # Check if we have valid grasp data
                 total_grasps = (
