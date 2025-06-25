@@ -1,0 +1,196 @@
+DATA:
+  classes: null
+  data_path: /home/user/Documents/grasp_generation/contact_graspnet_pytorch/acronym/
+  depth_augm:
+    clip: 0.005
+    gaussian_kernel: 0
+    sigma: 0.001
+  gripper_width: 0.08
+  input_normals: false
+  intrinsics: realsense
+  labels:
+    bin_weights:
+    - 0.16652107
+    - 0.21488856
+    - 0.37031708
+    - 0.55618503
+    - 0.75124664
+    - 0.93943357
+    - 1.07824539
+    - 1.19423112
+    - 1.55731375
+    - 3.17161779
+    filter_z: true
+    k: 1
+    max_radius: 0.005
+    num_neg_contacts: 0
+    num_pos_contacts: 8000
+    offset_bins:
+    - 0
+    - 0.00794435329
+    - 0.0158887021
+    - 0.0238330509
+    - 0.0317773996
+    - 0.0397217484
+    - 0.0476660972
+    - 0.055610446
+    - 0.0635547948
+    - 0.0714991435
+    - 0.08
+    to_gpu: false
+    z_val: -0.1
+  ndataset_points: 20000
+  num_point: 2048
+  num_test_scenes: 1000
+  pc_augm:
+    clip: 0.005
+    occlusion_dropout_rate: 0.0
+    occlusion_nclusters: 0
+    sigma: 0.0
+  raw_num_points: 20000
+  scene_contacts_path: scene_contacts
+  train_and_test: false
+  train_on_scenes: true
+  use_farthest_point: false
+  use_uniform_quaternions: false
+  view_sphere:
+    distance_range:
+    - 0.9
+    - 1.3
+    elevation:
+    - 30
+    - 150
+LOSS:
+  min_geom_loss_divisor: 1.0
+  offset_loss_type: sigmoid_cross_entropy
+  too_small_offset_pred_bin_factor: 0
+  topk_confidence: 512
+MODEL:
+  asymmetric_model: true
+  bin_offsets: true
+  dir_vec_length_offset: false
+  grasp_conf_head:
+    conv1d: 1
+    dropout_keep: 0.5
+  grasp_dir_head:
+    conv1d: 3
+    dropout_keep: 0.7
+  joint_head:
+    conv1d: 4
+    dropout_keep: 0.7
+  joint_heads: false
+  model: contact_graspnet
+  pointnet_fp_modules:
+  - mlp:
+    - 256
+    - 256
+  - mlp:
+    - 256
+    - 128
+  - mlp:
+    - 128
+    - 128
+    - 128
+  pointnet_sa_module:
+    group_all: true
+    mlp:
+    - 256
+    - 512
+    - 1024
+  pointnet_sa_modules_msg:
+  - mlp_list:
+    - - 32
+      - 32
+      - 64
+    - - 64
+      - 64
+      - 128
+    - - 64
+      - 96
+      - 128
+    npoint: 2048
+    nsample_list:
+    - 32
+    - 64
+    - 128
+    radius_list:
+    - 0.02
+    - 0.04
+    - 0.08
+  - mlp_list:
+    - - 64
+      - 64
+      - 128
+    - - 128
+      - 128
+      - 256
+    - - 128
+      - 128
+      - 256
+    npoint: 512
+    nsample_list:
+    - 64
+    - 64
+    - 128
+    radius_list:
+    - 0.04
+    - 0.08
+    - 0.16
+  - mlp_list:
+    - - 64
+      - 64
+      - 128
+    - - 128
+      - 128
+      - 256
+    - - 128
+      - 128
+      - 256
+    npoint: 128
+    nsample_list:
+    - 64
+    - 64
+    - 128
+    radius_list:
+    - 0.08
+    - 0.16
+    - 0.32
+  pred_contact_approach: false
+  pred_contact_base: false
+  pred_contact_offset: true
+  pred_contact_success: true
+  pred_grasps_adds: true
+  pred_grasps_adds_gt2pred: false
+OPTIMIZER:
+  adds_gt2pred_loss_weight: 1
+  adds_loss_weight: 10
+  approach_cosine_loss_weight: 1
+  backup_every: 200
+  batch_size: 6
+  bn_decay_clip: 0.99
+  bn_decay_decay_rate: 0.5
+  bn_decay_decay_step: 200000
+  bn_init_decay: 0.5
+  checkpoint_every: 100
+  decay_rate: 0.7
+  decay_step: 200000
+  dir_cosine_loss_weight: 1
+  learning_rate: 0.001
+  max_epoch: 200
+  momentum: 0.9
+  offset_loss_weight: 1
+  optimizer: adam
+  print_every: 10
+  score_ce_loss_weight: 1
+  val_every: 1
+TEST:
+  allow_zero_margin: 0
+  bin_vals: max
+  center_to_tip: 0.0
+  extra_opening: 0.005
+  filter_thres: 0.0001
+  first_thres: 0.15
+  max_farthest_points: 150
+  num_samples: 200
+  second_thres: 0.15
+  with_replacement: false
