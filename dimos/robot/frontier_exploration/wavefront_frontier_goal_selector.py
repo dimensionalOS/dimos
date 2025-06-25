@@ -19,11 +19,12 @@ This module provides frontier detection and exploration goal selection
 for autonomous navigation using the dimos Costmap and Vector types.
 """
 
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Callable
 from collections import deque
 import numpy as np
 from dataclasses import dataclass
 from enum import IntFlag
+import threading
 from dimos.utils.logging_config import setup_logger
 
 from dimos.types.costmap import Costmap, CostValues, smooth_costmap_for_frontiers
@@ -87,6 +88,9 @@ class WavefrontFrontierExplorer:
         min_distance_from_obstacles: float = 0.6,
         info_gain_threshold: float = 0.03,
         num_no_gain_attempts: int = 4,
+        set_goal: Optional[Callable] = None,
+        get_costmap: Optional[Callable] = None,
+        get_robot_pos: Optional[Callable] = None,
     ):
         """
         Initialize the frontier explorer.
@@ -99,6 +103,10 @@ class WavefrontFrontierExplorer:
             explored_area_buffer: Buffer distance around free areas to consider as explored (meters)
             min_distance_from_obstacles: Minimum distance frontier must be from obstacles (meters)
             info_gain_threshold: Minimum percentage increase in costmap information required to continue exploration (0.05 = 5%)
+            num_no_gain_attempts: Maximum number of consecutive attempts with no information gain
+            set_goal: Callable to set navigation goal, signature: (goal: Vector, stop_event: Optional[threading.Event]) -> bool
+            get_costmap: Callable to get current costmap, signature: () -> Costmap
+            get_robot_pos: Callable to get current robot position, signature: () -> Vector
         """
         self.min_frontier_size = min_frontier_size
         self.occupancy_threshold = occupancy_threshold
@@ -107,11 +115,14 @@ class WavefrontFrontierExplorer:
         self.explored_area_buffer = explored_area_buffer
         self.min_distance_from_obstacles = min_distance_from_obstacles
         self.info_gain_threshold = info_gain_threshold
+        self.num_no_gain_attempts = num_no_gain_attempts
+        self.set_goal = set_goal
+        self.get_costmap = get_costmap
+        self.get_robot_pos = get_robot_pos
         self._cache = FrontierCache()
         self.explored_goals = []  # list of explored goals
         self.exploration_direction = Vector([0.0, 0.0])  # current exploration direction
         self.last_costmap = None  # store last costmap for information comparison
-        self.num_no_gain_attempts = num_no_gain_attempts
 
     def _count_costmap_information(self, costmap: Costmap) -> int:
         """
@@ -613,3 +624,41 @@ class WavefrontFrontierExplorer:
         self._cache.clear()  # Clear frontier point cache
 
         logger.info("Exploration session reset - all state variables cleared")
+
+    def explore(self, stop_event: Optional[threading.Event] = None) -> bool:
+        """
+        Perform autonomous frontier exploration by continuously finding and navigating to frontiers.
+
+        Args:
+            stop_event: Optional threading.Event to signal when exploration should stop
+
+        Returns:
+            bool: True if exploration completed successfully, False if stopped or failed
+        """
+
+        logger.info("Starting autonomous frontier exploration")
+
+        while True:
+            # Check if stop event is set
+            if stop_event and stop_event.is_set():
+                logger.info("Exploration stopped by stop event")
+                return False
+
+            # Get fresh robot position and costmap data
+            robot_pose = self.get_robot_pos()
+            costmap = self.get_costmap()
+
+            # Get the next frontier goal
+            next_goal = self.get_exploration_goal(robot_pose, costmap)
+            if not next_goal:
+                logger.info("No more frontiers found, exploration complete")
+                return True
+
+            # Navigate to the frontier
+            logger.info(f"Navigating to frontier at {next_goal}")
+            navigation_successful = self.set_goal(next_goal, stop_event=stop_event)
+
+            if not navigation_successful:
+                logger.warning("Failed to navigate to frontier, continuing exploration")
+                # Continue to try other frontiers instead of stopping
+                continue
