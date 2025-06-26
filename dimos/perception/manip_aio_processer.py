@@ -26,7 +26,8 @@ from dimos.utils.logging_config import setup_logger
 from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
 from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
-from dimos.perception.grasp_generation.grasp_generation import ContactGraspNetGenerator
+from dimos.perception.grasp_generation.grasp_generation import GraspGeneratorFactory
+from dimos.perception.grasp_generation.utils import create_grasp_overlay
 from dimos.perception.pointcloud.utils import (
     create_point_cloud_overlay_visualization,
     extract_and_cluster_misc_points,
@@ -56,6 +57,8 @@ class ManipulationProcessor:
         max_objects: int = 20,
         vocabulary: Optional[str] = None,
         enable_grasp_generation: bool = False,
+        grasp_model: str = "contactgraspnet",  # "contactgraspnet" or "anygrasp"
+        grasp_server_url: Optional[str] = None,  # Required for AnyGrasp
         enable_segmentation: bool = True,
         segmentation_model: str = "sam2_b.pt",
     ):
@@ -67,7 +70,9 @@ class ManipulationProcessor:
             min_confidence: Minimum detection confidence threshold
             max_objects: Maximum number of objects to process
             vocabulary: Optional vocabulary for Detic detector
-            enable_grasp_generation: Whether to enable ContactGraspNet grasp generation
+            enable_grasp_generation: Whether to enable grasp generation
+            grasp_model: Type of grasp generator ("contactgraspnet" or "anygrasp")
+            grasp_server_url: WebSocket URL for AnyGrasp server (required if grasp_model="anygrasp")
             enable_segmentation: Whether to enable semantic segmentation
             segmentation_model: Segmentation model to use (SAM 2 or FastSAM)
         """
@@ -75,6 +80,8 @@ class ManipulationProcessor:
         self.min_confidence = min_confidence
         self.max_objects = max_objects
         self.enable_grasp_generation = enable_grasp_generation
+        self.grasp_model = grasp_model
+        self.grasp_server_url = grasp_server_url
         self.enable_segmentation = enable_segmentation
 
         # Initialize object detector
@@ -98,19 +105,28 @@ class ManipulationProcessor:
                 model_type="auto",  # Auto-detect model type
             )
 
-        # Initialize ContactGraspNet generator if enabled
+        # Initialize grasp generator if enabled
         self.grasp_generator = None
         if self.enable_grasp_generation:
             try:
-                self.grasp_generator = ContactGraspNetGenerator()
-                logger.info("ContactGraspNet generator initialized successfully")
+                if grasp_model.lower() == "anygrasp":
+                    if not grasp_server_url:
+                        raise ValueError("AnyGrasp requires grasp_server_url parameter")
+                    self.grasp_generator = GraspGeneratorFactory.create_generator(
+                        "anygrasp", server_url=grasp_server_url
+                    )
+                else:
+                    self.grasp_generator = GraspGeneratorFactory.create_generator("contactgraspnet")
+
+                logger.info(f"{grasp_model} generator initialized successfully")
             except Exception as e:
-                logger.error(f"Failed to initialize ContactGraspNet generator: {e}")
+                logger.error(f"Failed to initialize {grasp_model} generator: {e}")
                 self.grasp_generator = None
                 self.enable_grasp_generation = False
 
         logger.info(
-            f"Initialized ManipulationProcessor with confidence={min_confidence}, grasp_generation={enable_grasp_generation}"
+            f"Initialized ManipulationProcessor with confidence={min_confidence}, "
+            f"grasp_generation={enable_grasp_generation} ({grasp_model})"
         )
 
     def process_frame(
@@ -132,12 +148,13 @@ class ManipulationProcessor:
                 - detection2d_objects: Raw detection results as ObjectData
                 - segmentation2d_objects: Raw segmentation results as ObjectData (if enabled)
                 - detected_objects: Detection (Object Detection) objects with point clouds filtered
-                - all_objects: All objects (including misc objects) (SAM segmentation) with point clouds filtered
+                - all_objects: Combined objects with intelligent duplicate removal
                 - full_pointcloud: Complete scene point cloud (if point cloud processing enabled)
                 - misc_clusters: List of clustered background/miscellaneous point clouds (DBSCAN)
                 - misc_voxel_grid: Open3D voxel grid approximating all misc/background points
                 - misc_pointcloud_viz: Visualization of misc/background cluster overlay
-                - grasps: ContactGraspNet results (if enabled)
+                - grasps: Grasp results (ContactGraspNet or AnyGrasp, if enabled)
+                - grasp_overlay: Grasp visualization overlay (if enabled)
                 - processing_time: Total processing time
         """
         start_time = time.time()
@@ -255,7 +272,7 @@ class ManipulationProcessor:
             else:
                 results["misc_pointcloud_viz"] = base_image
 
-            # Step 4: ContactGraspNet Grasp Generation (if enabled)
+            # Step 4: Grasp Generation (if enabled)
             should_generate_grasps = (
                 generate_grasps if generate_grasps is not None else self.enable_grasp_generation
             )
@@ -263,6 +280,10 @@ class ManipulationProcessor:
             if should_generate_grasps and all_objects and full_pcd:
                 grasps = self.run_grasp_generation(all_objects, full_pcd)
                 results["grasps"] = grasps
+                if grasps:
+                    results["grasp_overlay"] = create_grasp_overlay(
+                        rgb_image, grasps, self.camera_intrinsics
+                    )
 
         except Exception as e:
             logger.error(f"Error processing frame: {e}")
@@ -371,27 +392,22 @@ class ManipulationProcessor:
             return {"objects": [], "viz_frame": rgb_image.copy()}
 
     def run_grasp_generation(self, filtered_objects: List[Dict], full_pcd) -> Optional[Dict]:
-        """Run ContactGraspNet grasp generation."""
+        """Run grasp generation using the configured generator (ContactGraspNet or AnyGrasp)."""
         if not self.grasp_generator:
-            logger.warning("Grasp generation requested but ContactGraspNet not available")
+            logger.warning("Grasp generation requested but no generator available")
             return None
 
         try:
-            # Generate grasps using ContactGraspNet
-            pred_grasps_cam, scores, contact_pts, gripper_openings = (
-                self.grasp_generator.generate_grasps_from_objects(filtered_objects, full_pcd)
+            # Generate grasps using the configured generator
+            parsed_grasps = self.grasp_generator.generate_grasps_from_objects(
+                filtered_objects, full_pcd
             )
 
-            # Return ContactGraspNet results directly
-            return {
-                "pred_grasps_cam": pred_grasps_cam,
-                "scores": scores,
-                "contact_pts": contact_pts,
-                "gripper_openings": gripper_openings,
-            }
+            # Return parsed results directly
+            return parsed_grasps
 
         except Exception as e:
-            logger.error(f"ContactGraspNet grasp generation failed: {e}")
+            logger.error(f"{self.grasp_model} grasp generation failed: {e}")
             return None
 
     def cleanup(self):
