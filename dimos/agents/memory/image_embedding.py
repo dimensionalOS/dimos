@@ -64,9 +64,10 @@ class ImageEmbeddingProvider:
             import onnxruntime as ort
 
             if self.model_name == "clip":
-                model_id = "openai/clip-vit-base-patch32"
-                self.model = ort.InferenceSession("onnx/clip/model.onnx")
-                self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+                model_id = "onnx/clip/model.onnx"
+                processor_id = "openai/clip-vit-base-patch32"
+                self.model = ort.InferenceSession(model_id)
+                self.processor = CLIPProcessor.from_pretrained(processor_id)
                 logger.info(f"Loaded CLIP model: {model_id}")
             elif self.model_name == "resnet":
                 model_id = "microsoft/resnet-50"
@@ -194,7 +195,9 @@ class ImageEmbeddingProvider:
 
                 # If the model expects pixel_values (i.e., fused model), add dummy vision input
                 if "pixel_values" in input_names:
-                    ort_inputs["pixel_values"] = np.zeros((batch_size, 3, 224, 224), dtype=np.float32)
+                    ort_inputs["pixel_values"] = np.zeros(
+                        (batch_size, 3, 224, 224), dtype=np.float32
+                    )
 
                 # Run inference
                 ort_outputs = self.model.run(None, ort_inputs)
@@ -207,7 +210,9 @@ class ImageEmbeddingProvider:
                     text_embedding = ort_outputs[0]  # fallback to first output
 
                 # Normalize
-                text_embedding = text_embedding / np.linalg.norm(text_embedding, axis=1, keepdims=True)
+                text_embedding = text_embedding / np.linalg.norm(
+                    text_embedding, axis=1, keepdims=True
+                )
                 text_embedding = text_embedding[0]  # shape: (512,)
 
             logger.debug(
