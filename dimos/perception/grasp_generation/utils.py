@@ -96,8 +96,6 @@ def create_gripper_geometry(
     grasp_data: dict,
     finger_length: float = 0.08,
     finger_thickness: float = 0.004,
-    base_height: float = 0.04,
-    color=[0, 0.5, 1],
 ) -> List[o3d.geometry.TriangleMesh]:
     """
     Create a simple fork-like gripper geometry from grasp data.
@@ -133,7 +131,6 @@ def create_gripper_geometry(
 
     # Gripper dimensions
     finger_width = 0.006  # Thickness of each finger
-    base_thickness = finger_thickness  # Make base same thickness as fingers (flat)
     handle_length = 0.05  # Length of handle extending backward
 
     # Build gripper in local coordinate system:
@@ -474,8 +471,34 @@ def draw_grasps_on_image(
     return result
 
 
+def get_standard_coordinate_transform():
+    """
+    Get a standard coordinate transformation matrix for consistent visualization.
+
+    This transformation ensures that:
+    - X (red) axis points right
+    - Y (green) axis points up
+    - Z (blue) axis points toward viewer
+
+    Returns:
+        4x4 transformation matrix
+    """
+    # Standard transformation matrix to ensure consistent coordinate frame orientation
+    transform = np.array(
+        [
+            [1, 0, 0, 0],  # X points right
+            [0, -1, 0, 0],  # Y points up (flip from OpenCV to standard)
+            [0, 0, -1, 0],  # Z points toward viewer (flip depth)
+            [0, 0, 0, 1],
+        ]
+    )
+    return transform
+
+
 def visualize_grasps_3d(
-    point_cloud: o3d.geometry.PointCloud, grasp_list: List[dict], max_grasps: int = -1
+    point_cloud: o3d.geometry.PointCloud,
+    grasp_list: List[dict],
+    max_grasps: int = -1,
 ):
     """
     Visualize grasps in 3D with point cloud.
@@ -485,20 +508,24 @@ def visualize_grasps_3d(
         grasp_list: List of grasp dictionaries
         max_grasps: Maximum number of grasps to visualize
     """
-    geometries = [point_cloud]
+    # Apply standard coordinate transformation
+    transform = get_standard_coordinate_transform()
 
-    # Add gripper geometries
+    # Transform point cloud
+    pc_copy = o3d.geometry.PointCloud(point_cloud)
+    pc_copy.transform(transform)
+    geometries = [pc_copy]
+
+    # Transform gripper geometries
     gripper_geometries = create_all_gripper_geometries(grasp_list, max_grasps)
+    for geom in gripper_geometries:
+        geom.transform(transform)
     geometries.extend(gripper_geometries)
 
-    # Add a coordinate frame at origin for reference
+    # Add transformed coordinate frame
     origin_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
+    origin_frame.transform(transform)
     geometries.append(origin_frame)
-
-    # Apply transformation for better view (flip z-axis)
-    trans_mat = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
-    for geom in geometries:
-        geom.transform(trans_mat)
 
     o3d.visualization.draw_geometries(geometries, window_name="3D Grasp Visualization")
 
@@ -607,3 +634,119 @@ def parse_contactgraspnet_results(
         }
 
     return parsed_grasps
+
+
+def parse_anygrasp_results(
+    grasps: List[Dict],
+) -> Dict[int, Dict[str, List]]:
+    """
+    Parse AnyGrasp results into the same format as ContactGraspNet.
+
+    Args:
+        grasps: List of AnyGrasp grasp dictionaries
+
+    Returns:
+        Dictionary mapping object_id to dictionary of lists containing:
+        - poses: List of Pose objects with position and rotation in camera frame
+        - scores: List of confidence scores (float)
+        - grasp_widths: List of gripper opening widths (float)
+        - contact_points: List of 3D contact points (Vector)
+    """
+    if not grasps:
+        return {}
+
+    parsed_grasps = {"scene": {"poses": [], "scores": [], "grasp_widths": [], "contact_points": []}}
+
+    for grasp in grasps:
+        # Extract rotation matrix and translation
+        rotation_matrix = np.array(grasp.get("rotation_matrix", np.eye(3)))
+        translation = grasp.get("translation", [0, 0, 0])
+
+        # Convert rotation matrix to euler angles then to quaternion
+        roll, pitch, yaw = rotation_matrix_to_euler(rotation_matrix)
+
+        # Create Pose object
+        pose = Pose()
+        pose.position.x = translation[0]
+        pose.position.y = translation[1]
+        pose.position.z = translation[2]
+
+        # Convert euler angles to quaternion
+        rotation = R.from_euler("xyz", [roll, pitch, yaw])
+        pose.orientation.x = rotation.as_quat()[0]
+        pose.orientation.y = rotation.as_quat()[1]
+        pose.orientation.z = rotation.as_quat()[2]
+        pose.orientation.w = rotation.as_quat()[3]
+
+        parsed_grasps["scene"]["poses"].append(pose)
+        parsed_grasps["scene"]["scores"].append(float(grasp.get("score", 0.0)))
+        parsed_grasps["scene"]["grasp_widths"].append(float(grasp.get("width", 0.08)))
+        parsed_grasps["scene"]["contact_points"].append(
+            Vector(translation[0], translation[1], translation[2])
+        )
+
+    return parsed_grasps
+
+
+def create_grasp_overlay(
+    rgb_image: np.ndarray,
+    grasps: Union[Dict, List[Dict]],
+    camera_intrinsics: Union[List[float], np.ndarray],
+) -> np.ndarray:
+    """
+    Create grasp visualization overlay on RGB image.
+
+    Args:
+        rgb_image: RGB input image
+        grasps: Parsed grasp data (unified format from parse_*_results functions)
+        camera_intrinsics: Camera parameters
+
+    Returns:
+        RGB image with grasp overlay
+    """
+    try:
+        bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+
+        # Convert parsed format to visualization format
+        viz_grasps = _convert_parsed_to_viz_format(grasps)
+
+        result_bgr = draw_grasps_on_image(
+            bgr_image,
+            viz_grasps,
+            camera_intrinsics,
+            max_grasps=-1,
+        )
+        return cv2.cvtColor(result_bgr, cv2.COLOR_BGR2RGB)
+    except Exception as e:
+        return rgb_image.copy()
+
+
+def _convert_parsed_to_viz_format(grasps: Dict) -> List[Dict]:
+    """Convert parsed grasp format to visualization format."""
+    viz_grasps = []
+    grasp_id = 0
+
+    for obj_id, obj_data in grasps.items():
+        poses = obj_data.get("poses", [])
+        scores = obj_data.get("scores", [])
+        widths = obj_data.get("grasp_widths", [])
+
+        for i, pose in enumerate(poses):
+            # Convert quaternion back to rotation matrix
+            quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
+            rotation = R.from_quat(quat)
+            rotation_matrix = rotation.as_matrix()
+
+            translation = [pose.position.x, pose.position.y, pose.position.z]
+
+            viz_grasp = {
+                "id": f"grasp_{grasp_id}",
+                "score": scores[i] if i < len(scores) else 0.0,
+                "width": widths[i] if i < len(widths) else 0.08,
+                "translation": translation,
+                "rotation_matrix": rotation_matrix.tolist(),
+            }
+            viz_grasps.append(viz_grasp)
+            grasp_id += 1
+
+    return viz_grasps

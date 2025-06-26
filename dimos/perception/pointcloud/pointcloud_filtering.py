@@ -194,7 +194,7 @@ class PointcloudFiltering:
 
     def get_full_point_cloud(self) -> o3d.geometry.PointCloud:
         """Get the full point cloud."""
-        return self.full_pcd
+        return self._apply_subsampling(self.full_pcd)
 
     def process_images(
         self, color_img: np.ndarray, depth_img: np.ndarray, objects: List[ObjectData]
@@ -293,7 +293,7 @@ class PointcloudFiltering:
             pcd = self._apply_color_mask(pcd, rgb_color)
 
             # Apply subsampling to control point cloud size
-            # pcd = self._apply_subsampling(pcd)
+            pcd = self._apply_subsampling(pcd)
 
             # Apply filtering (optional based on flags)
             pcd_filtered = self._apply_filtering(pcd)
