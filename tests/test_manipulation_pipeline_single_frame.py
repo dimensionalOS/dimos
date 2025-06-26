@@ -21,6 +21,7 @@ import numpy as np
 import time
 import argparse
 import matplotlib
+from scipy.spatial.transform import Rotation as R
 
 # Try to use TkAgg backend for live display, fallback to Agg if not available
 try:
@@ -45,11 +46,7 @@ from dimos.perception.pointcloud.utils import (
 )
 from dimos.utils.logging_config import setup_logger
 
-# Import ContactGraspNet visualization
-from dimos.models.manipulation.contact_graspnet_pytorch.contact_graspnet_pytorch.visualization_utils_o3d import (
-    visualize_grasps,
-)
-from dimos.perception.grasp_generation.utils import parse_contactgraspnet_results
+from dimos.perception.grasp_generation.utils import visualize_grasps_3d, create_grasp_overlay
 
 logger = setup_logger("test_pipeline_viz")
 
@@ -91,14 +88,22 @@ def create_point_cloud(color_img, depth_img, intrinsics):
     return o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, o3d_intrinsics)
 
 
-def run_processor(color_img, depth_img, intrinsics):
+def run_processor(
+    color_img, depth_img, intrinsics, grasp_model="contactgraspnet", grasp_server_url=None
+):
     """Run processor and collect results."""
-    processor = ManipulationProcessor(
-        camera_intrinsics=intrinsics,
-        enable_grasp_generation=True,
-        enable_segmentation=True,
-        segmentation_model="FastSAM-x.pt",
-    )
+    processor_kwargs = {
+        "camera_intrinsics": intrinsics,
+        "enable_grasp_generation": True,
+        "grasp_model": grasp_model,
+        "enable_segmentation": True,
+        "segmentation_model": "FastSAM-x.pt",
+    }
+
+    if grasp_model.lower() == "anygrasp" and grasp_server_url:
+        processor_kwargs["grasp_server_url"] = grasp_server_url
+
+    processor = ManipulationProcessor(**processor_kwargs)
 
     # Process frame without grasp generation
     results = processor.process_frame(color_img, depth_img, generate_grasps=False)
@@ -106,6 +111,7 @@ def run_processor(color_img, depth_img, intrinsics):
     # Run grasp generation separately
     grasps = processor.run_grasp_generation(results["all_objects"], results["full_pointcloud"])
     results["grasps"] = grasps
+    results["grasp_overlay"] = create_grasp_overlay(color_img, grasps, intrinsics)
 
     processor.cleanup()
     return results
@@ -115,41 +121,54 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", default="assets/rgbd_data")
     parser.add_argument("--wait-time", type=float, default=5.0)
+    parser.add_argument(
+        "--grasp-model",
+        choices=["contactgraspnet", "anygrasp"],
+        default="anygrasp",
+        help="Type of grasp generator to use",
+    )
+    parser.add_argument(
+        "--grasp-server-url",
+        default="ws://18.224.39.74:8000/ws/grasp",
+        help="WebSocket URL for AnyGrasp server (required for --grasp-model=anygrasp)",
+    )
     args = parser.parse_args()
+
+    # Validate AnyGrasp requirements
+    if args.grasp_model == "anygrasp" and not args.grasp_server_url:
+        print("Error: --grasp-server-url is required when using --grasp-model=anygrasp")
+        return
 
     # Load data
     color_img, depth_img, intrinsics = load_first_frame(args.data_dir)
     logger.info(f"Loaded images: color {color_img.shape}, depth {depth_img.shape}")
 
     # Run processor
-    results = run_processor(color_img, depth_img, intrinsics)
+    results = run_processor(
+        color_img, depth_img, intrinsics, args.grasp_model, args.grasp_server_url
+    )
 
     # Print results summary
     print(f"Processing time: {results.get('processing_time', 0):.3f}s")
     print(f"Detection objects: {len(results.get('detected_objects', []))}")
     print(f"All objects processed: {len(results.get('all_objects', []))}")
+    print(f"Grasp type: {args.grasp_model}")
 
     # Print grasp summary
     grasp_data = results["grasps"]
-    pred_grasps = grasp_data.get("pred_grasps_cam", {})
-    scores = grasp_data.get("scores", {})
-    total_grasps = sum(len(grasps) for grasps in pred_grasps.values())
+    total_grasps = 0
     best_score = 0
-    for obj_scores in scores.values():
-        if len(obj_scores) > 0:
-            obj_best_score = max(obj_scores)
+
+    for obj_id, obj_data in grasp_data.items():
+        poses = obj_data.get("poses", [])
+        scores = obj_data.get("scores", [])
+        total_grasps += len(poses)
+        if scores:
+            obj_best_score = max(scores)
             if obj_best_score > best_score:
                 best_score = obj_best_score
 
-    print(f"ContactGraspNet grasps: {total_grasps} total (best score: {best_score:.3f})")
-
-    # Parse ContactGraspNet results
-    contact_pts = grasp_data.get("contact_pts", {})
-    gripper_openings = grasp_data.get("gripper_openings", {})
-    parsed_grasps = parse_contactgraspnet_results(
-        pred_grasps, scores, contact_pts, gripper_openings
-    )
-    print(f"Parsed grasps for object 2: {len(parsed_grasps[2]['poses'])} poses")
+    print(f"{args.grasp_model} grasps: {total_grasps} total (best score: {best_score:.3f})")
 
     # Create visualizations
     plot_configs = []
@@ -163,6 +182,8 @@ def main():
         plot_configs.append(("detected_pointcloud_viz", "Detection Objects Point Cloud"))
     if results["misc_pointcloud_viz"] is not None:
         plot_configs.append(("misc_pointcloud_viz", "Misc/Background Points"))
+    if results["grasp_overlay"] is not None:
+        plot_configs.append(("grasp_overlay", "Grasp Overlay"))
 
     # Create subplot layout
     num_plots = len(plot_configs)
@@ -194,10 +215,42 @@ def main():
     plt.show(block=True)
     plt.close()
 
-    # 3D ContactGraspNet visualization
-    visualize_grasps(
-        results["full_pointcloud"], pred_grasps, scores, gripper_openings=gripper_openings
-    )
+    point_clouds = [obj["point_cloud"] for obj in results["all_objects"]]
+    colors = [obj["color"] for obj in results["all_objects"]]
+    combined_pcd = combine_object_pointclouds(point_clouds, colors)
+
+    # 3D Grasp visualization
+    if grasp_data:
+        # Convert parsed format to visualization format for 3D display
+        viz_grasps = []
+        for obj_id, obj_data in grasp_data.items():
+            poses = obj_data.get("poses", [])
+            scores = obj_data.get("scores", [])
+            widths = obj_data.get("grasp_widths", [])
+
+            for i, pose in enumerate(poses):
+                # Convert quaternion back to rotation matrix
+                quat = [
+                    pose.orientation.x,
+                    pose.orientation.y,
+                    pose.orientation.z,
+                    pose.orientation.w,
+                ]
+                rotation = R.from_quat(quat)
+                rotation_matrix = rotation.as_matrix()
+
+                translation = [pose.position.x, pose.position.y, pose.position.z]
+
+                viz_grasp = {
+                    "translation": translation,
+                    "rotation_matrix": rotation_matrix,
+                    "width": widths[i] if i < len(widths) else 0.08,
+                    "score": scores[i] if i < len(scores) else 0.0,
+                }
+                viz_grasps.append(viz_grasp)
+
+        # Use unified 3D visualization
+        visualize_grasps_3d(combined_pcd, viz_grasps)
 
     # Visualize full point cloud
     visualize_pcd(
@@ -208,9 +261,6 @@ def main():
     )
 
     # Visualize all objects point cloud
-    point_clouds = [obj["point_cloud"] for obj in results["all_objects"]]
-    colors = [obj["color"] for obj in results["all_objects"]]
-    combined_pcd = combine_object_pointclouds(point_clouds, colors)
     visualize_pcd(
         combined_pcd,
         window_name="All Objects Point Cloud",

@@ -1137,6 +1137,30 @@ def _cluster_point_cloud_dbscan(
         return [pcd]  # Return original point cloud as fallback
 
 
+def get_standard_coordinate_transform():
+    """
+    Get a standard coordinate transformation matrix for consistent visualization.
+
+    This transformation ensures that:
+    - X (red) axis points right
+    - Y (green) axis points up
+    - Z (blue) axis points toward viewer
+
+    Returns:
+        4x4 transformation matrix
+    """
+    # Standard transformation matrix to ensure consistent coordinate frame orientation
+    transform = np.array(
+        [
+            [1, 0, 0, 0],  # X points right
+            [0, -1, 0, 0],  # Y points up (flip from OpenCV to standard)
+            [0, 0, -1, 0],  # Z points toward viewer (flip depth)
+            [0, 0, 0, 1],
+        ]
+    )
+    return transform
+
+
 def visualize_clustered_point_clouds(
     clustered_pcds: List[o3d.geometry.PointCloud],
     window_name: str = "Clustered Point Clouds",
@@ -1158,40 +1182,36 @@ def visualize_clustered_point_clouds(
         print("Warning: No clustered point clouds to visualize")
         return
 
-    # Create list of geometries to visualize
-    geometries = list(clustered_pcds)
+    # Apply standard coordinate transformation
+    transform = get_standard_coordinate_transform()
+    geometries = []
+    for pcd in clustered_pcds:
+        pcd_copy = o3d.geometry.PointCloud(pcd)
+        pcd_copy.transform(transform)
+        geometries.append(pcd_copy)
 
-    # Add coordinate frame if requested
+    # Add coordinate frame
     if show_coordinate_frame:
         coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
             size=coordinate_frame_size
         )
+        coordinate_frame.transform(transform)
         geometries.append(coordinate_frame)
 
     total_points = sum(len(np.asarray(pcd.points)) for pcd in clustered_pcds)
     print(f"Visualizing {len(clustered_pcds)} clusters with {total_points} total points")
 
     try:
-        # Create visualizer
         vis = o3d.visualization.Visualizer()
         vis.create_window(window_name=window_name, width=1280, height=720)
-
-        # Add geometries
         for geom in geometries:
             vis.add_geometry(geom)
-
-        # Set render options
         render_option = vis.get_render_option()
         render_option.point_size = point_size
-
-        # Run visualization
         vis.run()
         vis.destroy_window()
-
     except Exception as e:
         print(f"Failed to create interactive visualization: {e}")
-        print("Falling back to simple visualization...")
-        # Fallback to simple visualization
         o3d.visualization.draw_geometries(
             geometries, window_name=window_name, width=1280, height=720
         )
@@ -1222,47 +1242,33 @@ def visualize_pcd(
         print("Warning: Point cloud is empty, nothing to visualize")
         return
 
-    # Create list of geometries to visualize
-    geometries = [pcd]
+    # Apply standard coordinate transformation
+    transform = get_standard_coordinate_transform()
+    pcd_copy = o3d.geometry.PointCloud(pcd)
+    pcd_copy.transform(transform)
+    geometries = [pcd_copy]
 
-    # Add coordinate frame if requested
+    # Add coordinate frame
     if show_coordinate_frame:
         coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
             size=coordinate_frame_size
         )
+        coordinate_frame.transform(transform)
         geometries.append(coordinate_frame)
-
-    # Set up visualization options
-    vis_options = {
-        "window_name": window_name,
-        "width": 1280,
-        "height": 720,
-        "point_show_normal": False,
-    }
 
     print(f"Visualizing point cloud with {len(np.asarray(pcd.points))} points")
 
     try:
-        # Create visualizer
         vis = o3d.visualization.Visualizer()
         vis.create_window(window_name=window_name, width=1280, height=720)
-
-        # Add geometries
         for geom in geometries:
             vis.add_geometry(geom)
-
-        # Set render options
         render_option = vis.get_render_option()
         render_option.point_size = point_size
-
-        # Run visualization
         vis.run()
         vis.destroy_window()
-
     except Exception as e:
         print(f"Failed to create interactive visualization: {e}")
-        print("Falling back to simple visualization...")
-        # Fallback to simple visualization
         o3d.visualization.draw_geometries(
             geometries, window_name=window_name, width=1280, height=720
         )
@@ -1275,7 +1281,7 @@ def visualize_voxel_grid(
     coordinate_frame_size: float = 0.1,
 ) -> None:
     """
-    Visualize an Open3D voxel grid.
+    Visualize an Open3D voxel grid using Open3D's visualization window.
 
     Args:
         voxel_grid: Open3D voxel grid to visualize
@@ -1291,40 +1297,29 @@ def visualize_voxel_grid(
         print("Warning: Voxel grid is empty, nothing to visualize")
         return
 
-    # Create list of geometries to visualize
+    # VoxelGrid doesn't support transform, so we need to transform the source points instead
+    # For now, just visualize as-is with transformed coordinate frame
     geometries = [voxel_grid]
 
-    # Add coordinate frame if requested
+    # Add coordinate frame
     if show_coordinate_frame:
         coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
             size=coordinate_frame_size
         )
+        coordinate_frame.transform(get_standard_coordinate_transform())
         geometries.append(coordinate_frame)
 
-    voxel_count = len(voxel_grid.get_voxels())
-    print(f"Visualizing voxel grid with {voxel_count} voxels")
+    print(f"Visualizing voxel grid with {len(voxel_grid.get_voxels())} voxels")
 
     try:
-        # Create visualizer
         vis = o3d.visualization.Visualizer()
         vis.create_window(window_name=window_name, width=1280, height=720)
-
-        # Add geometries
         for geom in geometries:
             vis.add_geometry(geom)
-
-        # Set render options for better voxel visualization
-        render_option = vis.get_render_option()
-        render_option.show_coordinate_frame = show_coordinate_frame
-
-        # Run visualization
         vis.run()
         vis.destroy_window()
-
     except Exception as e:
         print(f"Failed to create interactive visualization: {e}")
-        print("Falling back to simple visualization...")
-        # Fallback to simple visualization
         o3d.visualization.draw_geometries(
             geometries, window_name=window_name, width=1280, height=720
         )
