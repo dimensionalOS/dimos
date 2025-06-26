@@ -1,15 +1,28 @@
 import glob
 import os
 import argparse
+import sys
+
+# Simple fix: add parent directory to path to make imports work when running directly
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import torch
 import numpy as np
-from contact_graspnet_pytorch.contact_grasp_estimator import GraspEstimator
-from contact_graspnet_pytorch import config_utils
 
-from contact_graspnet_pytorch.visualization_utils_o3d import visualize_grasps, show_image
-from contact_graspnet_pytorch.checkpoints import CheckpointIO 
-from data import load_available_input_data
+# Simple conditional import
+try:
+    from contact_graspnet_pytorch.contact_grasp_estimator import GraspEstimator
+    from contact_graspnet_pytorch import config_utils
+    from contact_graspnet_pytorch.visualization_utils_o3d import visualize_grasps, show_image
+    from contact_graspnet_pytorch.checkpoints import CheckpointIO
+    from data import load_available_input_data
+except ImportError:
+    # When running as script directly
+    from contact_grasp_estimator import GraspEstimator
+    import config_utils
+    from visualization_utils_o3d import visualize_grasps, show_image
+    from checkpoints import CheckpointIO
+    from data import load_available_input_data
 
 def inference(global_config, 
               ckpt_dir,
