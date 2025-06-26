@@ -93,6 +93,7 @@ git+https://github.com/openai/CLIP.git
 git+https://github.com/facebookresearch/detectron2.git@v0.6
 
 # Mapping
+<<<<<<< tests_clip_yolo_sam_fix_clip_onnx
 open3d
 
 onnxruntime
@@ -101,3 +102,6 @@ onnxruntime
 extras_require={
     "cuda": ["pycuda", "onnxruntime-gpu[cuda,cudnn]"]
 }
+=======
+open3d
+>>>>>>> tests_clip_yolo_sam
