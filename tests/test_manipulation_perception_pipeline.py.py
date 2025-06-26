@@ -81,7 +81,7 @@ def main():
     # Configuration
     min_confidence = 0.6
     web_port = 5555
-    grasp_server_url = "ws://10.0.0.125:8000/ws/grasp"
+    grasp_server_url = "ws://18.224.39.74:8000/ws/grasp"
 
     try:
         # Initialize ZED camera stream
