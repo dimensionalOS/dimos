@@ -31,6 +31,7 @@ import numpy as np
 import cv2
 import yaml
 from datetime import datetime
+import open3d as o3d
 
 # Add the project root to Python path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -43,6 +44,7 @@ except ImportError:
     sys.exit(1)
 
 from dimos.hardware.zed_camera import ZEDCamera
+from dimos.perception.pointcloud.utils import visualize_pcd, visualize_clustered_point_clouds
 
 # Configure logging
 logging.basicConfig(
@@ -59,6 +61,9 @@ class ZEDLiveVisualizer:
         self.max_depth = max_depth
         self.output_dir = Path(output_dir)
         self.save_counter = 0
+
+        # Store captured pointclouds for later visualization
+        self.captured_pointclouds = []
 
         # Display settings for 480p
         self.display_width = 640
@@ -84,6 +89,7 @@ class ZEDLiveVisualizer:
         self.output_dir.mkdir(exist_ok=True)
         (self.output_dir / "color").mkdir(exist_ok=True)
         (self.output_dir / "depth").mkdir(exist_ok=True)
+        (self.output_dir / "pointclouds").mkdir(exist_ok=True)
         logger.info(f"Created output directory: {self.output_dir}")
 
     def save_camera_info(self):
@@ -165,9 +171,10 @@ class ZEDLiveVisualizer:
         return depth_colored
 
     def save_frame(self, rgb_img, depth_map):
-        """Save RGB and depth images with proper naming convention."""
+        """Save RGB, depth images, and pointcloud with proper naming convention."""
         # Generate filename with 5-digit zero-padding
         filename = f"{self.save_counter:05d}.png"
+        pcd_filename = f"{self.save_counter:05d}.ply"
 
         # Save RGB image
         rgb_path = self.output_dir / "color" / filename
@@ -177,12 +184,45 @@ class ZEDLiveVisualizer:
         depth_path = self.output_dir / "depth" / filename
         # Convert meters to millimeters and save as 16-bit
         depth_mm = (depth_map * 1000).astype(np.uint16)
-        # Set invalid pixels to 0
-        depth_mm[~((depth_map > 0) & np.isfinite(depth_map))] = 0
         cv2.imwrite(str(depth_path), depth_mm)
 
-        logger.info(f"Saved frame {self.save_counter}: {rgb_path} and {depth_path}")
+        # Capture and save pointcloud
+        pcd = self.camera.capture_pointcloud()
+        if pcd is not None and len(np.asarray(pcd.points)) > 0:
+            pcd_path = self.output_dir / "pointclouds" / pcd_filename
+            o3d.io.write_point_cloud(str(pcd_path), pcd)
+
+            # Store pointcloud for later visualization
+            self.captured_pointclouds.append(pcd)
+
+            logger.info(
+                f"Saved frame {self.save_counter}: {rgb_path}, {depth_path}, and {pcd_path}"
+            )
+        else:
+            logger.warning(f"Failed to capture pointcloud for frame {self.save_counter}")
+            logger.info(f"Saved frame {self.save_counter}: {rgb_path} and {depth_path}")
+
         self.save_counter += 1
+
+    def visualize_captured_pointclouds(self):
+        """Visualize all captured pointclouds using Open3D, one by one."""
+        if not self.captured_pointclouds:
+            logger.info("No pointclouds captured to visualize")
+            return
+
+        logger.info(
+            f"Visualizing {len(self.captured_pointclouds)} captured pointclouds one by one..."
+        )
+        logger.info("Close each pointcloud window to proceed to the next one")
+
+        for i, pcd in enumerate(self.captured_pointclouds):
+            if len(np.asarray(pcd.points)) > 0:
+                logger.info(f"Displaying pointcloud {i + 1}/{len(self.captured_pointclouds)}")
+                visualize_pcd(pcd, window_name=f"ZED Pointcloud {i + 1:05d}", point_size=2.0)
+            else:
+                logger.warning(f"Pointcloud {i + 1} is empty, skipping...")
+
+        logger.info("Finished displaying all pointclouds")
 
     def update_display(self):
         """Update the live display with new frames."""
@@ -192,11 +232,8 @@ class ZEDLiveVisualizer:
         if left_img is None or depth_map is None:
             return False, None, None
 
-        # Convert BGR to RGB for display
-        rgb_display = cv2.cvtColor(left_img, cv2.COLOR_BGR2RGB)
-
         # Resize RGB to 480p
-        rgb_resized = cv2.resize(rgb_display, (self.display_width, self.display_height))
+        rgb_resized = cv2.resize(left_img, (self.display_width, self.display_height))
 
         # Create depth visualization
         depth_colored = self.normalize_depth_for_display(depth_map)
@@ -289,7 +326,7 @@ def main():
         help="Maximum depth for visualization in meters (default: 10.0)",
     )
     parser.add_argument(
-        "--camera-fps", type=int, default=30, help="Camera capture FPS (default: 30)"
+        "--camera-fps", type=int, default=15, help="Camera capture FPS (default: 30)"
     )
     parser.add_argument(
         "--depth-mode",
@@ -301,7 +338,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="rgbd_data2",
+        default="assets/rgbd_data2",
         help="Output directory for saved data (default: rgbd_data2)",
     )
 
@@ -396,6 +433,9 @@ def main():
                     f"Final stats: {frame_count} frames in {total_time:.1f}s (avg {avg_fps:.1f} FPS)"
                 )
                 logger.info(f"Total saved frames: {visualizer.save_counter}")
+
+            # Visualize captured pointclouds
+            visualizer.visualize_captured_pointclouds()
 
     except Exception as e:
         logger.error(f"Error during execution: {e}")

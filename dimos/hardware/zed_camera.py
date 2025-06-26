@@ -14,6 +14,7 @@
 
 import numpy as np
 import cv2
+import open3d as o3d
 from typing import Optional, Tuple, Dict, Any
 import logging
 
@@ -152,12 +153,12 @@ class ZEDCamera(StereoCamera):
             logger.error(f"Error capturing frame: {e}")
             return None, None, None
 
-    def capture_pointcloud(self) -> Optional[np.ndarray]:
+    def capture_pointcloud(self) -> Optional[o3d.geometry.PointCloud]:
         """
         Capture point cloud from ZED camera.
 
         Returns:
-            Point cloud as numpy array (N, 4) - [x, y, z, confidence]
+            Open3D point cloud with XYZ coordinates and RGB colors
         """
         if not self.is_opened:
             logger.error("ZED camera not opened")
@@ -165,28 +166,43 @@ class ZEDCamera(StereoCamera):
 
         try:
             if self.zed.grab(self.runtime_params) == sl.ERROR_CODE.SUCCESS:
-                # Retrieve point cloud
+                # Retrieve point cloud with RGBA data
                 self.zed.retrieve_measure(self.point_cloud, sl.MEASURE.XYZRGBA)
                 point_cloud_data = self.point_cloud.get_data()
-
-                # Retrieve confidence map
-                self.zed.retrieve_measure(self.confidence_map, sl.MEASURE.CONFIDENCE)
-                confidence_data = self.confidence_map.get_data()
 
                 # Convert to numpy array format
                 height, width = point_cloud_data.shape[:2]
                 points = point_cloud_data.reshape(-1, 4)
-                confidence = confidence_data.reshape(-1)
+
+                # Extract XYZ coordinates
+                xyz = points[:, :3]
+
+                # Extract and unpack RGBA color data from 4th channel
+                rgba_packed = points[:, 3].view(np.uint32)
+
+                # Unpack RGBA: each 32-bit value contains 4 bytes (R, G, B, A)
+                colors_rgba = np.zeros((len(rgba_packed), 4), dtype=np.uint8)
+                colors_rgba[:, 0] = rgba_packed & 0xFF  # R
+                colors_rgba[:, 1] = (rgba_packed >> 8) & 0xFF  # G
+                colors_rgba[:, 2] = (rgba_packed >> 16) & 0xFF  # B
+                colors_rgba[:, 3] = (rgba_packed >> 24) & 0xFF  # A
+
+                # Extract RGB (ignore alpha) and normalize to [0, 1]
+                colors_rgb = colors_rgba[:, :3].astype(np.float64) / 255.0
 
                 # Filter out invalid points (NaN or inf)
-                valid = np.isfinite(points[:, :3]).all(axis=1)
-                points = points[valid]
-                confidence = confidence[valid]
+                valid = np.isfinite(xyz).all(axis=1)
+                valid_xyz = xyz[valid]
+                valid_colors = colors_rgb[valid]
 
-                # Combine points with confidence
-                result = np.column_stack([points[:, :3], confidence])
+                # Create Open3D point cloud
+                pcd = o3d.geometry.PointCloud()
 
-                return result
+                if len(valid_xyz) > 0:
+                    pcd.points = o3d.utility.Vector3dVector(valid_xyz)
+                    pcd.colors = o3d.utility.Vector3dVector(valid_colors)
+
+                return pcd
             else:
                 logger.warning("Failed to grab frame for point cloud")
                 return None
