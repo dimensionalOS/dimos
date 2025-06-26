@@ -18,6 +18,7 @@ from typing import List, Tuple, Optional
 from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
+import torch
 
 logger = setup_logger("dimos.perception.common.utils")
 
@@ -267,7 +268,11 @@ def detection_results_to_object_data(
             "class_id": class_ids[i] if i < len(class_ids) else 0,
             "label": names[i] if i < len(names) else f"{source}_object",
             "movement_tolerance": 1.0,  # Default to freely movable
-            "segmentation_mask": masks[i] if masks and i < len(masks) else None,
+            "segmentation_mask": masks[i].cpu().numpy()
+            if masks and i < len(masks) and isinstance(masks[i], torch.Tensor)
+            else masks[i]
+            if masks and i < len(masks)
+            else None,
             # Initialize 3D properties (will be populated by point cloud processing)
             "position": Vector(0, 0, 0),
             "rotation": Vector(0, 0, 0),
@@ -280,3 +285,47 @@ def detection_results_to_object_data(
         objects.append(object_data)
 
     return objects
+
+
+def combine_object_data(
+    list1: List[ObjectData], list2: List[ObjectData], overlap_threshold: float = 0.8
+) -> List[ObjectData]:
+    """
+    Combine two ObjectData lists, removing duplicates based on segmentation mask overlap.
+    """
+    combined = list1.copy()
+    used_ids = set(obj.get("object_id", 0) for obj in list1)
+    next_id = max(used_ids) + 1 if used_ids else 1
+
+    for obj2 in list2:
+        obj_copy = obj2.copy()
+
+        # Handle duplicate object_id
+        if obj_copy.get("object_id", 0) in used_ids:
+            obj_copy["object_id"] = next_id
+            next_id += 1
+        used_ids.add(obj_copy["object_id"])
+
+        # Check mask overlap
+        mask2 = obj2.get("segmentation_mask")
+        if mask2 is None or np.sum(mask2 > 0) == 0:
+            combined.append(obj_copy)
+            continue
+
+        mask2_area = np.sum(mask2 > 0)
+        is_duplicate = False
+
+        for obj1 in list1:
+            mask1 = obj1.get("segmentation_mask")
+            if mask1 is None:
+                continue
+
+            intersection = np.sum((mask1 > 0) & (mask2 > 0))
+            if intersection / mask2_area >= overlap_threshold:
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            combined.append(obj_copy)
+
+    return combined

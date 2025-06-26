@@ -18,8 +18,9 @@ import numpy as np
 import open3d as o3d
 import cv2
 from typing import List, Dict, Tuple, Optional, Union
-from dimos.types.pose import Pose
+from lcm_msgs.geometry_msgs import Pose
 from dimos.types.vector import Vector
+from scipy.spatial.transform import Rotation as R
 
 
 def project_3d_points_to_2d(
@@ -575,9 +576,17 @@ def parse_contactgraspnet_results(
             roll, pitch, yaw = rotation_matrix_to_euler(rotation_matrix)
 
             # Create Pose object
-            position = Vector(translation[0], translation[1], translation[2])
-            rotation = Vector(roll, pitch, yaw)
-            pose = Pose(position, rotation)
+            pose = Pose()
+            pose.position.x = translation[0]
+            pose.position.y = translation[1]
+            pose.position.z = translation[2]
+
+            # Convert euler angles to quaternion
+            rotation = R.from_euler("xyz", [roll, pitch, yaw])
+            pose.orientation.x = rotation.as_quat()[0]
+            pose.orientation.y = rotation.as_quat()[1]
+            pose.orientation.z = rotation.as_quat()[2]
+            pose.orientation.w = rotation.as_quat()[3]
 
             poses.append(pose)
             score_list.append(float(obj_scores[i]) if i < len(obj_scores) else 0.0)
