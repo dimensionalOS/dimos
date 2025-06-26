@@ -15,9 +15,7 @@
 
 import threading
 import time
-from nav_msgs import msg
 import pytest
-from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
 from dimos.utils.logging_config import setup_logger
 from dimos.types.vector import Vector
 import asyncio
@@ -68,11 +66,18 @@ class MockROSNode:
             self.logger.info(f"Unknown subscription: {subscription}")
 
 
-class MockRobot(ROSObservableTopicAbility):
-    def __init__(self):
-        self.logger = setup_logger("ROBOT")
-        # Initialize the mock ROS node
-        self._node = MockROSNode()
+# we are doing this in order to avoid importing ROS dependencies if ros tests aren't runnin
+@pytest.fixture
+def robot():
+    from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
+
+    class MockRobot(ROSObservableTopicAbility):
+        def __init__(self):
+            self.logger = setup_logger("ROBOT")
+            # Initialize the mock ROS node
+            self._node = MockROSNode()
+
+    return MockRobot()
 
 
 # This test verifies a bunch of basics:
@@ -82,8 +87,10 @@ class MockRobot(ROSObservableTopicAbility):
 # 3. that the system unsubscribes from ROS when observers are disposed
 # 4. that the system replays the last message to new observers,
 #    before the new ROS sub starts producing
-def test_parallel_and_cleanup():
-    robot = MockRobot()
+@pytest.mark.ros
+def test_parallel_and_cleanup(robot):
+    from nav_msgs import msg
+
     received_messages = []
 
     obs1 = robot.topic("/odom", msg.Odometry)
@@ -152,8 +159,9 @@ def test_parallel_and_cleanup():
 # ROS thread ─► ReplaySubject─► observe_on(pool) ─► backpressure.latest ─► sub1 (fast)
 #                          ├──► observe_on(pool) ─► backpressure.latest ─► sub2 (slow)
 #                          └──► observe_on(pool) ─► backpressure.latest ─► sub3 (slower)
-def test_parallel_and_hog():
-    robot = MockRobot()
+@pytest.mark.ros
+def test_parallel_and_hog(robot):
+    from nav_msgs import msg
 
     obs1 = robot.topic("/odom", msg.Odometry)
     obs2 = robot.topic("/odom", msg.Odometry)
@@ -191,8 +199,9 @@ def test_parallel_and_hog():
 
 
 @pytest.mark.asyncio
-async def test_topic_latest_async():
-    robot = MockRobot()
+@pytest.mark.ros
+async def test_topic_latest_async(robot):
+    from nav_msgs import msg
 
     odom = await robot.topic_latest_async("/odom", msg.Odometry)
     assert odom() == 1
@@ -203,15 +212,16 @@ async def test_topic_latest_async():
     assert robot._node.subs == {}
 
 
-def test_topic_auto_conversion():
-    robot = MockRobot()
+@pytest.mark.ros
+def test_topic_auto_conversion(robot):
     odom = robot.topic("/vector", Vector).subscribe(lambda x: print(x))
     time.sleep(0.5)
     odom.dispose()
 
 
-def test_topic_latest_sync():
-    robot = MockRobot()
+@pytest.mark.ros
+def test_topic_latest_sync(robot):
+    from nav_msgs import msg
 
     odom = robot.topic_latest("/odom", msg.Odometry)
     assert odom() == 1
@@ -222,8 +232,9 @@ def test_topic_latest_sync():
     assert robot._node.subs == {}
 
 
-def test_topic_latest_sync_benchmark():
-    robot = MockRobot()
+@pytest.mark.ros
+def test_topic_latest_sync_benchmark(robot):
+    from nav_msgs import msg
 
     odom = robot.topic_latest("/odom", msg.Odometry)
 
@@ -242,10 +253,3 @@ def test_topic_latest_sync_benchmark():
     odom.dispose()
     time.sleep(0.1)
     assert robot._node.subs == {}
-
-
-if __name__ == "__main__":
-    test_parallel_and_cleanup()
-    test_parallel_and_hog()
-    test_topic_latest_sync()
-    asyncio.run(test_topic_latest_async())
