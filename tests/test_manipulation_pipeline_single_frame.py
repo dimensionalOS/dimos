@@ -93,7 +93,6 @@ def create_point_cloud(color_img, depth_img, intrinsics):
 
 def run_processor(color_img, depth_img, intrinsics):
     """Run processor and collect results."""
-    # Create processor with ContactGraspNet enabled
     processor = ManipulationProcessor(
         camera_intrinsics=intrinsics,
         enable_grasp_generation=True,
@@ -101,14 +100,14 @@ def run_processor(color_img, depth_img, intrinsics):
         segmentation_model="FastSAM-x.pt",
     )
 
-    # Process single frame directly
-    results = processor.process_frame(color_img, depth_img)
+    # Process frame without grasp generation
+    results = processor.process_frame(color_img, depth_img, generate_grasps=False)
 
-    # Debug: print available results
-    print(f"Available results: {list(results.keys())}")
+    # Run grasp generation separately
+    grasps = processor.run_grasp_generation(results["all_objects"], results["full_pointcloud"])
+    results["grasps"] = grasps
 
     processor.cleanup()
-
     return results
 
 
@@ -125,90 +124,48 @@ def main():
     # Run processor
     results = run_processor(color_img, depth_img, intrinsics)
 
-    # Debug: Print what we received
-    print(f"\n✅ Processor Results:")
-    print(f"   Available results: {list(results.keys())}")
-    print(f"   Processing time: {results.get('processing_time', 0):.3f}s")
+    # Print results summary
+    print(f"Processing time: {results.get('processing_time', 0):.3f}s")
+    print(f"Detection objects: {len(results.get('detected_objects', []))}")
+    print(f"All objects processed: {len(results.get('all_objects', []))}")
 
-    # Show timing breakdown if available
-    if "timing_breakdown" in results:
-        breakdown = results["timing_breakdown"]
-        print(f"   Timing breakdown:")
-        print(f"     - Detection: {breakdown.get('detection', 0):.3f}s")
-        print(f"     - Segmentation: {breakdown.get('segmentation', 0):.3f}s")
-        print(f"     - Point cloud: {breakdown.get('pointcloud', 0):.3f}s")
-        print(f"     - Misc extraction: {breakdown.get('misc_extraction', 0):.3f}s")
+    # Print grasp summary
+    grasp_data = results["grasps"]
+    pred_grasps = grasp_data.get("pred_grasps_cam", {})
+    scores = grasp_data.get("scores", {})
+    total_grasps = sum(len(grasps) for grasps in pred_grasps.values())
+    best_score = 0
+    for obj_scores in scores.values():
+        if len(obj_scores) > 0:
+            obj_best_score = max(obj_scores)
+            if obj_best_score > best_score:
+                best_score = obj_best_score
 
-    # Print object information
-    detected_count = len(results.get("detected_objects", []))
-    all_count = len(results.get("all_objects", []))
+    print(f"ContactGraspNet grasps: {total_grasps} total (best score: {best_score:.3f})")
 
-    print(f"   Detection objects: {detected_count}")
-    print(f"   All objects processed: {all_count}")
+    # Parse ContactGraspNet results
+    contact_pts = grasp_data.get("contact_pts", {})
+    gripper_openings = grasp_data.get("gripper_openings", {})
+    parsed_grasps = parse_contactgraspnet_results(
+        pred_grasps, scores, contact_pts, gripper_openings
+    )
+    print(f"Parsed grasps for object 2: {len(parsed_grasps[2]['poses'])} poses")
 
-    # Print misc clusters information
-    if "misc_clusters" in results and results["misc_clusters"]:
-        cluster_count = len(results["misc_clusters"])
-        total_misc_points = sum(
-            len(np.asarray(cluster.points)) for cluster in results["misc_clusters"]
-        )
-        print(f"   Misc clusters: {cluster_count} clusters with {total_misc_points} total points")
-    else:
-        print(f"   Misc clusters: None")
-
-    # Print ContactGraspNet grasp summary
-    if "grasps" in results and results["grasps"]:
-        grasp_data = results["grasps"]
-        if isinstance(grasp_data, dict):
-            pred_grasps = grasp_data.get("pred_grasps_cam", {})
-            scores = grasp_data.get("scores", {})
-
-            total_grasps = 0
-            best_score = 0
-            for obj_id, obj_grasps in pred_grasps.items():
-                num_grasps = len(obj_grasps) if hasattr(obj_grasps, "__len__") else 0
-                total_grasps += num_grasps
-
-                if obj_id in scores and len(scores[obj_id]) > 0:
-                    obj_best_score = max(scores[obj_id])
-                    if obj_best_score > best_score:
-                        best_score = obj_best_score
-
-            print(f"   ContactGraspNet grasps: {total_grasps} total (best score: {best_score:.3f})")
-        else:
-            print("   ContactGraspNet grasps: Invalid format")
-    else:
-        print("   ContactGraspNet grasps: None generated")
-
-    # Determine number of subplots based on what results we have
-    num_plots = 0
+    # Create visualizations
     plot_configs = []
-
-    if "detection_viz" in results and results["detection_viz"] is not None:
+    if results["detection_viz"] is not None:
         plot_configs.append(("detection_viz", "Object Detection"))
-        num_plots += 1
-
-    if "segmentation_viz" in results and results["segmentation_viz"] is not None:
+    if results["segmentation_viz"] is not None:
         plot_configs.append(("segmentation_viz", "Semantic Segmentation"))
-        num_plots += 1
-
-    if "pointcloud_viz" in results and results["pointcloud_viz"] is not None:
+    if results["pointcloud_viz"] is not None:
         plot_configs.append(("pointcloud_viz", "All Objects Point Cloud"))
-        num_plots += 1
-
-    if "detected_pointcloud_viz" in results and results["detected_pointcloud_viz"] is not None:
+    if results["detected_pointcloud_viz"] is not None:
         plot_configs.append(("detected_pointcloud_viz", "Detection Objects Point Cloud"))
-        num_plots += 1
-
-    if "misc_pointcloud_viz" in results and results["misc_pointcloud_viz"] is not None:
+    if results["misc_pointcloud_viz"] is not None:
         plot_configs.append(("misc_pointcloud_viz", "Misc/Background Points"))
-        num_plots += 1
-
-    if num_plots == 0:
-        print("No visualization results to display")
-        return
 
     # Create subplot layout
+    num_plots = len(plot_configs)
     if num_plots <= 3:
         fig, axes = plt.subplots(1, num_plots, figsize=(6 * num_plots, 5))
     else:
@@ -216,7 +173,6 @@ def main():
         cols = (num_plots + 1) // 2
         fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows))
 
-    # Ensure axes is always a list for consistent indexing
     if num_plots == 1:
         axes = [axes]
     elif num_plots > 2:
@@ -228,149 +184,54 @@ def main():
         axes[i].set_title(title)
         axes[i].axis("off")
 
-    # Hide unused subplots if any
+    # Hide unused subplots
     if num_plots > 3:
         for i in range(num_plots, len(axes)):
             axes[i].axis("off")
 
     plt.tight_layout()
-
-    # Save and show the plot
-    output_path = "manipulation_results.png"
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    print(f"Results visualization saved to: {output_path}")
-
-    # Show plot live as well
+    plt.savefig("manipulation_results.png", dpi=150, bbox_inches="tight")
     plt.show(block=True)
     plt.close()
 
-    # 3D ContactGraspNet visualization (if enabled)
-    if "grasps" in results and results["grasps"] and "full_pointcloud" in results:
-        grasp_data = results["grasps"]
-        full_pcd = results["full_pointcloud"]
+    # 3D ContactGraspNet visualization
+    visualize_grasps(
+        results["full_pointcloud"], pred_grasps, scores, gripper_openings=gripper_openings
+    )
 
-        if isinstance(grasp_data, dict) and full_pcd is not None:
-            try:
-                # Extract ContactGraspNet data
-                pred_grasps_cam = grasp_data.get("pred_grasps_cam", {})
-                scores = grasp_data.get("scores", {})
-                contact_pts = grasp_data.get("contact_pts", {})
-                gripper_openings = grasp_data.get("gripper_openings", {})
+    # Visualize full point cloud
+    visualize_pcd(
+        results["full_pointcloud"],
+        window_name="Full Scene Point Cloud",
+        point_size=2.0,
+        show_coordinate_frame=True,
+    )
 
-                # =====================================================================
-                # =                    PARSE CONTACTGRASPNET RESULTS                  =
-                # =                    ===========================                    =
-                # =        Converting raw grasp data into clean dictionary format    =
-                # =====================================================================
-                parsed_grasps = parse_contactgraspnet_results(
-                    pred_grasps_cam, scores, contact_pts, gripper_openings
-                )
+    # Visualize all objects point cloud
+    point_clouds = [obj["point_cloud"] for obj in results["all_objects"]]
+    colors = [obj["color"] for obj in results["all_objects"]]
+    combined_pcd = combine_object_pointclouds(point_clouds, colors)
+    visualize_pcd(
+        combined_pcd,
+        window_name="All Objects Point Cloud",
+        point_size=3.0,
+        show_coordinate_frame=True,
+    )
 
-                # Check if we have valid grasp data
-                total_grasps = (
-                    sum(len(grasps) for grasps in pred_grasps_cam.values())
-                    if pred_grasps_cam
-                    else 0
-                )
+    # Visualize misc clusters
+    visualize_clustered_point_clouds(
+        results["misc_clusters"],
+        window_name="Misc/Background Clusters (DBSCAN)",
+        point_size=3.0,
+        show_coordinate_frame=True,
+    )
 
-                if total_grasps > 0:
-                    logger.info(f"Visualizing {total_grasps} ContactGraspNet grasps in 3D")
-
-                    # Use ContactGraspNet's native visualization - pass dictionaries directly
-                    visualize_grasps(
-                        full_pcd,
-                        pred_grasps_cam,  # Pass dictionary directly
-                        scores,  # Pass dictionary directly
-                        gripper_openings=gripper_openings,
-                    )
-                else:
-                    logger.info("No valid grasps to visualize")
-
-            except Exception as e:
-                logger.error(f"Error in ContactGraspNet visualization: {e}")
-                logger.info("Skipping 3D grasp visualization")
-    else:
-        logger.info(
-            "ContactGraspNet grasp generation disabled or no results - skipping 3D grasp visualization"
-        )
-
-    # Visualize full point cloud if available
-    if "full_pointcloud" in results and results["full_pointcloud"] is not None:
-        full_pcd = results["full_pointcloud"]
-        print(f"Visualizing full point cloud with {len(np.asarray(full_pcd.points))} points")
-
-        try:
-            visualize_pcd(
-                full_pcd,
-                window_name="Full Scene Point Cloud",
-                point_size=2.0,
-                show_coordinate_frame=True,
-            )
-        except (KeyboardInterrupt, EOFError):
-            print("\nSkipping full point cloud visualization")
-    else:
-        print("No full point cloud available for visualization")
-
-    # Visualize all objects point clouds if available
-    if "all_objects" in results and results["all_objects"]:
-        all_objects = results["all_objects"]
-
-        if all_objects:
-            # Extract point clouds
-            point_clouds = [obj["point_cloud"] for obj in all_objects]
-            colors = [obj["color"] for obj in all_objects]
-            # Use utility function to combine point clouds
-            combined_pcd = combine_object_pointclouds(point_clouds, colors)
-
-            if len(np.asarray(combined_pcd.points)) > 0:
-                visualize_pcd(
-                    combined_pcd,
-                    window_name="All Objects Point Cloud",
-                    point_size=3.0,
-                    show_coordinate_frame=True,
-                )
-
-    # Visualize misc/background clusters if available
-    if "misc_clusters" in results and results["misc_clusters"]:
-        misc_clusters = results["misc_clusters"]
-        cluster_count = len(misc_clusters)
-        total_misc_points = sum(len(np.asarray(cluster.points)) for cluster in misc_clusters)
-        print(
-            f"Visualizing {cluster_count} misc/background clusters with {total_misc_points} total points"
-        )
-
-        try:
-            visualize_clustered_point_clouds(
-                misc_clusters,
-                window_name="Misc/Background Clusters (DBSCAN)",
-                point_size=3.0,
-                show_coordinate_frame=True,
-            )
-        except (KeyboardInterrupt, EOFError):
-            print("\nSkipping misc clusters visualization")
-    else:
-        print("No misc clusters available for visualization")
-
-    # Visualize voxel grid separately
-    if "misc_voxel_grid" in results and results["misc_voxel_grid"] is not None:
-        misc_voxel_grid = results["misc_voxel_grid"]
-        misc_clusters = results.get("misc_clusters", [])
-
-        voxel_count = len(misc_voxel_grid.get_voxels())
-        print(f"Visualizing voxel grid with {voxel_count} voxels")
-
-        try:
-            visualize_voxel_grid(
-                misc_voxel_grid,
-                window_name="Misc/Background Voxel Grid",
-                show_coordinate_frame=True,
-            )
-        except (KeyboardInterrupt, EOFError):
-            print("\nSkipping voxel grid visualization")
-        except Exception as e:
-            print(f"Error in voxel grid visualization: {e}")
-    else:
-        print("No voxel grid available for visualization")
+    # Visualize voxel grid
+    visualize_voxel_grid(
+        results["misc_voxel_grid"],
+        window_name="Misc/Background Voxel Grid",
+        show_coordinate_frame=True,
+    )
 
 
 if __name__ == "__main__":
