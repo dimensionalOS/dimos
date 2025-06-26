@@ -52,16 +52,25 @@ pytest      # run tests
 
     
 ```
-    ┌───┐
-    │ros│
-    └┬──┘
-    ┌▽─────┐
-    │python│
-    └┬─────┘
-    ┌▽──┐
-    │dev│
-    └───┘
+    ┌──────┐
+    │ubuntu│
+    └┬────┬┘
+    ┌▽──┐┌▽───────┐
+    │ros││python  │
+    └┬──┘└───────┬┘
+    ┌▽─────────┐┌▽──┐
+    │ros-python││dev│
+    └┬─────────┘└───┘
+    ┌▽──────┐
+    │ros-dev│
+    └───────┘
 ```   
+
+* ghcr.io/dimensionalos/ros:dev
+* ghcr.io/dimensionalos/python:dev
+* ghcr.io/dimensionalos/ros-python:dev
+* ghcr.io/dimensionalos/ros-dev:dev
+* ghcr.io/dimensionalos/dev:dev
 
 > **Note**: The diagram shows only currently active images; the system is extensible—new combinations are possible, builds can be run per branch and as parallel as possible
 
