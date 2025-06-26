@@ -74,15 +74,6 @@ jobs:
       to-image: ghcr.io/dimensionalos/ros:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile:  ros
 
-  # # just a debugger
-  # inspect-needs:
-  #   needs: [check-changes, ros]
-  #   runs-on: dimos-runner-ubuntu-2204
-  #   if: always()
-  #   steps:
-  #     - run: |
-  #         echo '${{ toJSON(needs) }}'
-
   ros-python:
     needs: [check-changes, ros]
     if: always()
