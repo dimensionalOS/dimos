@@ -1,5 +1,5 @@
-# trigger rebuild: 1
-FROM ubuntu:22.04
+ARG FROM_IMAGE=ubuntu:22.04
+FROM ${FROM_IMAGE}
 
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
@@ -83,7 +83,9 @@ RUN apt-get update && apt-get install -y \
 
 # Initialize rosdep
 RUN rosdep init
-RUN rosdep update
+RUN rosdep update 
 
 # Source ROS2 and workspace in bashrc
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /root/.bashrc
+
+# Trigger docker workflow rerun 1

@@ -30,7 +30,7 @@ from dimos.utils.ros_utils import normalize_angle, distance_angle_to_goal_xy
 
 from dimos.types.vector import VectorLike, Vector, to_tuple
 from dimos.types.path import Path
-from nav_msgs.msg import OccupancyGrid
+from dimos.types.costmap import Costmap
 
 logger = setup_logger("dimos.robot.unitree.local_planner", level=logging.DEBUG)
 
@@ -45,7 +45,7 @@ class BaseLocalPlanner(ABC):
 
     def __init__(
         self,
-        get_costmap: Callable[[], Optional[OccupancyGrid]],
+        get_costmap: Callable[[], Optional[Costmap]],
         transform: object,
         move_vel_control: Callable[[float, float, float], None],
         safety_threshold: float = 0.5,
