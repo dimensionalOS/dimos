@@ -87,3 +87,5 @@ RUN rosdep update
 
 # Source ROS2 and workspace in bashrc
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /root/.bashrc
+
+# Trigger docker workflow rerun
