@@ -32,7 +32,11 @@ from dimos.perception.pointcloud.utils import (
     extract_and_cluster_misc_points,
     overlay_point_clouds_on_image,
 )
-from dimos.perception.common.utils import colorize_depth, detection_results_to_object_data
+from dimos.perception.common.utils import (
+    colorize_depth,
+    detection_results_to_object_data,
+    combine_object_data,
+)
 
 logger = setup_logger("dimos.perception.manip_aio_processor")
 
@@ -142,7 +146,7 @@ class ManipulationProcessor:
         try:
             # Step 1: Object Detection
             step_start = time.time()
-            detection_results = self._run_object_detection(rgb_image)
+            detection_results = self.run_object_detection(rgb_image)
             results["detection2d_objects"] = detection_results.get("objects", [])
             results["detection_viz"] = detection_results.get("viz_frame")
             detection_time = time.time() - step_start
@@ -151,7 +155,7 @@ class ManipulationProcessor:
             segmentation_time = 0
             if self.enable_segmentation:
                 step_start = time.time()
-                segmentation_results = self._run_segmentation(rgb_image)
+                segmentation_results = self.run_segmentation(rgb_image)
                 results["segmentation2d_objects"] = segmentation_results.get("objects", [])
                 results["segmentation_viz"] = segmentation_results.get("viz_frame")
                 segmentation_time = time.time() - step_start
@@ -165,7 +169,7 @@ class ManipulationProcessor:
             detected_objects = []
             if detection2d_objects:
                 step_start = time.time()
-                detected_objects = self._run_pointcloud_filtering(
+                detected_objects = self.run_pointcloud_filtering(
                     rgb_image, depth_image, detection2d_objects
                 )
                 pointcloud_time += time.time() - step_start
@@ -174,23 +178,24 @@ class ManipulationProcessor:
             segmentation_filtered_objects = []
             if segmentation2d_objects:
                 step_start = time.time()
-                segmentation_filtered_objects = self._run_pointcloud_filtering(
+                segmentation_filtered_objects = self.run_pointcloud_filtering(
                     rgb_image, depth_image, segmentation2d_objects
                 )
                 pointcloud_time += time.time() - step_start
 
-            # Combine all objects
-            all_objects = segmentation_filtered_objects
+            # Combine all objects using intelligent duplicate removal
+            all_objects = combine_object_data(
+                detected_objects, segmentation_filtered_objects, overlap_threshold=0.8
+            )
 
             # Get full point cloud
             full_pcd = self.pointcloud_filter.get_full_point_cloud()
 
             # Extract misc/background points and create voxel grid
             misc_start = time.time()
-            all_filtered_objects = segmentation_filtered_objects + detected_objects
             misc_clusters, misc_voxel_grid = extract_and_cluster_misc_points(
                 full_pcd,
-                all_filtered_objects,
+                all_objects,
                 eps=0.03,
                 min_points=100,
                 enable_filtering=True,
@@ -256,14 +261,8 @@ class ManipulationProcessor:
             )
 
             if should_generate_grasps and all_objects and full_pcd:
-                grasps = self._run_grasp_generation(all_objects, full_pcd)
+                grasps = self.run_grasp_generation(all_objects, full_pcd)
                 results["grasps"] = grasps
-
-            # Ensure segmentation runs even if no objects detected
-            if self.enable_segmentation and "segmentation_viz" not in results:
-                segmentation_results = self._run_segmentation(rgb_image)
-                results["segmentation2d_objects"] = segmentation_results.get("objects", [])
-                results["segmentation_viz"] = segmentation_results.get("viz_frame")
 
         except Exception as e:
             logger.error(f"Error processing frame: {e}")
@@ -286,7 +285,7 @@ class ManipulationProcessor:
 
         return results
 
-    def _run_object_detection(self, rgb_image: np.ndarray) -> Dict[str, Any]:
+    def run_object_detection(self, rgb_image: np.ndarray) -> Dict[str, Any]:
         """Run object detection on RGB image."""
         try:
             # Convert RGB to BGR for Detic detector
@@ -319,7 +318,7 @@ class ManipulationProcessor:
             logger.error(f"Object detection failed: {e}")
             return {"objects": [], "viz_frame": rgb_image.copy()}
 
-    def _run_pointcloud_filtering(
+    def run_pointcloud_filtering(
         self, rgb_image: np.ndarray, depth_image: np.ndarray, objects: List[Dict]
     ) -> List[Dict]:
         """Run point cloud filtering on detected objects."""
@@ -332,7 +331,7 @@ class ManipulationProcessor:
             logger.error(f"Point cloud filtering failed: {e}")
             return []
 
-    def _run_segmentation(self, rgb_image: np.ndarray) -> Dict[str, Any]:
+    def run_segmentation(self, rgb_image: np.ndarray) -> Dict[str, Any]:
         """Run semantic segmentation on RGB image."""
         if not self.segmenter:
             return {"objects": [], "viz_frame": rgb_image.copy()}
@@ -371,7 +370,7 @@ class ManipulationProcessor:
             logger.error(f"Segmentation failed: {e}")
             return {"objects": [], "viz_frame": rgb_image.copy()}
 
-    def _run_grasp_generation(self, filtered_objects: List[Dict], full_pcd) -> Optional[Dict]:
+    def run_grasp_generation(self, filtered_objects: List[Dict], full_pcd) -> Optional[Dict]:
         """Run ContactGraspNet grasp generation."""
         if not self.grasp_generator:
             logger.warning("Grasp generation requested but ContactGraspNet not available")
