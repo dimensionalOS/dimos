@@ -18,9 +18,6 @@ import numpy as np
 import open3d as o3d
 import cv2
 from typing import List, Dict, Tuple, Optional, Union
-from lcm_msgs.geometry_msgs import Pose
-from dimos.types.vector import Vector
-from scipy.spatial.transform import Rotation as R
 
 
 def project_3d_points_to_2d(
@@ -555,142 +552,48 @@ def rotation_matrix_to_euler(rotation_matrix: np.ndarray) -> Tuple[float, float,
     return x, y, z
 
 
-def parse_contactgraspnet_results(
-    pred_grasps_cam: Dict,
-    scores: Dict,
-    contact_pts: Dict,
-    gripper_openings: Dict,
-) -> Dict[int, Dict[str, List]]:
+def parse_anygrasp_results(grasps: List[Dict]) -> List[Dict]:
     """
-    Parse ContactGraspNet results into a clean dictionary format.
-
-    Args:
-        pred_grasps_cam: Dictionary mapping object_id to 4x4 transformation matrices
-        scores: Dictionary mapping object_id to confidence scores
-        contact_pts: Dictionary mapping object_id to contact points
-        gripper_openings: Dictionary mapping object_id to gripper widths
-
-    Returns:
-        Dictionary mapping object_id to dictionary of lists containing:
-        - poses: List of Pose objects with position and rotation in camera frame
-        - scores: List of confidence scores (float)
-        - grasp_widths: List of gripper opening widths (float)
-        - contact_points: List of 3D contact points (Vector, optional)
-    """
-
-    parsed_grasps = {}
-
-    for obj_id in pred_grasps_cam.keys():
-        if obj_id not in scores:
-            continue
-
-        obj_grasps = pred_grasps_cam[obj_id]
-        obj_scores = scores[obj_id]
-        obj_openings = gripper_openings.get(obj_id, [])
-        obj_contacts = contact_pts.get(obj_id, [])
-
-        poses = []
-        score_list = []
-        width_list = []
-        contact_list = []
-
-        for i, grasp_matrix in enumerate(obj_grasps):
-            # Extract rotation matrix (3x3) and translation vector (3x1) from 4x4 matrix
-            rotation_matrix = grasp_matrix[:3, :3]
-            translation = grasp_matrix[:3, 3]
-
-            # Convert rotation matrix to euler angles
-            roll, pitch, yaw = rotation_matrix_to_euler(rotation_matrix)
-
-            # Create Pose object
-            pose = Pose()
-            pose.position.x = translation[0]
-            pose.position.y = translation[1]
-            pose.position.z = translation[2]
-
-            # Convert euler angles to quaternion
-            rotation = R.from_euler("xyz", [roll, pitch, yaw])
-            pose.orientation.x = rotation.as_quat()[0]
-            pose.orientation.y = rotation.as_quat()[1]
-            pose.orientation.z = rotation.as_quat()[2]
-            pose.orientation.w = rotation.as_quat()[3]
-
-            poses.append(pose)
-            score_list.append(float(obj_scores[i]) if i < len(obj_scores) else 0.0)
-            width_list.append(float(obj_openings[i]) if i < len(obj_openings) else 0.08)
-
-            # Add contact point if available
-            if i < len(obj_contacts):
-                contact_point = obj_contacts[i]
-                contact_list.append(Vector(contact_point[0], contact_point[1], contact_point[2]))
-            else:
-                contact_list.append(None)
-
-        parsed_grasps[obj_id] = {
-            "poses": poses,
-            "scores": score_list,
-            "grasp_widths": width_list,
-            "contact_points": contact_list,
-        }
-
-    return parsed_grasps
-
-
-def parse_anygrasp_results(
-    grasps: List[Dict],
-) -> Dict[int, Dict[str, List]]:
-    """
-    Parse AnyGrasp results into the same format as ContactGraspNet.
+    Parse AnyGrasp results into visualization format.
 
     Args:
         grasps: List of AnyGrasp grasp dictionaries
 
     Returns:
-        Dictionary mapping object_id to dictionary of lists containing:
-        - poses: List of Pose objects with position and rotation in camera frame
-        - scores: List of confidence scores (float)
-        - grasp_widths: List of gripper opening widths (float)
-        - contact_points: List of 3D contact points (Vector)
+        List of dictionaries containing:
+        - id: Unique grasp identifier
+        - score: Confidence score (float)
+        - width: Gripper opening width (float)
+        - translation: 3D position [x, y, z]
+        - rotation_matrix: 3x3 rotation matrix as nested list
     """
     if not grasps:
-        return {}
+        return []
 
-    parsed_grasps = {"scene": {"poses": [], "scores": [], "grasp_widths": [], "contact_points": []}}
+    parsed_grasps = []
 
-    for grasp in grasps:
-        # Extract rotation matrix and translation
-        rotation_matrix = np.array(grasp.get("rotation_matrix", np.eye(3)))
+    for i, grasp in enumerate(grasps):
+        # Extract data from each grasp
         translation = grasp.get("translation", [0, 0, 0])
+        rotation_matrix = np.array(grasp.get("rotation_matrix", np.eye(3)))
+        score = float(grasp.get("score", 0.0))
+        width = float(grasp.get("width", 0.08))
 
-        # Convert rotation matrix to euler angles then to quaternion
-        roll, pitch, yaw = rotation_matrix_to_euler(rotation_matrix)
-
-        # Create Pose object
-        pose = Pose()
-        pose.position.x = translation[0]
-        pose.position.y = translation[1]
-        pose.position.z = translation[2]
-
-        # Convert euler angles to quaternion
-        rotation = R.from_euler("xyz", [roll, pitch, yaw])
-        pose.orientation.x = rotation.as_quat()[0]
-        pose.orientation.y = rotation.as_quat()[1]
-        pose.orientation.z = rotation.as_quat()[2]
-        pose.orientation.w = rotation.as_quat()[3]
-
-        parsed_grasps["scene"]["poses"].append(pose)
-        parsed_grasps["scene"]["scores"].append(float(grasp.get("score", 0.0)))
-        parsed_grasps["scene"]["grasp_widths"].append(float(grasp.get("width", 0.08)))
-        parsed_grasps["scene"]["contact_points"].append(
-            Vector(translation[0], translation[1], translation[2])
-        )
+        parsed_grasp = {
+            "id": f"grasp_{i}",
+            "score": score,
+            "width": width,
+            "translation": translation,
+            "rotation_matrix": rotation_matrix.tolist(),
+        }
+        parsed_grasps.append(parsed_grasp)
 
     return parsed_grasps
 
 
 def create_grasp_overlay(
     rgb_image: np.ndarray,
-    grasps: Union[Dict, List[Dict]],
+    grasps: List[Dict],
     camera_intrinsics: Union[List[float], np.ndarray],
 ) -> np.ndarray:
     """
@@ -698,7 +601,7 @@ def create_grasp_overlay(
 
     Args:
         rgb_image: RGB input image
-        grasps: Parsed grasp data (unified format from parse_*_results functions)
+        grasps: List of grasp dictionaries in viz format
         camera_intrinsics: Camera parameters
 
     Returns:
@@ -707,46 +610,12 @@ def create_grasp_overlay(
     try:
         bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
 
-        # Convert parsed format to visualization format
-        viz_grasps = _convert_parsed_to_viz_format(grasps)
-
         result_bgr = draw_grasps_on_image(
             bgr_image,
-            viz_grasps,
+            grasps,
             camera_intrinsics,
             max_grasps=-1,
         )
         return cv2.cvtColor(result_bgr, cv2.COLOR_BGR2RGB)
     except Exception as e:
         return rgb_image.copy()
-
-
-def _convert_parsed_to_viz_format(grasps: Dict) -> List[Dict]:
-    """Convert parsed grasp format to visualization format."""
-    viz_grasps = []
-    grasp_id = 0
-
-    for obj_id, obj_data in grasps.items():
-        poses = obj_data.get("poses", [])
-        scores = obj_data.get("scores", [])
-        widths = obj_data.get("grasp_widths", [])
-
-        for i, pose in enumerate(poses):
-            # Convert quaternion back to rotation matrix
-            quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
-            rotation = R.from_quat(quat)
-            rotation_matrix = rotation.as_matrix()
-
-            translation = [pose.position.x, pose.position.y, pose.position.z]
-
-            viz_grasp = {
-                "id": f"grasp_{grasp_id}",
-                "score": scores[i] if i < len(scores) else 0.0,
-                "width": widths[i] if i < len(widths) else 0.08,
-                "translation": translation,
-                "rotation_matrix": rotation_matrix.tolist(),
-            }
-            viz_grasps.append(viz_grasp)
-            grasp_id += 1
-
-    return viz_grasps

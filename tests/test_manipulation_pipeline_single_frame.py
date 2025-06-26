@@ -21,7 +21,6 @@ import numpy as np
 import time
 import argparse
 import matplotlib
-from scipy.spatial.transform import Rotation as R
 
 # Try to use TkAgg backend for live display, fallback to Agg if not available
 try:
@@ -88,19 +87,16 @@ def create_point_cloud(color_img, depth_img, intrinsics):
     return o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, o3d_intrinsics)
 
 
-def run_processor(
-    color_img, depth_img, intrinsics, grasp_model="contactgraspnet", grasp_server_url=None
-):
+def run_processor(color_img, depth_img, intrinsics, grasp_server_url=None):
     """Run processor and collect results."""
     processor_kwargs = {
         "camera_intrinsics": intrinsics,
         "enable_grasp_generation": True,
-        "grasp_model": grasp_model,
         "enable_segmentation": True,
         "segmentation_model": "FastSAM-x.pt",
     }
 
-    if grasp_model.lower() == "anygrasp" and grasp_server_url:
+    if grasp_server_url:
         processor_kwargs["grasp_server_url"] = grasp_server_url
 
     processor = ManipulationProcessor(**processor_kwargs)
@@ -122,53 +118,30 @@ def main():
     parser.add_argument("--data-dir", default="assets/rgbd_data")
     parser.add_argument("--wait-time", type=float, default=5.0)
     parser.add_argument(
-        "--grasp-model",
-        choices=["contactgraspnet", "anygrasp"],
-        default="anygrasp",
-        help="Type of grasp generator to use",
-    )
-    parser.add_argument(
         "--grasp-server-url",
         default="ws://18.224.39.74:8000/ws/grasp",
-        help="WebSocket URL for AnyGrasp server (required for --grasp-model=anygrasp)",
+        help="WebSocket URL for AnyGrasp server",
     )
     args = parser.parse_args()
-
-    # Validate AnyGrasp requirements
-    if args.grasp_model == "anygrasp" and not args.grasp_server_url:
-        print("Error: --grasp-server-url is required when using --grasp-model=anygrasp")
-        return
 
     # Load data
     color_img, depth_img, intrinsics = load_first_frame(args.data_dir)
     logger.info(f"Loaded images: color {color_img.shape}, depth {depth_img.shape}")
 
     # Run processor
-    results = run_processor(
-        color_img, depth_img, intrinsics, args.grasp_model, args.grasp_server_url
-    )
+    results = run_processor(color_img, depth_img, intrinsics, args.grasp_server_url)
 
     # Print results summary
     print(f"Processing time: {results.get('processing_time', 0):.3f}s")
     print(f"Detection objects: {len(results.get('detected_objects', []))}")
     print(f"All objects processed: {len(results.get('all_objects', []))}")
-    print(f"Grasp type: {args.grasp_model}")
 
     # Print grasp summary
     grasp_data = results["grasps"]
-    total_grasps = 0
-    best_score = 0
+    total_grasps = len(grasp_data) if isinstance(grasp_data, list) else 0
+    best_score = max(grasp["score"] for grasp in grasp_data) if grasp_data else 0
 
-    for obj_id, obj_data in grasp_data.items():
-        poses = obj_data.get("poses", [])
-        scores = obj_data.get("scores", [])
-        total_grasps += len(poses)
-        if scores:
-            obj_best_score = max(scores)
-            if obj_best_score > best_score:
-                best_score = obj_best_score
-
-    print(f"{args.grasp_model} grasps: {total_grasps} total (best score: {best_score:.3f})")
+    print(f"AnyGrasp grasps: {total_grasps} total (best score: {best_score:.3f})")
 
     # Create visualizations
     plot_configs = []
@@ -221,33 +194,21 @@ def main():
 
     # 3D Grasp visualization
     if grasp_data:
-        # Convert parsed format to visualization format for 3D display
+        # Convert grasp format to visualization format for 3D display
         viz_grasps = []
-        for obj_id, obj_data in grasp_data.items():
-            poses = obj_data.get("poses", [])
-            scores = obj_data.get("scores", [])
-            widths = obj_data.get("grasp_widths", [])
+        for grasp in grasp_data:
+            translation = grasp.get("translation", [0, 0, 0])
+            rotation_matrix = np.array(grasp.get("rotation_matrix", np.eye(3).tolist()))
+            score = grasp.get("score", 0.0)
+            width = grasp.get("width", 0.08)
 
-            for i, pose in enumerate(poses):
-                # Convert quaternion back to rotation matrix
-                quat = [
-                    pose.orientation.x,
-                    pose.orientation.y,
-                    pose.orientation.z,
-                    pose.orientation.w,
-                ]
-                rotation = R.from_quat(quat)
-                rotation_matrix = rotation.as_matrix()
-
-                translation = [pose.position.x, pose.position.y, pose.position.z]
-
-                viz_grasp = {
-                    "translation": translation,
-                    "rotation_matrix": rotation_matrix,
-                    "width": widths[i] if i < len(widths) else 0.08,
-                    "score": scores[i] if i < len(scores) else 0.0,
-                }
-                viz_grasps.append(viz_grasp)
+            viz_grasp = {
+                "translation": translation,
+                "rotation_matrix": rotation_matrix,
+                "width": width,
+                "score": score,
+            }
+            viz_grasps.append(viz_grasp)
 
         # Use unified 3D visualization
         visualize_grasps_3d(combined_pcd, viz_grasps)
