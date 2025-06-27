@@ -19,15 +19,17 @@ This module provides a class for generating vector embeddings from images
 using pre-trained models like CLIP, ResNet, etc.
 """
 
-import os
-import numpy as np
-from typing import Union
-from PIL import Image
-import io
-import cv2
 import base64
+import io
+import os
+from typing import Union
+
+import cv2
+import numpy as np
+from PIL import Image
+
+from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.testing import testData
 
 logger = setup_logger("dimos.agents.memory.image_embedding")
 
@@ -60,12 +62,12 @@ class ImageEmbeddingProvider:
     def _initialize_model(self):
         """Initialize the specified embedding model."""
         try:
-            import torch
-            from transformers import CLIPProcessor, AutoFeatureExtractor, AutoModel
             import onnxruntime as ort
+            import torch
+            from transformers import AutoFeatureExtractor, AutoModel, CLIPProcessor
 
             if self.model_name == "clip":
-                model_id = testData("models_clip") / "model.onnx"
+                model_id = get_data("models_clip") / "model.onnx"
                 processor_id = "openai/clip-vit-base-patch32"
                 self.model = ort.InferenceSession(model_id)
                 self.processor = CLIPProcessor.from_pretrained(processor_id)

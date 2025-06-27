@@ -13,19 +13,19 @@
 # limitations under the License.
 
 import os
-import time
-import tempfile
-import pytest
-import numpy as np
-import cv2
 import shutil
+import tempfile
+import time
+
+import cv2
+import numpy as np
+import pytest
 import reactivex as rx
+from reactivex import Observable
 from reactivex import operators as ops
 from reactivex.subject import Subject
-from reactivex import Observable
 
 from dimos.perception.spatial_perception import SpatialMemory
-from dimos.types.position import Position
 from dimos.stream.video_provider import VideoProvider
 from dimos.types.position import Position
 from dimos.types.vector import Vector
@@ -101,9 +101,9 @@ class TestSpatialMemory:
                 min_time_threshold=0.01,
             )
 
-            from dimos.utils.testing import testData
+            from dimos.utils.data import get_data
 
-            video_path = testData("assets") / "trimmed_video_office.mov"
+            video_path = get_data("assets") / "trimmed_video_office.mov"
             assert os.path.exists(video_path), f"Test video not found: {video_path}"
             video_provider = VideoProvider(dev_name="test_video", video_source=video_path)
             video_stream = video_provider.capture_video_as_observable(realtime=False, fps=15)

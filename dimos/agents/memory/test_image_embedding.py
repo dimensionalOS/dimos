@@ -18,12 +18,14 @@ Test module for the CLIP image embedding functionality in dimos.
 
 import os
 import time
+
 import numpy as np
 import pytest
 import reactivex as rx
 from reactivex import operators as ops
-from dimos.stream.video_provider import VideoProvider
+
 from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
+from dimos.stream.video_provider import VideoProvider
 
 
 class TestImageEmbedding:
@@ -44,9 +46,9 @@ class TestImageEmbedding:
     def test_clip_embedding_process_video(self):
         """Test CLIP embedding provider can process video frames and return embeddings."""
         try:
-            from dimos.utils.testing import testData
+            from dimos.utils.data import get_data
 
-            video_path = testData("assets") / "trimmed_video_office.mov"
+            video_path = get_data("assets") / "trimmed_video_office.mov"
 
             embedding_provider = ImageEmbeddingProvider(model_name="clip", dimensions=512)
 
