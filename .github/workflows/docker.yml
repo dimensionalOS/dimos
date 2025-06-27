@@ -23,14 +23,17 @@ jobs:
         with:
           base: ${{ github.event.before }}
           filters: |
+            # ros and python are (alternative) root images
+            # change to root stuff like docker.yml etc triggers rebuild of those
+            # which cascades into a full rebuild
             ros:
-              # ros rebuild will cascade to full rebuild
-              # this is why check-changes to this workflow trigger ros
               - .github/workflows/_docker-build-template.yml
               - .github/workflows/docker.yml
               - docker/ros/**
 
             python:
+              - .github/workflows/_docker-build-template.yml
+              - .github/workflows/docker.yml
               - docker/python/**
               - requirements*.txt
 
