@@ -25,7 +25,6 @@ import cv2
 class SemanticSegmentationStream:
     def __init__(
         self,
-        model_path: str = "FastSAM-s.pt",
         device: str = "cuda",
         enable_mono_depth: bool = True,
         enable_rich_labeling: bool = True,
@@ -36,7 +35,6 @@ class SemanticSegmentationStream:
         Initialize a semantic segmentation stream using Sam2DSegmenter.
 
         Args:
-            model_path: Path to the FastSAM model file
             device: Computation device ("cuda" or "cpu")
             enable_mono_depth: Whether to enable monocular depth processing
             enable_rich_labeling: Whether to enable rich labeling
@@ -45,7 +43,6 @@ class SemanticSegmentationStream:
                 - Physical parameters: resolution, focal_length, sensor_size
         """
         self.segmenter = Sam2DSegmenter(
-            model_path=model_path,
             device=device,
             min_analysis_interval=5.0,
             use_tracker=True,

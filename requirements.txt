@@ -95,4 +95,5 @@ git+https://github.com/facebookresearch/detectron2.git@v0.6
 # Mapping
 open3d
 
-# Touch for rebuild
+# Inference (CPU)
+onnxruntime

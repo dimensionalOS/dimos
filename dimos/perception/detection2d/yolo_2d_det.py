@@ -20,22 +20,37 @@ from dimos.perception.detection2d.utils import (
     filter_detections,
 )
 import os
+import onnxruntime
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.path_utils import get_project_root
+from dimos.utils.testing import testData
+from dimos.utils.gpu_utils import is_cuda_available
+
+logger = setup_logger("dimos.perception.detection2d.yolo_2d_det")
 
 
 class Yolo2DDetector:
-    def __init__(self, model_path="models/yolo11n.engine", device="cuda"):
+    def __init__(self, model_path="models_yolo", model_name="yolo11n.onnx", device="cpu"):
         """
         Initialize the YOLO detector.
 
         Args:
-            model_path (str): Path to the YOLO model weights
+            model_path (str): Path to the YOLO model weights in tests/data LFS directory
+            model_name (str): Name of the YOLO model weights file
             device (str): Device to run inference on ('cuda' or 'cpu')
         """
         self.device = device
-        self.model = YOLO(model_path)
+        self.model = YOLO(testData(model_path) / model_name)
 
         module_dir = os.path.dirname(__file__)
         self.tracker_config = os.path.join(module_dir, "config", "custom_tracker.yaml")
+        if is_cuda_available():
+            onnxruntime.preload_dlls(cuda=True, cudnn=True)
+            self.device = "cuda"
+            logger.info("Using CUDA for YOLO 2d detector")
+        else:
+            self.device = "cpu"
+            logger.info("Using CPU for YOLO 2d detector")
 
     def process_image(self, image):
         """

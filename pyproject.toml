@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "dimos"
 authors = [
@@ -5,6 +9,15 @@ authors = [
 ]
 version = "0.0.2"
 description = "Powering agentive generalist robotics"
+
+[project.optional-dependencies]
+cuda = [
+    "pycuda",
+    "onnxruntime-gpu[cuda,cudnn]"
+]
+
+[tool.setuptools]
+packages = ["dimos"]
 
 [tool.ruff]
 line-length = 100
