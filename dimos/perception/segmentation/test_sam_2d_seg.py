@@ -23,16 +23,9 @@ from reactivex import operators as ops
 from dimos.stream.video_provider import VideoProvider
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.perception.segmentation.utils import extract_masks_bboxes_probs_names
-from dimos.utils.path_utils import get_project_root
 
 
 class TestSam2DSegmenter:
-    @pytest.fixture(scope="class")
-    def video_path(self):
-        # Use a video file from assets directory
-        video_file = "trimmed_video_office.mov"
-        return os.path.join(get_project_root(), "assets", video_file)
-
     def test_sam_segmenter_initialization(self):
         """Test FastSAM segmenter initializes correctly with default model path."""
         try:
@@ -44,8 +37,13 @@ class TestSam2DSegmenter:
             # If the model file doesn't exist, the test should still pass with a warning
             pytest.skip(f"Skipping test due to model initialization error: {e}")
 
-    def test_sam_segmenter_process_image(self, video_path):
+    def test_sam_segmenter_process_image(self):
         """Test FastSAM segmenter can process video frames and return segmentation masks."""
+        # Import testData inside method to avoid pytest fixture confusion
+        from dimos.utils.testing import testData
+
+        # Get test video path directly
+        video_path = testData("assets") / "trimmed_video_office.mov"
         try:
             # Initialize segmenter without analyzer for faster testing
             segmenter = Sam2DSegmenter(use_analyzer=False)

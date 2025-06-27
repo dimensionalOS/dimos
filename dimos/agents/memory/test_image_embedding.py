@@ -29,23 +29,6 @@ from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
 class TestImageEmbedding:
     """Test class for CLIP image embedding functionality."""
 
-    @pytest.fixture(scope="class")
-    def video_path(self):
-        """Return the path to the test video."""
-        # Use a video file from assets directory
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../assets"))
-        video_file = "trimmed_video_office.mov"  # Use the same test video as YOLO test
-        video_path = os.path.join(base_dir, video_file)
-
-        # Fallback to any video file in assets directory if the specific one isn't found
-        if not os.path.exists(video_path):
-            for filename in os.listdir(base_dir):
-                if filename.endswith((".mp4", ".avi", ".mov")):
-                    video_path = os.path.join(base_dir, filename)
-                    break
-
-        return video_path
-
     def test_clip_embedding_initialization(self):
         """Test CLIP embedding provider initializes correctly."""
         try:
@@ -58,13 +41,15 @@ class TestImageEmbedding:
         except Exception as e:
             pytest.skip(f"Skipping test due to model initialization error: {e}")
 
-    def test_clip_embedding_process_video(self, video_path):
+    def test_clip_embedding_process_video(self):
         """Test CLIP embedding provider can process video frames and return embeddings."""
         try:
-            # Initialize the embedding provider
+            from dimos.utils.testing import testData
+
+            video_path = testData("assets") / "trimmed_video_office.mov"
+
             embedding_provider = ImageEmbeddingProvider(model_name="clip", dimensions=512)
 
-            # Create video provider and get video stream observable
             assert os.path.exists(video_path), f"Test video not found: {video_path}"
             video_provider = VideoProvider(dev_name="test_video", video_source=video_path)
 

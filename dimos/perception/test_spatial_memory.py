@@ -32,22 +32,6 @@ from dimos.types.vector import Vector
 
 
 class TestSpatialMemory:
-    @pytest.fixture(scope="class")
-    def video_path(self):
-        # Use a video file from assets directory
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../assets"))
-        video_file = "trimmed_video_office.mov"
-        return os.path.join(base_dir, video_file)
-
-    @pytest.fixture(scope="class")
-    def video_provider(self, video_path):
-        # Create a video provider with the test video
-        assert os.path.exists(video_path), f"Test video not found: {video_path}"
-        provider = VideoProvider("test_video", video_source=video_path)
-        yield provider
-        # Clean up
-        provider.dispose_all()
-
     @pytest.fixture(scope="function")
     def temp_dir(self):
         # Create a temporary directory for storing spatial memory data
@@ -102,7 +86,7 @@ class TestSpatialMemory:
         except Exception as e:
             pytest.fail(f"Error in test: {e}")
 
-    def test_spatial_memory_processing(self, video_path, temp_dir):
+    def test_spatial_memory_processing(self, temp_dir):
         """Test processing video frames and building spatial memory with CLIP embeddings."""
         try:
             # Initialize spatial memory with temporary storage
@@ -117,9 +101,10 @@ class TestSpatialMemory:
                 min_time_threshold=0.01,
             )
 
-            # Create video provider and directly get a video stream observable
+            from dimos.utils.testing import testData
+
+            video_path = testData("assets") / "trimmed_video_office.mov"
             assert os.path.exists(video_path), f"Test video not found: {video_path}"
-            # Store a reference to the provider so we can dispose it later
             video_provider = VideoProvider(dev_name="test_video", video_source=video_path)
             video_stream = video_provider.capture_video_as_observable(realtime=False, fps=15)
 

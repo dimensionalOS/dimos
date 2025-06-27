@@ -24,13 +24,6 @@ from dimos.stream.video_provider import VideoProvider
 
 
 class TestYolo2DDetector:
-    @pytest.fixture(scope="class")
-    def video_path(self):
-        # Use a video file from assets directory
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../assets"))
-        video_file = "trimmed_video_office.mov"
-        return os.path.join(base_dir, video_file)
-
     def test_yolo_detector_initialization(self):
         """Test YOLO detector initializes correctly with default model path."""
         try:
@@ -41,10 +34,15 @@ class TestYolo2DDetector:
             # If the model file doesn't exist, the test should still pass with a warning
             pytest.skip(f"Skipping test due to model initialization error: {e}")
 
-    def test_yolo_detector_process_image(self, video_path):
+    def test_yolo_detector_process_image(self):
         """Test YOLO detector can process video frames and return detection results."""
         try:
+            # Import testData inside method to avoid pytest fixture confusion
+            from dimos.utils.testing import testData
+
             detector = Yolo2DDetector()
+
+            video_path = testData("assets") / "trimmed_video_office.mov"
 
             # Create video provider and directly get a video stream observable
             assert os.path.exists(video_path), f"Test video not found: {video_path}"
