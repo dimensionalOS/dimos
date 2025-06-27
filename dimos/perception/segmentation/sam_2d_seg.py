@@ -21,7 +21,7 @@ from dimos.perception.segmentation.utils import (
     plot_results,
     crop_images_from_bboxes,
 )
-from dimos.perception.detection2d.utils import is_cuda_available
+from dimos.utils.gpu_utils import is_cuda_available
 from dimos.perception.common.detection2d_tracker import target2dTracker, get_tracked_results
 from dimos.perception.segmentation.image_analyzer import ImageAnalyzer
 import os

@@ -15,7 +15,6 @@
 import cv2
 from ultralytics import YOLO
 from dimos.perception.detection2d.utils import (
-    is_cuda_available,
     extract_detection_results,
     plot_results,
     filter_detections,
@@ -25,6 +24,7 @@ import onnxruntime
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.path_utils import get_project_root
 from dimos.utils.testing import testData
+from dimos.utils.gpu_utils import is_cuda_available
 
 logger = setup_logger("dimos.perception.detection2d.yolo_2d_det")
 
