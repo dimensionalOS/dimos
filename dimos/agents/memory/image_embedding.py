@@ -27,6 +27,7 @@ import io
 import cv2
 import base64
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.testing import testData
 
 logger = setup_logger("dimos.agents.memory.image_embedding")
 
@@ -64,7 +65,7 @@ class ImageEmbeddingProvider:
             import onnxruntime as ort
 
             if self.model_name == "clip":
-                model_id = "onnx/clip/model.onnx"
+                model_id = testData("models_clip") / "model.onnx"
                 processor_id = "openai/clip-vit-base-patch32"
                 self.model = ort.InferenceSession(model_id)
                 self.processor = CLIPProcessor.from_pretrained(processor_id)

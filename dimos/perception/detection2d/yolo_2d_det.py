@@ -24,21 +24,23 @@ import os
 import onnxruntime
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.path_utils import get_project_root
+from dimos.utils.testing import testData
 
 logger = setup_logger("dimos.perception.detection2d.yolo_2d_det")
 
 
 class Yolo2DDetector:
-    def __init__(self, model_path="dimos/models/onnx/yolo11n.onnx", device="cpu"):
+    def __init__(self, model_path="models_yolo", model_name="yolo11n.onnx", device="cpu"):
         """
         Initialize the YOLO detector.
 
         Args:
-            model_path (str): Path to the YOLO model weights
+            model_path (str): Path to the YOLO model weights in tests/data LFS directory
+            model_name (str): Name of the YOLO model weights file
             device (str): Device to run inference on ('cuda' or 'cpu')
         """
         self.device = device
-        self.model = YOLO(os.path.join(get_project_root(), model_path))
+        self.model = YOLO(testData(model_path) / model_name)
 
         module_dir = os.path.dirname(__file__)
         self.tracker_config = os.path.join(module_dir, "config", "custom_tracker.yaml")
