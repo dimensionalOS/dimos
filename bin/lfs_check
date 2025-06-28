@@ -13,8 +13,8 @@ new_data=()
 # Enable nullglob to make globs expand to nothing when not matching
 shopt -s nullglob
 
-# Iterate through all directories in tests/data
-for dir_path in tests/data/*; do
+# Iterate through all directories in data/
+for dir_path in data/*; do
 
     # Extract directory name
     dir_name=$(basename "$dir_path")
@@ -23,7 +23,7 @@ for dir_path in tests/data/*; do
     [ "$dir_name" = ".lfs" ] && continue
 
     # Define compressed file path
-    compressed_file="tests/data/.lfs/${dir_name}.tar.gz"
+    compressed_file="data/.lfs/${dir_name}.tar.gz"
 
     # Check if compressed file already exists
     if [ -f "$compressed_file" ]; then
@@ -34,9 +34,9 @@ for dir_path in tests/data/*; do
 done
 
 if [ ${#new_data[@]} -gt 0 ]; then
-   echo -e "${RED}✗${NC} New test data detected at /tests/data:"
+   echo -e "${RED}✗${NC} New test data detected at /data:"
    echo -e "  ${GREEN}${new_data[@]}${NC}"
    echo -e "\nEither delete or run ${GREEN}./bin/lfs_push${NC}"
-   echo -e "(lfs_push will compress the files into /tests/data/.lfs/, upload to LFS, and add them to your commit)"
+   echo -e "(lfs_push will compress the files into /data/.lfs/, upload to LFS, and add them to your commit)"
    exit 1
 fi

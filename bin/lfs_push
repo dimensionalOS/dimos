@@ -1,5 +1,5 @@
 #!/bin/bash
-# Compresses directories in tests/data/* into tests/data/.lfs/dirname.tar.gz
+# Compresses directories in data/* into data/.lfs/dirname.tar.gz
 # Pushes to LFS
 
 set -e
@@ -15,17 +15,17 @@ NC='\033[0m' # No Color
 ROOT=$(git rev-parse --show-toplevel)
 cd $ROOT
 
-# Check if tests/data exists
-if [ ! -d "tests/data" ]; then
-    echo -e "${YELLOW}No tests/data directory found, skipping compression.${NC}"
+# Check if data/ exists
+if [ ! -d "data/" ]; then
+    echo -e "${YELLOW}No data directory found, skipping compression.${NC}"
     exit 0
 fi
 
 # Track if any compression was performed
 compressed_dirs=()
 
-# Iterate through all directories in tests/data
-for dir_path in tests/data/*; do
+# Iterate through all directories in data/
+for dir_path in data/*; do
     # Skip if no directories found (glob didn't match)
     [ ! "$dir_path" ] && continue
     
@@ -36,7 +36,7 @@ for dir_path in tests/data/*; do
     [ "$dir_name" = ".lfs" ] && continue
     
     # Define compressed file path
-    compressed_file="tests/data/.lfs/${dir_name}.tar.gz"
+    compressed_file="data/.lfs/${dir_name}.tar.gz"
     
     # Check if compressed file already exists
     if [ -f "$compressed_file" ]; then
@@ -58,7 +58,7 @@ for dir_path in tests/data/*; do
         --exclude='Thumbs.db' \
         --checkpoint=1000 \
         --checkpoint-action=dot \
-        -C "tests/data" \
+        -C "data/" \
         "$dir_name"
     
     if [ $? -eq 0 ]; then
