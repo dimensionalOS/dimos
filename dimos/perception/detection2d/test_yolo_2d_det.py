@@ -14,11 +14,13 @@
 
 import os
 import time
-import pytest
+
 import cv2
 import numpy as np
+import pytest
 import reactivex as rx
 from reactivex import operators as ops
+
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.stream.video_provider import VideoProvider
 
@@ -37,12 +39,12 @@ class TestYolo2DDetector:
     def test_yolo_detector_process_image(self):
         """Test YOLO detector can process video frames and return detection results."""
         try:
-            # Import testData inside method to avoid pytest fixture confusion
-            from dimos.utils.testing import testData
+            # Import data inside method to avoid pytest fixture confusion
+            from dimos.utils.data import get_data
 
             detector = Yolo2DDetector()
 
-            video_path = testData("assets") / "trimmed_video_office.mov"
+            video_path = get_data("assets") / "trimmed_video_office.mov"
 
             # Create video provider and directly get a video stream observable
             assert os.path.exists(video_path), f"Test video not found: {video_path}"

@@ -23,8 +23,8 @@ assets/agent/memory.txt
 .bash_history
 
 # Ignore all test data directories but allow compressed files
-tests/data/*
-!tests/data/.lfs/
+/data/*
+!/data/.lfs/
 
 # node env (used by devcontainers cli)
 node_modules
