@@ -46,3 +46,18 @@ def test_lcm_encode_decode(img: Image):
     assert isinstance(decoded_img, Image)
     assert decoded_img is not img
     assert decoded_img == img
+
+
+def test_rgb_bgr_conversion(img: Image):
+    rgb = img.to_rgb()
+    assert not rgb == img
+    assert rgb.to_bgr() == img
+
+
+def test_opencv_conversion(img: Image):
+    ocv = img.to_opencv()
+    decoded_img = Image.from_opencv(ocv)
+
+    # artificially patch timestamp
+    decoded_img.ts = img.ts
+    assert decoded_img == img

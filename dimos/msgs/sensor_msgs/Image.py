@@ -115,8 +115,24 @@ class Image(Timestamped):
     @property
     def dtype(self) -> np.dtype:
         """Get image data type."""
+        return self.data.dtype
 
-    #                       # taken from the list of strings in include/sensor_msgs/image_encodings.h
+    def copy(self) -> "Image":
+        """Create a deep copy of the image."""
+        return self.__class__(
+            data=self.data.copy(),
+            format=self.format,
+            frame_id=self.frame_id,
+            ts=self.ts,
+        )
+
+    @classmethod
+    def from_opencv(
+        cls, cv_image: np.ndarray, format: ImageFormat = ImageFormat.BGR, **kwargs
+    ) -> "Image":
+        """Create Image from OpenCV image array."""
+        return cls(data=cv_image, format=format, **kwargs)
+
     @classmethod
     def from_numpy(
         cls, np_image: np.ndarray, format: ImageFormat = ImageFormat.BGR, **kwargs
