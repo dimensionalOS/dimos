@@ -59,6 +59,8 @@ jobs:
           context: ${{ inputs.context }}
           file:   docker/${{ inputs.dockerfile }}/Dockerfile
           tags:   ${{ inputs.to-image }}
-          cache-from: type=gha,scope=${{ inputs.dockerfile }}-${{ inputs.from-image }}
-          cache-to:   type=gha,mode=max,scope=${{ inputs.dockerfile }}-${{ inputs.from-image }}
+          cache-from: type=gha,scope=${{ inputs.dockerfile }}
+          cache-to:   type=gha,mode=max,scope=${{ inputs.dockerfile }}
+          #cache-from: type=gha,scope=${{ inputs.dockerfile }}-${{ inputs.from-image }}
+          #cache-to:   type=gha,mode=max,scope=${{ inputs.dockerfile }}-${{ inputs.from-image }}
           build-args: FROM_IMAGE=${{ inputs.from-image }}
