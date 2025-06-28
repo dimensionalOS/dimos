@@ -1,11 +1,10 @@
 name: docker
-on: workflow_call
+on: push
 
 permissions:
   contents: read
   packages: write
   pull-requests: read
-
 
 jobs:
   check-changes:
