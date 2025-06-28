@@ -46,7 +46,12 @@ class Planner(Visualizable):
             return False
 
         print("pathing success", path)
-        return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
+
+        navigation_successful = self.set_local_nav(
+            path, stop_event=stop_event, goal_theta=goal_theta
+        )
+
+        return navigation_successful
 
 
 @dataclass
