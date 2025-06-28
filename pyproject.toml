@@ -117,6 +117,7 @@ manipulation = [
     "pandas>=1.5.2",
     "tqdm>=4.65.0",
     "pyyaml>=6.0",
+    "contact-graspnet-pytorch @ git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git",
     
     # Visualization (Optional)
     "kaleido>=0.2.1",
