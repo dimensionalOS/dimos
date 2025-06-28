@@ -24,7 +24,6 @@ import cv2
 class PersonTrackingStream:
     def __init__(
         self,
-        model_path="yolo11n.pt",
         device="cuda",
         camera_intrinsics=None,
         camera_pitch=0.0,
@@ -44,7 +43,7 @@ class PersonTrackingStream:
             camera_pitch: Camera pitch angle in radians (positive is up)
             camera_height: Height of the camera from the ground in meters
         """
-        self.detector = Yolo2DDetector(model_path=model_path, device=device)
+        self.detector = Yolo2DDetector(device=device)
 
         # Initialize distance estimator
         if camera_intrinsics is None:
