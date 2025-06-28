@@ -358,20 +358,12 @@ class WebRTCRobot(ConnectionInterface):
         except Exception as e:
             logger.error(f"Failed to send API request: {e}")
 
-    def standup_ai(self):
-        """Make robot stand up in AI mode."""
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
-
-    def standup_normal(self):
-        """Make robot stand up in normal mode."""
+    def standup(self):
+        """Make robot stand up"""
         self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]})
         time.sleep(0.5)
         self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["RecoveryStand"]})
         return True
-
-    def standup(self):
-        """Make robot stand up (uses AI mode by default)."""
-        return self.standup_ai()
 
     def liedown(self):
         """Make robot lie down."""

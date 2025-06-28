@@ -74,6 +74,15 @@ class UnitreeGo2(Robot):
             mode=mode,
         )
 
+        webrtc_control.standup()
+
+        # Initialize WebRTC-specific features (now via Zenoh)
+        self.lidar_stream = webrtc_control.lidar_stream()
+        self.odom = getter_streaming(webrtc_control.odom_stream())
+        self.map = Map(voxel_size=0.2)
+        self.map_stream = self.map.consume(self.lidar_stream)
+        self.lidar_message = getter_streaming(self.lidar_stream)
+
         if skill_library is None:
             skill_library = MyUnitreeSkills()
 
@@ -106,13 +115,6 @@ class UnitreeGo2(Robot):
         self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
         self.camera_pitch = np.deg2rad(0)  # negative for downward pitch
         self.camera_height = 0.44  # meters
-
-        # Initialize WebRTC-specific features (now via Zenoh)
-        self.lidar_stream = webrtc_control.lidar_stream()
-        self.odom = getter_streaming(webrtc_control.odom_stream())
-        self.map = Map(voxel_size=0.2)
-        self.map_stream = self.map.consume(self.lidar_stream)
-        self.lidar_message = getter_streaming(self.lidar_stream)
 
         # Initialize visual servoing using connection interface
         video_stream = self.get_video_stream()
