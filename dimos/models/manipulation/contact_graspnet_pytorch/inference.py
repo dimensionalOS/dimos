@@ -10,7 +10,7 @@ from contact_graspnet_pytorch import config_utils
 from contact_graspnet_pytorch.visualization_utils_o3d import visualize_grasps, show_image
 from contact_graspnet_pytorch.checkpoints import CheckpointIO 
 from contact_graspnet_pytorch.data import load_available_input_data
-from dimos.utils.testing import testData
+from dimos.utils.data import get_data
 
 def inference(global_config, 
               ckpt_dir,
@@ -39,7 +39,7 @@ def inference(global_config,
     grasp_estimator = GraspEstimator(global_config)
 
     # Load the weights
-    model_checkpoint_dir = testData(ckpt_dir)
+    model_checkpoint_dir = get_data(ckpt_dir)
     checkpoint_io = CheckpointIO(checkpoint_dir=model_checkpoint_dir, model=grasp_estimator.model)
     try:
         load_dict = checkpoint_io.load('model.pt')

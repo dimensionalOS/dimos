@@ -23,15 +23,15 @@ def test_contact_graspnet_inference():
         return
     
     try:
+        from dimos.utils.data import get_data
         from contact_graspnet_pytorch import config_utils
         from dimos.models.manipulation.contact_graspnet_pytorch.inference import inference
-        from dimos.utils.testing import testData
     except ImportError:
         pytest.skip("Required modules could not be imported. Make sure you have run 'pip install .[manipulation]'.")
         return
 
     # Test data path - use the default test data path
-    test_data_path = os.path.join(testData("models_contact_graspnet"), "test_data/0.npy")
+    test_data_path = os.path.join(get_data("models_contact_graspnet"), "test_data/0.npy")
     
     # Check if test data exists
     test_files = glob.glob(test_data_path)
