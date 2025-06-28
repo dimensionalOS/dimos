@@ -25,6 +25,7 @@ from starlette.applications import Starlette
 from starlette.staticfiles import StaticFiles
 from dimos.web.websocket_vis.types import Drawable
 from reactivex import Observable
+import concurrent.futures
 
 
 async def serve_index(request):
@@ -113,6 +114,7 @@ class WebsocketVis:
         self.use_reload = use_reload
         self.main_state = main_state  # Reference to global main_state
         self.msg_handler = msg_handler
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
         # Store reference to this instance on the sio object for message handling
         sio.vis_instance = self
@@ -167,7 +169,7 @@ class WebsocketVis:
             [name, drawable] = data
             self.update_state({"draw": {name: self.process_drawable(drawable)}})
 
-        obs.subscribe(
+        return obs.subscribe(
             on_next=new_update,
             on_error=lambda e: print(f"Error in stream: {e}"),
             on_completed=lambda: print("Stream completed"),
@@ -176,30 +178,42 @@ class WebsocketVis:
     def stop(self):
         if self.server_thread and self.server_thread.is_alive():
             self.server_thread.join()
-        self.sio.disconnect()
+        if hasattr(self, "_executor"):
+            self._executor.shutdown(wait=True)
+        if hasattr(self.sio, "disconnect"):
+            try:
+                asyncio.run(self.sio.disconnect())
+            except:
+                pass
 
     async def update_state_async(self, new_data):
         """Update main_state and broadcast to all connected clients"""
         await update_state(new_data)
 
     def update_state(self, new_data):
-        """Synchronous wrapper for update_state"""
-
-        # Get or create an event loop
+        """Thread-safe wrapper for update_state"""
         try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        # Run the coroutine in the loop
-        if loop.is_running():
-            # Create a future and run it in the existing loop
+            # Try to get the current event loop
+            loop = asyncio.get_running_loop()
+            # If we're in an event loop, schedule the coroutine
             future = asyncio.run_coroutine_threadsafe(update_state(new_data), loop)
-            return future.result()
-        else:
-            # Run the coroutine in a new loop
-            return loop.run_until_complete(update_state(new_data))
+            return future.result(timeout=5.0)  # Add timeout to prevent blocking
+        except RuntimeError:
+            # No event loop running, this is likely called from a different thread
+            # Use the executor to run in a controlled manner
+            def run_async():
+                try:
+                    return asyncio.run(update_state(new_data))
+                except Exception as e:
+                    print(f"Error updating state: {e}")
+                    return None
+
+            future = self._executor.submit(run_async)
+            try:
+                return future.result(timeout=5.0)
+            except concurrent.futures.TimeoutError:
+                print("Warning: State update timed out")
+                return None
 
 
 # Test timer function that updates state with current Unix time

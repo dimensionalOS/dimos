@@ -105,7 +105,7 @@ class FollowHuman(AbstractRobotSkill):
                 x_vel = output.get("linear_vel")
                 z_vel = output.get("angular_vel")
                 logger.debug(f"Following human: x_vel: {x_vel}, z_vel: {z_vel}")
-                self._robot.ros_control.move_vel_control(x=x_vel, y=0, yaw=z_vel)
+                self._robot.move(x=x_vel, y=0, yaw=z_vel)
                 time.sleep(0.05)
 
             # If we completed the full timeout duration, consider it success
@@ -127,7 +127,6 @@ class FollowHuman(AbstractRobotSkill):
             if self._visual_servoing:
                 self._visual_servoing.stop_tracking()
                 self._visual_servoing = None
-            self._robot.ros_control.stop()
 
     def stop(self):
         """
@@ -143,9 +142,6 @@ class FollowHuman(AbstractRobotSkill):
             # Clean up visual servoing if it exists
             self._visual_servoing.stop_tracking()
             self._visual_servoing = None
-
-            # Stop the robot
-            self._robot.ros_control.stop()
 
             return True
         return False

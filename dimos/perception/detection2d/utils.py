@@ -14,8 +14,8 @@
 
 import numpy as np
 import cv2
-
-from dimos.utils.ros_utils import distance_angle_to_goal_xy
+from dimos.types.vector import Vector
+from dimos.utils.transform_utils import distance_angle_to_goal_xy
 
 
 def filter_detections(
@@ -206,24 +206,19 @@ def plot_results(image, bboxes, track_ids, class_ids, confidences, names, alpha=
     return vis_img
 
 
-def calculate_depth_from_bbox(depth_model, frame, bbox):
+def calculate_depth_from_bbox(depth_map, bbox):
     """
     Calculate the average depth of an object within a bounding box.
     Uses the 25th to 75th percentile range to filter outliers.
 
     Args:
-        depth_model: Depth model
-        frame: The image frame
+        depth_map: The depth map
         bbox: Bounding box in format [x1, y1, x2, y2]
 
     Returns:
         float: Average depth in meters, or None if depth estimation fails
     """
     try:
-        # Get depth map for the entire frame
-        depth_map = depth_model.infer_depth(frame)
-        depth_map = np.array(depth_map)
-
         # Extract region of interest from the depth map
         x1, y1, x2, y2 = map(int, bbox)
         roi_depth = depth_map[y1:y2, x1:x2]
@@ -323,7 +318,8 @@ def calculate_position_rotation_from_bbox(bbox, depth, camera_intrinsics):
         camera_intrinsics: List [fx, fy, cx, cy] with camera parameters
 
     Returns:
-        Tuple of (position_dict, rotation_dict)
+        Vector: position
+        Vector: rotation
     """
     # Calculate distance and angle to object
     distance, angle = calculate_distance_angle_from_bbox(bbox, depth, camera_intrinsics)
@@ -336,11 +332,7 @@ def calculate_position_rotation_from_bbox(bbox, depth, camera_intrinsics):
     # For now, rotation is only in yaw (around z-axis)
     # We can use the negative of the angle as an estimate of the object's yaw
     # assuming objects tend to face the camera
-    position = {"x": x, "y": y, "z": 0.0}  # z=0 assuming objects are on the ground
-    rotation = {
-        "roll": 0.0,
-        "pitch": 0.0,
-        "yaw": -angle,
-    }  # Only yaw is meaningful with monocular camera
+    position = Vector([x, y, 0.0])
+    rotation = Vector([0.0, 0.0, -angle])
 
     return position, rotation

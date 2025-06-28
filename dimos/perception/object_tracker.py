@@ -102,7 +102,9 @@ class ObjectTrackingStream:
 
         # Calculate depth only if distance and size not provided
         if frame is not None and distance is None and size is None:
-            depth_estimate = calculate_depth_from_bbox(self.depth_model, frame, bbox)
+            depth_map = self.depth_model.infer_depth(frame)
+            depth_map = np.array(depth_map)
+            depth_estimate = calculate_depth_from_bbox(depth_map, bbox)
             if depth_estimate is not None:
                 print(f"Estimated depth for object: {depth_estimate:.2f}m")
 
