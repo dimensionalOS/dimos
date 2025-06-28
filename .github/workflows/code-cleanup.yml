@@ -1,9 +1,5 @@
-name: cleanup
-on:
-  pull_request:
-    branches:
-      - main
-      - dev
+name: code-cleanup
+on: push
 
 permissions:
   contents: write
@@ -31,7 +27,3 @@ jobs:
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
         commit_message: "CI code cleanup"
-
-  docker:
-    needs: [pre-commit]
-    uses: ./.github/workflows/docker.yml

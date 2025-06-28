@@ -1,11 +1,10 @@
 name: docker
-on: workflow_call
+on: push
 
 permissions:
   contents: read
   packages: write
   pull-requests: read
-
 
 jobs:
   check-changes:
@@ -23,15 +22,18 @@ jobs:
         with:
           base: ${{ github.event.before }}
           filters: |
+            # ros and python are (alternative) root images
+            # change to root stuff like docker.yml etc triggers rebuild of those
+            # which cascades into a full rebuild
             ros:
-              # ros rebuild will cascade to full rebuild
-              # this is why check-changes to this workflow trigger ros
               - .github/workflows/_docker-build-template.yml
               - .github/workflows/docker.yml
-              - docker/base-ros/**
+              - docker/ros/**
 
             python:
-              - docker/base-python/**
+              - .github/workflows/_docker-build-template.yml
+              - .github/workflows/docker.yml
+              - docker/python/**
               - requirements*.txt
 
             dev:
@@ -73,15 +75,6 @@ jobs:
       from-image: ubuntu:22.04
       to-image: ghcr.io/dimensionalos/ros:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile:  ros
-
-  # # just a debugger
-  # inspect-needs:
-  #   needs: [check-changes, ros]
-  #   runs-on: dimos-runner-ubuntu-2204
-  #   if: always()
-  #   steps:
-  #     - run: |
-  #         echo '${{ toJSON(needs) }}'
 
   ros-python:
     needs: [check-changes, ros]

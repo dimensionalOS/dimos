@@ -14,10 +14,8 @@
 
 from dataclasses import dataclass
 from abc import abstractmethod
-from typing import Callable, Optional, List
+from typing import Callable, Optional
 import threading
-import os
-import time
 
 from dimos.types.path import Path
 from dimos.types.costmap import Costmap
@@ -25,7 +23,6 @@ from dimos.types.vector import VectorLike, to_vector, Vector
 from dimos.robot.global_planner.algo import astar
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.helpers import Visualizable
-from dimos.robot.frontier_exploration.utils import CostmapSaver
 
 logger = setup_logger("dimos.robot.unitree.global_planner")
 
