@@ -97,3 +97,5 @@ open3d
 
 # lcm_msgs
 git+https://github.com/dimensionalOS/python_lcm_msgs@main#egg=lcm_msgs
+# Inference (CPU)
+onnxruntime
