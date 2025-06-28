@@ -124,14 +124,10 @@ manipulation = [
     "plotly>=5.9.0",
 ]
 
-[project.optional-dependencies]
 cuda = [
     "pycuda",
     "onnxruntime-gpu[cuda,cudnn]"
 ]
-
-[tool.setuptools]
-packages = ["dimos"]
 
 [tool.ruff]
 line-length = 100
