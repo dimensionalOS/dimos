@@ -50,11 +50,13 @@ class SensorReplay(Generic[T]):
 
     def load_one(self, name: Union[int, str, Path]) -> Union[T, Any]:
         if isinstance(name, int):
-            full_path = self.root_dir / f"/{name:03d}.pickle"
+            full_path = self.root_dir / f"{name:03d}.pickle"
         elif isinstance(name, Path):
-            full_path = self.root_dir / f"/{name}.pickle"
-        else:
             full_path = name
+        elif isinstance(name, str):
+            full_path = self.root_dir / f"{name}.pickle"
+        else:
+            raise TypeError("name must be int, a string or Path object")
 
         with open(full_path, "rb") as f:
             data = pickle.load(f)

@@ -29,6 +29,7 @@ from lcm_msgs.std_msgs.Header import Header
 from dimos.types.timestamped import Timestamped
 
 
+# TODO: encode/decode need to be updated to work with full spectrum of pointcloud2 fields
 class PointCloud2(Timestamped):
     name = "sensor_msgs.PointCloud2"
 
@@ -105,7 +106,9 @@ class PointCloud2(Timestamped):
         return msg.encode()
 
     @classmethod
-    def lcm_decode(cls, msg: LCMPointCloud2, **kwargs) -> "PointCloud2":
+    def lcm_decode(cls, data: bytes) -> "PointCloud2":
+        msg = LCMPointCloud2.decode(data)
+
         if msg.width == 0 or msg.height == 0:
             # Empty point cloud
             pc = o3d.geometry.PointCloud()
@@ -115,7 +118,6 @@ class PointCloud2(Timestamped):
                 ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
                 if hasattr(msg, "header") and msg.header.stamp.sec > 0
                 else None,
-                **kwargs,
             )
 
         # Parse field information to find X, Y, Z offsets
@@ -160,7 +162,6 @@ class PointCloud2(Timestamped):
             ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
             if hasattr(msg, "header") and msg.header.stamp.sec > 0
             else None,
-            **kwargs,
         )
 
     def _create_xyz_field(self) -> list:
@@ -191,13 +192,13 @@ class PointCloud2(Timestamped):
         z_field.count = 1
         fields.append(z_field)
 
-        # C field
-        c_field = PointField()
-        c_field.name = "intensity"
-        c_field.offset = 12
-        c_field.datatype = 7  # FLOAT32
-        c_field.count = 1
-        fields.append(c_field)
+        # I field
+        i_field = PointField()
+        i_field.name = "intensity"
+        i_field.offset = 12
+        i_field.datatype = 7  # FLOAT32
+        i_field.count = 1
+        fields.append(i_field)
 
         return fields
 
