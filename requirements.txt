@@ -97,3 +97,6 @@ open3d
 
 # Inference (CPU)
 onnxruntime
+
+# Zenoh
+eclipse-zenoh
