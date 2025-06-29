@@ -13,16 +13,15 @@
 # limitations under the License.
 
 from copy import copy
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import List, TypedDict
+from dataclasses import field
+from typing import List, Optional, TypedDict
 
 import numpy as np
 import open3d as o3d
 
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.testing.helpers import color
-from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_datetime, to_human_readable
+from dimos.robot.unitree_webrtc.type.timeseries import to_human_readable
 from dimos.types.costmap import Costmap, pointcloud_to_costmap
 from dimos.types.vector import Vector
 
@@ -51,26 +50,34 @@ class RawLidarMsg(TypedDict):
     data: RawLidarData
 
 
-@dataclass
 class LidarMessage(PointCloud2):
-    ts: float
     origin: Vector
     resolution: float
-    pointcloud: o3d.geometry.PointCloud
-    raw_msg: RawLidarMsg = field(repr=False, default=None)
-    _costmap: Costmap = field(init=False, repr=False, default=None)
+    raw_msg: Optional[RawLidarMsg]
+    _costmap: Optional[Costmap]
+
+    def __init__(self, **kwargs):
+        super().__init__(
+            pointcloud=kwargs.get("pointcloud"),
+            ts=kwargs.get("ts"),
+            frame_id=kwargs.get("frame_id"),
+        )
+
+        self.origin = kwargs.get("origin")
+        self.resolution = kwargs.get("resolution")
 
     @classmethod
     def from_msg(cls: "LidarMessage", raw_message: RawLidarMsg) -> "LidarMessage":
         data = raw_message["data"]
         points = data["data"]["points"]
-        point_cloud = o3d.geometry.PointCloud().cpu()
+        point_cloud = o3d.geometry.PointCloud()
         point_cloud.points = o3d.utility.Vector3dVector(points)
+
         return cls(
-            ts=data["stamp"],
             origin=Vector(data["origin"]),
             resolution=data["resolution"],
             pointcloud=point_cloud,
+            ts=data["stamp"],
             raw_msg=raw_message,
         )
 
@@ -85,18 +92,18 @@ class LidarMessage(PointCloud2):
         # Create a new point cloud combining both
 
         # Determine which message is more recent
-        if self.timestamp >= other.timestamp:
-            timestamp = self.timestamp
+        if self.ts >= other.ts:
+            ts = self.ts
             origin = self.origin
             resolution = self.resolution
         else:
-            timestamp = other.timestamp
+            ts = other.ts
             origin = other.origin
             resolution = other.resolution
 
         # Return a new LidarMessage with combined data
         return LidarMessage(
-            timestamp=timestamp,
+            ts=ts,
             origin=origin,
             resolution=resolution,
             pointcloud=self.pointcloud + other.pointcloud,
