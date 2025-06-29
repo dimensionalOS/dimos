@@ -44,7 +44,8 @@ def test_publish():
     topic = Topic(topic="/lidar", lcm_type=PointCloud2)
     lidar = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
 
-    for frame in lidar.iterate():
-        print(frame)
-        lcm.publish(topic, frame.to_pointcloud2())
-        time.sleep(0.1)
+    while True:
+        for frame in lidar.iterate():
+            print(frame)
+            lcm.publish(topic, frame.to_pointcloud2())
+            time.sleep(0.1)

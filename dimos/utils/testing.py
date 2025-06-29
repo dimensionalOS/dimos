@@ -67,7 +67,7 @@ class SensorReplay(Generic[T]):
     def iterate(self) -> Iterator[Union[T, Any]]:
         pattern = os.path.join(self.root_dir, "*")
         for file_path in sorted(glob.glob(pattern)):
-            yield self.load_one(file_path)
+            yield self.load_one(Path(file_path))
 
     def stream(self, rate_hz: Optional[float] = None) -> Observable[Union[T, Any]]:
         if rate_hz is None:
