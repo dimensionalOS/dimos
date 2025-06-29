@@ -30,6 +30,8 @@ from dimos.types.timestamped import Timestamped
 
 
 class PointCloud2(Timestamped):
+    name = "sensor_msgs.PointCloud2"
+
     def __init__(
         self,
         pointcloud: o3d.geometry.PointCloud = None,
@@ -45,7 +47,7 @@ class PointCloud2(Timestamped):
         """Get points as numpy array."""
         return np.asarray(self.pointcloud.points)
 
-    def lcm_encode(self, frame_id: Optional[str] = None) -> LCMPointCloud2:
+    def lcm_encode(self, frame_id: Optional[str] = None) -> bytes:
         """Convert to LCM PointCloud2 message."""
         msg = LCMPointCloud2()
 
@@ -62,13 +64,13 @@ class PointCloud2(Timestamped):
             # Empty point cloud
             msg.height = 0
             msg.width = 0
-            msg.point_step = 12  # 3 floats * 4 bytes
+            msg.point_step = 16  # 4 floats * 4 bytes (x, y, z, intensity)
             msg.row_step = 0
             msg.data_length = 0
             msg.data = b""
             msg.is_dense = True
             msg.is_bigendian = False
-            msg.fields_length = 3
+            msg.fields_length = 4  # x, y, z, intensity
             msg.fields = self._create_xyz_field()
             return msg
 
@@ -76,16 +78,23 @@ class PointCloud2(Timestamped):
         msg.height = 1  # Unorganized point cloud
         msg.width = len(points)
 
-        # Define fields (X, Y, Z as float32)
-        msg.fields_length = 3
+        # Define fields (X, Y, Z, intensity as float32)
+        msg.fields_length = 4  # x, y, z, intensity
         msg.fields = self._create_xyz_field()
 
         # Point step and row step
-        msg.point_step = 12  # 3 floats * 4 bytes each
+        msg.point_step = 16  # 4 floats * 4 bytes each (x, y, z, intensity)
         msg.row_step = msg.point_step * msg.width
 
-        # Convert points to bytes (little endian float32)
-        data_bytes = points.astype(np.float32).tobytes()
+        # Convert points to bytes with intensity padding (little endian float32)
+        # Add intensity column (zeros) to make it 4 columns: x, y, z, intensity
+        points_with_intensity = np.column_stack(
+            [
+                points,  # x, y, z columns
+                np.zeros(len(points), dtype=np.float32),  # intensity column (padding)
+            ]
+        )
+        data_bytes = points_with_intensity.astype(np.float32).tobytes()
         msg.data_length = len(data_bytes)
         msg.data = data_bytes
 
@@ -93,7 +102,7 @@ class PointCloud2(Timestamped):
         msg.is_dense = True  # No invalid points
         msg.is_bigendian = False  # Little endian
 
-        return msg
+        return msg.encode()
 
     @classmethod
     def lcm_decode(cls, msg: LCMPointCloud2, **kwargs) -> "PointCloud2":
@@ -181,6 +190,14 @@ class PointCloud2(Timestamped):
         z_field.datatype = 7  # FLOAT32
         z_field.count = 1
         fields.append(z_field)
+
+        # C field
+        c_field = PointField()
+        c_field.name = "intensity"
+        c_field.offset = 12
+        c_field.datatype = 7  # FLOAT32
+        c_field.count = 1
+        fields.append(c_field)
 
         return fields
 
