@@ -34,17 +34,10 @@ import reactivex as rx
 import reactivex.operators as ops
 from dimos.stream.audio.pipelines import tts, stt
 import threading
-import json
 from dimos.types.vector import Vector
 from dimos.skills.speak import Speak
 
-from dimos.perception.object_detection_stream import ObjectDetectionStream
-from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
-from dimos.utils.reactive import backpressure
 import asyncio
-import atexit
-import signal
-import sys
 import warnings
 import logging
 
@@ -82,51 +75,6 @@ robot = UnitreeGo2(
     ip=os.getenv("ROBOT_IP"),
     mode="normal",
 )
-
-
-# Add graceful shutdown handling to prevent WebRTC task destruction errors
-def cleanup_robot():
-    print("Cleaning up robot connection...")
-    try:
-        # Make cleanup non-blocking to avoid hangs
-        def quick_cleanup():
-            try:
-                robot.liedown()
-            except:
-                pass
-
-        # Run cleanup in a separate thread with timeout
-        cleanup_thread = threading.Thread(target=quick_cleanup)
-        cleanup_thread.daemon = True
-        cleanup_thread.start()
-        cleanup_thread.join(timeout=3.0)  # Max 3 seconds for cleanup
-
-        # Force stop the robot's WebRTC connection
-        try:
-            robot.stop()
-        except:
-            pass
-
-    except Exception as e:
-        print(f"Error during cleanup: {e}")
-        # Continue anyway
-
-
-atexit.register(cleanup_robot)
-
-
-def signal_handler(signum, frame):
-    print("Received shutdown signal, cleaning up...")
-    try:
-        cleanup_robot()
-    except:
-        pass
-    # Force exit if cleanup hangs
-    os._exit(0)
-
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
 
 # Initialize WebSocket visualization
 websocket_vis = WebsocketVis()
@@ -212,72 +160,9 @@ agent_response_subject = rx.subject.Subject()
 agent_response_stream = agent_response_subject.pipe(ops.share())
 local_planner_viz_stream = robot.local_planner_viz_stream.pipe(ops.share())
 
-# Initialize object detection stream
-min_confidence = 0.6
-class_filter = None  # No class filtering
-min_confidence = 0.99  # temporarily disable detections
-# detector = Detic2DDetector(vocabulary=None, threshold=min_confidence)
-
-# Create video stream from robot's camera
-video_stream = robot.get_video_stream()  # WebRTC doesn't use ROS video stream
-
-# # Initialize ObjectDetectionStream with robot
-# object_detector = ObjectDetectionStream(
-#     camera_intrinsics=robot.camera_intrinsics,
-#     min_confidence=min_confidence,
-#     class_filter=class_filter,
-#     get_pose=robot.get_pose,
-#     detector=detector,
-#     video_stream=video_stream,
-# )
-
-# # Create visualization stream for web interface
-# viz_stream = backpressure(object_detector.get_stream()).pipe(
-#     ops.share(),
-#     ops.map(lambda x: x["viz_frame"] if x is not None else None),
-#     ops.filter(lambda x: x is not None),
-# )
-
-# # Get the formatted detection stream
-# formatted_detection_stream = object_detector.get_formatted_stream().pipe(
-#     ops.filter(lambda x: x is not None)
-# )
-
-
-# Create a direct mapping that combines detection data with locations
-def combine_with_locations(object_detections):
-    # Get locations from spatial memory
-    try:
-        spatial_memory = robot.get_spatial_memory()
-        if spatial_memory is None:
-            # If spatial memory is disabled, just return the object detections
-            return object_detections
-
-        locations = spatial_memory.get_robot_locations()
-
-        # Format the locations section
-        locations_text = "\n\nSaved Robot Locations:\n"
-        if locations:
-            for loc in locations:
-                locations_text += f"- {loc.name}: Position ({loc.position[0]:.2f}, {loc.position[1]:.2f}, {loc.position[2]:.2f}), "
-                locations_text += f"Rotation ({loc.rotation[0]:.2f}, {loc.rotation[1]:.2f}, {loc.rotation[2]:.2f})\n"
-        else:
-            locations_text += "None\n"
-
-        # Simply concatenate the strings
-        return object_detections + locations_text
-    except Exception as e:
-        print(f"Error adding locations: {e}")
-        return object_detections
-
-
-# Create the combined stream with a simple pipe operation
-# enhanced_data_stream = formatted_detection_stream.pipe(ops.map(combine_with_locations), ops.share())
-
 streams = {
-    "unitree_video": robot.get_video_stream(),  # Changed from get_ros_video_stream to get_video_stream for WebRTC
+    "unitree_video": robot.get_video_stream(),
     "local_planner_viz": local_planner_viz_stream,
-    # "object_detection": viz_stream,  # Uncommented object detection
 }
 text_streams = {
     "agent_responses": agent_response_stream,
@@ -353,5 +238,4 @@ except Exception as e:
 
     traceback.print_exc()
 finally:
-    print("Cleaning up...")
-    cleanup_robot()
+    robot.liedown()
