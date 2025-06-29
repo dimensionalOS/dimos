@@ -15,23 +15,56 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
+
 from dimos.multiprocess.actors2.base import dimos
 from dimos.multiprocess.actors2.meta import In, Out, module, rpc
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.path import Path
 from dimos.types.vector import Vector
+from dimos.utils.testing import SensorReplay
 
 if dimos:  # otherwise ruff deletes the import
     ...
 
 
 @module
-class Odometry:
+class OdometryReceiver:
     odometry: Out[Odometry]
 
     def __init__(self):
+        print("INIT ODOMETRY")
         self.odometry = Out(Odometry, "odometry")
+        from threading import Event
+
+        self._stop_event = Event()
+        self._thread = None
+
+    def start(self):
+        print("ODOM START")
+
+        # run odomloop in a separate thread
+        from threading import Thread
+
+        self._thread = Thread(target=self.odomloop)
+        self._thread.start()
+
+    def odomloop(self):
+        odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
+        self._stop_event.clear()
+        while not self._stop_event.is_set():
+            for odom in odomdata.iterate():
+                if self._stop_event.is_set():
+                    print("Stopping odometry stream")
+                    return
+                print(odom)
+                time.sleep(0.1)
+
+    def stop(self):
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)  # Wait up to 1 second for clean shutdown
 
 
 @module
@@ -71,6 +104,9 @@ def test_get_sub(dimos):
     print("Map Stream:\t", map_stream)
     print("Odometry Stream:\t", odometry_stream, "\n\n")
 
+    odom = dimos.deploy(OdometryReceiver)
+    odom.start().result()
+
     nav = dimos.deploy(
         Navigation,
         target_position=target_position_stream,
@@ -83,3 +119,8 @@ def test_get_sub(dimos):
     print("NAV Target:\t", nav.target_path)
 
     print(f"NAV I/O (remote query):\n\n{nav.io().result()}")
+
+    time.sleep(2)
+    odom.stop()
+
+    time.sleep(1)
