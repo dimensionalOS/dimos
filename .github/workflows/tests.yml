@@ -33,8 +33,13 @@ jobs:
           exit 0
 
       - uses: actions/checkout@v4
+        
+      - name: Validate typing
+        run: |
+          /entrypoint.sh bash -c "mypy"
 
       - name: Run tests
         run: |
           git config --global --add safe.directory '*'
           /entrypoint.sh bash -c "${{ inputs.cmd }}"
+

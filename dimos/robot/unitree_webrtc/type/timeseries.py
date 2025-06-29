@@ -13,10 +13,10 @@
 # limitations under the License.
 
 from __future__ import annotations
-from datetime import datetime, timedelta, timezone
-from typing import Iterable, TypeVar, Generic, Tuple, Union, TypedDict
-from abc import ABC, abstractmethod
 
+from abc import ABC, abstractmethod
+from datetime import datetime, timedelta, timezone
+from typing import Generic, Iterable, Tuple, TypedDict, TypeVar, Union
 
 PAYLOAD = TypeVar("PAYLOAD")
 
@@ -119,7 +119,7 @@ class Timeseries(ABC, Generic[EVENT]):
         min_dist = float("inf")
 
         for event in self:
-            dist = abs(event.ts.timestamp() - target_ts)
+            dist = abs(event.ts - target_ts)
             if dist > min_dist:
                 break
 

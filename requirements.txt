@@ -95,4 +95,7 @@ git+https://github.com/facebookresearch/detectron2.git@v0.6
 # Mapping
 open3d
 
-# Touch for rebuild
+# lcm_msgs
+git+https://github.com/dimensionalOS/python_lcm_msgs@main#egg=lcm_msgs
+# Inference (CPU)
+onnxruntime

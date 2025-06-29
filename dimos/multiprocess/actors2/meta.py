@@ -15,15 +15,9 @@
 from __future__ import annotations
 
 import inspect
-from typing import (
-    Any,
-    Generic,
-    TypeVar,
-    get_args,
-    get_origin,
-    get_type_hints,
-)
+from typing import Any, Dict, Generic, List, Tuple, TypeVar, get_args, get_origin, get_type_hints
 
+from distributed.protocol.serialize import dask_serialize
 from reactivex.subject import Subject
 
 T = TypeVar("T")
@@ -59,8 +53,8 @@ class In(Generic[T]):
     def __set_name__(self, owner, n):
         self.name = n
 
-    def __get__(self, *_):
-        raise AttributeError("metadata only")
+    # def __get__(self, *_):
+    #    raise AttributeError("metadata only")
 
     @property
     def type_name(self) -> str:
@@ -78,8 +72,8 @@ class Out(Generic[T]):
     def __set_name__(self, owner, n):
         self.name = n
 
-    def __get__(self, *_):
-        raise AttributeError("metadata only")
+    # def __get__(self, *_):
+    #    raise AttributeError("metadata only")
 
     @property
     def type_name(self) -> str:
@@ -99,7 +93,7 @@ def module(cls: type) -> type:
 
     for n, ann in cls_type_hints.items():
         origin = get_origin(ann)
-        print(n, ann, origin)
+        # print(n, ann, origin)
         if origin is Out:
             inner_type, *_ = get_args(ann) or (Any,)
             md = Out(inner_type, n)
@@ -115,7 +109,7 @@ def module(cls: type) -> type:
     sig = inspect.signature(cls.__init__)
     type_hints = get_type_hints(cls.__init__, include_extras=True)
 
-    print(sig.parameters)
+    # print(sig.parameters)
     for name, _ in sig.parameters.items():
         if name == "self":
             continue

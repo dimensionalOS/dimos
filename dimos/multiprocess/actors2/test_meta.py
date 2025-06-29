@@ -15,11 +15,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos.multiprocess.actors2.base import dimos
 from dimos.multiprocess.actors2.meta import In, Out, module, rpc
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.path import Path
 from dimos.types.vector import Vector
+
+if dimos:  # otherwise ruff deletes the import
+    ...
+
+
+@module
+class Odometry:
+    odometry: Out[Odometry]
+
+    def __init__(self):
+        self.odometry = Out(Odometry, "odometry")
 
 
 @module
@@ -38,6 +50,7 @@ class Navigation:
         self.target_position = target_position
         self.map_stream = map_stream
         self.odometry = odometry
+        self.target_path = Out(Path, "target_path")
 
 
 def test_introspect():
@@ -45,5 +58,28 @@ def test_introspect():
     assert hasattr(Navigation, "inputs")
     assert hasattr(Navigation, "outputs")
     assert hasattr(Navigation, "rpcs")
-
     print("\n\n\n" + Navigation.io(), "\n\n")
+
+
+def test_get_sub(dimos):
+    target_position_stream = Out(Vector, "target_position")
+    map_stream = Out(Map, "map")
+    odometry_stream = Out(Odometry, "odometry")
+
+    print("\n")
+    print("Target Position Stream:\t", target_position_stream)
+    print("Map Stream:\t", map_stream)
+    print("Odometry Stream:\t", odometry_stream, "\n\n")
+
+    nav = dimos.deploy(
+        Navigation,
+        target_position=target_position_stream,
+        map_stream=map_stream,
+        odometry=odometry_stream,
+    )
+
+    print("\n\nNAV Instance:\t", nav)
+
+    print("NAV Target:\t", nav.target_path)
+
+    print(f"NAV I/O (remote query):\n\n{nav.io().result()}")

@@ -40,6 +40,17 @@ repos:
         name: format json
         args: [ --autofix, --no-sort-keys ]
 
+  # - repo: local
+  #   hooks:
+  #     - id: mypy
+  #       name: Type check
+  #       # possible to also run within the dev image
+  #       #entry: "./bin/dev mypy"
+  #       entry: "./bin/mypy"
+  #       language: python
+  #       additional_dependencies: ["mypy==1.15.0", "numpy>=1.26.4,<2.0.0"]
+  #       types: [python]
+
   - repo: local
     hooks:
       - id: lfs_check
@@ -48,3 +59,5 @@ repos:
         pass_filenames: false
         entry: bin/lfs_check
         language: script
+
+        
