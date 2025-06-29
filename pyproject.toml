@@ -101,6 +101,9 @@ dependencies = [
     
     # Mapping
     "open3d",
+
+    # Zenoh
+    "eclipse-zenoh",
 ]
 
 [project.optional-dependencies]
