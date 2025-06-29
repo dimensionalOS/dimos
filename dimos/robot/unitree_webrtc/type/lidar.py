@@ -20,6 +20,7 @@ from typing import List, TypedDict
 import numpy as np
 import open3d as o3d
 
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.testing.helpers import color
 from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_datetime, to_human_readable
 from dimos.types.costmap import Costmap, pointcloud_to_costmap
@@ -51,8 +52,8 @@ class RawLidarMsg(TypedDict):
 
 
 @dataclass
-class LidarMessage(Timestamped):
-    ts: datetime
+class LidarMessage(PointCloud2):
+    ts: float
     origin: Vector
     resolution: float
     pointcloud: o3d.geometry.PointCloud
@@ -60,13 +61,13 @@ class LidarMessage(Timestamped):
     _costmap: Costmap = field(init=False, repr=False, default=None)
 
     @classmethod
-    def from_msg(cls, raw_message: RawLidarMsg) -> "LidarMessage":
+    def from_msg(cls: "LidarMessage", raw_message: RawLidarMsg) -> "LidarMessage":
         data = raw_message["data"]
         points = data["data"]["points"]
         point_cloud = o3d.geometry.PointCloud().cpu()
         point_cloud.points = o3d.utility.Vector3dVector(points)
         return cls(
-            ts=to_datetime(data["stamp"]),
+            ts=data["stamp"],
             origin=Vector(data["origin"]),
             resolution=data["resolution"],
             pointcloud=point_cloud,

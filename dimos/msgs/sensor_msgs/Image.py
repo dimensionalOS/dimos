@@ -38,31 +38,6 @@ class ImageFormat(Enum):
     GRAY16 = "mono16"
 
 
-# Header header        # Header timestamp should be acquisition time of image
-#                      # Header frame_id should be optical frame of camera
-#                      # origin of frame should be optical center of camera
-#                      # +x should point to the right in the image
-#                      # +y should point down in the image
-#                      # +z should point into to plane of the image
-#                      # If the frame_id here and the frame_id of the CameraInfo
-#                      # message associated with the image conflict
-#                      # the behavior is undefined
-#
-# uint32 height         # image height, that is, number of rows
-# uint32 width          # image width, that is, number of columns
-#
-# # The legal values for encoding are in file src/image_encodings.cpp
-# # If you want to standardize a new string format, join
-# # ros-users@lists.sourceforge.net and send an email proposing a new encoding.
-#
-# string encoding       # Encoding of pixels -- channel meaning, ordering, size
-#                       # taken from the list of strings in include/sensor_msgs/image_encodings.h
-#
-# uint8 is_bigendian    # is this data bigendian?
-# uint32 step           # Full row length in bytes
-# uint8[] data          # actual matrix data, size is (step * rows)
-
-
 @dataclass
 class Image(Timestamped):
     """Standardized image type with LCM integration."""
@@ -287,9 +262,7 @@ class Image(Timestamped):
         cv_image = self.to_opencv()
         return cv2.imwrite(filepath, cv_image)
 
-    def lcm_encode(
-        self, frame_id: Optional[str] = None, timestamp: Optional[float] = None
-    ) -> LCMImage:
+    def lcm_encode(self, frame_id: Optional[str] = None) -> LCMImage:
         """Convert to LCM Image message."""
         msg = LCMImage()
 
@@ -299,10 +272,7 @@ class Image(Timestamped):
         msg.header.frame_id = frame_id or self.frame_id
 
         # Set timestamp properly as Time object
-        if timestamp is not None:
-            msg.header.stamp.sec = int(timestamp)
-            msg.header.stamp.nsec = int((timestamp - int(timestamp)) * 1e9)
-        elif self.ts is not None:
+        if self.ts is not None:
             msg.header.stamp.sec = int(self.ts)
             msg.header.stamp.nsec = int((self.ts - int(self.ts)) * 1e9)
         else:
