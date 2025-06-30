@@ -16,14 +16,11 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from pprint import pprint
 from typing import Any, Generic, Optional, TypeVar, get_args, get_origin, get_type_hints
 
-from dask.distributed import Client, Future, get_worker
+from dask.distributed import get_worker
 from distributed.actor import Actor
-from distributed.client import get_client
 from distributed.worker import thread_state
-from reactivex.disposable import Disposable
 
 T = TypeVar("T")
 
@@ -95,18 +92,28 @@ class In(Generic[T]):
     def __str__(self):
         return f"{self.name}[{self.type_name}]"
 
+    def receive(self, message):
+        """Receive a message on this input stream."""
+        # For now, just pass - this can be extended later for processing
+        pass
+
 
 @dataclass
 class ActorReference:
     workerid: str
     actorid: str
     cls: type
+    _actor: Optional[Actor] = None  # Store the actual deployed actor
 
     def __str__(self):
         return f"{(blue(self.actorid))}{green(self.workerid)}"
 
     @property
     def actor(self):
+        # Return the stored actor if available, otherwise create a new one
+        if self._actor is not None:
+            return self._actor
+        # Fallback to manual creation (this may not work properly for remote calls)
         return Actor(cls=self.cls, address=self.workerid, key=self.actorid)
 
 
@@ -128,7 +135,12 @@ class Out(Generic[T]):
         self.type = type
         self.name = name
         if owner:
-            self.owner = owner.ref()
+            # If owner is an Actor object, store it in the reference
+            ref = owner.ref()
+            if hasattr(owner, "__class__") and hasattr(owner, "_io_loop"):
+                # This looks like a deployed Actor object
+                ref._actor = owner
+            self.owner = ref
 
     def __set_name__(self, owner, n):
         self.name = n
@@ -150,7 +162,11 @@ class Out(Generic[T]):
         for sub in self.subscribers:
             (actor_ref, in_name) = sub
             print("PUBLISHING", value, "to", actor_ref, "input", in_name)
-            actor_ref.actor.receive_message(in_name, value).result()
+            try:
+                actor_ref.actor.receive_message(in_name, value).result()
+            except Exception as e:
+                print(f"Error publishing to {actor_ref}: {e}")
+                raise e
 
     def __str__(self):
         selfstr = orange(f"{self.name}[{self.type_name}]")
@@ -295,11 +311,31 @@ def module(cls: type) -> type:
     cls.__init__ = wrapped_init
 
     def ref(self) -> ActorReference:
-        return ActorReference(
+        ref = ActorReference(
             cls=self.__class__,
             workerid=self.worker.address if self.worker else None,
             actorid=self.id if self.id else None,
         )
+
+        # The ref() method gets called on the original instance (on worker)
+        # but we need to store the Actor proxy that called it
+        # We can detect this by checking if we have thread_state indicating actor execution
+        try:
+            from distributed.actor import Actor
+            from distributed.worker import thread_state
+
+            # Check if we're being called from an actor context
+            if hasattr(thread_state, "actor") and thread_state.actor:
+                # We're in an actor execution context
+                # Create an Actor proxy that points to ourselves
+                actor_proxy = Actor(cls=self.__class__, address=self.worker.address, key=self.id)
+                ref._actor = actor_proxy
+            else:
+                pass  # Not in actor context, no need to set _actor
+        except Exception:
+            pass  # Error checking actor context, continue without setting _actor
+
+        return ref
 
     cls.ref = ref
 
