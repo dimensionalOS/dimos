@@ -16,6 +16,7 @@
 # limitations under the License.
 
 import time
+from threading import Thread
 
 from dimos.multiprocess.actors2.base import dimos
 from dimos.multiprocess.actors2.meta import In, Out, module, rpc
@@ -30,23 +31,17 @@ if dimos:  # otherwise ruff deletes the import
 
 
 @module
-class OdometryReceiver:
+class RobotClient:
     odometry: Out[Odometry]
 
     def __init__(self):
-        print("INIT ODOMETRY")
-        self.odometry = Out(Odometry, "odometry")
+        self.odometry = Out(Odometry, "odometry", self)
         from threading import Event
 
         self._stop_event = Event()
         self._thread = None
 
     def start(self):
-        print("ODOM START")
-
-        # run odomloop in a separate thread
-        from threading import Thread
-
         self._thread = Thread(target=self.odomloop)
         self._thread.start()
 
@@ -58,8 +53,11 @@ class OdometryReceiver:
                 if self._stop_event.is_set():
                     print("Stopping odometry stream")
                     return
-                print(odom)
+                # print(odom)
                 time.sleep(0.1)
+
+    async def subscribe(self, pubname: str, ref):
+        print("sub request received for", self.outputs[pubname], "from", ref)
 
     def stop(self):
         self._stop_event.set()
@@ -85,6 +83,9 @@ class Navigation:
         self.odometry = odometry
         self.target_path = Out(Path, "target_path")
 
+        print("NAVIGATION RECEIVED ODOMETRY STREAM", odometry)
+        print("GET STREAM FROM ODOM", odometry.get_stream())
+
 
 def test_introspect():
     """Test introspection of the Navigation module."""
@@ -102,16 +103,16 @@ def test_get_sub(dimos):
     print("\n")
     print("Target Position Stream:\t", target_position_stream)
     print("Map Stream:\t", map_stream)
-    print("Odometry Stream:\t", odometry_stream, "\n\n")
 
-    odom = dimos.deploy(OdometryReceiver)
-    odom.start().result()
+    robot = dimos.deploy(RobotClient)
+    robot.start().result()
+    print("Odometry Stream:\t", robot.odometry, "\n\n")
 
     nav = dimos.deploy(
         Navigation,
         target_position=target_position_stream,
         map_stream=map_stream,
-        odometry=odometry_stream,
+        odometry=robot.odometry,
     )
 
     print("\n\nNAV Instance:\t", nav)
@@ -120,7 +121,6 @@ def test_get_sub(dimos):
 
     print(f"NAV I/O (remote query):\n\n{nav.io().result()}")
 
-    time.sleep(2)
-    odom.stop()
-
     time.sleep(1)
+    robot.stop()
+    time.sleep(0.2)

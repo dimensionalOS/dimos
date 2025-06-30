@@ -15,12 +15,47 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Dict, Generic, List, Tuple, TypeVar, get_args, get_origin, get_type_hints
+from dataclasses import dataclass
+from pprint import pprint
+from typing import Any, Generic, Optional, TypeVar, get_args, get_origin, get_type_hints
 
-from distributed.protocol.serialize import dask_serialize
-from reactivex.subject import Subject
+from dask.distributed import Client, Future, get_worker
+from distributed.actor import Actor
+from distributed.client import get_client
+from distributed.worker import thread_state
+from reactivex.disposable import Disposable
 
 T = TypeVar("T")
+
+
+def green(text: str) -> str:
+    """Return the given text in green color."""
+    return f"\033[92m{text}\033[0m"
+
+
+def blue(text: str) -> str:
+    """Return the given text in blue color."""
+    return f"\033[94m{text}\033[0m"
+
+
+def red(text: str) -> str:
+    """Return the given text in red color."""
+    return f"\033[91m{text}\033[0m"
+
+
+def yellow(text: str) -> str:
+    """Return the given text in yellow color."""
+    return f"\033[93m{text}\033[0m"
+
+
+def cyan(text: str) -> str:
+    """Return the given text in cyan color."""
+    return f"\033[96m{text}\033[0m"
+
+
+def orange(text: str) -> str:
+    """Return the given text in orange color."""
+    return f"\033[38;5;208m{text}\033[0m"
 
 
 class StreamDef(Generic[T]):
@@ -37,7 +72,7 @@ class StreamDef(Generic[T]):
 
     @property
     def type_name(self) -> str:
-        getattr(self.type, "__name__", repr(self.type))
+        return getattr(self.type, "__name__", repr(self.type))
 
 
 def rpc(fn):
@@ -53,9 +88,6 @@ class In(Generic[T]):
     def __set_name__(self, owner, n):
         self.name = n
 
-    # def __get__(self, *_):
-    #    raise AttributeError("metadata only")
-
     @property
     def type_name(self) -> str:
         return getattr(self.type, "__name__", repr(self.type))
@@ -64,10 +96,36 @@ class In(Generic[T]):
         return f"{self.name}[{self.type_name}]"
 
 
+@dataclass
+class ActorReference:
+    workerid: str
+    actorid: str
+    cls: type
+
+    def __str__(self):
+        return f"{(blue(self.actorid))}/{green(self.workerid)}"
+
+    def actor(self):
+        return Actor(cls=self.cls, address=self.workerid, key=self.actorid)
+
+
+# pattern 2 ── query the live WorkerState objects directly
+def wid_to_addr(target, *, dask_scheduler=None):
+    for a, ws in dask_scheduler.workers.items():
+        if ws.server_id == target:  # exact match
+            return a
+    return None  # not found
+
+
 class Out(Generic[T]):
-    def __init__(self, type: type[T], name: str = "Out"):
+    owner: Optional[ActorReference] = None
+    context: Optional[ActorReference] = None
+
+    def __init__(self, type: type[T], name: str = "Out", owner: Any = None):
         self.type = type
         self.name = name
+        if owner:
+            self.owner = owner.ref()
 
     def __set_name__(self, owner, n):
         self.name = n
@@ -75,12 +133,33 @@ class Out(Generic[T]):
     # def __get__(self, *_):
     #    raise AttributeError("metadata only")
 
+    # pickle control
+    # def __getstate__(self):
+    #    state = self.__dict__.copy()
+    #
+    #    return state
+
     @property
     def type_name(self) -> str:
         return getattr(self.type, "__name__", repr(self.type))
 
     def __str__(self):
-        return f"{self.name}[{self.type_name}]"
+        selfstr = orange(f"{self.name}[{self.type_name}]")
+        if self.owner:
+            if self.context:
+                return f"{selfstr} from {self.owner} at {self.context}"
+            return f"{selfstr} at {self.owner}"
+
+        else:
+            return selfstr
+
+    def get_stream(self):
+        if not self.context:
+            raise ValueError(
+                "Output context is not within an Actor. Only actors can subscribe to Actors. keep the main loop free"
+            )
+
+        return self.owner.actor().subscribe(self.name, self.context).result()
 
 
 # ── decorator with *type-based* input / output detection ────────────────────
@@ -177,5 +256,39 @@ def module(cls: type) -> type:
         return self.__class__.io()
 
     setattr(cls, "io_instance", _io_instance)
+
+    # Wrap the __init__ method to add print statements
+    original_init = cls.__init__
+
+    def wrapped_init(self, *args, **kwargs):
+        try:
+            self.worker = get_worker()
+            self.id = thread_state.key
+
+        except ValueError:
+            self.worker = None
+
+        if self.worker:
+            print(f"[{cls.__name__}] deployed on worker {self.worker.id} as {self.id}")
+
+        newkwargs = {}
+
+        for k, v in kwargs.items():
+            if isinstance(v, Out):
+                v.context = self.ref()
+            newkwargs[k] = v
+
+        return original_init(self, *args, **newkwargs)
+
+    cls.__init__ = wrapped_init
+
+    def ref(self) -> ActorReference:
+        return ActorReference(
+            cls=self.__class__,
+            workerid=self.worker.address if self.worker else None,
+            actorid=self.id if self.id else None,
+        )
+
+    cls.ref = ref
 
     return cls
