@@ -30,8 +30,35 @@ if dimos:  # otherwise ruff deletes the import
     ...
 
 
+# we have these references but we actually want them to be just syntax sugar that facilitates
+# actors talking to each other, for example
+#
+# actor2 asks actor1 to subscribe to it's output1, and return it to actor1 input2 - this is a very flat message.
+# let's start with that?
+#
+# what we are getting in our inputs is actor2 50% of the data, we get actor1 and output1 reference
+#
+
+
+class Module:
+    ref = None
+
+    def set_reference(self, refernece):
+        self.ref = refernece
+
+    async def subscribe(self, out_name: str, actor_reference, in_name: str):
+        print(
+            f"SUBSCRIBE {self.__class__.__name__} OUTPUT {out_name} TO ACTOR {actor_reference} INPUT {in_name}"
+        )
+        self.outputs[out_name].subscribers.append((actor_reference, in_name))
+
+    async def receive_message(self, in_name, message):
+        print(f"RECEIVED MESSAGE IN {self.__class__.__name__} INPUT {in_name}: {message}")
+        self.inputs[in_name].receive(message)
+
+
 @module
-class RobotClient:
+class RobotClient(Module):
     odometry: Out[Odometry]
 
     def __init__(self):
@@ -54,10 +81,8 @@ class RobotClient:
                     print("Stopping odometry stream")
                     return
                 # print(odom)
+                self.odometry.publish(odom)
                 time.sleep(0.1)
-
-    async def subscribe(self, pubname: str, ref):
-        print("sub request received for", self.outputs[pubname], "from", ref)
 
     def stop(self):
         self._stop_event.set()
@@ -66,7 +91,7 @@ class RobotClient:
 
 
 @module
-class Navigation:
+class Navigation(Module):
     target_path: Out[Path]
 
     @rpc
@@ -84,7 +109,7 @@ class Navigation:
         self.target_path = Out(Path, "target_path")
 
         print("NAVIGATION RECEIVED ODOMETRY STREAM", odometry)
-        print("GET STREAM FROM ODOM", odometry.get_stream())
+        print("GET STREAM FROM ODOM", odometry.subscribe())
 
 
 def test_introspect():

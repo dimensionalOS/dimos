@@ -103,8 +103,9 @@ class ActorReference:
     cls: type
 
     def __str__(self):
-        return f"{(blue(self.actorid))}/{green(self.workerid)}"
+        return f"{(blue(self.actorid))}{green(self.workerid)}"
 
+    @property
     def actor(self):
         return Actor(cls=self.cls, address=self.workerid, key=self.actorid)
 
@@ -120,6 +121,8 @@ def wid_to_addr(target, *, dask_scheduler=None):
 class Out(Generic[T]):
     owner: Optional[ActorReference] = None
     context: Optional[ActorReference] = None
+    inputkey: Optional[str] = None
+    subscribers: list[tuple[ActorReference, str]] = []
 
     def __init__(self, type: type[T], name: str = "Out", owner: Any = None):
         self.type = type
@@ -130,18 +133,24 @@ class Out(Generic[T]):
     def __set_name__(self, owner, n):
         self.name = n
 
-    # def __get__(self, *_):
-    #    raise AttributeError("metadata only")
-
     # pickle control
-    # def __getstate__(self):
-    #    state = self.__dict__.copy()
-    #
-    #    return state
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["subscribers"] = None
+        return state
 
     @property
     def type_name(self) -> str:
         return getattr(self.type, "__name__", repr(self.type))
+
+    def publish(self, value: T):
+        if self.context:
+            raise ValueError("You cannot publish to Out from a remote Actor")
+
+        for sub in self.subscribers:
+            (actor_ref, in_name) = sub
+            print("PUBLISHING", self.name, "to", actor_ref, "input", in_name)
+            actor_ref.actor.receive_message(in_name, value).result()
 
     def __str__(self):
         selfstr = orange(f"{self.name}[{self.type_name}]")
@@ -153,13 +162,13 @@ class Out(Generic[T]):
         else:
             return selfstr
 
-    def get_stream(self):
+    def subscribe(self):
         if not self.context:
             raise ValueError(
                 "Output context is not within an Actor. Only actors can subscribe to Actors. keep the main loop free"
             )
 
-        return self.owner.actor().subscribe(self.name, self.context).result()
+        return self.owner.actor.subscribe(self.name, self.context, self.inputkey).result()
 
 
 # ── decorator with *type-based* input / output detection ────────────────────
@@ -276,6 +285,7 @@ def module(cls: type) -> type:
         for k, v in kwargs.items():
             if isinstance(v, Out):
                 v.context = self.ref()
+                v.inputkey = k
             newkwargs[k] = v
 
         return original_init(self, *args, **newkwargs)
