@@ -86,7 +86,9 @@ def test_introspection():
 
 
 def test_instance_introspection():
-    nav = Navigation(1, 2, 3)
+    robot = RobotClient()
+
+    nav = Navigation(target_position="bla", map_stream="bla", odometry=robot.odometry)
     """Test introspection of the Navigation module."""
     assert hasattr(nav, "inputs")
     assert hasattr(nav, "rpcs")

@@ -31,13 +31,13 @@ def rpc(fn):
 class State(enum.Enum):
     DORMANT = "dormant"
     READY = "ready"
+    CONNECTED = "connected"
 
 
 class Stream(Generic[T]):
-    def __init__(self, type: type[T], name: str = "In", owner: Any = None):
+    def __init__(self, type: type[T], name: str):
         self.type = type
         self.name = name
-        self.owner = owner
 
     def __set_name__(self, owner, n):
         self.name = n
@@ -47,29 +47,49 @@ class Stream(Generic[T]):
         return getattr(self.type, "__name__", repr(self.type))
 
     def __str__(self):
-        return self.color()(f"{self.name}[{self.type_name}]")
+        return self.color()(f"{self.name}[{self.type_name}] {self.state.value}")
 
     def color(self) -> Callable[[str], str]:
         if self.state == State.DORMANT:
             return colors.orange
         if self.state == State.READY:
+            return colors.blue
+        if self.state == State.CONNECTED:
             return colors.green
+
+    @property
+    def state(self) -> State:
+        raise NotImplementedError("State is not implemented for abstract stream")
+
+
+class In(Stream[T]):
+    def __init__(self, type: type[T], name: str = "In", source: Out = None):
+        self.source = source
+        super().__init__(type, name)
+
+    def __str__(self):
+        return f"IN {super().__str__()}"
+
+    @property
+    def state(self) -> State:
+        if not self.source:
+            return State.DORMANT
+        return State.CONNECTED
+
+
+class Out(Stream[T]):
+    def __init__(self, type: type[T], name: str = "Out", owner: Any = None):
+        self.owner = owner
+        super().__init__(type, name)
+
+    def __str__(self):
+        return f"OUT {super().__str__()}"
 
     @property
     def state(self) -> State:
         if not self.owner:
             return State.DORMANT
         return State.READY
-
-
-class In(Stream[T]):
-    def __str__(self):
-        return f"IN {super().__str__()}"
-
-
-class Out(Stream[T]):
-    def __str__(self):
-        return f"OUT {super().__str__()}"
 
 
 class Module:
@@ -167,7 +187,16 @@ def module(cls: type) -> type:
         for name, inp in self.inputs.items():
             inp.owner = self
 
-        return original_init(self, *args, **kwargs)
+        new_kwargs = {}
+        for k, val in kwargs.items():
+            if isinstance(val, Out):
+                new_kwargs[k] = In(val.type, val.name, val)
+                self.inputs[k] = new_kwargs[k]
+            else:
+                # here we should do a validation of input, and throw
+                new_kwargs[k] = val
+
+        return original_init(self, *args, **new_kwargs)
 
     cls.__init__ = init_override
 
