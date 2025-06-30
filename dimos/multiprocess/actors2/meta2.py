@@ -137,13 +137,7 @@ class Out(Generic[T]):
     def __init__(self, type: type[T], name: str = "Out", owner: Any = None):
         self.type = type
         self.name = name
-        if owner:
-            # If owner is an Actor object, store it in the reference
-            ref = owner.ref()
-            if hasattr(owner, "__class__") and hasattr(owner, "_io_loop"):
-                # This looks like a deployed Actor object
-                ref._actor = owner
-            self.owner = ref
+        self.owner = owner
 
     def __set_name__(self, owner, n):
         self.name = n
@@ -152,6 +146,8 @@ class Out(Generic[T]):
     def __getstate__(self):
         state = self.__dict__.copy()
         state["subscribers"] = None
+        if state.get("owner"):
+            state["owner"] = state["owner"].actor
         return state
 
     @property
@@ -192,49 +188,9 @@ class Out(Generic[T]):
         return self.owner.actor.subscribe(self.name, self.context, self.inputkey).result()
 
 
-# ── decorator with *type-based* input / output detection ────────────────────
-def module(cls: type) -> type:
-    cls.inputs = dict(getattr(cls, "inputs", {}))
-    cls.outputs = dict(getattr(cls, "outputs", {}))
-    cls.rpcs = dict(getattr(cls, "rpcs", {}))
-
-    cls_type_hints = get_type_hints(cls, include_extras=True)
-
-    for n, ann in cls_type_hints.items():
-        origin = get_origin(ann)
-        # print(n, ann, origin)
-        if origin is Out:
-            inner_type, *_ = get_args(ann) or (Any,)
-            md = Out(inner_type, n)
-            cls.outputs[n] = md
-            # make attribute accessible via instance / class
-            setattr(cls, n, md)
-
-    # RPCs
-    for n, a in cls.__dict__.items():
-        if callable(a) and getattr(a, "__rpc__", False):
-            cls.rpcs[n] = a
-
-    sig = inspect.signature(cls.__init__)
-    type_hints = get_type_hints(cls.__init__, include_extras=True)
-
-    # print(sig.parameters)
-    for name, _ in sig.parameters.items():
-        if name == "self":
-            continue
-
-        md = None
-        ann = type_hints.get(name)
-        origin = get_origin(ann)
-
-        if origin is In:
-            inner_type, *_ = get_args(ann) or (Any,)
-            md = In(inner_type, name)
-
-        if md is not None:
-            cls.inputs[name] = md
-
-    def _io_inner(c):
+class Module:
+    @classmethod
+    def io(c):
         def boundary_iter(iterable, first, middle, last):
             l = list(iterable)
             for idx, sd in enumerate(l):
@@ -279,67 +235,80 @@ def module(cls: type) -> type:
 
         return "\n".join(inputs + [box(c.__name__)] + outputs + rpcs)
 
-    setattr(cls, "io", classmethod(_io_inner))
 
-    # instance method simply forwards to classmethod
-    def _io_instance(self):
-        return self.__class__.io()
-
-    setattr(cls, "io_instance", _io_instance)
-
-    # Wrap the __init__ method to add print statements
-    original_init = cls.__init__
-
-    def wrapped_init(self, *args, **kwargs):
+def init_wrapper(cls, original_init):
+    def new_init(self, *args, **kwargs):
         try:
             self.worker = get_worker()
-            self.id = thread_state.key
 
         except ValueError:
             self.worker = None
 
         if self.worker:
-            print(f"[{cls.__name__}] deployed on worker {self.worker.id} as {self.id}")
+            print(f"[{cls.__name__}] deployed on worker {self.worker.id} as {self.actor}")
 
-        newkwargs = {}
+        for k, v in self.outputs.items():
+            print("Setting output owner to", type(self.actor))
+            self.outputs[k] = Out(v.type, v.name, owner=self.actor)
 
-        for k, v in kwargs.items():
-            if isinstance(v, Out):
-                v.context = self.ref()
-                v.inputkey = k
-            newkwargs[k] = v
+        return original_init(self, *args, **kwargs)
 
-        return original_init(self, *args, **newkwargs)
+    return new_init
 
-    cls.__init__ = wrapped_init
 
-    def ref(self) -> ActorReference:
-        ref = ActorReference(
-            cls=self.__class__,
-            workerid=self.worker.address if self.worker else None,
-            actorid=self.id if self.id else None,
-        )
+def module(cls: type) -> type:
+    cls.inputs = dict(getattr(cls, "inputs", {}))
+    cls.outputs = dict(getattr(cls, "outputs", {}))
+    cls.rpcs = dict(getattr(cls, "rpcs", {}))
 
-        # The ref() method gets called on the original instance (on worker)
-        # but we need to store the Actor proxy that called it
-        # We can detect this by checking if we have thread_state indicating actor execution
-        try:
-            from distributed.actor import Actor
-            from distributed.worker import thread_state
+    cls_type_hints = get_type_hints(cls, include_extras=True)
 
-            # Check if we're being called from an actor context
-            if hasattr(thread_state, "actor") and thread_state.actor:
-                # We're in an actor execution context
-                # Create an Actor proxy that points to ourselves
-                actor_proxy = Actor(cls=self.__class__, address=self.worker.address, key=self.id)
-                ref._actor = actor_proxy
-            else:
-                pass  # Not in actor context, no need to set _actor
-        except Exception:
-            pass  # Error checking actor context, continue without setting _actor
+    for n, ann in cls_type_hints.items():
+        origin = get_origin(ann)
+        # print(n, ann, origin)
+        if origin is Out:
+            inner_type, *_ = get_args(ann) or (Any,)
+            md = Out(inner_type, n)
+            cls.outputs[n] = md
+            # make attribute accessible via instance / class
+            setattr(cls, n, md)
 
-        return ref
+    # RPCs
+    for n, a in cls.__dict__.items():
+        if callable(a) and getattr(a, "__rpc__", False):
+            cls.rpcs[n] = a
 
-    cls.ref = ref
+    sig = inspect.signature(cls.__init__)
+    type_hints = get_type_hints(cls.__init__, include_extras=True)
 
+    # print(sig.parameters)
+    for name, _ in sig.parameters.items():
+        if name == "self":
+            continue
+
+        md = None
+        ann = type_hints.get(name)
+        origin = get_origin(ann)
+
+        if origin is In:
+            inner_type, *_ = get_args(ann) or (Any,)
+            md = In(inner_type, name)
+
+        if md is not None:
+            cls.inputs[name] = md
+
+    original_init = cls.__init__
+    cls.__original_init__ = init_wrapper(cls, original_init)
+
+    def store_init(self, *args, **kwargs):
+        self._initargs = {"args": args, "kwargs": kwargs}
+
+    cls.__init__ = store_init
+
+    def set_ref(self, actor):
+        self.actor = actor
+        self.__original_init__(*self._initargs["args"], **self._initargs["kwargs"])
+        self._initargs = None
+
+    cls.set_ref = set_ref
     return cls

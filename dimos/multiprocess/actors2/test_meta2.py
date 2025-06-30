@@ -19,7 +19,7 @@ import time
 from threading import Event, Thread
 
 from dimos.multiprocess.actors2.base import dimos
-from dimos.multiprocess.actors2.meta import ActorReference, In, Out, module, rpc
+from dimos.multiprocess.actors2.meta2 import ActorReference, In, Module, Out, module, rpc
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.path import Path
@@ -37,19 +37,6 @@ if dimos:  # otherwise ruff deletes the import
 # let's start with that?
 #
 # what we are getting in our inputs is actor2 50% of the data, we get actor1 and output1 reference
-#
-
-
-class Module:
-    def subscribe(self, out_name: str, actor_reference: ActorReference, in_name: str):
-        print(
-            f"{self.__class__.__name__} {out_name} SUB REQ from {actor_reference} pass into INPUT {in_name}"
-        )
-        self.outputs[out_name].subscribers.append((actor_reference, in_name))
-
-    def receive_message(self, in_name, message):
-        # print(f"RECEIVED MESSAGE IN {self.__class__.__name__} INPUT {in_name}: {message}")
-        self.inputs[in_name].receive(message)
 
 
 @module
@@ -72,7 +59,6 @@ class RobotClient(Module):
         while not self._stop_event.is_set():
             for odom in odomdata.iterate():
                 if self._stop_event.is_set():
-                    print("Stopping odometry stream")
                     return
                 # print(odom)
                 odom.pubtime = time.perf_counter()
@@ -104,8 +90,8 @@ class Navigation(Module):
         self.target_path = Out(Path, "target_path")
 
     def start(self):
-        print("navigation odom stream is", self.odometry)
-        print("calling subscribe", self.odometry.subscribe())
+        print("navigation odom stream is, subscribing", self.odometry)
+        self.odometry.subscribe(print)
 
 
 def test_introspect():
@@ -116,77 +102,7 @@ def test_introspect():
     print("\n\n\n" + Navigation.io(), "\n\n")
 
 
-def test_get_sub(dimos):
-    target_position_stream = Out(Vector, "target_position")
-    map_stream = Out(Map, "map")
-    odometry_stream = Out(Odometry, "odometry")
-
-    print("\n")
-    print("Target Position Stream:\t", target_position_stream)
-    print("Map Stream:\t", map_stream)
-
+def test_introspect_instance(dimos):
     robot = dimos.deploy(RobotClient)
-    print("Odometry Stream:\t", robot.odometry, "\n\n")
 
-    robot.start().result()
-
-    nav = dimos.deploy(
-        Navigation,
-        target_position=target_position_stream,
-        map_stream=map_stream,
-        odometry=robot.odometry,
-    )
-
-    print("\n\nNAV Instance:\t", nav)
-
-    print("NAV Target:\t", nav.target_path)
-
-    print(f"NAV I/O (remote query):\n\n{nav.io().result()}")
-
-    nav.start().result()
-
-    time.sleep(5)
-    robot.stop()
-    time.sleep(0.2)
-
-
-def test_final_working_solution(dimos):
-    """Final test confirming the actor communication solution works completely."""
-
-    # Deploy actors
-    robot = dimos.deploy(RobotClient)
-    robot.start().result()
-
-    nav = dimos.deploy(
-        Navigation,
-        target_position=Out(Vector, "target_position"),
-        map_stream=Out(Map, "map"),
-        odometry=robot.odometry,
-    )
-
-    # Verify actor references are properly set
-    robot_ref = robot.ref().result()
-    nav_ref = nav.ref().result()
-
-    print(f"✅ Robot ref has _actor: {robot_ref._actor is not None}")
-    print(f"✅ Nav ref has _actor: {nav_ref._actor is not None}")
-
-    # Start navigation (triggers subscription)
-    nav.start().result()
-    print("✅ Navigation started and subscribed to robot odometry")
-
-    # Give it a short time to receive messages
-    print("📡 Testing message delivery for 2 seconds...")
-    time.sleep(2)
-
-    # Clean shutdown
-    robot.stop().result()
-    print("🏁 Test completed successfully - Actor communication is WORKING!")
-
-    print("\n" + "=" * 60)
-    print("🎉 SOLUTION SUMMARY:")
-    print("✅ Fixed ActorReference to store deployed Actor objects")
-    print("✅ Modified @module decorator to detect actor context")
-    print("✅ Actors now communicate successfully via proper references")
-    print("✅ The manual actor reference hydration issue is SOLVED!")
-    print("=" * 60)
+    print(robot.odometry)
