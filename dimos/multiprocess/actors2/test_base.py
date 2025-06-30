@@ -17,6 +17,7 @@ from threading import Event, Thread
 
 from dimos.multiprocess.actors2.base import In, Module, Out, RemoteOut, module, rpc
 from dimos.multiprocess.actors2.base_dask import dimos
+from dimos.protocol.pubsub.lcmpubsub import Topic as LCMTopic
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -30,9 +31,9 @@ class RobotClient(Module):
     odometry: Out[Odometry]
     lidar: Out[LidarMessage]
 
-    def __init__(self):
+    def __init__(self, mov: In[Vector]):
         self.odometry = Out(Odometry, "odometry", self)
-
+        self.mov = mov
         self._stop_event = Event()
         self._thread = None
 
@@ -86,7 +87,6 @@ class Navigation(Module):
 
     @rpc
     def start(self):
-        print("navigation odom stream is, subscribing", self.odometry)
         self.odometry.subscribe(
             lambda msg: print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
         )
@@ -109,7 +109,8 @@ def test_stream_introspection():
 
 
 def test_instance_introspection():
-    robot = RobotClient()
+    mov = RemoteOut[Vector](Vector, "mov")
+    robot = RobotClient(mov=mov)
     print(robot)
 
     target_stream = Out[Vector](Vector, "map")
@@ -126,7 +127,8 @@ def test_instance_introspection():
 
 
 def test_deployment(dimos):
-    robot = dimos.deploy(RobotClient)
+    mov = RemoteOut[Vector](Vector, "mov")
+    robot = dimos.deploy(RobotClient, mov=mov)
     target_stream = RemoteOut[Vector](Vector, "map")
 
     print("\n")
@@ -135,11 +137,39 @@ def test_deployment(dimos):
     print("odom stream", robot.odometry)
 
     nav = dimos.deploy(
-        Navigation, target_position=target_stream, lidar=robot.lidar, odometry=robot.odometry
+        Navigation,
+        target_position=target_stream,
+        lidar=robot.lidar,
+        odometry=robot.odometry,
     )
     print("\n\n\n" + robot.io().result(), "\n")
     print(nav.io().result(), "\n\n")
 
     robot.start().result()
     nav.start().result()
+    time.sleep(2)
+
+
+async def test_alt_transport(dimos):
+    mov = RemoteOut[Vector](Vector, "mov")
+    robot = dimos.deploy(RobotClient, mov=mov)
+
+    target_stream = RemoteOut[Vector](Vector, "map")
+
+    print("lidar stream", robot.lidar)
+    print("target stream", target_stream)
+    print("odom stream", robot.odometry)
+
+    robot.odometry.transport = LCMTopic("/odometry", Odometry)
+    # robot.lidar.transport = ZENOHTopic("/odometry", Odometry)
+
+    nav = dimos.deploy(
+        Navigation, target_position=target_stream, lidar=robot.lidar, odometry=robot.odometry
+    )
+
+    print("\n\n\n" + robot.io().result(), "\n")
+    print(nav.io().result(), "\n\n")
+
+    await robot.start()
+    await nav.start()
     time.sleep(2)

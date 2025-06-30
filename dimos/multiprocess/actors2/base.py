@@ -100,7 +100,7 @@ class In(Stream[T]):
             raise ValueError("Cannot subscribe to an unconnected In stream")
 
         if self.state != State.FLOWING:
-            print("SUB REQ", self.source, "-->", self.owner, self.name)
+            # print("SUB REQ", self.source, "-->", self.owner, self.name)
             self.source.subscribe(self)
         self.subscribers.append(callback)
 
@@ -138,7 +138,7 @@ class RemoteOut(BaseOut[T]):
     owner: Actor
 
     def subscribe(self, inp: In[T]):
-        print("calling sub on", self.owner, "for", self.name)
+        # print("calling sub on", self.owner, "for", self.name)
         return self.owner.subscribe(self.name, inp).result()
 
 
@@ -157,17 +157,16 @@ class Out(BaseOut[T]):
             sub.owner.receive_msg(sub.name, value)
 
     def subscribe(self, remote_input):
-        print(self, "adding remote input to subscribers", remote_input)
+        # print(self, "adding remote input to subscribers", remote_input)
         remote_input.owner._try_bind_worker_client()
         self.subscribers.append(remote_input)
-        print(self.subscribers)
 
 
 class Module:
     ref = None
 
     def subscribe(self, output_name, remote_input):
-        print(f"Actor {self} received sub request for", output_name, "from", remote_input)
+        # print(f"Actor {self} received sub request for", output_name, "from", remote_input)
         getattr(self, output_name).subscribe(remote_input)
 
     def receive_msg(self, input_name, msg):
