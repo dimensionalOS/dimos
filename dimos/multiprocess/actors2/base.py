@@ -65,8 +65,9 @@ class Stream(Generic[T]):
 
 
 class In(Stream[T]):
-    def __init__(self, type: type[T], name: str = "In", source: Out = None):
+    def __init__(self, type: type[T], name: str = "In", owner: any = None, source: Out = None):
         self.source = source
+        self.owner = owner
         super().__init__(type, name)
 
     def __str__(self):
@@ -84,7 +85,8 @@ class In(Stream[T]):
     def subscribe(self, callback: callable):
         if not self.source:
             raise ValueError("Cannot subscribe to an unconnected In stream")
-        raise NotImplementedError("State is not implemented for abstract stream")
+
+        print("SUB REQ", self.source, "-->", self.owner, self.name)
 
 
 class BaseOut(Stream[T]):
@@ -98,19 +100,6 @@ class BaseOut(Stream[T]):
         if self.state == State.READY:
             return f"{self.__class__.__name__} {super().__str__()} @ {self.owner}"
         return f"{self.__class__.__name__} {super().__str__()}"
-
-    # # pickle control
-    # def __getstate__(self):
-    #     state = {}
-    #     state["type"] = self.type
-    #     state["name"] = self.name
-
-    #     if self.owner:
-    #         if type(self.owner) is Actor:
-    #             state["owner"] = self.owner
-    #         else:
-    #             state["owner"] = self.owner.ref
-    #     return state
 
     @property
     def state(self) -> State:
@@ -131,6 +120,9 @@ class Out(BaseOut[T]):
 
     def __reduce__(self) -> Any:
         return (RemoteOut, (self.type, self.name, self.owner.ref if self.owner else None))
+
+    def publish(self, value: T):
+        print("PUB REQ", self.owner, value)
 
 
 class Module:
@@ -240,7 +232,7 @@ def module(cls: type) -> type:
         new_kwargs = {}
         for k, val in kwargs.items():
             if isinstance(val, RemoteOut):
-                new_kwargs[k] = In(val.type, val.name, val)
+                new_kwargs[k] = In(val.type, val.name, self, val)
                 self.inputs[k] = new_kwargs[k]
             else:
                 # here we should do a validation of input, and throw

@@ -141,4 +141,5 @@ def test_deployment(dimos):
     print(nav.io().result(), "\n\n")
 
     robot.start().result()
-    # time.sleep(2)
+    nav.start().result()
+    time.sleep(2)
