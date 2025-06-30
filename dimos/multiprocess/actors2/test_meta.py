@@ -20,6 +20,7 @@ from threading import Event, Thread
 
 from dimos.multiprocess.actors2.base import dimos
 from dimos.multiprocess.actors2.meta import ActorReference, In, Out, module, rpc
+from dimos.robot.unitree_webrtc.type.lidar import Lidar
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.path import Path
@@ -55,6 +56,7 @@ class Module:
 @module
 class RobotClient(Module):
     odometry: Out[Odometry]
+    lidar: Out[Lidar]
 
     def __init__(self):
         self.odometry = Out(Odometry, "odometry", self)
@@ -68,6 +70,9 @@ class RobotClient(Module):
 
     def odomloop(self):
         odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
+        lidardata = SensorReplay("office_lidar", autocast=Lidar.from_msg)
+
+        lidariter = lidardata.iterate()
         self._stop_event.clear()
         while not self._stop_event.is_set():
             for odom in odomdata.iterate():
@@ -77,6 +82,7 @@ class RobotClient(Module):
                 # print(odom)
                 odom.pubtime = time.perf_counter()
                 self.odometry.publish(odom)
+                self.lidar.publish(next(lidariter))
                 time.sleep(0.1)
 
     def stop(self):

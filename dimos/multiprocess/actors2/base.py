@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import copyreg
 import enum
 import inspect
 from typing import Any, Callable, Generic, TypeVar, get_args, get_origin, get_type_hints
@@ -21,6 +22,9 @@ from typing import Any, Callable, Generic, TypeVar, get_args, get_origin, get_ty
 from distributed.actor import Actor
 
 import dimos.multiprocess.actors2.colors as colors
+from dimos.multiprocess.actors2.o3dpickle import register_picklers
+
+register_picklers()
 
 T = TypeVar("T")
 
@@ -149,13 +153,12 @@ class Out(BaseOut[T]):
         return (RemoteOut, (self.type, self.name, self.owner.ref if self.owner else None))
 
     def publish(self, value: T):
-        print("PUB REQ", self.owner, value)
         for sub in self.subscribers:
-            print("PUBLISHING", value, "to", sub)
             sub.owner.receive_msg(sub.name, value)
 
     def subscribe(self, remote_input):
         print(self, "adding remote input to subscribers", remote_input)
+        remote_input.owner._try_bind_worker_client()
         self.subscribers.append(remote_input)
         print(self.subscribers)
 

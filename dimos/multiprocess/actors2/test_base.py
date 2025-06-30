@@ -17,6 +17,7 @@ from threading import Event, Thread
 
 from dimos.multiprocess.actors2.base import In, Module, Out, RemoteOut, module, rpc
 from dimos.multiprocess.actors2.base_dask import dimos
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.path import Path
@@ -27,33 +28,42 @@ from dimos.utils.testing import SensorReplay
 @module
 class RobotClient(Module):
     odometry: Out[Odometry]
+    lidar: Out[LidarMessage]
 
     def __init__(self):
         self.odometry = Out(Odometry, "odometry", self)
+
         self._stop_event = Event()
         self._thread = None
 
-    @rpc
     def start(self):
         self._thread = Thread(target=self.odomloop)
         self._thread.start()
 
     def odomloop(self):
         odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
+        lidardata = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
+
+        lidariter = lidardata.iterate()
         self._stop_event.clear()
         while not self._stop_event.is_set():
             for odom in odomdata.iterate():
                 if self._stop_event.is_set():
+                    print("Stopping odometry stream")
                     return
+                # print(odom)
                 odom.pubtime = time.perf_counter()
                 self.odometry.publish(odom)
+
+                lidarmsg = next(lidariter)
+                lidarmsg.pubtime = time.perf_counter()
+                self.lidar.publish(lidarmsg)
                 time.sleep(0.1)
 
-    @rpc
     def stop(self):
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=1.0)
+            self._thread.join(timeout=1.0)  # Wait up to 1 second for clean shutdown
 
 
 @module
@@ -66,18 +76,23 @@ class Navigation(Module):
     def __init__(
         self,
         target_position: In[Vector],
-        map_stream: In[Map],
+        lidar: In[LidarMessage],
         odometry: In[Odometry],
     ):
         self.target_position = target_position
-        self.map_stream = map_stream
+        self.lidar = lidar
         self.odometry = odometry
         self.target_path = Out(Path, "target_path")
 
     @rpc
     def start(self):
         print("navigation odom stream is, subscribing", self.odometry)
-        self.odometry.subscribe(print)
+        self.odometry.subscribe(
+            lambda msg: print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
+        )
+        self.lidar.subscribe(
+            lambda msg: print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
+        )
 
 
 def test_introspection():
@@ -97,46 +112,31 @@ def test_instance_introspection():
     robot = RobotClient()
     print(robot)
 
-    map_stream = Out[Map](Map, "map")
     target_stream = Out[Vector](Vector, "map")
     print("\n")
-    print("map stream", map_stream)
+    print("lidar stream", robot.lidar)
     print("target stream", target_stream)
     print("odom stream", robot.odometry)
 
-    nav = Navigation(target_position=target_stream, map_stream=map_stream, odometry=robot.odometry)
+    nav = Navigation(target_position=target_stream, lidar=robot.lidar, odometry=robot.odometry)
     """Test introspection of the Navigation module."""
     assert hasattr(nav, "inputs")
     assert hasattr(nav, "rpcs")
     print("\n\n\n" + nav.io(), "\n\n")
 
 
-#    nav.start()
-
-
 def test_deployment(dimos):
     robot = dimos.deploy(RobotClient)
-
-    map_stream = RemoteOut[Map](Map, "map")
     target_stream = RemoteOut[Vector](Vector, "map")
-    odom_stream = robot.odometry
+
     print("\n")
-    print("map stream", map_stream)
+    print("lidar stream", robot.lidar)
     print("target stream", target_stream)
-    print("odom stream", odom_stream)
-
-    # # print(type(odom_stream.owner))
-    # # print(type(robot))
-
-    # # out = Out(Odometry, "odometry", robot)
+    print("odom stream", robot.odometry)
 
     nav = dimos.deploy(
-        Navigation, target_position=target_stream, map_stream=map_stream, odometry=odom_stream
+        Navigation, target_position=target_stream, lidar=robot.lidar, odometry=robot.odometry
     )
-
-    # # """Test introspection of the Navigation module."""
-    # # assert hasattr(nav, "inputs")
-    # # assert hasattr(nav, "rpcs")
     print("\n\n\n" + robot.io().result(), "\n")
     print(nav.io().result(), "\n\n")
 
