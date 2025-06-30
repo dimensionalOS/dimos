@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import inspect
+import time
 from dataclasses import dataclass
 from typing import Any, Generic, Optional, TypeVar, get_args, get_origin, get_type_hints
 
@@ -95,6 +96,7 @@ class In(Generic[T]):
     def receive(self, message):
         """Receive a message on this input stream."""
         # For now, just pass - this can be extended later for processing
+        print((time.perf_counter() - message.pubtime) * 1000)
         pass
 
 
@@ -161,7 +163,7 @@ class Out(Generic[T]):
 
         for sub in self.subscribers:
             (actor_ref, in_name) = sub
-            print("PUBLISHING", value, "to", actor_ref, "input", in_name)
+            print("PUB", value, "\nto", actor_ref, "input", in_name)
             try:
                 actor_ref.actor.receive_message(in_name, value).result()
             except Exception as e:

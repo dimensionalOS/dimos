@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pickle
+
 import numpy as np
 import pytest
 from lcm_msgs.geometry_msgs import Pose as LCMPose
@@ -523,12 +525,31 @@ def test_pose_parametrized_orientations(qx, qy, qz, qw):
 
 def test_lcm_encode_decode():
     """Test encoding and decoding of Pose to/from binary LCM format."""
-    pose_source = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
 
-    binary_msg = pose_source.lcm_encode()
+    def encodepass():
+        pose_source = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
+        binary_msg = pose_source.lcm_encode()
+        pose_dest = Pose.lcm_decode(binary_msg)
+        assert isinstance(pose_dest, Pose)
+        assert pose_dest is not pose_source
+        assert pose_dest == pose_source
 
-    pose_dest = Pose.lcm_decode(binary_msg)
+    import timeit
 
-    assert isinstance(pose_dest, Pose)
-    assert pose_dest is not pose_source
-    assert pose_dest == pose_source
+    print(f"{timeit.timeit(encodepass, number=1000)} ms per cycle")
+
+
+def test_pickle_encode_decode():
+    """Test encoding and decoding of Pose to/from binary LCM format."""
+
+    def encodepass():
+        pose_source = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
+        binary_msg = pickle.dumps(pose_source)
+        pose_dest = pickle.loads(binary_msg)
+        assert isinstance(pose_dest, Pose)
+        assert pose_dest is not pose_source
+        assert pose_dest == pose_source
+
+    import timeit
+
+    print(f"{timeit.timeit(encodepass, number=1000)} ms per cycle")

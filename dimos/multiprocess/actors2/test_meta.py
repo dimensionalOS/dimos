@@ -16,7 +16,7 @@
 # limitations under the License.
 
 import time
-from threading import Thread
+from threading import Event, Thread
 
 from dimos.multiprocess.actors2.base import dimos
 from dimos.multiprocess.actors2.meta import ActorReference, In, Out, module, rpc
@@ -48,7 +48,7 @@ class Module:
         self.outputs[out_name].subscribers.append((actor_reference, in_name))
 
     def receive_message(self, in_name, message):
-        print(f"RECEIVED MESSAGE IN {self.__class__.__name__} INPUT {in_name}: {message}")
+        # print(f"RECEIVED MESSAGE IN {self.__class__.__name__} INPUT {in_name}: {message}")
         self.inputs[in_name].receive(message)
 
 
@@ -58,7 +58,6 @@ class RobotClient(Module):
 
     def __init__(self):
         self.odometry = Out(Odometry, "odometry", self)
-        from threading import Event
 
         self._stop_event = Event()
         self._thread = None
@@ -76,6 +75,7 @@ class RobotClient(Module):
                     print("Stopping odometry stream")
                     return
                 # print(odom)
+                odom.pubtime = time.perf_counter()
                 self.odometry.publish(odom)
                 time.sleep(0.1)
 
