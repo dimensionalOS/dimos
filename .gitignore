@@ -35,3 +35,10 @@ package-lock.json
 
 # Ignore build artifacts
 dist/
+
+data/models_clip
+FastSAM-x.pt
+yolo11n.pt
+data/assets/trimmed_video_office.mov
+data/models_fastsam/FastSAM-s.onnx
+data/models_yolo/yolo11n.onnx

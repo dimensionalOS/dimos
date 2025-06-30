@@ -15,6 +15,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 from reactivex.observable import Observable
+from dimos.types.vector import Vector
 
 __all__ = ["ConnectionInterface"]
 
@@ -27,13 +28,14 @@ class ConnectionInterface(ABC):
     """
 
     @abstractmethod
-    def move(self, x: float, y: float, yaw: float, duration: float = 0.0) -> bool:
+    def move(self, velocity: Vector, duration: float = 0.0) -> bool:
         """Send movement command to the robot using velocity commands.
 
         Args:
-            x: Forward/backward velocity (m/s)
-            y: Left/right velocity (m/s)
-            yaw: Rotational velocity (rad/s)
+            velocity: Velocity vector [x, y, yaw] where:
+                     x: Forward/backward velocity (m/s)
+                     y: Left/right velocity (m/s)
+                     yaw: Rotational velocity (rad/s)
             duration: How long to move (seconds). If 0, command is continuous
 
         Returns:

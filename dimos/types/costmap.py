@@ -522,53 +522,6 @@ def pointcloud_to_costmap(
     return costmap, origin.astype(np.float32)
 
 
-def smooth_costmap_for_frontiers(
-    costmap: Costmap,
-) -> Costmap:
-    """
-    Smooth a costmap using morphological operations for frontier exploration.
-
-    This function applies OpenCV morphological operations to smooth free space
-    areas and improve connectivity for better frontier detection. It's designed
-    specifically for frontier exploration.
-
-    Args:
-        costmap: Input Costmap object
-
-    Returns:
-        Smoothed Costmap object with enhanced free space connectivity
-    """
-    # Extract grid data and metadata from costmap
-    grid = costmap.grid
-    resolution = costmap.resolution
-
-    # Work with a copy to avoid modifying input
-    filtered_grid = grid.copy()
-
-    # 1. Create binary mask for free space
-    free_mask = (grid == CostValues.FREE).astype(np.uint8) * 255
-
-    # 2. Apply morphological operations for smoothing
-    kernel_size = 7
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-
-    # Dilate free space to connect nearby areas
-    dilated = cv2.dilate(free_mask, kernel, iterations=1)
-
-    # Morphological closing to fill small gaps
-    closed = cv2.morphologyEx(dilated, cv2.MORPH_CLOSE, kernel, iterations=1)
-
-    eroded = cv2.erode(closed, kernel, iterations=1)
-
-    # Apply the smoothed free space back to costmap
-    # Only change unknown areas to free, don't override obstacles
-    smoothed_free = eroded == 255
-    unknown_mask = grid == CostValues.UNKNOWN
-    filtered_grid[smoothed_free & unknown_mask] = CostValues.FREE
-
-    return Costmap(grid=filtered_grid, origin=costmap.origin, resolution=resolution)
-
-
 if __name__ == "__main__":
     costmap = Costmap.from_pickle("costmapMsg.pickle")
     print(costmap)

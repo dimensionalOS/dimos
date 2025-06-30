@@ -74,18 +74,20 @@ class WebRTCRobot(ConnectionInterface):
         self.thread.start()
         self.connection_ready.wait()
 
-    def move(self, x: float, y: float, yaw: float, duration: float = 0.0) -> bool:
+    def move(self, velocity: Vector, duration: float = 0.0) -> bool:
         """Send movement command to the robot using velocity commands.
 
         Args:
-            x: Forward/backward velocity (m/s)
-            y: Left/right velocity (m/s)
-            yaw: Rotational velocity (rad/s)
+            velocity: Velocity vector [x, y, yaw] where:
+                     x: Forward/backward velocity (m/s)
+                     y: Left/right velocity (m/s)
+                     yaw: Rotational velocity (rad/s)
             duration: How long to move (seconds). If 0, command is continuous
 
         Returns:
             bool: True if command was sent successfully
         """
+        x, y, yaw = velocity.x, velocity.y, velocity.z
 
         # WebRTC coordinate mapping:
         # x - Positive right, negative left
@@ -246,7 +248,7 @@ class WebRTCRobot(ConnectionInterface):
         Returns:
             bool: True if stop command was sent successfully
         """
-        return self.move(0.0, 0.0, 0.0)
+        return self.move(Vector(0.0, 0.0, 0.0))
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""

@@ -45,6 +45,7 @@ import tf2_ros
 from dimos.robot.ros_transform import ROSTransformAbility
 from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
 from dimos.robot.connection_interface import ConnectionInterface
+from dimos.types.vector import Vector
 
 from nav_msgs.msg import Odometry
 
@@ -474,61 +475,46 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             logger.error("Action failed")
             return False
 
-    def move(self, distance: float, speed: float = 0.5, time_allowance: float = 120) -> bool:
-        """
-        Move the robot forward by a specified distance
+    def move(self, velocity: Vector, duration: float = 0.0) -> bool:
+        """Send velocity commands to the robot.
 
         Args:
-            distance: Distance to move forward in meters (must be positive)
-            speed: Speed to move at in m/s (default 0.5)
-            time_allowance: Maximum time to wait for the request to complete
+            velocity: Velocity vector [x, y, yaw] where:
+                     x: Linear velocity in x direction (m/s)
+                     y: Linear velocity in y direction (m/s)
+                     yaw: Angular velocity around z axis (rad/s)
+            duration: Duration to apply command (seconds). If 0, apply once.
 
         Returns:
-            bool: True if movement succeeded
+            bool: True if command was sent successfully
         """
+        x, y, yaw = velocity.x, velocity.y, velocity.z
+
+        # Clamp velocities to safe limits
+        x = self._clamp_velocity(x, self.MAX_LINEAR_VELOCITY)
+        y = self._clamp_velocity(y, self.MAX_LINEAR_VELOCITY)
+        yaw = self._clamp_velocity(yaw, self.MAX_ANGULAR_VELOCITY)
+
+        # Create and send command
+        cmd = Twist()
+        cmd.linear.x = float(x)
+        cmd.linear.y = float(y)
+        cmd.angular.z = float(yaw)
+
         try:
-            if distance <= 0:
-                logger.error("Distance must be positive")
-                return False
-
-            speed = min(abs(speed), self.MAX_LINEAR_VELOCITY)
-
-            # Define function to execute the move
-            def execute_move():
-                # Create DriveOnHeading goal
-                goal = DriveOnHeading.Goal()
-                goal.target.x = distance
-                goal.target.y = 0.0
-                goal.target.z = 0.0
-                goal.speed = speed
-                goal.time_allowance = Duration(sec=time_allowance)
-
-                logger.info(f"Moving forward: distance={distance}m, speed={speed}m/s")
-
-                return self._send_action_client_goal(
-                    self._drive_client,
-                    goal,
-                    f"Sending Action Client goal in ROSControl.execute_move for {distance}m at {speed}m/s",
-                    time_allowance,
-                )
-
-            # Queue the action
-            cmd_id = self._command_queue.queue_action_client_request(
-                action_name="move",
-                execute_func=execute_move,
-                priority=0,
-                timeout=time_allowance,
-                distance=distance,
-                speed=speed,
-            )
-            logger.info(f"Queued move command: {cmd_id} - Distance: {distance}m, Speed: {speed}m/s")
+            if duration > 0:
+                start_time = time.time()
+                while time.time() - start_time < duration:
+                    self._move_vel_pub.publish(cmd)
+                    time.sleep(0.1)  # 10Hz update rate
+                # Stop after duration
+                self.stop()
+            else:
+                self._move_vel_pub.publish(cmd)
             return True
 
         except Exception as e:
-            logger.error(f"Forward movement failed: {e}")
-            import traceback
-
-            logger.error(traceback.format_exc())
+            self._logger.error(f"Failed to send movement command: {e}")
             return False
 
     def reverse(self, distance: float, speed: float = 0.5, time_allowance: float = 120) -> bool:
@@ -657,45 +643,6 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             import traceback
 
             logger.error(traceback.format_exc())
-            return False
-
-    def move(self, x: float, y: float, yaw: float, duration: float = 0.0) -> bool:
-        """Send velocity commands to the robot.
-
-        Args:
-            x: Linear velocity in x direction (m/s)
-            y: Linear velocity in y direction (m/s)
-            yaw: Angular velocity around z axis (rad/s)
-            duration: Duration to apply command (seconds). If 0, apply once.
-
-        Returns:
-            bool: True if command was sent successfully
-        """
-        # Clamp velocities to safe limits
-        x = self._clamp_velocity(x, self.MAX_LINEAR_VELOCITY)
-        y = self._clamp_velocity(y, self.MAX_LINEAR_VELOCITY)
-        yaw = self._clamp_velocity(yaw, self.MAX_ANGULAR_VELOCITY)
-
-        # Create and send command
-        cmd = Twist()
-        cmd.linear.x = float(x)
-        cmd.linear.y = float(y)
-        cmd.angular.z = float(yaw)
-
-        try:
-            if duration > 0:
-                start_time = time.time()
-                while time.time() - start_time < duration:
-                    self._move_vel_pub.publish(cmd)
-                    time.sleep(0.1)  # 10Hz update rate
-                # Stop after duration
-                self.stop()
-            else:
-                self._move_vel_pub.publish(cmd)
-            return True
-
-        except Exception as e:
-            self._logger.error(f"Failed to send movement command: {e}")
             return False
 
     def stop(self) -> bool:

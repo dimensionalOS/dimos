@@ -28,10 +28,13 @@ from typing import Optional, List, Tuple
 import numpy as np
 from PIL import Image, ImageDraw
 
-from dimos.types.costmap import Costmap, smooth_costmap_for_frontiers
+from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector
 from dimos.models.qwen.video_query import query_single_frame
-from dimos.robot.frontier_exploration.utils import costmap_to_pil_image
+from dimos.robot.frontier_exploration.utils import (
+    costmap_to_pil_image,
+    smooth_costmap_for_frontiers,
+)
 
 
 class QwenFrontierPredictor:

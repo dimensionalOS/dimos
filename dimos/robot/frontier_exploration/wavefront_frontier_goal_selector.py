@@ -27,8 +27,9 @@ from enum import IntFlag
 import threading
 from dimos.utils.logging_config import setup_logger
 
-from dimos.types.costmap import Costmap, CostValues, smooth_costmap_for_frontiers
+from dimos.types.costmap import Costmap, CostValues
 from dimos.types.vector import Vector
+from dimos.robot.frontier_exploration.utils import smooth_costmap_for_frontiers
 
 logger = setup_logger("dimos.robot.unitree.frontier_exploration")
 

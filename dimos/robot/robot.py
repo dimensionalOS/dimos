@@ -27,6 +27,7 @@ from dimos.hardware.interface import HardwareInterface
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.manipulation.manipulation_interface import ManipulationInterface
 from dimos.types.robot_capabilities import RobotCapability
+from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 from dimos.robot.connection_interface import ConnectionInterface
 
@@ -176,13 +177,14 @@ class Robot(ABC):
             ops.observe_on(self.pool_scheduler),
         )
 
-    def move(self, x: float, y: float, yaw: float, duration: float = 0.0) -> bool:
+    def move(self, velocity: Vector, duration: float = 0.0) -> bool:
         """Move the robot using velocity commands.
 
         Args:
-            x: Linear velocity in x direction (m/s)
-            y: Linear velocity in y direction (m/s)
-            yaw: Angular velocity (rad/s)
+            velocity: Velocity vector [x, y, yaw] where:
+                     x: Linear velocity in x direction (m/s)
+                     y: Linear velocity in y direction (m/s)
+                     yaw: Angular velocity (rad/s)
             duration: Duration to apply command (seconds). If 0, apply once.
 
         Returns:
@@ -194,7 +196,7 @@ class Robot(ABC):
         if self.connection_interface is None:
             raise RuntimeError("No connection interface available for movement")
 
-        return self.connection_interface.move(x, y, yaw, duration)
+        return self.connection_interface.move(velocity, duration)
 
     def spin(self, degrees: float, speed: float = 45.0) -> bool:
         """Rotate the robot by a specified angle.
@@ -223,7 +225,8 @@ class Robot(ABC):
         if degrees < 0:
             angular_velocity = -angular_velocity
 
-        return self.connection_interface.move(0.0, 0.0, angular_velocity, duration)
+        velocity = Vector(0.0, 0.0, angular_velocity)
+        return self.connection_interface.move(velocity, duration)
 
     @abstractmethod
     def get_pose(self) -> dict:

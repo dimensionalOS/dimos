@@ -32,14 +32,13 @@ def distance_angle_to_goal_xy(distance: float, angle: float) -> Tuple[float, flo
 
 
 def transform_robot_to_map(
-    robot_pose: Dict[str, Any], position: Vector, rotation: Vector
+    robot_position: Vector, robot_rotation: Vector, position: Vector, rotation: Vector
 ) -> Tuple[Vector, Vector]:
     """Transform position and rotation from robot frame to map frame.
 
     Args:
-        robot_pose_in_map: Current robot pose in map frame from get_pose()
-            - position: Vector (x, y, z)
-            - rotation: Vector (roll, pitch, yaw) in radians
+        robot_position: Current robot position in map frame
+        robot_rotation: Current robot rotation in map frame
         position: Position in robot frame as Vector (x, y, z)
         rotation: Rotation in robot frame as Vector (roll, pitch, yaw) in radians
 
@@ -49,15 +48,14 @@ def transform_robot_to_map(
             - transformed_rotation: Vector (roll, pitch, yaw) in map frame
 
     Example:
-        robot_pose = robot.get_pose()
         obj_pos_robot = Vector(1.0, 0.5, 0.0)  # 1m forward, 0.5m left of robot
         obj_rot_robot = Vector(0.0, 0.0, 0.0)  # No rotation relative to robot
 
-        map_pos, map_rot = transform_robot_to_map(robot_pose, obj_pos_robot, obj_rot_robot)
+        map_pos, map_rot = transform_robot_to_map(robot_position, robot_rotation, obj_pos_robot, obj_rot_robot)
     """
     # Extract robot pose components
-    robot_pos = robot_pose["position"]
-    robot_rot = robot_pose["rotation"]
+    robot_pos = robot_position
+    robot_rot = robot_rotation
 
     # Robot position and orientation in map frame
     robot_x, robot_y, robot_z = robot_pos.x, robot_pos.y, robot_pos.z

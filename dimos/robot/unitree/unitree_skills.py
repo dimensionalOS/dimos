@@ -26,6 +26,7 @@ else:
 
 from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
 from dimos.types.constants import Colors
+from dimos.types.vector import Vector
 
 # Module-level constant for Unitree ROS control definitions
 UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
@@ -270,7 +271,7 @@ class MyUnitreeSkills(SkillLibrary):
 
         def __call__(self):
             super().__call__()
-            return self._robot.move(x=self.x, y=self.y, yaw=self.yaw, duration=self.duration)
+            return self._robot.move(Vector(self.x, self.y, self.yaw), duration=self.duration)
 
     class Reverse(AbstractRobotSkill):
         """Reverse the robot using direct velocity commands. Determine duration required based on user distance instructions."""
@@ -283,7 +284,7 @@ class MyUnitreeSkills(SkillLibrary):
         def __call__(self):
             super().__call__()
             # Use move with negative x for backward movement
-            return self._robot.move(x=-self.x, y=self.y, yaw=self.yaw, duration=self.duration)
+            return self._robot.move(Vector(-self.x, self.y, self.yaw), duration=self.duration)
 
     class SpinLeft(AbstractRobotSkill):
         """Spin the robot left using degree commands."""

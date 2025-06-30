@@ -26,6 +26,7 @@ else:
 
 from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
 from dimos.types.constants import Colors
+from dimos.types.vector import Vector
 from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD
 
 # Module-level constant for Unitree WebRTC control definitions
@@ -266,9 +267,8 @@ class MyUnitreeSkills(SkillLibrary):
         yaw: float = Field(default=0.0, description="Rotational velocity (rad/s)")
         duration: float = Field(default=0.0, description="How long to move (seconds).")
 
-        def __call__(self):
-            super().__call__()
-            return self._robot.move(x=self.x, y=self.y, yaw=self.yaw, duration=self.duration)
+        def execute(self):
+            return self._robot.move(Vector(self.x, self.y, self.yaw), duration=self.duration)
 
     class Wait(AbstractSkill):
         """Wait for a specified amount of time."""

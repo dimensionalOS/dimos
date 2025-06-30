@@ -258,7 +258,6 @@ def test_frontier_detection_visualization():
     print("Visualization displayed. Close the image window to continue.")
 
 
-@pytest.mark.tool
 def test_multi_frame_exploration():
     """Tool test for multi-frame exploration analysis."""
     print("=== Multi-Frame Exploration Analysis ===")
@@ -295,17 +294,3 @@ def test_multi_frame_exploration():
             print(f"Selected goal at distance {distance:.2f}m")
         else:
             print("No exploration goal selected")
-
-
-if __name__ == "__main__":
-    # Run basic tests when executed directly
-    print("Running wavefront frontier goal selector tests...")
-
-    test_frontier_detection_with_office_lidar()
-    test_exploration_goal_selection()
-    test_exploration_session_reset()
-
-    print("\nAll tests completed successfully!")
-
-    # Uncomment to run visualization test
-    test_frontier_detection_visualization()
