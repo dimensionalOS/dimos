@@ -49,7 +49,7 @@ class Stream(Generic[T]):
         return getattr(self.type, "__name__", repr(self.type))
 
     def __str__(self):
-        return self.color()(f"{self.name}[{self.type_name}] {self.state.value}")
+        return self.color()(f"{self.name}[{self.type_name}]")
 
     def color(self) -> Callable[[str], str]:
         if self.state == State.DORMANT:
@@ -71,7 +71,7 @@ class In(Stream[T]):
 
     def __str__(self):
         if self.state == State.CONNECTED:
-            return f"IN {super().__str__()} - {self.source}"
+            return f"IN {super().__str__()} <- {self.source}"
 
         return f"IN {super().__str__()}"
 
@@ -87,7 +87,7 @@ class In(Stream[T]):
         raise NotImplementedError("State is not implemented for abstract stream")
 
 
-class Out(Stream[T]):
+class BaseOut(Stream[T]):
     owner = None
 
     def __init__(self, type: type[T], name: str = "Out", owner: Any = None):
@@ -96,21 +96,21 @@ class Out(Stream[T]):
 
     def __str__(self):
         if self.state == State.READY:
-            return f"OUT {super().__str__()} @ {self.owner}"
-        return f"OUT {super().__str__()}"
+            return f"{self.__class__.__name__} {super().__str__()} @ {self.owner}"
+        return f"{self.__class__.__name__} {super().__str__()}"
 
-    # pickle control
-    def __getstate__(self):
-        state = {}
-        state["type"] = self.type
-        state["name"] = self.name
+    # # pickle control
+    # def __getstate__(self):
+    #     state = {}
+    #     state["type"] = self.type
+    #     state["name"] = self.name
 
-        if self.owner:
-            if type(self.owner) is Actor:
-                state["owner"] = self.owner
-            else:
-                state["owner"] = self.owner.ref
-        return state
+    #     if self.owner:
+    #         if type(self.owner) is Actor:
+    #             state["owner"] = self.owner
+    #         else:
+    #             state["owner"] = self.owner.ref
+    #     return state
 
     @property
     def state(self) -> State:
@@ -119,7 +119,18 @@ class Out(Stream[T]):
         return State.READY
 
     def publish(self, T):
-        raise NotImplementedError("State is not implemented for abstract stream")
+        raise NotImplementedError("Publish is not implemented for abstract stream")
+
+
+class RemoteOut(BaseOut[T]):
+    owner: Actor
+
+
+class Out(BaseOut[T]):
+    owner: any
+
+    def __reduce__(self) -> Any:
+        return (RemoteOut, (self.type, self.name, self.owner.ref if self.owner else None))
 
 
 class Module:
@@ -127,6 +138,9 @@ class Module:
 
     def set_ref(self, ref: Any):
         self.ref = ref
+
+    def __str__(self):
+        return f"{self.__class__.__name__}-Local"
 
     @classmethod
     def io(c):
@@ -225,7 +239,7 @@ def module(cls: type) -> type:
 
         new_kwargs = {}
         for k, val in kwargs.items():
-            if isinstance(val, Out):
+            if isinstance(val, RemoteOut):
                 new_kwargs[k] = In(val.type, val.name, val)
                 self.inputs[k] = new_kwargs[k]
             else:
