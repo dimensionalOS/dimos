@@ -34,6 +34,7 @@ class State(enum.Enum):
     DORMANT = "dormant"
     READY = "ready"
     CONNECTED = "connected"
+    FLOWING = "flowing"
 
 
 class Stream(Generic[T]):
@@ -66,6 +67,7 @@ class Stream(Generic[T]):
 
 class In(Stream[T]):
     def __init__(self, type: type[T], name: str = "In", owner: any = None, source: Out = None):
+        self.subscribers = []
         self.source = source
         self.owner = owner
         super().__init__(type, name)
@@ -82,11 +84,28 @@ class In(Stream[T]):
             return State.DORMANT
         return State.CONNECTED
 
+    def publish(self, data: T):
+        for sub in self.subscribers:
+            sub(data)
+
+    def __reduce__(self) -> Any:
+        return (RemoteIn, (self.type, self.name, self.owner.ref if self.owner else None))
+
     def subscribe(self, callback: callable):
         if not self.source:
             raise ValueError("Cannot subscribe to an unconnected In stream")
 
-        print("SUB REQ", self.source, "-->", self.owner, self.name)
+        if self.state != State.FLOWING:
+            print("SUB REQ", self.source, "-->", self.owner, self.name)
+            self.source.subscribe(self)
+        self.subscribers.append(callback)
+
+
+class RemoteIn(In[T]):
+    owner: Actor
+
+    def __str__(self):
+        return f"{self.__class__.__name__} {super().__str__()} @ {self.owner}"
 
 
 class BaseOut(Stream[T]):
@@ -114,19 +133,42 @@ class BaseOut(Stream[T]):
 class RemoteOut(BaseOut[T]):
     owner: Actor
 
+    def subscribe(self, inp: In[T]):
+        print("calling sub on", self.owner, "for", self.name)
+        return self.owner.subscribe(self.name, inp).result()
+
 
 class Out(BaseOut[T]):
     owner: any
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.subscribers = []
 
     def __reduce__(self) -> Any:
         return (RemoteOut, (self.type, self.name, self.owner.ref if self.owner else None))
 
     def publish(self, value: T):
         print("PUB REQ", self.owner, value)
+        for sub in self.subscribers:
+            print("PUBLISHING", value, "to", sub)
+            sub.owner.receive_msg(sub.name, value)
+
+    def subscribe(self, remote_input):
+        print(self, "adding remote input to subscribers", remote_input)
+        self.subscribers.append(remote_input)
+        print(self.subscribers)
 
 
 class Module:
     ref = None
+
+    def subscribe(self, output_name, remote_input):
+        print(f"Actor {self} received sub request for", output_name, "from", remote_input)
+        getattr(self, output_name).subscribe(remote_input)
+
+    def receive_msg(self, input_name, msg):
+        self.inputs[input_name].publish(msg)
 
     def set_ref(self, ref: Any):
         self.ref = ref
