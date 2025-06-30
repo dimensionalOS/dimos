@@ -18,6 +18,8 @@ import enum
 import inspect
 from typing import Any, Callable, Generic, TypeVar, get_args, get_origin, get_type_hints
 
+from distributed.actor import Actor
+
 import dimos.multiprocess.actors2.colors as colors
 
 T = TypeVar("T")
@@ -68,6 +70,9 @@ class In(Stream[T]):
         super().__init__(type, name)
 
     def __str__(self):
+        if self.state == State.CONNECTED:
+            return f"IN {super().__str__()} - {self.source}"
+
         return f"IN {super().__str__()}"
 
     @property
@@ -76,14 +81,36 @@ class In(Stream[T]):
             return State.DORMANT
         return State.CONNECTED
 
+    def subscribe(self, callback: callable):
+        if not self.source:
+            raise ValueError("Cannot subscribe to an unconnected In stream")
+        raise NotImplementedError("State is not implemented for abstract stream")
+
 
 class Out(Stream[T]):
+    owner = None
+
     def __init__(self, type: type[T], name: str = "Out", owner: Any = None):
         self.owner = owner
         super().__init__(type, name)
 
     def __str__(self):
+        if self.state == State.READY:
+            return f"OUT {super().__str__()} @ {self.owner}"
         return f"OUT {super().__str__()}"
+
+    # pickle control
+    def __getstate__(self):
+        state = {}
+        state["type"] = self.type
+        state["name"] = self.name
+
+        if self.owner:
+            if type(self.owner) is Actor:
+                state["owner"] = self.owner
+            else:
+                state["owner"] = self.owner.ref
+        return state
 
     @property
     def state(self) -> State:
@@ -91,8 +118,16 @@ class Out(Stream[T]):
             return State.DORMANT
         return State.READY
 
+    def publish(self, T):
+        raise NotImplementedError("State is not implemented for abstract stream")
+
 
 class Module:
+    ref = None
+
+    def set_ref(self, ref: Any):
+        self.ref = ref
+
     @classmethod
     def io(c):
         def boundary_iter(iterable, first, middle, last):
@@ -182,6 +217,7 @@ def module(cls: type) -> type:
     original_init = cls.__init__
 
     def init_override(self, *args, **kwargs):
+        # TODO does htis override class attribute?
         for name, out in self.outputs.items():
             out.owner = self
         for name, inp in self.inputs.items():

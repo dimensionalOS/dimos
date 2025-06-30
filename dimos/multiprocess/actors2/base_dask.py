@@ -19,7 +19,6 @@ from dask.distributed import Client, LocalCluster
 
 def patchdask(dask_client: Client):
     def deploy(actor_class, *args, **kwargs):
-        print(f"\033[32msubsystem init: [{actor_class.__name__}]\033[0m")
         actor = dask_client.submit(
             actor_class,
             *args,
@@ -28,6 +27,7 @@ def patchdask(dask_client: Client):
         ).result()
 
         actor.set_ref(actor).result()
+        print(f"\033[32msubsystem deployed: [{actor}]\033[0m")
         return actor
 
     dask_client.deploy = deploy

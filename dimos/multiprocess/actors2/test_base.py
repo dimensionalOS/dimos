@@ -30,7 +30,6 @@ class RobotClient(Module):
 
     def __init__(self):
         self.odometry = Out(Odometry, "odometry", self)
-
         self._stop_event = Event()
         self._thread = None
 
@@ -85,17 +84,56 @@ def test_introspection():
     print("\n\n\n" + Navigation.io(), "\n\n")
 
 
+def test_stream_introspection():
+    nav = Navigation(1, 2, 3)
+
+    print(nav.target_path)
+
+
 def test_instance_introspection():
     robot = RobotClient()
+    print(robot)
 
-    nav = Navigation(target_position="bla", map_stream="bla", odometry=robot.odometry)
+    map_stream = Out[Map](Map, "map")
+    target_stream = Out[Vector](Vector, "map")
+    print("\n")
+    print("map stream", map_stream)
+    print("target stream", target_stream)
+    print("odom stream", robot.odometry)
+
+    nav = Navigation(target_position=target_stream, map_stream=map_stream, odometry=robot.odometry)
     """Test introspection of the Navigation module."""
     assert hasattr(nav, "inputs")
     assert hasattr(nav, "rpcs")
     print("\n\n\n" + nav.io(), "\n\n")
 
 
-def test_stream_introspection():
-    nav = Navigation(1, 2, 3)
+#    nav.start()
 
-    print(nav.target_path)
+
+def test_deployment(dimos):
+    robot = dimos.deploy(RobotClient)
+
+    map_stream = Out[Map](Map, "map")
+    target_stream = Out[Vector](Vector, "map")
+    odom_stream = robot.odometry
+    print("\n")
+    print("map stream", map_stream)
+    print("target stream", target_stream)
+    print("odom stream", odom_stream)
+
+    # print(type(odom_stream.owner))
+    # print(type(robot))
+
+    # out = Out(Odometry, "odometry", robot)
+
+    nav = dimos.deploy(
+        Navigation, target_position=target_stream, map_stream=map_stream, odometry=odom_stream
+    )
+
+    # """Test introspection of the Navigation module."""
+    # assert hasattr(nav, "inputs")
+    # assert hasattr(nav, "rpcs")
+    print("\n\n\n" + nav.io().result(), "\n\n")
+
+    # nav.start()
