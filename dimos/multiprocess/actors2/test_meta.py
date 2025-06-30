@@ -19,7 +19,7 @@ import time
 from threading import Thread
 
 from dimos.multiprocess.actors2.base import dimos
-from dimos.multiprocess.actors2.meta import In, Out, module, rpc
+from dimos.multiprocess.actors2.meta import ActorReference, In, Out, module, rpc
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.path import Path
@@ -46,13 +46,13 @@ class Module:
     def set_reference(self, refernece):
         self.ref = refernece
 
-    async def subscribe(self, out_name: str, actor_reference, in_name: str):
+    def subscribe(self, out_name: str, actor_reference: ActorReference, in_name: str):
         print(
-            f"SUBSCRIBE {self.__class__.__name__} OUTPUT {out_name} TO ACTOR {actor_reference} INPUT {in_name}"
+            f"{self.__class__.__name__} {out_name} SUB REQ from {actor_reference} pass into INPUT {in_name}"
         )
         self.outputs[out_name].subscribers.append((actor_reference, in_name))
 
-    async def receive_message(self, in_name, message):
+    def receive_message(self, in_name, message):
         print(f"RECEIVED MESSAGE IN {self.__class__.__name__} INPUT {in_name}: {message}")
         self.inputs[in_name].receive(message)
 
@@ -108,8 +108,9 @@ class Navigation(Module):
         self.odometry = odometry
         self.target_path = Out(Path, "target_path")
 
-        print("NAVIGATION RECEIVED ODOMETRY STREAM", odometry)
-        print("GET STREAM FROM ODOM", odometry.subscribe())
+    def start(self):
+        print("navigation odom stream is", self.odometry)
+        print("calling subscribe", self.odometry.subscribe())
 
 
 def test_introspect():
@@ -130,8 +131,9 @@ def test_get_sub(dimos):
     print("Map Stream:\t", map_stream)
 
     robot = dimos.deploy(RobotClient)
-    robot.start().result()
     print("Odometry Stream:\t", robot.odometry, "\n\n")
+
+    robot.start().result()
 
     nav = dimos.deploy(
         Navigation,
@@ -146,6 +148,8 @@ def test_get_sub(dimos):
 
     print(f"NAV I/O (remote query):\n\n{nav.io().result()}")
 
-    time.sleep(1)
+    nav.start().result()
+
+    time.sleep(5)
     robot.stop()
     time.sleep(0.2)

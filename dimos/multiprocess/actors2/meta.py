@@ -145,11 +145,11 @@ class Out(Generic[T]):
 
     def publish(self, value: T):
         if self.context:
-            raise ValueError("You cannot publish to Out from a remote Actor")
+            raise ValueError("You cannot publish to a remote actor stream")
 
         for sub in self.subscribers:
             (actor_ref, in_name) = sub
-            print("PUBLISHING", self.name, "to", actor_ref, "input", in_name)
+            print("PUBLISHING", value, "to", actor_ref, "input", in_name)
             actor_ref.actor.receive_message(in_name, value).result()
 
     def __str__(self):
@@ -162,10 +162,12 @@ class Out(Generic[T]):
         else:
             return selfstr
 
+    def receive(self): ...
+
     def subscribe(self):
         if not self.context:
             raise ValueError(
-                "Output context is not within an Actor. Only actors can subscribe to Actors. keep the main loop free"
+                "Stream not within an Actor. Only actors can subscribe to Actors. keep the main loop free"
             )
 
         return self.owner.actor.subscribe(self.name, self.context, self.inputkey).result()
