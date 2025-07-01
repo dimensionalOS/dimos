@@ -27,12 +27,17 @@ from dimos.types.vector import Vector
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
 
-@module
-class Robot(WebRTCRobot):
+class Robot(Module, WebRTCRobot):
     mov: In[Vector]
     lidar: Out[LidarMessage]
     odometry: Out[Odometry]
     video: Out[VideoMessage]
+
+    def __init__(self, ip: str):
+        super().__init__(ip, mode="ai")
+        self.lidar = Out(LidarMessage, "lidar", self)
+        self.odometry = Out(Odometry, "odometry", self)
+        self.mov = In(Vector, "mov", self)
 
     def start(self):
         self.connect()

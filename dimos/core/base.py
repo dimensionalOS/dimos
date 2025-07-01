@@ -233,9 +233,12 @@ class Out(BaseOut[T]):
             self._subscribers.append(inp)
 
     def __reduce__(self):  # noqa: D401
-        if self.owner is None or not hasattr(self.owner, "ref"):
-            raise ValueError(f"{self} Cannot serialise Out without an owner ref")
-        return (RemoteOut, (self.type, self.name, self.owner.ref))
+        # if self.owner is None or not hasattr(self.owner, "ref"):
+        # raise ValueError(f"{self} Cannot serialise Out without an owner ref")
+        return (
+            RemoteOut,
+            (self.type, self.name, self.owner.ref if hasattr(self.owner, "ref") else None),
+        )
 
 
 class RemoteOut(BaseOut[T]):
@@ -330,8 +333,8 @@ class RemoteIn(In[T]):
     def __str__(self) -> str:  # noqa: D401
         return f"{self.__class__.__name__} {super().__str__()} @ {self.owner}"
 
-    def connect(self, source: Out[Any]) -> None:
-        self.owner.connect(self.name, source)
+    def stream_connect(self, source: Out[Any]) -> None:
+        self.owner.stream_connect(self.name, source)
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +352,7 @@ class Module:  # pylint: disable=too-few-public-methods
     # ------------------------------------------------------------------
     # Runtime helpers
     # ------------------------------------------------------------------
-    def connect(self, input_name: str, source: Out[Any]) -> None:
+    def stream_connect(self, input_name: str, source: Out[Any]) -> None:
         inp = In(source.type, input_name, self, source)
         self.inputs[input_name] = inp
         setattr(self, input_name, inp)

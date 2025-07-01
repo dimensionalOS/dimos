@@ -20,23 +20,24 @@ from dimos.robot.unitree_multiprocess.unitree_go2 import Robot
 from dimos.types.vector import Vector
 
 
-@module
 class Mover(Module):
     mov: Out[Vector]
     _stop_event: Event
 
     def __init__(self):
         self.mov = Out(Vector, "mov", self)
+        self._stop_event = Event()
 
     @rpc
     def start(self):
-        self._thread = Thread(target=self.odomloop)
+        self._thread = Thread(target=self.movloop)
         self._thread.start()
 
     def movloop(self):
         self._stop_event.clear()
         while not self._stop_event.is_set():
             self.mov.publish(Vector(0.0, 0.0, 0.2))
+            time.sleep(0.1)  # Add a small delay to prevent excessive publishing
 
     @rpc
     def stop(self):
@@ -48,27 +49,15 @@ class Mover(Module):
 def test_mover():
     dimos = initialize()
     mover = dimos.deploy(Mover)
+
     robot = dimos.deploy(Robot, "192.168.1.1")
 
-    print(Mover)
-    print(Robot)
-    mover.mov.connect(robot.mov)
+    robot.mov.connect(mover.mov)
 
     robot.start().result()
     mover.start().result()
-    time.sleep(30)
+    time.sleep(3)
 
 
 if __name__ == "__main__":
-    dimos = initialize()
-
-    mover = dimos.deploy(Mover, "bla")
-    # robot = dimos.deploy(Robot)
-
-    print(mover)
-    # mover.mov.connect(robot.mov)
-
-    # robot.start().result()
-    # mover.start().result()
-
-    time.sleep(10)
+    test_mover()
