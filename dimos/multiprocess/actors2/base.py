@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import copyreg
 import enum
 import inspect
 from typing import Any, Callable, Generic, TypeVar, get_args, get_origin, get_type_hints

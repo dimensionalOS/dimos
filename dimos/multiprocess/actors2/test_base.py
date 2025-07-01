@@ -17,13 +17,14 @@ from threading import Event, Thread
 
 from dimos.multiprocess.actors2.base import In, Module, Out, RemoteOut, module, rpc
 from dimos.multiprocess.actors2.base_dask import dimos
-from dimos.protocol.pubsub.lcmpubsub import Topic as LCMTopic
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from dimos.types.path import Path
 from dimos.types.vector import Vector
 from dimos.utils.testing import SensorReplay
+
+# never delete this
+if dimos:
+    ...
 
 
 @module
@@ -31,6 +32,12 @@ class RobotClient(Module):
     odometry: Out[Odometry]
     lidar: Out[LidarMessage]
     mov: In[Vector]
+
+    mov_msg_count = 0
+
+    def mov_callback(self, msg):
+        self.mov_msg_count += 1
+        print("MOV REQ", msg)
 
     def __init__(self):
         self.odometry = Out(Odometry, "odometry", self)
@@ -40,7 +47,7 @@ class RobotClient(Module):
     def start(self):
         self._thread = Thread(target=self.odomloop)
         self._thread.start()
-        self.mov.subscribe(lambda msg: print("MOV REQ", msg))
+        self.mov.subscribe(self.mov_callback)
 
     def odomloop(self):
         odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
@@ -70,6 +77,8 @@ class RobotClient(Module):
 @module
 class Navigation(Module):
     mov: Out[Vector]
+    odom_msg_count = 0
+    lidar_msg_count = 0
 
     @rpc
     def navigate_to(self, target: Vector) -> bool: ...
@@ -88,70 +97,17 @@ class Navigation(Module):
     @rpc
     def start(self):
         def _odom(msg):
+            self.odom_msg_count += 1
             print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
             self.mov.publish(msg.pos)
 
         self.odometry.subscribe(_odom)
-        self.lidar.subscribe(
-            lambda msg: print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
-        )
 
+        def _lidar(msg):
+            self.lidar_msg_count += 1
+            print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
 
-def test_introspection():
-    """Test introspection of the Navigation module."""
-    assert hasattr(Navigation, "inputs")
-    assert hasattr(Navigation, "rpcs")
-    print("\n\n\n" + Navigation.io(), "\n\n")
-
-
-def test_stream_introspection():
-    nav = Navigation(1, 2, 3)
-
-    print(nav.target_path)
-
-
-def test_instance_introspection():
-    mov = RemoteOut[Vector](Vector, "mov")
-    robot = RobotClient()
-    print(robot)
-
-    target_stream = Out[Vector](Vector, "map")
-    print("\n")
-    print("lidar stream", robot.lidar)
-    print("target stream", target_stream)
-    print("odom stream", robot.odometry)
-
-    nav = Navigation(target_position=target_stream, lidar=robot.lidar, odometry=robot.odometry)
-    """Test introspection of the Navigation module."""
-    assert hasattr(nav, "inputs")
-    assert hasattr(nav, "rpcs")
-    print("\n\n\n" + nav.io(), "\n\n")
-
-
-async def test_alt_transport(dimos):
-    mov = RemoteOut[Vector](Vector, "mov")
-    robot = dimos.deploy(RobotClient, mov=mov)
-
-    target_stream = RemoteOut[Vector](Vector, "map")
-
-    print("lidar stream", robot.lidar)
-    print("target stream", target_stream)
-    print("odom stream", robot.odometry)
-
-    # robot.odometry.transport = LCMTopic("/odometry", Odometry)
-
-    # robot.lidar.transport = ZENOHTopic("/odometry", Odometry)
-
-    nav = dimos.deploy(
-        Navigation, target_position=target_stream, lidar=robot.lidar, odometry=robot.odometry
-    )
-
-    print("\n\n\n" + robot.io().result(), "\n")
-    print(nav.io().result(), "\n\n")
-
-    await robot.start()
-    await nav.start()
-    time.sleep(2)
+        self.lidar.subscribe(_lidar)
 
 
 def test_deployment(dimos):
@@ -178,5 +134,12 @@ def test_deployment(dimos):
 
     robot.start().result()
     nav.start().result()
-    time.sleep(2)
+    time.sleep(1)
     robot.stop().result()
+    print("robot.mov_msg_count", robot.mov_msg_count)
+    print("nav.odom_msg_count", nav.odom_msg_count)
+    print("nav.lidar_msg_count", nav.lidar_msg_count)
+
+    assert robot.mov_msg_count > 5
+    assert nav.odom_msg_count > 5
+    assert nav.lidar_msg_count > 5
