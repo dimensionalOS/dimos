@@ -83,7 +83,7 @@ def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 
 # ---------------------------------------------------------------------------
-# Protocols
+# Protocols (work in progress)
 # ---------------------------------------------------------------------------
 
 
@@ -102,7 +102,11 @@ class DirectTransportProtocol(Protocol[T]):
 Transport = TransportProtocol | DirectTransportProtocol
 
 
-class DaskTransport: ...
+class DaskTransport(DirectTransportProtocol):
+    def msg(self, selfstream: Out[T], target: RemoteIn[T], value: T) -> None: ...
+
+
+daskTransport = DaskTransport()  # singleton instance for use in Out/RemoteOut
 
 
 # ---------------------------------------------------------------------------
@@ -120,9 +124,13 @@ class State(enum.Enum):
 class Stream(Generic[T]):
     """Base class shared by *In* and *Out* streams."""
 
-    def __init__(self, typ: type[T], name: str, transport: Transport = DaskTransport):
+    transport: Transport = daskTransport  # default transport
+
+    def __init__(self, typ: type[T], name: str, transport: Transport = None):
         self.type: type[T] = typ
         self.name: str = name
+        if transport:
+            self.transport = transport
 
     # ------------------------------------------------------------------
     # Descriptor plumbing – auto-fill name when used as class attr
@@ -166,8 +174,8 @@ class Stream(Generic[T]):
 class BaseOut(Stream[T]):
     """Common behaviour shared by *local* and *remote* outputs."""
 
-    def __init__(self, typ: type[T], name: str = "Out", owner: Any | None = None):
-        super().__init__(typ, name)
+    def __init__(self, typ: type[T], name: str = "Out", owner: Any | None = None, **kwargs):
+        super().__init__(typ, name, **kwargs)
         self.owner: Any | None = owner
 
     @property
@@ -193,6 +201,8 @@ class BaseOut(Stream[T]):
 
 class Out(BaseOut[T]):
     """Local *Out* – synchronous fan-out to subscribers."""
+
+    transport: Transport = daskTransport
 
     def __init__(self, typ: type[T], name: str = "Out", owner: Any | None = None):
         super().__init__(typ, name, owner)
@@ -320,6 +330,9 @@ class RemoteIn(In[T]):
     def __str__(self) -> str:  # noqa: D401
         return f"{self.__class__.__name__} {super().__str__()} @ {self.owner}"
 
+    def connect(self, source: Out[Any]) -> None:
+        self.owner.connect(self.name, source)
+
 
 # ---------------------------------------------------------------------------
 # Module infrastructure
@@ -336,12 +349,10 @@ class Module:  # pylint: disable=too-few-public-methods
     # ------------------------------------------------------------------
     # Runtime helpers
     # ------------------------------------------------------------------
-    def bind(self, input_name: str, source: Out[Any]) -> None:
+    def connect(self, input_name: str, source: Out[Any]) -> None:
         inp = In(source.type, input_name, self, source)
         self.inputs[input_name] = inp
         setattr(self, input_name, inp)
-
-    connect = bind  # legacy alias
 
     def subscribe(self, output_name: str, remote_input: In[Any]) -> None:  # noqa: D401
         getattr(self, output_name).subscribe(remote_input)

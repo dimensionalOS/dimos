@@ -127,7 +127,7 @@ def test_deployment(dimos):
     )
 
     print(robot.lidar)
-    robot.connect("mov", nav.mov)
+    robot.mov.connect(nav.mov)
 
     print("\n\n\n" + robot.io().result(), "\n")
     print(nav.io().result(), "\n\n")
