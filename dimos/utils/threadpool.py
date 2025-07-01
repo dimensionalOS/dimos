@@ -18,9 +18,11 @@ This module provides a shared ThreadPoolExecutor exposed through a
 ReactiveX scheduler, ensuring consistent thread management across the application.
 """
 
-import os
 import multiprocessing
+import os
+
 from reactivex.scheduler import ThreadPoolScheduler
+
 from .logging_config import logger
 
 
@@ -37,7 +39,7 @@ def get_max_workers() -> int:
 
 # Create a ThreadPoolScheduler with a configurable number of workers.
 try:
-    max_workers = get_max_workers()
+    max_workers = 6
     scheduler = ThreadPoolScheduler(max_workers=max_workers)
     logger.info(f"Using {max_workers} workers")
 except Exception as e:
