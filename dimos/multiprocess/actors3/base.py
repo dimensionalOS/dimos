@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import enum
 import inspect
+import traceback
 from typing import (
     Any,
     Callable,
@@ -50,17 +51,50 @@ class Transport(Protocol[T]):
 
 
 class DaskTransport(Transport[T]):
+    subscribers: List[Callable[[T], None]]
+    _started: bool = False
+
+    def __init__(self):
+        self.subscribers = []
+
     def __str__(self) -> str:
         return colors.yellow("DaskTransport")
 
-    def connect(self, selfstream: RemoteIn[T], otherstream: RemoteOut[T]) -> None:
-        print("dask transport connection request")
-        print(selfstream, "->", otherstream)
+    def __reduce__(self):
+        return (DaskTransport, ())
 
-    def disconnect(self): ...
+    def broadcast(self, selfstream: RemoteIn[T], msg: T) -> None:
+        for subscriber in self.subscribers:
+            # there is some sort of a bug here with losing worker loop
+            #            print(subscriber.owner, subscriber.owner._worker, subscriber.owner._client)
+            #            subscriber.owner._try_bind_worker_client()
+            #            print(subscriber.owner, subscriber.owner._worker, subscriber.owner._client)
 
-    # used by
-    def broadcast(self, selfstream: Out[T], value: T): ...
+            subscriber.owner.dask_receive_msg(subscriber.name, msg).result()
+
+    def dask_receive_msg(self, msg) -> None:
+        for subscriber in self.subscribers:
+            try:
+                subscriber(msg)
+            except Exception as e:
+                print(
+                    colors.red("Error in DaskTransport subscriber callback:"),
+                    e,
+                    traceback.format_exc(),
+                )
+
+    # for outputs
+    def dask_register_subscriber(self, remoteInput: RemoteIn[T]) -> None:
+        self.subscribers.append(remoteInput)
+
+    # for inputs
+    def subscribe(self, selfstream: In[T], callback: Callable[[T], None]) -> None:
+        if not self._started:
+            selfstream.connection.owner.dask_register_subscriber(
+                selfstream.connection.name, selfstream
+            ).result()
+            self._started = True
+        self.subscribers.append(callback)
 
 
 class PubSubTransport(Transport[T]):
@@ -87,14 +121,14 @@ class pLCMTransport(PubSubTransport[T]):
     def __reduce__(self):
         return (pLCMTransport, (self.topic,))
 
-    def broadcast(self, msg):
+    def broadcast(self, _, msg):
         if not self._started:
             self.lcm.start()
             self._started = True
 
         self.lcm.publish(self.topic, msg)
 
-    def subscribe(self, callback: Callable[[T], None]) -> None:
+    def subscribe(self, selfstream: In[T], callback: Callable[[T], None]) -> None:
         if not self._started:
             self.lcm.start()
             self._started = True
@@ -113,14 +147,14 @@ class LCMTransport(PubSubTransport[T]):
     def __reduce__(self):
         return (pLCMTransport, (self.topic,))
 
-    def broadcast(self, msg):
+    def broadcast(self, _, msg):
         if not self._started:
             self.lcm.start()
             self._started = True
 
         self.lcm.publish(self.topic, msg, self.type)
 
-    def subscribe(self, callback: Callable[[T], None]) -> None:
+    def subscribe(self, selfstream: In[T], callback: Callable[[T], None]) -> None:
         if not self._started:
             self.lcm.start()
             self._started = True
@@ -184,7 +218,16 @@ class Stream(Generic[T]):
 
 
 class Out(Stream[T]):
-    _transport: Transport = DaskTransport()
+    _transport: Transport
+
+    def __init__(self, *argv, **kwargs):
+        super().__init__(*argv, **kwargs)
+        if not hasattr(self, "_transport") or self._transport is None:
+            self._transport = DaskTransport()
+
+    @property
+    def transport(self) -> Transport[T]:
+        return self._transport
 
     @property
     def state(self) -> State:  # noqa: D401
@@ -204,7 +247,7 @@ class Out(Stream[T]):
         )
 
     def publish(self, msg):
-        self._transport.broadcast(msg)
+        self._transport.broadcast(self, msg)
 
 
 class RemoteStream(Stream[T]):
@@ -224,7 +267,7 @@ class RemoteStream(Stream[T]):
 
 class RemoteOut(RemoteStream[T]):
     def connect(self, other: RemoteIn[T]):
-        print("sub request from", self, "to", other)
+        return other.connect(self)
 
 
 class In(Stream[T]):
@@ -239,12 +282,16 @@ class In(Stream[T]):
         return (RemoteIn, (self.type, self.name, self.owner.ref, self._transport))
 
     @property
+    def transport(self) -> Transport[T]:
+        return self.connection.transport
+
+    @property
     def state(self) -> State:  # noqa: D401
         return State.UNBOUND if self.owner is None else State.READY
 
     def subscribe(self, cb):
-        print("SUBBING", self, self.connection._transport)
-        self.connection._transport.subscribe(cb)
+        # print("SUBBING", self, self.connection._transport)
+        self.connection._transport.subscribe(self, cb)
 
 
 class RemoteIn(RemoteStream[T]):
@@ -258,24 +305,3 @@ def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 
 daskTransport = DaskTransport()  # singleton instance for use in Out/RemoteOut
-
-
-# process for LCM
-# remoteInput - connect to remoteOutput
-# or remoteOutput - connect to remoteInput
-#
-# remoteInput learns the actual LCM topic, from that point on local comms
-
-
-# process for Dask
-# remoteInput - connect to remoteOutput
-# or remoteOutput - connect to remoteInput
-#
-# remoteInput learns the actual Dask actor from remoteOutput
-# remoteInput contacts the actor, telling it "I'm interested in remoteOutput, contact me here"
-
-
-# this means that transport split is at
-# remoteInput/remoteOutput sub request level?
-#
-# remoteInput needs to communicate the transport to local Input in some way, so Transport def is portable.

@@ -25,6 +25,7 @@ from dimos.multiprocess.actors3 import (
     dimos,
     pLCMTransport,
     rpc,
+    start,
 )
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -124,11 +125,14 @@ def test_deployment(dimos):
 
     nav = dimos.deploy(Navigation)
 
+    # this one encodes proper LCM messages
     robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
-    # robot.lidar.transport = pLCMTransport("/lidar")
+
+    # odometry using just a pickle over LCM
     robot.odometry.transport = pLCMTransport("/odom")
-    nav.mov.transport = pLCMTransport("/mov")
-    # robot.odometry.transport = ZenohTransport("/odom", LidarMessage)
+
+    # this one uses default dask transport
+    # nav.mov.transport = pLCMTransport("/mov")
 
     nav.lidar.connect(robot.lidar)
     nav.odometry.connect(robot.odometry)
@@ -136,7 +140,6 @@ def test_deployment(dimos):
 
     print("\n" + robot.io().result() + "\n")
     print("\n" + nav.io().result() + "\n")
-
     robot.start().result()
     nav.start().result()
 
@@ -146,6 +149,11 @@ def test_deployment(dimos):
     print("nav.odom_msg_count", nav.odom_msg_count)
     print("nav.lidar_msg_count", nav.lidar_msg_count)
 
-    # assert robot.mov_msg_count >= 9
-    # assert nav.odom_msg_count >= 9
-    # assert nav.lidar_msg_count >= 9
+    assert robot.mov_msg_count >= 9
+    assert nav.odom_msg_count >= 9
+    assert nav.lidar_msg_count >= 9
+
+
+if __name__ == "__main__":
+    client = start(3)
+    test_deployment(client)

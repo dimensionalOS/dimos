@@ -38,3 +38,14 @@ def dimos():
     yield patchdask(client)
     client.close()
     cluster.close()
+
+
+def start(n):
+    cluster = LocalCluster(n_workers=n, threads_per_worker=3)
+    client = Client(cluster)
+    return patchdask(client)
+
+
+def stop(client: Client):
+    client.close()
+    client.cluster.close()

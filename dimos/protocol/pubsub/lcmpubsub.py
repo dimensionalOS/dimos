@@ -89,6 +89,7 @@ class LCMbase(PubSub[Topic, Any], Service[LCMConfig]):
         return unsubscribe
 
     def start(self):
+        # TODO: proper error handling/log messages for these system calls
         if self.config.auto_configure_multicast:
             try:
                 os.system("sudo ifconfig lo multicast")

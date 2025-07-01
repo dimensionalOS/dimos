@@ -54,6 +54,7 @@ class Module:
     def __str__(self):
         return f"{self.__class__.__name__}"
 
+    # called from remote
     def set_transport(self, stream_name: str, transport: Transport):
         stream = getattr(self, stream_name, None)
         if not stream:
@@ -65,6 +66,7 @@ class Module:
         stream._transport = transport
         return True
 
+    # called from remote
     def connect_stream(self, input_name: str, remote_stream: RemoteOut[T]):
         input_stream = getattr(self, input_name, None)
         if not input_stream:
@@ -72,6 +74,12 @@ class Module:
         if not isinstance(input_stream, In):
             raise TypeError(f"Input {input_name} is not a valid stream")
         input_stream.connection = remote_stream
+
+    def dask_receive_msg(self, input_name: str, msg: Any):
+        getattr(self, input_name).transport.dask_receive_msg(msg)
+
+    def dask_register_subscriber(self, output_name: str, subscriber: RemoteIn[T]):
+        getattr(self, output_name).transport.dask_register_subscriber(subscriber)
 
     @property
     def outputs(self) -> dict[str, Out]:
