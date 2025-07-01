@@ -157,13 +157,17 @@ class Out(BaseOut[T]):
             sub.owner.receive_msg(sub.name, value)
 
     def subscribe(self, remote_input):
-        # print(self, "adding remote input to subscribers", remote_input)
         remote_input.owner._try_bind_worker_client()
         self.subscribers.append(remote_input)
 
 
 class Module:
     ref = None
+
+    def connect(self, input_name, val):
+        input_stream = In(val.type, val.name, self, val)
+        self.inputs[input_name] = input_stream
+        setattr(self, input_name, input_stream)
 
     def subscribe(self, output_name, remote_input):
         # print(f"Actor {self} received sub request for", output_name, "from", remote_input)
@@ -234,12 +238,17 @@ def module(cls: type) -> type:
 
     for n, ann in cls_type_hints.items():
         origin = get_origin(ann)
-        # print(n, ann, origin)
 
         if origin is Out:
             inner_type, *_ = get_args(ann) or (Any,)
             md = Out(inner_type, n)
             cls.outputs[n] = md
+            setattr(cls, n, md)
+
+        if origin is In:
+            inner_type, *_ = get_args(ann) or (Any,)
+            md = In(inner_type, n)
+            cls.inputs[n] = md
             setattr(cls, n, md)
 
     for n, a in cls.__dict__.items():
@@ -267,7 +276,7 @@ def module(cls: type) -> type:
     original_init = cls.__init__
 
     def init_override(self, *args, **kwargs):
-        # TODO does htis override class attribute?
+        # TODO does this override class attribute value?
         for name, out in self.outputs.items():
             out.owner = self
         for name, inp in self.inputs.items():

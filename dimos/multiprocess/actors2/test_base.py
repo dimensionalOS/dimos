@@ -30,16 +30,17 @@ from dimos.utils.testing import SensorReplay
 class RobotClient(Module):
     odometry: Out[Odometry]
     lidar: Out[LidarMessage]
+    mov: In[Vector]
 
-    def __init__(self, mov: In[Vector]):
+    def __init__(self):
         self.odometry = Out(Odometry, "odometry", self)
-        self.mov = mov
         self._stop_event = Event()
         self._thread = None
 
     def start(self):
         self._thread = Thread(target=self.odomloop)
         self._thread.start()
+        self.mov.subscribe(lambda msg: print("MOV REQ", msg))
 
     def odomloop(self):
         odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
@@ -50,7 +51,6 @@ class RobotClient(Module):
         while not self._stop_event.is_set():
             for odom in odomdata.iterate():
                 if self._stop_event.is_set():
-                    print("Stopping odometry stream")
                     return
                 # print(odom)
                 odom.pubtime = time.perf_counter()
@@ -69,7 +69,7 @@ class RobotClient(Module):
 
 @module
 class Navigation(Module):
-    target_path: Out[Path]
+    mov: Out[Vector]
 
     @rpc
     def navigate_to(self, target: Vector) -> bool: ...
@@ -80,16 +80,18 @@ class Navigation(Module):
         lidar: In[LidarMessage],
         odometry: In[Odometry],
     ):
+        self.mov = Out(Vector, "mov", self)
         self.target_position = target_position
         self.lidar = lidar
         self.odometry = odometry
-        self.target_path = Out(Path, "target_path")
 
     @rpc
     def start(self):
-        self.odometry.subscribe(
-            lambda msg: print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
-        )
+        def _odom(msg):
+            print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
+            self.mov.publish(msg.pos)
+
+        self.odometry.subscribe(_odom)
         self.lidar.subscribe(
             lambda msg: print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
         )
@@ -110,7 +112,7 @@ def test_stream_introspection():
 
 def test_instance_introspection():
     mov = RemoteOut[Vector](Vector, "mov")
-    robot = RobotClient(mov=mov)
+    robot = RobotClient()
     print(robot)
 
     target_stream = Out[Vector](Vector, "map")
@@ -126,9 +128,34 @@ def test_instance_introspection():
     print("\n\n\n" + nav.io(), "\n\n")
 
 
-def test_deployment(dimos):
+async def test_alt_transport(dimos):
     mov = RemoteOut[Vector](Vector, "mov")
     robot = dimos.deploy(RobotClient, mov=mov)
+
+    target_stream = RemoteOut[Vector](Vector, "map")
+
+    print("lidar stream", robot.lidar)
+    print("target stream", target_stream)
+    print("odom stream", robot.odometry)
+
+    # robot.odometry.transport = LCMTopic("/odometry", Odometry)
+
+    # robot.lidar.transport = ZENOHTopic("/odometry", Odometry)
+
+    nav = dimos.deploy(
+        Navigation, target_position=target_stream, lidar=robot.lidar, odometry=robot.odometry
+    )
+
+    print("\n\n\n" + robot.io().result(), "\n")
+    print(nav.io().result(), "\n\n")
+
+    await robot.start()
+    await nav.start()
+    time.sleep(2)
+
+
+def test_deployment(dimos):
+    robot = dimos.deploy(RobotClient)
     target_stream = RemoteOut[Vector](Vector, "map")
 
     print("\n")
@@ -142,34 +169,14 @@ def test_deployment(dimos):
         lidar=robot.lidar,
         odometry=robot.odometry,
     )
+
+    print(robot.lidar)
+    robot.connect("mov", nav.mov)
+
     print("\n\n\n" + robot.io().result(), "\n")
     print(nav.io().result(), "\n\n")
 
     robot.start().result()
     nav.start().result()
     time.sleep(2)
-
-
-async def test_alt_transport(dimos):
-    mov = RemoteOut[Vector](Vector, "mov")
-    robot = dimos.deploy(RobotClient, mov=mov)
-
-    target_stream = RemoteOut[Vector](Vector, "map")
-
-    print("lidar stream", robot.lidar)
-    print("target stream", target_stream)
-    print("odom stream", robot.odometry)
-
-    robot.odometry.transport = LCMTopic("/odometry", Odometry)
-    # robot.lidar.transport = ZENOHTopic("/odometry", Odometry)
-
-    nav = dimos.deploy(
-        Navigation, target_position=target_stream, lidar=robot.lidar, odometry=robot.odometry
-    )
-
-    print("\n\n\n" + robot.io().result(), "\n")
-    print(nav.io().result(), "\n\n")
-
-    await robot.start()
-    await nav.start()
-    time.sleep(2)
+    robot.stop().result()
