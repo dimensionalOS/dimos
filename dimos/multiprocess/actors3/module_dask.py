@@ -62,8 +62,8 @@ class Module:
         if not isinstance(stream, Out) and not isinstance(stream, In):
             raise TypeError(f"Output {stream_name} is not a valid stream")
 
-        stream.transport = transport
-        print("Set transport", stream)
+        stream._transport = transport
+        return True
 
     def connect_stream(self, input_name: str, remote_stream: RemoteOut[T]):
         input_stream = getattr(self, input_name, None)

@@ -15,7 +15,7 @@
 import time
 from threading import Event, Thread
 
-from dimos.multiprocess.actors3 import In, Module, Out, RemoteOut, dimos, rpc
+from dimos.multiprocess.actors3 import In, LCMTransport, Module, Out, RemoteOut, dimos, rpc
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.vector import Vector
@@ -39,7 +39,6 @@ class RobotClient(Module):
     def __init__(self):
         super().__init__()
         print(self)
-        print("ODOM GET TEST", getattr(self, "lidar"))
         self._stop_event = Event()
         self._thread = None
 
@@ -108,7 +107,7 @@ def test_deployment(dimos):
     robot = dimos.deploy(RobotClient)
     target_stream = RemoteOut[Vector](Vector, "target")
 
-    # robot.lidar.transport = LCMTopic("/lidar", LidarMessage)
+    robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
 
     print("\n")
     print("lidar stream", robot.lidar)
@@ -116,6 +115,7 @@ def test_deployment(dimos):
     print("odom stream", robot.odometry)
 
     nav = dimos.deploy(Navigation)
+
     nav.lidar.connect(robot.lidar)
 
     print("\n" + robot.io().result() + "\n")

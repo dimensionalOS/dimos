@@ -44,16 +44,13 @@ class Transport(Protocol[T]):
     # used by local Output
     def broadcast(self, selfstream: Out[T], value: T): ...
 
-    # used by remote Input
-    def connect(self, selfstream: RemoteIn[T], otherstream: RemoteOut[T]) -> None: ...
-
     # used by local Input
-    def subscribe(self, selfstream: In[T], callback: Callable[[T], None]) -> None: ...
+    def subscribe(self, selfstream: RemoteIn[T], otherstream: RemoteOut[T]) -> None: ...
 
 
 class DaskTransport(Transport[T]):
     def __str__(self) -> str:
-        return "DaskTransport"
+        return colors.yellow("DaskTransport")
 
     # used by remote Input
     def connect(self, selfstream: RemoteIn[T], otherstream: RemoteOut[T]) -> None:
@@ -64,6 +61,16 @@ class DaskTransport(Transport[T]):
 
 
 class LCMTransport(Transport[T]):
+    topic: str
+    type: type
+
+    def __init__(self, topic: str, type: type):
+        self.topic = topic
+        self.type = type
+
+    def __str__(self) -> str:
+        return colors.green("LCM(") + colors.blue(self.topic) + colors.green(")")
+
     def broadcast(self, selfstream: Out[T], value: T): ...
 
 
@@ -116,7 +123,7 @@ class Stream(Generic[T]):
                 if isinstance(self.owner, Actor)
                 else colors.green(self.owner)
             )
-            + ("" if not self._transport else " - " + colors.yellow(str(self._transport)))
+            + ("" if not self._transport else " via " + str(self._transport))
         )
 
 
@@ -155,6 +162,7 @@ class RemoteStream(Stream[T]):
     @transport.setter
     def transport(self, value: Transport[T]) -> None:
         self.owner.set_transport(self.name, value).result()
+        self._transport = value
 
 
 class RemoteOut(RemoteStream[T]):
@@ -182,12 +190,11 @@ class In(Stream[T]):
 
 class RemoteIn(RemoteStream[T]):
     def connect(self, other: RemoteOut[T]) -> None:
+        print("CONENCT REQU", other)
         return self.owner.connect_stream(self.name, other).result()
 
 
 def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Mark *fn* as remotely callable."""
-
     fn.__rpc__ = True  # type: ignore[attr-defined]
     return fn
 
