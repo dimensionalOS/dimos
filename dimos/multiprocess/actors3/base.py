@@ -35,7 +35,7 @@ from dask.distributed import Actor
 
 from dimos.multiprocess.actors2 import colors
 from dimos.multiprocess.actors2.o3dpickle import register_picklers
-from dimos.protocol.pubsub.lcmpubsub import LCM
+from dimos.protocol.pubsub.lcmpubsub import LCM, pickleLCM
 
 register_picklers()
 T = TypeVar("T")
@@ -46,10 +46,7 @@ class Transport(Protocol[T]):
     def broadcast(self, selfstream: Out[T], value: T): ...
 
     # used by local Input
-    def connect(self, selfstream: In[T]) -> None: ...
-
-    # used by local Input
-    def disconnect(self, selfstream: In[T]) -> None: ...
+    def subscribe(self, selfstream: In[T], callback: Callable[[T], any]) -> None: ...
 
 
 class DaskTransport(Transport[T]):
@@ -80,13 +77,38 @@ class PubSubTransport(Transport[T]):
         )
 
 
-class LCMTransport(PubSubTransport[T]):
-    type: type
+class pLCMTransport(PubSubTransport[T]):
+    _started: bool = False
 
+    def __init__(self, topic):
+        super().__init__(topic)
+        self.lcm = pickleLCM()
+
+    def __reduce__(self):
+        return (pLCMTransport, (self.topic,))
+
+    def broadcast(self, msg):
+        if not self._started:
+            self.lcm.start()
+            self._started = True
+
+        self.lcm.publish(self.topic, msg)
+
+    def subscribe(self, callback: Callable[[T], None]) -> None:
+        if not self._started:
+            self.lcm.start()
+            self._started = True
+        self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
+
+
+class LCMTransport(PubSubTransport[T]):
     def __init__(self, topic, type):
         super().__init__(topic)
         self.type = type
-        self.pubsub = LCM(topic, type)
+        self.lcm = LCM()
+
+    def __reduce__(self):
+        return (LCMTransport, (self.topic, self.type))
 
     def connect(self, *args, **kwargs):
         self.lcm.start()
@@ -174,7 +196,8 @@ class Out(Stream[T]):
             ),
         )
 
-    def publish(self, msg): ...
+    def publish(self, msg):
+        self._transport.broadcast(msg)
 
 
 class RemoteStream(Stream[T]):
@@ -212,14 +235,9 @@ class In(Stream[T]):
     def state(self) -> State:  # noqa: D401
         return State.UNBOUND if self.owner is None else State.READY
 
-    # actual message passing implementation
-    def connect_remote(self):
-        self._transport.connect(self.connection)
-
-    def disconnect_remote(self):
-        self._transport.disconnect()
-
-    def subscribe(self, cb): ...
+    def subscribe(self, cb):
+        print("SUBBING", self, self.connection._transport)
+        self.connection._transport.subscribe(cb)
 
 
 class RemoteIn(RemoteStream[T]):

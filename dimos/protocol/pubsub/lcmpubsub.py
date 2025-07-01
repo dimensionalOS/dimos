@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import threading
+import traceback
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
@@ -89,12 +90,18 @@ class LCMbase(PubSub[Topic, Any], Service[LCMConfig]):
 
     def start(self):
         if self.config.auto_configure_multicast:
-            os.system("sudo ifconfig lo multicast")
-            os.system("sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
+            try:
+                os.system("sudo ifconfig lo multicast")
+                os.system("sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
+            except Exception as e:
+                print(f"Error configuring multicast: {e}")
 
         if self.config.auto_configure_buffers:
-            os.system("sudo sysctl -w net.core.rmem_max=2097152")
-            os.system("sudo sysctl -w net.core.rmem_default=2097152")
+            try:
+                os.system("sudo sysctl -w net.core.rmem_max=2097152")
+                os.system("sudo sysctl -w net.core.rmem_default=2097152")
+            except Exception as e:
+                print(f"Error configuring buffers: {e}")
 
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._loop)
@@ -108,7 +115,8 @@ class LCMbase(PubSub[Topic, Any], Service[LCMConfig]):
                 # Use timeout to allow periodic checking of stop_event
                 self.lc.handle_timeout(100)  # 100ms timeout
             except Exception as e:
-                print(f"Error in LCM handling: {e}")
+                stack_trace = traceback.format_exc()
+                print(f"Error in LCM handling: {e}\n{stack_trace}")
                 if self._stop_event.is_set():
                     break
 

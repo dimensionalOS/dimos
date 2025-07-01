@@ -1,7 +1,15 @@
 import pytest
 from dask.distributed import Client, LocalCluster
 
-from dimos.multiprocess.actors3.base import In, LCMTransport, Out, RemoteOut, ZenohTransport, rpc
+from dimos.multiprocess.actors3.base import (
+    In,
+    LCMTransport,
+    Out,
+    RemoteOut,
+    ZenohTransport,
+    pLCMTransport,
+    rpc,
+)
 from dimos.multiprocess.actors3.module_dask import Module
 
 

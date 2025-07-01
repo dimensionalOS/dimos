@@ -23,6 +23,7 @@ from dimos.multiprocess.actors3 import (
     RemoteOut,
     ZenohTransport,
     dimos,
+    pLCMTransport,
     rpc,
 )
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -66,7 +67,7 @@ class RobotClient(Module):
             for odom in odomdata.iterate():
                 if self._stop_event.is_set():
                     return
-                # print(odom)
+                print(odom)
                 odom.pubtime = time.perf_counter()
                 self.odometry.publish(odom)
 
@@ -116,9 +117,6 @@ def test_deployment(dimos):
     robot = dimos.deploy(RobotClient)
     target_stream = RemoteOut[Vector](Vector, "target")
 
-    robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
-    robot.odometry.transport = ZenohTransport("/odom", LidarMessage)
-
     print("\n")
     print("lidar stream", robot.lidar)
     print("target stream", target_stream)
@@ -126,7 +124,28 @@ def test_deployment(dimos):
 
     nav = dimos.deploy(Navigation)
 
+    # robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
+    robot.lidar.transport = pLCMTransport("/lidar")
+    robot.odometry.transport = pLCMTransport("/odom")
+    nav.mov.transport = pLCMTransport("/mov")
+    # robot.odometry.transport = ZenohTransport("/odom", LidarMessage)
+
     nav.lidar.connect(robot.lidar)
+    nav.odometry.connect(robot.odometry)
+    robot.mov.connect(nav.mov)
 
     print("\n" + robot.io().result() + "\n")
     print("\n" + nav.io().result() + "\n")
+
+    robot.start().result()
+    nav.start().result()
+
+    time.sleep(1)
+    robot.stop().result()
+    print("robot.mov_msg_count", robot.mov_msg_count)
+    print("nav.odom_msg_count", nav.odom_msg_count)
+    print("nav.lidar_msg_count", nav.lidar_msg_count)
+
+    # assert robot.mov_msg_count >= 9
+    # assert nav.odom_msg_count >= 9
+    # assert nav.lidar_msg_count >= 9
