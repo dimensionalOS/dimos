@@ -4,7 +4,7 @@ FROM ${FROM_IMAGE}
 ARG GIT_COMMIT=unknown
 ARG GIT_BRANCH=unknown
 
-RUN apt-get install -y \
+RUN apt-get update && apt-get install -y \
     git \
     git-lfs \
     nano \
