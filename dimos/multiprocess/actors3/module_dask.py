@@ -28,7 +28,7 @@ from typing import (
 
 from dask.distributed import Actor
 
-from dimos.multiprocess.actors3.base import In, Out, RemoteIn
+from dimos.multiprocess.actors3.base import In, Out, RemoteIn, RemoteOut, T, Transport
 
 
 class Module:
@@ -53,6 +53,24 @@ class Module:
 
     def __str__(self):
         return f"{self.__class__.__name__}"
+
+    def set_transport(self, stream_name: str, transport: Transport):
+        stream = getattr(self, stream_name, None)
+        if not stream:
+            raise ValueError(f"{stream_name} not found in {self.__class__.__name__}")
+
+        if not isinstance(stream, Out) and not isinstance(stream, In):
+            raise TypeError(f"Output {stream_name} is not a valid stream")
+
+        stream.transport = transport
+
+    def connect_stream(self, input_name: str, remote_stream: RemoteOut[T]):
+        input_stream = getattr(self, input_name, None)
+        if not input_stream:
+            raise ValueError(f"{input_name} not found in {self.__class__.__name__}")
+        if not isinstance(input_stream, In):
+            raise TypeError(f"Input {input_name} is not a valid stream")
+        input_stream.connection = remote_stream
 
     @property
     def outputs(self) -> dict[str, Out]:

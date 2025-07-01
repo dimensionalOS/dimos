@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Copyright 2025 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,7 +35,6 @@ class RobotClient(Module):
 
     def mov_callback(self, msg):
         self.mov_msg_count += 1
-        print("MOV REQ", msg)
 
     def __init__(self):
         super().__init__()
@@ -111,11 +108,15 @@ def test_deployment(dimos):
     robot = dimos.deploy(RobotClient)
     target_stream = RemoteOut[Vector](Vector, "target")
 
+    # robot.lidar.transport = LCMTopic("/lidar", LidarMessage)
+
     print("\n")
     print("lidar stream", robot.lidar)
     print("target stream", target_stream)
     print("odom stream", robot.odometry)
 
     nav = dimos.deploy(Navigation)
-    print(nav.io().result())
     nav.lidar.connect(robot.lidar)
+
+    print("\n" + robot.io().result() + "\n")
+    print("\n" + nav.io().result() + "\n")

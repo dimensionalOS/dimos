@@ -23,6 +23,7 @@ from typing import (
     Dict,
     Generic,
     List,
+    Optional,
     Protocol,
     TypeVar,
     get_args,
@@ -39,6 +40,33 @@ register_picklers()
 T = TypeVar("T")
 
 
+class Transport(Protocol[T]):
+    # used by local Output
+    def broadcast(self, selfstream: Out[T], value: T): ...
+
+    # used by remote Input
+    def connect(self, selfstream: RemoteIn[T], otherstream: RemoteOut[T]) -> None: ...
+
+    # used by local Input
+    def subscribe(self, selfstream: In[T], callback: Callable[[T], None]) -> None: ...
+
+
+class DaskTransport(Transport[T]):
+    def __str__(self) -> str:
+        return "DaskTransport"
+
+    # used by remote Input
+    def connect(self, selfstream: RemoteIn[T], otherstream: RemoteOut[T]) -> None:
+        print("dask transport connection request")
+        print(selfstream, "->", otherstream)
+
+    def broadcast(self, selfstream: Out[T], value: T): ...
+
+
+class LCMTransport(Transport[T]):
+    def broadcast(self, selfstream: Out[T], value: T): ...
+
+
 class State(enum.Enum):
     UNBOUND = "unbound"  # descriptor defined but not bound
     READY = "ready"  # bound to owner but not yet connected
@@ -47,7 +75,7 @@ class State(enum.Enum):
 
 
 class Stream(Generic[T]):
-    transport = None
+    _transport = DaskTransport()
 
     def __init__(self, type: type[T], name: str, owner: Any | None = None):
         self.name = name
@@ -73,9 +101,12 @@ class Stream(Generic[T]):
             + " "
             + self._color_fn()(f"{self.name}[{self.type_name}]")
             + " @ "
-            + colors.orange(self.owner)
-            if isinstance(self.owner, Actor)
-            else colors.green(self.owner)
+            + (
+                colors.orange(self.owner)
+                if isinstance(self.owner, Actor)
+                else colors.green(self.owner)
+            )
+            + ("" if not self._transport else " - " + colors.yellow(str(self._transport)))
         )
 
 
@@ -92,14 +123,30 @@ class Out(Stream[T]):
     def publish(self, msg): ...
 
 
-class RemoteOut(Stream[T]):
+class RemoteStream(Stream[T]):
     @property
     def state(self) -> State:  # noqa: D401
         return State.UNBOUND if self.owner is None else State.READY
 
+    @property
+    def transport(self) -> Transport[T]:
+        return self._transport
+
+    @transport.setter
+    def transport(self, value: Transport[T]) -> None:
+        self.owner.set_transport(self.name, value).result()
+
+
+class RemoteOut(RemoteStream[T]):
+    def connect(self, other: RemoteIn[T]):
+        print("sub request from", self, "to", other)
+
 
 class In(Stream[T]):
-    connection: RemoteOut[T] | None = None
+    connection: Optional[RemoteOut[T]] = None
+
+    def __str__(self):
+        return super().__str__() + ("" if not self.connection else f" <- {self.connection}")
 
     def subscribe(self, cb): ...
 
@@ -113,13 +160,9 @@ class In(Stream[T]):
         return State.UNBOUND if self.owner is None else State.READY
 
 
-class RemoteIn(Stream[T]):
-    @property
-    def state(self) -> State:  # noqa: D401
-        return State.UNBOUND if self.owner is None else State.READY
-
-    def connect(self, other: Out[T]) -> None:
-        print("sub request from", self, "to", other)
+class RemoteIn(RemoteStream[T]):
+    def connect(self, other: RemoteOut[T]) -> None:
+        return self.owner.connect_stream(self.name, other).result()
 
 
 def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -127,3 +170,27 @@ def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:
 
     fn.__rpc__ = True  # type: ignore[attr-defined]
     return fn
+
+
+daskTransport = DaskTransport()  # singleton instance for use in Out/RemoteOut
+
+
+# process for LCM
+# remoteInput - connect to remoteOutput
+# or remoteOutput - connect to remoteInput
+#
+# remoteInput learns the actual LCM topic, from that point on local comms
+
+
+# process for Dask
+# remoteInput - connect to remoteOutput
+# or remoteOutput - connect to remoteInput
+#
+# remoteInput learns the actual Dask actor from remoteOutput
+# remoteInput contacts the actor, telling it "I'm interested in remoteOutput, contact me here"
+
+
+# this means that transport split is at
+# remoteInput/remoteOutput sub request level?
+#
+# remoteInput needs to communicate the transport to local Input in some way, so Transport def is portable.
