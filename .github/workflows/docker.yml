@@ -36,6 +36,7 @@ jobs:
               - .github/workflows/docker.yml
               - docker/python/**
               - requirements*.txt
+              - requirements.txt
 
             dev:
               - docker/dev/**
