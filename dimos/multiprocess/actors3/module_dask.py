@@ -63,6 +63,7 @@ class Module:
             raise TypeError(f"Output {stream_name} is not a valid stream")
 
         stream.transport = transport
+        print("Set transport", stream)
 
     def connect_stream(self, input_name: str, remote_stream: RemoteOut[T]):
         input_stream = getattr(self, input_name, None)

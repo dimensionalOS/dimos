@@ -75,12 +75,22 @@ class State(enum.Enum):
 
 
 class Stream(Generic[T]):
-    _transport = DaskTransport()
+    _transport: Optional[Transport]
 
-    def __init__(self, type: type[T], name: str, owner: Any | None = None):
+    def __init__(
+        self,
+        type: type[T],
+        name: str,
+        owner: Optional[Any] = None,
+        transport: Optional[Transport] = None,
+    ):
         self.name = name
         self.owner = owner
         self.type = type
+        if transport:
+            self._transport = transport
+        if not hasattr(self, "_transport"):
+            self._transport = None
 
     @property
     def type_name(self) -> str:
@@ -111,6 +121,8 @@ class Stream(Generic[T]):
 
 
 class Out(Stream[T]):
+    _transport: Transport = DaskTransport()
+
     @property
     def state(self) -> State:  # noqa: D401
         return State.UNBOUND if self.owner is None else State.READY
@@ -118,7 +130,15 @@ class Out(Stream[T]):
     def __reduce__(self):  # noqa: D401
         if self.owner is None or not hasattr(self.owner, "ref"):
             raise ValueError("Cannot serialise Out without an owner ref")
-        return (RemoteOut, (self.type, self.name, self.owner.ref))
+        return (
+            RemoteOut,
+            (
+                self.type,
+                self.name,
+                self.owner.ref,
+                self._transport,
+            ),
+        )
 
     def publish(self, msg): ...
 
@@ -153,7 +173,7 @@ class In(Stream[T]):
     def __reduce__(self):  # noqa: D401
         if self.owner is None or not hasattr(self.owner, "ref"):
             raise ValueError("Cannot serialise Out without an owner ref")
-        return (RemoteIn, (self.type, self.name, self.owner.ref))
+        return (RemoteIn, (self.type, self.name, self.owner.ref, self._transport))
 
     @property
     def state(self) -> State:  # noqa: D401
