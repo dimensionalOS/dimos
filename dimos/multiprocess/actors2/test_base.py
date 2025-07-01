@@ -115,7 +115,7 @@ def test_deployment(dimos):
     target_stream = RemoteOut[Vector](Vector, "map")
 
     print("\n")
-    print("lidar stream", robot.lidar)
+    print("lidar stream", robot.lidar, robot.lidar.owner)
     print("target stream", target_stream)
     print("odom stream", robot.odometry)
 
@@ -140,6 +140,6 @@ def test_deployment(dimos):
     print("nav.odom_msg_count", nav.odom_msg_count)
     print("nav.lidar_msg_count", nav.lidar_msg_count)
 
-    assert robot.mov_msg_count > 5
-    assert nav.odom_msg_count > 5
-    assert nav.lidar_msg_count > 5
+    assert robot.mov_msg_count >= 9
+    assert nav.odom_msg_count >= 9
+    assert nav.lidar_msg_count >= 9

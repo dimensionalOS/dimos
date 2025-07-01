@@ -28,7 +28,18 @@ from __future__ import annotations
 
 import enum
 import inspect
-from typing import Any, Callable, Dict, Generic, List, TypeVar, get_args, get_origin, get_type_hints
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generic,
+    List,
+    Protocol,
+    TypeVar,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from distributed.actor import Actor  # only imported for type-checking
 
@@ -38,6 +49,25 @@ from dimos.multiprocess.actors2.o3dpickle import register_picklers
 register_picklers()
 
 T = TypeVar("T")
+
+
+# Goals
+# ----------
+# streams should be able to know:
+#   - if they are in or out
+#   - which actor is their owner
+#   - streams can implement their own transport (how does this work?)
+#   - if they are connected to another stream, know all of the above for it
+#
+# Usage within actor
+# ------------------
+# LocalIn.subscribe(print)
+# LocalOut.publish("hello")
+#
+# Usage from outside
+# myActor.inputStream.connect(otherActor.outputStream)
+# myActor.outputStream.connect(otherActor.inputStream)
+#
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +80,29 @@ def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:
 
     fn.__rpc__ = True  # type: ignore[attr-defined]
     return fn
+
+
+# ---------------------------------------------------------------------------
+# Protocols
+# ---------------------------------------------------------------------------
+
+
+class MultiprocessingProtocol(Protocol):
+    def deploy(self, target): ...
+
+
+class TransportProtocol(Protocol[T]):
+    def broadcast(self, selfstream: Out, value: T): ...
+
+
+class DirectTransportProtocol(Protocol[T]):
+    def direct_msg(self, selfstream: Out, target: RemoteIn, value: T) -> None: ...
+
+
+Transport = TransportProtocol | DirectTransportProtocol
+
+
+class DaskTransport: ...
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +120,7 @@ class State(enum.Enum):
 class Stream(Generic[T]):
     """Base class shared by *In* and *Out* streams."""
 
-    def __init__(self, typ: type[T], name: str):
+    def __init__(self, typ: type[T], name: str, transport: Transport = DaskTransport):
         self.type: type[T] = typ
         self.name: str = name
 
@@ -127,6 +180,15 @@ class BaseOut(Stream[T]):
 
     def subscribe(self, inp: "In[T]") -> None:  # pragma: no cover – abstract
         raise NotImplementedError
+
+    def __str__(self) -> str:  # noqa: D401
+        return (
+            self.__class__.__name__
+            + " "
+            + self._color_fn()(f"{self.name}[{self.type_name}]")
+            + " @ "
+            + str(self.owner)
+        )
 
 
 class Out(BaseOut[T]):
@@ -287,7 +349,7 @@ class Module:  # pylint: disable=too-few-public-methods
     def receive_msg(self, input_name: str, msg: Any) -> None:  # noqa: D401
         self.inputs[input_name]._receive(msg)
 
-    def set_ref(self, ref: Any) -> None:  # noqa: D401
+    def set_ref(self, ref: Actor) -> None:  # noqa: D401
         self.ref = ref  # created dynamically elsewhere
 
     def __str__(self) -> str:  # noqa: D401
