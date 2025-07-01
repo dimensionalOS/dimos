@@ -109,7 +109,10 @@ class Navigation(Module):
 
         def _lidar(msg):
             self.lidar_msg_count += 1
-            print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
+            if hasattr(msg, "pubtime"):
+                print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
+            else:
+                print("RCV: unknown time", msg)
 
         self.lidar.subscribe(_lidar)
 
@@ -129,10 +132,10 @@ def test_deployment(dimos):
     robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
 
     # odometry using just a pickle over LCM
-    # robot.odometry.transport = pLCMTransport("/odom")
+    robot.odometry.transport = pLCMTransport("/odom")
 
     # this one uses default dask transport
-    # nav.mov.transport = pLCMTransport("/mov")
+    nav.mov.transport = pLCMTransport("/mov")
 
     nav.lidar.connect(robot.lidar)
     nav.odometry.connect(robot.odometry)
@@ -145,6 +148,7 @@ def test_deployment(dimos):
 
     time.sleep(1)
     robot.stop().result()
+
     print("robot.mov_msg_count", robot.mov_msg_count)
     print("nav.odom_msg_count", nav.odom_msg_count)
     print("nav.lidar_msg_count", nav.lidar_msg_count)

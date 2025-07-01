@@ -37,6 +37,7 @@ from dask.distributed import Actor
 from dimos.multiprocess.actors2 import colors
 from dimos.multiprocess.actors2.o3dpickle import register_picklers
 from dimos.protocol.pubsub.lcmpubsub import LCM, pickleLCM
+from dimos.protocol.pubsub.lcmpubsub import Topic as LCMTopic
 
 register_picklers()
 T = TypeVar("T")
@@ -98,9 +99,9 @@ class DaskTransport(Transport[T]):
 
 
 class PubSubTransport(Transport[T]):
-    topic: str
+    topic: any
 
-    def __init__(self, topic: str):
+    def __init__(self, topic: any):
         self.topic = topic
 
     def __str__(self) -> str:
@@ -137,22 +138,20 @@ class pLCMTransport(PubSubTransport[T]):
 
 class LCMTransport(PubSubTransport[T]):
     _started: bool = False
-    type: type
 
     def __init__(self, topic: str, type: type):
-        super().__init__(topic)
-        self.type = type
+        super().__init__(LCMTopic(topic, type))
         self.lcm = LCM()
 
     def __reduce__(self):
-        return (pLCMTransport, (self.topic,))
+        return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
 
     def broadcast(self, _, msg):
         if not self._started:
             self.lcm.start()
             self._started = True
 
-        self.lcm.publish(self.topic, msg, self.type)
+        self.lcm.publish(self.topic, msg)
 
     def subscribe(self, selfstream: In[T], callback: Callable[[T], None]) -> None:
         if not self._started:
