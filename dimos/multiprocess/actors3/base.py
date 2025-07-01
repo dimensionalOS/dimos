@@ -80,7 +80,7 @@ class PubSubTransport(Transport[T]):
 class pLCMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic):
+    def __init__(self, topic: str):
         super().__init__(topic)
         self.lcm = pickleLCM()
 
@@ -102,22 +102,29 @@ class pLCMTransport(PubSubTransport[T]):
 
 
 class LCMTransport(PubSubTransport[T]):
-    def __init__(self, topic, type):
+    _started: bool = False
+    type: type
+
+    def __init__(self, topic: str, type: type):
         super().__init__(topic)
         self.type = type
         self.lcm = LCM()
 
     def __reduce__(self):
-        return (LCMTransport, (self.topic, self.type))
-
-    def connect(self, *args, **kwargs):
-        self.lcm.start()
-
-    def disconnect(self, *args, **kwargs):
-        self.lcm.stop()
+        return (pLCMTransport, (self.topic,))
 
     def broadcast(self, msg):
-        self.pubsub.publish(self.topic, msg)
+        if not self._started:
+            self.lcm.start()
+            self._started = True
+
+        self.lcm.publish(self.topic, msg, self.type)
+
+    def subscribe(self, callback: Callable[[T], None]) -> None:
+        if not self._started:
+            self.lcm.start()
+            self._started = True
+        self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
 class ZenohTransport(PubSubTransport[T]): ...

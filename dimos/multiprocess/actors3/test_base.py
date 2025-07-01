@@ -124,8 +124,8 @@ def test_deployment(dimos):
 
     nav = dimos.deploy(Navigation)
 
-    # robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
-    robot.lidar.transport = pLCMTransport("/lidar")
+    robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
+    # robot.lidar.transport = pLCMTransport("/lidar")
     robot.odometry.transport = pLCMTransport("/odom")
     nav.mov.transport = pLCMTransport("/mov")
     # robot.odometry.transport = ZenohTransport("/odom", LidarMessage)
