@@ -60,7 +60,7 @@ class DaskTransport(Transport[T]):
     def broadcast(self, selfstream: Out[T], value: T): ...
 
 
-class LCMTransport(Transport[T]):
+class PubSubTransport(Transport[T]):
     topic: str
     type: type
 
@@ -69,9 +69,17 @@ class LCMTransport(Transport[T]):
         self.type = type
 
     def __str__(self) -> str:
-        return colors.green("LCM(") + colors.blue(self.topic) + colors.green(")")
+        return (
+            colors.green(f"{self.__class__.__name__}(")
+            + colors.blue(self.topic)
+            + colors.green(")")
+        )
 
-    def broadcast(self, selfstream: Out[T], value: T): ...
+
+class LCMTransport(PubSubTransport[T]): ...
+
+
+class ZenohTransport(PubSubTransport[T]): ...
 
 
 class State(enum.Enum):
@@ -176,8 +184,6 @@ class In(Stream[T]):
     def __str__(self):
         return super().__str__() + ("" if not self.connection else f" <- {self.connection}")
 
-    def subscribe(self, cb): ...
-
     def __reduce__(self):  # noqa: D401
         if self.owner is None or not hasattr(self.owner, "ref"):
             raise ValueError("Cannot serialise Out without an owner ref")
@@ -187,10 +193,18 @@ class In(Stream[T]):
     def state(self) -> State:  # noqa: D401
         return State.UNBOUND if self.owner is None else State.READY
 
+    # actual message passing implementation
+    def connect_remote(self):
+        self._transport.connect(self.connection)
+
+    def disconnect_remote(self):
+        self._transport.disconnect()
+
+    def subscribe(self, cb): ...
+
 
 class RemoteIn(RemoteStream[T]):
     def connect(self, other: RemoteOut[T]) -> None:
-        print("CONENCT REQU", other)
         return self.owner.connect_stream(self.name, other).result()
 
 

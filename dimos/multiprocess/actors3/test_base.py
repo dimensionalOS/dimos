@@ -15,7 +15,16 @@
 import time
 from threading import Event, Thread
 
-from dimos.multiprocess.actors3 import In, LCMTransport, Module, Out, RemoteOut, dimos, rpc
+from dimos.multiprocess.actors3 import (
+    In,
+    LCMTransport,
+    Module,
+    Out,
+    RemoteOut,
+    ZenohTransport,
+    dimos,
+    rpc,
+)
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.vector import Vector
@@ -108,6 +117,7 @@ def test_deployment(dimos):
     target_stream = RemoteOut[Vector](Vector, "target")
 
     robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
+    robot.odometry.transport = ZenohTransport("/odom", LidarMessage)
 
     print("\n")
     print("lidar stream", robot.lidar)
