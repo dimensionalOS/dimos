@@ -21,7 +21,7 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 import lcm
 
-from dimos.protocol.pubsub.spec import PubSub, PubSubEncoderMixin
+from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
 from dimos.protocol.service.spec import Service
 
 
@@ -133,5 +133,11 @@ class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
 
 class LCM(
     LCMEncoderMixin,
+    LCMbase,
+): ...
+
+
+class pickleLCM(
+    PickleEncoderMixin,
     LCMbase,
 ): ...

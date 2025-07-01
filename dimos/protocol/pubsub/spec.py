@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import pickle
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -127,3 +128,11 @@ class PubSubEncoderMixin(ABC, Generic[TopicT, MsgT]):
             callback(decoded_message, topic)
 
         return super().subscribe(topic, wrapper_cb)  # type: ignore[misc]
+
+
+class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT]):
+    def encode(self, msg: MsgT, *_: TopicT) -> bytes:
+        return pickle.dumps(msg)
+
+    def decode(self, msg: bytes, _: TopicT) -> MsgT:
+        return pickle.loads(msg)

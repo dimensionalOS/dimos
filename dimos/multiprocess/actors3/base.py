@@ -35,6 +35,7 @@ from dask.distributed import Actor
 
 from dimos.multiprocess.actors2 import colors
 from dimos.multiprocess.actors2.o3dpickle import register_picklers
+from dimos.protocol.pubsub.lcmpubsub import LCM
 
 register_picklers()
 T = TypeVar("T")
@@ -45,28 +46,31 @@ class Transport(Protocol[T]):
     def broadcast(self, selfstream: Out[T], value: T): ...
 
     # used by local Input
-    def subscribe(self, selfstream: RemoteIn[T], otherstream: RemoteOut[T]) -> None: ...
+    def connect(self, selfstream: In[T]) -> None: ...
+
+    # used by local Input
+    def disconnect(self, selfstream: In[T]) -> None: ...
 
 
 class DaskTransport(Transport[T]):
     def __str__(self) -> str:
         return colors.yellow("DaskTransport")
 
-    # used by remote Input
     def connect(self, selfstream: RemoteIn[T], otherstream: RemoteOut[T]) -> None:
         print("dask transport connection request")
         print(selfstream, "->", otherstream)
 
+    def disconnect(self): ...
+
+    # used by
     def broadcast(self, selfstream: Out[T], value: T): ...
 
 
 class PubSubTransport(Transport[T]):
     topic: str
-    type: type
 
-    def __init__(self, topic: str, type: type):
+    def __init__(self, topic: str):
         self.topic = topic
-        self.type = type
 
     def __str__(self) -> str:
         return (
@@ -76,7 +80,22 @@ class PubSubTransport(Transport[T]):
         )
 
 
-class LCMTransport(PubSubTransport[T]): ...
+class LCMTransport(PubSubTransport[T]):
+    type: type
+
+    def __init__(self, topic, type):
+        super().__init__(topic)
+        self.type = type
+        self.pubsub = LCM(topic, type)
+
+    def connect(self, *args, **kwargs):
+        self.lcm.start()
+
+    def disconnect(self, *args, **kwargs):
+        self.lcm.stop()
+
+    def broadcast(self, msg):
+        self.pubsub.publish(self.topic, msg)
 
 
 class ZenohTransport(PubSubTransport[T]): ...
