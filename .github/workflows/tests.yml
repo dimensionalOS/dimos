@@ -20,10 +20,9 @@ permissions:
   packages: read
 
 jobs:
-  run-tests:
+
+  cleanup:
     runs-on: dimos-runner-ubuntu-2204
-
-
     steps:
       - name: exit early
         if: ${{ !inputs.should-run }}
@@ -36,12 +35,17 @@ jobs:
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/share/boost
           sudo rm -rf /usr/local/lib/android
+          
+  run-tests:
+    runs-on: dimos-runner-ubuntu-2204
+    container:
+      image: ghcr.io/dimensionalos/${{ inputs.dev-image }}
+
+    steps:
 
       - uses: actions/checkout@v4
         
       - name: Run tests
-        container:
-          image: ghcr.io/dimensionalos/${{ inputs.dev-image }}
         run: |
           git config --global --add safe.directory '*'
           /entrypoint.sh bash -c "${{ inputs.cmd }}"
