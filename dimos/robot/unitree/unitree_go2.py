@@ -54,11 +54,8 @@ class UnitreeGo2(Robot):
         output_dir: str = os.path.join(os.getcwd(), "assets", "output"),
         skill_library: SkillLibrary = None,
         robot_capabilities: List[RobotCapability] = None,
-        costmap: np.ndarray = None,
         spatial_memory_collection: str = "spatial_memory",
         new_memory: bool = False,
-        video_selection: str = "front",
-        video_fps: int = 30,
         disable_video_stream: bool = False,
         mock_connection: bool = False,
         enable_perception: bool = True,
@@ -70,11 +67,8 @@ class UnitreeGo2(Robot):
             output_dir: Directory for output files
             skill_library: Library of robot skills
             robot_capabilities: List of robot capabilities
-            costmap: Optional pre-loaded costmap
             spatial_memory_collection: Collection name for spatial memory
             new_memory: Whether to create new memory collection
-            video_selection: Which camera to use ('front', 'chin', 'left', 'right')
-            video_fps: Frame rate for video capture
             disable_video_stream: Whether to disable video streaming
             mock_connection: Whether to use mock connection for testing
             enable_perception: Whether to enable perception streams and spatial memory
