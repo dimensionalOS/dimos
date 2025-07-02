@@ -38,4 +38,8 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
           /entrypoint.sh bash -c "${{ inputs.cmd }}"
-
+          
+      - name: check disk space
+        if: failure()
+        run: |
+          df -h
