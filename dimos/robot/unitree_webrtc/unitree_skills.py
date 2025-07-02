@@ -238,7 +238,7 @@ class MyUnitreeSkills(SkillLibrary):
                     )
                 else:
                     # Use WebRTC publish_request interface through the robot's webrtc_connection
-                    result = self._robot.webrtc_connection.publish_request(
+                    result = self._robot.publish_request(
                         RTC_TOPIC["SPORT_MOD"], {"api_id": self._app_id}
                     )
                     string = f"{Colors.GREEN_PRINT_COLOR}{self.__class__.__name__} was successful: id={self._app_id}{Colors.RESET_COLOR}"

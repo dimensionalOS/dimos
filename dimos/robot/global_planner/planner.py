@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from dimos.robot.module_utils import robot_module
+from dimos.robot.capabilities import Move, Lidar, Odometry
 from abc import abstractmethod
 from typing import Callable, Optional
 import threading
@@ -23,6 +25,9 @@ from dimos.types.vector import VectorLike, to_vector, Vector
 from dimos.robot.global_planner.algo import astar
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.helpers import Visualizable
+from dimos.robot.local_planner.local_planner import navigate_path_local
+from dimos.utils.reactive import getter_streaming
+from dimos.robot.unitree_webrtc.type.map import Map
 
 logger = setup_logger("dimos.robot.unitree.global_planner")
 
@@ -49,12 +54,20 @@ class Planner(Visualizable):
         return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
 
 
-@dataclass
+@robot_module
 class AstarPlanner(Planner):
-    get_costmap: Callable[[], Costmap]
-    get_robot_pos: Callable[[], Vector]
-    set_local_nav: Callable[[Path], bool]
-    conservativism: int = 8
+    REQUIRES = (Move, Lidar, Odometry)
+
+    def __init__(self, conservativism: int = 8):
+        self.conservativism = conservativism
+
+    def setup(self, robot):
+        # Build lambdas that access robot state lazily
+        self.get_costmap = lambda: Map(voxel_size=0.2).costmap()
+        self.get_robot_pos = lambda: getter_streaming(robot.odom_stream()).pos
+        self.set_local_nav = lambda path, stop_event=None, goal_theta=None: navigate_path_local(
+            robot, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event
+        )
 
     def plan(self, goal: VectorLike) -> Path:
         goal = to_vector(goal).to_2d()

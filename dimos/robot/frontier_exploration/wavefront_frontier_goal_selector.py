@@ -21,6 +21,7 @@ for autonomous navigation using the dimos Costmap and Vector types.
 
 from typing import List, Tuple, Optional, Callable
 from collections import deque
+from dimos.robot.global_planner.planner import AstarPlanner
 import numpy as np
 from dataclasses import dataclass
 from enum import IntFlag
@@ -30,6 +31,9 @@ from dimos.utils.logging_config import setup_logger
 from dimos.types.costmap import Costmap, CostValues
 from dimos.types.vector import Vector
 from dimos.robot.frontier_exploration.utils import smooth_costmap_for_frontiers
+from dimos.robot.module_utils import robot_module
+from dimos.robot.unitree_webrtc.type.map import Map
+from dimos.utils.reactive import getter_streaming
 
 logger = setup_logger("dimos.robot.unitree.frontier_exploration")
 
@@ -71,13 +75,54 @@ class FrontierCache:
         self.points.clear()
 
 
+from dimos.robot.capabilities import Move, Odometry, Lidar
+
+
+@robot_module
 class WavefrontFrontierExplorer:
+    REQUIRES = (Move, Odometry, Lidar)
     """
     Wavefront frontier exploration algorithm implementation.
 
     This class encapsulates the frontier detection and exploration goal selection
     functionality using the wavefront algorithm with BFS exploration.
     """
+
+    # ------------------------------------------------------------------
+    # Robot lifecycle hook
+    # ------------------------------------------------------------------
+    def setup(self, robot):  # type: ignore[override]
+        kw = getattr(self, "_init_kwargs", {})
+        # Recover stored params
+        self.min_frontier_size = kw.get("min_frontier_size", 10)
+        self.occupancy_threshold = kw.get("occupancy_threshold", 65)
+        self.subsample_resolution = kw.get("subsample_resolution", 3)
+        self.min_distance_from_robot = kw.get("min_distance_from_robot", 0.5)
+        self.explored_area_buffer = kw.get("explored_area_buffer", 0.5)
+        self.min_distance_from_obstacles = kw.get("min_distance_from_obstacles", 0.6)
+        self.info_gain_threshold = kw.get("info_gain_threshold", 0.03)
+        self.num_no_gain_attempts = kw.get("num_no_gain_attempts", 4)
+        self.set_goal = (
+            kw.get("set_goal") or robot.get_module(AstarPlanner).set_goal
+            if robot.get_module(AstarPlanner)
+            else None
+        )
+
+        # Data sources from robot
+        self.lidar_stream = robot.lidar_stream()
+        self.odom = getter_streaming(robot.odom_stream())
+        self.map = Map(voxel_size=0.2)
+        self.map_stream = self.map.consume(self.lidar_stream)
+        self.lidar_message = getter_streaming(self.lidar_stream)
+        self.get_costmap = lambda: self.lidar_message().costmap()
+        self.get_robot_pos = lambda: self.odom().pos
+
+        # Ensure global planner
+        self.global_planner = robot.get_module(AstarPlanner)
+        if self.global_planner is None:
+            raise RuntimeError("AstarPlanner module required for WavefrontFrontierExplorer")
+
+        logger.info("WavefrontFrontierExplorer setup complete")
 
     def __init__(
         self,
@@ -109,21 +154,33 @@ class WavefrontFrontierExplorer:
             get_costmap: Callable to get current costmap, signature: () -> Costmap
             get_robot_pos: Callable to get current robot position, signature: () -> Vector
         """
-        self.min_frontier_size = min_frontier_size
-        self.occupancy_threshold = occupancy_threshold
-        self.subsample_resolution = subsample_resolution
-        self.min_distance_from_robot = min_distance_from_robot
-        self.explored_area_buffer = explored_area_buffer
-        self.min_distance_from_obstacles = min_distance_from_obstacles
-        self.info_gain_threshold = info_gain_threshold
-        self.num_no_gain_attempts = num_no_gain_attempts
-        self.set_goal = set_goal
-        self.get_costmap = get_costmap
-        self.get_robot_pos = get_robot_pos
+        # Store parameters only; robot-dependent parts are initialized in setup
+        self._init_kwargs = dict(
+            min_frontier_size=min_frontier_size,
+            occupancy_threshold=occupancy_threshold,
+            subsample_resolution=subsample_resolution,
+            min_distance_from_robot=min_distance_from_robot,
+            explored_area_buffer=explored_area_buffer,
+            min_distance_from_obstacles=min_distance_from_obstacles,
+            info_gain_threshold=info_gain_threshold,
+            num_no_gain_attempts=num_no_gain_attempts,
+            set_goal=set_goal,
+            get_costmap=get_costmap,
+            get_robot_pos=get_robot_pos,
+        )
+
+        # Placeholder fields; real init in setup
+        self.global_planner = None
+        self.lidar_stream = None
+        self.odom = None
+        self.map = None
+        self.map_stream = None
+        self.lidar_message = None
+
         self._cache = FrontierCache()
-        self.explored_goals = []  # list of explored goals
-        self.exploration_direction = Vector([0.0, 0.0])  # current exploration direction
-        self.last_costmap = None  # store last costmap for information comparison
+        self.explored_goals = []
+        self.exploration_direction = Vector([0.0, 0.0])
+        self.last_costmap = None
 
     def _count_costmap_information(self, costmap: Costmap) -> int:
         """

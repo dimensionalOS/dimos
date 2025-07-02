@@ -21,12 +21,20 @@ import numpy as np
 import cv2
 
 
+from dimos.robot.module_utils import robot_module
+from dimos.robot.capabilities import Video
+
+
+@robot_module
 class PersonTrackingStream:
+    # Module capability requirement
+    REQUIRES = (Video,)
+
     def __init__(
         self,
         camera_intrinsics=None,
-        camera_pitch=0.0,
-        camera_height=1.0,
+        camera_pitch=None,
+        camera_height=None,
     ):
         """
         Initialize a person tracking stream using Yolo2DDetector and PersonDistanceEstimator.
@@ -41,25 +49,31 @@ class PersonTrackingStream:
             camera_height: Height of the camera from the ground in meters
         """
         self.detector = Yolo2DDetector()
+        # store parameters; may be None and filled later in `setup`
+        self.camera_intrinsics = camera_intrinsics
+        self.camera_pitch = camera_pitch
+        self.camera_height = camera_height
+        # Distance estimator will be built later once we have camera parameters
+        self.distance_estimator = None
 
-        # Initialize distance estimator
-        if camera_intrinsics is None:
-            raise ValueError("Camera intrinsics are required for distance estimation")
+    def setup(self, robot):
+        if self.camera_intrinsics is None:
+            self.camera_intrinsics = robot.camera_intrinsics
+        if self.camera_pitch is None:
+            self.camera_pitch = robot.camera_pitch
+        if self.camera_height is None:
+            self.camera_height = robot.camera_height
 
-        # Validate camera intrinsics format [fx, fy, cx, cy]
-        if (
-            not isinstance(camera_intrinsics, (list, tuple, np.ndarray))
-            or len(camera_intrinsics) != 4
-        ):
-            raise ValueError("Camera intrinsics must be provided as [fx, fy, cx, cy]")
+        if self.distance_estimator is None:
+            if self.camera_intrinsics is None or len(self.camera_intrinsics) != 4:
+                raise ValueError("Valid camera_intrinsics are required for PersonTrackingStream")
+            fx, fy, cx, cy = self.camera_intrinsics
+            K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
+            self.distance_estimator = PersonDistanceEstimator(
+                K=K, camera_pitch=self.camera_pitch, camera_height=self.camera_height
+            )
 
-        # Convert [fx, fy, cx, cy] to 3x3 camera matrix
-        fx, fy, cx, cy = camera_intrinsics
-        K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
-
-        self.distance_estimator = PersonDistanceEstimator(
-            K=K, camera_pitch=camera_pitch, camera_height=camera_height
-        )
+        self._stream = self.create_stream(robot.video_stream())
 
     def create_stream(self, video_stream: Observable) -> Observable:
         """

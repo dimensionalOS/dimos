@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import cv2
+from dimos.robot.module_utils import robot_module
+from dimos.robot.capabilities import Video
 from reactivex import Observable
 from reactivex import operators as ops
 import numpy as np
@@ -21,7 +23,10 @@ from dimos.models.depth.metric3d import Metric3D
 from dimos.perception.detection2d.utils import calculate_depth_from_bbox
 
 
+@robot_module
 class ObjectTrackingStream:
+    REQUIRES = (Video,)
+
     def __init__(
         self,
         camera_intrinsics=None,
@@ -72,6 +77,28 @@ class ObjectTrackingStream:
         self.depth_model = Metric3D(gt_depth_scale)
         if camera_intrinsics is not None:
             self.depth_model.update_intrinsic(camera_intrinsics)
+
+        self.camera_intrinsics = camera_intrinsics
+        self.camera_pitch = camera_pitch
+        self.camera_height = camera_height
+
+    def setup(self, robot):
+        if self.camera_intrinsics is None:
+            self.camera_intrinsics = robot.camera_intrinsics
+        if self.camera_pitch is None:
+            self.camera_pitch = robot.camera_pitch
+        if self.camera_height is None:
+            self.camera_height = robot.camera_height
+
+        # Build distance estimator if still missing
+        if self.distance_estimator is None and self.camera_intrinsics is not None:
+            fx, fy, cx, cy = self.camera_intrinsics
+            K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
+            self.distance_estimator = ObjectDistanceEstimator(
+                K=K, camera_pitch=self.camera_pitch, camera_height=self.camera_height
+            )
+
+        self._stream = self.create_stream(robot.video_stream())
 
     def track(self, bbox, frame=None, distance=None, size=None):
         """

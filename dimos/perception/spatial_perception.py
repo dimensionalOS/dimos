@@ -36,7 +36,14 @@ from dimos.types.robot_location import RobotLocation
 logger = setup_logger("dimos.perception.spatial_memory")
 
 
+from dimos.robot.module_utils import robot_module
+
+
+@robot_module
 class SpatialMemory:
+    from dimos.robot.capabilities import Video, Odometry
+
+    REQUIRES = (Video, Odometry)
     """
     A class for building and querying Robot spatial memory.
 
@@ -54,7 +61,7 @@ class SpatialMemory:
         min_time_threshold: float = 1.0,  # Min time in seconds to record a new frame
         db_path: Optional[str] = None,  # Path for ChromaDB persistence
         visual_memory_path: Optional[str] = None,  # Path for saving/loading visual memory
-        new_memory: bool = False,  # Whether to create a new memory from scratch
+        new_memory: bool = True,  # Whether to create a new memory from scratch
         output_dir: Optional[str] = None,  # Directory for storing visual memory data
         chroma_client: Any = None,  # Optional ChromaDB client for persistence
         visual_memory: Optional[
@@ -83,10 +90,11 @@ class SpatialMemory:
         self.min_time_threshold = min_time_threshold
 
         # Set up paths for persistence
-        self.db_path = db_path
-        self.visual_memory_path = visual_memory_path
-        self.output_dir = output_dir
-
+        self.output_dir = output_dir or os.path.join(
+            os.getenv("DIMOS_OUTPUT_DIR"), "spatial_memory"
+        )
+        self.db_path = os.path.join(self.output_dir, "chromadb_data")
+        self.visual_memory_path = os.path.join(self.output_dir, "visual_memory.pkl")
         # Setup ChromaDB client if not provided
         self._chroma_client = chroma_client
         if chroma_client is None and db_path is not None:
@@ -159,9 +167,10 @@ class SpatialMemory:
 
         logger.info(f"SpatialMemory initialized with model {embedding_model}")
 
-        # Start processing video stream if provided
-        if video_stream is not None and get_pose is not None:
-            self.start_continuous_processing(video_stream, get_pose)
+    def setup(self, robot):
+        self.video_stream = robot.video_stream()
+        self.get_pose = robot.get_pose
+        self.start_continuous_processing(self.video_stream, self.get_pose)
 
     def query_by_location(
         self, x: float, y: float, radius: float = 2.0, limit: int = 5

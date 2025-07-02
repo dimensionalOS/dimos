@@ -18,6 +18,9 @@ import numpy as np
 from typing import Dict, Tuple, Optional, Callable, Any
 import cv2
 import logging
+from dimos.robot.module_utils import robot_module
+from dimos.robot.capabilities import Move, Lidar, Odometry
+from dimos.robot.global_planner.planner import AstarPlanner
 
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import normalize_angle
@@ -25,21 +28,80 @@ from dimos.utils.transform_utils import normalize_angle
 from dimos.robot.local_planner.local_planner import BaseLocalPlanner, visualize_local_planner_state
 from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector, VectorLike
+from dimos.utils.reactive import getter_streaming
 
 logger = setup_logger("dimos.robot.unitree.vfh_local_planner", level=logging.DEBUG)
 
 
+@robot_module
 class VFHPurePursuitPlanner(BaseLocalPlanner):
+    REQUIRES = (Move, Lidar, Odometry)
     """
     A local planner that combines Vector Field Histogram (VFH) for obstacle avoidance
     with Pure Pursuit for goal tracking.
     """
 
+    def setup(self, robot):
+        kw = getattr(self, "_init_kwargs", {})
+
+        lidar_stream = getter_streaming(robot.lidar_stream())
+        odom_stream = getter_streaming(robot.odom_stream())
+        get_costmap = lambda: lidar_stream().costmap()
+        get_robot_pose = lambda: odom_stream()
+
+        move = robot.move
+
+        # Get global planner if available
+        try:
+            gp = robot.get_module(AstarPlanner)
+            global_planner_plan = gp.plan if gp else None
+        except Exception as e:
+            logger.warning(f"Failed to get Required Astar Planner: {e}")
+            global_planner_plan = None
+
+        # Get configuration parameters from stored kwargs
+        safety_threshold = kw.get("safety_threshold", 0.8)
+        histogram_bins = kw.get("histogram_bins", 144)
+        max_linear_vel = kw.get("max_linear_vel", 0.8)
+        max_angular_vel = kw.get("max_angular_vel", 1.0)
+        lookahead_distance = kw.get("lookahead_distance", 1.0)
+        goal_tolerance = kw.get("goal_tolerance", 0.4)
+        angle_tolerance = kw.get("angle_tolerance", 0.1)
+        robot_width = kw.get("robot_width", 0.5)
+        robot_length = kw.get("robot_length", 0.7)
+        visualization_size = kw.get("visualization_size", 400)
+        control_frequency = kw.get("control_frequency", 10.0)
+        safe_goal_distance = kw.get("safe_goal_distance", 1.0)
+        max_recovery_attempts = kw.get("max_recovery_attempts", 3)
+
+        # Initialize with the parameters
+        self._initialize(
+            get_costmap=get_costmap,
+            get_robot_pose=get_robot_pose,
+            move=move,
+            safety_threshold=safety_threshold,
+            max_linear_vel=max_linear_vel,
+            max_angular_vel=max_angular_vel,
+            lookahead_distance=lookahead_distance,
+            goal_tolerance=goal_tolerance,
+            angle_tolerance=angle_tolerance,
+            robot_width=robot_width,
+            robot_length=robot_length,
+            visualization_size=visualization_size,
+            control_frequency=control_frequency,
+            safe_goal_distance=safe_goal_distance,
+            max_recovery_attempts=max_recovery_attempts,
+            global_planner_plan=global_planner_plan,
+            histogram_bins=histogram_bins,
+        )
+
+        self.local_planner_viz_stream = self.create_stream(frequency_hz=5.0)
+
     def __init__(
         self,
-        get_costmap: Callable[[], Optional[Costmap]],
-        get_robot_pose: Callable[[], Any],
-        move: Callable[[Vector], None],
+        get_costmap: Callable[[], Optional[Costmap]] = None,
+        get_robot_pose: Callable[[], Any] = None,
+        move: Callable[[Vector], None] = None,
         safety_threshold: float = 0.8,
         histogram_bins: int = 144,
         max_linear_vel: float = 0.8,
@@ -77,12 +139,10 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             max_recovery_attempts: Maximum number of recovery attempts
             global_planner_plan: Optional function to get the global plan
         """
-        # Initialize base class
-        super().__init__(
-            get_costmap=get_costmap,
-            get_robot_pose=get_robot_pose,
-            move=move,
+        # Store parameters for later setup
+        self._init_kwargs = dict(
             safety_threshold=safety_threshold,
+            histogram_bins=histogram_bins,
             max_linear_vel=max_linear_vel,
             max_angular_vel=max_angular_vel,
             lookahead_distance=lookahead_distance,
@@ -94,11 +154,59 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             control_frequency=control_frequency,
             safe_goal_distance=safe_goal_distance,
             max_recovery_attempts=max_recovery_attempts,
+            get_costmap=get_costmap,
+            get_robot_pose=get_robot_pose,
+            move=move,
             global_planner_plan=global_planner_plan,
         )
 
+        # Legacy direct initialization if all callbacks are provided
+        if all(cb is not None for cb in (get_costmap, get_robot_pose, move)):
+            # Initialize with the parameters
+            self._initialize(
+                get_costmap=get_costmap,
+                get_robot_pose=get_robot_pose,
+                move=move,
+                safety_threshold=safety_threshold,
+                max_linear_vel=max_linear_vel,
+                max_angular_vel=max_angular_vel,
+                lookahead_distance=lookahead_distance,
+                goal_tolerance=goal_tolerance,
+                angle_tolerance=angle_tolerance,
+                robot_width=robot_width,
+                robot_length=robot_length,
+                visualization_size=visualization_size,
+                control_frequency=control_frequency,
+                safe_goal_distance=safe_goal_distance,
+                max_recovery_attempts=max_recovery_attempts,
+                global_planner_plan=global_planner_plan,
+                histogram_bins=histogram_bins,
+            )
+
+    def _initialize(self, **kwargs):
+        """Common initialization code for both setup and direct init."""
+        # Initialize base class
+        super().__init__(
+            get_costmap=kwargs["get_costmap"],
+            get_robot_pose=kwargs["get_robot_pose"],
+            move=kwargs["move"],
+            safety_threshold=kwargs["safety_threshold"],
+            max_linear_vel=kwargs["max_linear_vel"],
+            max_angular_vel=kwargs["max_angular_vel"],
+            lookahead_distance=kwargs["lookahead_distance"],
+            goal_tolerance=kwargs["goal_tolerance"],
+            angle_tolerance=kwargs["angle_tolerance"],
+            robot_width=kwargs["robot_width"],
+            robot_length=kwargs["robot_length"],
+            visualization_size=kwargs["visualization_size"],
+            control_frequency=kwargs["control_frequency"],
+            safe_goal_distance=kwargs["safe_goal_distance"],
+            max_recovery_attempts=kwargs["max_recovery_attempts"],
+            global_planner_plan=kwargs["global_planner_plan"],
+        )
+
         # VFH specific parameters
-        self.histogram_bins = histogram_bins
+        self.histogram_bins = kwargs["histogram_bins"]
         self.histogram = None
         self.selected_direction = None
 
