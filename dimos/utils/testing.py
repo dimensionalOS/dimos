@@ -56,6 +56,8 @@ class SensorReplay(Generic[T]):
         else:
             full_path = self.root_dir / Path(f"{name}.pickle")
 
+        print(os.system("ls -l " + str(full_path)))
+
         with open(full_path, "rb") as f:
             data = pickle.load(f)
             if self.autocast:
