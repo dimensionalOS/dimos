@@ -19,20 +19,17 @@ and simulated implementations, with common functionality for movement, control,
 and video streaming.
 """
 
-from abc import ABC
+from abc import ABC, abstractmethod
 import os
-from typing import TYPE_CHECKING, Optional, List, Union, Dict, Any
+from typing import Optional, List, Union, Dict, Any
 
 from dimos.hardware.interface import HardwareInterface
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.manipulation.manipulation_interface import ManipulationInterface
 from dimos.types.robot_capabilities import RobotCapability
+from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.robot.ros_control import ROSControl
-else:
-    ROSControl = "ROSControl"
+from dimos.robot.connection_interface import ConnectionInterface
 
 from dimos.skills.skills import SkillLibrary
 from reactivex import Observable, operators as ops
@@ -65,7 +62,7 @@ class Robot(ABC):
     def __init__(
         self,
         hardware_interface: HardwareInterface = None,
-        ros_control: ROSControl = None,
+        connection_interface: ConnectionInterface = None,
         output_dir: str = os.path.join(os.getcwd(), "assets", "output"),
         pool_scheduler: ThreadPoolScheduler = None,
         skill_library: SkillLibrary = None,
@@ -73,24 +70,29 @@ class Robot(ABC):
         new_memory: bool = False,
         capabilities: List[RobotCapability] = None,
         video_stream: Optional[Observable] = None,
+        enable_perception: bool = True,
     ):
         """Initialize a Robot instance.
 
         Args:
             hardware_interface: Interface to the robot's hardware. Defaults to None.
-            ros_control: ROS-based control system. Defaults to None.
+            connection_interface: Connection interface for robot control and communication.
             output_dir: Directory for storing output files. Defaults to "./assets/output".
             pool_scheduler: Thread pool scheduler. If None, one will be created.
             skill_library: Skill library instance. If None, one will be created.
             spatial_memory_collection: Name of the collection in the ChromaDB database.
             new_memory: If True, creates a new spatial memory from scratch. Defaults to False.
+            capabilities: List of robot capabilities. Defaults to None.
+            video_stream: Optional video stream. Defaults to None.
+            enable_perception: If True, enables perception streams and spatial memory. Defaults to True.
         """
         self.hardware_interface = hardware_interface
-        self.ros_control = ros_control
+        self.connection_interface = connection_interface
         self.output_dir = output_dir
         self.disposables = CompositeDisposable()
         self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
         self.skill_library = skill_library if skill_library else SkillLibrary()
+        self.enable_perception = enable_perception
 
         # Initialize robot capabilities
         self.capabilities = capabilities or []
@@ -113,35 +115,29 @@ class Robot(ABC):
         os.makedirs(self.spatial_memory_dir, exist_ok=True)
         os.makedirs(self.db_path, exist_ok=True)
 
-        # Initialize spatial memory - this will be handled by SpatialMemory class
+        # Initialize spatial memory properties
         self._video_stream = video_stream
-        transform_provider = None
 
-        # Only create video stream if ROS control is available
-        if self.ros_control is not None and self.ros_control.video_provider is not None:
-            # Get video stream
-            self._video_stream = self.get_ros_video_stream(fps=10)  # Lower FPS for processing
+        # Only create video stream if connection interface is available
+        if self.connection_interface is not None:
+            # Get video stream - always create this, regardless of enable_perception
+            self._video_stream = self.get_video_stream(fps=10)  # Lower FPS for processing
 
-            # Define transform provider
-            def transform_provider():
-                position, rotation = self.ros_control.transform_euler("base_link")
-                if position is None or rotation is None:
-                    return {"position": None, "rotation": None}
-                return {"position": position, "rotation": rotation}
-
-        # Avoids circular imports
-        from dimos.perception.spatial_perception import SpatialMemory
-
-        # Create SpatialMemory instance - it will handle all initialization internally
-        self._spatial_memory = SpatialMemory(
-            collection_name=self.spatial_memory_collection,
-            db_path=self.db_path,
-            visual_memory_path=self.visual_memory_path,
-            new_memory=new_memory,
-            output_dir=self.spatial_memory_dir,
-            video_stream=self._video_stream,
-            transform_provider=transform_provider,
-        )
+        # Create SpatialMemory instance only if perception is enabled
+        if self.enable_perception:
+            self._spatial_memory = SpatialMemory(
+                collection_name=self.spatial_memory_collection,
+                db_path=self.db_path,
+                visual_memory_path=self.visual_memory_path,
+                new_memory=new_memory,
+                output_dir=self.spatial_memory_dir,
+                video_stream=self._video_stream,
+                get_pose=self.get_pose,
+            )
+            logger.info("Spatial memory initialized")
+        else:
+            self._spatial_memory = None
+            logger.info("Spatial memory disabled (enable_perception=False)")
 
         # Initialize manipulation interface if the robot has manipulation capability
         self._manipulation_interface = None
@@ -158,8 +154,8 @@ class Robot(ABC):
             )
             logger.info("Manipulation interface initialized")
 
-    def get_ros_video_stream(self, fps: int = 30) -> Observable:
-        """Get the ROS video stream with rate limiting and frame processing.
+    def get_video_stream(self, fps: int = 30) -> Observable:
+        """Get the video stream with rate limiting and frame processing.
 
         Args:
             fps: Frames per second for the video stream. Defaults to 30.
@@ -168,58 +164,39 @@ class Robot(ABC):
             Observable: An observable stream of video frames.
 
         Raises:
-            RuntimeError: If no ROS video provider is available.
+            RuntimeError: If no connection interface is available for video streaming.
         """
-        if not self.ros_control or not self.ros_control.video_provider:
-            raise RuntimeError("No ROS video provider available")
+        if self.connection_interface is None:
+            raise RuntimeError("No connection interface available for video streaming")
 
-        print(f"Starting ROS video stream at {fps} FPS...")
+        stream = self.connection_interface.get_video_stream(fps)
+        if stream is None:
+            raise RuntimeError("No video stream available from connection interface")
 
-        # Get base stream from video provider
-        video_stream = self.ros_control.video_provider.capture_video_as_observable(fps=fps)
-
-        # Add minimal processing pipeline with proper thread handling
-        processed_stream = video_stream.pipe(
-            ops.subscribe_on(self.pool_scheduler),
-            ops.observe_on(self.pool_scheduler),  # Ensure thread safety
-            ops.share(),  # Share the stream
+        return stream.pipe(
+            ops.observe_on(self.pool_scheduler),
         )
 
-        return processed_stream
-
-    def move(self, distance: float, speed: float = 0.5) -> bool:
+    def move(self, velocity: Vector, duration: float = 0.0) -> bool:
         """Move the robot using velocity commands.
 
-        DEPRECATED: Use move_vel instead for direct velocity control.
-
         Args:
-            distance: Distance to move forward in meters (must be positive).
-            speed: Speed to move at in m/s. Defaults to 0.5.
+            velocity: Velocity vector [x, y, yaw] where:
+                     x: Linear velocity in x direction (m/s)
+                     y: Linear velocity in y direction (m/s)
+                     yaw: Angular velocity (rad/s)
+            duration: Duration to apply command (seconds). If 0, apply once.
 
         Returns:
             bool: True if movement succeeded.
 
         Raises:
-            RuntimeError: If no ROS control interface is available.
+            RuntimeError: If no connection interface is available.
         """
-        pass
+        if self.connection_interface is None:
+            raise RuntimeError("No connection interface available for movement")
 
-    def reverse(self, distance: float, speed: float = 0.5) -> bool:
-        """Move the robot backward by a specified distance.
-
-        DEPRECATED: Use move_vel with negative x value instead for direct velocity control.
-
-        Args:
-            distance: Distance to move backward in meters (must be positive).
-            speed: Speed to move at in m/s. Defaults to 0.5.
-
-        Returns:
-            bool: True if movement succeeded.
-
-        Raises:
-            RuntimeError: If no ROS control interface is available.
-        """
-        pass
+        return self.connection_interface.move(velocity, duration)
 
     def spin(self, degrees: float, speed: float = 45.0) -> bool:
         """Rotate the robot by a specified angle.
@@ -233,11 +210,35 @@ class Robot(ABC):
             bool: True if rotation succeeded.
 
         Raises:
-            RuntimeError: If no ROS control interface is available.
+            RuntimeError: If no connection interface is available.
         """
-        if self.ros_control is None:
-            raise RuntimeError("No ROS control interface available for rotation")
-        return self.ros_control.spin(degrees, speed)
+        if self.connection_interface is None:
+            raise RuntimeError("No connection interface available for rotation")
+
+        # Convert degrees to radians
+        import math
+
+        angular_velocity = math.radians(speed)
+        duration = abs(degrees) / speed if speed > 0 else 0
+
+        # Set direction based on sign of degrees
+        if degrees < 0:
+            angular_velocity = -angular_velocity
+
+        velocity = Vector(0.0, 0.0, angular_velocity)
+        return self.connection_interface.move(velocity, duration)
+
+    @abstractmethod
+    def get_pose(self) -> dict:
+        """
+        Get the current pose (position and rotation) of the robot.
+
+        Returns:
+            Dictionary containing:
+                - position: Tuple[float, float, float] (x, y, z)
+                - rotation: Tuple[float, float, float] (roll, pitch, yaw) in radians
+        """
+        pass
 
     def webrtc_req(
         self,
@@ -248,54 +249,40 @@ class Robot(ABC):
         request_id: str = None,
         data=None,
         timeout: float = 1000.0,
-    ) -> bool:
+    ):
         """Send a WebRTC request command to the robot.
 
         Args:
             api_id: The API ID for the command.
             topic: The API topic to publish to. Defaults to ROSControl.webrtc_api_topic.
-            parameter: Optional parameter string. Defaults to ''.
-            priority: Priority level as defined by PriorityQueue(). Defaults to 0 (no priority).
-            data: Optional data dictionary.
-            timeout: Maximum time to wait for the command to complete.
+            parameter: Additional parameter data. Defaults to "".
+            priority: Priority of the request. Defaults to 0.
+            request_id: Unique identifier for the request. If None, one will be generated.
+            data: Additional data to include with the request. Defaults to None.
+            timeout: Timeout for the request in milliseconds. Defaults to 1000.0.
 
         Returns:
-            bool: True if command was sent successfully.
+            The result of the WebRTC request.
 
         Raises:
-            RuntimeError: If no ROS control interface is available.
-
+            RuntimeError: If no connection interface with WebRTC capability is available.
         """
-        if self.ros_control is None:
-            raise RuntimeError("No ROS control interface available for WebRTC commands")
-        return self.ros_control.queue_webrtc_req(
-            api_id=api_id,
-            topic=topic,
-            parameter=parameter,
-            priority=priority,
-            request_id=request_id,
-            data=data,
-            timeout=timeout,
-        )
+        if self.connection_interface is None:
+            raise RuntimeError("No connection interface available for WebRTC commands")
 
-    def move_vel(self, x: float, y: float, yaw: float, duration: float = 0.0) -> bool:
-        """Move the robot using direct movement commands.
-
-        Args:
-            x: Forward/backward velocity (m/s)
-            y: Left/right velocity (m/s)
-            yaw: Rotational velocity (rad/s)
-            duration: How long to move (seconds). If 0, command is continuous
-
-        Returns:
-            bool: True if command was sent successfully
-
-        Raises:
-            RuntimeError: If no ROS control interface is available.
-        """
-        if self.ros_control is None:
-            raise RuntimeError("No ROS control interface available for movement")
-        return self.ros_control.move_vel(x, y, yaw, duration)
+        # WebRTC requests are only available on ROS control interfaces
+        if hasattr(self.connection_interface, "queue_webrtc_req"):
+            return self.connection_interface.queue_webrtc_req(
+                api_id=api_id,
+                topic=topic,
+                parameter=parameter,
+                priority=priority,
+                request_id=request_id,
+                data=data,
+                timeout=timeout,
+            )
+        else:
+            raise RuntimeError("WebRTC requests not supported by this connection interface")
 
     def pose_command(self, roll: float, pitch: float, yaw: float) -> bool:
         """Send a pose command to the robot.
@@ -309,11 +296,13 @@ class Robot(ABC):
             bool: True if command was sent successfully.
 
         Raises:
-            RuntimeError: If no ROS control interface is available.
+            RuntimeError: If no connection interface with pose command capability is available.
         """
-        if self.ros_control is None:
-            raise RuntimeError("No ROS control interface available for pose commands")
-        return self.ros_control.pose_command(roll, pitch, yaw)
+        # Pose commands are only available on ROS control interfaces
+        if hasattr(self.connection_interface, "pose_command"):
+            return self.connection_interface.pose_command(roll, pitch, yaw)
+        else:
+            raise RuntimeError("Pose commands not supported by this connection interface")
 
     def update_hardware_interface(self, new_hardware_interface: HardwareInterface):
         """Update the hardware interface with a new configuration.
@@ -346,11 +335,11 @@ class Robot(ABC):
         self.hardware_interface.set_configuration(configuration)
 
     @property
-    def spatial_memory(self) -> SpatialMemory:
+    def spatial_memory(self) -> Optional[SpatialMemory]:
         """Get the robot's spatial memory.
 
         Returns:
-            SpatialMemory: The robot's spatial memory system.
+            SpatialMemory: The robot's spatial memory system, or None if perception is disabled.
         """
         return self._spatial_memory
 
@@ -392,6 +381,14 @@ class Robot(ABC):
         """
         return self._video_stream
 
+    def get_skills(self):
+        """Get the robot's skill library.
+
+        Returns:
+            The robot's skill library for adding/managing skills.
+        """
+        return self.skill_library
+
     def cleanup(self):
         """Clean up resources used by the robot.
 
@@ -403,8 +400,10 @@ class Robot(ABC):
         if self.disposables:
             self.disposables.dispose()
 
-        if self.ros_control:
-            self.ros_control.cleanup()
+        # Clean up connection interface
+        if self.connection_interface:
+            self.connection_interface.disconnect()
+
         self.disposables.dispose()
 
 

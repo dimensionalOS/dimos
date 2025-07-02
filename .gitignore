@@ -17,8 +17,10 @@ __pycache__
 
 # Ignore default runtime output folder
 /assets/output/
+/assets/rgbd_data/
+/assets/saved_maps/
 /assets/model-cache/
-assets/agent/memory.txt
+/assets/agent/memory.txt
 
 .bash_history
 
@@ -33,3 +35,8 @@ package-lock.json
 
 # Ignore build artifacts
 dist/
+
+# Ignore data and modelfiles
+data/
+FastSAM-x.pt
+yolo11n.pt

@@ -44,6 +44,8 @@ from nav_msgs.msg import OccupancyGrid
 import tf2_ros
 from dimos.robot.ros_transform import ROSTransformAbility
 from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
+from dimos.robot.connection_interface import ConnectionInterface
+from dimos.types.vector import Vector
 
 from nav_msgs.msg import Odometry
 
@@ -62,7 +64,7 @@ class RobotMode(Enum):
     ERROR = auto()
 
 
-class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
+class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInterface, ABC):
     """Abstract base class for ROS-controlled robots"""
 
     def __init__(
@@ -412,6 +414,20 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
         """Data provider property for streaming data"""
         return self._video_provider
 
+    def get_video_stream(self, fps: int = 30) -> Optional[Observable]:
+        """Get the video stream from the robot's camera.
+
+        Args:
+            fps: Frames per second for the video stream
+
+        Returns:
+            Observable: An observable stream of video frames or None if not available
+        """
+        if not self.video_provider:
+            return None
+
+        return self.video_provider.get_stream(fps=fps)
+
     def _send_action_client_goal(self, client, goal_msg, description=None, time_allowance=20.0):
         """
         Generic function to send any action client goal and wait for completion.
@@ -459,61 +475,46 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             logger.error("Action failed")
             return False
 
-    def move(self, distance: float, speed: float = 0.5, time_allowance: float = 120) -> bool:
-        """
-        Move the robot forward by a specified distance
+    def move(self, velocity: Vector, duration: float = 0.0) -> bool:
+        """Send velocity commands to the robot.
 
         Args:
-            distance: Distance to move forward in meters (must be positive)
-            speed: Speed to move at in m/s (default 0.5)
-            time_allowance: Maximum time to wait for the request to complete
+            velocity: Velocity vector [x, y, yaw] where:
+                     x: Linear velocity in x direction (m/s)
+                     y: Linear velocity in y direction (m/s)
+                     yaw: Angular velocity around z axis (rad/s)
+            duration: Duration to apply command (seconds). If 0, apply once.
 
         Returns:
-            bool: True if movement succeeded
+            bool: True if command was sent successfully
         """
+        x, y, yaw = velocity.x, velocity.y, velocity.z
+
+        # Clamp velocities to safe limits
+        x = self._clamp_velocity(x, self.MAX_LINEAR_VELOCITY)
+        y = self._clamp_velocity(y, self.MAX_LINEAR_VELOCITY)
+        yaw = self._clamp_velocity(yaw, self.MAX_ANGULAR_VELOCITY)
+
+        # Create and send command
+        cmd = Twist()
+        cmd.linear.x = float(x)
+        cmd.linear.y = float(y)
+        cmd.angular.z = float(yaw)
+
         try:
-            if distance <= 0:
-                logger.error("Distance must be positive")
-                return False
-
-            speed = min(abs(speed), self.MAX_LINEAR_VELOCITY)
-
-            # Define function to execute the move
-            def execute_move():
-                # Create DriveOnHeading goal
-                goal = DriveOnHeading.Goal()
-                goal.target.x = distance
-                goal.target.y = 0.0
-                goal.target.z = 0.0
-                goal.speed = speed
-                goal.time_allowance = Duration(sec=time_allowance)
-
-                logger.info(f"Moving forward: distance={distance}m, speed={speed}m/s")
-
-                return self._send_action_client_goal(
-                    self._drive_client,
-                    goal,
-                    f"Sending Action Client goal in ROSControl.execute_move for {distance}m at {speed}m/s",
-                    time_allowance,
-                )
-
-            # Queue the action
-            cmd_id = self._command_queue.queue_action_client_request(
-                action_name="move",
-                execute_func=execute_move,
-                priority=0,
-                timeout=time_allowance,
-                distance=distance,
-                speed=speed,
-            )
-            logger.info(f"Queued move command: {cmd_id} - Distance: {distance}m, Speed: {speed}m/s")
+            if duration > 0:
+                start_time = time.time()
+                while time.time() - start_time < duration:
+                    self._move_vel_pub.publish(cmd)
+                    time.sleep(0.1)  # 10Hz update rate
+                # Stop after duration
+                self.stop()
+            else:
+                self._move_vel_pub.publish(cmd)
             return True
 
         except Exception as e:
-            logger.error(f"Forward movement failed: {e}")
-            import traceback
-
-            logger.error(traceback.format_exc())
+            self._logger.error(f"Failed to send movement command: {e}")
             return False
 
     def reverse(self, distance: float, speed: float = 0.5, time_allowance: float = 120) -> bool:
@@ -644,32 +645,6 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             logger.error(traceback.format_exc())
             return False
 
-    def _goal_response_callback(self, future):
-        """Handle the goal response."""
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            logger.warn("Goal was rejected!")
-            print("[ROSControl] Goal was REJECTED by the action server")
-            self._action_success = False
-            return
-
-        logger.info("Goal accepted")
-        print("[ROSControl] Goal was ACCEPTED by the action server")
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(self._goal_result_callback)
-
-    def _goal_result_callback(self, future):
-        """Handle the goal result."""
-        try:
-            result = future.result().result
-            logger.info("Goal completed")
-            print(f"[ROSControl] Goal COMPLETED with result: {result}")
-            self._action_success = True
-        except Exception as e:
-            logger.error(f"Goal failed with error: {e}")
-            print(f"[ROSControl] Goal FAILED with error: {e}")
-            self._action_success = False
-
     def stop(self) -> bool:
         """Stop all robot movement"""
         try:
@@ -696,6 +671,10 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
         # Destroy node and shutdown rclpy
         self._node.destroy_node()
         rclpy.shutdown()
+
+    def disconnect(self) -> None:
+        """Disconnect from the robot and clean up resources."""
+        self.cleanup()
 
     def webrtc_req(
         self,
@@ -787,46 +766,6 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             data=data,
         )
 
-    def move_vel(self, x: float, y: float, yaw: float, duration: float = 0.0) -> bool:
-        """
-        Send movement command to the robot using velocity commands
-
-        Args:
-            x: Forward/backward velocity (m/s)
-            y: Left/right velocity (m/s)
-            yaw: Rotational velocity (rad/s)
-            duration: How long to move (seconds). If 0, command is continuous
-
-        Returns:
-            bool: True if command was sent successfully
-        """
-        # Clamp velocities to safe limits
-        x = self._clamp_velocity(x, self.MAX_LINEAR_VELOCITY)
-        y = self._clamp_velocity(y, self.MAX_LINEAR_VELOCITY)
-        yaw = self._clamp_velocity(yaw, self.MAX_ANGULAR_VELOCITY)
-
-        # Create and send command
-        cmd = Twist()
-        cmd.linear.x = float(x)
-        cmd.linear.y = float(y)
-        cmd.angular.z = float(yaw)
-
-        try:
-            if duration > 0:
-                start_time = time.time()
-                while time.time() - start_time < duration:
-                    self._move_vel_pub.publish(cmd)
-                    time.sleep(0.1)  # 10Hz update rate
-                # Stop after duration
-                self.stop()
-            else:
-                self._move_vel_pub.publish(cmd)
-            return True
-
-        except Exception as e:
-            self._logger.error(f"Failed to send movement command: {e}")
-            return False
-
     def move_vel_control(self, x: float, y: float, yaw: float) -> bool:
         """
         Send a single velocity command without duration handling.
@@ -900,3 +839,29 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
         )
 
         return position_provider.get_position_stream()
+
+    def _goal_response_callback(self, future):
+        """Handle the goal response."""
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            logger.warn("Goal was rejected!")
+            print("[ROSControl] Goal was REJECTED by the action server")
+            self._action_success = False
+            return
+
+        logger.info("Goal accepted")
+        print("[ROSControl] Goal was ACCEPTED by the action server")
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(self._goal_result_callback)
+
+    def _goal_result_callback(self, future):
+        """Handle the goal result."""
+        try:
+            result = future.result().result
+            logger.info("Goal completed")
+            print(f"[ROSControl] Goal COMPLETED with result: {result}")
+            self._action_success = True
+        except Exception as e:
+            logger.error(f"Goal failed with error: {e}")
+            print(f"[ROSControl] Goal FAILED with error: {e}")
+            self._action_success = False

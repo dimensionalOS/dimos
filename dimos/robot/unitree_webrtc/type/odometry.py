@@ -22,7 +22,9 @@ from dimos.robot.unitree_webrtc.type.timeseries import (
     to_human_readable,
 )
 from dimos.types.position import Position
-from dimos.types.vector import VectorLike
+from dimos.types.vector import VectorLike, Vector
+from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_human_readable
+from scipy.spatial.transform import Rotation as R
 
 raw_odometry_msg_sample = {
     "type": "msg",
@@ -81,15 +83,6 @@ class Odometry(Position):
         super().__init__(pos, rot)
         self.ts = to_datetime(ts) if ts else datetime.now()
 
-    @staticmethod
-    def quaternion_to_yaw(x: float, y: float, z: float, w: float) -> float:
-        """Convert quaternion to yaw angle (rotation around z-axis) in radians."""
-        # Calculate yaw (rotation around z-axis)
-        siny_cosp = 2 * (w * z + x * y)
-        cosy_cosp = 1 - 2 * (y * y + z * z)
-        yaw = math.atan2(siny_cosp, cosy_cosp)
-        return yaw
-
     @classmethod
     def from_msg(cls, msg: RawOdometryMessage) -> "Odometry":
         pose = msg["data"]["pose"]
@@ -99,16 +92,20 @@ class Odometry(Position):
         # Extract position
         pos = [position.get("x"), position.get("y"), position.get("z")]
 
-        # Extract quaternion components
-        qx = orientation.get("x")
-        qy = orientation.get("y")
-        qz = orientation.get("z")
-        qw = orientation.get("w")
+        quat = [
+            orientation.get("x"),
+            orientation.get("y"),
+            orientation.get("z"),
+            orientation.get("w"),
+        ]
 
-        # Convert quaternion to yaw angle and store in rot.z
-        # Keep x,y as quaternion components for now, but z becomes the actual yaw angle
-        yaw_radians = cls.quaternion_to_yaw(qx, qy, qz, qw)
-        rot = [qx, qy, yaw_radians]
+        # Check if quaternion has zero norm (invalid)
+        quat_norm = sum(x**2 for x in quat) ** 0.5
+        if quat_norm < 1e-8:
+            quat = [0.0, 0.0, 0.0, 1.0]
+
+        rotation = R.from_quat(quat)
+        rot = Vector(rotation.as_euler("xyz", degrees=False))
 
         return cls(pos, rot, msg["data"]["header"]["stamp"])
 

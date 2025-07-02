@@ -24,12 +24,15 @@ import threading
 from typing import Optional
 import base64
 import cv2
+import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
 from pydantic import Field
+from PIL import Image
 
 from dimos.skills.skills import AbstractRobotSkill
 from dimos.agents.agent import LLMAgent
+from dimos.models.qwen.video_query import query_single_frame
 from dimos.utils.threadpool import get_scheduler
 from dimos.utils.logging_config import setup_logger
 
@@ -74,7 +77,7 @@ class ObserveStream(AbstractRobotSkill):
 
         # Get the video stream
         # TODO: Use the video stream provided in the constructor for dynamic video_stream selection by the agent
-        self._video_stream = self._robot.get_ros_video_stream()
+        self._video_stream = self._robot.video_stream
         if self._video_stream is None:
             logger.error("Failed to get video stream from robot")
             return
@@ -189,32 +192,41 @@ class ObserveStream(AbstractRobotSkill):
 
     def _process_frame(self, frame):
         """
-        Process a frame with the Claude agent.
+        Process a frame with the Qwen VLM and add the response to conversation history.
 
         Args:
             frame: The video frame to process
         """
-        logger.info("Processing frame with Claude agent")
+        logger.info("Processing frame with Qwen VLM")
 
         try:
-            _, buffer = cv2.imencode(".jpg", frame)
-            base64_image = base64.b64encode(buffer).decode("utf-8")
+            # Convert frame to PIL Image format
+            if isinstance(frame, np.ndarray):
+                # OpenCV uses BGR, PIL uses RGB
+                if frame.shape[-1] == 3:  # Check if it has color channels
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    pil_image = Image.fromarray(frame_rgb)
+                else:
+                    pil_image = Image.fromarray(frame)
+            else:
+                pil_image = frame
 
-            observable = self._agent.run_observable_query(
-                f"{self.query_text}\n\nHere is the current camera view from the robot:",
-                base64_image=base64_image,
-            )
+            # Use Qwen to process the frame
+            model_name = "qwen2.5-vl-72b-instruct"  # Using the most capable model
+            response = query_single_frame(pil_image, self.query_text, model_name=model_name)
 
-            # Simple subscription to make sure the query executes
-            # The actual response content isn't important
-            observable.subscribe(
-                on_next=lambda x: logger.info(f"Got response from _observable_query: {x}"),
-                on_error=lambda e: logger.error(f"Error: {e}"),
-                on_completed=lambda: logger.info("ObserveStream query completed"),
-            )
+            logger.info(f"Qwen response received: {response[:100]}...")
+
+            # Add the response to the conversation history
+            # self._agent.append_to_history(
+            #     f"Observation: {response}",
+            # )
+            response = self._agent.run_observable_query(f"Observation: {response}")
+
+            logger.info("Added Qwen observation to conversation history")
 
         except Exception as e:
-            logger.error(f"Error processing frame with agent: {e}")
+            logger.error(f"Error processing frame with Qwen VLM: {e}")
 
     def stop(self):
         """

@@ -27,9 +27,10 @@ else:
 from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
 from dimos.types.constants import Colors
 from dimos.types.vector import Vector
+from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD
 
-# Module-level constant for Unitree ROS control definitions
-UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
+# Module-level constant for Unitree WebRTC control definitions
+UNITREE_WEBRTC_CONTROLS: List[Tuple[str, int, str]] = [
     ("Damp", 1001, "Lowers the robot to the ground fully."),
     (
         "BalanceStand",
@@ -56,7 +57,7 @@ UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
         1007,
         "Adjusts the robot's orientation using Euler angles, providing precise control over its rotation.",
     ),
-    # ("Move", 1008, "Move the robot using velocity commands."),  # Intentionally omitted
+    # ("Move", 1008, "Move the robot using velocity commands."),  # Handled separately
     ("Sit", 1009, "Commands the robot to sit down from a standing or moving stance."),
     (
         "RiseSit",
@@ -85,7 +86,7 @@ UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
         "Sets or adjusts the speed at which the robot moves, with various levels available for different operational needs.",
     ),
     (
-        "ShakeHand",
+        "Hello",
         1016,
         "Performs a greeting action, which could involve a wave or other friendly gesture.",
     ),
@@ -114,34 +115,46 @@ UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
         1025,
         "Retrieves the current height at which the robot's feet are being raised during movement.",
     ),
-    ("GetSpeedLevel", 1026, "Returns the current speed level at which the robot is operating."),
+    (
+        "GetSpeedLevel",
+        1026,
+        "Retrieves the current speed level setting of the robot.",
+    ),
     (
         "SwitchJoystick",
         1027,
-        "Toggles the control mode to joystick input, allowing for manual direction of the robot's movements.",
+        "Switches the robot's control mode to respond to joystick input for manual operation.",
     ),
     (
         "Pose",
         1028,
-        "Directs the robot to take a specific pose or stance, which could be used for tasks or performances.",
+        "Commands the robot to assume a specific pose or posture as predefined in its programming.",
+    ),
+    ("Scrape", 1029, "The robot performs a scraping motion."),
+    (
+        "FrontFlip",
+        1030,
+        "Commands the robot to perform a front flip, showcasing its agility and dynamic movement capabilities.",
     ),
     (
-        "Scrape",
-        1029,
-        "Robot falls to its hind legs and makes scraping motions with its front legs.",
+        "FrontJump",
+        1031,
+        "Instructs the robot to jump forward, demonstrating its explosive movement capabilities.",
     ),
-    ("FrontFlip", 1030, "Executes a front flip, a complex and dynamic maneuver."),
-    ("FrontJump", 1031, "Commands the robot to perform a forward jump."),
     (
         "FrontPounce",
         1032,
-        "Initiates a pouncing movement forward, mimicking animal-like pouncing behavior.",
+        "Commands the robot to perform a pouncing motion forward.",
     ),
-    ("WiggleHips", 1033, "Causes the robot to wiggle its hips."),
+    (
+        "WiggleHips",
+        1033,
+        "The robot performs a hip wiggling motion, often used for entertainment or demonstration purposes.",
+    ),
     (
         "GetState",
         1034,
-        "Retrieves the current operational state of the robot, including status reports or diagnostic information.",
+        "Retrieves the current operational state of the robot, including its mode, position, and status.",
     ),
     (
         "EconomicGait",
@@ -157,23 +170,15 @@ UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
     (
         "CrossStep",
         1302,
-        "Engages the robot in a cross-stepping routine, useful for complex locomotion or dance moves.",
+        "Commands the robot to perform cross-step movements.",
     ),
     (
         "OnesidedStep",
         1303,
-        "Commands the robot to perform a stepping motion that predominantly uses one side.",
+        "Commands the robot to perform one-sided step movements.",
     ),
-    (
-        "Bound",
-        1304,
-        "Initiates a bounding motion, similar to a light, repetitive hopping or leaping.",
-    ),
-    (
-        "LeadFollow",
-        1045,
-        "Engages follow-the-leader behavior, where the robot follows a designated leader or follows a signal.",
-    ),
+    ("Bound", 1304, "Commands the robot to perform bounding movements."),
+    ("MoonWalk", 1305, "Commands the robot to perform a moonwalk motion."),
     ("LeftFlip", 1042, "Executes a flip towards the left side."),
     ("RightFlip", 1043, "Performs a flip towards the right side."),
     ("Backflip", 1044, "Executes a backflip, a complex and dynamic maneuver."),
@@ -183,9 +188,15 @@ UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
 
 
 class MyUnitreeSkills(SkillLibrary):
-    """My Unitree Skills."""
+    """My Unitree Skills for WebRTC interface."""
 
-    _robot: Optional[Robot] = None
+    def __init__(self, robot: Optional[Robot] = None):
+        super().__init__()
+        self._robot: Robot = None
+
+        # Add dynamic skills to this class
+        dynamic_skills = self.create_skills_live()
+        self.register_skills(dynamic_skills)
 
     @classmethod
     def register_skills(cls, skill_classes: Union["AbstractSkill", list["AbstractSkill"]]):
@@ -194,32 +205,15 @@ class MyUnitreeSkills(SkillLibrary):
         Args:
             skill_classes: List of skill classes to add
         """
-        if isinstance(skill_classes, list):
-            for skill_class in skill_classes:
-                setattr(cls, skill_class.__name__, skill_class)
-        else:
-            setattr(cls, skill_classes.__name__, skill_classes)
+        if not isinstance(skill_classes, list):
+            skill_classes = [skill_classes]
 
-    def __init__(self, robot: Optional[Robot] = None):
-        super().__init__()
-        self._robot: Robot = None
-
-        # Add dynamic skills to this class
-        self.register_skills(self.create_skills_live())
-
-        if robot is not None:
-            self._robot = robot
-            self.initialize_skills()
+        for skill_class in skill_classes:
+            # Add to the class as a skill
+            setattr(cls, skill_class.__name__, skill_class)
 
     def initialize_skills(self):
-        # Create the skills and add them to the list of skills
-        self.register_skills(self.create_skills_live())
-
-        # Provide the robot instance to each skill
-        for skill_class in self:
-            print(
-                f"{Colors.GREEN_PRINT_COLOR}Creating instance for skill: {skill_class}{Colors.RESET_COLOR}"
-            )
+        for skill_class in self.get_class_skills():
             self.create_instance(skill_class.__name__, robot=self._robot)
 
         # Refresh the class skills
@@ -243,19 +237,23 @@ class MyUnitreeSkills(SkillLibrary):
                         f"{Colors.RESET_COLOR}"
                     )
                 else:
-                    self._robot.webrtc_req(api_id=self._app_id)
+                    # Use WebRTC publish_request interface through the robot's webrtc_connection
+                    result = self._robot.webrtc_connection.publish_request(
+                        RTC_TOPIC["SPORT_MOD"], {"api_id": self._app_id}
+                    )
                     string = f"{Colors.GREEN_PRINT_COLOR}{self.__class__.__name__} was successful: id={self._app_id}{Colors.RESET_COLOR}"
                     print(string)
                     return string
 
         skills_classes = []
-        for name, app_id, description in UNITREE_ROS_CONTROLS:
-            skill_class = type(
-                name,  # Name of the class
-                (BaseUnitreeSkill,),  # Base classes
-                {"__doc__": description, "_app_id": app_id},
-            )
-            skills_classes.append(skill_class)
+        for name, app_id, description in UNITREE_WEBRTC_CONTROLS:
+            if name not in ["Reverse", "Spin"]:  # Exclude reverse and spin skills
+                skill_class = type(
+                    name,  # Name of the class
+                    (BaseUnitreeSkill,),  # Base classes
+                    {"__doc__": description, "_app_id": app_id},
+                )
+                skills_classes.append(skill_class)
 
         return skills_classes
 
@@ -270,39 +268,7 @@ class MyUnitreeSkills(SkillLibrary):
         duration: float = Field(default=0.0, description="How long to move (seconds).")
 
         def __call__(self):
-            super().__call__()
             return self._robot.move(Vector(self.x, self.y, self.yaw), duration=self.duration)
-
-    class Reverse(AbstractRobotSkill):
-        """Reverse the robot using direct velocity commands. Determine duration required based on user distance instructions."""
-
-        x: float = Field(..., description="Backward velocity (m/s). Positive values move backward.")
-        y: float = Field(default=0.0, description="Left/right velocity (m/s)")
-        yaw: float = Field(default=0.0, description="Rotational velocity (rad/s)")
-        duration: float = Field(default=0.0, description="How long to move (seconds).")
-
-        def __call__(self):
-            super().__call__()
-            # Use move with negative x for backward movement
-            return self._robot.move(Vector(-self.x, self.y, self.yaw), duration=self.duration)
-
-    class SpinLeft(AbstractRobotSkill):
-        """Spin the robot left using degree commands."""
-
-        degrees: float = Field(..., description="Distance to spin left in degrees")
-
-        def __call__(self):
-            super().__call__()
-            return self._robot.spin(degrees=self.degrees)  # Spinning left is positive degrees
-
-    class SpinRight(AbstractRobotSkill):
-        """Spin the robot right using degree commands."""
-
-        degrees: float = Field(..., description="Distance to spin right in degrees")
-
-        def __call__(self):
-            super().__call__()
-            return self._robot.spin(degrees=-self.degrees)  # Spinning right is negative degrees
 
     class Wait(AbstractSkill):
         """Wait for a specified amount of time."""
@@ -312,3 +278,8 @@ class MyUnitreeSkills(SkillLibrary):
         def __call__(self):
             time.sleep(self.seconds)
             return f"Wait completed with length={self.seconds}s"
+
+    # endregion
+
+
+# endregion
