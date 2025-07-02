@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import cv2
+import time
 import numpy as np
 from reactivex import Observable
 from reactivex import operators as ops
@@ -26,8 +27,9 @@ from dimos.perception.detection2d.utils import (
     calculate_position_rotation_from_bbox,
 )
 from dimos.types.vector import Vector
-from typing import Optional, Union
+from typing import Optional, Union, Callable
 from dimos.types.manipulation import ObjectData
+from dimos.utils.transform_utils import transform_robot_to_map
 
 from dimos.utils.logging_config import setup_logger
 
@@ -54,7 +56,7 @@ class ObjectDetectionStream:
         gt_depth_scale=1000.0,
         min_confidence=0.7,
         class_filter=None,  # Optional list of class names to filter (e.g., ["person", "car"])
-        transform_to_map=None,  # Optional function to transform coordinates to map frame
+        get_pose: Callable = None,  # Optional function to transform coordinates to map frame
         detector: Optional[Union[Detic2DDetector, Yolo2DDetector]] = None,
         video_stream: Observable = None,
         disable_depth: bool = False,  # Flag to disable monocular Metric3D depth estimation
@@ -69,7 +71,7 @@ class ObjectDetectionStream:
             gt_depth_scale: Ground truth depth scale for Metric3D
             min_confidence: Minimum confidence for detections
             class_filter: Optional list of class names to filter
-            transform_to_map: Optional function to transform pose to map coordinates
+            get_pose: Optional function to transform pose to map coordinates
             detector: Optional detector instance (Detic or Yolo)
             video_stream: Observable of video frames to process (if provided, returns a stream immediately)
             disable_depth: Flag to disable monocular Metric3D depth estimation
@@ -77,7 +79,7 @@ class ObjectDetectionStream:
         """
         self.min_confidence = min_confidence
         self.class_filter = class_filter
-        self.transform_to_map = transform_to_map
+        self.get_pose = get_pose
         self.disable_depth = disable_depth
         self.draw_masks = draw_masks
         # Initialize object detector
@@ -131,6 +133,11 @@ class ObjectDetectionStream:
 
             # Process detections
             objects = []
+            if not self.disable_depth:
+                depth_map = self.depth_model.infer_depth(frame)
+                depth_map = np.array(depth_map)
+            else:
+                depth_map = None
 
             for i, bbox in enumerate(bboxes):
                 # Skip if confidence is too low
@@ -142,9 +149,9 @@ class ObjectDetectionStream:
                 if self.class_filter and class_name not in self.class_filter:
                     continue
 
-                if not self.disable_depth:
+                if not self.disable_depth and depth_map is not None:
                     # Get depth for this object
-                    depth = calculate_depth_from_bbox(self.depth_model, frame, bbox)
+                    depth = calculate_depth_from_bbox(depth_map, bbox)
                     if depth is None:
                         # Skip objects with invalid depth
                         continue
@@ -159,13 +166,11 @@ class ObjectDetectionStream:
 
                     # Transform to map frame if a transform function is provided
                     try:
-                        if self.transform_to_map:
-                            position = Vector([position["x"], position["y"], position["z"]])
-                            rotation = Vector(
-                                [rotation["roll"], rotation["pitch"], rotation["yaw"]]
-                            )
-                            position, rotation = self.transform_to_map(
-                                position, rotation, source_frame="base_link"
+                        if self.get_pose:
+                            # position and rotation are already Vector objects, no need to convert
+                            robot_pose = self.get_pose()
+                            position, rotation = transform_robot_to_map(
+                                robot_pose, position, rotation
                             )
                     except Exception as e:
                         logger.error(f"Error transforming to map frame: {e}")

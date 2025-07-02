@@ -156,9 +156,15 @@ class LidarMessage(Timestamped):
         self.estimate_normals()
         return self
 
-    def costmap(self) -> Costmap:
+    def costmap(self, voxel_size: float = 0.2) -> Costmap:
         if not self._costmap:
-            grid, origin_xy = pointcloud_to_costmap(self.pointcloud, resolution=self.resolution)
+            down_sampled_pointcloud = self.pointcloud.voxel_down_sample(voxel_size=voxel_size)
+            inflate_radius_m = 1.0 * voxel_size if voxel_size > self.resolution else 0.0
+            grid, origin_xy = pointcloud_to_costmap(
+                down_sampled_pointcloud,
+                resolution=self.resolution,
+                inflate_radius_m=inflate_radius_m,
+            )
             self._costmap = Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.resolution)
 
         return self._costmap

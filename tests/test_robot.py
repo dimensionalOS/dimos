@@ -15,10 +15,8 @@
 import os
 import time
 import threading
-from dimos.robot.unitree.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.robot.local_planner import navigate_to_goal_local
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.robot.local_planner.local_planner import navigate_to_goal_local
 from dimos.web.robot_web_interface import RobotWebInterface
 from reactivex import operators as RxOps
 import tests.test_header
@@ -27,15 +25,11 @@ import tests.test_header
 def main():
     print("Initializing Unitree Go2 robot with local planner visualization...")
 
-    # Initialize the robot with ROS control and skills
-    robot = UnitreeGo2(
-        ip=os.getenv("ROBOT_IP"),
-        ros_control=UnitreeROSControl(),
-        skills=MyUnitreeSkills(),
-    )
+    # Initialize the robot with webrtc interface
+    robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
 
     # Get the camera stream
-    video_stream = robot.get_ros_video_stream()
+    video_stream = robot.get_video_stream()
 
     # The local planner visualization stream is created during robot initialization
     local_planner_stream = robot.local_planner_viz_stream
@@ -80,7 +74,11 @@ def main():
         print(f"Error during test: {e}")
     finally:
         print("Cleaning up...")
-        robot.cleanup()
+        # Make sure the robot stands down safely
+        try:
+            robot.liedown()
+        except:
+            pass
         print("Test completed")
 
 

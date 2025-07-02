@@ -33,7 +33,7 @@ from dimos.skills.skills import AbstractRobotSkill
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
-from dimos.utils.ros_utils import distance_angle_to_goal_xy
+from dimos.utils.transform_utils import distance_angle_to_goal_xy
 from dimos.robot.local_planner.local_planner import navigate_to_goal_local
 
 logger = setup_logger("dimos.skills.semantic_map_skills")
@@ -73,10 +73,6 @@ class NavigateWithText(AbstractRobotSkill):
     limit: int = Field(1, description="Maximum number of results to return")
     distance: float = Field(1.0, description="Desired distance to maintain from object in meters")
     timeout: float = Field(40.0, description="Maximum time to spend navigating in seconds")
-    similarity_threshold: float = Field(
-        0.25,
-        description="Minimum similarity score required for semantic map results to be considered valid",
-    )
 
     def __init__(self, robot=None, **data):
         """
@@ -92,6 +88,7 @@ class NavigateWithText(AbstractRobotSkill):
         self._scheduler = get_scheduler()  # Use the shared DiMOS thread pool
         self._navigation_disposable = None  # Disposable returned by scheduler.schedule()
         self._tracking_subscriber = None  # For object tracking
+        self._similarity_threshold = 0.25
 
     def _navigate_to_object(self):
         """
@@ -111,8 +108,8 @@ class NavigateWithText(AbstractRobotSkill):
             # Try to get a bounding box from Qwen - only try once
             bbox = None
             try:
-                # Capture a single frame from the video stream
-                frame = self._robot.get_ros_video_stream().pipe(ops.take(1)).run()
+                # Use the robot's existing video stream instead of creating a new one
+                frame = self._robot.get_video_stream().pipe(ops.take(1)).run()
                 # Use the frame-based function
                 bbox, object_size = get_bbox_from_qwen_frame(frame, object_name=self.query)
             except Exception as e:
@@ -169,12 +166,10 @@ class NavigateWithText(AbstractRobotSkill):
                         break
 
                     else:
-                        logger.warning(f"No valid target tracking data found. target: {target}")
+                        logger.warning("No valid target tracking data found.")
 
                 else:
-                    logger.warning(
-                        f"No valid target tracking data found. tracking_data: {tracking_data}"
-                    )
+                    logger.warning("No valid target tracking data found.")
 
                 time.sleep(0.1)
 
@@ -223,7 +218,6 @@ class NavigateWithText(AbstractRobotSkill):
             return {"success": False, "failure_reason": "Code Error", "error": f"Error: {e}"}
         finally:
             # Clean up
-            self._robot.ros_control.stop()
             self._robot.object_tracker.cleanup()
 
     def _navigate_using_semantic_map(self):
@@ -277,9 +271,9 @@ class NavigateWithText(AbstractRobotSkill):
                 )
 
                 # Check if similarity is below the threshold
-                if similarity < self.similarity_threshold:
+                if similarity < self._similarity_threshold:
                     logger.warning(
-                        f"Match found but similarity score ({similarity:.4f}) is below threshold ({self.similarity_threshold})"
+                        f"Match found but similarity score ({similarity:.4f}) is below threshold ({self._similarity_threshold})"
                     )
                     return {
                         "success": False,
@@ -287,7 +281,7 @@ class NavigateWithText(AbstractRobotSkill):
                         "position": (pos_x, pos_y),
                         "rotation": theta,
                         "similarity": similarity,
-                        "error": f"Match found but similarity score ({similarity:.4f}) is below threshold ({self.similarity_threshold})",
+                        "error": f"Match found but similarity score ({similarity:.4f}) is below threshold ({self._similarity_threshold})",
                     }
 
                 # Reset the stop event before starting navigation
@@ -347,6 +341,7 @@ class NavigateWithText(AbstractRobotSkill):
                     "query": self.query,
                     "error": "No valid position data found in semantic map",
                 }
+
         except Exception as e:
             logger.error(f"Error in semantic map navigation: {e}")
             return {"success": False, "error": f"Semantic map error: {e}"}
@@ -416,9 +411,6 @@ class NavigateWithText(AbstractRobotSkill):
             self._spatial_memory.cleanup()
             self._spatial_memory = None
 
-        # Stop robot motion
-        self._robot.ros_control.stop()
-
         return "Navigate skill stopped successfully."
 
 
@@ -465,17 +457,21 @@ class GetPose(AbstractRobotSkill):
 
         try:
             # Get the current pose using the robot's get_pose method
-            position, rotation = self._robot.get_pose()
+            pose_data = self._robot.get_pose()
+
+            # Extract position and rotation from the new dictionary format
+            position = pose_data["position"]
+            rotation = pose_data["rotation"]
 
             # Format the response
             result = {
                 "success": True,
                 "position": {
-                    "x": position[0],
-                    "y": position[1],
-                    "z": position[2] if len(position) > 2 else 0.0,
+                    "x": position.x,
+                    "y": position.y,
+                    "z": position.z,
                 },
-                "rotation": {"roll": rotation[0], "pitch": rotation[1], "yaw": rotation[2]},
+                "rotation": {"roll": rotation.x, "pitch": rotation.y, "yaw": rotation.z},
             }
 
             # If location_name is provided, remember this location
@@ -485,7 +481,9 @@ class GetPose(AbstractRobotSkill):
 
                 # Create a RobotLocation object
                 location = RobotLocation(
-                    name=self.location_name, position=position, rotation=rotation
+                    name=self.location_name,
+                    position=(position.x, position.y, position.z),
+                    rotation=(rotation.x, rotation.y, rotation.z),
                 )
 
                 # Add to spatial memory
@@ -604,3 +602,96 @@ class NavigateToGoal(AbstractRobotSkill):
         self.unregister_as_running("NavigateToGoal", skill_library)
         self._stop_event.set()
         return "Navigation stopped"
+
+
+class Explore(AbstractRobotSkill):
+    """
+    A skill that performs autonomous frontier exploration.
+
+    This skill continuously finds and navigates to unknown frontiers in the environment
+    until no more frontiers are found or the exploration is stopped.
+
+    Don't save GetPose locations when frontier exploring. Don't call any other skills except stop skill when needed.
+    """
+
+    timeout: float = Field(60.0, description="Maximum time (in seconds) allowed for exploration")
+
+    def __init__(self, robot=None, **data):
+        """
+        Initialize the Explore skill.
+
+        Args:
+            robot: The robot instance
+            **data: Additional data for configuration
+        """
+        super().__init__(robot=robot, **data)
+        self._stop_event = threading.Event()
+
+    def __call__(self):
+        """
+        Start autonomous frontier exploration.
+
+        Returns:
+            A dictionary containing the result of the exploration
+        """
+        super().__call__()
+
+        if self._robot is None:
+            error_msg = "No robot instance provided to Explore skill"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
+
+        # Reset stop event to make sure we don't immediately abort
+        self._stop_event.clear()
+
+        skill_library = self._robot.get_skills()
+        self.register_as_running("Explore", skill_library)
+
+        logger.info("Starting autonomous frontier exploration")
+
+        try:
+            # Start exploration using the robot's explore method
+            result = self._robot.explore(stop_event=self._stop_event)
+
+            if result:
+                logger.info("Exploration completed successfully - no more frontiers found")
+                return {
+                    "success": True,
+                    "message": "Exploration completed - all accessible areas explored",
+                }
+            else:
+                if self._stop_event.is_set():
+                    logger.info("Exploration stopped by user")
+                    return {
+                        "success": False,
+                        "message": "Exploration stopped by user",
+                    }
+                else:
+                    logger.warning("Exploration did not complete successfully")
+                    return {
+                        "success": False,
+                        "message": "Exploration failed or was interrupted",
+                    }
+
+        except Exception as e:
+            error_msg = f"Error during exploration: {e}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+            }
+        finally:
+            self.stop()
+
+    def stop(self):
+        """
+        Stop the exploration.
+
+        Returns:
+            A message indicating that the exploration was stopped
+        """
+        logger.info("Stopping Explore")
+        skill_library = self._robot.get_skills()
+        self.unregister_as_running("Explore", skill_library)
+        self._stop_event.set()
+        return "Exploration stopped"
