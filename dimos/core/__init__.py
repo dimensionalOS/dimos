@@ -1,3 +1,5 @@
+import multiprocessing as mp
+
 import pytest
 from dask.distributed import Client, LocalCluster
 
@@ -17,7 +19,7 @@ def patchdask(dask_client: Client):
         ).result()
 
         actor.set_ref(actor).result()
-        print(f"\033[32msubsystem deployed: [{actor}]\033[0m")
+        print(colors.green(f"Subsystem deployed: {actor}"))
         return actor
 
     dask_client.deploy = deploy
@@ -27,15 +29,19 @@ def patchdask(dask_client: Client):
 @pytest.fixture
 def dimos():
     process_count = 3  # we chill
-    cluster = LocalCluster(n_workers=process_count, threads_per_worker=3)
-    client = Client(cluster)
-    yield patchdask(client)
-    client.close()
-    cluster.close()
+    client = start(process_count)
+    yield client
+    stop(client)
 
 
 def start(n):
-    cluster = LocalCluster(n_workers=n, threads_per_worker=3)
+    if not n:
+        n = mp.cpu_count()
+    print(colors.green(f"Initializing dimos local cluster with {n} workers"))
+    cluster = LocalCluster(
+        n_workers=n,
+        threads_per_worker=3,
+    )
     client = Client(cluster)
     return patchdask(client)
 

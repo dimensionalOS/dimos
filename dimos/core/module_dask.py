@@ -12,15 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
 from typing import (
     Any,
     Callable,
-    Dict,
-    Generic,
     List,
-    Protocol,
-    TypeVar,
     get_args,
     get_origin,
     get_type_hints,
@@ -99,11 +94,7 @@ class Module:
 
     @property
     def rpcs(self) -> List[Callable]:
-        return [
-            getattr(self, name)
-            for name in dir(self)
-            if callable(getattr(self, name)) and hasattr(getattr(self, name), "__rpc__")
-        ]
+        return [name for name in dir(self) if hasattr(getattr(self, name), "__rpc__")]
 
     def io(self) -> str:
         def _box(name: str) -> str:
@@ -114,9 +105,9 @@ class Module:
             ]
 
         ret = [
-            *(f" ├─ {name:<16} {stream}" for name, stream in self.inputs.items()),
+            *(f" ├─ {stream}" for stream in self.inputs.values()),
             *_box(self.__class__.__name__),
-            *(f" ├─ {name:<16} {stream}" for name, stream in self.outputs.items()),
+            *(f" ├─ {stream}" for stream in self.outputs.values()),
         ]
 
         return "\n".join(ret)

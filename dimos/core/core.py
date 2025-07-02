@@ -206,7 +206,12 @@ class In(Stream[T]):
     connection: Optional[RemoteOut[T]] = None
 
     def __str__(self):
-        return super().__str__() + ("" if not self.connection else f" <- {self.connection}")
+        mystr = super().__str__()
+
+        if not self.connection:
+            return mystr
+
+        return (mystr + " ◀─").ljust(60, "─") + f" {self.connection}"
 
     def __reduce__(self):  # noqa: D401
         if self.owner is None or not hasattr(self.owner, "ref"):

@@ -129,13 +129,10 @@ def test_deployment(dimos):
     nav = dimos.deploy(Navigation)
 
     # this one encodes proper LCM messages
-    robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
-
-    # odometry using just a pickle over LCM
-    robot.odometry.transport = pLCMTransport("/odom")
-
-    # this one uses default dask transport
-    nav.mov.transport = pLCMTransport("/mov")
+    # robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
+    # odometry & mov using just a pickle over LCM
+    # robot.odometry.transport = pLCMTransport("/odom")
+    # nav.mov.transport = pLCMTransport("/mov")
 
     nav.lidar.connect(robot.lidar)
     nav.odometry.connect(robot.odometry)
