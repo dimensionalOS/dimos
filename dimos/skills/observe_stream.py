@@ -77,7 +77,7 @@ class ObserveStream(AbstractRobotSkill):
 
         # Get the video stream
         # TODO: Use the video stream provided in the constructor for dynamic video_stream selection by the agent
-        self._video_stream = self._robot.video_stream
+        self._video_stream = self._robot.video_stream()
         if self._video_stream is None:
             logger.error("Failed to get video stream from robot")
             return
