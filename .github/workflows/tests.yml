@@ -23,18 +23,25 @@ jobs:
   run-tests:
     runs-on: dimos-runner-ubuntu-2204
 
-    container:
-      image: ghcr.io/dimensionalos/${{ inputs.dev-image }}
 
     steps:
       - name: exit early
         if: ${{ !inputs.should-run }}
         run: |
           exit 0
+          
+      - name: Free disk space
+        run: |
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
 
       - uses: actions/checkout@v4
         
       - name: Run tests
+        container:
+          image: ghcr.io/dimensionalos/${{ inputs.dev-image }}
         run: |
           git config --global --add safe.directory '*'
           /entrypoint.sh bash -c "${{ inputs.cmd }}"
@@ -43,3 +50,4 @@ jobs:
         if: failure()
         run: |
           df -h
+        
