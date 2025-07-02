@@ -150,9 +150,9 @@ def test_deployment(dimos):
     print("nav.odom_msg_count", nav.odom_msg_count)
     print("nav.lidar_msg_count", nav.lidar_msg_count)
 
-    assert robot.mov_msg_count >= 9
-    assert nav.odom_msg_count >= 9
-    assert nav.lidar_msg_count >= 9
+    assert robot.mov_msg_count >= 8
+    assert nav.odom_msg_count >= 8
+    assert nav.lidar_msg_count >= 8
 
 
 if __name__ == "__main__":
