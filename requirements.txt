@@ -95,7 +95,9 @@ git+https://github.com/facebookresearch/detectron2.git@v0.6
 # Mapping
 open3d
 
-# lcm_msgs
-git+https://github.com/dimensionalOS/python_lcm_msgs@main#egg=lcm_msgs
 # Inference (CPU)
 onnxruntime
+
+# multiprocess
+dask[complete]==2025.5.1
+-e git+https://github.com/dimensionalOS/python_lcm_msgs@main#egg=lcm_msgs
