@@ -650,8 +650,17 @@ class Explore(AbstractRobotSkill):
         logger.info("Starting autonomous frontier exploration")
 
         try:
-            # Start exploration using the robot's explore method
-            result = self._robot.explore(stop_event=self._stop_event)
+            # Retrieve frontier exploration module, if available
+            from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
+                WavefrontFrontierExplorer,
+            )
+
+            explorer = self._robot.get_module(WavefrontFrontierExplorer)
+            if explorer is None:
+                raise RuntimeError("WavefrontFrontierExplorer module not available on this robot")
+
+            # Run exploration via the module
+            result = explorer.explore(stop_event=self._stop_event)
 
             if result:
                 logger.info("Exploration completed successfully - no more frontiers found")
