@@ -12,18 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import test_header
+from setuptools import setup, find_packages
 
-from dotenv import load_dotenv
-from dimos.agents.cerebras_agent import CerebrasAgent
-
-# Load API key from environment
-load_dotenv()
-
-# Create a CerebrasAgent instance
-agent = CerebrasAgent(dev_name="test_agent", query="What is the capital of France?")
-
-# Use the stream_query method to get a response
-response = agent.run_observable_query("What is the capital of France?").run()
-
-print(f"Response from Cerebras Agent: {response}")
+setup(
+    packages=find_packages(),
+    package_dir={"": "."},
+)

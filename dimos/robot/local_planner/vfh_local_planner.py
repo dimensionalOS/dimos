@@ -15,16 +15,16 @@
 # limitations under the License.
 
 import numpy as np
-from typing import Dict, Tuple, Optional, Callable
+from typing import Dict, Tuple, Optional, Callable, Any
 import cv2
 import logging
 
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.ros_utils import normalize_angle
+from dimos.utils.transform_utils import normalize_angle
 
 from dimos.robot.local_planner.local_planner import BaseLocalPlanner, visualize_local_planner_state
 from dimos.types.costmap import Costmap
-from nav_msgs.msg import OccupancyGrid
+from dimos.types.vector import Vector, VectorLike
 
 logger = setup_logger("dimos.robot.unitree.vfh_local_planner", level=logging.DEBUG)
 
@@ -37,29 +37,31 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
 
     def __init__(
         self,
-        get_costmap: Callable[[], Optional[OccupancyGrid]],
-        transform: object,
-        move_vel_control: Callable[[float, float, float], None],
+        get_costmap: Callable[[], Optional[Costmap]],
+        get_robot_pose: Callable[[], Any],
+        move: Callable[[Vector], None],
         safety_threshold: float = 0.8,
         histogram_bins: int = 144,
         max_linear_vel: float = 0.8,
         max_angular_vel: float = 1.0,
         lookahead_distance: float = 1.0,
-        goal_tolerance: float = 0.2,
+        goal_tolerance: float = 0.4,
         angle_tolerance: float = 0.1,  # ~5.7 degrees
         robot_width: float = 0.5,
         robot_length: float = 0.7,
         visualization_size: int = 400,
         control_frequency: float = 10.0,
         safe_goal_distance: float = 1.0,
+        max_recovery_attempts: int = 3,
+        global_planner_plan: Optional[Callable[[VectorLike], Optional[Any]]] = None,
     ):
         """
         Initialize the VFH + Pure Pursuit planner.
 
         Args:
             get_costmap: Function to get the latest local costmap
-            transform: Object with transform methods (transform_point, transform_rot, etc.)
-            move_vel_control: Function to send velocity commands
+            get_robot_pose: Function to get the latest robot pose (returning odom object)
+            move: Function to send velocity commands
             safety_threshold: Distance to maintain from obstacles (meters)
             histogram_bins: Number of directional bins in the polar histogram
             max_linear_vel: Maximum linear velocity (m/s)
@@ -72,12 +74,14 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             visualization_size: Size of the visualization image in pixels
             control_frequency: Frequency at which the planner is called (Hz)
             safe_goal_distance: Distance at which to adjust the goal and ignore obstacles (meters)
+            max_recovery_attempts: Maximum number of recovery attempts
+            global_planner_plan: Optional function to get the global plan
         """
         # Initialize base class
         super().__init__(
             get_costmap=get_costmap,
-            transform=transform,
-            move_vel_control=move_vel_control,
+            get_robot_pose=get_robot_pose,
+            move=move,
             safety_threshold=safety_threshold,
             max_linear_vel=max_linear_vel,
             max_angular_vel=max_angular_vel,
@@ -89,6 +93,8 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             visualization_size=visualization_size,
             control_frequency=control_frequency,
             safe_goal_distance=safe_goal_distance,
+            max_recovery_attempts=max_recovery_attempts,
+            global_planner_plan=global_planner_plan,
         )
 
         # VFH specific parameters
@@ -97,10 +103,10 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         self.selected_direction = None
 
         # VFH tuning parameters
-        self.alpha = 0.2  # Histogram smoothing factor
-        self.obstacle_weight = 10.0
-        self.goal_weight = 1.0
-        self.prev_direction_weight = 0.5
+        self.alpha = 0.25  # Histogram smoothing factor
+        self.obstacle_weight = 5.0
+        self.goal_weight = 2.0
+        self.prev_direction_weight = 1.0
         self.prev_selected_angle = 0.0
         self.prev_linear_vel = 0.0
         self.linear_vel_filter_factor = 0.4
@@ -118,13 +124,13 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             Dict[str, float]: Velocity commands with 'x_vel' and 'angular_vel' keys
         """
         # Get necessary data for planning
-        costmap = self.get_costmap()
+        costmap = self._get_costmap()
         if costmap is None:
             logger.warning("No costmap available for planning")
             return {"x_vel": 0.0, "angular_vel": 0.0}
 
-        [pos, rot] = self.transform.transform_euler("base_link", "odom")
-        robot_x, robot_y, robot_theta = pos[0], pos[1], rot[2]
+        robot_pos, robot_theta = self._get_robot_pose()
+        robot_x, robot_y = robot_pos
         robot_pose = (robot_x, robot_y, robot_theta)
 
         # Calculate goal-related parameters
@@ -175,7 +181,6 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             )
 
         if self.check_collision(0.0, safety_threshold=self.safety_threshold):
-            logger.warning("Collision detected ahead. Stopping.")
             linear_vel = 0.0
 
         self.prev_linear_vel = linear_vel
@@ -337,12 +342,12 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             return False
 
         # Get the latest costmap and robot pose
-        costmap = self.get_costmap()
+        costmap = self._get_costmap()
         if costmap is None:
             return False  # No costmap available
 
-        [pos, rot] = self.transform.transform_euler("base_link", "odom")
-        robot_x, robot_y, robot_theta = pos[0], pos[1], rot[2]
+        robot_pos, robot_theta = self._get_robot_pose()
+        robot_x, robot_y = robot_pos
 
         # Direction in world frame
         direction_world = robot_theta + selected_direction
@@ -373,12 +378,12 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
     def update_visualization(self) -> np.ndarray:
         """Generate visualization of the planning state."""
         try:
-            costmap = self.get_costmap()
+            costmap = self._get_costmap()
             if costmap is None:
                 raise ValueError("Costmap is None")
 
-            [pos, rot] = self.transform.transform_euler("base_link", "odom")
-            robot_x, robot_y, robot_theta = pos[0], pos[1], rot[2]
+            robot_pos, robot_theta = self._get_robot_pose()
+            robot_x, robot_y = robot_pos
             robot_pose = (robot_x, robot_y, robot_theta)
 
             goal_xy = self.goal_xy  # This could be a lookahead point or final goal
@@ -388,9 +393,9 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             selected_direction = getattr(self, "selected_direction", None)
 
             # Get waypoint data if in waypoint mode
-            waypoints_to_draw = self.waypoints_in_odom
+            waypoints_to_draw = self.waypoints_in_absolute
             current_wp_index_to_draw = (
-                self.current_waypoint_index if self.waypoints_in_odom is not None else None
+                self.current_waypoint_index if self.waypoints_in_absolute is not None else None
             )
             # Ensure index is valid before passing
             if waypoints_to_draw is not None and current_wp_index_to_draw is not None:
@@ -400,7 +405,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             return visualize_local_planner_state(
                 occupancy_grid=costmap.grid,
                 grid_resolution=costmap.resolution,
-                grid_origin=(costmap.origin.x, costmap.origin.y, costmap.origin_theta),
+                grid_origin=(costmap.origin.x, costmap.origin.y),
                 robot_pose=robot_pose,
                 goal_xy=goal_xy,  # Current target (lookahead or final)
                 goal_theta=self.goal_theta,  # Pass goal orientation if available
