@@ -237,10 +237,14 @@ class WebRTCZenohBridge:
                 # Send continuous commands for duration
                 start_time = time.time()
                 while time.time() - start_time < duration and self.running:
-                    await self.webrtc_conn.datachannel.pub_sub.publish_without_callback(
-                        RTC_TOPIC["WIRELESS_CONTROLLER"],
-                        data={"lx": y, "ly": x, "rx": -yaw, "ry": 0},
-                    )
+                    try:
+                        await self.webrtc_conn.datachannel.pub_sub.publish_without_callback(
+                            RTC_TOPIC["WIRELESS_CONTROLLER"],
+                            data={"lx": y, "ly": x, "rx": -yaw, "ry": 0},
+                        )
+                    except Exception as e:
+                        await asyncio.sleep(0.01)
+
                     await asyncio.sleep(0.01)  # 100Hz update rate
             else:
                 # Single command
