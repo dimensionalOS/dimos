@@ -20,7 +20,7 @@ from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.types.vector import Vector
 from dimos.types.position import Position
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.odometry import Odometry
+from dimos.robot.unitree_webrtc.type.odometry import Odometry as OdometryType
 from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
 from go2_webrtc_driver.constants import RTC_TOPIC, VUI_COLOR, SPORT_CMD
 from reactivex.subject import Subject
@@ -29,14 +29,28 @@ import numpy as np
 from reactivex import operators as ops
 from aiortc import MediaStreamTrack
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
-from dimos.robot.connection_interface import ConnectionInterface
+from dimos.utils.reactive import getter_streaming
+from dimos.robot.capabilities import (
+    Move,
+    Stop,
+    Video,
+    Lidar,
+    Odometry,
+    Connection,
+    implements,
+    WebRTCRequest,
+)
 import time
 
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
+# Public export for other modules
+__all__ = ["UnitreeWebRTCConnection", "WebRTCRobot", "VideoMessage"]
 
-class WebRTCRobot(ConnectionInterface):
-    def __init__(self, ip: str, mode: str = "ai"):
+
+@implements(Move, Stop, Video, Lidar, Odometry)
+class UnitreeWebRTCConnection(Connection):
+    def __init__(self, ip: str, mode: str = "normal"):
         self.ip = ip
         self.mode = mode
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
@@ -124,6 +138,20 @@ class WebRTCRobot(ConnectionInterface):
             print(f"Failed to send movement command: {e}")
             return False
 
+    def get_pose(self) -> dict:
+        """
+        Get the current pose (position and rotation) of the robot in the map frame.
+
+        Returns:
+            Dictionary containing:
+                - position: Vector (x, y, z)
+                - rotation: Vector (roll, pitch, yaw) in radians
+        """
+        odom = getter_streaming(self.odom_stream())
+        position = Vector(odom().pos.x, odom().pos.y, odom().pos.z)
+        orientation = Vector(odom().rot.x, odom().rot.y, odom().rot.z)
+        return {"position": position, "rotation": orientation}
+
     # Generic conversion of unitree subscription to Subject (used for all subs)
     def unitree_sub_stream(self, topic_name: str):
         return callback_to_observable(
@@ -156,7 +184,7 @@ class WebRTCRobot(ConnectionInterface):
 
     @functools.cache
     def odom_stream(self) -> Subject[Position]:
-        return backpressure(self.raw_odom_stream().pipe(ops.map(Odometry.from_msg)))
+        return backpressure(self.raw_odom_stream().pipe(ops.map(OdometryType.from_msg)))
 
     @functools.cache
     def lowstate_stream(self) -> Subject[LowStateMsg]:
@@ -197,6 +225,51 @@ class WebRTCRobot(ConnectionInterface):
                 },
             },
         )
+
+    # TODO: implement queue_webrtc_req
+    def webrtc_req(
+        self,
+        api_id: int,
+        topic: str = None,
+        parameter: str = "",
+        priority: int = 0,
+        request_id: str = None,
+        data=None,
+        timeout: float = 1000.0,
+    ):
+        """Send a WebRTC request command to the robot.
+
+        Args:
+            api_id: The API ID for the command.
+            topic: The API topic to publish to. Defaults to ROSControl.webrtc_api_topic.
+            parameter: Additional parameter data. Defaults to "".
+            priority: Priority of the request. Defaults to 0.
+            request_id: Unique identifier for the request. If None, one will be generated.
+            data: Additional data to include with the request. Defaults to None.
+            timeout: Timeout for the request in milliseconds. Defaults to 1000.0.
+
+        Returns:
+            The result of the WebRTC request.
+
+        Raises:
+            RuntimeError: If no connection interface with WebRTC capability is available.
+        """
+        if self.conn is None:
+            raise RuntimeError("No connection interface available for WebRTC commands")
+
+        # WebRTC requests are only available on ROS control interfaces
+        if hasattr(self.conn, "queue_webrtc_req"):
+            return self.conn.queue_webrtc_req(
+                api_id=api_id,
+                topic=topic,
+                parameter=parameter,
+                priority=priority,
+                request_id=request_id,
+                data=data,
+                timeout=timeout,
+            )
+        else:
+            raise RuntimeError("WebRTC requests not supported by this connection interface")
 
     @functools.lru_cache(maxsize=None)
     def video_stream(self) -> Observable[VideoMessage]:
@@ -270,3 +343,7 @@ class WebRTCRobot(ConnectionInterface):
 
         if hasattr(self, "thread") and self.thread.is_alive():
             self.thread.join(timeout=2.0)
+
+
+# Backwards compatibility for tests
+WebRTCRobot = UnitreeWebRTCConnection
