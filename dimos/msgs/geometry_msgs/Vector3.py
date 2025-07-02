@@ -391,10 +391,6 @@ class Vector3(LCMVector3):
         """
         return not self.is_zero()
 
-    def __iter__(self):
-        """Make Vector3 iterable so it can be converted to tuple/list."""
-        return iter([self.x, self.y, self.z])
-
 
 @dispatch
 def to_numpy(value: "Vector3") -> np.ndarray:
