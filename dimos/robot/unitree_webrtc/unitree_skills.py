@@ -267,7 +267,7 @@ class MyUnitreeSkills(SkillLibrary):
         yaw: float = Field(default=0.0, description="Rotational velocity (rad/s)")
         duration: float = Field(default=0.0, description="How long to move (seconds).")
 
-        def execute(self):
+        def __call__(self):
             return self._robot.move(Vector(self.x, self.y, self.yaw), duration=self.duration)
 
     class Wait(AbstractSkill):
