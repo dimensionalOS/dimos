@@ -4,7 +4,7 @@ FROM ${FROM_IMAGE}
 ARG GIT_COMMIT=unknown
 ARG GIT_BRANCH=unknown
 
-RUN apt-get install -y \
+RUN apt-get update && apt-get install -y \
     git \
     git-lfs \
     nano \
@@ -15,6 +15,8 @@ RUN apt-get install -y \
     python-is-python3 \
     iputils-ping \
     wget \
+    net-tools \
+    sudo \
     pre-commit
 
 

@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.robot.unitree_webrtc.testing.helpers import color
-from datetime import datetime
-from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_datetime, to_human_readable
-from dimos.types.costmap import Costmap, pointcloud_to_costmap
-from dimos.types.vector import Vector
-from dataclasses import dataclass, field
-from typing import List, TypedDict
+from copy import copy
+from typing import List, Optional, TypedDict
+
 import numpy as np
 import open3d as o3d
-from copy import copy
+
+from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.robot.unitree_webrtc.type.timeseries import to_human_readable
+from dimos.types.costmap import Costmap, pointcloud_to_costmap
+from dimos.types.vector import Vector
 
 
 class RawLidarPoints(TypedDict):
@@ -48,27 +49,49 @@ class RawLidarMsg(TypedDict):
     data: RawLidarData
 
 
-@dataclass
-class LidarMessage(Timestamped):
-    ts: datetime
-    origin: Vector
-    resolution: float
-    pointcloud: o3d.geometry.PointCloud
-    raw_msg: RawLidarMsg = field(repr=False, default=None)
-    _costmap: Costmap = field(init=False, repr=False, default=None)
+class LidarMessage(PointCloud2):
+    resolution: float  # we lose resolution when encoding PointCloud2
+    origin: Vector3
+    raw_msg: Optional[RawLidarMsg]
+    _costmap: Optional[Costmap]
+
+    def __init__(self, **kwargs):
+        super().__init__(
+            pointcloud=kwargs.get("pointcloud"),
+            ts=kwargs.get("ts"),
+            frame_id="lidar",
+        )
+
+        self.origin = kwargs.get("origin")
+        self.resolution = kwargs.get("resolution")
 
     @classmethod
-    def from_msg(cls, raw_message: RawLidarMsg) -> "LidarMessage":
+    def from_msg(cls: "LidarMessage", raw_message: RawLidarMsg) -> "LidarMessage":
         data = raw_message["data"]
         points = data["data"]["points"]
-        point_cloud = o3d.geometry.PointCloud()
-        point_cloud.points = o3d.utility.Vector3dVector(points)
+        pointcloud = o3d.geometry.PointCloud()
+        pointcloud.points = o3d.utility.Vector3dVector(points)
+
+        origin = Vector3(data["origin"])
+        # webrtc decoding via native decompression doesn't require us
+        # to shift the pointcloud by it's origin
+        #
+        # pointcloud.translate((origin / 2).to_tuple())
+
         return cls(
-            ts=to_datetime(data["stamp"]),
-            origin=Vector(data["origin"]),
+            origin=origin,
             resolution=data["resolution"],
-            pointcloud=point_cloud,
+            pointcloud=pointcloud,
+            ts=data["stamp"],
             raw_msg=raw_message,
+        )
+
+    def to_pointcloud2(self) -> PointCloud2:
+        """Convert to PointCloud2 message format."""
+        return PointCloud2(
+            pointcloud=self.pointcloud,
+            frame_id=self.frame_id,
+            ts=self.ts,
         )
 
     def __repr__(self):
@@ -79,21 +102,19 @@ class LidarMessage(Timestamped):
         return self
 
     def __add__(self, other: "LidarMessage") -> "LidarMessage":
-        # Create a new point cloud combining both
-
         # Determine which message is more recent
-        if self.timestamp >= other.timestamp:
-            timestamp = self.timestamp
+        if self.ts >= other.ts:
+            ts = self.ts
             origin = self.origin
             resolution = self.resolution
         else:
-            timestamp = other.timestamp
+            ts = other.ts
             origin = other.origin
             resolution = other.resolution
 
         # Return a new LidarMessage with combined data
         return LidarMessage(
-            timestamp=timestamp,
+            ts=ts,
             origin=origin,
             resolution=resolution,
             pointcloud=self.pointcloud + other.pointcloud,
@@ -102,59 +123,6 @@ class LidarMessage(Timestamped):
     @property
     def o3d_geometry(self):
         return self.pointcloud
-
-    def icp(self, other: "LidarMessage") -> o3d.pipelines.registration.RegistrationResult:
-        self.estimate_normals()
-        other.estimate_normals()
-
-        reg_p2l = o3d.pipelines.registration.registration_icp(
-            self.pointcloud,
-            other.pointcloud,
-            0.1,
-            np.identity(4),
-            o3d.pipelines.registration.TransformationEstimationPointToPlane(),
-            o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=100),
-        )
-
-        return reg_p2l
-
-    def transform(self, transform) -> "LidarMessage":
-        self.pointcloud.transform(transform)
-        return self
-
-    def clone(self) -> "LidarMessage":
-        return self.copy()
-
-    def copy(self) -> "LidarMessage":
-        return LidarMessage(
-            ts=self.ts,
-            origin=copy(self.origin),
-            resolution=self.resolution,
-            # TODO: seems to work, but will it cause issues because of the shallow copy?
-            pointcloud=copy(self.pointcloud),
-        )
-
-    def icptransform(self, other):
-        return self.transform(self.icp(other).transformation)
-
-    def estimate_normals(self) -> "LidarMessage":
-        # Check if normals already exist by testing if the normals attribute has data
-        if not self.pointcloud.has_normals() or len(self.pointcloud.normals) == 0:
-            self.pointcloud.estimate_normals(
-                search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
-            )
-        return self
-
-    def color(self, color_choice) -> "LidarMessage":
-        def get_color(color_choice):
-            if isinstance(color_choice, int):
-                return color[color_choice]
-            return color_choice
-
-        self.pointcloud.paint_uniform_color(get_color(color_choice))
-        # Looks like we'll be displaying so might as well?
-        self.estimate_normals()
-        return self
 
     def costmap(self, voxel_size: float = 0.2) -> Costmap:
         if not self._costmap:

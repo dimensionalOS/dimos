@@ -52,9 +52,9 @@ class SensorReplay(Generic[T]):
         if isinstance(name, int):
             full_path = self.root_dir / f"/{name:03d}.pickle"
         elif isinstance(name, Path):
-            full_path = self.root_dir / f"/{name}.pickle"
-        else:
             full_path = name
+        else:
+            full_path = self.root_dir / Path(f"{name}.pickle")
 
         with open(full_path, "rb") as f:
             data = pickle.load(f)
@@ -65,7 +65,7 @@ class SensorReplay(Generic[T]):
     def iterate(self) -> Iterator[Union[T, Any]]:
         pattern = os.path.join(self.root_dir, "*")
         for file_path in sorted(glob.glob(pattern)):
-            yield self.load_one(file_path)
+            yield self.load_one(Path(file_path))
 
     def stream(self, rate_hz: Optional[float] = None) -> Observable[Union[T, Any]]:
         if rate_hz is None:

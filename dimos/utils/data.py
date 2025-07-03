@@ -47,7 +47,7 @@ def _get_lfs_dir() -> Path:
     return _get_data_dir() / ".lfs"
 
 
-def _check_git_lfs_available() -> None:
+def _check_git_lfs_available() -> bool:
     try:
         subprocess.run(["git", "lfs", "version"], capture_output=True, check=True, text=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -85,6 +85,8 @@ def _lfs_pull(file_path: Path, repo_root: Path) -> None:
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"Failed to pull LFS file {file_path}: {e}")
 
+    return None
+
 
 def _decompress_archive(filename: Union[str, Path]) -> Path:
     target_dir = _get_data_dir()
@@ -102,7 +104,7 @@ def _pull_lfs_archive(filename: Union[str, Path]) -> Path:
     repo_root = _get_repo_root()
 
     # Construct path to test data file
-    file_path = _get_lfs_dir() / (filename + ".tar.gz")
+    file_path = _get_lfs_dir() / (str(filename) + ".tar.gz")
 
     # Check if file exists
     if not file_path.exists():

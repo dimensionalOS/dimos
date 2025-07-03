@@ -97,3 +97,10 @@ open3d
 
 # Inference (CPU)
 onnxruntime
+
+# Terminal colors
+rich==14.0.0
+
+# multiprocess 
+dask[complete]==2025.5.1
+git+https://github.com/dimensionalOS/python_lcm_msgs@main#egg=lcm_msgs

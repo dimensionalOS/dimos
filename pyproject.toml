@@ -149,6 +149,15 @@ exclude = [
     "src"
 ]
 
+[tool.mypy]
+# mypy doesn't understand plum @dispatch decorator
+# so we gave up on this check globally
+disable_error_code = ["no-redef", "import-untyped", "import-not-found"]
+files = [
+    "dimos/msgs/**/*.py",
+    "dimos/protocol/**/*.py"
+]
+
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
 norecursedirs = ["dimos/robot/unitree/external"]
@@ -161,3 +170,6 @@ markers = [
     "ros: depend on ros"]
 
 addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not ros'"
+
+
+
