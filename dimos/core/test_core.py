@@ -119,6 +119,7 @@ class Navigation(Module):
         self.lidar.subscribe(_lidar)
 
 
+@pytest.mark.tool
 def test_deployment(dimos):
     robot = dimos.deploy(RobotClient)
     target_stream = RemoteOut[Vector](Vector, "target")
@@ -131,10 +132,10 @@ def test_deployment(dimos):
     nav = dimos.deploy(Navigation)
 
     # this one encodes proper LCM messages
-    # robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
+    robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
     # odometry & mov using just a pickle over LCM
-    # robot.odometry.transport = pLCMTransport("/odom")
-    # nav.mov.transport = pLCMTransport("/mov")
+    robot.odometry.transport = pLCMTransport("/odom")
+    nav.mov.transport = pLCMTransport("/mov")
 
     nav.lidar.connect(robot.lidar)
     nav.odometry.connect(robot.odometry)
