@@ -21,20 +21,20 @@ permissions:
 
 jobs:
 
-  cleanup:
-    runs-on: dimos-runner-ubuntu-2204
-    steps:
-      - name: exit early
-        if: ${{ !inputs.should-run }}
-        run: |
-          exit 0
+  # cleanup:
+  #   runs-on: dimos-runner-ubuntu-2204
+  #   steps:
+  #     - name: exit early
+  #       if: ${{ !inputs.should-run }}
+  #       run: |
+  #         exit 0
           
-      - name: Free disk space
-        run: |
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf /usr/local/lib/android
+  #     - name: Free disk space
+  #       run: |
+  #         sudo rm -rf /opt/ghc
+  #         sudo rm -rf /usr/share/dotnet
+  #         sudo rm -rf /usr/local/share/boost
+  #         sudo rm -rf /usr/local/lib/android
           
   run-tests:
     runs-on: dimos-runner-ubuntu-2204

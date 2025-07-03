@@ -161,5 +161,5 @@ def test_deployment(dimos):
 
 
 if __name__ == "__main__":
-    client = start(3)
+    client = start(1)  # single process for CI memory
     test_deployment(client)
