@@ -15,6 +15,8 @@
 import time
 from threading import Event, Thread
 
+import pytest
+
 from dimos.core import (
     In,
     LCMTransport,
@@ -117,6 +119,7 @@ class Navigation(Module):
         self.lidar.subscribe(_lidar)
 
 
+@pytest.mark.tool
 def test_deployment(dimos):
     robot = dimos.deploy(RobotClient)
     target_stream = RemoteOut[Vector](Vector, "target")
@@ -145,6 +148,8 @@ def test_deployment(dimos):
 
     time.sleep(1)
     robot.stop().result()
+
+    time.sleep(0.5)
 
     print("robot.mov_msg_count", robot.mov_msg_count)
     print("nav.odom_msg_count", nav.odom_msg_count)
