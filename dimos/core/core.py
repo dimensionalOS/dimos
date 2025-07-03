@@ -227,7 +227,6 @@ class In(Stream[T]):
         return State.UNBOUND if self.owner is None else State.READY
 
     def subscribe(self, cb):
-        # print("SUBBING", self, self.connection._transport)
         self.connection._transport.subscribe(self, cb)
 
 

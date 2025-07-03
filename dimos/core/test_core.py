@@ -51,7 +51,6 @@ class RobotClient(Module):
 
     def __init__(self):
         super().__init__()
-        print(self)
         self._stop_event = Event()
         self._thread = None
 

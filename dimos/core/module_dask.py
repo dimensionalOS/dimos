@@ -12,22 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from typing import (
     Any,
     Callable,
-    List,
     get_args,
     get_origin,
     get_type_hints,
 )
 
-from dask.distributed import Actor
+from dask.distributed import Actor, get_worker
 
+from dimos.core import colors
 from dimos.core.core import In, Out, RemoteIn, RemoteOut, T, Transport
 
 
 class Module:
     ref: Actor
+    worker: str
 
     def __init__(self):
         self.ref = None
@@ -44,7 +46,10 @@ class Module:
                 setattr(self, name, stream)
 
     def set_ref(self, ref):
+        worker = get_worker()
         self.ref = ref
+        self.worker = worker.name
+        return worker.name
 
     def __str__(self):
         return f"{self.__class__.__name__}"
@@ -93,8 +98,14 @@ class Module:
         }
 
     @property
-    def rpcs(self) -> List[Callable]:
-        return [name for name in dir(self) if hasattr(getattr(self, name), "__rpc__")]
+    def rpcs(self) -> dict[str, Callable]:
+        return {
+            name: getattr(self.__class__, name)
+            for name in dir(self.__class__)
+            if not name.startswith("_")
+            and callable(getattr(self.__class__, name, None))
+            and hasattr(getattr(self.__class__, name), "__rpc__")
+        }
 
     def io(self) -> str:
         def _box(name: str) -> str:
@@ -104,10 +115,40 @@ class Module:
                 "└┬" + "─" * (len(name) + 1) + "┘",
             ]
 
+        # can't modify __str__ on a function like we are doing for I/O
+        # so we have a separate repr function here
+        def repr_rpc(fn: Callable) -> str:
+            sig = inspect.signature(fn)
+            # Remove 'self' parameter
+            params = [p for name, p in sig.parameters.items() if name != "self"]
+
+            # Format parameters with colored types
+            param_strs = []
+            for param in params:
+                param_str = param.name
+                if param.annotation != inspect.Parameter.empty:
+                    type_name = getattr(param.annotation, "__name__", str(param.annotation))
+                    param_str += ": " + colors.green(type_name)
+                if param.default != inspect.Parameter.empty:
+                    param_str += f" = {param.default}"
+                param_strs.append(param_str)
+
+            # Format return type
+            return_annotation = ""
+            if sig.return_annotation != inspect.Signature.empty:
+                return_type = getattr(sig.return_annotation, "__name__", str(sig.return_annotation))
+                return_annotation = " -> " + colors.green(return_type)
+
+            return (
+                "RPC " + colors.blue(fn.__name__) + f"({', '.join(param_strs)})" + return_annotation
+            )
+
         ret = [
             *(f" ├─ {stream}" for stream in self.inputs.values()),
             *_box(self.__class__.__name__),
             *(f" ├─ {stream}" for stream in self.outputs.values()),
+            " │",
+            *(f" ├─ {repr_rpc(rpc)}" for rpc in self.rpcs.values()),
         ]
 
         return "\n".join(ret)
