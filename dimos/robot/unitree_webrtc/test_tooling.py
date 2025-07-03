@@ -17,29 +17,33 @@ import sys
 import time
 
 import pytest
-from dotenv import load_dotenv
 import reactivex.operators as ops
+from dotenv import load_dotenv
 
-from dimos.robot.unitree_webrtc.testing.multimock import Multimock
 from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
-from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.map import Map
+from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
 
 @pytest.mark.tool
-def test_record_lidar():
+def test_record_all():
     from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 
     load_dotenv()
     robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
 
     print("Robot is standing up...")
+
     robot.standup()
 
-    lidar_store = Multimock("athens_lidar")
-    odom_store = Multimock("athens_odom")
-    lidar_store.consume(robot.raw_lidar_stream()).subscribe(print)
-    odom_store.consume(robot.raw_odom_stream()).subscribe(print)
+    lidar_store = TimedSensorStorage("unitree/lidar")
+    odom_store = TimedSensorStorage("unitree/odom")
+    video_store = TimedSensorStorage("unitree/video")
+
+    lidar_store.save_stream(robot.raw_lidar_stream()).subscribe(print)
+    odom_store.save_stream(robot.raw_odom_stream()).subscribe(print)
+    video_store.save_stream(robot.video_stream()).subscribe(print)
 
     print("Recording, CTRL+C to kill")
 
@@ -54,10 +58,19 @@ def test_record_lidar():
         sys.exit(0)
 
 
+def test_replay_all():
+    lidar_store = TimedSensorReplay("unitree/lidar")
+    odom_store = TimedSensorReplay("unitree/odom")
+    video_store = TimedSensorReplay("unitree/video")
+
+    lidar_store.stream().subscribe(print)
+    odom_store.stream().subscribe(print)
+    video_store.stream().pipe(ops.map(lambda x: "video")).subscribe(print)
+
+
+# multimock is obsolete but we do need something that allows us to replay streams
 @pytest.mark.tool
 def test_replay_recording():
-    from dimos.robot.unitree_webrtc.type.odometry import position_from_odom
-
     odom_stream = Multimock("athens_odom").stream().pipe(ops.map(position_from_odom))
     odom_stream.subscribe(lambda x: print(x))
 

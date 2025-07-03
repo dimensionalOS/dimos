@@ -29,7 +29,7 @@ from dimos.core.core import In, Out, RemoteIn, RemoteOut, T, Transport
 
 class Module:
     ref: Actor
-    worker: str
+    worker: int
 
     def __init__(self):
         self.ref = None
@@ -45,7 +45,7 @@ class Module:
                 stream = In(inner, name, self)
                 setattr(self, name, stream)
 
-    def set_ref(self, ref):
+    def set_ref(self, ref) -> int:
         worker = get_worker()
         self.ref = ref
         self.worker = worker.name

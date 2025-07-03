@@ -15,11 +15,9 @@
 import glob
 import os
 import pickle
-import subprocess
-import tarfile
-from functools import cache
+import time
 from pathlib import Path
-from typing import Any, Callable, Generic, Iterator, Optional, Type, TypeVar, Union
+from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
 
 from reactivex import from_iterable, interval
 from reactivex import operators as ops
@@ -140,3 +138,27 @@ class SensorStorage(Generic[T]):
 
         self.cnt += 1
         return self.cnt
+
+
+class TimedSensorStorage(SensorStorage[T]):
+    def save_one(self, frame: T) -> int:
+        return super().save_one((time.time(), frame))
+
+
+class TimedSensorReplay(SensorReplay[T]):
+    def iterate(self) -> Iterator[Union[T, Any]]:
+        return (x[1] for x in super().iterate())
+
+    def iterate_ts(self) -> Iterator[Union[Tuple[float, T], Any]]:
+        return super().iterate()
+
+    def stream(self, rate_hz: Optional[float] = None) -> Observable[Union[T, Any]]:
+        if rate_hz is None:
+            return from_iterable(self.iterate())
+
+        sleep_time = 1.0 / rate_hz
+
+        return from_iterable(self.iterate()).pipe(
+            ops.zip(interval(sleep_time)),
+            ops.map(lambda x: x[0] if isinstance(x, tuple) else x),
+        )
