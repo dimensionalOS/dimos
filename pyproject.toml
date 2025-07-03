@@ -160,7 +160,6 @@ files = [
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
-norecursedirs = ["dimos/robot/unitree/external"]
 markers = [
     "vis: marks tests that run visuals and require a visual check by dev",
     "benchmark: benchmark, executes something multiple times, calculates avg, prints to console",
