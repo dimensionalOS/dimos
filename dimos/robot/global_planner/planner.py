@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
-from abc import abstractmethod
-from typing import Callable, Optional
 import threading
+from abc import abstractmethod
+from dataclasses import dataclass
+from typing import Callable, Optional
 
-from dimos.types.path import Path
-from dimos.types.costmap import Costmap
-from dimos.types.vector import VectorLike, to_vector, Vector
+from dimos import core
 from dimos.robot.global_planner.algo import astar
+from dimos.types.costmap import Costmap
+from dimos.types.path import Path
+from dimos.types.vector import Vector, VectorLike, to_vector
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.helpers import Visualizable
 
@@ -28,10 +29,15 @@ logger = setup_logger("dimos.robot.unitree.global_planner")
 
 
 @dataclass
-class Planner(Visualizable):
+class Planner(Visualizable, core.Module):
     set_local_nav: Callable[[Path, Optional[threading.Event]], bool]
 
+    def __init__(self):
+        core.Module.__init__(self)
+        Visualizable.__init__(self)
+
     @abstractmethod
+    @core.rpc
     def plan(self, goal: VectorLike) -> Path: ...
 
     def set_goal(
@@ -56,6 +62,7 @@ class AstarPlanner(Planner):
     set_local_nav: Callable[[Path], bool]
     conservativism: int = 8
 
+    @core.rpc
     def plan(self, goal: VectorLike) -> Path:
         goal = to_vector(goal).to_2d()
         pos = self.get_robot_pos().to_2d()
