@@ -65,7 +65,7 @@ try:
 
     @contextmanager
     def lcm_context():
-        lcm_pubsub = LCM(auto_configure_multicast=False)
+        lcm_pubsub = LCM(autoconf=True)
         lcm_pubsub.start()
         yield lcm_pubsub
         lcm_pubsub.stop()

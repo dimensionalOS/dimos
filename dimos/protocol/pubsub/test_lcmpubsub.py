@@ -49,12 +49,8 @@ class MockLCMMessage:
         return isinstance(other, MockLCMMessage) and self.data == other.data
 
 
-def test_autoconf():
-    autoconf()
-
-
 def test_lcmbase_pubsub():
-    lcm = LCMbase()
+    lcm = LCMbase(autoconf=True)
     lcm.start()
 
     received_messages = []
@@ -84,7 +80,7 @@ def test_lcmbase_pubsub():
 
 
 def test_lcm_autodecoder_pubsub():
-    lcm = LCM()
+    lcm = LCM(autoconf=True)
     lcm.start()
 
     received_messages = []
@@ -123,7 +119,7 @@ test_msgs = [
 # passes some geometry types through LCM
 @pytest.mark.parametrize("test_message", test_msgs)
 def test_lcm_geometry_msgs_pubsub(test_message):
-    lcm = LCM()
+    lcm = LCM(autoconf=True)
     lcm.start()
 
     received_messages = []
@@ -157,7 +153,7 @@ def test_lcm_geometry_msgs_pubsub(test_message):
 # passes some geometry types through pickle LCM
 @pytest.mark.parametrize("test_message", test_msgs)
 def test_lcm_geometry_msgs_autopickle_pubsub(test_message):
-    lcm = pickleLCM()
+    lcm = pickleLCM(autoconf=True)
     lcm.start()
 
     received_messages = []
