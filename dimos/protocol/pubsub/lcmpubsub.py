@@ -121,8 +121,7 @@ def autoconf() -> None:
 class LCMConfig:
     ttl: int = 0
     url: str | None = None
-    # auto configure routing
-    autoconf: bool = True
+    autoconf: bool = False
 
 
 @runtime_checkable
