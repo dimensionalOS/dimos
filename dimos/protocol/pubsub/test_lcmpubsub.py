@@ -49,6 +49,10 @@ class MockLCMMessage:
         return isinstance(other, MockLCMMessage) and self.data == other.data
 
 
+def test_autoconf():
+    autoconf()
+
+
 def test_lcmbase_pubsub():
     lcm = LCMbase()
     lcm.start()
