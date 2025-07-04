@@ -146,19 +146,43 @@ class TimedSensorStorage(SensorStorage[T]):
 
 
 class TimedSensorReplay(SensorReplay[T]):
+    def load_one(self, name: Union[int, str, Path]) -> Union[T, Any]:
+        if isinstance(name, int):
+            full_path = self.root_dir / f"/{name:03d}.pickle"
+        elif isinstance(name, Path):
+            full_path = name
+        else:
+            full_path = self.root_dir / Path(f"{name}.pickle")
+
+        with open(full_path, "rb") as f:
+            data = pickle.load(f)
+            if self.autocast:
+                return (data[0], self.autocast(data[1]))
+            return data
+
     def iterate(self) -> Iterator[Union[T, Any]]:
         return (x[1] for x in super().iterate())
 
     def iterate_ts(self) -> Iterator[Union[Tuple[float, T], Any]]:
         return super().iterate()
 
-    def stream(self, rate_hz: Optional[float] = None) -> Observable[Union[T, Any]]:
-        if rate_hz is None:
-            return from_iterable(self.iterate())
+    def stream(self) -> Observable[Union[T, Any]]:
+        """Stream sensor data with original timing preserved."""
 
-        sleep_time = 1.0 / rate_hz
+        def emit_with_timing():
+            iterator = self.iterate_ts()
+            last_timestamp = None
 
-        return from_iterable(self.iterate()).pipe(
-            ops.zip(interval(sleep_time)),
-            ops.map(lambda x: x[0] if isinstance(x, tuple) else x),
-        )
+            for item in iterator:
+                timestamp, data = item[0], item[1]
+
+                if last_timestamp is not None:
+                    time_diff = timestamp - last_timestamp
+                    # print(f"Time diff: {time_diff}")
+                    if time_diff > 0:
+                        time.sleep(time_diff)
+
+                last_timestamp = timestamp
+                yield data
+
+        return from_iterable(emit_with_timing())

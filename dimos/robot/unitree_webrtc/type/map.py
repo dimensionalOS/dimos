@@ -35,6 +35,10 @@ class Map(Module):
         super().__init__()
 
     @rpc
+    def start(self):
+        self.lidar.subscribe(self.add_frame)
+
+    @rpc
     def add_frame(self, frame: LidarMessage) -> "Map":
         """Voxelise *frame* and splice it into the running map."""
         new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)

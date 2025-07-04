@@ -279,17 +279,3 @@ class WebRTCRobot(ConnectionInterface):
 
         if hasattr(self, "thread") and self.thread.is_alive():
             self.thread.join(timeout=2.0)
-
-
-class Connection(WebRTCRobot, Module):
-    movecmd: In[Vector] = None
-    odom: Out[Odometry] = None
-    lidar: Out[LidarMessage] = None
-    video: Out[VideoMessage] = None
-
-    def __init__(self, ip: str):
-        Module.__init__(self)
-
-    def start(self):
-        self.movecmd.subscribe(self.move)
-        # super().__init__(ip=self.ip)

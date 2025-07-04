@@ -17,12 +17,11 @@ import sys
 import time
 
 import pytest
-import reactivex.operators as ops
 from dotenv import load_dotenv
 
-from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.map import Map
+from dimos.robot.unitree_webrtc.type.odometry import Odometry
+from dimos.utils.reactive import backpressure
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
 
@@ -59,42 +58,14 @@ def test_record_all():
 
 
 def test_replay_all():
-    lidar_store = TimedSensorReplay("unitree/lidar")
-    odom_store = TimedSensorReplay("unitree/odom")
+    lidar_store = TimedSensorReplay("unitree/lidar", autocast=LidarMessage.from_msg)
+    odom_store = TimedSensorReplay("unitree/odom", autocast=Odometry.from_msg)
     video_store = TimedSensorReplay("unitree/video")
 
-    lidar_store.stream().subscribe(print)
-    odom_store.stream().subscribe(print)
-    video_store.stream().pipe(ops.map(lambda x: "video")).subscribe(print)
+    backpressure(odom_store.stream()).subscribe(print)
+    backpressure(lidar_store.stream()).subscribe(print)
+    backpressure(video_store.stream()).subscribe(print)
 
-
-# multimock is obsolete but we do need something that allows us to replay streams
-@pytest.mark.tool
-def test_replay_recording():
-    odom_stream = Multimock("athens_odom").stream().pipe(ops.map(position_from_odom))
-    odom_stream.subscribe(lambda x: print(x))
-
-    map = Map()
-
-    def lidarmsg(msg):
-        frame = LidarMessage.from_msg(msg)
-        map.add_frame(frame)
-        return [map, map.costmap.smudge()]
-
-    global_map_stream = Multimock("athens_lidar").stream().pipe(ops.map(lidarmsg))
-    show3d_stream(global_map_stream.pipe(ops.map(lambda x: x[0])), clearframe=True).run()
-
-
-@pytest.mark.tool
-def compare_events():
-    odom_events = Multimock("athens_odom").list()
-
-    map = Map()
-
-    def lidarmsg(msg):
-        frame = LidarMessage.from_msg(msg)
-        map.add_frame(frame)
-        return [map, map.costmap.smudge()]
-
-    global_map_stream = Multimock("athens_lidar").stream().pipe(ops.map(lidarmsg))
-    show3d_stream(global_map_stream.pipe(ops.map(lambda x: x[0])), clearframe=True).run()
+    print("Replaying for 3 seconds...")
+    time.sleep(3)
+    print("Stopping replay after 3 seconds")
