@@ -73,8 +73,6 @@ dependencies = [
     # Vector Embedding
     "sentence_transformers",
     
-    # CTransforms GGUF
-    "ctransformers[cuda]==0.2.27",
     
     # Perception Dependencies
     "ultralytics>=8.3.70",
@@ -82,28 +80,15 @@ dependencies = [
     "scipy>=1.15.1",
     "scikit-learn",
     "Pillow",
-    "mmengine>=0.10.3",
-    "mmcv>=2.1.0",
+    "clip @ git+https://github.com/openai/CLIP.git",
     "timm>=1.0.15",
     "lap>=0.5.12",
-    "xformers==0.0.20",
-    
-    # Detic
-    "mss",
-    "dataclasses",
-    "ftfy",
-    "regex",
-    "fasttext",
-    "lvis",
-    "nltk",
-    "clip @ git+https://github.com/openai/CLIP.git",
-    "detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6",
-    
+
     # Mapping
     "open3d",
 
     # Inference
-    "onnxruntime",
+
     "onnx",
 
     # Multiprocess 
@@ -132,9 +117,30 @@ manipulation = [
     "plotly>=5.9.0",
 ]
 
+cpu = [
+    # CPU inference backends
+    "onnxruntime",
+    "ctransformers==0.2.27",
+]
+
 cuda = [
     "pycuda",
-    "onnxruntime-gpu[cuda,cudnn]"
+    "onnxruntime-gpu[cuda,cudnn]",
+    "ctransformers[cuda]==0.2.27",
+    "mmengine>=0.10.3",
+    "mmcv>=2.1.0",
+    "xformers==0.0.20",
+
+    # Detic GPU stack 
+    "mss",
+    "dataclasses",
+    "ftfy",
+    "regex",
+    "fasttext",
+    "lvis",
+    "nltk",
+    "clip @ git+https://github.com/openai/CLIP.git",
+    "detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6",
 ]
 
 [tool.ruff]
