@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
 
-from reactivex import from_iterable, interval
+from reactivex import from_iterable, interval, merge, timer
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
@@ -167,22 +167,27 @@ class TimedSensorReplay(SensorReplay[T]):
         return super().iterate()
 
     def stream(self) -> Observable[Union[T, Any]]:
-        """Stream sensor data with original timing preserved."""
+        """Stream sensor data with original timing preserved (non-blocking)."""
 
-        def emit_with_timing():
-            iterator = self.iterate_ts()
-            last_timestamp = None
+        # Load all data with timestamps upfront
+        items = list(self.iterate_ts())
 
-            for item in iterator:
-                timestamp, data = item[0], item[1]
+        if not items:
+            return from_iterable([])
 
-                if last_timestamp is not None:
-                    time_diff = timestamp - last_timestamp
-                    # print(f"Time diff: {time_diff}")
-                    if time_diff > 0:
-                        time.sleep(time_diff)
+        # Create timed observables for each item
+        observables = []
+        start_time = items[0][0]
 
-                last_timestamp = timestamp
-                yield data
+        for timestamp, data in items:
+            # Calculate relative delay from start
+            delay = max(0, timestamp - start_time)
 
-        return from_iterable(emit_with_timing())
+            # Create a timer that emits this data after the delay
+            # Use a default parameter to capture the data variable
+            timed_observable = timer(delay).pipe(ops.map(lambda _, d=data: d))
+
+            observables.append(timed_observable)
+
+        # Merge all timed observables to create a single stream
+        return merge(*observables)
