@@ -14,7 +14,8 @@
 
 from __future__ import annotations
 
-import os
+import subprocess
+import sys
 import threading
 import traceback
 from dataclasses import dataclass
@@ -24,6 +25,69 @@ import lcm
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
 from dimos.protocol.service.spec import Service
+
+
+def check_multicast() -> list[str]:
+    """Check if multicast configuration is needed and return required commands."""
+    commands_needed = []
+
+    # Check if loopback interface has multicast enabled
+    try:
+        result = subprocess.run(["ip", "link", "show", "lo"], capture_output=True, text=True)
+        if "MULTICAST" not in result.stdout:
+            commands_needed.append("sudo ifconfig lo multicast")
+    except Exception:
+        commands_needed.append("sudo ifconfig lo multicast")
+
+    # Check if multicast route exists
+    try:
+        result = subprocess.run(
+            ["ip", "route", "show", "224.0.0.0/4"], capture_output=True, text=True
+        )
+        if not result.stdout.strip():
+            commands_needed.append("sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
+    except Exception:
+        commands_needed.append("sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
+
+    return commands_needed
+
+
+def check_buffers() -> list[str]:
+    """Check if buffer configuration is needed and return required commands."""
+    commands_needed = []
+
+    # Check current buffer settings
+    try:
+        result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
+        current_max = int(result.stdout.split("=")[1].strip())
+        if current_max < 2097152:
+            commands_needed.append("sudo sysctl -w net.core.rmem_max=2097152")
+    except Exception:
+        commands_needed.append("sudo sysctl -w net.core.rmem_max=2097152")
+
+    try:
+        result = subprocess.run(["sysctl", "net.core.rmem_default"], capture_output=True, text=True)
+        current_default = int(result.stdout.split("=")[1].strip())
+        if current_default < 2097152:
+            commands_needed.append("sudo sysctl -w net.core.rmem_default=2097152")
+    except Exception:
+        commands_needed.append("sudo sysctl -w net.core.rmem_default=2097152")
+
+    return commands_needed
+
+
+def check_system() -> None:
+    """Check if system configuration is needed and exit with required commands if not prepared."""
+    commands_needed = []
+    commands_needed.extend(check_multicast())
+    commands_needed.extend(check_buffers())
+
+    if commands_needed:
+        print("System configuration required. Please run the following commands:")
+        for cmd in commands_needed:
+            print(f"  {cmd}")
+        print("\nThen restart your application.")
+        sys.exit(1)
 
 
 @dataclass
@@ -90,19 +154,11 @@ class LCMbase(PubSub[Topic, Any], Service[LCMConfig]):
 
     def start(self):
         # TODO: proper error handling/log messages for these system calls
-        if self.config.auto_configure_multicast:
+        if self.config.auto_configure_multicast or self.config.auto_configure_buffers:
             try:
-                os.system("sudo ifconfig lo multicast")
-                os.system("sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
+                check_system()
             except Exception as e:
-                print(f"Error configuring multicast: {e}")
-
-        if self.config.auto_configure_buffers:
-            try:
-                os.system("sudo sysctl -w net.core.rmem_max=2097152")
-                os.system("sudo sysctl -w net.core.rmem_default=2097152")
-            except Exception as e:
-                print(f"Error configuring buffers: {e}")
+                print(f"Error checking system configuration: {e}")
 
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._loop)
