@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import subprocess
 import time
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ from dimos.protocol.pubsub.lcmpubsub import (
     LCM,
     LCMbase,
     Topic,
+    autoconf,
     check_buffers,
     check_multicast,
     pickleLCM,
@@ -382,3 +384,139 @@ class TestSystemChecks:
                 "sudo sysctl -w net.core.rmem_default=2097152",
             ]
             assert result == expected
+
+    def test_autoconf_no_config_needed(self):
+        """Test autoconf when no configuration is needed."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock all checks passing
+            mock_run.side_effect = [
+                # check_multicast calls
+                type(
+                    "MockResult",
+                    (),
+                    {
+                        "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP,MULTICAST> mtu 65536",
+                        "returncode": 0,
+                    },
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "224.0.0.0/4 dev lo scope link", "returncode": 0}
+                )(),
+                # check_buffers calls
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                )(),
+            ]
+
+            with patch("builtins.print") as mock_print:
+                autoconf()
+                # Should not print anything when no config is needed
+                mock_print.assert_not_called()
+
+    def test_autoconf_with_config_needed_success(self):
+        """Test autoconf when configuration is needed and commands succeed."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock checks failing, then mock the execution succeeding
+            mock_run.side_effect = [
+                # check_multicast calls
+                type(
+                    "MockResult",
+                    (),
+                    {"stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536", "returncode": 0},
+                )(),
+                type("MockResult", (), {"stdout": "", "returncode": 0})(),
+                # check_buffers calls
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0}
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_default = 1048576", "returncode": 0}
+                )(),
+                # Command execution calls
+                type(
+                    "MockResult", (), {"stdout": "success", "returncode": 0}
+                )(),  # sudo ifconfig lo multicast
+                type(
+                    "MockResult", (), {"stdout": "success", "returncode": 0}
+                )(),  # sudo route add...
+                type(
+                    "MockResult", (), {"stdout": "success", "returncode": 0}
+                )(),  # sudo sysctl rmem_max
+                type(
+                    "MockResult", (), {"stdout": "success", "returncode": 0}
+                )(),  # sudo sysctl rmem_default
+            ]
+
+            with patch("builtins.print") as mock_print:
+                autoconf()
+
+                # Verify the expected print calls
+                expected_calls = [
+                    ("System configuration required. Executing commands...",),
+                    ("  Running: sudo ifconfig lo multicast",),
+                    ("  ✓ Success",),
+                    ("  Running: sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",),
+                    ("  ✓ Success",),
+                    ("  Running: sudo sysctl -w net.core.rmem_max=2097152",),
+                    ("  ✓ Success",),
+                    ("  Running: sudo sysctl -w net.core.rmem_default=2097152",),
+                    ("  ✓ Success",),
+                    ("System configuration completed.",),
+                ]
+                from unittest.mock import call
+
+                mock_print.assert_has_calls([call(*args) for args in expected_calls])
+
+    def test_autoconf_with_command_failures(self):
+        """Test autoconf when some commands fail."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock checks failing, then mock some commands failing
+            mock_run.side_effect = [
+                # check_multicast calls
+                type(
+                    "MockResult",
+                    (),
+                    {"stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536", "returncode": 0},
+                )(),
+                type("MockResult", (), {"stdout": "", "returncode": 0})(),
+                # check_buffers calls (no buffer issues for simpler test)
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                )(),
+                # Command execution calls - first succeeds, second fails
+                type(
+                    "MockResult", (), {"stdout": "success", "returncode": 0}
+                )(),  # sudo ifconfig lo multicast
+                subprocess.CalledProcessError(
+                    1,
+                    [
+                        "sudo",
+                        "route",
+                        "add",
+                        "-net",
+                        "224.0.0.0",
+                        "netmask",
+                        "240.0.0.0",
+                        "dev",
+                        "lo",
+                    ],
+                    "Permission denied",
+                    "Operation not permitted",
+                ),
+            ]
+
+            with patch("builtins.print") as mock_print:
+                autoconf()
+
+                # Verify it handles the failure gracefully
+                print_calls = [call[0][0] for call in mock_print.call_args_list]
+                assert "System configuration required. Executing commands..." in print_calls
+                assert "  ✓ Success" in print_calls  # First command succeeded
+                assert any("✗ Failed" in call for call in print_calls)  # Second command failed
+                assert "System configuration completed." in print_calls

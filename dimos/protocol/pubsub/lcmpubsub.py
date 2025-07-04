@@ -90,13 +90,38 @@ def check_system() -> None:
         sys.exit(1)
 
 
+def autoconf() -> None:
+    """Auto-configure system by running checks and executing required commands if needed."""
+    commands_needed = []
+    commands_needed.extend(check_multicast())
+    commands_needed.extend(check_buffers())
+
+    if not commands_needed:
+        return
+
+    print("System configuration required. Executing commands...")
+    for cmd in commands_needed:
+        print(f"  Running: {cmd}")
+        try:
+            # Split command into parts for subprocess
+            cmd_parts = cmd.split()
+            result = subprocess.run(cmd_parts, capture_output=True, text=True, check=True)
+            print("  ✓ Success")
+        except subprocess.CalledProcessError as e:
+            print(f"  ✗ Failed: {e}")
+            print(f"    stdout: {e.stdout}")
+            print(f"    stderr: {e.stderr}")
+        except Exception as e:
+            print(f"  ✗ Error: {e}")
+
+    print("System configuration completed.")
+
+
 @dataclass
 class LCMConfig:
     ttl: int = 0
     url: str | None = None
-    # auto configure routing
-    auto_configure_multicast: bool = True
-    auto_configure_buffers: bool = False
+    autoconf: bool = False
 
 
 @runtime_checkable
@@ -153,8 +178,9 @@ class LCMbase(PubSub[Topic, Any], Service[LCMConfig]):
         return unsubscribe
 
     def start(self):
-        # TODO: proper error handling/log messages for these system calls
-        if self.config.auto_configure_multicast or self.config.auto_configure_buffers:
+        if self.config.autoconf:
+            autoconf()
+        else:
             try:
                 check_system()
             except Exception as e:
