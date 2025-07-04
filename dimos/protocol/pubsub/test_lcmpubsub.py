@@ -13,11 +13,19 @@
 # limitations under the License.
 
 import time
+from unittest.mock import patch
 
 import pytest
 
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
-from dimos.protocol.pubsub.lcmpubsub import LCM, LCMbase, Topic, pickleLCM
+from dimos.protocol.pubsub.lcmpubsub import (
+    LCM,
+    LCMbase,
+    Topic,
+    check_buffers,
+    check_multicast,
+    pickleLCM,
+)
 
 
 class MockLCMMessage:
@@ -172,3 +180,205 @@ def test_lcm_geometry_msgs_autopickle_pubsub(test_message):
     assert received_topic == topic
 
     print(test_message, topic)
+
+
+class TestSystemChecks:
+    """Test suite for system configuration check functions."""
+
+    def test_check_multicast_all_configured(self):
+        """Test check_multicast when system is properly configured."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock successful checks with realistic output format
+            mock_run.side_effect = [
+                type(
+                    "MockResult",
+                    (),
+                    {
+                        "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP,MULTICAST> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00",
+                        "returncode": 0,
+                    },
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "224.0.0.0/4 dev lo scope link", "returncode": 0}
+                )(),
+            ]
+
+            result = check_multicast()
+            assert result == []
+
+    def test_check_multicast_missing_multicast_flag(self):
+        """Test check_multicast when loopback interface lacks multicast."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock interface without MULTICAST flag (realistic current system state)
+            mock_run.side_effect = [
+                type(
+                    "MockResult",
+                    (),
+                    {
+                        "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00",
+                        "returncode": 0,
+                    },
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "224.0.0.0/4 dev lo scope link", "returncode": 0}
+                )(),
+            ]
+
+            result = check_multicast()
+            assert result == ["sudo ifconfig lo multicast"]
+
+    def test_check_multicast_missing_route(self):
+        """Test check_multicast when multicast route is missing."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock missing route - interface has multicast but no route
+            mock_run.side_effect = [
+                type(
+                    "MockResult",
+                    (),
+                    {
+                        "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP,MULTICAST> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00",
+                        "returncode": 0,
+                    },
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "", "returncode": 0}
+                )(),  # Empty output - no route
+            ]
+
+            result = check_multicast()
+            assert result == ["sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"]
+
+    def test_check_multicast_all_missing(self):
+        """Test check_multicast when both multicast flag and route are missing (current system state)."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock both missing - matches actual current system state
+            mock_run.side_effect = [
+                type(
+                    "MockResult",
+                    (),
+                    {
+                        "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00",
+                        "returncode": 0,
+                    },
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "", "returncode": 0}
+                )(),  # Empty output - no route
+            ]
+
+            result = check_multicast()
+            expected = [
+                "sudo ifconfig lo multicast",
+                "sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
+            ]
+            assert result == expected
+
+    def test_check_multicast_subprocess_exception(self):
+        """Test check_multicast when subprocess calls fail."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock subprocess exceptions
+            mock_run.side_effect = Exception("Command failed")
+
+            result = check_multicast()
+            expected = [
+                "sudo ifconfig lo multicast",
+                "sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
+            ]
+            assert result == expected
+
+    def test_check_buffers_all_configured(self):
+        """Test check_buffers when system is properly configured."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock sufficient buffer sizes
+            mock_run.side_effect = [
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                )(),
+            ]
+
+            result = check_buffers()
+            assert result == []
+
+    def test_check_buffers_low_max_buffer(self):
+        """Test check_buffers when rmem_max is too low."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock low rmem_max
+            mock_run.side_effect = [
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0}
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                )(),
+            ]
+
+            result = check_buffers()
+            assert result == ["sudo sysctl -w net.core.rmem_max=2097152"]
+
+    def test_check_buffers_low_default_buffer(self):
+        """Test check_buffers when rmem_default is too low."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock low rmem_default
+            mock_run.side_effect = [
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_default = 1048576", "returncode": 0}
+                )(),
+            ]
+
+            result = check_buffers()
+            assert result == ["sudo sysctl -w net.core.rmem_default=2097152"]
+
+    def test_check_buffers_both_low(self):
+        """Test check_buffers when both buffer sizes are too low."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock both low
+            mock_run.side_effect = [
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0}
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_default = 1048576", "returncode": 0}
+                )(),
+            ]
+
+            result = check_buffers()
+            expected = [
+                "sudo sysctl -w net.core.rmem_max=2097152",
+                "sudo sysctl -w net.core.rmem_default=2097152",
+            ]
+            assert result == expected
+
+    def test_check_buffers_subprocess_exception(self):
+        """Test check_buffers when subprocess calls fail."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock subprocess exceptions
+            mock_run.side_effect = Exception("Command failed")
+
+            result = check_buffers()
+            expected = [
+                "sudo sysctl -w net.core.rmem_max=2097152",
+                "sudo sysctl -w net.core.rmem_default=2097152",
+            ]
+            assert result == expected
+
+    def test_check_buffers_parsing_error(self):
+        """Test check_buffers when output parsing fails."""
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock malformed output
+            mock_run.side_effect = [
+                type("MockResult", (), {"stdout": "invalid output", "returncode": 0})(),
+                type("MockResult", (), {"stdout": "also invalid", "returncode": 0})(),
+            ]
+
+            result = check_buffers()
+            expected = [
+                "sudo sysctl -w net.core.rmem_max=2097152",
+                "sudo sysctl -w net.core.rmem_default=2097152",
+            ]
+            assert result == expected
