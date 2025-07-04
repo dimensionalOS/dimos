@@ -30,7 +30,7 @@ logger = setup_logger("dimos.robot.unitree.global_planner")
 
 @dataclass
 class Planner(Visualizable, core.Module):
-    set_local_nav: Callable[[Path, Optional[threading.Event]], bool]
+    set_local_nav: Callable[[Path], bool]
 
     def __init__(self):
         core.Module.__init__(self)
