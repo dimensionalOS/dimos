@@ -16,6 +16,7 @@
 
 import asyncio
 import time
+import traceback
 from contextlib import contextmanager
 from typing import Any, Callable, List, Tuple
 
@@ -42,7 +43,7 @@ testdata: List[Tuple[Callable[[], Any], Any, List[Any]]] = [
 ]
 
 try:
-    from dimos.protocol.pubsub.redis import Redis
+    from dimos.protocol.pubsub.redispubsub import Redis
 
     @contextmanager
     def redis_context():
@@ -65,7 +66,7 @@ try:
 
     @contextmanager
     def lcm_context():
-        lcm_pubsub = LCM(auto_configure_multicast=False)
+        lcm_pubsub = LCM(autoconf=True)
         lcm_pubsub.start()
         yield lcm_pubsub
         lcm_pubsub.stop()
