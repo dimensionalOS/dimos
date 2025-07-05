@@ -243,6 +243,9 @@ class RemoteIn(RemoteStream[T]):
     def transport(self) -> Transport[T]:
         return self._transport
 
+    def publish(self, msg):
+        self.transport.broadcast(self, msg)
+
     @transport.setter
     def transport(self, value: Transport[T]) -> None:
         self.owner.set_transport(self.name, value).result()
