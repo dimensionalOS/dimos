@@ -104,7 +104,7 @@ class Navigation(Module):
         def _odom(msg):
             self.odom_msg_count += 1
             print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
-            self.mov.publish(msg.pos)
+            self.mov.publish(msg.position)
 
         self.odometry.subscribe(_odom)
 
