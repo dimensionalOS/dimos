@@ -27,8 +27,6 @@ from dimos.stream.video_provider import VideoProvider
 from dimos.perception.object_detection_stream import ObjectDetectionStream
 from dimos.types.vector import Vector
 from dimos.utils.reactive import backpressure
-from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
-
 from dotenv import load_dotenv
 
 
@@ -103,9 +101,6 @@ def main():
     class_filter = None  # No class filtering
     web_port = 5555
 
-    # Initialize detector
-    detector = Detic2DDetector(vocabulary=None, threshold=min_confidence)
-
     # Initialize based on mode
     if args.mode == "robot":
         print("Initializing in robot mode...")
@@ -166,9 +161,9 @@ def main():
             camera_intrinsics=camera_intrinsics,
             min_confidence=min_confidence,
             class_filter=class_filter,
-            detector=detector,
             video_stream=video_stream,
             disable_depth=False,
+            draw_masks=True,
         )
 
         # Set placeholder robot for cleanup
