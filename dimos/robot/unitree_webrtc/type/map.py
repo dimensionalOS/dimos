@@ -35,7 +35,7 @@ class Map(Module):
         super().__init__()
 
     @rpc
-    def start(self):
+    async def start(self):
         self.lidar.subscribe(self.add_frame)
 
     @rpc

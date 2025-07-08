@@ -19,9 +19,11 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
 
-from reactivex import from_iterable, interval, merge, timer
+from reactivex import concat, empty, from_iterable, interval, just, merge, timer
 from reactivex import operators as ops
+from reactivex import timer as rx_timer
 from reactivex.observable import Observable
+from reactivex.scheduler import TimeoutScheduler
 
 from dimos.utils.data import _get_data_dir, get_data
 
@@ -169,25 +171,25 @@ class TimedSensorReplay(SensorReplay[T]):
     def stream(self) -> Observable[Union[T, Any]]:
         """Stream sensor data with original timing preserved (non-blocking)."""
 
-        # Load all data with timestamps upfront
-        items = list(self.iterate_ts())
+        def create_timed_stream():
+            iterator = self.iterate_ts()
 
-        if not items:
-            return from_iterable([])
+            try:
+                prev_timestamp, first_data = next(iterator)
 
-        # Create timed observables for each item
-        observables = []
-        start_time = items[0][0]
+                yield just(first_data)
 
-        for timestamp, data in items:
-            # Calculate relative delay from start
-            delay = max(0, timestamp - start_time)
+                for timestamp, data in iterator:
+                    time_diff = timestamp - prev_timestamp
 
-            # Create a timer that emits this data after the delay
-            # Use a default parameter to capture the data variable
-            timed_observable = timer(delay).pipe(ops.map(lambda _, d=data: d))
+                    if time_diff > 0:
+                        yield rx_timer(time_diff).pipe(ops.map(lambda _: data))
+                    else:
+                        yield just(data)
 
-            observables.append(timed_observable)
+                    prev_timestamp = timestamp
 
-        # Merge all timed observables to create a single stream
-        return merge(*observables)
+            except StopIteration:
+                yield empty()
+
+        return concat(*create_timed_stream())

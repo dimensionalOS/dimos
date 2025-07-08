@@ -71,15 +71,17 @@ class AstarPlanner(Planner):
         self.get_costmap = get_costmap
         self.get_robot_pos = get_robot_pos
 
-    def start(self):
-        self.target.subscribe(self.plan)
+    async def start(self):
+        print("TARGET SUB RES", self.target.subscribe(self.plan))
 
     def plan(self, goal: VectorLike) -> Path:
         print("planning path to goal", goal)
         goal = to_vector(goal).to_2d()
-        pos = self.get_robot_pos().to_2d()
-        costmap = self.get_costmap().smudge()
+        pos = self.get_robot_pos().result()
+        print("current pos", pos)
+        costmap = self.get_costmap().result().smudge()
 
+        print("current costmap", costmap)
         self.vis("target", goal)
 
         print("ASTAR ", costmap, goal, pos)

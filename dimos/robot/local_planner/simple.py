@@ -85,7 +85,7 @@ class SimplePlanner(Module):
             self.frequency_spy("movement_test"),
         )
 
-    def start(self):
+    async def start(self):
         self.path.subscribe(self.set_goal)
         self.get_move_stream(frequency=20.0).subscribe(self.movecmd.publish)
 

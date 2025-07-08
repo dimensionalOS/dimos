@@ -13,12 +13,17 @@
 # limitations under the License.
 
 import asyncio
+import contextvars
 import functools
 import time
 from typing import Callable
 
+from dask.distributed import get_client, get_worker
+from distributed import get_worker
 from reactivex import operators as ops
+from reactivex.scheduler import ThreadPoolScheduler
 
+import dimos.core.colors as colors
 from dimos import core
 from dimos.core import In, Module, Out
 from dimos.msgs.geometry_msgs import Vector3
@@ -32,10 +37,12 @@ from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector
+from dimos.utils.data import get_data
 from dimos.utils.reactive import backpressure, getter_streaming
 from dimos.utils.testing import TimedSensorReplay
 
 
+# can be swapped in for WebRTCRobot
 class FakeRTC(WebRTCRobot):
     def connect(self): ...
 
@@ -43,19 +50,19 @@ class FakeRTC(WebRTCRobot):
     def lidar_stream(self):
         print("lidar stream start")
         lidar_store = TimedSensorReplay("unitree_office_walk/lidar", autocast=LidarMessage.from_msg)
-        return backpressure(lidar_store.stream())
+        return lidar_store.stream()
 
     @functools.cache
     def odom_stream(self):
         print("odom stream start")
         odom_store = TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
-        return backpressure(odom_store.stream())
+        return odom_store.stream()
 
     @functools.cache
     def video_stream(self):
         print("video stream start")
         video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
-        return backpressure(video_store.stream().pipe(ops.sample(0.25)))
+        return video_store.stream().pipe(ops.sample(0.5))
 
     def move(self, vector: Vector):
         print("move supressed", vector)
@@ -75,14 +82,21 @@ class ConnectionModule(FakeRTC, Module):
         Module.__init__(self)
         self.ip = ip
 
-    def start(self):
+    async def start(self):
+        # ensure that LFS data is available
+        data = get_data("unitree_office_walk")
         # Since TimedSensorReplay is now non-blocking, we can subscribe directly
         self.lidar_stream().subscribe(self.lidar.publish)
         self.odom_stream().subscribe(self.odom.publish)
         self.video_stream().subscribe(self.video.publish)
+
+        print("movecmd sub")
         self.movecmd.subscribe(print)
+        print("sub ok")
         self._odom = getter_streaming(self.odom_stream())
         self._lidar = getter_streaming(self.lidar_stream())
+
+        print("ConnectionModule started")
 
     def get_local_costmap(self) -> Costmap:
         return self._lidar().costmap()
@@ -91,80 +105,98 @@ class ConnectionModule(FakeRTC, Module):
         return self._odom()
 
     def get_pos(self) -> Vector:
-        print("GETPOS")
         return self._odom().position
-
-    def move(self, vector: Vector):
-        print("move command received:", vector)
 
 
 class ControlModule(Module):
     plancmd: Out[Vector3] = None
 
-    def start(self):
-        time.sleep(5)
-        print("requesting global nav")
-        self.plancmd.publish(Vector3([0, 0, 0]))
+    async def start(self):
+        async def plancmd():
+            await asyncio.sleep(4)
+            print(colors.red("requesting global plan"))
+            self.plancmd.publish(Vector3([0, 0, 0]))
+
+        asyncio.create_task(plancmd())
 
 
 class Unitree:
     def __init__(self, ip: str):
         self.ip = ip
 
-    def start(self):
+    async def start(self):
         dimos = None
         if not dimos:
-            dimos = core.start(2)
+            dimos = core.start(4)
 
         connection = dimos.deploy(ConnectionModule, self.ip)
 
-        # ensures system multicast, udp sizes are auto-adjusted if needed
+        # # This enables LCM transport
+        # # ensures system multicast, udp sizes are auto-adjusted if needed
+        #
         pubsub.lcm.autoconf()
-
         connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         connection.odom.transport = core.LCMTransport("/odom", Odometry)
         connection.video.transport = core.LCMTransport("/video", Image)
+        connection.movecmd.transport = core.LCMTransport("/move", Vector3)
 
-        map = dimos.deploy(Map, voxel_size=0.5)
-        map.lidar.connect(connection.lidar)
+        mapper = dimos.deploy(Map, voxel_size=0.5)
 
         local_planner = dimos.deploy(
             SimplePlanner,
-            get_costmap=lambda: connection.get_local_costmap().result(),
-            get_robot_pos=lambda: connection.get_pos().result(),
+            get_costmap=connection.get_local_costmap,
+            get_robot_pos=connection.get_pos,
         )
 
         global_planner = dimos.deploy(
             AstarPlanner,
-            get_costmap=lambda: map.costmap().result(),
-            get_robot_pos=lambda: connection.get_pos().result(),
+            get_costmap=mapper.costmap,
+            get_robot_pos=connection.get_pos,
         )
+
+        global_planner.path.transport = core.pLCMTransport("/global_path")
 
         local_planner.path.connect(global_planner.path)
         local_planner.movecmd.connect(connection.movecmd)
 
         ctrl = dimos.deploy(ControlModule)
+
+        mapper.lidar.connect(connection.lidar)
+
         ctrl.plancmd.transport = core.LCMTransport("/global_target", Vector3)
-        ctrl.plancmd.connect(global_planner.target)
+        global_planner.target.connect(ctrl.plancmd)
 
         # we review the structure
-        print("\n")
-        for module in [connection, map, global_planner, local_planner, ctrl]:
-            print(module.io().result(), "\n")
+        # print("\n")
+        # for module in [connection, mapper, global_planner, ctrl]:
+        #    print(module.io().result(), "\n")
 
-        # start systems
-        map.start().result()
+        print(colors.green("starting mapper"))
+        mapper.start().result()
+
+        print(colors.green("starting connection"))
         connection.start().result()
-        local_planner.start().result()
-        global_planner.start().result()
-        ctrl.start()
-        print("running")
-        time.sleep(2)
 
-        print(map.costmap().result())
+        print(colors.green("local planner start"))
+        local_planner.start().result()
+
+        print(colors.green("starting global planner"))
+        global_planner.start().result()
+
+        print(colors.green("starting ctrl"))
+        ctrl.start().result()
+
+        print(colors.red("READY"))
+        await asyncio.sleep(3)
+        print("querying system")
+        print(mapper.costmap().result())
+        # global_planner.dask_receive_msg("target", Vector3([0, 0, 0])).result()
+        time.sleep(20)
 
 
 if __name__ == "__main__":
+    # run start in a loop
+
     unitree = Unitree("Bla")
-    unitree.start()
+    asyncio.run(unitree.start())
     time.sleep(30)
