@@ -42,4 +42,4 @@ COPY . /app/
 
 WORKDIR /app
 
-RUN --mount=type=cache,target=/root/.cache/pip bash -c "pip install --upgrade 'pip>=24' 'setuptools>=70' wheel && pip install '.[cpu]'"
+RUN --mount=type=cache,target=/root/.cache/pip bash -c "pip install --upgrade 'pip>=24' 'setuptools>=70' 'wheel' 'packaging>=24' && pip install '.[cpu]'"
