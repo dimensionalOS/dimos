@@ -37,5 +37,5 @@ COPY pyproject.toml /app/
 
 WORKDIR /app
 
-# Install dependencies with [cpu] extra
-RUN --mount=type=cache,target=/root/.cache/pip pip install .[cpu]
+# Install the package in editable mode with CPU dependencies
+RUN --mount=type=cache,target=/root/.cache/pip pip install -e ".[cpu]"
