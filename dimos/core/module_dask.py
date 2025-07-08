@@ -97,14 +97,16 @@ class Module:
             if isinstance(s, In) and not name.startswith("_")
         }
 
+    @classmethod
     @property
-    def rpcs(self) -> dict[str, Callable]:
+    def rpcs(cls) -> dict[str, Callable]:
         return {
-            name: getattr(self.__class__, name)
-            for name in dir(self.__class__)
+            name: getattr(cls, name)
+            for name in dir(cls)
             if not name.startswith("_")
-            and callable(getattr(self.__class__, name, None))
-            and hasattr(getattr(self.__class__, name), "__rpc__")
+            and name != "rpcs"  # Exclude the rpcs property itself to prevent recursion
+            and callable(getattr(cls, name, None))
+            and hasattr(getattr(cls, name), "__rpc__")
         }
 
     def io(self) -> str:
