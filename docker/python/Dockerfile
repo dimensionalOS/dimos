@@ -33,7 +33,7 @@ RUN apt-get install -y \
 
 RUN mkdir -p /app/dimos
 
-COPY pyproject.toml /app/
+COPY . /app/
 
 WORKDIR /app
 
