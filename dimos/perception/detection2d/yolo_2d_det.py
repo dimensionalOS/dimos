@@ -47,7 +47,8 @@ class Yolo2DDetector:
         module_dir = os.path.dirname(__file__)
         self.tracker_config = os.path.join(module_dir, "config", "custom_tracker.yaml")
         if is_cuda_available():
-            onnxruntime.preload_dlls(cuda=True, cudnn=True)
+            if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
+                onnxruntime.preload_dlls(cuda=True, cudnn=True)
             self.device = "cuda"
             logger.info("Using CUDA for YOLO 2d detector")
         else:
