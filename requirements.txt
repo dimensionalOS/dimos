@@ -40,15 +40,6 @@ pydantic
 # Developer Specific
 ipykernel
 
-# Unitree webrtc streaming
-aiortc==1.9.0
-pycryptodome
-opencv-python
-sounddevice
-pyaudio
-requests
-wasmtime
-
 # Audio
 openai-whisper
 soundfile
