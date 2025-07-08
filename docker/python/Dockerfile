@@ -33,12 +33,8 @@ RUN apt-get install -y \
 
 RUN mkdir -p /app/dimos
 
-# Ensure we have a recent pip + setuptools that support PEP 660 editable installs
-RUN --mount=type=cache,target=/root/.cache/pip pip install --upgrade pip "setuptools>=61" wheel
-
 COPY pyproject.toml /app/
 
 WORKDIR /app
 
-# Install the package in editable mode with CPU dependencies
-RUN --mount=type=cache,target=/root/.cache/pip pip install -e ".[cpu]"
+RUN --mount=type=cache,target=/root/.cache/pip pip install ".[cpu]"
