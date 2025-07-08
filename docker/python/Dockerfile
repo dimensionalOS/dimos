@@ -1,6 +1,8 @@
 ARG FROM_IMAGE=ghcr.io/dimensionalos/ros:dev
 FROM ${FROM_IMAGE}
 
+ENV REBUILD=1
+
 # Install basic requirements
 RUN apt-get update
 RUN apt-get install -y \
