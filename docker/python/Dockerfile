@@ -34,11 +34,7 @@ RUN apt-get install -y \
     supervisor
 
 # Fix distutils-installed packages that block pip upgrades
-# RUN apt-get purge -y python3-blinker python3-sympy || true
-
-# Allow pip to overwrite any remaining distutils packages
-ENV PIP_BREAK_SYSTEM_PACKAGES=1
-# RUN apt-get purge -y python3-blinker || true
+RUN apt-get purge -y python3-blinker python3-sympy python3-oauthlib || true
 
 RUN mkdir -p /app/dimos
 
