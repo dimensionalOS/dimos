@@ -33,6 +33,9 @@ RUN apt-get install -y \
     qtbase5-dev-tools \
     supervisor
 
+# Fixes distutils blinker 1.4 dependency conflict
+RUN apt-get purge -y python3-blinker || true
+
 RUN mkdir -p /app/dimos
 
 COPY . /app/
