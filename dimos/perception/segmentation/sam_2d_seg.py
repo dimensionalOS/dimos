@@ -51,7 +51,8 @@ class Sam2DSegmenter:
         self.device = device
         if is_cuda_available():
             logger.info("Using CUDA for SAM 2d segmenter")
-            onnxruntime.preload_dlls(cuda=True, cudnn=True)
+            if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
+                onnxruntime.preload_dlls(cuda=True, cudnn=True)
             self.device = "cuda"
         else:
             logger.info("Using CPU for SAM 2d segmenter")
