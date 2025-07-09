@@ -26,6 +26,7 @@ from dimos.protocol.rpc.spec import RPCClient, RPCServer
 testgrid: List[Callable] = []
 
 
+# test module we'll use for binding RPC methods
 class MyModule(Module):
     @rpc
     def add(self, a: int, b: int) -> int:
@@ -38,6 +39,15 @@ class MyModule(Module):
         return a - b
 
 
+# This tests a generic RPC-over-PubSub implementation that can be used via any
+# pubsub transport such as LCM or Redis in this test.
+#
+# (For transport systems that have call/reply type of functionaltity, we will
+# not use PubSubRPC but implement protocol native RPC conforimg to
+# RPCClient/RPCServer spec in spec.py)
+
+
+# LCMRPC (mixed in PassThroughPubSubRPC into lcm pubsub)
 @contextmanager
 def lcm_rpc_context():
     server = LCMRPC(autoconf=True)
@@ -52,6 +62,7 @@ def lcm_rpc_context():
 testgrid.append(lcm_rpc_context)
 
 
+# RedisRPC (mixed in in PassThroughPubSubRPC into redis pubsub)
 try:
     from dimos.protocol.rpc.redisrpc import RedisRPC
 
@@ -78,6 +89,11 @@ def test_basics(rpc_context):
         def remote_function(a: int, b: int):
             return a + b
 
+        # You can bind an arbitrary function to arbitrary name
+        # topics are:
+        #
+        # - /rpc/add/req
+        # - /rpc/add/res
         server.serve_rpc(remote_function, "add")
 
         msgs = []
@@ -97,29 +113,19 @@ def test_module_autobind(rpc_context):
     with rpc_context() as (server, client):
         module = MyModule()
 
+        # We take an endpoint name from __class__.__name__,
+        # so topics are:
+        #
+        # - /rpc/MyModule/method_name1/req
+        # - /rpc/MyModule/method_name1/res
+        #
+        # - /rpc/MyModule/method_name2/req
+        # - /rpc/MyModule/method_name2/res
+        #
+        # etc
         server.serve_module_rpc(module)
 
-        server.serve_module_rpc(module, "testmodule")
-
-        msgs = []
-
-        def receive_msg(msg):
-            msgs.append(msg)
-
-        client.call("MyModule/add", [1, 2], receive_msg)
-        client.call("testmodule/subtract", [3, 1], receive_msg)
-
-        time.sleep(0.1)
-        assert msgs == [3, 2]
-        assert len(msgs) == 2
-
-
-@pytest.mark.parametrize("rpc_context", testgrid)
-def test_module_autobind(rpc_context):
-    with rpc_context() as (server, client):
-        module = MyModule()
-
-        server.serve_module_rpc(module)
+        # can override the __class__.__name__ with something else
         server.serve_module_rpc(module, "testmodule")
 
         msgs = []
@@ -135,6 +141,10 @@ def test_module_autobind(rpc_context):
         assert msgs == [3, 2]
 
 
+# Default rpc.call() either doesn't wait for response or accepts a callback
+# but also we support different calling strategies,
+#
+# can do blocking calls
 @pytest.mark.parametrize("rpc_context", testgrid)
 def test_sync(rpc_context):
     with rpc_context() as (server, client):
@@ -144,6 +154,7 @@ def test_sync(rpc_context):
         assert 3 == client.call_sync("MyModule/add", [1, 2])
 
 
+# or async calls as well
 @pytest.mark.parametrize("rpc_context", testgrid)
 @pytest.mark.asyncio
 async def test_async(rpc_context):
