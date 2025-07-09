@@ -25,7 +25,7 @@ from reactivex.scheduler import ThreadPoolScheduler
 
 import dimos.core.colors as colors
 from dimos import core
-from dimos.core import In, Module, Out
+from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
@@ -82,6 +82,7 @@ class ConnectionModule(FakeRTC, Module):
         Module.__init__(self)
         self.ip = ip
 
+    @rpc
     async def start(self):
         # ensure that LFS data is available
         data = get_data("unitree_office_walk")
@@ -98,12 +99,15 @@ class ConnectionModule(FakeRTC, Module):
 
         print("ConnectionModule started")
 
+    @rpc
     def get_local_costmap(self) -> Costmap:
         return self._lidar().costmap()
 
+    @rpc
     def get_odom(self) -> Odometry:
         return self._odom()
 
+    @rpc
     def get_pos(self) -> Vector:
         return self._odom().position
 
@@ -131,10 +135,10 @@ class Unitree:
 
         connection = dimos.deploy(ConnectionModule, self.ip)
 
-        # # This enables LCM transport
-        # # ensures system multicast, udp sizes are auto-adjusted if needed
-        #
+        # This enables LCM transport
+        # Ensures system multicast, udp sizes are auto-adjusted if needed
         pubsub.lcm.autoconf()
+
         connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         connection.odom.transport = core.LCMTransport("/odom", Odometry)
         connection.video.transport = core.LCMTransport("/video", Image)
@@ -195,8 +199,6 @@ class Unitree:
 
 
 if __name__ == "__main__":
-    # run start in a loop
-
     unitree = Unitree("Bla")
     asyncio.run(unitree.start())
     time.sleep(30)
