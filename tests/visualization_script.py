@@ -456,11 +456,11 @@ class DrakeKinematicsEnv:
             pcd.points = o3d.utility.Vector3dVector(obj["point_cloud_numpy"])
             full_detected_pcd += pcd
         
-        self.process_and_add_object_class("all_objects", results)
-        self.process_and_add_object_class("misc_clusters", results)
-        misc_clusters = results["misc_clusters"]
-        print(type(misc_clusters[0]["points"]))
-        print(np.asarray(misc_clusters[0]["points"]).shape)
+        self.process_and_add_object_class("detected_objects", results)
+        # self.process_and_add_object_class("misc_clusters", results)
+        # misc_clusters = results["misc_clusters"]
+        # print(type(misc_clusters[0]["points"]))
+        # print(np.asarray(misc_clusters[0]["points"]).shape)
 
 
     def process_and_add_object_class(self, object_key: str, results: dict):
@@ -494,9 +494,11 @@ class DrakeKinematicsEnv:
                         # Transform points to world frame
                         points = self.transform_point_cloud_with_open3d(points, transform)
                             
-                        # Use fast DBSCAN clustering + convex hulls approach
-                        clustered_hulls = self._create_clustered_convex_hulls(points, i)
-                        all_decomposed_meshes.extend(clustered_hulls)
+                        # Use voxelized clustering + convex hulls approach
+                        clustered_hulls = self._create_voxelized_clustered_convex_hulls(points, i)
+                        # Store hulls with their object ID for coloring
+                        for hull in clustered_hulls:
+                            all_decomposed_meshes.append((hull, i))
                         
                         print(f"Created {len(clustered_hulls)} clustered convex hulls for object {i}")
                         
@@ -504,7 +506,7 @@ class DrakeKinematicsEnv:
                         print(f"Warning: Failed to process object {i}: {e}")
                 
                 if all_decomposed_meshes:
-                    self.register_convex_hulls_as_collision(all_decomposed_meshes, object_key)
+                    self.register_convex_hulls_as_collision(all_decomposed_meshes, object_key, detected_objects)
                     print(f"Registered {len(all_decomposed_meshes)} total clustered convex hulls")
                 else:
                     print("Warning: No valid clustered convex hulls created from detected objects")
@@ -633,6 +635,122 @@ class DrakeKinematicsEnv:
             except:
                 return []
 
+    def _create_voxelized_clustered_convex_hulls(self, points: np.ndarray, object_id: int) -> List[o3d.geometry.TriangleMesh]:
+        """
+        Create convex hulls from voxelized clusters of point cloud data.
+        This method creates a voxel grid and groups points that fall into the same voxel.
+        
+        Args:
+            points: Nx3 numpy array of 3D points
+            object_id: ID for debugging/logging
+            
+        Returns:
+            List of Open3D triangle meshes (convex hulls of voxel clusters)
+        """
+        try:
+            if len(points) < 4:
+                print(f"Warning: Too few points ({len(points)}) for object {object_id}")
+                return []
+            
+            # Find min and max dimensions
+            min_coords = np.min(points, axis=0)
+            max_coords = np.max(points, axis=0)
+            
+            # Calculate voxel size by dividing total range by 10 for each dimension
+            ranges = max_coords - min_coords
+            voxel_size = ranges / 10.0
+            
+            # Handle edge case where range is too small
+            min_voxel_size = 0.001  # 1mm minimum voxel size
+            voxel_size = np.maximum(voxel_size, min_voxel_size)
+            
+            print(f"Object {object_id}: {len(points)} points, voxel_size={voxel_size}")
+            
+            # Create voxel indices for each point
+            voxel_indices = np.floor((points - min_coords) / voxel_size).astype(int)
+            
+            # Ensure indices are within bounds (handle numerical precision issues)
+            voxel_indices = np.clip(voxel_indices, 0, 9)
+            
+            # Create a dictionary to group points by voxel
+            voxel_clusters = {}
+            for i, point in enumerate(points):
+                voxel_key = tuple(voxel_indices[i])
+                if voxel_key not in voxel_clusters:
+                    voxel_clusters[voxel_key] = []
+                voxel_clusters[voxel_key].append(point)
+            
+            print(f"Created {len(voxel_clusters)} voxel clusters for object {object_id}")
+            
+            # Create convex hull for each voxel cluster
+            convex_hulls = []
+            for voxel_key, cluster_points in voxel_clusters.items():
+                try:
+                    cluster_points = np.array(cluster_points)
+                    
+                    if len(cluster_points) < 4:
+                        print(f"Skipping voxel {voxel_key} with only {len(cluster_points)} points")
+                        continue
+                    
+                    # Create point cloud for this voxel cluster
+                    cluster_pcd = o3d.geometry.PointCloud()
+                    cluster_pcd.points = o3d.utility.Vector3dVector(cluster_points)
+                    
+                    # Apply statistical outlier removal to this voxel cluster
+                    if len(cluster_points) >= 10:  # Only apply outlier removal if we have enough points
+                        cluster_pcd_filtered, outlier_indices = cluster_pcd.remove_statistical_outlier(
+                            nb_neighbors=min(10, len(cluster_points) - 1),  # Use fewer neighbors for small clusters
+                            std_ratio=2.0
+                        )
+                        
+                        # Update cluster points with filtered points
+                        filtered_cluster_points = np.asarray(cluster_pcd_filtered.points)
+                        num_outliers = len(outlier_indices)
+                        
+                        if len(filtered_cluster_points) >= 4:
+                            cluster_pcd = cluster_pcd_filtered
+                            cluster_points = filtered_cluster_points
+                            print(f"  Voxel {voxel_key}: Removed {num_outliers} outliers, {len(cluster_points)} points remaining")
+                        else:
+                            print(f"  Voxel {voxel_key}: Skipping outlier removal - would leave too few points ({len(filtered_cluster_points)})")
+                    
+                    # Compute convex hull
+                    hull_mesh, _ = cluster_pcd.compute_convex_hull()
+                    hull_mesh.compute_vertex_normals()
+                    
+                    # Validate hull
+                    if len(np.asarray(hull_mesh.vertices)) >= 4 and len(np.asarray(hull_mesh.triangles)) >= 4:
+                        convex_hulls.append(hull_mesh)
+                        print(f"  Voxel {voxel_key}: {len(cluster_points)} points → convex hull with {len(np.asarray(hull_mesh.vertices))} vertices")
+                    else:
+                        print(f"  Skipping degenerate hull for voxel {voxel_key}")
+                        
+                except Exception as e:
+                    print(f"Error processing voxel {voxel_key} for object {object_id}: {e}")
+            
+            if not convex_hulls:
+                print(f"No valid convex hulls created for object {object_id}, using entire point cloud")
+                # Fallback: use entire point cloud as single convex hull
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(points)
+                hull_mesh, _ = pcd.compute_convex_hull()
+                hull_mesh.compute_vertex_normals()
+                return [hull_mesh]
+            
+            return convex_hulls
+            
+        except Exception as e:
+            print(f"Error in voxelized clustering for object {object_id}: {e}")
+            # Final fallback: single convex hull
+            try:
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(points)
+                hull_mesh, _ = pcd.compute_convex_hull()
+                hull_mesh.compute_vertex_normals()
+                return [hull_mesh]
+            except:
+                return []
+
     def _set_initial_configuration(self):
         """Set the robot to a reasonable initial joint configuration"""
         # Set all joints to zero initially
@@ -684,16 +802,16 @@ class DrakeKinematicsEnv:
         self._update_visualization()
         print(f"Updated joint positions: {joint_positions}")
 
-    def register_convex_hulls_as_collision(self, meshes: List[o3d.geometry.TriangleMesh], hull_type: str):
+    def register_convex_hulls_as_collision(self, meshes_with_ids, hull_type: str, detected_objects=None):
         """Register convex hulls as collision and visual geometry"""
-        if not meshes:
+        if not meshes_with_ids:
             print("No meshes to register")
             return
             
         world = self.plant.world_body()
         proximity = ProximityProperties()
 
-        for i, mesh in enumerate(meshes):
+        for i, (mesh, object_id) in enumerate(meshes_with_ids):
             try:
                 # Convert Open3D → numpy arrays → trimesh.Trimesh
                 vertices = np.asarray(mesh.vertices)
@@ -720,40 +838,28 @@ class DrakeKinematicsEnv:
                 rpy = RollPitchYaw(0.0, 0.0, 0.0)
                 X_WG = DrakeRigidTransform(RotationMatrix(rpy), pos)
 
-                # Register collision and visual geometry
+                # Register collision and visual geometry with object-based naming
                 self.plant.RegisterCollisionGeometry(
                     body=world,
                     X_BG=X_WG,
                     shape=drake_mesh,
-                    name=f"convex_hull_collision_{i}_{hull_type}",
+                    name=f"{hull_type}/object_{object_id}/collision_hull_{i}",
                     properties=proximity,
                 )
+                # Generate a unique color for each object (all hulls from same object have same color)
+                hull_color = self.get_seeded_random_rgba(object_id)
                 self.plant.RegisterVisualGeometry(
                     body=world,
                     X_BG=X_WG,
                     shape=drake_mesh,
-                    name=f"convex_hull_visual_{i}_{hull_type}",
-                    diffuse_color=np.array([0.7, 0.5, 0.3, 0.8]),  # Orange-ish color
+                    name=f"{hull_type}/object_{object_id}/visual_hull_{i}",
+                    diffuse_color=hull_color,
                 )
 
-                print(f"Registered convex hull {i} with {len(vertices)} vertices and {len(faces)} faces")
+                # print(f"Registered convex hull {i} with {len(vertices)} vertices and {len(faces)} faces")
                 
             except Exception as e:
                 print(f"Warning: Failed to register mesh {i}: {e}")
-
-        # Add a simple table for reference
-        try:
-            table_shape = Box(1.0, 1.0, 0.1)  # Thinner table
-            table_pose = RigidTransform(p=[0.5, 0.0, -0.05])  # In front of robot
-            self.plant.RegisterCollisionGeometry(
-                world, table_pose, table_shape, "table_collision", proximity
-            )
-            self.plant.RegisterVisualGeometry(
-                world, table_pose, table_shape, "table_visual", [0.8, 0.6, 0.4, 1.0]
-            )
-            print("Added reference table")
-        except Exception as e:
-            print(f"Warning: Failed to add table: {e}")
     
     def get_seeded_random_rgba(self, id: int):
         np.random.seed(id)
@@ -942,7 +1048,7 @@ if __name__ == "__main__":
             "link6",
         ]
         
-        urdf_path = "./assets/devkit_base_descr.urdf"
+        urdf_path = "./tests/assets/devkit_base_descr.urdf"
         urdf_path = os.path.abspath(urdf_path)
         
         print(f"Attempting to load URDF from: {urdf_path}")
