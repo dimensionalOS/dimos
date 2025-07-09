@@ -145,7 +145,7 @@ jobs:
         (needs.ros-dev.result == 'skipped' &&
         needs.check-changes.outputs.tests == 'true'))
         }}
-      cmd: "pytest && pytest -m ros" # run tests that depend on ros as well
+      cmd: "pytest && pytest -m heavy && pytest -m ros" # run tests that depend on ros as well
       dev-image: ros-dev:${{ needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-tests:
@@ -159,5 +159,5 @@ jobs:
         (needs.dev.result == 'skipped' &&
         needs.check-changes.outputs.tests == 'true'))
         }}
-      cmd: "pytest"
+      cmd: "pytest && pytest -m heavy"
       dev-image: dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
