@@ -13,30 +13,68 @@
 # limitations under the License.
 
 import time
+from contextlib import contextmanager
+from typing import Any, Callable, List, Tuple
 
-from dimos.protocol.rpc.pubsubrpc import PickleLCM
+import pytest
+
+from dimos.protocol.rpc.lcmrpc import LCMRPC
+from dimos.protocol.rpc.spec import RPCClient, RPCServer
+
+testgrid: List[Callable] = []
 
 
-def test_basics():
-    def remote_function(a: int, b: int):
-        return a + b
-
-    server = PickleLCM(autoconf=True)
+@contextmanager
+def lcm_rpc_context():
+    server = LCMRPC(autoconf=True)
+    client = LCMRPC(autoconf=True)
     server.start()
-
-    server.serve_rpc(remote_function, "add")
-
-    client = PickleLCM(autoconf=True)
     client.start()
-    msgs = []
-
-    def receive_msg(response):
-        msgs.append(response)
-        print(f"Received response: {response}")
-
-    client.call_cb("add", [1, 2], receive_msg)
-
-    time.sleep(0.2)
-    assert len(msgs) > 0
+    yield [server, client]
     server.stop()
     client.stop()
+
+
+testgrid.append(lcm_rpc_context)
+
+
+try:
+    from dimos.protocol.rpc.redisrpc import RedisRPC
+
+    @contextmanager
+    def redis_rpc_context():
+        server = RedisRPC()
+        client = RedisRPC()
+        server.start()
+        client.start()
+        yield [server, client]
+        server.stop()
+        client.stop()
+
+    testgrid.append(redis_rpc_context)
+
+except (ConnectionError, ImportError):
+    print("Redis not available")
+
+
+@pytest.mark.parametrize("rpc_context", testgrid)
+def test_basics(rpc_context):
+    with rpc_context() as (server, client):
+
+        def remote_function(a: int, b: int):
+            return a + b
+
+        server.serve_rpc(remote_function, "add")
+
+        msgs = []
+
+        def receive_msg(response):
+            msgs.append(response)
+            print(f"Received response: {response}")
+
+        client.call_cb("add", [1, 2], receive_msg)
+
+        time.sleep(0.2)
+        assert len(msgs) > 0
+        server.stop()
+        client.stop()

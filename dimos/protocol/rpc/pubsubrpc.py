@@ -34,12 +34,8 @@ from typing import (
     runtime_checkable,
 )
 
-import lcm
-
-from dimos.protocol.pubsub.lcmpubsub import LCMConfig, PickleLCM, Topic
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub
 from dimos.protocol.rpc.spec import RPC, RPCClient, RPCServer
-from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf, check_system
 from dimos.protocol.service.spec import Service
 
 MsgT = TypeVar("MsgT")
@@ -127,10 +123,10 @@ class PubSubRPCMixin(RPC, Generic[TopicT]):
         self.subscribe(topic_req, receive_call)
 
 
-class PickleLCM(PubSubRPCMixin, PickleLCM):
-    def topicgen(self, name: str, req_or_res: bool) -> TopicT:
-        return Topic(topic=f"/rpc/{name}/{'res' if req_or_res else 'req'}")
-
+# simple PUBSUB RPC implementation that doesn't encode
+# special request/response messages, assumes pubsub implementation
+# supports generic dictionary pubsub
+class PassThroughPubSubRPC(PubSubRPCMixin):
     def _encodeRPCReq(self, req: RPCReq) -> MsgT:
         return req
 

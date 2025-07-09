@@ -27,60 +27,7 @@ from dimos.core import colors
 from dimos.core.core import In, Out, RemoteIn, RemoteOut, T, Transport
 
 
-class Module:
-    ref: Actor
-    worker: int
-
-    def __init__(self):
-        self.ref = None
-
-        for name, ann in get_type_hints(self, include_extras=True).items():
-            origin = get_origin(ann)
-            if origin is Out:
-                inner, *_ = get_args(ann) or (Any,)
-                stream = Out(inner, name, self)
-                setattr(self, name, stream)
-            elif origin is In:
-                inner, *_ = get_args(ann) or (Any,)
-                stream = In(inner, name, self)
-                setattr(self, name, stream)
-
-    def set_ref(self, ref) -> int:
-        worker = get_worker()
-        self.ref = ref
-        self.worker = worker.name
-        return worker.name
-
-    def __str__(self):
-        return f"{self.__class__.__name__}"
-
-    # called from remote
-    def set_transport(self, stream_name: str, transport: Transport):
-        stream = getattr(self, stream_name, None)
-        if not stream:
-            raise ValueError(f"{stream_name} not found in {self.__class__.__name__}")
-
-        if not isinstance(stream, Out) and not isinstance(stream, In):
-            raise TypeError(f"Output {stream_name} is not a valid stream")
-
-        stream._transport = transport
-        return True
-
-    # called from remote
-    def connect_stream(self, input_name: str, remote_stream: RemoteOut[T]):
-        input_stream = getattr(self, input_name, None)
-        if not input_stream:
-            raise ValueError(f"{input_name} not found in {self.__class__.__name__}")
-        if not isinstance(input_stream, In):
-            raise TypeError(f"Input {input_name} is not a valid stream")
-        input_stream.connection = remote_stream
-
-    def dask_receive_msg(self, input_name: str, msg: Any):
-        getattr(self, input_name).transport.dask_receive_msg(msg)
-
-    def dask_register_subscriber(self, output_name: str, subscriber: RemoteIn[T]):
-        getattr(self, output_name).transport.dask_register_subscriber(subscriber)
-
+class ModuleBase:
     @property
     def outputs(self) -> dict[str, Out]:
         return {
@@ -154,3 +101,62 @@ class Module:
         ]
 
         return "\n".join(ret)
+
+
+class DaskModule(ModuleBase):
+    ref: Actor
+    worker: int
+
+    def __init__(self):
+        self.ref = None
+
+        for name, ann in get_type_hints(self, include_extras=True).items():
+            origin = get_origin(ann)
+            if origin is Out:
+                inner, *_ = get_args(ann) or (Any,)
+                stream = Out(inner, name, self)
+                setattr(self, name, stream)
+            elif origin is In:
+                inner, *_ = get_args(ann) or (Any,)
+                stream = In(inner, name, self)
+                setattr(self, name, stream)
+
+    def set_ref(self, ref) -> int:
+        worker = get_worker()
+        self.ref = ref
+        self.worker = worker.name
+        return worker.name
+
+    def __str__(self):
+        return f"{self.__class__.__name__}"
+
+    # called from remote
+    def set_transport(self, stream_name: str, transport: Transport):
+        stream = getattr(self, stream_name, None)
+        if not stream:
+            raise ValueError(f"{stream_name} not found in {self.__class__.__name__}")
+
+        if not isinstance(stream, Out) and not isinstance(stream, In):
+            raise TypeError(f"Output {stream_name} is not a valid stream")
+
+        stream._transport = transport
+        return True
+
+    # called from remote
+    def connect_stream(self, input_name: str, remote_stream: RemoteOut[T]):
+        input_stream = getattr(self, input_name, None)
+        if not input_stream:
+            raise ValueError(f"{input_name} not found in {self.__class__.__name__}")
+        if not isinstance(input_stream, In):
+            raise TypeError(f"Input {input_name} is not a valid stream")
+        input_stream.connection = remote_stream
+
+    def dask_receive_msg(self, input_name: str, msg: Any):
+        getattr(self, input_name).transport.dask_receive_msg(msg)
+
+    def dask_register_subscriber(self, output_name: str, subscriber: RemoteIn[T]):
+        getattr(self, output_name).transport.dask_register_subscriber(subscriber)
+
+
+# global setting
+Module = DaskModule
