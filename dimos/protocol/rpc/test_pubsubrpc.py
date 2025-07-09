@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import time
 from contextlib import contextmanager
 from typing import Any, Callable, List, Tuple
@@ -23,6 +24,18 @@ from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCClient, RPCServer
 
 testgrid: List[Callable] = []
+
+
+class MyModule(Module):
+    @rpc
+    def add(self, a: int, b: int) -> int:
+        print("A + B", a + b)
+        return a + b
+
+    @rpc
+    def subtract(self, a: int, b: int) -> int:
+        print("A - B", a - b)
+        return a - b
 
 
 @contextmanager
@@ -73,27 +86,15 @@ def test_basics(rpc_context):
             msgs.append(response)
             print(f"Received response: {response}")
 
-        client.call_cb("add", [1, 2], receive_msg)
+        client.call("add", [1, 2], receive_msg)
 
-        time.sleep(0.2)
+        time.sleep(0.1)
         assert len(msgs) > 0
 
 
 @pytest.mark.parametrize("rpc_context", testgrid)
 def test_module_autobind(rpc_context):
     with rpc_context() as (server, client):
-
-        class MyModule(Module):
-            @rpc
-            def add(self, a: int, b: int) -> int:
-                print("A + B", a + b)
-                return a + b
-
-            @rpc
-            def subtract(self, a: int, b: int) -> int:
-                print("A - B", a - b)
-                return a - b
-
         module = MyModule()
 
         server.serve_module_rpc(module)
@@ -105,10 +106,54 @@ def test_module_autobind(rpc_context):
         def receive_msg(msg):
             msgs.append(msg)
 
-        client.call_cb("MyModule/add", [1, 2], receive_msg)
-        time.sleep(0.1)
-        client.call_cb("testmodule/subtract", [3, 1], receive_msg)
+        client.call("MyModule/add", [1, 2], receive_msg)
+        client.call("testmodule/subtract", [3, 1], receive_msg)
 
         time.sleep(0.1)
         assert msgs == [3, 2]
         assert len(msgs) == 2
+
+
+@pytest.mark.parametrize("rpc_context", testgrid)
+def test_module_autobind(rpc_context):
+    with rpc_context() as (server, client):
+        module = MyModule()
+
+        server.serve_module_rpc(module)
+        server.serve_module_rpc(module, "testmodule")
+
+        msgs = []
+
+        def receive_msg(msg):
+            msgs.append(msg)
+
+        client.call("MyModule/add", [1, 2], receive_msg)
+        client.call("testmodule/subtract", [3, 1], receive_msg)
+
+        time.sleep(0.1)
+        assert len(msgs) == 2
+        assert msgs == [3, 2]
+
+
+@pytest.mark.parametrize("rpc_context", testgrid)
+def test_sync(rpc_context):
+    with rpc_context() as (server, client):
+        module = MyModule()
+
+        server.serve_module_rpc(module)
+        assert 3 == client.call_sync("MyModule/add", [1, 2])
+
+
+@pytest.mark.parametrize("rpc_context", testgrid)
+def test_async(rpc_context):
+    with rpc_context() as (server, client):
+        module = MyModule()
+        server.serve_module_rpc(module)
+
+        async def atest():
+            print("RUNING TEST")
+            val = await client.call_async("MyModule/add", [1, 2])
+            print("ASYNC TEST RESULT", val)
+            assert val == 3
+
+        asyncio.run(atest())

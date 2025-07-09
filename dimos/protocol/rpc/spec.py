@@ -12,14 +12,58 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Callable, Protocol
+import asyncio
+import time
+from typing import Any, Callable, Optional, Protocol, overload
+
+
+class Empty: ...
 
 
 class RPCClient(Protocol):
-    async def call(self, name: str, arguments: list) -> Any: ...
-    def call_cb(self, name: str, arguments: list, cb: Callable) -> Any: ...
-    def call_sync(self, name: str, arguments: list) -> Any: ...
-    def call_nowait(self, name: str, arguments: list) -> None: ...
+    # if we don't provide callback, we don't get a return unsub f
+    @overload
+    def call(self, name: str, arguments: list, cb: None) -> None: ...
+
+    # if we provide callback, we do get return unsub f
+    @overload
+    def call(self, name: str, arguments: list, cb: Callable[[Any], None]) -> Callable[[], Any]: ...
+
+    def call(
+        self, name: str, arguments: list, cb: Optional[Callable]
+    ) -> Optional[Callable[[], Any]]: ...
+
+    # we bootstrap these from the call() implementation above
+    def call_sync(self, name: str, arguments: list) -> Any:
+        res = Empty
+
+        def receive_value(val):
+            nonlocal res
+            res = val
+
+        self.call(name, arguments, receive_value)
+        while res is Empty:
+            time.sleep(0.05)
+        return res
+
+    async def call_async(self, name: str, arguments: list) -> Any:
+        loop = asyncio.get_event_loop()
+        print("LOOP IS", loop)
+        future = loop.create_future()
+
+        print(f"RPCClient.call_async: {name}({arguments})")
+
+        def receive_value(val):
+            print("RECEIVED", val)
+            try:
+                future.set_result(val)
+            except Exception as e:
+                print(f"Error setting result in future: {e}")
+                future.set_exception(e)
+
+        self.call(name, arguments, receive_value)
+
+        return await future
 
 
 class RPCServer(Protocol):

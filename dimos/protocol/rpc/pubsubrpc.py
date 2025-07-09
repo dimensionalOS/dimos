@@ -53,7 +53,7 @@ class RPCInspectable(Protocol):
 
 
 class RPCReq(TypedDict):
-    id: float
+    id: float | None
     name: str
     args: list
 
@@ -75,6 +75,12 @@ class PubSubRPCMixin(RPC, Generic[TopicT]):
 
     @abstractmethod
     def _encodeRPCRes(self, res: RPCRes) -> MsgT: ...
+
+    def call(self, name: str, arguments: list, cb: Optional[Callable]):
+        if cb is None:
+            return self.call_nowait(name, arguments)
+
+        return self.call_cb(name, arguments, cb)
 
     def call_cb(self, name: str, arguments: list, cb: Callable) -> Any:
         topic_req = self.topicgen(name, False)
@@ -98,7 +104,10 @@ class PubSubRPCMixin(RPC, Generic[TopicT]):
         self.publish(topic_req, self._encodeRPCReq(req))
         return unsub
 
-    def call_nowait(self, service: str, method: str, arguments: list) -> None: ...
+    def call_nowait(self, name: str, arguments: list) -> None:
+        topic_req = self.topicgen(name, False)
+        req = {"name": name, "args": arguments, "id": None}
+        self.publish(topic_req, self._encodeRPCReq(req))
 
     def serve_module_rpc(self, module: RPCInspectable, name: str = None):
         for fname in module.rpcs.keys():
