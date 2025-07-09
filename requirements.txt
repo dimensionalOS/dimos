@@ -24,9 +24,7 @@ reactivex
 git+https://github.com/dimensionalOS/rxpy-backpressure.git
 pytest-asyncio==0.26.0
 asyncio==3.4.3
--e git+https://github.com/legion1581/go2_webrtc_connect.git@fe64abb5987594e8c048427a98445799f6f6a9cc#egg=go2_webrtc_connect
-#-e git+https://github.com/legion1581/aioice.git@ff5755a1e37127411b5fc797c105804db8437445#egg=aioice
-
+-e git+https://github.com/dimensionalOS/go2_webrtc_connect.git#egg=go2_webrtc_connect
 # Web Extensions
 fastapi>=0.115.6
 sse-starlette>=2.2.1
@@ -41,15 +39,6 @@ pydantic
 
 # Developer Specific
 ipykernel
-
-# Unitree webrtc streaming
-aiortc==1.9.0
-pycryptodome
-opencv-python
-sounddevice
-pyaudio
-requests
-wasmtime
 
 # Audio
 openai-whisper
@@ -97,6 +86,7 @@ open3d
 
 # Inference (CPU)
 onnxruntime
+onnx
 
 # Terminal colors
 rich==14.0.0

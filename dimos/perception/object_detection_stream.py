@@ -19,7 +19,14 @@ from reactivex import Observable
 from reactivex import operators as ops
 
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
-from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
+
+try:
+    from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
+
+    DETIC_AVAILABLE = True
+except (ModuleNotFoundError, ImportError):
+    DETIC_AVAILABLE = False
+    Detic2DDetector = None
 from dimos.models.depth.metric3d import Metric3D
 from dimos.perception.detection2d.utils import (
     calculate_depth_from_bbox,
@@ -83,25 +90,47 @@ class ObjectDetectionStream:
         self.disable_depth = disable_depth
         self.draw_masks = draw_masks
         # Initialize object detector
-        self.detector = detector or Detic2DDetector(vocabulary=None, threshold=min_confidence)
+        if detector is not None:
+            self.detector = detector
+        else:
+            if DETIC_AVAILABLE:
+                try:
+                    self.detector = Detic2DDetector(vocabulary=None, threshold=min_confidence)
+                    logger.info("Using Detic2DDetector")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to initialize Detic2DDetector: {e}. Falling back to Yolo2DDetector."
+                    )
+                    self.detector = Yolo2DDetector()
+            else:
+                logger.info("Detic not available. Using Yolo2DDetector.")
+                self.detector = Yolo2DDetector()
         # Set up camera intrinsics
         self.camera_intrinsics = camera_intrinsics
 
         # Initialize depth estimation model
         self.depth_model = None
         if not disable_depth:
-            self.depth_model = Metric3D(gt_depth_scale)
+            try:
+                self.depth_model = Metric3D(gt_depth_scale)
 
-            if camera_intrinsics is not None:
-                self.depth_model.update_intrinsic(camera_intrinsics)
+                if camera_intrinsics is not None:
+                    self.depth_model.update_intrinsic(camera_intrinsics)
 
-                # Create 3x3 camera matrix for calculations
-                fx, fy, cx, cy = camera_intrinsics
-                self.camera_matrix = np.array(
-                    [[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32
-                )
-            else:
-                raise ValueError("camera_intrinsics must be provided")
+                    # Create 3x3 camera matrix for calculations
+                    fx, fy, cx, cy = camera_intrinsics
+                    self.camera_matrix = np.array(
+                        [[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32
+                    )
+                else:
+                    raise ValueError("camera_intrinsics must be provided")
+
+                logger.info("Depth estimation enabled with Metric3D")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Metric3D depth model: {e}")
+                logger.warning("Falling back to disable_depth=True mode")
+                self.disable_depth = True
+                self.depth_model = None
         else:
             logger.info("Depth estimation disabled")
 
@@ -123,9 +152,15 @@ class ObjectDetectionStream:
         """
 
         def process_frame(frame):
-            # Detect objects
-            bboxes, track_ids, class_ids, confidences, names, masks = self.detector.process_image(
-                frame
+            # TODO: More modular detector output interface
+            bboxes, track_ids, class_ids, confidences, names, *mask_data = (
+                self.detector.process_image(frame) + ([],)
+            )
+
+            masks = (
+                mask_data[0]
+                if mask_data and len(mask_data[0]) == len(bboxes)
+                else [None] * len(bboxes)
             )
 
             # Create visualization
