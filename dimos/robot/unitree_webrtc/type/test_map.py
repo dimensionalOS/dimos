@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import pytest
 
 from dimos.robot.unitree_webrtc.testing.helpers import show3d, show3d_stream
@@ -42,10 +56,13 @@ def test_robot_vis():
 
 
 def test_robot_mapping():
-    lidar_stream = SensorReplay("office_lidar", autocast=lambda x: LidarMessage.from_msg(x))
+    lidar_stream = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
     map = Map(voxel_size=0.5)
-    map.consume(lidar_stream.stream(rate_hz=100.0)).run()
 
+    # this will block until map has consumed the whole stream
+    map.consume(lidar_stream.stream()).run()
+
+    # we investigate built map
     costmap = map.costmap
 
     assert costmap.grid.shape == (404, 276)

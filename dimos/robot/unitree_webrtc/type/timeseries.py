@@ -1,8 +1,22 @@
-from __future__ import annotations
-from datetime import datetime, timedelta, timezone
-from typing import Iterable, TypeVar, Generic, Tuple, Union, TypedDict
-from abc import ABC, abstractmethod
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from datetime import datetime, timedelta, timezone
+from typing import Generic, Iterable, Tuple, TypedDict, TypeVar, Union
 
 PAYLOAD = TypeVar("PAYLOAD")
 
@@ -40,8 +54,10 @@ def to_datetime(ts: EpochLike, tz: timezone = None) -> datetime:
 class Timestamped(ABC):
     """Abstract class for an event with a timestamp."""
 
-    def __init__(self, timestamp: EpochLike):
-        self.ts = to_datetime(timestamp)
+    ts: datetime
+
+    def __init__(self, ts: EpochLike):
+        self.ts = to_datetime(ts)
 
 
 class TEvent(Timestamped, Generic[PAYLOAD]):
@@ -103,7 +119,7 @@ class Timeseries(ABC, Generic[EVENT]):
         min_dist = float("inf")
 
         for event in self:
-            dist = abs(event.ts.timestamp() - target_ts)
+            dist = abs(event.ts - target_ts)
             if dist > min_dist:
                 break
 

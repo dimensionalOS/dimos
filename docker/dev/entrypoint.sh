@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-source /opt/ros/${ROS_DISTRO}/setup.bash
-#source /ros2_ws/install/setup.bash
+if [ -d "/opt/ros/${ROS_DISTRO}" ]; then
+    source /opt/ros/${ROS_DISTRO}/setup.bash
+else
+    echo "ROS is not available in this env"
+fi
 
 exec "$@"

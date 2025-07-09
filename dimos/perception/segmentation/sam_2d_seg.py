@@ -1,32 +1,64 @@
-import cv2
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import os
 import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+
+import cv2
+import onnxruntime
 from ultralytics import FastSAM
+
+from dimos.perception.common.detection2d_tracker import get_tracked_results, target2dTracker
+from dimos.perception.segmentation.image_analyzer import ImageAnalyzer
 from dimos.perception.segmentation.utils import (
+    crop_images_from_bboxes,
     extract_masks_bboxes_probs_names,
     filter_segmentation_results,
     plot_results,
-    crop_images_from_bboxes,
 )
-from dimos.perception.common.detection2d_tracker import target2dTracker, get_tracked_results
-from dimos.perception.segmentation.image_analyzer import ImageAnalyzer
-import os
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
+from dimos.utils.data import get_data
+from dimos.utils.gpu_utils import is_cuda_available
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.path_utils import get_project_root
+
+logger = setup_logger("dimos.perception.segmentation.sam_2d_seg")
 
 
 class Sam2DSegmenter:
     def __init__(
         self,
-        model_path="FastSAM-s.pt",
-        device="cuda",
+        model_path="models_fastsam",
+        model_name="FastSAM-s.onnx",
+        device="cpu",
         min_analysis_interval=5.0,
         use_tracker=True,
         use_analyzer=True,
         use_rich_labeling=False,
     ):
-        # Core components
         self.device = device
-        self.model = FastSAM(model_path)
+        if is_cuda_available():
+            logger.info("Using CUDA for SAM 2d segmenter")
+            if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
+                onnxruntime.preload_dlls(cuda=True, cudnn=True)
+            self.device = "cuda"
+        else:
+            logger.info("Using CPU for SAM 2d segmenter")
+            self.device = "cpu"
+        # Core components
+        self.model = FastSAM(get_data(model_path) / model_name)
         self.use_tracker = use_tracker
         self.use_analyzer = use_analyzer
         self.use_rich_labeling = use_rich_labeling

@@ -61,9 +61,7 @@ class SpatialMemory:
             "VisualMemory"
         ] = None,  # Optional VisualMemory instance for storing images
         video_stream: Optional[Observable] = None,  # Video stream to process
-        transform_provider: Optional[
-            callable
-        ] = None,  # Function that returns position and rotation
+        get_pose: Optional[callable] = None,  # Function that returns position and rotation
     ):
         """
         Initialize the spatial perception system.
@@ -162,8 +160,8 @@ class SpatialMemory:
         logger.info(f"SpatialMemory initialized with model {embedding_model}")
 
         # Start processing video stream if provided
-        if video_stream is not None and transform_provider is not None:
-            self.start_continuous_processing(video_stream, transform_provider)
+        if video_stream is not None and get_pose is not None:
+            self.start_continuous_processing(video_stream, get_pose)
 
     def query_by_location(
         self, x: float, y: float, radius: float = 2.0, limit: int = 5
@@ -183,14 +181,14 @@ class SpatialMemory:
         return self.vector_db.query_by_location(x, y, radius, limit)
 
     def start_continuous_processing(
-        self, video_stream: Observable, transform_provider: callable
+        self, video_stream: Observable, get_pose: callable
     ) -> disposable.Disposable:
         """
         Start continuous processing of video frames from an Observable stream.
 
         Args:
             video_stream: Observable of video frames
-            transform_provider: Callable that returns position and rotation for each frame
+            get_pose: Callable that returns position and rotation for each frame
 
         Returns:
             Disposable subscription that can be used to stop processing
@@ -200,7 +198,7 @@ class SpatialMemory:
 
         # Map each video frame to include transform data
         combined_stream = video_stream.pipe(
-            ops.map(lambda video_frame: {"frame": video_frame, **transform_provider()}),
+            ops.map(lambda video_frame: {"frame": video_frame, **get_pose()}),
             # Filter out bad transforms
             ops.filter(
                 lambda data: data.get("position") is not None and data.get("rotation") is not None

@@ -1,6 +1,6 @@
 {
   "name": "dimos-dev",
-  "image": "ghcr.io/dimensionalos/dev:dev",
+  "image": "ghcr.io/dimensionalos/ros-dev:dev",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -25,5 +25,8 @@
     },
     "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.formatOnSave": true
-  }
+  },
+  "runArgs": [
+    "--cap-add=NET_ADMIN"
+  ]
 }

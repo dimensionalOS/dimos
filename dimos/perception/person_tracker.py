@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.perception.detection2d.utils import filter_detections
 from dimos.perception.common.ibvs import PersonDistanceEstimator
@@ -10,8 +24,6 @@ import cv2
 class PersonTrackingStream:
     def __init__(
         self,
-        model_path="yolo11n.pt",
-        device="cuda",
         camera_intrinsics=None,
         camera_pitch=0.0,
         camera_height=1.0,
@@ -20,8 +32,6 @@ class PersonTrackingStream:
         Initialize a person tracking stream using Yolo2DDetector and PersonDistanceEstimator.
 
         Args:
-            model_path: Path to the YOLO model file
-            device: Computation device ("cuda" or "cpu")
             camera_intrinsics: List in format [fx, fy, cx, cy] where:
                 - fx: Focal length in x direction (pixels)
                 - fy: Focal length in y direction (pixels)
@@ -30,7 +40,7 @@ class PersonTrackingStream:
             camera_pitch: Camera pitch angle in radians (positive is up)
             camera_height: Height of the camera from the ground in meters
         """
-        self.detector = Yolo2DDetector(model_path=model_path, device=device)
+        self.detector = Yolo2DDetector()
 
         # Initialize distance estimator
         if camera_intrinsics is None:

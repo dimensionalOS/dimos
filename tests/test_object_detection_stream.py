@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import time
 import sys
@@ -6,8 +20,6 @@ import threading
 from typing import List, Dict, Any
 from reactivex import Subject, operators as ops
 
-from dimos.robot.unitree.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.utils.logging_config import logger
@@ -15,8 +27,6 @@ from dimos.stream.video_provider import VideoProvider
 from dimos.perception.object_detection_stream import ObjectDetectionStream
 from dimos.types.vector import Vector
 from dimos.utils.reactive import backpressure
-from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
-
 from dotenv import load_dotenv
 
 
@@ -72,8 +82,8 @@ class ResultPrinter:
                 print(
                     f"{i + 1}. {obj['label']} (ID: {obj['object_id']}, Conf: {obj['confidence']:.2f})"
                 )
-                print(f"   Position: x={pos['x']:.2f}, y={pos['y']:.2f}, z={pos['z']:.2f} m")
-                print(f"   Rotation: yaw={rot['yaw']:.2f} rad")
+                print(f"   Position: x={pos.x:.2f}, y={pos.y:.2f}, z={pos.z:.2f} m")
+                print(f"   Rotation: yaw={rot.z:.2f} rad")
                 print(f"   Size: width={size['width']:.2f}, height={size['height']:.2f} m")
                 print(f"   Depth: {obj['depth']:.2f} m")
                 print("-" * 30)
@@ -90,9 +100,6 @@ def main():
     min_confidence = 0.6
     class_filter = None  # No class filtering
     web_port = 5555
-
-    # Initialize detector
-    detector = Detic2DDetector(vocabulary=None, threshold=min_confidence)
 
     # Initialize based on mode
     if args.mode == "robot":
@@ -121,6 +128,7 @@ def main():
             transform_to_map=robot.ros_control.transform_pose,
             detector=detector,
             video_stream=video_stream,
+            disable_depth=False,
         )
 
     else:  # webcam mode
@@ -153,8 +161,9 @@ def main():
             camera_intrinsics=camera_intrinsics,
             min_confidence=min_confidence,
             class_filter=class_filter,
-            detector=detector,
             video_stream=video_stream,
+            disable_depth=False,
+            draw_masks=True,
         )
 
         # Set placeholder robot for cleanup

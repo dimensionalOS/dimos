@@ -8,21 +8,35 @@ __pycache__/
 venv*
 .ssh/
 
+# Ignore python tooling dirs
+*.egg-info/
+__pycache__
+
 .env
 **/.DS_Store
 
 # Ignore default runtime output folder
 /assets/output/
+/assets/rgbd_data/
+/assets/saved_maps/
 /assets/model-cache/
-assets/agent/memory.txt
+/assets/agent/memory.txt
 
 .bash_history
 
 # Ignore all test data directories but allow compressed files
-tests/data/*
-!tests/data/.lfs/
+/data/*
+!/data/.lfs/
 
 # node env (used by devcontainers cli)
 node_modules
 package.json
 package-lock.json
+
+# Ignore build artifacts
+dist/
+
+# Ignore data and modelfiles
+data/
+FastSAM-x.pt
+yolo11n.pt

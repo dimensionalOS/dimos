@@ -79,7 +79,8 @@ devcontainer_install() {
         exit 1
     fi
 
-    if [[ ! -d "$REPO_ROOT/node_modules" ]]; then
+    cd "$REPO_ROOT/bin/"
+    if [[ ! -d "$REPO_ROOT/bin/node_modules" ]]; then
         npm init -y 1>/dev/null
     fi
     npm install @devcontainers/cli 1>&2
@@ -87,7 +88,7 @@ devcontainer_install() {
         echo "Failed to install devcontainer CLI. Please install it manually."
         exit 1
     fi
-    echo $REPO_ROOT/node_modules/.bin/devcontainer
+    echo $REPO_ROOT/bin/node_modules/.bin/devcontainer
 }
 
 
@@ -97,7 +98,7 @@ find_devcontainer_bin() {
     bin_path=$(command -v devcontainer)
 
     if [[ -z "$bin_path" ]]; then
-        bin_path="$REPO_ROOT/node_modules/.bin/devcontainer"
+        bin_path="$REPO_ROOT/bin/node_modules/.bin/devcontainer"
     fi
 
     if [[ -x "$bin_path" ]]; then
