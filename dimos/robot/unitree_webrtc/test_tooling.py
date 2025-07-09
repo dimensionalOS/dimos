@@ -57,6 +57,7 @@ def test_record_all():
         sys.exit(0)
 
 
+@pytest.mark.tool
 def test_replay_all():
     lidar_store = TimedSensorReplay("unitree/lidar", autocast=LidarMessage.from_msg)
     odom_store = TimedSensorReplay("unitree/odom", autocast=Odometry.from_msg)

@@ -31,6 +31,7 @@ from dimos.types.position import Position
 from dimos.types.vector import Vector
 
 
+@pytest.mark.heavy
 class TestSpatialMemory:
     @pytest.fixture(scope="function")
     def temp_dir(self):
