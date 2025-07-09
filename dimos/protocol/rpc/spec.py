@@ -48,18 +48,14 @@ class RPCClient(Protocol):
 
     async def call_async(self, name: str, arguments: list) -> Any:
         loop = asyncio.get_event_loop()
-        print("LOOP IS", loop)
         future = loop.create_future()
 
-        print(f"RPCClient.call_async: {name}({arguments})")
-
         def receive_value(val):
-            print("RECEIVED", val)
             try:
-                future.set_result(val)
+                # Use call_soon_threadsafe to safely set the result from another thread
+                loop.call_soon_threadsafe(future.set_result, val)
             except Exception as e:
-                print(f"Error setting result in future: {e}")
-                future.set_exception(e)
+                loop.call_soon_threadsafe(future.set_exception, e)
 
         self.call(name, arguments, receive_value)
 
