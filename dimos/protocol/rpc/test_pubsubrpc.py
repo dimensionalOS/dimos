@@ -145,15 +145,9 @@ def test_sync(rpc_context):
 
 
 @pytest.mark.parametrize("rpc_context", testgrid)
-def test_async(rpc_context):
+@pytest.mark.asyncio
+async def test_async(rpc_context):
     with rpc_context() as (server, client):
         module = MyModule()
         server.serve_module_rpc(module)
-
-        async def atest():
-            print("RUNING TEST")
-            val = await client.call_async("MyModule/add", [1, 2])
-            print("ASYNC TEST RESULT", val)
-            assert val == 3
-
-        asyncio.run(atest())
+        assert 3 == await client.call_async("MyModule/add", [1, 2])
