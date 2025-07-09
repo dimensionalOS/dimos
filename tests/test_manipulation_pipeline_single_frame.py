@@ -93,7 +93,6 @@ def run_processor(color_img, depth_img, intrinsics, grasp_server_url=None):
         "camera_intrinsics": intrinsics,
         "enable_grasp_generation": True,
         "enable_segmentation": True,
-        "segmentation_model": "FastSAM-x.pt",
     }
 
     if grasp_server_url:

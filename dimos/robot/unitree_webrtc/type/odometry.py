@@ -21,7 +21,7 @@ from dimos.robot.unitree_webrtc.type.timeseries import (
     to_datetime,
     to_human_readable,
 )
-from dimos.types.position import Position
+from dimos.types.pose import Pose
 from dimos.types.vector import VectorLike, Vector
 from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_human_readable
 from scipy.spatial.transform import Rotation as R

@@ -56,132 +56,138 @@ logger = setup_logger("test_pipeline_lcm")
 
 class LCMDataCollector:
     """Collects one message from each required LCM topic."""
-    
+
     def __init__(self, lcm_url: str = "udpm://239.255.76.67:7667?ttl=1"):
         self.lcm = lcm.LCM(lcm_url)
-        
+
         # Data storage
         self.rgb_data: Optional[np.ndarray] = None
         self.depth_data: Optional[np.ndarray] = None
         self.camera_intrinsics: Optional[List[float]] = None
-        
+
         # Synchronization
         self.data_lock = threading.Lock()
         self.data_ready_event = threading.Event()
-        
+
         # Flags to track received messages
         self.rgb_received = False
         self.depth_received = False
         self.camera_info_received = False
-        
+
         # Subscribe to topics
         self.lcm.subscribe("head_cam_rgb#sensor_msgs.Image", self._handle_rgb_message)
         self.lcm.subscribe("head_cam_depth#sensor_msgs.Image", self._handle_depth_message)
         self.lcm.subscribe("head_cam_info#sensor_msgs.CameraInfo", self._handle_camera_info_message)
-        
+
         logger.info("LCM Data Collector initialized")
         logger.info("Subscribed to topics:")
         logger.info("  - head_cam_rgb#sensor_msgs.Image")
         logger.info("  - head_cam_depth#sensor_msgs.Image")
         logger.info("  - head_cam_info#sensor_msgs.CameraInfo")
-    
+
     def _handle_rgb_message(self, channel: str, data: bytes):
         """Handle RGB image message."""
         if self.rgb_received:
             return  # Already got one, ignore subsequent messages
-            
+
         try:
             msg = LCMImage.decode(data)
-            
+
             # Convert message data to numpy array
             if msg.encoding == "rgb8":
                 # RGB8 format: 3 bytes per pixel
-                rgb_array = np.frombuffer(msg.data[:msg.data_length], dtype=np.uint8)
+                rgb_array = np.frombuffer(msg.data[: msg.data_length], dtype=np.uint8)
                 rgb_image = rgb_array.reshape((msg.height, msg.width, 3))
-                
+
                 with self.data_lock:
                     self.rgb_data = rgb_image
                     self.rgb_received = True
-                    logger.info(f"RGB message received: {msg.width}x{msg.height}, encoding: {msg.encoding}")
+                    logger.info(
+                        f"RGB message received: {msg.width}x{msg.height}, encoding: {msg.encoding}"
+                    )
                     self._check_all_data_received()
-                    
+
             else:
                 logger.warning(f"Unsupported RGB encoding: {msg.encoding}")
-                
+
         except Exception as e:
             logger.error(f"Error processing RGB message: {e}")
-    
+
     def _handle_depth_message(self, channel: str, data: bytes):
         """Handle depth image message."""
         if self.depth_received:
             return  # Already got one, ignore subsequent messages
-            
+
         try:
             msg = LCMImage.decode(data)
-            
+
             # Convert message data to numpy array
             if msg.encoding == "32FC1":
                 # 32FC1 format: 4 bytes (float32) per pixel
-                depth_array = np.frombuffer(msg.data[:msg.data_length], dtype=np.float32)
+                depth_array = np.frombuffer(msg.data[: msg.data_length], dtype=np.float32)
                 depth_image = depth_array.reshape((msg.height, msg.width))
-                
+
                 with self.data_lock:
                     self.depth_data = depth_image
                     self.depth_received = True
-                    logger.info(f"Depth message received: {msg.width}x{msg.height}, encoding: {msg.encoding}")
-                    logger.info(f"Depth range: {depth_image.min():.3f} - {depth_image.max():.3f} meters")
+                    logger.info(
+                        f"Depth message received: {msg.width}x{msg.height}, encoding: {msg.encoding}"
+                    )
+                    logger.info(
+                        f"Depth range: {depth_image.min():.3f} - {depth_image.max():.3f} meters"
+                    )
                     self._check_all_data_received()
-                    
+
             else:
                 logger.warning(f"Unsupported depth encoding: {msg.encoding}")
-                
+
         except Exception as e:
             logger.error(f"Error processing depth message: {e}")
-    
+
     def _handle_camera_info_message(self, channel: str, data: bytes):
         """Handle camera info message."""
         if self.camera_info_received:
             return  # Already got one, ignore subsequent messages
-            
+
         try:
             msg = LCMCameraInfo.decode(data)
-            
+
             # Extract intrinsics from K matrix: [fx, 0, cx, 0, fy, cy, 0, 0, 1]
             K = msg.K
             fx = K[0]  # K[0,0]
-            fy = K[4]  # K[1,1] 
+            fy = K[4]  # K[1,1]
             cx = K[2]  # K[0,2]
             cy = K[5]  # K[1,2]
-            
+
             intrinsics = [fx, fy, cx, cy]
-            
+
             with self.data_lock:
                 self.camera_intrinsics = intrinsics
                 self.camera_info_received = True
                 logger.info(f"Camera info received: {msg.width}x{msg.height}")
                 logger.info(f"Intrinsics: fx={fx:.1f}, fy={fy:.1f}, cx={cx:.1f}, cy={cy:.1f}")
                 self._check_all_data_received()
-                
+
         except Exception as e:
             logger.error(f"Error processing camera info message: {e}")
-    
+
     def _check_all_data_received(self):
         """Check if all required data has been received."""
         if self.rgb_received and self.depth_received and self.camera_info_received:
             logger.info("✅ All required data received!")
             self.data_ready_event.set()
-    
+
     def wait_for_data(self, timeout: float = 30.0) -> bool:
         """Wait for all data to be received."""
         logger.info("Waiting for RGB, depth, and camera info messages...")
-        
+
         # Start LCM handling in a separate thread
         lcm_thread = threading.Thread(target=self._lcm_handle_loop, daemon=True)
         lcm_thread.start()
-        
+
         # Wait for data with timeout
         return self.data_ready_event.wait(timeout)
-    
+
     def _lcm_handle_loop(self):
         """LCM message handling loop."""
         try:
@@ -189,7 +195,7 @@ class LCMDataCollector:
                 self.lcm.handle_timeout(100)  # 100ms timeout
         except Exception as e:
             logger.error(f"Error in LCM handling loop: {e}")
-    
+
     def get_data(self):
         """Get the collected data."""
         with self.data_lock:
@@ -217,10 +223,9 @@ def run_processor(color_img, depth_img, intrinsics):
     # Create processor
     processor = ManipulationProcessor(
         camera_intrinsics=intrinsics,
-        grasp_server_url="ws://10.0.0.125:8000/ws/grasp",
+        grasp_server_url="ws://18.224.39.74:8000/ws/grasp",
         enable_grasp_generation=False,
         enable_segmentation=True,
-        segmentation_model="FastSAM-x.pt",
     )
 
     # Process single frame directly
@@ -236,29 +241,32 @@ def run_processor(color_img, depth_img, intrinsics):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--lcm-url", default="udpm://239.255.76.67:7667?ttl=1", 
-                       help="LCM URL for subscription")
-    parser.add_argument("--timeout", type=float, default=30.0, 
-                       help="Timeout in seconds to wait for messages")
-    parser.add_argument("--save-images", action="store_true", 
-                       help="Save received RGB and depth images to files")
+    parser.add_argument(
+        "--lcm-url", default="udpm://239.255.76.67:7667?ttl=1", help="LCM URL for subscription"
+    )
+    parser.add_argument(
+        "--timeout", type=float, default=30.0, help="Timeout in seconds to wait for messages"
+    )
+    parser.add_argument(
+        "--save-images", action="store_true", help="Save received RGB and depth images to files"
+    )
     args = parser.parse_args()
 
     # Create data collector
     collector = LCMDataCollector(args.lcm_url)
-    
+
     # Wait for data
     if not collector.wait_for_data(args.timeout):
         logger.error(f"Timeout waiting for data after {args.timeout} seconds")
         logger.error("Make sure Unity is running and publishing to the LCM topics")
         return
-    
+
     # Get the collected data
     color_img, depth_img, intrinsics = collector.get_data()
-    
+
     logger.info(f"Loaded images: color {color_img.shape}, depth {depth_img.shape}")
     logger.info(f"Intrinsics: {intrinsics}")
-    
+
     # Save images if requested
     if args.save_images:
         try:
@@ -316,70 +324,86 @@ def main():
         print(f"   Grasps generated: {total_grasps} (best score: {best_score:.3f})")
     else:
         print("   Grasps: None generated")
-        
+
     # Save results to pickle file
     pickle_path = "manipulation_results.pkl"
     print(f"\nSaving results to pickle file: {pickle_path}")
-    
+
     def serialize_point_cloud(pcd):
         """Convert Open3D PointCloud to serializable format."""
         if pcd is None:
             return None
         data = {
-            'points': np.asarray(pcd.points).tolist() if hasattr(pcd, 'points') else [],
-            'colors': np.asarray(pcd.colors).tolist() if hasattr(pcd, 'colors') and pcd.colors else []
+            "points": np.asarray(pcd.points).tolist() if hasattr(pcd, "points") else [],
+            "colors": np.asarray(pcd.colors).tolist()
+            if hasattr(pcd, "colors") and pcd.colors
+            else [],
         }
         return data
-    
+
     def serialize_voxel_grid(voxel_grid):
         """Convert Open3D VoxelGrid to serializable format."""
         if voxel_grid is None:
             return None
-        
+
         # Extract voxel data
         voxels = voxel_grid.get_voxels()
         data = {
-            'voxel_size': voxel_grid.voxel_size,
-            'origin': np.asarray(voxel_grid.origin).tolist(),
-            'voxels': [(v.grid_index[0], v.grid_index[1], v.grid_index[2], 
-                       v.color[0], v.color[1], v.color[2]) for v in voxels]
+            "voxel_size": voxel_grid.voxel_size,
+            "origin": np.asarray(voxel_grid.origin).tolist(),
+            "voxels": [
+                (
+                    v.grid_index[0],
+                    v.grid_index[1],
+                    v.grid_index[2],
+                    v.color[0],
+                    v.color[1],
+                    v.color[2],
+                )
+                for v in voxels
+            ],
         }
         return data
-    
+
     # Create a copy of results with non-picklable objects converted
     pickle_data = {
         "color_img": color_img,
         "depth_img": depth_img,
         "intrinsics": intrinsics,
-        "results": {}
+        "results": {},
     }
-    
+
     # Convert and store all results, properly handling Open3D objects
     for key, value in results.items():
-        if key.endswith('_viz') or key in ['processing_time', 'timing_breakdown', 'detection2d_objects', 'segmentation2d_objects']:
+        if key.endswith("_viz") or key in [
+            "processing_time",
+            "timing_breakdown",
+            "detection2d_objects",
+            "segmentation2d_objects",
+        ]:
             # These are already serializable
             pickle_data["results"][key] = value
-        elif key == 'full_pointcloud':
+        elif key == "full_pointcloud":
             # Serialize PointCloud object
             pickle_data["results"][key] = serialize_point_cloud(value)
             print(f"Serialized {key}")
-        elif key == 'misc_voxel_grid':
+        elif key == "misc_voxel_grid":
             # Serialize VoxelGrid object
             pickle_data["results"][key] = serialize_voxel_grid(value)
             print(f"Serialized {key}")
-        elif key == 'misc_clusters':
+        elif key == "misc_clusters":
             # List of PointCloud objects
             if value:
                 serialized_clusters = [serialize_point_cloud(cluster) for cluster in value]
                 pickle_data["results"][key] = serialized_clusters
                 print(f"Serialized {key} ({len(serialized_clusters)} clusters)")
-        elif key == 'detected_objects' or key == 'all_objects':
+        elif key == "detected_objects" or key == "all_objects":
             # Objects with PointCloud attributes
             serialized_objects = []
             for obj in value:
-                obj_dict = {k: v for k, v in obj.items() if k != 'point_cloud'}
-                if 'point_cloud' in obj:
-                    obj_dict['point_cloud'] = serialize_point_cloud(obj.get('point_cloud'))
+                obj_dict = {k: v for k, v in obj.items() if k != "point_cloud"}
+                if "point_cloud" in obj:
+                    obj_dict["point_cloud"] = serialize_point_cloud(obj.get("point_cloud"))
                 serialized_objects.append(obj_dict)
             pickle_data["results"][key] = serialized_objects
             print(f"Serialized {key} ({len(serialized_objects)} objects)")
@@ -390,13 +414,12 @@ def main():
                 print(f"Preserved {key} as is")
             except (TypeError, ValueError):
                 print(f"Warning: Could not serialize {key}, skipping")
-    
+
     with open(pickle_path, "wb") as f:
         pickle.dump(pickle_data, f)
-    
+
     print(f"Results saved successfully with all 3D data serialized!")
     print(f"Pickled data keys: {list(pickle_data['results'].keys())}")
-    
 
     # Visualization code has been moved to visualization_script.py
     # The results have been pickled and can be loaded from there
