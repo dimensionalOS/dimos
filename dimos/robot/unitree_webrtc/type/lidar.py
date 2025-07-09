@@ -53,7 +53,7 @@ class LidarMessage(PointCloud2):
     resolution: float  # we lose resolution when encoding PointCloud2
     origin: Vector3
     raw_msg: Optional[RawLidarMsg]
-    _costmap: Optional[Costmap]
+    _costmap: Optional[Costmap] = None
 
     def __init__(self, **kwargs):
         super().__init__(

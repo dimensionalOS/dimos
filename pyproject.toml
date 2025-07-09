@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=70", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
@@ -30,15 +30,13 @@ dependencies = [
     "lark",
     "plum-dispatch==2.5.7",
     "ffmpeg-python",
-    "pytest",
     "tiktoken>=0.8.0",
     "Flask>=2.2",
     "python-multipart==0.0.20",
     "reactivex",
     "rxpy-backpressure @ git+https://github.com/dimensionalOS/rxpy-backpressure.git",
-    "pytest-asyncio==0.26.0",
     "asyncio==3.4.3",
-    "go2-webrtc-connect @ git+https://github.com/legion1581/go2_webrtc_connect.git@fe64abb5987594e8c048427a98445799f6f6a9cc",
+    "go2-webrtc-connect @ git+https://github.com/dimensionalOS/go2_webrtc_connect.git",
     
     # Web Extensions
     "fastapi>=0.115.6",
@@ -73,8 +71,6 @@ dependencies = [
     # Vector Embedding
     "sentence_transformers",
     
-    # CTransforms GGUF
-    "ctransformers[cuda]==0.2.27",
     
     # Perception Dependencies
     "ultralytics>=8.3.70",
@@ -82,25 +78,20 @@ dependencies = [
     "scipy>=1.15.1",
     "scikit-learn",
     "Pillow",
-    "mmengine>=0.10.3",
-    "mmcv>=2.1.0",
+    "clip @ git+https://github.com/openai/CLIP.git",
     "timm>=1.0.15",
     "lap>=0.5.12",
-    "xformers==0.0.20",
-    
-    # Detic
-    "mss",
-    "dataclasses",
-    "ftfy",
-    "regex",
-    "fasttext",
-    "lvis",
-    "nltk",
-    "clip @ git+https://github.com/openai/CLIP.git",
-    "detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6",
-    
+
     # Mapping
     "open3d",
+
+    # Inference
+
+    "onnx",
+
+    # Multiprocess 
+    "dask[complete]==2025.5.1",
+    "lcm_msgs @ git+https://github.com/dimensionalOS/python_lcm_msgs.git@main#egg=lcm_msgs"
 ]
 
 [project.optional-dependencies]
@@ -124,9 +115,38 @@ manipulation = [
     "plotly>=5.9.0",
 ]
 
+cpu = [
+    # CPU inference backends
+    "onnxruntime",
+    "ctransformers==0.2.27",
+]
+
 cuda = [
     "pycuda",
-    "onnxruntime-gpu[cuda,cudnn]"
+    "onnxruntime-gpu>=1.17.1,<=1.18.1", # Only versions supporting both cuda11 and cuda12
+    "ctransformers[cuda]==0.2.27",
+    "mmengine>=0.10.3",
+    "mmcv>=2.1.0",
+    "xformers==0.0.20",
+
+    # Detic GPU stack 
+    "mss",
+    "dataclasses",
+    "ftfy",
+    "regex",
+    "fasttext",
+    "lvis",
+    "nltk",
+    "clip @ git+https://github.com/openai/CLIP.git",
+    "detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6",
+]
+
+dev = [
+    "ruff==0.11.10",
+    "mypy==1.15.0",
+    "pre_commit==4.2.0",
+    "pytest",
+    "pytest-asyncio==0.26.0"
 ]
 
 [tool.ruff]
@@ -160,7 +180,6 @@ files = [
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
-norecursedirs = ["dimos/robot/unitree/external"]
 markers = [
     "vis: marks tests that run visuals and require a visual check by dev",
     "benchmark: benchmark, executes something multiple times, calculates avg, prints to console",
