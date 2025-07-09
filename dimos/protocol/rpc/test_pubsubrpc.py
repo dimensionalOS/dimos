@@ -18,6 +18,7 @@ from typing import Any, Callable, List, Tuple
 
 import pytest
 
+from dimos.core import Module, rpc
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCClient, RPCServer
 
@@ -76,5 +77,38 @@ def test_basics(rpc_context):
 
         time.sleep(0.2)
         assert len(msgs) > 0
-        server.stop()
-        client.stop()
+
+
+@pytest.mark.parametrize("rpc_context", testgrid)
+def test_module_autobind(rpc_context):
+    with rpc_context() as (server, client):
+
+        class MyModule(Module):
+            @rpc
+            def add(self, a: int, b: int) -> int:
+                print("A + B", a + b)
+                return a + b
+
+            @rpc
+            def subtract(self, a: int, b: int) -> int:
+                print("A - B", a - b)
+                return a - b
+
+        module = MyModule()
+
+        server.serve_module_rpc(module)
+
+        server.serve_module_rpc(module, "testmodule")
+
+        msgs = []
+
+        def receive_msg(msg):
+            msgs.append(msg)
+
+        client.call_cb("MyModule/add", [1, 2], receive_msg)
+        time.sleep(0.1)
+        client.call_cb("testmodule/subtract", [3, 1], receive_msg)
+
+        time.sleep(0.1)
+        assert msgs == [3, 2]
+        assert len(msgs) == 2
