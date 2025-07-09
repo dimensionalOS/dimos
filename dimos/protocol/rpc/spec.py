@@ -20,6 +20,13 @@ from typing import Any, Callable, Optional, Protocol, overload
 class Empty: ...
 
 
+# module that we can inspect for RPCs
+class RPCInspectable(Protocol):
+    @classmethod
+    @property
+    def rpcs() -> dict[str, Callable]: ...
+
+
 class RPCClient(Protocol):
     # if we don't provide callback, we don't get a return unsub f
     @overload
@@ -52,7 +59,6 @@ class RPCClient(Protocol):
 
         def receive_value(val):
             try:
-                # Use call_soon_threadsafe to safely set the result from another thread
                 loop.call_soon_threadsafe(future.set_result, val)
             except Exception as e:
                 loop.call_soon_threadsafe(future.set_exception, e)
@@ -60,6 +66,16 @@ class RPCClient(Protocol):
         self.call(name, arguments, receive_value)
 
         return await future
+
+    def serve_module_rpc(self, module: RPCInspectable, name: str = None):
+        for fname in module.rpcs.keys():
+            if not name:
+                name = module.__class__.__name__
+
+            def call(*args, fname=fname):
+                return getattr(module, fname)(*args)
+
+            self.serve_rpc(call, name + "/" + fname)
 
 
 class RPCServer(Protocol):

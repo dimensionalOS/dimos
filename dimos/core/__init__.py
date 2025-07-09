@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import multiprocessing as mp
 import time
 from typing import Optional
@@ -10,24 +12,35 @@ import dimos.core.colors as colors
 from dimos.core.core import In, Out, RemoteOut, rpc
 from dimos.core.module import Module, ModuleBase
 from dimos.core.transport import LCMTransport, ZenohTransport, pLCMTransport
+from dimos.protocol.rpc.spec import RPC
 
 
 def patch_actor(actor, cls): ...
 
 
 def patchdask(dask_client: Client):
-    def deploy(actor_class, *args, **kwargs):
+    def deploy(
+        actor_class,
+        rpc: RPC = None,
+        *args,
+        **kwargs,
+    ):
         console = Console()
         with console.status(f"deploying [green]{actor_class.__name__}", spinner="arc"):
             actor = dask_client.submit(
                 actor_class,
                 *args,
                 **kwargs,
+                rpc=RPC,
                 actor=True,
             ).result()
 
             worker = actor.set_ref(actor).result()
             print((f"deployed: {colors.green(actor)} @ {colors.blue('worker ' + str(worker))}"))
+
+            if rpc:
+                rpc = RPC()
+                rpc.serve_module_rpc(actor)
 
             for name, rpc in actor_class.rpcs.items():
                 print(f"binding rpc on {actor_class}, {name} to {rpc}")

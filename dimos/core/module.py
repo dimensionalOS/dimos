@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import inspect
 from typing import (
     Any,
@@ -25,9 +24,15 @@ from dask.distributed import Actor, get_worker
 
 from dimos.core import colors
 from dimos.core.core import In, Out, RemoteIn, RemoteOut, T, Transport
+from dimos.protocol.rpc.spec import RPCServer
 
 
 class ModuleBase:
+    def __init__(self, rpc: RPCServer = None, *args, **kwargs):
+        self.rpc = rpc
+        rpc.serve_module_rpc(self)
+        rpc.start()
+
     @property
     def outputs(self) -> dict[str, Out]:
         return {
