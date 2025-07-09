@@ -91,6 +91,6 @@ onnx
 # Terminal colors
 rich==14.0.0
 
-# multiprocess 
+# multiprocess 1
 dask[complete]==2025.5.1
 git+https://github.com/dimensionalOS/python_lcm_msgs@main#egg=lcm_msgs
