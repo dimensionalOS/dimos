@@ -100,9 +100,15 @@ class PubSubRPCMixin(RPC, Generic[TopicT]):
 
     def call_nowait(self, service: str, method: str, arguments: list) -> None: ...
 
-    def serve_module_rpc(self, module: RPCInspectable):
-        for fname, f in module.rpcs.items():
-            self.serve_rpc(module.__class__.__name__ + "/" + fname, f)
+    def serve_module_rpc(self, module: RPCInspectable, name: str = None):
+        for fname in module.rpcs.keys():
+            if not name:
+                name = module.__class__.__name__
+
+            def call(*args, fname=fname):
+                return getattr(module, fname)(*args)
+
+            self.serve_rpc(call, name + "/" + fname)
 
     def serve_rpc(self, f: Callable, name: str = None):
         if not name:
