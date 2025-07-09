@@ -12,18 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Callable, Protocol
-
-
-class RPCClient(Protocol):
-    async def call(self, name: str, arguments: list) -> Any: ...
-    def call_cb(self, name: str, arguments: list, cb: Callable) -> Any: ...
-    def call_sync(self, name: str, arguments: list) -> Any: ...
-    def call_nowait(self, name: str, arguments: list) -> None: ...
-
-
-class RPCServer(Protocol):
-    def serve(self, f: Callable, name: str) -> None: ...
-
-
-class RPC(RPCServer, RPCClient): ...
+from dimos.protocol.rpc.pubsubrpc import Lcm
+from dimos.protocol.rpc.spec import RPC, RPCClient, RPCServer

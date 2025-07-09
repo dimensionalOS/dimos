@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import pickle
 import subprocess
 import sys
 import threading
@@ -98,7 +99,7 @@ class LCM(
 ): ...
 
 
-class pickleLCM(
+class PickleLCM(
     PickleEncoderMixin,
     LCMPubSubBase,
 ): ...

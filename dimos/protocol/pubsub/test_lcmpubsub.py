@@ -22,8 +22,8 @@ from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.protocol.pubsub.lcmpubsub import (
     LCM,
     LCMPubSubBase,
+    PickleLCM,
     Topic,
-    pickleLCM,
 )
 
 
@@ -150,7 +150,7 @@ def test_lcm_geometry_msgs_pubsub(test_message):
 # passes some geometry types through pickle LCM
 @pytest.mark.parametrize("test_message", test_msgs)
 def test_lcm_geometry_msgs_autopickle_pubsub(test_message):
-    lcm = pickleLCM(autoconf=True)
+    lcm = PickleLCM(autoconf=True)
     lcm.start()
 
     received_messages = []

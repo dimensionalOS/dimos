@@ -12,18 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Callable, Protocol
+import time
+
+from dimos.protocol.rpc.pubsubrpc import PickleLCM
 
 
-class RPCClient(Protocol):
-    async def call(self, name: str, arguments: list) -> Any: ...
-    def call_cb(self, name: str, arguments: list, cb: Callable) -> Any: ...
-    def call_sync(self, name: str, arguments: list) -> Any: ...
-    def call_nowait(self, name: str, arguments: list) -> None: ...
+def test_basics():
+    def remote_function(a: int, b: int):
+        return a + b
 
+    server = PickleLCM(autoconf=True)
+    server.start()
 
-class RPCServer(Protocol):
-    def serve(self, f: Callable, name: str) -> None: ...
+    server.serve_rpc(remote_function, "add")
 
+    client = PickleLCM(autoconf=True)
+    client.start()
+    msgs = []
 
-class RPC(RPCServer, RPCClient): ...
+    def receive_msg(response):
+        msgs.append(response)
+        print(f"Received response: {response}")
+
+    client.call_cb("add", [1, 2], receive_msg)
+
+    time.sleep(0.2)
+    assert len(msgs) > 0
+    server.stop()
+    client.stop()
