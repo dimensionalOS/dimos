@@ -59,7 +59,6 @@ class ManipulationProcessor:
         enable_grasp_generation: bool = False,
         grasp_server_url: Optional[str] = None,  # Required when enable_grasp_generation=True
         enable_segmentation: bool = True,
-        segmentation_model: str = "sam2_b.pt",
     ):
         """
         Initialize the manipulation processor.
@@ -99,11 +98,9 @@ class ManipulationProcessor:
         self.segmenter = None
         if self.enable_segmentation:
             self.segmenter = Sam2DSegmenter(
-                model_path=segmentation_model,
                 device="cuda",
                 use_tracker=False,  # Disable tracker for simple segmentation
                 use_analyzer=False,  # Disable analyzer for simple segmentation
-                model_type="auto",  # Auto-detect model type
             )
 
         # Initialize grasp generator if enabled
