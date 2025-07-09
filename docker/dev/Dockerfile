@@ -23,8 +23,9 @@ RUN apt-get update && apt-get install -y \
 # Configure git to trust any directory (resolves dubious ownership issues in containers)
 RUN git config --global --add safe.directory '*'
 
-COPY docker/dev/dev-requirements.txt /app/
-RUN --mount=type=cache,target=/root/.cache/pip pip install -r dev-requirements.txt
+COPY . /app/
+WORKDIR /app
+RUN --mount=type=cache,target=/root/.cache/pip pip install .[dev]
 
 # Copy files and add version to motd
 COPY /assets/dimensionalascii.txt /etc/motd

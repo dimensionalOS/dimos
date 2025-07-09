@@ -30,13 +30,11 @@ dependencies = [
     "lark",
     "plum-dispatch==2.5.7",
     "ffmpeg-python",
-    "pytest",
     "tiktoken>=0.8.0",
     "Flask>=2.2",
     "python-multipart==0.0.20",
     "reactivex",
     "rxpy-backpressure @ git+https://github.com/dimensionalOS/rxpy-backpressure.git",
-    "pytest-asyncio==0.26.0",
     "asyncio==3.4.3",
     "go2-webrtc-connect @ git+https://github.com/dimensionalOS/go2_webrtc_connect.git",
     
@@ -141,6 +139,14 @@ cuda = [
     "nltk",
     "clip @ git+https://github.com/openai/CLIP.git",
     "detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6",
+]
+
+dev = [
+    "ruff==0.11.10",
+    "mypy==1.15.0",
+    "pre_commit==4.2.0",
+    "pytest",
+    "pytest-asyncio==0.26.0"
 ]
 
 [tool.ruff]
