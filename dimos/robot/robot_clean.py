@@ -14,44 +14,45 @@
 
 from __future__ import annotations
 
-from dimos.robot.capabilities import Connection, Move, Lidar, Stop, Video, Odometry
+from dimos.robot.connection import BaseConnection
+from dimos.robot.capabilities import has_capability, Move, Stop, Video, Lidar, Odometry
 from dimos.types.vector import Vector
-from typing import Any
+from typing import Any, cast
 import os
 
 
 class Robot:
     """Helper class for robots."""
 
-    def __init__(self, conn: Connection):
+    def __init__(self, conn: BaseConnection):
         self.conn = conn
         self.output_dir = os.path.join(os.getcwd(), "assets", "output")
         self._modules: dict[str, Any] = {}
 
     def move(self, velocity: Vector, duration: float = 0.0) -> bool:
-        if not isinstance(self.conn, Move):
+        if not has_capability(self.conn, Move):
             raise RuntimeError("Connection object does not support Move capability")
-        return self.conn.move(velocity, duration)
+        return cast(Move, self.conn).move(velocity, duration)
 
     def stop(self) -> bool:
-        if not isinstance(self.conn, Stop):
+        if not has_capability(self.conn, Stop):
             raise RuntimeError("Connection object does not support Stop capability")
-        return self.conn.stop()
+        return cast(Stop, self.conn).stop()
 
     def lidar_stream(self):
-        if not isinstance(self.conn, Lidar):
+        if not has_capability(self.conn, Lidar):
             raise RuntimeError("Lidar capability unavailable")
-        return self.conn.lidar_stream()
+        return cast(Lidar, self.conn).lidar_stream()
 
     def video_stream(self):
-        if not isinstance(self.conn, Video):
+        if not has_capability(self.conn, Video):
             raise RuntimeError("Video capability unavailable")
-        return self.conn.video_stream()
+        return cast(Video, self.conn).video_stream()
 
     def odom_stream(self):
-        if not isinstance(self.conn, Odometry):
+        if not has_capability(self.conn, Odometry):
             raise RuntimeError("Odometry capability unavailable")
-        return self.conn.odom_stream()
+        return cast(Odometry, self.conn).odom_stream()
 
     def __getattr__(self, item: str) -> Any:
         """Fallback – forward any unknown attribute to the connection object."""
@@ -65,3 +66,11 @@ class Robot:
             return self.skill_library
         else:
             raise AttributeError("Skill library does not exist")
+
+    def get_pose(self) -> dict:
+        """Get current robot pose.
+
+        Returns:
+            Dictionary with 'position' and 'rotation' vectors
+        """
+        return self.conn.get_pose()

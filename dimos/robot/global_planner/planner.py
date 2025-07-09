@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 from dimos.robot.module_utils import robot_module
 from dimos.robot.capabilities import Move, Lidar, Odometry
 from abc import abstractmethod
@@ -25,33 +24,41 @@ from dimos.types.vector import VectorLike, to_vector, Vector
 from dimos.robot.global_planner.algo import astar
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.helpers import Visualizable
-from dimos.robot.local_planner.local_planner import navigate_path_local
 from dimos.utils.reactive import getter_streaming
 from dimos.robot.unitree_webrtc.type.map import Map
 
 logger = setup_logger("dimos.robot.unitree.global_planner")
 
 
-@dataclass
 class Planner(Visualizable):
-    set_local_nav: Callable[[Path, Optional[threading.Event]], bool]
+    """Base class for path planners."""
+
+    # Instance variable declaration - cleaner than in __init__
+    set_local_nav: Optional[Callable[[Path, Optional[threading.Event]], bool]] = None
+
+    def __init__(self):
+        # Note: I originally moved this to __init__ when removing @dataclass
+        # but it's cleaner as a class attribute with type hint above
+        pass
 
     @abstractmethod
-    def plan(self, goal: VectorLike) -> Path: ...
+    def plan(self, goal: VectorLike) -> Optional[Path]: ...
 
     def set_goal(
         self,
         goal: VectorLike,
         goal_theta: Optional[float] = None,
         stop_event: Optional[threading.Event] = None,
-    ):
+    ) -> bool:
         path = self.plan(goal)
         if not path:
             logger.warning("No path found to the goal.")
             return False
 
         print("pathing success", path)
-        return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
+        if self.set_local_nav:
+            return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
+        return False
 
 
 @robot_module
@@ -59,17 +66,38 @@ class AstarPlanner(Planner):
     REQUIRES = (Move, Lidar, Odometry)
 
     def __init__(self, conservativism: int = 8):
+        super().__init__()
         self.conservativism = conservativism
+        # Initialize placeholder values
+        self.get_costmap = None
+        self.get_robot_pos = None
+        self.set_local_nav = None
 
     def setup(self, robot):
         # Build lambdas that access robot state lazily
-        self.get_costmap = lambda: Map(voxel_size=0.2).costmap()
-        self.get_robot_pos = lambda: getter_streaming(robot.odom_stream()).pos
+        from dimos.utils.reactive import getter_streaming
+        from dimos.robot.unitree_webrtc.type.map import Map
+        from dimos.robot.local_planner.local_planner import navigate_path_local
+
+        # Create map and streams
+        lidar_stream = robot.lidar_stream()
+        odom_stream = robot.odom_stream()
+        self.map = Map(voxel_size=0.2)
+        self.map_stream = self.map.consume(lidar_stream)
+        self.odom = getter_streaming(odom_stream)
+
+        # Set up callbacks
+        self.get_costmap = lambda: self.map.costmap
+        self.get_robot_pos = lambda: self.odom().pos
         self.set_local_nav = lambda path, stop_event=None, goal_theta=None: navigate_path_local(
             robot, path, timeout=120.0, goal_theta=goal_theta, stop_event=stop_event
         )
 
-    def plan(self, goal: VectorLike) -> Path:
+    def plan(self, goal: VectorLike) -> Optional[Path]:
+        if not self.get_costmap or not self.get_robot_pos:
+            logger.error("AstarPlanner not properly initialized")
+            return None
+
         goal = to_vector(goal).to_2d()
         pos = self.get_robot_pos().to_2d()
         costmap = self.get_costmap().smudge()
@@ -86,3 +114,4 @@ class AstarPlanner(Planner):
             return path
 
         logger.warning("No path found to the goal.")
+        return None

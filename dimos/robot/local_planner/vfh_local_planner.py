@@ -36,10 +36,14 @@ logger = setup_logger("dimos.robot.unitree.vfh_local_planner", level=logging.DEB
 @robot_module
 class VFHPurePursuitPlanner(BaseLocalPlanner):
     REQUIRES = (Move, Lidar, Odometry)
+    DEPENDS_ON = (AstarPlanner,)  # Declare dependency on AstarPlanner
     """
     A local planner that combines Vector Field Histogram (VFH) for obstacle avoidance
     with Pure Pursuit for goal tracking.
     """
+
+    # Type hints for injected dependencies
+    astar_planner: Optional[AstarPlanner] = None
 
     def setup(self, robot):
         kw = getattr(self, "_init_kwargs", {})
@@ -51,13 +55,8 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
 
         move = robot.move
 
-        # Get global planner if available
-        try:
-            gp = robot.get_module(AstarPlanner)
-            global_planner_plan = gp.plan if gp else None
-        except Exception as e:
-            logger.warning(f"Failed to get Required Astar Planner: {e}")
-            global_planner_plan = None
+        # Use injected dependency instead of robot.get_module
+        global_planner_plan = self.astar_planner.plan if self.astar_planner else None
 
         # Get configuration parameters from stored kwargs
         safety_threshold = kw.get("safety_threshold", 0.8)
@@ -96,6 +95,8 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         )
 
         self.local_planner_viz_stream = self.create_stream(frequency_hz=5.0)
+
+        robot.local_planner = self
 
     def __init__(
         self,

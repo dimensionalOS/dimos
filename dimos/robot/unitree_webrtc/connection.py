@@ -15,7 +15,7 @@
 import functools
 import asyncio
 import threading
-from typing import TypeAlias, Literal
+from typing import TypeAlias, Literal, Optional
 from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.types.vector import Vector
 from dimos.types.position import Position
@@ -30,17 +30,20 @@ from reactivex import operators as ops
 from aiortc import MediaStreamTrack
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.utils.reactive import getter_streaming
+from dimos.robot.connection import BaseConnection
 from dimos.robot.capabilities import (
     Move,
     Stop,
     Video,
     Lidar,
     Odometry,
-    Connection,
     implements,
     WebRTCRequest,
 )
 import time
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger("dimos.robot.unitree_webrtc.connection")
 
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
@@ -49,9 +52,9 @@ __all__ = ["UnitreeWebRTCConnection", "WebRTCRobot", "VideoMessage"]
 
 
 @implements(Move, Stop, Video, Lidar, Odometry)
-class UnitreeWebRTCConnection(Connection):
+class UnitreeWebRTCConnection(BaseConnection):
     def __init__(self, ip: str, mode: str = "normal"):
-        self.ip = ip
+        super().__init__(ip)
         self.mode = mode
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
         self.connect()
@@ -87,6 +90,14 @@ class UnitreeWebRTCConnection(Connection):
         self.thread = threading.Thread(target=start_background_loop, daemon=True)
         self.thread.start()
         self.connection_ready.wait()
+
+    def disconnect(self):
+        """Close connection and clean up resources."""
+        if hasattr(self, "loop") and self.loop and self.loop.is_running():
+            self.loop.call_soon_threadsafe(self.loop.stop)
+        if hasattr(self, "thread") and self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+        logger.info("UnitreeWebRTCConnection disconnected")
 
     def move(self, velocity: Vector, duration: float = 0.0) -> bool:
         """Send movement command to the robot using velocity commands.
@@ -322,27 +333,6 @@ class UnitreeWebRTCConnection(Connection):
             bool: True if stop command was sent successfully
         """
         return self.move(Vector(0.0, 0.0, 0.0))
-
-    def disconnect(self) -> None:
-        """Disconnect from the robot and clean up resources."""
-        if hasattr(self, "task") and self.task:
-            self.task.cancel()
-        if hasattr(self, "conn"):
-
-            async def async_disconnect():
-                try:
-                    await self.conn.disconnect()
-                except:
-                    pass
-
-            if hasattr(self, "loop") and self.loop.is_running():
-                asyncio.run_coroutine_threadsafe(async_disconnect(), self.loop)
-
-        if hasattr(self, "loop") and self.loop.is_running():
-            self.loop.call_soon_threadsafe(self.loop.stop)
-
-        if hasattr(self, "thread") and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
 
 
 # Backwards compatibility for tests

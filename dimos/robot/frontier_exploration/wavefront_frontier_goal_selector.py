@@ -81,12 +81,16 @@ from dimos.robot.capabilities import Move, Odometry, Lidar
 @robot_module
 class WavefrontFrontierExplorer:
     REQUIRES = (Move, Odometry, Lidar)
+    DEPENDS_ON = (AstarPlanner,)  # Declare dependency on AstarPlanner
     """
     Wavefront frontier exploration algorithm implementation.
 
     This class encapsulates the frontier detection and exploration goal selection
     functionality using the wavefront algorithm with BFS exploration.
     """
+
+    # Type hints for injected dependencies
+    astar_planner: Optional[AstarPlanner] = None
 
     # ------------------------------------------------------------------
     # Robot lifecycle hook
@@ -102,10 +106,11 @@ class WavefrontFrontierExplorer:
         self.min_distance_from_obstacles = kw.get("min_distance_from_obstacles", 0.6)
         self.info_gain_threshold = kw.get("info_gain_threshold", 0.03)
         self.num_no_gain_attempts = kw.get("num_no_gain_attempts", 4)
-        self.set_goal = (
-            kw.get("set_goal") or robot.get_module(AstarPlanner).set_goal
-            if robot.get_module(AstarPlanner)
-            else None
+
+        # Use injected dependency instead of robot.get_module
+        # AstarPlanner will be injected as self.astar_planner
+        self.set_goal = kw.get("set_goal") or (
+            self.astar_planner.set_goal if self.astar_planner else None
         )
 
         # Data sources from robot
@@ -114,11 +119,11 @@ class WavefrontFrontierExplorer:
         self.map = Map(voxel_size=0.2)
         self.map_stream = self.map.consume(self.lidar_stream)
         self.lidar_message = getter_streaming(self.lidar_stream)
-        self.get_costmap = lambda: self.lidar_message().costmap()
+        self.get_costmap = lambda: self.map.costmap
         self.get_robot_pos = lambda: self.odom().pos
 
-        # Ensure global planner
-        self.global_planner = robot.get_module(AstarPlanner)
+        # Use injected global planner
+        self.global_planner = self.astar_planner
         if self.global_planner is None:
             raise RuntimeError("AstarPlanner module required for WavefrontFrontierExplorer")
 

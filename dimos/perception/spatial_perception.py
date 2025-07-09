@@ -91,7 +91,7 @@ class SpatialMemory:
 
         # Set up paths for persistence
         self.output_dir = output_dir or os.path.join(
-            os.getenv("DIMOS_OUTPUT_DIR"), "spatial_memory"
+            os.getenv("DIMOS_OUTPUT_DIR", "assets/output"), "spatial_memory"
         )
         self.db_path = os.path.join(self.output_dir, "chromadb_data")
         self.visual_memory_path = os.path.join(self.output_dir, "visual_memory.pkl")
