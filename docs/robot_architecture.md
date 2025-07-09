@@ -158,7 +158,8 @@ modules:
 
 Feel free to adjust naming (`ConnectionModule`, `Robot`, etc.); the pattern above will remain valid. 
 
-**7. Full Implementation Example**
+## Quickstart Example
+**1. Initialize your Robot**
 
 ```python
 @robot_capability(AstarPlanner, VFHPurePursuitPlanner)
@@ -172,7 +173,7 @@ print("modules:", list(robot._modules))
 The decorator auto-instantiates the planners; nothing else is required.
 
 ---
-**8. ConnectionModule with Capability Protocols**
+**2. ConnectionModule with Capability Protocols**
 
 ```python
 @implements(Move, Lidar, Odometry, Video)
