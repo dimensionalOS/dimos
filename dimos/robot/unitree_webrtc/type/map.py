@@ -29,13 +29,13 @@ class Map(Module):
     lidar: In[LidarMessage] = None
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
 
-    def __init__(self, voxel_size: float = 0.05, cost_resolution: float = 0.05):
+    def __init__(self, voxel_size: float = 0.05, cost_resolution: float = 0.05, **kwargs):
         self.voxel_size = voxel_size
         self.cost_resolution = cost_resolution
-        super().__init__()
+        super().__init__(**kwargs)
 
     @rpc
-    async def start(self):
+    def start(self):
         self.lidar.subscribe(self.add_frame)
 
     @rpc
