@@ -33,6 +33,25 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
     """
     A local planner that combines Vector Field Histogram (VFH) for obstacle avoidance
     with Pure Pursuit for goal tracking.
+
+    Args:
+        get_costmap: Function to get the latest local costmap
+        get_robot_pose: Function to get the latest robot pose (returning odom object)
+        move: Function to send velocity commands
+        safety_threshold: Distance to maintain from obstacles (meters)
+        histogram_bins: Number of directional bins in the polar histogram
+        max_linear_vel: Maximum linear velocity (m/s)
+        max_angular_vel: Maximum angular velocity (rad/s)
+        lookahead_distance: Lookahead distance for pure pursuit (meters)
+        goal_tolerance: Distance at which the goal is considered reached (meters)
+        angle_tolerance: Angle at which the goal orientation is considered reached (radians)
+        robot_width: Width of the robot for visualization (meters)
+        robot_length: Length of the robot for visualization (meters)
+        visualization_size: Size of the visualization image in pixels
+        control_frequency: Frequency at which the planner is called (Hz)
+        safe_goal_distance: Distance at which to adjust the goal and ignore obstacles (meters)
+        max_recovery_attempts: Maximum number of recovery attempts
+        global_planner_plan: Optional function to get the global plan
     """
 
     def __init__(
@@ -55,28 +74,6 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         max_recovery_attempts: int = 3,
         global_planner_plan: Optional[Callable[[VectorLike], Optional[Any]]] = None,
     ):
-        """
-        Initialize the VFH + Pure Pursuit planner.
-
-        Args:
-            get_costmap: Function to get the latest local costmap
-            get_robot_pose: Function to get the latest robot pose (returning odom object)
-            move: Function to send velocity commands
-            safety_threshold: Distance to maintain from obstacles (meters)
-            histogram_bins: Number of directional bins in the polar histogram
-            max_linear_vel: Maximum linear velocity (m/s)
-            max_angular_vel: Maximum angular velocity (rad/s)
-            lookahead_distance: Lookahead distance for pure pursuit (meters)
-            goal_tolerance: Distance at which the goal is considered reached (meters)
-            angle_tolerance: Angle at which the goal orientation is considered reached (radians)
-            robot_width: Width of the robot for visualization (meters)
-            robot_length: Length of the robot for visualization (meters)
-            visualization_size: Size of the visualization image in pixels
-            control_frequency: Frequency at which the planner is called (Hz)
-            safe_goal_distance: Distance at which to adjust the goal and ignore obstacles (meters)
-            max_recovery_attempts: Maximum number of recovery attempts
-            global_planner_plan: Optional function to get the global plan
-        """
         # Initialize base class
         super().__init__(
             get_costmap=get_costmap,

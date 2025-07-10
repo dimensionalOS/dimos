@@ -38,19 +38,19 @@ class Planner(Visualizable, Module):
         Module.__init__(self)
         Visualizable.__init__(self)
 
-    # def set_goal(
-    #     self,
-    #     goal: VectorLike,
-    #     goal_theta: Optional[float] = None,
-    #     stop_event: Optional[threading.Event] = None,
-    # ):
-    #     path = self.plan(goal)
-    #     if not path:
-    #         logger.warning("No path found to the goal.")
-    #         return False
+    def set_goal(
+        self,
+        goal: VectorLike,
+        goal_theta: Optional[float] = None,
+        stop_event: Optional[threading.Event] = None,
+    ):
+        path = self.plan(goal)
+        if not path:
+            logger.warning("No path found to the goal.")
+            return False
 
-    #     print("pathing success", path)
-    #     return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
+        print("pathing success", path)
+        return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
 
 
 class AstarPlanner(Planner):
@@ -59,6 +59,7 @@ class AstarPlanner(Planner):
 
     get_costmap: Callable[[], Costmap]
     get_robot_pos: Callable[[], Vector3]
+    set_local_nav: Callable[[Path, Optional[threading.Event], Optional[float]], bool]
 
     conservativism: int = 8
 

@@ -31,6 +31,7 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
 from dimos.robot.global_planner import AstarPlanner
 from dimos.robot.local_planner.simple import SimplePlanner
+from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
 from dimos.robot.unitree_webrtc.connection import VideoMessage, WebRTCRobot
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
@@ -155,22 +156,20 @@ class Unitree:
         mapper = dimos.deploy(Map, voxel_size=0.5)
 
         local_planner = dimos.deploy(
-            SimplePlanner,
+            VFHPurePursuitPlanner,
             get_costmap=connection.get_local_costmap,
             get_robot_pos=connection.get_pos,
-            set_move=connection.move,
+            move=connection.move,
         )
 
         global_planner = dimos.deploy(
             AstarPlanner,
             get_costmap=mapper.costmap,
             get_robot_pos=connection.get_pos,
+            set_local_nav=local_planner.navigate_to_goal_local,
         )
 
         global_planner.path.transport = core.pLCMTransport("/global_path")
-
-        local_planner.path.connect(global_planner.path)
-        local_planner.movecmd.connect(connection.movecmd)
 
         ctrl = dimos.deploy(ControlModule)
 
