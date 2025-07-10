@@ -215,7 +215,6 @@ local_planner_viz_stream = robot.local_planner_viz_stream.pipe(ops.share())
 # Initialize object detection stream
 min_confidence = 0.6
 class_filter = None  # No class filtering
-min_confidence = 0.99  # temporarily disable detections
 
 # Create video stream from robot's camera
 video_stream = backpressure(robot.get_video_stream())  # WebRTC doesn't use ROS video stream
@@ -223,10 +222,10 @@ video_stream = backpressure(robot.get_video_stream())  # WebRTC doesn't use ROS 
 # # Initialize ObjectDetectionStream with robot
 object_detector = ObjectDetectionStream(
     camera_intrinsics=robot.camera_intrinsics,
-    min_confidence=min_confidence,
     class_filter=class_filter,
     get_pose=robot.get_pose,
     video_stream=video_stream,
+    draw_masks=True,
 )
 
 # # Create visualization stream for web interface
