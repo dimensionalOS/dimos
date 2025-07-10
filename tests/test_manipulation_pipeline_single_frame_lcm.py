@@ -42,6 +42,8 @@ from typing import Dict, List, Optional
 import lcm
 from lcm_msgs.sensor_msgs import Image as LCMImage
 from lcm_msgs.sensor_msgs import CameraInfo as LCMCameraInfo
+from lcm_msgs.sensor_msgs import JointState as LCMJointState
+from lcm_msgs.tf2_msgs import TFMessage as LCMTFMessage
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -64,6 +66,8 @@ class LCMDataCollector:
         self.rgb_data: Optional[np.ndarray] = None
         self.depth_data: Optional[np.ndarray] = None
         self.camera_intrinsics: Optional[List[float]] = None
+        self.joint_states_data: Optional[dict] = None
+        self.tf_data: Optional[dict] = None
         
         # Synchronization
         self.data_lock = threading.Lock()
@@ -73,17 +77,23 @@ class LCMDataCollector:
         self.rgb_received = False
         self.depth_received = False
         self.camera_info_received = False
+        self.joint_states_received = False
+        self.tf_received = False
         
         # Subscribe to topics
         self.lcm.subscribe("head_cam_rgb#sensor_msgs.Image", self._handle_rgb_message)
         self.lcm.subscribe("head_cam_depth#sensor_msgs.Image", self._handle_depth_message)
         self.lcm.subscribe("head_cam_info#sensor_msgs.CameraInfo", self._handle_camera_info_message)
+        self.lcm.subscribe("joint_states#sensor_msgs.JointState", self._handle_joint_states_message)
+        self.lcm.subscribe("tf#tf2_msgs.TFMessage", self._handle_tf_message)
         
         logger.info("LCM Data Collector initialized")
         logger.info("Subscribed to topics:")
         logger.info("  - head_cam_rgb#sensor_msgs.Image")
         logger.info("  - head_cam_depth#sensor_msgs.Image")
         logger.info("  - head_cam_info#sensor_msgs.CameraInfo")
+        logger.info("  - joint_states#sensor_msgs.JointState")
+        logger.info("  - tf#tf2_msgs.TFMessage")
     
     def _handle_rgb_message(self, channel: str, data: bytes):
         """Handle RGB image message."""
@@ -165,15 +175,87 @@ class LCMDataCollector:
         except Exception as e:
             logger.error(f"Error processing camera info message: {e}")
     
+    def _handle_joint_states_message(self, channel: str, data: bytes):
+        """Handle joint states message."""
+        if self.joint_states_received:
+            return  # Already got one, ignore subsequent messages
+            
+        try:
+            msg = LCMJointState.decode(data)
+            
+            # Extract joint states data
+            joint_states = {
+                'header': {
+                    'stamp': msg.header.stamp,
+                    'frame_id': msg.header.frame_id
+                },
+                'name': msg.name,
+                'position': msg.position,
+                'velocity': msg.velocity,
+                'effort': msg.effort
+            }
+            
+            with self.data_lock:
+                self.joint_states_data = joint_states
+                self.joint_states_received = True
+                logger.info(f"Joint states message received: {len(msg.name)} joints")
+                self._check_all_data_received()
+                    
+        except Exception as e:
+            logger.error(f"Error processing joint states message: {e}")
+    
+    def _handle_tf_message(self, channel: str, data: bytes):
+        """Handle TF message."""
+        if self.tf_received:
+            return  # Already got one, ignore subsequent messages
+            
+        try:
+            msg = LCMTFMessage.decode(data)
+            
+            # Extract TF data
+            transforms = []
+            for transform in msg.transforms:
+                tf_data = {
+                    'header': {
+                        'stamp': transform.header.stamp,
+                        'frame_id': transform.header.frame_id
+                    },
+                    'child_frame_id': transform.child_frame_id,
+                    'transform': {
+                        'translation': {
+                            'x': transform.transform.translation.x,
+                            'y': transform.transform.translation.y,
+                            'z': transform.transform.translation.z
+                        },
+                        'rotation': {
+                            'x': transform.transform.rotation.x,
+                            'y': transform.transform.rotation.y,
+                            'z': transform.transform.rotation.z,
+                            'w': transform.transform.rotation.w
+                        }
+                    }
+                }
+                transforms.append(tf_data)
+            
+            with self.data_lock:
+                self.tf_data = {'transforms': transforms}
+                self.tf_received = True
+                logger.info(f"TF message received: {len(transforms)} transforms")
+                self._check_all_data_received()
+                    
+        except Exception as e:
+            logger.error(f"Error processing TF message: {e}")
+    
     def _check_all_data_received(self):
         """Check if all required data has been received."""
-        if self.rgb_received and self.depth_received and self.camera_info_received:
+        if (self.rgb_received and self.depth_received and self.camera_info_received and 
+            self.joint_states_received and self.tf_received):
             logger.info("✅ All required data received!")
             self.data_ready_event.set()
     
     def wait_for_data(self, timeout: float = 30.0) -> bool:
         """Wait for all data to be received."""
-        logger.info("Waiting for RGB, depth, and camera info messages...")
+        logger.info("Waiting for RGB, depth, camera info, joint states, and TF messages...")
         
         # Start LCM handling in a separate thread
         lcm_thread = threading.Thread(target=self._lcm_handle_loop, daemon=True)
@@ -193,7 +275,7 @@ class LCMDataCollector:
     def get_data(self):
         """Get the collected data."""
         with self.data_lock:
-            return self.rgb_data, self.depth_data, self.camera_intrinsics
+            return self.rgb_data, self.depth_data, self.camera_intrinsics, self.joint_states_data, self.tf_data
 
 
 def create_point_cloud(color_img, depth_img, intrinsics):
@@ -254,7 +336,7 @@ def main():
         return
     
     # Get the collected data
-    color_img, depth_img, intrinsics = collector.get_data()
+    color_img, depth_img, intrinsics, joint_states, tf_data = collector.get_data()
     
     logger.info(f"Loaded images: color {color_img.shape}, depth {depth_img.shape}")
     logger.info(f"Intrinsics: {intrinsics}")
@@ -351,6 +433,8 @@ def main():
         "color_img": color_img,
         "depth_img": depth_img,
         "intrinsics": intrinsics,
+        "joint_states": joint_states,
+        "tf_data": tf_data,
         "results": {}
     }
     

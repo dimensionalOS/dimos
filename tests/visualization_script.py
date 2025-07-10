@@ -81,11 +81,6 @@ from pydrake.math import RigidTransform as DrakeRigidTransform
 from pydrake.common import MemoryFile
 
 from pydrake.all import MinimumDistanceLowerBoundConstraint, MultibodyPlant, Parser, DiagramBuilder, AddMultibodyPlantSceneGraph, MeshcatVisualizer, StartMeshcat, RigidTransform, Role, RollPitchYaw, RotationMatrix, Solve, InverseKinematics, MeshcatVisualizerParams, MinimumDistanceLowerBoundConstraint, DoDifferentialInverseKinematics, DifferentialInverseKinematicsStatus, DifferentialInverseKinematicsParameters, DepthImageToPointCloud
-from manipulation.scenarios import AddMultibodyTriad
-from manipulation.meshcat_utils import (  # TODO(russt): switch to pydrake version
-    _MeshcatPoseSliders,
-)
-from manipulation.scenarios import AddIiwa, AddShape, AddWsg
 
 logger = setup_logger("visualization_script")
 
@@ -423,8 +418,8 @@ class DrakeKinematicsEnv:
             print("Warning: camera_center_link not found")
             self.camera_link = None
 
-        # Set robot to a reasonable initial configuration
-        self._set_initial_configuration()
+        # Set robot joint positions from pickle file data
+        self._set_joint_positions_from_pickle()
         
         # Force initial visualization update
         self._update_visualization()
@@ -751,6 +746,64 @@ class DrakeKinematicsEnv:
             except:
                 return []
 
+    def _set_joint_positions_from_pickle(self):
+        """Set robot joint positions from pickle file joint states data"""
+        pickle_path = "manipulation_results.pkl"
+        try:
+            with open(pickle_path, "rb") as f:
+                data = pickle.load(f)
+            
+            if "joint_states" in data and data["joint_states"]:
+                joint_states = data["joint_states"]
+                joint_names = joint_states.get("name", [])
+                joint_positions = joint_states.get("position", [])
+                
+                if joint_names and joint_positions:
+                    print(f"Found {len(joint_names)} joints from pickle file")
+                    print(f"Joint names: {joint_names}")
+                    print(f"Joint positions: {joint_positions}")
+                    
+                    # Create a mapping from joint name to position
+                    joint_name_to_position = dict(zip(joint_names, joint_positions))
+                    
+                    # Set positions for known joints
+                    positions = self.plant.GetPositions(self.plant_context)
+                    joints_set = 0
+                    
+                    for joint_name in self.kinematic_chain_joints:
+                        try:
+                            joint = self.plant.GetJointByName(joint_name)
+                            if joint.num_positions() > 0 and joint_name in joint_name_to_position:
+                                start_index = joint.position_start()
+                                joint_position = joint_name_to_position[joint_name]
+                                
+                                for i in range(joint.num_positions()):
+                                    if start_index + i < len(positions):
+                                        positions[start_index + i] = joint_position
+                                        joints_set += 1
+                                        
+                                print(f"Set joint '{joint_name}' to position {joint_position}")
+                            elif joint_name not in joint_name_to_position:
+                                print(f"Joint '{joint_name}' not found in joint states data")
+                        except RuntimeError:
+                            print(f"Warning: Joint '{joint_name}' not found in URDF.")
+                    
+                    self.plant.SetPositions(self.plant_context, positions)
+                    print(f"Successfully set {joints_set} joint positions from pickle file")
+                else:
+                    print("No joint names or positions found in joint states")
+                    self._set_initial_configuration()
+            else:
+                print("No joint states found in pickle file")
+                self._set_initial_configuration()
+                
+        except FileNotFoundError:
+            print(f"Pickle file {pickle_path} not found, using default configuration")
+            self._set_initial_configuration()
+        except Exception as e:
+            print(f"Error reading joint states from pickle file: {e}")
+            self._set_initial_configuration()
+
     def _set_initial_configuration(self):
         """Set the robot to a reasonable initial joint configuration"""
         # Set all joints to zero initially
@@ -863,7 +916,9 @@ class DrakeKinematicsEnv:
     
     def get_seeded_random_rgba(self, id: int):
         np.random.seed(id)
-        return np.random.rand(4)
+        random_color = np.random.rand(4)
+        random_color[3] = 0.9
+        return random_color
     
     @contextmanager
     def safe_lcm_instance(self):
@@ -1024,12 +1079,16 @@ if __name__ == "__main__":
         # Then set up Drake environment
         kinematic_chain_joints = [
             "pillar_platform_joint",
+            "pan_tilt_pan_joint",
+            "pan_tilt_head_joint",
             "joint1", 
             "joint2",
             "joint3",
             "joint4",
             "joint5",
             "joint6",
+            "joint7",
+            "joint8",
         ]
         
         links_to_ignore = [
@@ -1048,13 +1107,13 @@ if __name__ == "__main__":
             "link6",
         ]
         
-        urdf_path = "./tests/assets/devkit_base_descr.urdf"
+        urdf_path = "./assets/devkit_base_descr.urdf"
         urdf_path = os.path.abspath(urdf_path)
         
         print(f"Attempting to load URDF from: {urdf_path}")
         
         env = DrakeKinematicsEnv(urdf_path, kinematic_chain_joints, links_to_ignore)
-        env.set_joint_positions([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        # env.set_joint_positions([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         transform = env.get_transform("world", "camera_center_link")
         print(transform.transform.translation.x, transform.transform.translation.y, transform.transform.translation.z)
         print(transform.transform.rotation.w, transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z)
