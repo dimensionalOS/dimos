@@ -42,11 +42,12 @@ VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
 
 class WebRTCRobot(ConnectionInterface):
-    def __init__(self, ip: str, mode: str = "ai"):
+    def __init__(self, ip: str, mode: str = "normal"):
         self.ip = ip
         self.mode = mode
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
-        self.connect()
+        # self.connect()
+        print("WebRTCRobot initialized")
 
     def connect(self):
         self.loop = asyncio.new_event_loop()
@@ -80,6 +81,7 @@ class WebRTCRobot(ConnectionInterface):
         self.thread.start()
         self.connection_ready.wait()
 
+    @rpc
     def move(self, velocity: Vector, duration: float = 0.0) -> bool:
         """Send movement command to the robot using velocity commands.
 
@@ -99,6 +101,8 @@ class WebRTCRobot(ConnectionInterface):
         # x - Positive right, negative left
         # y - positive forward, negative backwards
         # yaw - Positive rotate right, negative rotate left
+        print("moving", velocity)
+
         async def async_move():
             self.conn.datachannel.pub_sub.publish_without_callback(
                 RTC_TOPIC["WIRELESS_CONTROLLER"],
@@ -132,10 +136,44 @@ class WebRTCRobot(ConnectionInterface):
 
     # Generic conversion of unitree subscription to Subject (used for all subs)
     def unitree_sub_stream(self, topic_name: str):
+        def start_subscription(cb):
+            # Schedule the subscription in the WebRTC connection's event loop
+            future = asyncio.run_coroutine_threadsafe(
+                self._async_subscribe(topic_name, cb), self.loop
+            )
+            return future.result()
+
+        def stop_subscription(cb):
+            # Schedule the unsubscription in the WebRTC connection's event loop
+            future = asyncio.run_coroutine_threadsafe(
+                self._async_unsubscribe(topic_name), self.loop
+            )
+            try:
+                return future.result()
+            except:
+                pass  # Ignore errors during cleanup
+
         return callback_to_observable(
-            start=lambda cb: self.conn.datachannel.pub_sub.subscribe(topic_name, cb),
-            stop=lambda: self.conn.datachannel.pub_sub.unsubscribe(topic_name),
+            start=start_subscription,
+            stop=stop_subscription,
         )
+
+    async def _async_subscribe(self, topic_name: str, cb):
+        """Async method to subscribe to a topic - runs in the WebRTC event loop"""
+        print(f"Subscribing to topic: {topic_name}")
+
+        def debug_cb(msg):
+            # print(f"Received message on topic {topic_name}: {type(msg)}")
+            return cb(msg)
+
+        result = self.conn.datachannel.pub_sub.subscribe(topic_name, debug_cb)
+        print(f"Subscription result for {topic_name}: {result}")
+        return result
+
+    async def _async_unsubscribe(self, topic_name: str):
+        """Async method to unsubscribe from a topic - runs in the WebRTC event loop"""
+        print(f"Unsubscribing from topic: {topic_name}")
+        return self.conn.datachannel.pub_sub.unsubscribe(topic_name)
 
     # Generic sync API call (we jump into the client thread)
     def publish_request(self, topic: str, data: dict):
@@ -220,12 +258,12 @@ class WebRTCRobot(ConnectionInterface):
                 subject.on_next(frame.to_ndarray(format="bgr24"))
 
         self.conn.video.add_track_callback(accept_track)
-        self.conn.video.switchVideoChannel(True)
+        # self.conn.video.switchVideoChannel(True)
 
         def stop(cb):
             stop_event.set()  # Signal the loop to stop
             self.conn.video.track_callbacks.remove(accept_track)
-            self.conn.video.switchVideoChannel(False)
+            # self.conn.video.switchVideoChannel(False)
 
         return subject.pipe(ops.finally_action(stop))
 

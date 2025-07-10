@@ -40,6 +40,7 @@ from dimos.types.vector import Vector
 from dimos.utils.data import get_data
 from dimos.utils.reactive import backpressure, getter_streaming
 from dimos.utils.testing import TimedSensorReplay
+import os
 
 
 # can be swapped in for WebRTCRobot
@@ -68,7 +69,7 @@ class FakeRTC(WebRTCRobot):
         print("move supressed", vector)
 
 
-class ConnectionModule(FakeRTC, Module):
+class ConnectionModule(WebRTCRobot, Module):
     movecmd: In[Vector] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
@@ -81,18 +82,24 @@ class ConnectionModule(FakeRTC, Module):
     def __init__(self, ip: str, *args, **kwargs):
         Module.__init__(self, *args, **kwargs)
         self.ip = ip
+        WebRTCRobot.__init__(self, ip)
 
     @rpc
     def start(self):
+        self.connect()
+        self.standup()
         # ensure that LFS data is available
         data = get_data("unitree_office_walk")
         # Since TimedSensorReplay is now non-blocking, we can subscribe directly
         self.lidar_stream().subscribe(self.lidar.publish)
         self.odom_stream().subscribe(self.odom.publish)
-        self.video_stream().subscribe(self.video.publish)
+
+        # self.video_stream().subscribe(self.video.publish)
+        def test_move(vector: Vector):
+            print("dasfdsasdfasdfasdfasdfasdf")
 
         print("movecmd sub")
-        self.movecmd.subscribe(print)
+        self.movecmd.subscribe(test_move)
         print("sub ok")
         self._odom = getter_streaming(self.odom_stream())
         self._lidar = getter_streaming(self.lidar_stream())
@@ -119,7 +126,7 @@ class ControlModule(Module):
         async def plancmd():
             await asyncio.sleep(4)
             print(colors.red("requesting global plan"))
-            self.plancmd.publish(Vector3([0, 0, 0]))
+            self.plancmd.publish(Vector3([-6, -3, 0]))
 
         asyncio.create_task(plancmd())
 
@@ -150,6 +157,7 @@ class Unitree:
             SimplePlanner,
             get_costmap=connection.get_local_costmap,
             get_robot_pos=connection.get_pos,
+            set_move=connection.move,
         )
 
         global_planner = dimos.deploy(
@@ -201,6 +209,6 @@ class Unitree:
 
 
 if __name__ == "__main__":
-    unitree = Unitree("Bla")
+    unitree = Unitree(os.getenv("ROBOT_IP"))
     asyncio.run(unitree.start())
     time.sleep(30)
