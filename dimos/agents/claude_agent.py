@@ -624,8 +624,11 @@ class ClaudeAgent(LLMAgent):
             observer.on_completed()
         except Exception as e:
             logger.error(f"Query failed in {self.dev_name}: {e}")
-            observer.on_error(e)
-            self.response_subject.on_error(e)
+            # Send a user-friendly error message instead of propagating the error
+            error_message = "I apologize, but I'm having trouble processing your request right now. Please try again."
+            observer.on_next(error_message)
+            self.response_subject.on_next(error_message)
+            observer.on_completed()
 
     def _handle_tooling(self, response_message, messages):
         """Executes tools and appends tool-use/result blocks to messages."""
@@ -649,12 +652,36 @@ class ClaudeAgent(LLMAgent):
             }
             messages.append({"role": "assistant", "content": [tool_use_block]})
 
-            # Execute the tool
-            args = json.loads(tool_call.function.arguments)
-            tool_result = self.skills.call(tool_call.function.name, **args)
+            try:
+                # Execute the tool
+                args = json.loads(tool_call.function.arguments)
+                tool_result = self.skills.call(tool_call.function.name, **args)
 
-            # Add tool result to conversation history
-            if tool_result:
+                # Check if the result is an error message
+                if isinstance(tool_result, str) and (
+                    "Error executing skill" in tool_result or "is not available" in tool_result
+                ):
+                    # Log the error but provide a user-friendly message
+                    logger.error(f"Tool execution failed: {tool_result}")
+                    tool_result = "I apologize, but I'm having trouble executing that action right now. Please try again or ask for something else."
+
+                # Add tool result to conversation history
+                if tool_result:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_call.id,
+                                    "content": f"{tool_result}",
+                                }
+                            ],
+                        }
+                    )
+            except Exception as e:
+                logger.error(f"Unexpected error executing tool {tool_call.function.name}: {e}")
+                # Add error result to conversation history
                 messages.append(
                     {
                         "role": "user",
@@ -662,7 +689,7 @@ class ClaudeAgent(LLMAgent):
                             {
                                 "type": "tool_result",
                                 "tool_use_id": tool_call.id,
-                                "content": f"{tool_result}",
+                                "content": "I apologize, but I encountered an error while trying to execute that action. Please try again.",
                             }
                         ],
                     }
@@ -672,13 +699,19 @@ class ClaudeAgent(LLMAgent):
         """Runs the observable query for each tool call in the current response_message"""
         if not hasattr(response_message, "tool_calls") or not response_message.tool_calls:
             return
-        for tool_call in response_message.tool_calls:
-            tool_name = tool_call.function.name
-            tool_id = tool_call.id
-            self.run_observable_query(
-                query_text=f"Tool {tool_name}, ID: {tool_id} execution complete. Please summarize the results and continue.",
-                thinking_budget_tokens=0,
-            ).run()
+
+        try:
+            for tool_call in response_message.tool_calls:
+                tool_name = tool_call.function.name
+                tool_id = tool_call.id
+                self.run_observable_query(
+                    query_text=f"Tool {tool_name}, ID: {tool_id} execution complete. Please summarize the results and continue.",
+                    thinking_budget_tokens=0,
+                ).run()
+        except Exception as e:
+            logger.error(f"Error in tooling callback: {e}")
+            # Continue processing even if the callback fails
+            pass
 
     def _debug_api_call(self, claude_params: dict):
         """Debugging function to log API calls with truncated base64 data."""

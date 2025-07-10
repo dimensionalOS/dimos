@@ -216,32 +216,30 @@ local_planner_viz_stream = robot.local_planner_viz_stream.pipe(ops.share())
 min_confidence = 0.6
 class_filter = None  # No class filtering
 min_confidence = 0.99  # temporarily disable detections
-# detector = Detic2DDetector(vocabulary=None, threshold=min_confidence)
 
 # Create video stream from robot's camera
-video_stream = robot.get_video_stream()  # WebRTC doesn't use ROS video stream
+video_stream = backpressure(robot.get_video_stream())  # WebRTC doesn't use ROS video stream
 
 # # Initialize ObjectDetectionStream with robot
-# object_detector = ObjectDetectionStream(
-#     camera_intrinsics=robot.camera_intrinsics,
-#     min_confidence=min_confidence,
-#     class_filter=class_filter,
-#     get_pose=robot.get_pose,
-#     detector=detector,
-#     video_stream=video_stream,
-# )
+object_detector = ObjectDetectionStream(
+    camera_intrinsics=robot.camera_intrinsics,
+    min_confidence=min_confidence,
+    class_filter=class_filter,
+    get_pose=robot.get_pose,
+    video_stream=video_stream,
+)
 
 # # Create visualization stream for web interface
-# viz_stream = backpressure(object_detector.get_stream()).pipe(
-#     ops.share(),
-#     ops.map(lambda x: x["viz_frame"] if x is not None else None),
-#     ops.filter(lambda x: x is not None),
-# )
+viz_stream = backpressure(object_detector.get_stream()).pipe(
+    ops.share(),
+    ops.map(lambda x: x["viz_frame"] if x is not None else None),
+    ops.filter(lambda x: x is not None),
+)
 
 # # Get the formatted detection stream
-# formatted_detection_stream = object_detector.get_formatted_stream().pipe(
-#     ops.filter(lambda x: x is not None)
-# )
+formatted_detection_stream = object_detector.get_formatted_stream().pipe(
+    ops.filter(lambda x: x is not None)
+)
 
 
 # Create a direct mapping that combines detection data with locations
@@ -272,12 +270,12 @@ def combine_with_locations(object_detections):
 
 
 # Create the combined stream with a simple pipe operation
-# enhanced_data_stream = formatted_detection_stream.pipe(ops.map(combine_with_locations), ops.share())
+enhanced_data_stream = formatted_detection_stream.pipe(ops.map(combine_with_locations), ops.share())
 
 streams = {
     "unitree_video": robot.get_video_stream(),  # Changed from get_ros_video_stream to get_video_stream for WebRTC
     "local_planner_viz": local_planner_viz_stream,
-    # "object_detection": viz_stream,  # Uncommented object detection
+    "object_detection": viz_stream,  # Uncommented object detection
 }
 text_streams = {
     "agent_responses": agent_response_stream,
@@ -294,15 +292,17 @@ with open(
     system_query = f.read()
 
 # Create a ClaudeAgent instance
-agent = CerebrasAgent(
+agent = ClaudeAgent(
     dev_name="test_agent",
     # input_query_stream=stt_node.emit_text(),
     input_query_stream=web_interface.query_stream,
+    input_data_stream=enhanced_data_stream,
     skills=robot.get_skills(),
     system_query=system_query,
-    # model_name="claude-3-7-sonnet-latest",
-    # thinking_budget_tokens=0,
-    model_name="llama-4-scout-17b-16e-instruct",
+    model_name="claude-3-5-haiku-latest",
+    thinking_budget_tokens=0,
+    max_output_tokens_per_request=8192,
+    # model_name="llama-4-scout-17b-16e-instruct",
 )
 
 # tts_node = tts()
@@ -313,7 +313,7 @@ robot_skills.add(ObserveStream)
 robot_skills.add(Observe)
 robot_skills.add(KillSkill)
 robot_skills.add(NavigateWithText)
-robot_skills.add(FollowHuman)
+# robot_skills.add(FollowHuman) # TODO: broken
 robot_skills.add(GetPose)
 # robot_skills.add(Speak)
 robot_skills.add(NavigateToGoal)
@@ -323,7 +323,7 @@ robot_skills.create_instance("ObserveStream", robot=robot, agent=agent)
 robot_skills.create_instance("Observe", robot=robot, agent=agent)
 robot_skills.create_instance("KillSkill", robot=robot, skill_library=robot_skills)
 robot_skills.create_instance("NavigateWithText", robot=robot)
-robot_skills.create_instance("FollowHuman", robot=robot)
+# robot_skills.create_instance("FollowHuman", robot=robot)
 robot_skills.create_instance("GetPose", robot=robot)
 robot_skills.create_instance("NavigateToGoal", robot=robot)
 robot_skills.create_instance("Explore", robot=robot)
