@@ -29,34 +29,7 @@
 
   const handleKeyDown = async (event: KeyboardEvent) => {
     if (event.key === 'Enter') {
-      const [commandName, ...args] = command.split(' ');
-
-      if (import.meta.env.VITE_TRACKING_ENABLED === 'true') {
-        track(commandName, ...args);
-      }
-
-      const commandFunction = commands[commandName];
-
-      if (commandFunction) {
-        const output = await commandFunction(args);
-
-        if (commandName !== 'clear') {
-          if (output && typeof output === 'object' && 'type' in output && output.type === 'STREAM_START') {
-            // Add initial message to history
-            $history = [...$history, { command, outputs: [output.initialMessage] }];
-            // Connect to text stream
-            connectTextStream(output.streamKey);
-          } else {
-            $history = [...$history, { command, outputs: [output] }];
-          }
-        }
-      } else {
-        const output = `${commandName}: command not found`;
-        $history = [...$history, { command, outputs: [output] }];
-      }
-
-      command = '';
-      historyIndex = -1;
+      await executeCommand();
     } else if (event.key === 'ArrowUp') {
       if (historyIndex < $history.length - 1) {
         historyIndex++;
@@ -79,6 +52,37 @@
       event.preventDefault();
       $history = [];
     }
+  };
+
+  const executeCommand = async () => {
+    const [commandName, ...args] = command.split(' ');
+
+    if (import.meta.env.VITE_TRACKING_ENABLED === 'true') {
+      track(commandName, ...args);
+    }
+
+    const commandFunction = commands[commandName];
+
+    if (commandFunction) {
+      const output = await commandFunction(args);
+
+      if (commandName !== 'clear') {
+        if (output && typeof output === 'object' && 'type' in output && output.type === 'STREAM_START') {
+          // Add initial message to history
+          $history = [...$history, { command, outputs: [output.initialMessage] }];
+          // Connect to text stream
+          connectTextStream(output.streamKey);
+        } else {
+          $history = [...$history, { command, outputs: [output] }];
+        }
+      }
+    } else {
+      const output = `${commandName}: command not found`;
+      $history = [...$history, { command, outputs: [output] }];
+    }
+
+    command = '';
+    historyIndex = -1;
   };
 </script>
 
