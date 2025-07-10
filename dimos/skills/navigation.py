@@ -405,12 +405,6 @@ class NavigateWithText(AbstractRobotSkill):
                 logger.error(f"Error disposing navigation task: {e}")
             self._navigation_disposable = None
 
-        # Clean up spatial memory if it exists
-        if hasattr(self, "_spatial_memory") and self._spatial_memory is not None:
-            logger.info("Cleaning up spatial memory")
-            self._spatial_memory.cleanup()
-            self._spatial_memory = None
-
         return "Navigate skill stopped successfully."
 
 
