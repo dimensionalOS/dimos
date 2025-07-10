@@ -30,12 +30,12 @@ testgrid: List[Callable] = []
 class MyModule(Module):
     @rpc
     def add(self, a: int, b: int) -> int:
-        print("A + B", a + b)
+        print(f"A + B = {a + b}")
         return a + b
 
     @rpc
     def subtract(self, a: int, b: int) -> int:
-        print("A - B", a - b)
+        print(f"A - B = {a - b}")
         return a - b
 
 
@@ -112,6 +112,7 @@ def test_basics(rpc_context):
 def test_module_autobind(rpc_context):
     with rpc_context() as (server, client):
         module = MyModule()
+        print("\n")
 
         # We take an endpoint name from __class__.__name__,
         # so topics are:
@@ -149,6 +150,7 @@ def test_module_autobind(rpc_context):
 def test_sync(rpc_context):
     with rpc_context() as (server, client):
         module = MyModule()
+        print("\n")
 
         server.serve_module_rpc(module)
         assert 3 == client.call_sync("MyModule/add", [1, 2])
@@ -160,5 +162,6 @@ def test_sync(rpc_context):
 async def test_async(rpc_context):
     with rpc_context() as (server, client):
         module = MyModule()
+        print("\n")
         server.serve_module_rpc(module)
         assert 3 == await client.call_async("MyModule/add", [1, 2])
