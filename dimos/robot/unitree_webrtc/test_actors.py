@@ -119,6 +119,7 @@ if __name__ == "__main__":
     test_mapper_start(dimos)
 
 
+@pytest.mark.tool
 def test_counter(dimos):
     counter = dimos.deploy(Counter)
     assert counter.addten(10) == 20

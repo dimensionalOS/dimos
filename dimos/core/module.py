@@ -29,9 +29,13 @@ from dimos.protocol.rpc.lcmrpc import LCMRPC
 
 class ModuleBase:
     def __init__(self, *args, **kwargs):
-        self.rpc = LCMRPC()
-        self.rpc.serve_module_rpc(self)
-        self.rpc.start()
+        try:
+            get_worker()
+            self.rpc = LCMRPC()
+            self.rpc.serve_module_rpc(self)
+            self.rpc.start()
+        except ValueError:
+            return
 
     @property
     def outputs(self) -> dict[str, Out]:
