@@ -46,7 +46,7 @@ from lcm_msgs.sensor_msgs import CameraInfo as LCMCameraInfo
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dimos.perception.pointcloud.utils import visualize_clustered_point_clouds, visualize_voxel_grid
-from dimos.perception.manip_aio_processer import ManipulationProcessor
+from dimos.manipulation.manip_aio_processer import ManipulationProcessor
 from dimos.perception.grasp_generation.utils import visualize_grasps_3d
 from dimos.perception.pointcloud.utils import visualize_pcd
 from dimos.utils.logging_config import setup_logger
