@@ -77,9 +77,9 @@ class AstarPlanner(Planner):
     def plan(self, goal: VectorLike) -> Path:
         print("planning path to goal", goal)
         goal = to_vector(goal).to_2d()
-        pos = self.get_robot_pos().result()
+        pos = self.get_robot_pos()
         print("current pos", pos)
-        costmap = self.get_costmap().result().smudge()
+        costmap = self.get_costmap().smudge()
 
         print("current costmap", costmap)
         self.vis("target", goal)
