@@ -42,6 +42,7 @@ class ImageFormat(Enum):
 class Image(Timestamped):
     """Standardized image type with LCM integration."""
 
+    name = "sensor_msgs.Image"
     data: np.ndarray
     format: ImageFormat = field(default=ImageFormat.BGR)
     frame_id: str = field(default="")
@@ -292,12 +293,13 @@ class Image(Timestamped):
         msg.data_length = len(image_bytes)
         msg.data = image_bytes
 
-        return msg
+        return msg.encode()
 
     @classmethod
-    def lcm_decode(cls, msg: LCMImage, **kwargs) -> "Image":
+    def lcm_decode(cls, data: bytes, **kwargs) -> "Image":
         """Create Image from LCM Image message."""
         # Parse encoding to determine format and data type
+        msg = LCMImage.decode(data)
         format_info = cls._parse_encoding(msg.encoding)
 
         # Convert bytes back to numpy array

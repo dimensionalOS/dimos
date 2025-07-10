@@ -12,12 +12,76 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Protocol, Sequence, TypeVar
+import asyncio
+import time
+from typing import Any, Callable, Optional, Protocol, overload
 
-A = TypeVar("A", bound=Sequence)
+
+class Empty: ...
 
 
-class RPC(Protocol):
-    def call(self, service: str, method: str, arguments: A) -> Any: ...
-    def call_sync(self, service: str, method: str, arguments: A) -> Any: ...
-    def call_nowait(self, service: str, method: str, arguments: A) -> None: ...
+# module that we can inspect for RPCs
+class RPCInspectable(Protocol):
+    @classmethod
+    @property
+    def rpcs() -> dict[str, Callable]: ...
+
+
+class RPCClient(Protocol):
+    # if we don't provide callback, we don't get a return unsub f
+    @overload
+    def call(self, name: str, arguments: list, cb: None) -> None: ...
+
+    # if we provide callback, we do get return unsub f
+    @overload
+    def call(self, name: str, arguments: list, cb: Callable[[Any], None]) -> Callable[[], Any]: ...
+
+    def call(
+        self, name: str, arguments: list, cb: Optional[Callable]
+    ) -> Optional[Callable[[], Any]]: ...
+
+    # we bootstrap these from the call() implementation above
+    def call_sync(self, name: str, arguments: list) -> Any:
+        res = Empty
+
+        def receive_value(val):
+            nonlocal res
+            res = val
+
+        self.call(name, arguments, receive_value)
+
+        while res is Empty:
+            time.sleep(0.05)
+        return res
+
+    async def call_async(self, name: str, arguments: list) -> Any:
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+
+        def receive_value(val):
+            try:
+                loop.call_soon_threadsafe(future.set_result, val)
+            except Exception as e:
+                loop.call_soon_threadsafe(future.set_exception, e)
+
+        self.call(name, arguments, receive_value)
+
+        return await future
+
+    def serve_module_rpc(self, module: RPCInspectable, name: str = None):
+        for fname in module.rpcs.keys():
+            if not name:
+                name = module.__class__.__name__
+
+            def call(*args, fname=fname):
+                return getattr(module, fname)(*args)
+
+            topic = name + "/" + fname
+            self.serve_rpc(call, topic)
+
+
+class RPCServer(Protocol):
+    def serve(self, f: Callable, name: str) -> None: ...
+
+
+class RPC(RPCServer, RPCClient): ...

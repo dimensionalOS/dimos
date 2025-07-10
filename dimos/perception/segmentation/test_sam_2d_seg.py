@@ -27,6 +27,7 @@ from dimos.stream import video_provider
 from dimos.stream.video_provider import VideoProvider
 
 
+@pytest.mark.heavy
 class TestSam2DSegmenter:
     def test_sam_segmenter_initialization(self):
         """Test FastSAM segmenter initializes correctly with default model path."""

@@ -68,7 +68,7 @@ for dir_path in data/*; do
         compressed_dirs+=("$dir_name")
         
         # Add the compressed file to git LFS tracking
-        git add "$compressed_file"
+        git add -f "$compressed_file"
 
         echo -e "  ${GREEN}✓${NC} git-add $compressed_file"
 

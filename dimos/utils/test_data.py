@@ -16,10 +16,13 @@ import hashlib
 import os
 import subprocess
 
+import pytest
+
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils import data
 
 
+@pytest.mark.heavy
 def test_pull_file():
     repo_root = data._get_repo_root()
     test_file_name = "cafe.jpg"
@@ -75,6 +78,7 @@ def test_pull_file():
         )
 
 
+@pytest.mark.heavy
 def test_pull_dir():
     repo_root = data._get_repo_root()
     test_dir_name = "ab_lidar_frames"

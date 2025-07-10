@@ -181,6 +181,7 @@ files = [
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
 markers = [
+    "heavy: resource heavy test",
     "vis: marks tests that run visuals and require a visual check by dev",
     "benchmark: benchmark, executes something multiple times, calculates avg, prints to console",
     "exclude: arbitrary exclusion from CI and default test exec",
@@ -188,7 +189,7 @@ markers = [
     "needsdata: needs test data to be downloaded",
     "ros: depend on ros"]
 
-addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not ros'"
+addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not ros and not heavy'"
 
 
 

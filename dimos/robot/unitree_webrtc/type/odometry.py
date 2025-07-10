@@ -11,20 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import math
 from datetime import datetime
-from typing import Literal, TypedDict
+from io import BytesIO
+from typing import BinaryIO, Literal, TypeAlias, TypedDict
 
+from scipy.spatial.transform import Rotation as R
+
+from dimos.msgs.geometry_msgs import PoseStamped as LCMPoseStamped
+from dimos.msgs.geometry_msgs import Quaternion, Vector3
 from dimos.robot.unitree_webrtc.type.timeseries import (
     EpochLike,
+    Timestamped,
     to_datetime,
     to_human_readable,
 )
-from dimos.types.position import Position
-from dimos.types.vector import VectorLike, Vector
-from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_human_readable
-from scipy.spatial.transform import Rotation as R
+from dimos.types.timestamped import to_timestamp
+from dimos.types.vector import Vector, VectorLike
 
 raw_odometry_msg_sample = {
     "type": "msg",
@@ -78,10 +81,8 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-class Odometry(Position):
-    def __init__(self, pos: VectorLike, rot: VectorLike, ts: EpochLike):
-        super().__init__(pos, rot)
-        self.ts = to_datetime(ts) if ts else datetime.now()
+class Odometry(LCMPoseStamped):
+    name = "geometry_msgs.PoseStamped"
 
     @classmethod
     def from_msg(cls, msg: RawOdometryMessage) -> "Odometry":
@@ -90,24 +91,17 @@ class Odometry(Position):
         position = pose["position"]
 
         # Extract position
-        pos = [position.get("x"), position.get("y"), position.get("z")]
+        pos = Vector3(position.get("x"), position.get("y"), position.get("z"))
 
-        quat = [
+        rot = Quaternion(
             orientation.get("x"),
             orientation.get("y"),
             orientation.get("z"),
             orientation.get("w"),
-        ]
+        )
 
-        # Check if quaternion has zero norm (invalid)
-        quat_norm = sum(x**2 for x in quat) ** 0.5
-        if quat_norm < 1e-8:
-            quat = [0.0, 0.0, 0.0, 1.0]
-
-        rotation = R.from_quat(quat)
-        rot = Vector(rotation.as_euler("xyz", degrees=False))
-
-        return cls(pos, rot, msg["data"]["header"]["stamp"])
+        ts = to_timestamp(msg["data"]["header"]["stamp"])
+        return Odometry(pos, rot, ts=ts, frame_id="lidar")
 
     def __repr__(self) -> str:
-        return f"Odom ts({to_human_readable(self.ts)}) pos({self.pos}), rot({self.rot}) yaw({math.degrees(self.rot.z):.1f}°)"
+        return f"Odom pos({self.position}), rot({self.orientation})"

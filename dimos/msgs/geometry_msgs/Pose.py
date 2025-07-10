@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import struct
+import traceback
 from io import BytesIO
 from typing import BinaryIO, TypeAlias
 
@@ -42,6 +43,7 @@ class Pose(LCMPose):
         if not hasattr(data, "read"):
             data = BytesIO(data)
         if data.read(8) != cls._get_packed_fingerprint():
+            traceback.print_exc()
             raise ValueError("Decode error")
         return cls._lcm_decode_one(data)
 

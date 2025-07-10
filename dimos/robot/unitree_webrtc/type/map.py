@@ -12,29 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import open3d as o3d
-import numpy as np
 from dataclasses import dataclass
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
+import numpy as np
+import open3d as o3d
+import reactivex.operators as ops
+from reactivex.observable import Observable
+
+from dimos.core import In, Module, Out, rpc
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.types.costmap import Costmap, pointcloud_to_costmap
 
-from reactivex.observable import Observable
-import reactivex.operators as ops
 
-
-@dataclass
-class Map:
+class Map(Module):
+    lidar: In[LidarMessage] = None
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
-    voxel_size: float = 0.05
-    cost_resolution: float = 0.05
 
+    def __init__(self, voxel_size: float = 0.05, cost_resolution: float = 0.05, **kwargs):
+        self.voxel_size = voxel_size
+        self.cost_resolution = cost_resolution
+        super().__init__(**kwargs)
+
+    @rpc
+    def start(self):
+        self.lidar.subscribe(self.add_frame)
+
+    @rpc
     def add_frame(self, frame: LidarMessage) -> "Map":
         """Voxelise *frame* and splice it into the running map."""
         new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
-        return self
 
     def consume(self, observable: Observable[LidarMessage]) -> Observable["Map"]:
         """Reactive operator that folds a stream of `LidarMessage` into the map."""
@@ -44,7 +52,7 @@ class Map:
     def o3d_geometry(self) -> o3d.geometry.PointCloud:
         return self.pointcloud
 
-    @property
+    @rpc
     def costmap(self) -> Costmap:
         """Return a fully inflated cost-map in a `Costmap` wrapper."""
         inflate_radius_m = 0.5 * self.voxel_size if self.voxel_size > self.cost_resolution else 0.0
@@ -53,6 +61,7 @@ class Map:
             resolution=self.cost_resolution,
             inflate_radius_m=inflate_radius_m,
         )
+
         return Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution)
 
 

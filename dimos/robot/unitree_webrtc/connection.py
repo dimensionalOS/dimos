@@ -12,25 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import functools
 import asyncio
+import functools
 import threading
-from typing import TypeAlias, Literal
-from dimos.utils.reactive import backpressure, callback_to_observable
-from dimos.types.vector import Vector
-from dimos.types.position import Position
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
-from go2_webrtc_driver.constants import RTC_TOPIC, VUI_COLOR, SPORT_CMD
-from reactivex.subject import Subject
-from reactivex.observable import Observable
-import numpy as np
-from reactivex import operators as ops
-from aiortc import MediaStreamTrack
-from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
-from dimos.robot.connection_interface import ConnectionInterface
 import time
+from typing import Literal, TypeAlias
+
+import numpy as np
+from aiortc import MediaStreamTrack
+from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD, VUI_COLOR
+from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-not-found]
+    Go2WebRTCConnection,
+    WebRTCConnectionMethod,
+)
+from reactivex import operators as ops
+from reactivex.observable import Observable
+from reactivex.subject import Subject
+
+from dimos.core import In, Module, Out, rpc
+from dimos.robot.connection_interface import ConnectionInterface
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
+from dimos.robot.unitree_webrtc.type.odometry import Odometry
+from dimos.types.position import Position
+from dimos.types.vector import Vector
+from dimos.utils.reactive import backpressure, callback_to_observable
 
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
@@ -171,12 +177,14 @@ class WebRTCRobot(ConnectionInterface):
         self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["RecoveryStand"]})
         return True
 
+    @rpc
     def standup(self):
         if self.mode == "ai":
             return self.standup_ai()
         else:
             return self.standup_normal()
 
+    @rpc
     def liedown(self):
         return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
 
@@ -186,6 +194,7 @@ class WebRTCRobot(ConnectionInterface):
             {"api_id": SPORT_CMD["Standup"], "parameter": {"data": True}},
         )
 
+    @rpc
     def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 60) -> bool:
         return self.publish_request(
             RTC_TOPIC["VUI"],

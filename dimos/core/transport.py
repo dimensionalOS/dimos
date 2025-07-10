@@ -31,7 +31,7 @@ from typing import (
 
 import dimos.core.colors as colors
 from dimos.core.core import In, Transport
-from dimos.protocol.pubsub.lcmpubsub import LCM, pickleLCM
+from dimos.protocol.pubsub.lcmpubsub import LCM, PickleLCM
 from dimos.protocol.pubsub.lcmpubsub import Topic as LCMTopic
 
 T = TypeVar("T")
@@ -54,9 +54,9 @@ class PubSubTransport(Transport[T]):
 class pLCMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str):
+    def __init__(self, topic: str, **kwargs):
         super().__init__(topic)
-        self.lcm = pickleLCM()
+        self.lcm = PickleLCM(**kwargs)
 
     def __reduce__(self):
         return (pLCMTransport, (self.topic,))
@@ -78,9 +78,9 @@ class pLCMTransport(PubSubTransport[T]):
 class LCMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, type: type):
+    def __init__(self, topic: str, type: type, **kwargs):
         super().__init__(LCMTopic(topic, type))
-        self.lcm = LCM()
+        self.lcm = LCM(**kwargs)
 
     def __reduce__(self):
         return (LCMTransport, (self.topic.topic, self.topic.lcm_type))

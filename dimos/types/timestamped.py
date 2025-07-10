@@ -13,10 +13,30 @@
 # limitations under the License.
 
 from datetime import datetime, timezone
+from typing import Generic, Iterable, Tuple, TypedDict, TypeVar, Union
 
 # any class that carries a timestamp should inherit from this
 # this allows us to work with timeseries in consistent way, allign messages, replay etc
 # aditional functionality will come to this class soon
+
+
+class RosStamp(TypedDict):
+    sec: int
+    nanosec: int
+
+
+EpochLike = Union[int, float, datetime, RosStamp]
+
+
+def to_timestamp(ts: EpochLike) -> float:
+    """Convert EpochLike to a timestamp in seconds."""
+    if isinstance(ts, datetime):
+        return ts.timestamp()
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
+        return ts["sec"] + ts["nanosec"] / 1e9
+    raise TypeError("unsupported timestamp type")
 
 
 class Timestamped:

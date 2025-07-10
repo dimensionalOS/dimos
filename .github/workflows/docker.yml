@@ -161,3 +161,18 @@ jobs:
         }}
       cmd: "pytest"
       dev-image: dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+
+  # we run in parallel with normal tests for speed
+  run-heavy-tests:
+    needs: [check-changes, dev]
+    if: always()
+    uses: ./.github/workflows/tests.yml
+    with:
+      should-run: ${{
+        needs.check-changes.result == 'success' &&
+        ((needs.dev.result == 'success') ||
+        (needs.dev.result == 'skipped' &&
+        needs.check-changes.outputs.tests == 'true'))
+        }}
+      cmd: "pytest -m heavy"
+      dev-image: dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}

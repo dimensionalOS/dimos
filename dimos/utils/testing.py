@@ -15,15 +15,15 @@
 import glob
 import os
 import pickle
-import subprocess
-import tarfile
-from functools import cache
+import time
 from pathlib import Path
-from typing import Any, Callable, Generic, Iterator, Optional, Type, TypeVar, Union
+from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
 
-from reactivex import from_iterable, interval
+from reactivex import concat, empty, from_iterable, interval, just, merge, timer
 from reactivex import operators as ops
+from reactivex import timer as rx_timer
 from reactivex.observable import Observable
+from reactivex.scheduler import TimeoutScheduler
 
 from dimos.utils.data import _get_data_dir, get_data
 
@@ -140,3 +140,56 @@ class SensorStorage(Generic[T]):
 
         self.cnt += 1
         return self.cnt
+
+
+class TimedSensorStorage(SensorStorage[T]):
+    def save_one(self, frame: T) -> int:
+        return super().save_one((time.time(), frame))
+
+
+class TimedSensorReplay(SensorReplay[T]):
+    def load_one(self, name: Union[int, str, Path]) -> Union[T, Any]:
+        if isinstance(name, int):
+            full_path = self.root_dir / f"/{name:03d}.pickle"
+        elif isinstance(name, Path):
+            full_path = name
+        else:
+            full_path = self.root_dir / Path(f"{name}.pickle")
+
+        with open(full_path, "rb") as f:
+            data = pickle.load(f)
+            if self.autocast:
+                return (data[0], self.autocast(data[1]))
+            return data
+
+    def iterate(self) -> Iterator[Union[T, Any]]:
+        return (x[1] for x in super().iterate())
+
+    def iterate_ts(self) -> Iterator[Union[Tuple[float, T], Any]]:
+        return super().iterate()
+
+    def stream(self) -> Observable[Union[T, Any]]:
+        """Stream sensor data with original timing preserved (non-blocking)."""
+
+        def create_timed_stream():
+            iterator = self.iterate_ts()
+
+            try:
+                prev_timestamp, first_data = next(iterator)
+
+                yield just(first_data)
+
+                for timestamp, data in iterator:
+                    time_diff = timestamp - prev_timestamp
+
+                    if time_diff > 0:
+                        yield rx_timer(time_diff).pipe(ops.map(lambda _: data))
+                    else:
+                        yield just(data)
+
+                    prev_timestamp = timestamp
+
+            except StopIteration:
+                yield empty()
+
+        return concat(*create_timed_stream())

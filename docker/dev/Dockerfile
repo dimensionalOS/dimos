@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     net-tools \
     sudo \
+    iproute2 # for LCM networking system config \
     pre-commit
 
 

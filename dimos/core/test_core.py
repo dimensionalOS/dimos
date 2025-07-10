@@ -51,7 +51,6 @@ class RobotClient(Module):
 
     def __init__(self):
         super().__init__()
-        print(self)
         self._stop_event = Event()
         self._thread = None
 
@@ -105,7 +104,7 @@ class Navigation(Module):
         def _odom(msg):
             self.odom_msg_count += 1
             print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
-            self.mov.publish(msg.pos)
+            self.mov.publish(msg.position)
 
         self.odometry.subscribe(_odom)
 
@@ -117,6 +116,37 @@ class Navigation(Module):
                 print("RCV: unknown time", msg)
 
         self.lidar.subscribe(_lidar)
+
+
+def test_classmethods():
+    # Test class property access
+    class_rpcs = Navigation.rpcs
+    print("Class rpcs:", class_rpcs)
+
+    # Test instance property access
+    nav = Navigation()
+    instance_rpcs = nav.rpcs
+    print("Instance rpcs:", instance_rpcs)
+
+    # Assertions
+    assert isinstance(class_rpcs, dict), "Class rpcs should be a dictionary"
+    assert isinstance(instance_rpcs, dict), "Instance rpcs should be a dictionary"
+    assert class_rpcs == instance_rpcs, "Class and instance rpcs should be identical"
+
+    # Check that we have the expected RPC methods
+    assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
+    assert "start" in class_rpcs, "start should be in rpcs"
+    assert len(class_rpcs) == 2, "Should have exactly 2 RPC methods"
+
+    # Check that the values are callable
+    assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
+    assert callable(class_rpcs["start"]), "start should be callable"
+
+    # Check that they have the __rpc__ attribute
+    assert hasattr(class_rpcs["navigate_to"], "__rpc__"), (
+        "navigate_to should have __rpc__ attribute"
+    )
+    assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
 
 
 @pytest.mark.tool
