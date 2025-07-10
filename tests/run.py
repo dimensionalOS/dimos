@@ -294,14 +294,15 @@ with open(
     system_query = f.read()
 
 # Create a ClaudeAgent instance
-agent = ClaudeAgent(
+agent = CerebrasAgent(
     dev_name="test_agent",
     # input_query_stream=stt_node.emit_text(),
     input_query_stream=web_interface.query_stream,
     skills=robot.get_skills(),
     system_query=system_query,
-    model_name="claude-3-7-sonnet-latest",
-    thinking_budget_tokens=0,
+    # model_name="claude-3-7-sonnet-latest",
+    # thinking_budget_tokens=0,
+    model_name="llama-4-scout-17b-16e-instruct",
 )
 
 # tts_node = tts()
