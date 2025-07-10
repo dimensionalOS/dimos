@@ -24,6 +24,7 @@ from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 # from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
+from dimos.web.voice_web_interface import VoiceWebInterface
 from dimos.web.websocket_vis.server import WebsocketVis
 from dimos.skills.observe_stream import ObserveStream
 from dimos.skills.observe import Observe
@@ -282,7 +283,11 @@ text_streams = {
 
 web_interface = RobotWebInterface(port=5555, text_streams=text_streams, **streams)
 
-# stt_node = stt()
+# Initialize voice web interface
+voice_web_interface = VoiceWebInterface(port=5560)
+
+stt_node = stt()
+stt_node.consume_audio(voice_web_interface.emit_audio())
 
 # Read system query from prompt.txt file
 with open(
@@ -293,8 +298,8 @@ with open(
 # Create a ClaudeAgent instance
 agent = ClaudeAgent(
     dev_name="test_agent",
-    # input_query_stream=stt_node.emit_text(),
-    input_query_stream=web_interface.query_stream,
+    input_query_stream=stt_node.emit_text(),
+    # input_query_stream=web_interface.query_stream,
     input_data_stream=enhanced_data_stream,
     skills=robot.get_skills(),
     system_query=system_query,
@@ -338,6 +343,11 @@ print("Created memory.txt file")
 web_thread = threading.Thread(target=web_interface.run)
 web_thread.daemon = True
 web_thread.start()
+
+# Start voice web interface in a separate thread to avoid blocking
+voice_thread = threading.Thread(target=voice_web_interface.run)
+voice_thread.daemon = True
+voice_thread.start()
 
 try:
     while True:
