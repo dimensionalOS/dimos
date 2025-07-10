@@ -445,6 +445,11 @@ class DrakeKinematicsEnv:
             print(f"Warning: Error loading pickle file: {e}")
             return
 
+        # Preprocess detected objects to extract planes and remove overlapping points
+        if "detected_objects" in results:
+            results["detected_objects"] = self._preprocess_plane_detection(results["detected_objects"])
+            results["detected_objects"] = self._preprocess_overlapping_points(results["detected_objects"])
+        
         full_detected_pcd = o3d.geometry.PointCloud()
         for obj in results["detected_objects"]:
             pcd = o3d.geometry.PointCloud()
@@ -457,6 +462,234 @@ class DrakeKinematicsEnv:
         # print(type(misc_clusters[0]["points"]))
         # print(np.asarray(misc_clusters[0]["points"]).shape)
 
+    def _preprocess_plane_detection(self, detected_objects):
+        """
+        Preprocess detected objects to extract large planes (like tables) and create separate plane objects.
+        For each object, detect planes larger than 5cm and split them into separate objects.
+        
+        Args:
+            detected_objects: List of detected object dictionaries
+            
+        Returns:
+            List of detected objects with planes extracted as separate objects
+        """
+        if not detected_objects:
+            return detected_objects
+            
+        print(f"Preprocessing {len(detected_objects)} objects for plane detection...")
+        
+        processed_objects = []
+        plane_objects = []
+        min_plane_size = 0.05  # 5cm minimum plane size
+        
+        for i, obj in enumerate(detected_objects):
+            if "point_cloud_numpy" in obj:
+                points = obj["point_cloud_numpy"]
+            elif "point_cloud" in obj and obj["point_cloud"]:
+                points = np.array(obj["point_cloud"]["points"])
+            else:
+                print(f"Warning: No point cloud data found for object {i}")
+                processed_objects.append(obj)
+                continue
+                
+            if len(points) < 50:  # Need enough points for plane detection
+                print(f"  Object {i}: Too few points ({len(points)}) for plane detection")
+                processed_objects.append(obj)
+                continue
+            
+            # Extract planes from this object
+            remaining_points, extracted_planes = self._extract_planes_from_points(points, i, min_plane_size)
+            
+            # Update original object with remaining points
+            if len(remaining_points) > 0:
+                obj_copy = obj.copy()
+                obj_copy["point_cloud_numpy"] = remaining_points
+                processed_objects.append(obj_copy)
+                print(f"  Object {i}: {len(points)} → {len(remaining_points)} points (extracted {len(extracted_planes)} planes)")
+            else:
+                print(f"  Object {i}: All points were part of planes, object removed")
+            
+            # Create new objects for extracted planes
+            for j, plane_points in enumerate(extracted_planes):
+                plane_obj = obj.copy()
+                plane_obj["point_cloud_numpy"] = plane_points
+                plane_obj["is_extracted_plane"] = True
+                plane_obj["original_object_index"] = i
+                plane_obj["plane_index"] = j
+                plane_objects.append(plane_obj)
+                print(f"    Created plane object from object {i}, plane {j}: {len(plane_points)} points")
+        
+        # Combine processed objects with extracted plane objects
+        all_objects = processed_objects + plane_objects
+        print(f"Plane detection complete: {len(processed_objects)} objects + {len(plane_objects)} extracted planes = {len(all_objects)} total")
+        
+        return all_objects
+    
+    def _extract_planes_from_points(self, points, object_id, min_plane_size):
+        """
+        Extract planes from a point cloud using RANSAC plane detection.
+        
+        Args:
+            points: Nx3 numpy array of 3D points
+            object_id: ID for debugging/logging
+            min_plane_size: Minimum size (in meters) for a plane to be extracted
+            
+        Returns:
+            Tuple of (remaining_points, extracted_planes)
+            - remaining_points: Points that don't belong to any large plane
+            - extracted_planes: List of numpy arrays, each containing points of a detected plane
+        """
+        try:
+            # Create Open3D point cloud
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(points)
+            
+            remaining_points = points.copy()
+            extracted_planes = []
+            
+            # Iteratively extract planes
+            max_iterations = 3  # Maximum number of planes to extract per object
+            for iteration in range(max_iterations):
+                if len(remaining_points) < 50:  # Need enough points for plane detection
+                    break
+                
+                # Create point cloud from remaining points
+                temp_pcd = o3d.geometry.PointCloud()
+                temp_pcd.points = o3d.utility.Vector3dVector(remaining_points)
+                
+                # RANSAC plane detection
+                plane_model, inliers = temp_pcd.segment_plane(
+                    distance_threshold=0.01,  # 1cm tolerance
+                    ransac_n=3,
+                    num_iterations=1000
+                )
+                
+                if len(inliers) < 50:  # Need enough inliers for a valid plane
+                    break
+                
+                # Get plane points
+                plane_points = remaining_points[inliers]
+                
+                # Check if plane is large enough
+                plane_pcd = o3d.geometry.PointCloud()
+                plane_pcd.points = o3d.utility.Vector3dVector(plane_points)
+                
+                # Calculate plane bounding box to estimate size
+                bbox = plane_pcd.get_axis_aligned_bounding_box()
+                bbox_size = bbox.get_max_bound() - bbox.get_min_bound()
+                max_dimension = np.max(bbox_size)
+                
+                if max_dimension >= min_plane_size:
+                    # This is a large enough plane, extract it
+                    extracted_planes.append(plane_points)
+                    
+                    # Remove plane points from remaining points
+                    mask = np.ones(len(remaining_points), dtype=bool)
+                    mask[inliers] = False
+                    remaining_points = remaining_points[mask]
+                    
+                    print(f"    Extracted plane {len(extracted_planes)} from object {object_id}: {len(plane_points)} points, max dimension: {max_dimension:.3f}m")
+                else:
+                    # Plane is too small, stop looking for more planes
+                    print(f"    Found small plane in object {object_id} (max dimension: {max_dimension:.3f}m < {min_plane_size}m), stopping")
+                    break
+            
+            return remaining_points, extracted_planes
+            
+        except Exception as e:
+            print(f"Error in plane extraction for object {object_id}: {e}")
+            return points, []  # Return original points if extraction fails
+
+    def _preprocess_overlapping_points(self, detected_objects):
+        """
+        Preprocess detected objects to remove overlapping points.
+        Sort objects by number of points (ascending) and remove points from larger objects
+        that are already present in smaller objects.
+        
+        Args:
+            detected_objects: List of detected object dictionaries
+            
+        Returns:
+            List of detected objects with overlapping points removed
+        """
+        if not detected_objects:
+            return detected_objects
+            
+        print(f"Preprocessing {len(detected_objects)} objects to remove overlapping points...")
+        
+        # Extract point clouds and sort by number of points (ascending)
+        objects_with_points = []
+        for i, obj in enumerate(detected_objects):
+            if "point_cloud_numpy" in obj:
+                points = obj["point_cloud_numpy"]
+            elif "point_cloud" in obj and obj["point_cloud"]:
+                points = np.array(obj["point_cloud"]["points"])
+            else:
+                print(f"Warning: No point cloud data found for object {i}")
+                continue
+                
+            objects_with_points.append({
+                'original_index': i,
+                'points': points,
+                'num_points': len(points),
+                'object_data': obj.copy()
+            })
+        
+        # Sort by number of points (ascending - smallest first)
+        objects_with_points.sort(key=lambda x: x['num_points'])
+        
+        print("Object sizes before preprocessing:")
+        for obj in objects_with_points:
+            print(f"  Object {obj['original_index']}: {obj['num_points']} points")
+        
+        # Process objects from smallest to largest, removing overlapping points
+        processed_objects = []
+        all_processed_points = set()
+        
+        # Define a tolerance for point matching (in meters)
+        tolerance = 0.01  # 10mm tolerance
+        
+        for obj_data in objects_with_points:
+            points = obj_data['points']
+            original_count = len(points)
+            
+            # Remove points that are too close to already processed points
+            if all_processed_points:
+                # Convert processed points to numpy array for efficient distance computation
+                processed_points_array = np.array(list(all_processed_points))
+                
+                # Find points that are far enough from all processed points
+                unique_points = []
+                for point in points:
+                    # Calculate distances to all processed points
+                    distances = np.linalg.norm(processed_points_array - point, axis=1)
+                    # Keep point if it's far enough from all processed points
+                    if np.min(distances) > tolerance:
+                        unique_points.append(point)
+                        # Add to processed points set (rounded for set storage)
+                        all_processed_points.add(tuple(np.round(point, 4)))
+                    
+                unique_points = np.array(unique_points) if unique_points else np.empty((0, 3))
+            else:
+                # First object - keep all points
+                unique_points = points
+                # Add all points to processed set
+                for point in points:
+                    all_processed_points.add(tuple(np.round(point, 4)))
+            
+            # Update object data with filtered points
+            obj_data['object_data']['point_cloud_numpy'] = unique_points
+            processed_objects.append(obj_data)
+            
+            removed_count = original_count - len(unique_points)
+            print(f"  Object {obj_data['original_index']}: {original_count} → {len(unique_points)} points (removed {removed_count} overlapping)")
+        
+        # Sort back to original order and extract the processed object data
+        processed_objects.sort(key=lambda x: x['original_index'])
+        result = [obj['object_data'] for obj in processed_objects]
+        
+        print("Preprocessing complete!")
+        return result
 
     def process_and_add_object_class(self, object_key: str, results: dict):
         # Process detected objects
