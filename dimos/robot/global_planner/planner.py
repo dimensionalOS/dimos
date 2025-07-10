@@ -72,7 +72,7 @@ class AstarPlanner(Planner):
         self.get_robot_pos = get_robot_pos
 
     async def start(self):
-        print("TARGET SUB RES", self.target.subscribe(self.plan))
+        self.target.subscribe(self.plan)
 
     def plan(self, goal: VectorLike) -> Path:
         print("planning path to goal", goal)
