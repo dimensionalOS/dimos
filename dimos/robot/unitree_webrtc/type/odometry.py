@@ -65,14 +65,14 @@ class Orientation(TypedDict):
     w: float
 
 
-class Pose(TypedDict):
+class PoseData(TypedDict):
     position: RawPosition
     orientation: Orientation
 
 
 class OdometryData(TypedDict):
     header: Header
-    pose: Pose
+    pose: PoseData
 
 
 class RawOdometryMessage(TypedDict):
