@@ -24,7 +24,6 @@ from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 # from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.web.voice_web_interface import VoiceWebInterface
 from dimos.web.websocket_vis.server import WebsocketVis
 from dimos.skills.observe_stream import ObserveStream
 from dimos.skills.observe import Observe
@@ -212,6 +211,7 @@ websocket_vis.connect(robot.odom_stream().pipe(ops.map(lambda pos: ["robot_pos",
 agent_response_subject = rx.subject.Subject()
 agent_response_stream = agent_response_subject.pipe(ops.share())
 local_planner_viz_stream = robot.local_planner_viz_stream.pipe(ops.share())
+audio_subject = rx.subject.Subject()
 
 # Initialize object detection stream
 min_confidence = 0.6
@@ -281,13 +281,12 @@ text_streams = {
     "agent_responses": agent_response_stream,
 }
 
-web_interface = RobotWebInterface(port=5555, text_streams=text_streams, **streams)
-
-# Initialize voice web interface
-voice_web_interface = VoiceWebInterface(port=5560)
+web_interface = RobotWebInterface(
+    port=5555, text_streams=text_streams, audio_subject=audio_subject, **streams
+)
 
 stt_node = stt()
-stt_node.consume_audio(voice_web_interface.emit_audio())
+stt_node.consume_audio(audio_subject.pipe(ops.share()))
 
 # Read system query from prompt.txt file
 with open(
@@ -343,11 +342,6 @@ print("Created memory.txt file")
 web_thread = threading.Thread(target=web_interface.run)
 web_thread.daemon = True
 web_thread.start()
-
-# Start voice web interface in a separate thread to avoid blocking
-voice_thread = threading.Thread(target=voice_web_interface.run)
-voice_thread.daemon = True
-voice_thread.start()
 
 try:
     while True:

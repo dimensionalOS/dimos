@@ -27,7 +27,7 @@
 # Fast Api & Uvicorn
 import cv2
 from dimos.web.edge_io import EdgeIO
-from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from fastapi.templating import Jinja2Templates
@@ -42,6 +42,14 @@ from reactivex import operators as ops
 import reactivex as rx
 from fastapi.middleware.cors import CORSMiddleware
 
+# For audio processing
+import io
+import time
+import numpy as np
+import ffmpeg
+import soundfile as sf
+from dimos.stream.audio.base import AudioEvent
+
 # TODO: Resolve threading, start/stop stream functionality.
 
 
@@ -53,6 +61,7 @@ class FastAPIServer(EdgeIO):
         host="0.0.0.0",
         port=5555,
         text_streams=None,
+        audio_subject=None,
         **streams,
     ):
         print("Starting FastAPIServer initialization...")  # Debug print
@@ -88,6 +97,7 @@ class FastAPIServer(EdgeIO):
         # Create a Subject for text queries
         self.query_subject = rx.subject.Subject()
         self.query_stream = self.query_subject.pipe(ops.share())
+        self.audio_subject = audio_subject
 
         for key in self.streams:
             if self.streams[key] is not None:
@@ -198,6 +208,33 @@ class FastAPIServer(EdgeIO):
         finally:
             self.text_clients.remove(client_id)
 
+    @staticmethod
+    def _decode_audio(raw: bytes) -> tuple[np.ndarray, int]:
+        """Convert the webm/opus blob sent by the browser into mono 16-kHz PCM."""
+        try:
+            # Use ffmpeg to convert to 16-kHz mono 16-bit PCM WAV in memory
+            out, _ = (
+                ffmpeg.input("pipe:0")
+                .output(
+                    "pipe:1",
+                    format="wav",
+                    acodec="pcm_s16le",
+                    ac=1,
+                    ar="16000",
+                    loglevel="quiet",
+                )
+                .run(input=raw, capture_stdout=True, capture_stderr=True)
+            )
+            # Load with soundfile (returns float32 by default)
+            audio, sr = sf.read(io.BytesIO(out), dtype="float32")
+            # Ensure 1-D array (mono)
+            if audio.ndim > 1:
+                audio = audio[:, 0]
+            return np.array(audio), sr
+        except Exception as exc:
+            print(f"ffmpeg decoding failed: {exc}")
+            return None, None
+
     def setup_routes(self):
         """Set up FastAPI routes."""
 
@@ -221,6 +258,7 @@ class FastAPIServer(EdgeIO):
                     "request": request,
                     "stream_keys": stream_keys,
                     "text_stream_keys": text_stream_keys,
+                    "has_voice": self.audio_subject is not None,
                 },
             )
 
@@ -239,6 +277,39 @@ class FastAPIServer(EdgeIO):
                     status_code=500,
                     content={"success": False, "message": f"Server error: {str(e)}"},
                 )
+
+        @self.app.post("/upload_audio")
+        async def upload_audio(file: UploadFile = File(...)):
+            """Handle audio upload from the browser."""
+            if self.audio_subject is None:
+                return JSONResponse(
+                    status_code=400,
+                    content={"success": False, "message": "Voice input not configured"},
+                )
+
+            try:
+                data = await file.read()
+                audio_np, sr = self._decode_audio(data)
+                if audio_np is None:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"success": False, "message": "Unable to decode audio"},
+                    )
+
+                event = AudioEvent(
+                    data=audio_np,
+                    sample_rate=sr,
+                    timestamp=time.time(),
+                    channels=1 if audio_np.ndim == 1 else audio_np.shape[1],
+                )
+
+                # Push to reactive stream
+                self.audio_subject.on_next(event)
+                print(f"Received audio – {event.data.shape[0] / sr:.2f} s, {sr} Hz")
+                return {"success": True}
+            except Exception as e:
+                print(f"Failed to process uploaded audio: {e}")
+                return JSONResponse(status_code=500, content={"success": False, "message": str(e)})
 
         # Unitree API endpoints
         @self.app.get("/unitree/status")
