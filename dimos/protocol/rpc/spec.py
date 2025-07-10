@@ -49,6 +49,7 @@ class RPCClient(Protocol):
             res = val
 
         self.call(name, arguments, receive_value)
+
         while res is Empty:
             time.sleep(0.05)
         return res
@@ -75,7 +76,8 @@ class RPCClient(Protocol):
             def call(*args, fname=fname):
                 return getattr(module, fname)(*args)
 
-            self.serve_rpc(call, name + "/" + fname)
+            topic = name + "/" + fname
+            self.serve_rpc(call, topic)
 
 
 class RPCServer(Protocol):

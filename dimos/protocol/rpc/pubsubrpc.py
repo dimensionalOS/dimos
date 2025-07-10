@@ -109,16 +109,6 @@ class PubSubRPCMixin(RPC, Generic[TopicT]):
         req = {"name": name, "args": arguments, "id": None}
         self.publish(topic_req, self._encodeRPCReq(req))
 
-    def serve_module_rpc(self, module: RPCInspectable, name: str = None):
-        for fname in module.rpcs.keys():
-            if not name:
-                name = module.__class__.__name__
-
-            def call(*args, fname=fname):
-                return getattr(module, fname)(*args)
-
-            self.serve_rpc(call, name + "/" + fname)
-
     def serve_rpc(self, f: Callable, name: str = None):
         if not name:
             name = f.__name__

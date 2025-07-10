@@ -20,7 +20,7 @@ import pytest
 from reactivex import operators as ops
 
 from dimos import core
-from dimos.core import In, Module, Out
+from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
@@ -66,7 +66,8 @@ class Consumer:
         return n
 
 
-class Counter:
+class Counter(Module):
+    @rpc
     def addten(self, x: int):
         print(f"counter adding to {x}")
         return x + 10
@@ -116,3 +117,8 @@ if __name__ == "__main__":
     dimos = core.start(2)
     test_basic(dimos)
     test_mapper_start(dimos)
+
+
+def test_counter(dimos):
+    counter = dimos.deploy(Counter)
+    assert counter.addten(10) == 20

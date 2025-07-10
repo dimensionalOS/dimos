@@ -29,9 +29,10 @@ from dimos.protocol.rpc.spec import RPCServer
 
 class ModuleBase:
     def __init__(self, rpc: RPCServer = None, *args, **kwargs):
-        self.rpc = rpc
-        rpc.serve_module_rpc(self)
-        rpc.start()
+        if rpc:
+            self.rpc = rpc()
+            self.rpc.serve_module_rpc(self)
+            self.rpc.start()
 
     @property
     def outputs(self) -> dict[str, Out]:
@@ -64,9 +65,9 @@ class ModuleBase:
     def io(self) -> str:
         def _box(name: str) -> str:
             return [
-                "┌┴" + "─" * (len(name) + 1) + "┐",
+                f"┌┴" + "─" * (len(name) + 1) + "┐",
                 f"│ {name} │",
-                "└┬" + "─" * (len(name) + 1) + "┘",
+                f"└┬" + "─" * (len(name) + 1) + "┘",
             ]
 
         # can't modify __str__ on a function like we are doing for I/O
@@ -112,7 +113,7 @@ class DaskModule(ModuleBase):
     ref: Actor
     worker: int
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         self.ref = None
 
         for name, ann in get_type_hints(self, include_extras=True).items():
@@ -125,6 +126,7 @@ class DaskModule(ModuleBase):
                 inner, *_ = get_args(ann) or (Any,)
                 stream = In(inner, name, self)
                 setattr(self, name, stream)
+        super().__init__(*args, **kwargs)
 
     def set_ref(self, ref) -> int:
         worker = get_worker()

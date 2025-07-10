@@ -12,16 +12,49 @@ import dimos.core.colors as colors
 from dimos.core.core import In, Out, RemoteOut, rpc
 from dimos.core.module import Module, ModuleBase
 from dimos.core.transport import LCMTransport, ZenohTransport, pLCMTransport
+from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPC
 
 
 def patch_actor(actor, cls): ...
 
 
+class RPCClient:
+    def __init__(self, rpc, actor_instance, actor_class):
+        self.rpc = rpc()
+        self.remote_name = actor_class.__name__
+        self.remote_instance = actor_instance
+        self.rpcs = actor_class.rpcs.keys()
+
+        self.rpc.start()
+
+    # passthrough
+    def __getattr__(self, name: str):
+        # Check if accessing a known safe attribute to avoid recursion
+        if name in {
+            "__class__",
+            "__init__",
+            "__dict__",
+            "__getattr__",
+            "rpcs",
+            "remote_name",
+            "remote_instance",
+            "actor_instance",
+        }:
+            raise AttributeError(f"{name} is not found.")
+
+        if name in self.rpcs:
+            return lambda *args: self.rpc.call_sync(f"{self.remote_name}/{name}", args)
+
+        # Try to avoid recursion by directly accessing attributes that are known
+        attribute = object.__getattribute__(self.actor_instance, name)
+        return attribute
+
+
 def patchdask(dask_client: Client):
     def deploy(
         actor_class,
-        rpc: RPC = None,
+        rpc: RPC = LCMRPC,
         *args,
         **kwargs,
     ):
@@ -31,22 +64,14 @@ def patchdask(dask_client: Client):
                 actor_class,
                 *args,
                 **kwargs,
-                rpc=RPC,
+                rpc=rpc,
                 actor=True,
             ).result()
 
             worker = actor.set_ref(actor).result()
             print((f"deployed: {colors.green(actor)} @ {colors.blue('worker ' + str(worker))}"))
 
-            if rpc:
-                rpc = RPC()
-                rpc.serve_module_rpc(actor)
-
-            for name, rpc in actor_class.rpcs.items():
-                print(f"binding rpc on {actor_class}, {name} to {rpc}")
-                setattr(actor, name, lambda: print("RPC CALLED", name, actor_class))
-
-            return actor
+            return RPCClient(rpc, actor, actor_class)
 
     dask_client.deploy = deploy
     return dask_client
