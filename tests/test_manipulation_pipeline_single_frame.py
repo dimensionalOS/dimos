@@ -37,7 +37,7 @@ from typing import Dict, List
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dimos.perception.pointcloud.utils import visualize_clustered_point_clouds, visualize_voxel_grid
-from dimos.perception.manip_aio_processer import ManipulationProcessor
+from dimos.manipulation.manip_aio_processer import ManipulationProcessor
 from dimos.perception.pointcloud.utils import (
     load_camera_matrix_from_yaml,
     visualize_pcd,
