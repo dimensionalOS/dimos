@@ -36,7 +36,7 @@ from dimos.stream.audio.pipelines import tts, stt
 import threading
 import json
 from dimos.types.vector import Vector
-from dimos.skills.speak import Speak
+from dimos.skills.unitree.unitree_speak import UnitreeSpeak
 
 from dimos.perception.object_detection_stream import ObjectDetectionStream
 from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
@@ -318,7 +318,7 @@ robot_skills.add(KillSkill)
 robot_skills.add(NavigateWithText)
 # robot_skills.add(FollowHuman) # TODO: broken
 robot_skills.add(GetPose)
-# robot_skills.add(Speak)
+robot_skills.add(UnitreeSpeak)  # Re-enable Speak skill
 robot_skills.add(NavigateToGoal)
 robot_skills.add(Explore)
 
@@ -330,7 +330,7 @@ robot_skills.create_instance("NavigateWithText", robot=robot)
 robot_skills.create_instance("GetPose", robot=robot)
 robot_skills.create_instance("NavigateToGoal", robot=robot)
 robot_skills.create_instance("Explore", robot=robot)
-# robot_skills.create_instance("Speak", tts_node=tts_node)
+robot_skills.create_instance("UnitreeSpeak", robot=robot)  # Now only needs robot instance
 
 # Subscribe to agent responses and send them to the subject
 agent.get_response_observable().subscribe(lambda x: agent_response_subject.on_next(x))
