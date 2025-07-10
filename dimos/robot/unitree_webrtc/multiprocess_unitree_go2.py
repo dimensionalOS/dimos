@@ -94,7 +94,8 @@ class ConnectionModule(WebRTCRobot, Module):
         self.lidar_stream().subscribe(self.lidar.publish)
         self.odom_stream().subscribe(self.odom.publish)
 
-        # self.video_stream().subscribe(self.video.publish)
+        self.video_stream().subscribe(self.video.publish)
+
         def test_move(vector: Vector):
             print("dasfdsasdfasdfasdfasdfasdf")
 
@@ -126,7 +127,7 @@ class ControlModule(Module):
         async def plancmd():
             await asyncio.sleep(4)
             print(colors.red("requesting global plan"))
-            self.plancmd.publish(Vector3([-6, -3, 0]))
+            self.plancmd.publish(Vector3([-2, 0, 0]))
 
         asyncio.create_task(plancmd())
 

@@ -94,7 +94,11 @@ class SimplePlanner(Module):
 
     async def start(self):
         self.path.subscribe(self.set_goal)
-        self.get_move_stream(frequency=20.0).subscribe(self.set_move)
+        # Create a single subscription that handles both set_move and movecmd
+        self.get_move_stream(frequency=20.0).subscribe(
+            lambda vector: self.set_move(vector)
+            # self.movecmd.publish(vector) TODO: fix broken movecmd stream
+        )
 
     @dispatch
     def set_goal(self, goal: Path, stop_event=None, goal_theta=None) -> bool:
@@ -178,11 +182,11 @@ class SimplePlanner(Module):
 
         if phase < 0.5:
             # First half: move LEFT (positive X according to our documentation)
-            movement = Vector(1, 0, 0)  # Move left at 0.2 m/s
+            movement = Vector(0.3, 0, 0)  # Move left at 0.2 m/s
             direction = "LEFT (positive X)"
         else:
             # Second half: move RIGHT (negative X according to our documentation)
-            movement = Vector(-1, 0, 0)  # Move right at 0.2 m/s
+            movement = Vector(-0.3, 0, 0)  # Move right at 0.2 m/s
             direction = "RIGHT (negative X)"
 
         print("=== LEFT-RIGHT MOVEMENT TEST ===")
