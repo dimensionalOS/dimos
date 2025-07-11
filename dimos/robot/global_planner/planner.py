@@ -17,7 +17,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from dimos.core import In, Module, Out
+from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.global_planner.algo import astar
 from dimos.types.costmap import Costmap
@@ -71,7 +71,8 @@ class AstarPlanner(Planner):
         self.get_costmap = get_costmap
         self.get_robot_pos = get_robot_pos
 
-    async def start(self):
+    @rpc
+    def start(self):
         self.target.subscribe(self.plan)
 
     def plan(self, goal: VectorLike) -> Path:
