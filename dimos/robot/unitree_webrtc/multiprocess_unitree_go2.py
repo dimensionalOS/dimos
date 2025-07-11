@@ -15,8 +15,8 @@
 import asyncio
 import contextvars
 import functools
-import time
 import threading
+import time
 from typing import Callable
 
 from dask.distributed import get_client, get_worker
@@ -47,28 +47,52 @@ from dimos.utils.testing import TimedSensorReplay
 class FakeRTC(WebRTCRobot):
     def connect(self): ...
 
+    def standup(self):
+        print("standup supressed")
+
+    def liedown(self):
+        print("liedown supressed")
+
+    @rpc
+    def start(self):
+        # ensure that LFS data is available
+        data = get_data("unitree_office_walk")
+        self.lidar_stream().subscribe(self.lidar.publish)
+        self.odom_stream().subscribe(self.odom.publish)
+        self.video_stream().subscribe(self.video.publish)
+        self.movecmd.subscribe(self.move)
+        self._odom = getter_streaming(self.odom_stream())
+        self._lidar = getter_streaming(self.lidar_stream())
+
     @functools.cache
     def lidar_stream(self):
         print("lidar stream start")
         lidar_store = TimedSensorReplay("unitree_office_walk/lidar", autocast=LidarMessage.from_msg)
-        return lidar_store.stream()
+        return backpressure(lidar_store.stream())
 
     @functools.cache
     def odom_stream(self):
         print("odom stream start")
         odom_store = TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
-        return odom_store.stream()
+        return backpressure(odom_store.stream())
 
     @functools.cache
-    def video_stream(self):
+    def video_stream(self, freq_hz=0.5):
         print("video stream start")
         video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
-        return video_store.stream().pipe(ops.sample(0.5))
+        return backpressure(video_store.stream().pipe(ops.sample(freq_hz)))
 
     def move(self, vector: Vector):
         print("move supressed", vector)
 
 
+class RealRTC(WebRTCRobot):
+    @rpc
+    def start(self):
+        WebRTCRobot.__init__(self, ip=self.ip)
+
+
+# inherit RealRTC instead of FakeRTC to run the real robot
 class ConnectionModule(FakeRTC, Module):
     movecmd: In[Vector] = None
     odom: Out[Vector3] = None
@@ -80,26 +104,8 @@ class ConnectionModule(FakeRTC, Module):
     _lidar: Callable[[], LidarMessage]
 
     def __init__(self, ip: str, *args, **kwargs):
-        Module.__init__(self, *args, **kwargs)
-
         self.ip = ip
-
-    @rpc
-    def start(self):
-        # ensure that LFS data is available
-        data = get_data("unitree_office_walk")
-        # Since TimedSensorReplay is now non-blocking, we can subscribe directly
-        self.lidar_stream().subscribe(self.lidar.publish)
-        self.odom_stream().subscribe(self.odom.publish)
-        self.video_stream().subscribe(self.video.publish)
-
-        print("movecmd sub")
-        self.movecmd.subscribe(print)
-        print("sub ok")
-        self._odom = getter_streaming(self.odom_stream())
-        self._lidar = getter_streaming(self.lidar_stream())
-
-        print("ConnectionModule started")
+        Module.__init__(self, *args, **kwargs)
 
     @rpc
     def get_local_costmap(self) -> Costmap:
@@ -117,6 +123,7 @@ class ConnectionModule(FakeRTC, Module):
 class ControlModule(Module):
     plancmd: Out[Vector3] = None
 
+    @rpc
     def start(self):
         def plancmd():
             time.sleep(4)
@@ -127,83 +134,73 @@ class ControlModule(Module):
         thread.start()
 
 
-class Unitree:
-    def __init__(self, ip: str):
-        self.ip = ip
+async def run(ip):
+    dimos = core.start(3)
+    connection = dimos.deploy(ConnectionModule, ip)
 
-    async def start(self):
-        dimos = None
-        if not dimos:
-            dimos = core.start(4)
+    # This enables LCM transport
+    # Ensures system multicast, udp sizes are auto-adjusted if needed
+    # TODO: this doesn't seem to work atm and LCMTransport instantiation can fail
+    pubsub.lcm.autoconf()
 
-        connection = dimos.deploy(ConnectionModule, self.ip)
+    connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
+    connection.odom.transport = core.LCMTransport("/odom", Odometry)
+    connection.video.transport = core.LCMTransport("/video", Image)
+    connection.movecmd.transport = core.LCMTransport("/move", Vector3)
 
-        # This enables LCM transport
-        # Ensures system multicast, udp sizes are auto-adjusted if needed
-        pubsub.lcm.autoconf()
+    mapper = dimos.deploy(Map, voxel_size=0.5)
 
-        connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
-        connection.odom.transport = core.LCMTransport("/odom", Odometry)
-        connection.video.transport = core.LCMTransport("/video", Image)
-        connection.movecmd.transport = core.LCMTransport("/move", Vector3)
+    local_planner = dimos.deploy(
+        SimplePlanner,
+        get_costmap=connection.get_local_costmap,
+        get_robot_pos=connection.get_pos,
+    )
 
-        mapper = dimos.deploy(Map, voxel_size=0.5)
+    global_planner = dimos.deploy(
+        AstarPlanner,
+        get_costmap=mapper.costmap,
+        get_robot_pos=connection.get_pos,
+    )
 
-        local_planner = dimos.deploy(
-            SimplePlanner,
-            get_costmap=connection.get_local_costmap,
-            get_robot_pos=connection.get_pos,
-        )
+    global_planner.path.transport = core.pLCMTransport("/global_path")
 
-        global_planner = dimos.deploy(
-            AstarPlanner,
-            get_costmap=mapper.costmap,
-            get_robot_pos=connection.get_pos,
-        )
+    local_planner.path.connect(global_planner.path)
+    local_planner.movecmd.connect(connection.movecmd)
 
-        global_planner.path.transport = core.pLCMTransport("/global_path")
+    ctrl = dimos.deploy(ControlModule)
 
-        local_planner.path.connect(global_planner.path)
-        local_planner.movecmd.connect(connection.movecmd)
+    mapper.lidar.connect(connection.lidar)
 
-        ctrl = dimos.deploy(ControlModule)
+    ctrl.plancmd.transport = core.LCMTransport("/global_target", Vector3)
+    global_planner.target.connect(ctrl.plancmd)
 
-        mapper.lidar.connect(connection.lidar)
+    # we review the structure
+    print("\n")
+    for module in [connection, mapper, local_planner, global_planner, ctrl]:
+        print(module.io().result(), "\n")
 
-        ctrl.plancmd.transport = core.LCMTransport("/global_target", Vector3)
-        global_planner.target.connect(ctrl.plancmd)
+    print(colors.green("starting mapper"))
+    mapper.start()
 
-        # we review the structure
-        print("\n")
-        for module in [connection, mapper, local_planner, global_planner, ctrl]:
-            print(module.io().result(), "\n")
+    print(colors.green("starting connection"))
+    connection.start()
 
-        print(colors.green("starting mapper"))
-        mapper.start()
+    print(colors.green("local planner start"))
+    local_planner.start()
 
-        print(colors.green("starting connection"))
-        connection.start()
+    print(colors.green("starting global planner"))
+    global_planner.start()
 
-        print(colors.green("local planner start"))
-        local_planner.start()
+    print(colors.green("starting ctrl"))
+    ctrl.start()
 
-        print(colors.green("starting global planner"))
-        global_planner.start()
+    print(colors.red("READY"))
 
-        print(colors.green("starting ctrl"))
-        ctrl.start()
-
-        print(colors.red("READY"))
-
-        await asyncio.sleep(3)
-
-        print("querying system")
-        print(mapper.costmap())
-        # global_planner.dask_receive_msg("target", Vector3([0, 0, 0])).result()
-        time.sleep(20)
+    await asyncio.sleep(20)
+    print("querying system")
+    print(mapper.costmap())
+    await asyncio.sleep(60)
 
 
 if __name__ == "__main__":
-    unitree = Unitree("Bla")
-    asyncio.run(unitree.start())
-    time.sleep(30)
+    asyncio.run(run("192.168.9.140"))
