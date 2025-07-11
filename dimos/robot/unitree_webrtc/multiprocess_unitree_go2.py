@@ -45,6 +45,10 @@ from dimos.utils.testing import TimedSensorReplay
 
 # can be swapped in for WebRTCRobot
 class FakeRTC(WebRTCRobot):
+    def __init__(self, *args, **kwargs):
+        # ensures we download msgs from lfs store
+        data = get_data("unitree_office_walk")
+
     def connect(self): ...
 
     def standup(self):
@@ -53,48 +57,34 @@ class FakeRTC(WebRTCRobot):
     def liedown(self):
         print("liedown supressed")
 
-    @rpc
-    def start(self):
-        # ensure that LFS data is available
-        data = get_data("unitree_office_walk")
-        self.lidar_stream().subscribe(self.lidar.publish)
-        self.odom_stream().subscribe(self.odom.publish)
-        self.video_stream().subscribe(self.video.publish)
-        self.movecmd.subscribe(self.move)
-        self._odom = getter_streaming(self.odom_stream())
-        self._lidar = getter_streaming(self.lidar_stream())
-
     @functools.cache
     def lidar_stream(self):
         print("lidar stream start")
         lidar_store = TimedSensorReplay("unitree_office_walk/lidar", autocast=LidarMessage.from_msg)
-        return backpressure(lidar_store.stream())
+        return lidar_store.stream()
 
     @functools.cache
     def odom_stream(self):
         print("odom stream start")
         odom_store = TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
-        return backpressure(odom_store.stream())
+        return odom_store.stream()
 
     @functools.cache
     def video_stream(self, freq_hz=0.5):
         print("video stream start")
         video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
-        return backpressure(video_store.stream().pipe(ops.sample(freq_hz)))
+        return video_store.stream().pipe(ops.sample(freq_hz))
 
     def move(self, vector: Vector):
         print("move supressed", vector)
 
 
-class RealRTC(WebRTCRobot):
-    @rpc
-    def start(self):
-        WebRTCRobot.__init__(self, ip=self.ip)
+class RealRTC(WebRTCRobot): ...
 
 
 # inherit RealRTC instead of FakeRTC to run the real robot
-class ConnectionModule(FakeRTC, Module):
-    movecmd: In[Vector] = None
+class ConnectionModule(RealRTC, Module):
+    movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
     video: Out[VideoMessage] = None
@@ -103,9 +93,24 @@ class ConnectionModule(FakeRTC, Module):
     _odom: Callable[[], Odometry]
     _lidar: Callable[[], LidarMessage]
 
+    @rpc
+    def move(self, vector: Vector3):
+        super().move(vector)
+
     def __init__(self, ip: str, *args, **kwargs):
         self.ip = ip
         Module.__init__(self, *args, **kwargs)
+
+    @rpc
+    def start(self):
+        super().__init__(self.ip)
+        # ensure that LFS data is available
+        self.lidar_stream().subscribe(self.lidar.publish)
+        self.odom_stream().subscribe(self.odom.publish)
+        self.video_stream().subscribe(self.video.publish)
+        self.movecmd.subscribe(self.move)
+        self._odom = getter_streaming(self.odom_stream())
+        self._lidar = getter_streaming(self.lidar_stream())
 
     @rpc
     def get_local_costmap(self) -> Costmap:
@@ -128,14 +133,14 @@ class ControlModule(Module):
         def plancmd():
             time.sleep(4)
             print(colors.red("requesting global plan"))
-            self.plancmd.publish(Vector3([0, 0, 0]))
+            self.plancmd.publish(Vector3([0.750893, -6.017522, 0.307474]))
 
         thread = threading.Thread(target=plancmd, daemon=True)
         thread.start()
 
 
 async def run(ip):
-    dimos = core.start(3)
+    dimos = core.start(4)
     connection = dimos.deploy(ConnectionModule, ip)
 
     # This enables LCM transport
@@ -154,6 +159,7 @@ async def run(ip):
         SimplePlanner,
         get_costmap=connection.get_local_costmap,
         get_robot_pos=connection.get_pos,
+        set_move=connection.move,
     )
 
     global_planner = dimos.deploy(
@@ -191,16 +197,18 @@ async def run(ip):
     print(colors.green("starting global planner"))
     global_planner.start()
 
-    print(colors.green("starting ctrl"))
-    ctrl.start()
+    # uncomment to move the bot
+    # print(colors.green("starting ctrl"))
+    # ctrl.start()
 
     print(colors.red("READY"))
 
-    await asyncio.sleep(20)
+    await asyncio.sleep(10)
     print("querying system")
     print(mapper.costmap())
     await asyncio.sleep(60)
 
 
 if __name__ == "__main__":
-    asyncio.run(run("192.168.9.140"))
+    asyncio.run(run("192.168.9.179"))
+    # asyncio.run(run("192.168.9.140"))
