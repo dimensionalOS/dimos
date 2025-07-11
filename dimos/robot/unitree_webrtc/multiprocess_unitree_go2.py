@@ -83,7 +83,7 @@ class RealRTC(WebRTCRobot): ...
 
 
 # inherit RealRTC instead of FakeRTC to run the real robot
-class ConnectionModule(RealRTC, Module):
+class ConnectionModule(FakeRTC, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
@@ -210,5 +210,7 @@ async def run(ip):
 
 
 if __name__ == "__main__":
-    asyncio.run(run("192.168.9.179"))
+    import os
+
+    asyncio.run(run(os.getenv("ROBOT_IP")))
     # asyncio.run(run("192.168.9.140"))
