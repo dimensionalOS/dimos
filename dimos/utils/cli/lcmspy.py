@@ -24,10 +24,22 @@ from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 
 
 class BandwidthUnit(Enum):
-    BPS = "B/s"
-    KBPS = "kB/s"
-    MBPS = "MB/s"
-    GBPS = "GB/s"
+    BP = "B"
+    KBP = "kB"
+    MBP = "MB"
+    GBP = "GB"
+
+
+def human_readable_bytes(bytes_value: float, round_to: int = 2) -> tuple[float, BandwidthUnit]:
+    """Convert bytes to human-readable format with appropriate units"""
+    if bytes_value >= 1024**3:  # GB
+        return round(bytes_value / (1024**3), round_to), BandwidthUnit.GBP
+    elif bytes_value >= 1024**2:  # MB
+        return round(bytes_value / (1024**2), round_to), BandwidthUnit.MBP
+    elif bytes_value >= 1024:  # KB
+        return round(bytes_value / 1024, round_to), BandwidthUnit.KBP
+    else:
+        return round(bytes_value, round_to), BandwidthUnit.BP
 
 
 class Topic:
@@ -38,11 +50,14 @@ class Topic:
         # Store (timestamp, data_size) tuples for statistics
         self.message_history = deque()
         self.history_window = history_window
+        # Total traffic accumulator (doesn't get cleaned up)
+        self.total_traffic_bytes = 0
 
     def msg(self, data: bytes):
         # print(f"> msg {self.__str__()} {len(data)} bytes")
         datalen = len(data)
         self.message_history.append((time.time(), datalen))
+        self.total_traffic_bytes += datalen
         self._cleanup_old_messages()
 
     def _cleanup_old_messages(self, max_age: float = None):
@@ -78,15 +93,9 @@ class Topic:
     def kbps_hr(self, time_window: float, round_to: int = 2) -> tuple[float, BandwidthUnit]:
         """Return human-readable bandwidth with appropriate units"""
         kbps_val = self.kbps(time_window)
-
-        if kbps_val >= 1024:
-            return round(kbps_val / 1024, round_to), BandwidthUnit.MBPS
-        elif kbps_val >= 1:
-            return round(kbps_val, round_to), BandwidthUnit.KBPS
-        else:
-            # Convert to B/s for small values
-            bps = kbps_val * 1000
-            return round(bps, round_to), BandwidthUnit.BPS
+        # Convert kB/s to B/s for human_readable_bytes
+        bps = kbps_val * 1000
+        return human_readable_bytes(bps, round_to)
 
     # avg msg size in the last n seconds
     def size(self, time_window: float) -> float:
@@ -95,6 +104,15 @@ class Topic:
             return 0.0
         total_size = sum(size for _, size in messages)
         return total_size / len(messages)
+
+    def total_traffic(self) -> int:
+        """Return total traffic passed in bytes since the beginning"""
+        return self.total_traffic_bytes
+
+    def total_traffic_hr(self) -> tuple[float, BandwidthUnit]:
+        """Return human-readable total traffic with appropriate units"""
+        total_bytes = self.total_traffic()
+        return human_readable_bytes(total_bytes)
 
     def __str__(self):
         return f"topic({self.name})"

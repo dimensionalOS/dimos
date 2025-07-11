@@ -87,6 +87,7 @@ class LCMSpyApp(App):
         self.table.add_column("Topic", width=30)
         self.table.add_column("Freq (Hz)")
         self.table.add_column("Bandwidth")
+        self.table.add_column("Total Traffic")
         yield self.table
         yield Footer()
 
@@ -100,18 +101,20 @@ class LCMSpyApp(App):
 
     def refresh_table(self):
         topics: List[SpyTopic] = list(self.spy.topic.values())
-        topics.sort(key=lambda t: t.kbps(5.0), reverse=True)
+        topics.sort(key=lambda t: t.total_traffic(), reverse=True)
         self.table.clear(columns=False)
 
         for t in topics:
             freq = t.freq(5.0)
             kbps = t.kbps(5.0)
             bw_val, bw_unit = t.kbps_hr(5.0)
+            total_val, total_unit = t.total_traffic_hr()
 
             self.table.add_row(
                 topic_text(t.name),
                 Text(f"{freq:.1f}", style=gradient(10, freq)),
-                Text(f"{bw_val} {bw_unit.value}", style=gradient(1024 * 3, kbps)),
+                Text(f"{bw_val} {bw_unit.value}/s", style=gradient(1024 * 3, kbps)),
+                Text(f"{total_val} {total_unit.value}"),
             )
 
 
@@ -119,7 +122,6 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) > 1 and sys.argv[1] == "web":
-        # get script file
         import os
 
         from textual_serve.server import Server
