@@ -4,7 +4,6 @@ import multiprocessing as mp
 import time
 from typing import Optional
 
-import pytest
 from dask.distributed import Client, LocalCluster
 from rich.console import Console
 
@@ -80,14 +79,6 @@ def patchdask(dask_client: Client):
 
     dask_client.deploy = deploy
     return dask_client
-
-
-@pytest.fixture
-def dimos():
-    process_count = 3  # we chill
-    client = start(process_count)
-    yield client
-    stop(client)
 
 
 def start(n: Optional[int] = None) -> Client:
