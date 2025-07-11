@@ -16,6 +16,7 @@ import asyncio
 import contextvars
 import functools
 import time
+import threading
 from typing import Callable
 
 from dask.distributed import get_client, get_worker
@@ -80,6 +81,7 @@ class ConnectionModule(FakeRTC, Module):
 
     def __init__(self, ip: str, *args, **kwargs):
         Module.__init__(self, *args, **kwargs)
+
         self.ip = ip
 
     @rpc
@@ -115,13 +117,14 @@ class ConnectionModule(FakeRTC, Module):
 class ControlModule(Module):
     plancmd: Out[Vector3] = None
 
-    async def start(self):
-        async def plancmd():
-            await asyncio.sleep(4)
+    def start(self):
+        def plancmd():
+            time.sleep(4)
             print(colors.red("requesting global plan"))
             self.plancmd.publish(Vector3([0, 0, 0]))
 
-        asyncio.create_task(plancmd())
+        thread = threading.Thread(target=plancmd, daemon=True)
+        thread.start()
 
 
 class Unitree:
