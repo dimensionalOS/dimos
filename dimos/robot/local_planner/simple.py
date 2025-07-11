@@ -21,7 +21,7 @@ import reactivex as rx
 from plum import dispatch
 from reactivex import operators as ops
 
-from dimos.core import In, Module, Out
+from dimos.core import In, Module, Out, rpc
 
 # from dimos.robot.local_planner.local_planner import LocalPlanner
 from dimos.types.costmap import Costmap
@@ -85,7 +85,8 @@ class SimplePlanner(Module):
             self.frequency_spy("movement_test"),
         )
 
-    async def start(self):
+    @rpc
+    def start(self):
         self.path.subscribe(self.set_goal)
         self.get_move_stream(frequency=20.0).subscribe(self.movecmd.publish)
 
