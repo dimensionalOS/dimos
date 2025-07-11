@@ -21,6 +21,13 @@
 
   const dispatch = createEventDispatcher();
 
+  // Get the server URL dynamically based on current location
+  const getServerUrl = () => {
+    // In production, use the same host as the frontend but on port 5555
+    const hostname = window.location.hostname;
+    return `http://${hostname}:5555`;
+  };
+
   let isRecording = false;
   let mediaRecorder: MediaRecorder | null = null;
   let chunks: Blob[] = [];
@@ -50,7 +57,7 @@
             formData.append('file', blob, 'recording.webm');
             
             try {
-              const res = await fetch('http://0.0.0.0:5555/upload_audio', {
+              const res = await fetch(`${getServerUrl()}/upload_audio`, {
                 method: 'POST',
                 body: formData
               });
