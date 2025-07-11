@@ -16,8 +16,12 @@ import hashlib
 import os
 import subprocess
 
+from reactivex import operators as ops
+import reactivex as rx
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils import testing
+from dimos.utils.data import get_data
 
 
 def test_sensor_replay():
@@ -36,3 +40,29 @@ def test_sensor_replay_cast():
         counter += 1
         assert isinstance(message, LidarMessage)
     assert counter == 500
+
+
+def test_timed_sensor_replay():
+    data = get_data("unitree_office_walk")
+    odom_store = testing.TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+
+    itermsgs = []
+    for msg in odom_store.iterate():
+        itermsgs.append(msg)
+        if len(itermsgs) > 9:
+            break
+
+    assert len(itermsgs) == 10
+
+    print("\n")
+
+    timed_msgs = []
+
+    for msg in odom_store.stream().pipe(ops.take(10), ops.to_list()).run():
+        timed_msgs.append(msg)
+
+    assert len(timed_msgs) == 10
+
+    for i in range(10):
+        print(itermsgs[i], timed_msgs[i])
+        assert itermsgs[i] == timed_msgs[i]

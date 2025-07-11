@@ -19,7 +19,15 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
 
-from reactivex import concat, empty, from_iterable, interval, just, merge, timer
+from reactivex import (
+    concat_with_iterable,
+    empty,
+    from_iterable,
+    interval,
+    just,
+    merge,
+    timer,
+)
 from reactivex import operators as ops
 from reactivex import timer as rx_timer
 from reactivex.observable import Observable
@@ -176,14 +184,14 @@ class TimedSensorReplay(SensorReplay[T]):
 
             try:
                 prev_timestamp, first_data = next(iterator)
-
                 yield just(first_data)
 
                 for timestamp, data in iterator:
                     time_diff = timestamp - prev_timestamp
-
                     if time_diff > 0:
-                        yield rx_timer(time_diff).pipe(ops.map(lambda _: data))
+                        yield rx_timer(time_diff).pipe(
+                            ops.map(lambda _, captured_data=data: captured_data)
+                        )
                     else:
                         yield just(data)
 
@@ -192,4 +200,4 @@ class TimedSensorReplay(SensorReplay[T]):
             except StopIteration:
                 yield empty()
 
-        return concat(*create_timed_stream())
+        return concat_with_iterable(create_timed_stream())
