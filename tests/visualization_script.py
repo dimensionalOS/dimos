@@ -80,7 +80,27 @@ from pydrake.geometry import (
 from pydrake.math import RigidTransform as DrakeRigidTransform
 from pydrake.common import MemoryFile
 
-from pydrake.all import MinimumDistanceLowerBoundConstraint, MultibodyPlant, Parser, DiagramBuilder, AddMultibodyPlantSceneGraph, MeshcatVisualizer, StartMeshcat, RigidTransform, Role, RollPitchYaw, RotationMatrix, Solve, InverseKinematics, MeshcatVisualizerParams, MinimumDistanceLowerBoundConstraint, DoDifferentialInverseKinematics, DifferentialInverseKinematicsStatus, DifferentialInverseKinematicsParameters, DepthImageToPointCloud
+from pydrake.all import (
+    MinimumDistanceLowerBoundConstraint,
+    MultibodyPlant,
+    Parser,
+    DiagramBuilder,
+    AddMultibodyPlantSceneGraph,
+    MeshcatVisualizer,
+    StartMeshcat,
+    RigidTransform,
+    Role,
+    RollPitchYaw,
+    RotationMatrix,
+    Solve,
+    InverseKinematics,
+    MeshcatVisualizerParams,
+    MinimumDistanceLowerBoundConstraint,
+    DoDifferentialInverseKinematics,
+    DifferentialInverseKinematicsStatus,
+    DifferentialInverseKinematicsParameters,
+    DepthImageToPointCloud,
+)
 from manipulation.scenarios import AddMultibodyTriad
 from manipulation.meshcat_utils import (  # TODO(russt): switch to pydrake version
     _MeshcatPoseSliders,
@@ -110,12 +130,12 @@ def deserialize_point_cloud(data):
     """Reconstruct Open3D PointCloud from serialized data."""
     if data is None:
         return None
-    
+
     pcd = o3d.geometry.PointCloud()
-    if 'points' in data and data['points']:
-        pcd.points = o3d.utility.Vector3dVector(np.array(data['points']))
-    if 'colors' in data and data['colors']:
-        pcd.colors = o3d.utility.Vector3dVector(np.array(data['colors']))
+    if "points" in data and data["points"]:
+        pcd.points = o3d.utility.Vector3dVector(np.array(data["points"]))
+    if "colors" in data and data["colors"]:
+        pcd.colors = o3d.utility.Vector3dVector(np.array(data["colors"]))
     return pcd
 
 
@@ -123,27 +143,27 @@ def deserialize_voxel_grid(data):
     """Reconstruct Open3D VoxelGrid from serialized data."""
     if data is None:
         return None
-    
+
     # Create a point cloud to convert to voxel grid
     pcd = o3d.geometry.PointCloud()
-    voxel_size = data['voxel_size']
-    origin = np.array(data['origin'])
-    
+    voxel_size = data["voxel_size"]
+    origin = np.array(data["origin"])
+
     # Create points from voxel indices
     points = []
     colors = []
-    for voxel in data['voxels']:
+    for voxel in data["voxels"]:
         # Each voxel is (i, j, k, r, g, b)
         i, j, k, r, g, b = voxel
         # Convert voxel grid index to 3D point
         point = origin + np.array([i, j, k]) * voxel_size
         points.append(point)
         colors.append([r, g, b])
-    
+
     if points:
         pcd.points = o3d.utility.Vector3dVector(np.array(points))
         pcd.colors = o3d.utility.Vector3dVector(np.array(colors))
-        
+
     # Convert to voxel grid
     voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, voxel_size)
     return voxel_grid
@@ -155,14 +175,14 @@ def visualize_results(pickle_path="manipulation_results.pkl"):
     try:
         with open(pickle_path, "rb") as f:
             data = pickle.load(f)
-            
+
         results = data["results"]
         color_img = data["color_img"]
         depth_img = data["depth_img"]
         intrinsics = data["intrinsics"]
-        
+
         print(f"Loaded results with keys: {list(results.keys())}")
-        
+
     except FileNotFoundError:
         print(f"Error: Pickle file {pickle_path} not found.")
         print("Make sure to run test_manipulation_pipeline_single_frame_lcm.py first.")
@@ -170,7 +190,7 @@ def visualize_results(pickle_path="manipulation_results.pkl"):
     except Exception as e:
         print(f"Error loading pickle file: {e}")
         return
-    
+
     # Determine number of subplots based on what results we have
     num_plots = 0
     plot_configs = []
@@ -247,7 +267,7 @@ def visualize_results(pickle_path="manipulation_results.pkl"):
     if "full_pointcloud" in results and results["full_pointcloud"] is not None:
         full_pcd = deserialize_point_cloud(results["full_pointcloud"])
         print(f"Reconstructed full point cloud with {len(np.asarray(full_pcd.points))} points")
-        
+
         # Visualize reconstructed full point cloud
         try:
             visualize_pcd(
@@ -262,14 +282,14 @@ def visualize_results(pickle_path="manipulation_results.pkl"):
             print(f"Error in point cloud visualization: {e}")
     else:
         print("No full point cloud available for visualization")
-    
+
     # Reconstruct misc clusters if available
     if "misc_clusters" in results and results["misc_clusters"]:
         misc_clusters = [deserialize_point_cloud(cluster) for cluster in results["misc_clusters"]]
         cluster_count = len(misc_clusters)
         total_misc_points = sum(len(np.asarray(cluster.points)) for cluster in misc_clusters)
         print(f"Reconstructed {cluster_count} misc clusters with {total_misc_points} total points")
-        
+
         # Visualize reconstructed misc clusters
         try:
             visualize_clustered_point_clouds(
@@ -284,14 +304,14 @@ def visualize_results(pickle_path="manipulation_results.pkl"):
             print(f"Error in misc clusters visualization: {e}")
     else:
         print("No misc clusters available for visualization")
-    
+
     # Reconstruct voxel grid if available
     if "misc_voxel_grid" in results and results["misc_voxel_grid"] is not None:
         misc_voxel_grid = deserialize_voxel_grid(results["misc_voxel_grid"])
         if misc_voxel_grid:
             voxel_count = len(misc_voxel_grid.get_voxels())
             print(f"Reconstructed voxel grid with {voxel_count} voxels")
-            
+
             # Visualize reconstructed voxel grid
             try:
                 visualize_voxel_grid(
@@ -308,8 +328,14 @@ def visualize_results(pickle_path="manipulation_results.pkl"):
     else:
         print("No voxel grid available for visualization")
 
+
 class DrakeKinematicsEnv:
-    def __init__(self, urdf_path: str, kinematic_chain_joints: List[str], links_to_ignore: Optional[List[str]] = None):
+    def __init__(
+        self,
+        urdf_path: str,
+        kinematic_chain_joints: List[str],
+        links_to_ignore: Optional[List[str]] = None,
+    ):
         self._resources_to_cleanup = []
 
         # Register cleanup at exit
@@ -328,11 +354,11 @@ class DrakeKinematicsEnv:
         # Check if URDF file exists
         if not os.path.exists(urdf_path):
             raise FileNotFoundError(f"URDF file not found: {urdf_path}")
-        
+
         # Drake utils initialization
         self.meshcat = StartMeshcat()
         print(f"Meshcat started at: {self.meshcat.web_url()}")
-        
+
         self.urdf_path = urdf_path
         self.builder = DiagramBuilder()
 
@@ -344,10 +370,10 @@ class DrakeKinematicsEnv:
         self.model_instances = self.parser.AddModelsFromUrl(f"file://{self.urdf_path}")
         self.kinematic_chain_joints = kinematic_chain_joints
         self.model_instance = self.model_instances[0] if self.model_instances else None
-        
+
         if not self.model_instances:
             raise RuntimeError("Failed to load any model instances from URDF")
-        
+
         print(f"Loaded {len(self.model_instances)} model instances")
 
         # Set up collision filtering
@@ -372,7 +398,7 @@ class DrakeKinematicsEnv:
 
         # Finalize the plant before adding visualizer
         self.plant.Finalize()
-        
+
         # Print some debug info about the plant
         print(f"Plant has {self.plant.num_bodies()} bodies")
         print(f"Plant has {self.plant.num_joints()} joints")
@@ -382,10 +408,7 @@ class DrakeKinematicsEnv:
 
         # Add visualizer
         self.visualizer = MeshcatVisualizer.AddToBuilder(
-            self.builder, 
-            self.scene_graph, 
-            self.meshcat, 
-            params=MeshcatVisualizerParams()
+            self.builder, self.scene_graph, self.meshcat, params=MeshcatVisualizerParams()
         )
 
         # Build the diagram
@@ -402,7 +425,9 @@ class DrakeKinematicsEnv:
                     start_index = joint.position_start()
                     for i in range(joint.num_positions()):
                         self.joint_indices.append(start_index + i)
-                    print(f"Added joint '{joint_name}' at indices {start_index} to {start_index + joint.num_positions() - 1}")
+                    print(
+                        f"Added joint '{joint_name}' at indices {start_index} to {start_index + joint.num_positions() - 1}"
+                    )
             except RuntimeError:
                 print(f"Warning: Joint '{joint_name}' not found in URDF.")
 
@@ -415,7 +440,7 @@ class DrakeKinematicsEnv:
             print("Warning: link6 not found")
             self.end_effector_link = None
             self.end_effector_frame = None
-            
+
         try:
             self.camera_link = self.plant.GetBodyByName("camera_center_link")
             print("Found camera_center_link")
@@ -425,10 +450,10 @@ class DrakeKinematicsEnv:
 
         # Set robot to a reasonable initial configuration
         self._set_initial_configuration()
-        
+
         # Force initial visualization update
         self._update_visualization()
-        
+
         print("Drake environment initialization complete!")
         print(f"Visit {self.meshcat.web_url()} to see the visualization")
 
@@ -438,10 +463,10 @@ class DrakeKinematicsEnv:
         try:
             with open(pickle_path, "rb") as f:
                 data = pickle.load(f)
-                
+
             results = data["results"]
             print(f"Loaded results with keys: {list(results.keys())}")
-            
+
         except FileNotFoundError:
             print(f"Warning: Pickle file {pickle_path} not found.")
             print("Skipping point cloud loading.")
@@ -455,13 +480,12 @@ class DrakeKinematicsEnv:
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(obj["point_cloud_numpy"])
             full_detected_pcd += pcd
-        
+
         self.process_and_add_object_class("all_objects", results)
         self.process_and_add_object_class("misc_clusters", results)
         misc_clusters = results["misc_clusters"]
         print(type(misc_clusters[0]["points"]))
         print(np.asarray(misc_clusters[0]["points"]).shape)
-
 
     def process_and_add_object_class(self, object_key: str, results: dict):
         # Process detected objects
@@ -470,7 +494,7 @@ class DrakeKinematicsEnv:
             if detected_objects:
                 print(f"Processing {len(detected_objects)} {object_key}")
                 all_decomposed_meshes = []
-                
+
                 transform = self.get_transform("world", "camera_center_link")
                 for i in range(len(detected_objects)):
                     try:
@@ -478,31 +502,38 @@ class DrakeKinematicsEnv:
                             points = np.asarray(detected_objects[i]["points"])
                         elif "point_cloud_numpy" in detected_objects[i]:
                             points = detected_objects[i]["point_cloud_numpy"]
-                        elif "point_cloud" in detected_objects[i] and detected_objects[i]["point_cloud"]:
+                        elif (
+                            "point_cloud" in detected_objects[i]
+                            and detected_objects[i]["point_cloud"]
+                        ):
                             # Handle serialized point cloud
                             points = np.array(detected_objects[i]["point_cloud"]["points"])
                         else:
                             print(f"Warning: No point cloud data found for object {i}")
                             continue
-                            
+
                         if len(points) < 10:  # Need more points for mesh reconstruction
-                            print(f"Warning: Object {i} has too few points ({len(points)}) for mesh reconstruction")
+                            print(
+                                f"Warning: Object {i} has too few points ({len(points)}) for mesh reconstruction"
+                            )
                             continue
-                        
+
                         # Swap y-z axes since this is a common problem
                         points = np.column_stack((points[:, 0], points[:, 2], -points[:, 1]))
                         # Transform points to world frame
                         points = self.transform_point_cloud_with_open3d(points, transform)
-                            
+
                         # Use fast DBSCAN clustering + convex hulls approach
                         clustered_hulls = self._create_clustered_convex_hulls(points, i)
                         all_decomposed_meshes.extend(clustered_hulls)
-                        
-                        print(f"Created {len(clustered_hulls)} clustered convex hulls for object {i}")
-                        
+
+                        print(
+                            f"Created {len(clustered_hulls)} clustered convex hulls for object {i}"
+                        )
+
                     except Exception as e:
                         print(f"Warning: Failed to process object {i}: {e}")
-                
+
                 if all_decomposed_meshes:
                     self.register_convex_hulls_as_collision(all_decomposed_meshes, object_key)
                     print(f"Registered {len(all_decomposed_meshes)} total clustered convex hulls")
@@ -511,15 +542,17 @@ class DrakeKinematicsEnv:
             else:
                 print("No detected objects found")
 
-    def _create_clustered_convex_hulls(self, points: np.ndarray, object_id: int) -> List[o3d.geometry.TriangleMesh]:
+    def _create_clustered_convex_hulls(
+        self, points: np.ndarray, object_id: int
+    ) -> List[o3d.geometry.TriangleMesh]:
         """
         Create convex hulls from DBSCAN clusters of point cloud data.
         Fast approach: cluster points, then convex hull each cluster.
-        
+
         Args:
             points: Nx3 numpy array of 3D points
             object_id: ID for debugging/logging
-            
+
         Returns:
             List of Open3D triangle meshes (convex hulls of clusters)
         """
@@ -527,61 +560,72 @@ class DrakeKinematicsEnv:
             # Create Open3D point cloud
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(points)
-            
+
             # Quick outlier removal (optional, can skip for speed)
             if len(points) > 50:  # Only for larger point clouds
                 pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=10, std_ratio=2.0)
                 points = np.asarray(pcd.points)
-            
+
             if len(points) < 4:
                 print(f"Warning: Too few points after filtering for object {object_id}")
                 return []
-            
+
             # Try multiple DBSCAN parameter combinations to find clusters
             clusters = []
             labels = None
-            
+
             # Calculate some basic statistics for parameter estimation
             if len(points) > 10:
                 # Compute nearest neighbor distances for better eps estimation
                 distances = pcd.compute_nearest_neighbor_distance()
                 avg_nn_distance = np.mean(distances)
                 std_nn_distance = np.std(distances)
-                
-                print(f"Object {object_id}: {len(points)} points, avg_nn_dist={avg_nn_distance:.4f}")
-                
+
+                print(
+                    f"Object {object_id}: {len(points)} points, avg_nn_dist={avg_nn_distance:.4f}"
+                )
+
                 for i in range(20):
                     try:
-                        eps = avg_nn_distance * (2.0 + (i*0.1))
+                        eps = avg_nn_distance * (2.0 + (i * 0.1))
                         min_samples = 20
                         labels = np.array(pcd.cluster_dbscan(eps=eps, min_points=min_samples))
                         unique_labels = np.unique(labels)
                         clusters = unique_labels[unique_labels >= 0]  # Remove noise label (-1)
-                        
+
                         noise_points = np.sum(labels == -1)
                         clustered_points = len(points) - noise_points
-                        
-                        print(f"  Try {i+1}: eps={eps:.4f}, min_samples={min_samples} → {len(clusters)} clusters, {clustered_points}/{len(points)} points clustered")
-                        
+
+                        print(
+                            f"  Try {i + 1}: eps={eps:.4f}, min_samples={min_samples} → {len(clusters)} clusters, {clustered_points}/{len(points)} points clustered"
+                        )
+
                         # Accept if we found clusters and most points are clustered
-                        if len(clusters) > 0 and clustered_points >= len(points) * 0.95:  # At least 30% of points clustered
-                            print(f"  ✓ Accepted parameter set {i+1}")
+                        if (
+                            len(clusters) > 0 and clustered_points >= len(points) * 0.95
+                        ):  # At least 30% of points clustered
+                            print(f"  ✓ Accepted parameter set {i + 1}")
                             break
-                            
+
                     except Exception as e:
-                        print(f"  Try {i+1}: Failed with eps={eps:.4f}, min_samples={min_samples}: {e}")
+                        print(
+                            f"  Try {i + 1}: Failed with eps={eps:.4f}, min_samples={min_samples}: {e}"
+                        )
                         continue
-            
+
             if len(clusters) == 0 or labels is None:
-                print(f"No clusters found for object {object_id} after all attempts, using entire point cloud")
+                print(
+                    f"No clusters found for object {object_id} after all attempts, using entire point cloud"
+                )
                 # Fallback: use entire point cloud as single convex hull
                 hull_mesh, _ = pcd.compute_convex_hull()
                 hull_mesh.compute_vertex_normals()
                 return [hull_mesh]
-            
-            print(f"Found {len(clusters)} clusters for object {object_id} (eps={eps:.3f}, min_samples={min_samples})")
 
-            
+            print(
+                f"Found {len(clusters)} clusters for object {object_id} (eps={eps:.3f}, min_samples={min_samples})"
+            )
+
             # Create convex hull for each cluster
             convex_hulls = []
             for cluster_id in clusters:
@@ -589,38 +633,47 @@ class DrakeKinematicsEnv:
                     # Get points for this cluster
                     cluster_mask = labels == cluster_id
                     cluster_points = points[cluster_mask]
-                    
+
                     if len(cluster_points) < 4:
-                        print(f"Skipping cluster {cluster_id} with only {len(cluster_points)} points")
+                        print(
+                            f"Skipping cluster {cluster_id} with only {len(cluster_points)} points"
+                        )
                         continue
-                    
+
                     # Create point cloud for this cluster
                     cluster_pcd = o3d.geometry.PointCloud()
                     cluster_pcd.points = o3d.utility.Vector3dVector(cluster_points)
-                    
+
                     # Compute convex hull
                     hull_mesh, _ = cluster_pcd.compute_convex_hull()
                     hull_mesh.compute_vertex_normals()
-                    
+
                     # Validate hull
-                    if len(np.asarray(hull_mesh.vertices)) >= 4 and len(np.asarray(hull_mesh.triangles)) >= 4:
+                    if (
+                        len(np.asarray(hull_mesh.vertices)) >= 4
+                        and len(np.asarray(hull_mesh.triangles)) >= 4
+                    ):
                         convex_hulls.append(hull_mesh)
-                        print(f"  Cluster {cluster_id}: {len(cluster_points)} points → convex hull with {len(np.asarray(hull_mesh.vertices))} vertices")
+                        print(
+                            f"  Cluster {cluster_id}: {len(cluster_points)} points → convex hull with {len(np.asarray(hull_mesh.vertices))} vertices"
+                        )
                     else:
                         print(f"  Skipping degenerate hull for cluster {cluster_id}")
-                        
+
                 except Exception as e:
                     print(f"Error processing cluster {cluster_id} for object {object_id}: {e}")
-            
+
             if not convex_hulls:
-                print(f"No valid convex hulls created for object {object_id}, using entire point cloud")
+                print(
+                    f"No valid convex hulls created for object {object_id}, using entire point cloud"
+                )
                 # Fallback: use entire point cloud as single convex hull
                 hull_mesh, _ = pcd.compute_convex_hull()
                 hull_mesh.compute_vertex_normals()
                 return [hull_mesh]
-            
+
             return convex_hulls
-            
+
         except Exception as e:
             print(f"Error in DBSCAN clustering for object {object_id}: {e}")
             # Final fallback: single convex hull
@@ -638,23 +691,23 @@ class DrakeKinematicsEnv:
         # Set all joints to zero initially
         if self.joint_indices:
             q = np.zeros(len(self.joint_indices))
-            
+
             # You can customize these values for a better initial pose
             # For example, if you know good default joint angles:
             if len(q) >= 6:  # Assuming at least 6 DOF arm
-                q[1] = 0.0    # joint1
-                q[2] = 0.0   # joint2 
-                q[3] = 0.0    # joint3
-                q[4] = 0.0    # joint4
-                q[5] = 0.0    # joint5
-                q[6] = 0.0    # joint6
-            
+                q[1] = 0.0  # joint1
+                q[2] = 0.0  # joint2
+                q[3] = 0.0  # joint3
+                q[4] = 0.0  # joint4
+                q[5] = 0.0  # joint5
+                q[6] = 0.0  # joint6
+
             # Set the joint positions in the plant context
             positions = self.plant.GetPositions(self.plant_context)
             for i, joint_idx in enumerate(self.joint_indices):
                 if joint_idx < len(positions):
                     positions[joint_idx] = q[i]
-            
+
             self.plant.SetPositions(self.plant_context, positions)
             print(f"Set initial joint configuration: {q}")
         else:
@@ -673,23 +726,27 @@ class DrakeKinematicsEnv:
     def set_joint_positions(self, joint_positions):
         """Set specific joint positions and update visualization"""
         if len(joint_positions) != len(self.joint_indices):
-            raise ValueError(f"Expected {len(self.joint_indices)} joint positions, got {len(joint_positions)}")
-        
+            raise ValueError(
+                f"Expected {len(self.joint_indices)} joint positions, got {len(joint_positions)}"
+            )
+
         positions = self.plant.GetPositions(self.plant_context)
         for i, joint_idx in enumerate(self.joint_indices):
             if joint_idx < len(positions):
                 positions[joint_idx] = joint_positions[i]
-        
+
         self.plant.SetPositions(self.plant_context, positions)
         self._update_visualization()
         print(f"Updated joint positions: {joint_positions}")
 
-    def register_convex_hulls_as_collision(self, meshes: List[o3d.geometry.TriangleMesh], hull_type: str):
+    def register_convex_hulls_as_collision(
+        self, meshes: List[o3d.geometry.TriangleMesh], hull_type: str
+    ):
         """Register convex hulls as collision and visual geometry"""
         if not meshes:
             print("No meshes to register")
             return
-            
+
         world = self.plant.world_body()
         proximity = ProximityProperties()
 
@@ -698,19 +755,17 @@ class DrakeKinematicsEnv:
                 # Convert Open3D → numpy arrays → trimesh.Trimesh
                 vertices = np.asarray(mesh.vertices)
                 faces = np.asarray(mesh.triangles)
-                
+
                 if len(vertices) == 0 or len(faces) == 0:
                     print(f"Warning: Mesh {i} is empty, skipping")
                     continue
-                    
+
                 tmesh = trimesh.Trimesh(vertices=vertices, faces=faces)
 
                 # Export to OBJ in memory
                 tmesh_obj_blob = tmesh.export(file_type="obj")
                 mem_file = MemoryFile(
-                    contents=tmesh_obj_blob,
-                    extension=".obj",
-                    filename_hint=f"convex_hull_{i}.obj"
+                    contents=tmesh_obj_blob, extension=".obj", filename_hint=f"convex_hull_{i}.obj"
                 )
                 in_memory_mesh = InMemoryMesh()
                 in_memory_mesh.mesh_file = mem_file
@@ -736,8 +791,10 @@ class DrakeKinematicsEnv:
                     diffuse_color=np.array([0.7, 0.5, 0.3, 0.8]),  # Orange-ish color
                 )
 
-                print(f"Registered convex hull {i} with {len(vertices)} vertices and {len(faces)} faces")
-                
+                print(
+                    f"Registered convex hull {i} with {len(vertices)} vertices and {len(faces)} faces"
+                )
+
             except Exception as e:
                 print(f"Warning: Failed to register mesh {i}: {e}")
 
@@ -754,11 +811,11 @@ class DrakeKinematicsEnv:
             print("Added reference table")
         except Exception as e:
             print(f"Warning: Failed to add table: {e}")
-    
+
     def get_seeded_random_rgba(self, id: int):
         np.random.seed(id)
         return np.random.rand(4)
-    
+
     @contextmanager
     def safe_lcm_instance(self):
         """Context manager for safely managing LCM instance lifecycle"""
@@ -776,24 +833,24 @@ class DrakeKinematicsEnv:
         for resource in reversed(self._resources_to_cleanup):
             try:
                 # For objects like TransformListener that might have a close or shutdown method
-                if hasattr(resource, 'close'):
+                if hasattr(resource, "close"):
                     resource.close()
-                elif hasattr(resource, 'shutdown'):
+                elif hasattr(resource, "shutdown"):
                     resource.shutdown()
-                
+
                 # Explicitly delete the resource
                 del resource
             except Exception as e:
                 print(f"Error during cleanup: {e}")
-        
+
         # Clear the resources list
         self._resources_to_cleanup = []
-    
+
     def get_transform(self, target_frame, source_frame):
         print("Getting transform from", source_frame, "to", target_frame)
         attempts = 0
         max_attempts = 20  # Reduced from 120 to avoid long blocking
-        
+
         while attempts < max_attempts:
             try:
                 # Process LCM messages with error handling
@@ -801,7 +858,7 @@ class DrakeKinematicsEnv:
                     # If handle_timeout returns false, we might need to re-check if LCM is still good
                     if not self.tf_lcm_instance.good():
                         print("WARNING: LCM instance is no longer in a good state")
-                
+
                 # Get the most recent timestamp from the buffer instead of using current time
                 try:
                     timestamp = self.buffer.get_most_recent_timestamp()
@@ -810,21 +867,29 @@ class DrakeKinematicsEnv:
                 except Exception as e:
                     # Fall back to current time if get_most_recent_timestamp fails
                     timestamp = datetime.now()
-                    if not hasattr(timestamp, 'timestamp'):
-                        timestamp.timestamp = lambda: time.mktime(timestamp.timetuple()) + timestamp.microsecond / 1e6
+                    if not hasattr(timestamp, "timestamp"):
+                        timestamp.timestamp = (
+                            lambda: time.mktime(timestamp.timetuple()) + timestamp.microsecond / 1e6
+                        )
                     if attempts % 10 == 0:
                         print(f"Falling back to current time: {timestamp}")
-                
+
                 # Check if we can find the transform
                 if self.buffer.can_transform(target_frame, source_frame, timestamp):
                     # print(f"Found transform between '{target_frame}' and '{source_frame}'!")
-                    
+
                     # Look up the transform with the timestamp from the buffer
-                    transform = self.buffer.lookup_transform(target_frame, source_frame, timestamp, 
-                                            timeout=10.0, time_tolerance=0.1, lcm_module=lcm_msgs)
-                    
+                    transform = self.buffer.lookup_transform(
+                        target_frame,
+                        source_frame,
+                        timestamp,
+                        timeout=10.0,
+                        time_tolerance=0.1,
+                        lcm_module=lcm_msgs,
+                    )
+
                     return transform
-                
+
                 # Increment counter and report status every 10 attempts
                 attempts += 1
                 if attempts % 10 == 0:
@@ -836,22 +901,22 @@ class DrakeKinematicsEnv:
                             print(f"  {frame}")
                     else:
                         print("No frames received yet")
-                
+
                 # Brief pause
                 time.sleep(0.5)
-                
+
             except Exception as e:
                 print(f"Error during transform lookup: {e}")
                 attempts += 1
                 time.sleep(1)  # Longer pause after an error
-        
+
         print(f"\nERROR: No transform found after {max_attempts} attempts")
         return None
-    
+
     def transform_point_cloud_with_open3d(self, points_np: np.ndarray, transform) -> np.ndarray:
         """
         Transforms a point cloud using Open3D given a transform.
-        
+
         Args:
             points_np (np.ndarray): Nx3 array of 3D points.
             transform: Transform from tf_lcm_py.
@@ -865,27 +930,27 @@ class DrakeKinematicsEnv:
 
         # Convert transform to 4x4 numpy matrix
         tf_matrix = np.eye(4)
-        
+
         # Extract rotation quaternion components
         qw = transform.transform.rotation.w
         qx = transform.transform.rotation.x
         qy = transform.transform.rotation.y
         qz = transform.transform.rotation.z
-        
+
         # Convert quaternion to rotation matrix
         # Formula from: https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Quaternion-derived_rotation_matrix
-        tf_matrix[0, 0] = 1 - 2*qy*qy - 2*qz*qz
-        tf_matrix[0, 1] = 2*qx*qy - 2*qz*qw
-        tf_matrix[0, 2] = 2*qx*qz + 2*qy*qw
-        
-        tf_matrix[1, 0] = 2*qx*qy + 2*qz*qw
-        tf_matrix[1, 1] = 1 - 2*qx*qx - 2*qz*qz
-        tf_matrix[1, 2] = 2*qy*qz - 2*qx*qw
-        
-        tf_matrix[2, 0] = 2*qx*qz - 2*qy*qw
-        tf_matrix[2, 1] = 2*qy*qz + 2*qx*qw
-        tf_matrix[2, 2] = 1 - 2*qx*qx - 2*qy*qy
-        
+        tf_matrix[0, 0] = 1 - 2 * qy * qy - 2 * qz * qz
+        tf_matrix[0, 1] = 2 * qx * qy - 2 * qz * qw
+        tf_matrix[0, 2] = 2 * qx * qz + 2 * qy * qw
+
+        tf_matrix[1, 0] = 2 * qx * qy + 2 * qz * qw
+        tf_matrix[1, 1] = 1 - 2 * qx * qx - 2 * qz * qz
+        tf_matrix[1, 2] = 2 * qy * qz - 2 * qx * qw
+
+        tf_matrix[2, 0] = 2 * qx * qz - 2 * qy * qw
+        tf_matrix[2, 1] = 2 * qy * qz + 2 * qx * qw
+        tf_matrix[2, 2] = 1 - 2 * qx * qx - 2 * qy * qy
+
         # Set translation
         tf_matrix[0, 3] = transform.transform.translation.x
         tf_matrix[1, 3] = transform.transform.translation.y
@@ -906,10 +971,10 @@ class DrakeKinematicsEnv:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description='Visualize manipulation results')
-    parser.add_argument('--visualize-only', action='store_true', help='Only visualize results')
+    parser = argparse.ArgumentParser(description="Visualize manipulation results")
+    parser.add_argument("--visualize-only", action="store_true", help="Only visualize results")
     args = parser.parse_args()
-    
+
     if args.visualize_only:
         visualize_results()
         exit(0)
@@ -918,49 +983,59 @@ if __name__ == "__main__":
         # Then set up Drake environment
         kinematic_chain_joints = [
             "pillar_platform_joint",
-            "joint1", 
+            "joint1",
             "joint2",
             "joint3",
             "joint4",
             "joint5",
             "joint6",
         ]
-        
+
         links_to_ignore = [
             "devkit_base_link",
-            "pillar_platform", 
+            "pillar_platform",
             "piper_angled_mount",
             "pan_tilt_base",
             "pan_tilt_head",
             "pan_tilt_pan",
             "base_link",
             "link1",
-            "link2", 
+            "link2",
             "link3",
             "link4",
             "link5",
             "link6",
         ]
-        
+
         urdf_path = "./assets/devkit_base_descr.urdf"
         urdf_path = os.path.abspath(urdf_path)
-        
+
         print(f"Attempting to load URDF from: {urdf_path}")
-        
+
         env = DrakeKinematicsEnv(urdf_path, kinematic_chain_joints, links_to_ignore)
         env.set_joint_positions([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         transform = env.get_transform("world", "camera_center_link")
-        print(transform.transform.translation.x, transform.transform.translation.y, transform.transform.translation.z)
-        print(transform.transform.rotation.w, transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z)
-        
+        print(
+            transform.transform.translation.x,
+            transform.transform.translation.y,
+            transform.transform.translation.z,
+        )
+        print(
+            transform.transform.rotation.w,
+            transform.transform.rotation.x,
+            transform.transform.rotation.y,
+            transform.transform.rotation.z,
+        )
+
         # Keep the visualization alive
         print("\nVisualization is running. Press Ctrl+C to exit.")
         while True:
             time.sleep(1)
-            
+
     except KeyboardInterrupt:
         print("\nExiting...")
     except Exception as e:
         print(f"Error: {e}")
         import traceback
+
         traceback.print_exc()
