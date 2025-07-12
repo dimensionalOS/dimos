@@ -26,13 +26,13 @@
       },
       "cameraState": {
         "perspective": true,
-        "distance": 41.010920913295585,
-        "phi": 12.77189691842678,
-        "thetaOffset": 91.84171266855309,
+        "distance": 22.16066481982733,
+        "phi": 34.816360162458444,
+        "thetaOffset": 110.38709006815255,
         "targetOffset": [
-          5.610652121013281,
-          -2.2558250159447826,
-          5.235694681126227e-16
+          0.6543165797799305,
+          -5.069343424147507,
+          5.603018248159094e-16
         ],
         "target": [
           0,
@@ -63,8 +63,8 @@
           "colorField": "z",
           "colorMode": "colormap",
           "colorMap": "turbo",
-          "pointShape": "cube",
-          "pointSize": 8,
+          "pointShape": "square",
+          "pointSize": 10,
           "explicitAlpha": 1,
           "minValue": -0.1,
           "decayTime": 0,
@@ -82,7 +82,7 @@
           "colorField": "z",
           "colorMode": "colormap",
           "colorMap": "turbo",
-          "pointSize": 6,
+          "pointSize": 10,
           "minValue": -0.1,
           "decayTime": 0,
           "pointShape": "square",
