@@ -14,7 +14,7 @@
 
 import cv2
 import numpy as np
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Any
 from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
@@ -329,3 +329,36 @@ def combine_object_data(
             combined.append(obj_copy)
 
     return combined
+
+
+def point_in_bbox(point: Tuple[int, int], bbox: List[float]) -> bool:
+    """
+    Check if a point is inside a bounding box.
+
+    Args:
+        point: (x, y) coordinates
+        bbox: Bounding box [x1, y1, x2, y2]
+
+    Returns:
+        True if point is inside bbox
+    """
+    x, y = point
+    x1, y1, x2, y2 = bbox
+    return x1 <= x <= x2 and y1 <= y <= y2
+
+
+def find_clicked_object(click_point: Tuple[int, int], objects: List[Any]) -> Optional[Any]:
+    """
+    Find which object was clicked based on bounding boxes.
+
+    Args:
+        click_point: (x, y) coordinates of mouse click
+        objects: List of objects with 'bbox' field
+
+    Returns:
+        Clicked object or None
+    """
+    for obj in objects:
+        if "bbox" in obj and point_in_bbox(click_point, obj["bbox"]):
+            return obj
+    return None

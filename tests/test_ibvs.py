@@ -13,153 +13,223 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Copyright 2025 Dimensional Inc.
+
 """
-Simple test script for Detection3D processor with ZED camera.
-Press 'q' to quit, 's' to save current frame.
+Test script for PBVS with ZED camera supporting robot arm frame.
+Click on objects to select targets (requires origin to be set first).
+Press 'o' to set manipulator origin at current camera pose.
 """
 
 import cv2
 import numpy as np
 import sys
 import os
+import time
 
-# Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dimos.hardware.zed_camera import ZEDCamera
 from dimos.manipulation.ibvs.detection3d import Detection3DProcessor
+from dimos.manipulation.ibvs.utils import parse_zed_pose
+from dimos.perception.common.utils import find_clicked_object
+from dimos.manipulation.ibvs.pbvs import PBVSController
 
 try:
     import pyzed.sl as sl
 except ImportError:
-    print("Error: ZED SDK not installed. Please install pyzed package.")
+    print("Error: ZED SDK not installed.")
     sys.exit(1)
 
 
+# Global for mouse events
+mouse_click = None
+warning_message = None
+warning_time = None
+
+
+def mouse_callback(event, x, y, flags, param):
+    global mouse_click
+    if event == cv2.EVENT_LBUTTONDOWN:
+        mouse_click = (x, y)
+
+
 def main():
-    """Main test function."""
-    print("Starting Detection3D test with ZED camera...")
+    global mouse_click, warning_message, warning_time
 
-    # Initialize ZED camera
-    print("Initializing ZED camera...")
-    zed_camera = ZEDCamera(
-        camera_id=0,
-        resolution=sl.RESOLUTION.HD720,  # 1280x720 for good performance
-        depth_mode=sl.DEPTH_MODE.NEURAL,  # Best quality depth
-        fps=30,
-    )
+    print("=== PBVS Test with Robot Frame Support ===")
+    print("IMPORTANT: Press 'o' to set manipulator origin FIRST")
+    print("Then click objects to select targets | 'r' - reset | 'q' - quit")
 
-    # Open camera
-    if not zed_camera.open():
-        print("Failed to open ZED camera!")
+    # Initialize camera
+    zed = ZEDCamera(resolution=sl.RESOLUTION.HD720, depth_mode=sl.DEPTH_MODE.NEURAL)
+    if not zed.open() or not zed.enable_positional_tracking():
+        print("Camera initialization failed!")
         return
 
-    # Get camera intrinsics
-    camera_info = zed_camera.get_camera_info()
-    left_cam = camera_info.get("left_cam", {})
-
-    # Extract intrinsics [fx, fy, cx, cy]
+    # Get intrinsics
+    cam_info = zed.get_camera_info()
     intrinsics = [
-        left_cam.get("fx", 700),
-        left_cam.get("fy", 700),
-        left_cam.get("cx", 640),
-        left_cam.get("cy", 360),
+        cam_info["left_cam"]["fx"],
+        cam_info["left_cam"]["fy"],
+        cam_info["left_cam"]["cx"],
+        cam_info["left_cam"]["cy"],
     ]
 
-    print(
-        f"Camera intrinsics: fx={intrinsics[0]:.1f}, fy={intrinsics[1]:.1f}, "
-        f"cx={intrinsics[2]:.1f}, cy={intrinsics[3]:.1f}"
-    )
+    # Initialize processors
+    detector = Detection3DProcessor(intrinsics)
+    pbvs = PBVSController(position_gain=0.3, rotation_gain=0.2, target_tolerance=0.1)
 
-    # Initialize Detection3D processor
-    print("Initializing Detection3D processor...")
-    detector = Detection3DProcessor(
-        camera_intrinsics=intrinsics,
-        min_confidence=0.5,  # Lower threshold for more detections
-        min_points=20,  # Lower for better real-time performance
-        max_depth=3.0,  # Limit to 3 meters
-    )
-
-    print("\nStarting detection loop...")
-    print("Press 'q' to quit, 's' to save current frame")
-
-    frame_count = 0
+    # Setup window
+    cv2.namedWindow("PBVS")
+    cv2.setMouseCallback("PBVS", mouse_callback)
 
     try:
         while True:
-            # Capture frame
-            left_img, right_img, depth = zed_camera.capture_frame()
-
-            if left_img is None or depth is None:
-                print("Failed to capture frame")
+            # Capture
+            bgr, _, depth, pose_data = zed.capture_frame_with_pose()
+            if bgr is None or depth is None:
                 continue
 
-            # Convert BGR to RGB for detection
-            rgb_img = cv2.cvtColor(left_img, cv2.COLOR_BGR2RGB)
+            # Process
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            camera_pose = parse_zed_pose(pose_data) if pose_data else None
+            results = detector.process_frame(rgb, depth, camera_pose)
+            detections = results["detections"]
 
-            # Process frame
-            results = detector.process_frame(rgb_img, depth)
+            # Handle click
+            if mouse_click:
+                clicked = find_clicked_object(mouse_click, detections)
+                if clicked:
+                    # Try to set target (will fail if no origin)
+                    if not pbvs.set_target(clicked):
+                        warning_message = "SET ORIGIN FIRST! Press 'o'"
+                        warning_time = time.time()
+                mouse_click = None
 
-            # Create visualization
-            viz = detector.visualize_detections(rgb_img, results["detections"], show_3d=True)
+            # Create visualization with position overlays (robot frame if available)
+            viz = detector.visualize_detections(rgb, detections, pbvs_controller=pbvs)
+
+            # PBVS control
+            if camera_pose:
+                vel_cmd, ang_vel_cmd, reached, has_target = pbvs.compute_control(
+                    camera_pose, detections
+                )
+
+                # Apply PBVS overlay
+                viz = pbvs.create_status_overlay(viz, intrinsics)
+
+                # Highlight target
+                if has_target and pbvs.current_target and "bbox" in pbvs.current_target:
+                    x1, y1, x2, y2 = map(int, pbvs.current_target["bbox"])
+                    cv2.rectangle(viz, (x1, y1), (x2, y2), (0, 255, 0), 3)
+                    cv2.putText(
+                        viz, "TARGET", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
+                    )
+
+                # Print velocity commands for debugging (only if origin set)
+                if vel_cmd and ang_vel_cmd:
+                    print(f"Linear vel: ({vel_cmd.x:.3f}, {vel_cmd.y:.3f}, {vel_cmd.z:.3f}) m/s")
+                    print(
+                        f"Angular vel: ({ang_vel_cmd.x:.3f}, {ang_vel_cmd.y:.3f}, {ang_vel_cmd.z:.3f}) rad/s"
+                    )
 
             # Convert back to BGR for OpenCV display
             viz_bgr = cv2.cvtColor(viz, cv2.COLOR_RGB2BGR)
 
-            # Add info text
-            info_text = [
-                f"Frame: {frame_count}",
-                f"Detections: {len(results['detections'])}",
-                f"3D Valid: {sum(1 for d in results['detections'] if d.get('has_3d', False))}",
-                f"Time: {results['processing_time'] * 1000:.1f}ms",
-            ]
+            # Add camera pose info
+            if camera_pose:
+                # Show camera pose in appropriate frame
+                if pbvs.manipulator_origin is not None:
+                    cam_robot = pbvs.get_camera_pose_robot_frame(camera_pose)
+                    if cam_robot:
+                        pose_text = f"Camera [Robot]: ({cam_robot.pos.x:.2f}, {cam_robot.pos.y:.2f}, {cam_robot.pos.z:.2f})m"
+                    else:
+                        pose_text = f"Camera [ZED]: ({camera_pose.pos.x:.2f}, {camera_pose.pos.y:.2f}, {camera_pose.pos.z:.2f})m"
+                else:
+                    pose_text = f"Camera [ZED]: ({camera_pose.pos.x:.2f}, {camera_pose.pos.y:.2f}, {camera_pose.pos.z:.2f})m"
 
-            y_offset = 20
-            for text in info_text:
                 cv2.putText(
-                    viz_bgr, text, (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2
+                    viz_bgr, pose_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1
                 )
-                y_offset += 25
 
-            # Find closest detection
-            closest = detector.get_closest_detection(results["detections"])
-            if closest:
-                text = f"Closest: {closest['class_name']} @ {closest['centroid'][2]:.2f}m"
-                cv2.putText(
-                    viz_bgr, text, (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2
-                )
+                # Show origin status
+                if pbvs.manipulator_origin is not None:
+                    cv2.putText(
+                        viz_bgr,
+                        "Manipulator Origin SET",
+                        (10, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 0),
+                        1,
+                    )
+                else:
+                    cv2.putText(
+                        viz_bgr,
+                        "Press 'o' to set manipulator origin",
+                        (10, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 0, 0),
+                        1,
+                    )
+
+            # Display warning message if active
+            if warning_message and warning_time:
+                # Show warning for 3 seconds
+                if time.time() - warning_time < 3.0:
+                    # Draw warning box
+                    height, width = viz_bgr.shape[:2]
+                    box_height = 80
+                    box_y = height // 2 - box_height // 2
+
+                    # Semi-transparent red background
+                    overlay = viz_bgr.copy()
+                    cv2.rectangle(
+                        overlay, (50, box_y), (width - 50, box_y + box_height), (0, 0, 255), -1
+                    )
+                    viz_bgr = cv2.addWeighted(viz_bgr, 0.7, overlay, 0.3, 0)
+
+                    # Warning text
+                    text_size = cv2.getTextSize(warning_message, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)[0]
+                    text_x = (width - text_size[0]) // 2
+                    text_y = box_y + box_height // 2 + text_size[1] // 2
+
+                    cv2.putText(
+                        viz_bgr,
+                        warning_message,
+                        (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        (255, 255, 255),
+                        2,
+                    )
+                else:
+                    warning_message = None
+                    warning_time = None
 
             # Display
-            cv2.imshow("Detection3D Test", viz_bgr)
+            cv2.imshow("PBVS", viz_bgr)
 
-            # Handle key press
+            # Keyboard
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
-            elif key == ord("s"):
-                # Save current frame
-                cv2.imwrite(f"detection3d_frame_{frame_count:04d}.png", viz_bgr)
-                print(f"Saved frame {frame_count}")
-
-            frame_count += 1
-
-            # Print detections every 30 frames
-            if frame_count % 30 == 0:
-                print(f"\nFrame {frame_count}:")
-                for det in results["detections"]:
-                    if det.get("has_3d", False):
-                        print(f"  - {det['class_name']}: {det['centroid'][2]:.2f}m away")
+            elif key == ord("r"):
+                pbvs.clear_target()
+            elif key == ord("o") and camera_pose:
+                pbvs.set_manipulator_origin(camera_pose)
+                print(
+                    f"Set manipulator origin at: ({camera_pose.pos.x:.3f}, {camera_pose.pos.y:.3f}, {camera_pose.pos.z:.3f})"
+                )
 
     except KeyboardInterrupt:
-        print("\nInterrupted by user")
-
+        pass
     finally:
-        # Cleanup
-        print("\nCleaning up...")
         cv2.destroyAllWindows()
         detector.cleanup()
-        zed_camera.close()
-        print("Done!")
+        zed.close()
 
 
 if __name__ == "__main__":
