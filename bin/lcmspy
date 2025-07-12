@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# current script dir + ..dimos
+
+
+script_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+python $script_dir/../dimos/utils/cli/lcmspy_cli.py "$@" 

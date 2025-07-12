@@ -18,6 +18,8 @@ import subprocess
 import sys
 import threading
 import traceback
+import os
+from functools import cache
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
@@ -26,17 +28,29 @@ import lcm
 from dimos.protocol.service.spec import Service
 
 
+@cache
+def check_root() -> bool:
+    """Return True if the current process is running as root (UID 0)."""
+    try:
+        return os.geteuid() == 0  # type: ignore[attr-defined]
+    except AttributeError:
+        # Platforms without geteuid (e.g. Windows) – assume non-root.
+        return False
+
+
 def check_multicast() -> list[str]:
     """Check if multicast configuration is needed and return required commands."""
     commands_needed = []
+
+    sudo = "" if check_root() else "sudo "
 
     # Check if loopback interface has multicast enabled
     try:
         result = subprocess.run(["ip", "link", "show", "lo"], capture_output=True, text=True)
         if "MULTICAST" not in result.stdout:
-            commands_needed.append("sudo ifconfig lo multicast")
+            commands_needed.append(f"{sudo}ifconfig lo multicast")
     except Exception:
-        commands_needed.append("sudo ifconfig lo multicast")
+        commands_needed.append(f"{sudo}ifconfig lo multicast")
 
     # Check if multicast route exists
     try:
@@ -44,9 +58,9 @@ def check_multicast() -> list[str]:
             ["ip", "route", "show", "224.0.0.0/4"], capture_output=True, text=True
         )
         if not result.stdout.strip():
-            commands_needed.append("sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
+            commands_needed.append(f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
     except Exception:
-        commands_needed.append("sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
+        commands_needed.append(f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
 
     return commands_needed
 
@@ -55,22 +69,24 @@ def check_buffers() -> list[str]:
     """Check if buffer configuration is needed and return required commands."""
     commands_needed = []
 
+    sudo = "" if check_root() else "sudo "
+
     # Check current buffer settings
     try:
         result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
         current_max = int(result.stdout.split("=")[1].strip())
         if current_max < 2097152:
-            commands_needed.append("sudo sysctl -w net.core.rmem_max=2097152")
+            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
     except Exception:
-        commands_needed.append("sudo sysctl -w net.core.rmem_max=2097152")
+        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
 
     try:
         result = subprocess.run(["sysctl", "net.core.rmem_default"], capture_output=True, text=True)
         current_default = int(result.stdout.split("=")[1].strip())
         if current_default < 2097152:
-            commands_needed.append("sudo sysctl -w net.core.rmem_default=2097152")
+            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
     except Exception:
-        commands_needed.append("sudo sysctl -w net.core.rmem_default=2097152")
+        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
 
     return commands_needed
 

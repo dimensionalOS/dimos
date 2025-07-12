@@ -19,7 +19,16 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
 
-from reactivex import concat, empty, from_iterable, interval, just, merge, timer
+from reactivex import (
+    concat_with_iterable,
+    empty,
+    from_iterable,
+    interval,
+    just,
+    merge,
+    timer,
+    concat,
+)
 from reactivex import operators as ops
 from reactivex import timer as rx_timer
 from reactivex.observable import Observable
@@ -169,27 +178,44 @@ class TimedSensorReplay(SensorReplay[T]):
         return super().iterate()
 
     def stream(self) -> Observable[Union[T, Any]]:
-        """Stream sensor data with original timing preserved (non-blocking)."""
+        def _subscribe(observer, scheduler=None):
+            from reactivex.disposable import CompositeDisposable, Disposable
 
-        def create_timed_stream():
+            scheduler = scheduler or TimeoutScheduler()  # default thread-based
+
             iterator = self.iterate_ts()
 
             try:
-                prev_timestamp, first_data = next(iterator)
-
-                yield just(first_data)
-
-                for timestamp, data in iterator:
-                    time_diff = timestamp - prev_timestamp
-
-                    if time_diff > 0:
-                        yield rx_timer(time_diff).pipe(ops.map(lambda _: data))
-                    else:
-                        yield just(data)
-
-                    prev_timestamp = timestamp
-
+                prev_ts, first_data = next(iterator)
             except StopIteration:
-                yield empty()
+                observer.on_completed()
+                return Disposable()
 
-        return concat(*create_timed_stream())
+            # Emit the first sample immediately
+            observer.on_next(first_data)
+
+            disp = CompositeDisposable()
+
+            def emit_next(prev_timestamp):
+                try:
+                    ts, data = next(iterator)
+                except StopIteration:
+                    observer.on_completed()
+                    return
+
+                delay = max(0.0, ts - prev_timestamp)
+
+                def _action(sc, _state=None):
+                    observer.on_next(data)
+                    emit_next(ts)  # schedule the following sample
+
+                # Schedule the next emission relative to previous timestamp
+                disp.add(scheduler.schedule_relative(delay, _action))
+
+            emit_next(prev_ts)
+
+            return disp
+
+        from reactivex import create
+
+        return create(_subscribe)

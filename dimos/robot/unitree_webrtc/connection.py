@@ -30,6 +30,7 @@ from reactivex.observable import Observable
 from reactivex.subject import Subject
 
 from dimos.core import In, Module, Out, rpc
+from dimos.msgs.sensor_msgs import Image
 from dimos.robot.connection_interface import ConnectionInterface
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
@@ -132,9 +133,25 @@ class WebRTCRobot(ConnectionInterface):
 
     # Generic conversion of unitree subscription to Subject (used for all subs)
     def unitree_sub_stream(self, topic_name: str):
+        def subscribe_in_thread(cb):
+            # Run the subscription in the background thread that has the event loop
+            def run_subscription():
+                self.conn.datachannel.pub_sub.subscribe(topic_name, cb)
+
+            # Use call_soon_threadsafe to run in the background thread
+            self.loop.call_soon_threadsafe(run_subscription)
+
+        def unsubscribe_in_thread(cb):
+            # Run the unsubscription in the background thread that has the event loop
+            def run_unsubscription():
+                self.conn.datachannel.pub_sub.unsubscribe(topic_name)
+
+            # Use call_soon_threadsafe to run in the background thread
+            self.loop.call_soon_threadsafe(run_unsubscription)
+
         return callback_to_observable(
-            start=lambda cb: self.conn.datachannel.pub_sub.subscribe(topic_name, cb),
-            stop=lambda: self.conn.datachannel.pub_sub.unsubscribe(topic_name),
+            start=subscribe_in_thread,
+            stop=unsubscribe_in_thread,
         )
 
     # Generic sync API call (we jump into the client thread)
@@ -217,15 +234,25 @@ class WebRTCRobot(ConnectionInterface):
                 if stop_event.is_set():
                     return
                 frame = await track.recv()
-                subject.on_next(frame.to_ndarray(format="bgr24"))
+                subject.on_next(Image.from_numpy(frame.to_ndarray(format="bgr24")))
 
         self.conn.video.add_track_callback(accept_track)
-        self.conn.video.switchVideoChannel(True)
+
+        # Run the video channel switching in the background thread
+        def switch_video_channel():
+            self.conn.video.switchVideoChannel(True)
+
+        self.loop.call_soon_threadsafe(switch_video_channel)
 
         def stop(cb):
             stop_event.set()  # Signal the loop to stop
             self.conn.video.track_callbacks.remove(accept_track)
-            self.conn.video.switchVideoChannel(False)
+
+            # Run the video channel switching off in the background thread
+            def switch_video_channel_off():
+                self.conn.video.switchVideoChannel(False)
+
+            self.loop.call_soon_threadsafe(switch_video_channel_off)
 
         return subject.pipe(ops.finally_action(stop))
 
@@ -247,6 +274,7 @@ class WebRTCRobot(ConnectionInterface):
             if stream is None:
                 print("Warning: Video stream is not available")
             return stream
+
         except Exception as e:
             print(f"Error getting video stream: {e}")
             return None

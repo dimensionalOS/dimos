@@ -23,7 +23,13 @@ from dimos.protocol.service.lcmservice import (
     autoconf,
     check_buffers,
     check_multicast,
+    check_root,
 )
+
+
+def get_sudo_prefix() -> str:
+    """Return 'sudo ' if not running as root, empty string if running as root."""
+    return "" if check_root() else "sudo "
 
 
 def test_check_multicast_all_configured():
@@ -63,7 +69,8 @@ def test_check_multicast_missing_multicast_flag():
         ]
 
         result = check_multicast()
-        assert result == ["sudo ifconfig lo multicast"]
+        sudo = get_sudo_prefix()
+        assert result == [f"{sudo}ifconfig lo multicast"]
 
 
 def test_check_multicast_missing_route():
@@ -83,7 +90,8 @@ def test_check_multicast_missing_route():
         ]
 
         result = check_multicast()
-        assert result == ["sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"]
+        sudo = get_sudo_prefix()
+        assert result == [f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"]
 
 
 def test_check_multicast_all_missing():
@@ -103,9 +111,10 @@ def test_check_multicast_all_missing():
         ]
 
         result = check_multicast()
+        sudo = get_sudo_prefix()
         expected = [
-            "sudo ifconfig lo multicast",
-            "sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
+            f"{sudo}ifconfig lo multicast",
+            f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
         ]
         assert result == expected
 
@@ -117,9 +126,10 @@ def test_check_multicast_subprocess_exception():
         mock_run.side_effect = Exception("Command failed")
 
         result = check_multicast()
+        sudo = get_sudo_prefix()
         expected = [
-            "sudo ifconfig lo multicast",
-            "sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
+            f"{sudo}ifconfig lo multicast",
+            f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
         ]
         assert result == expected
 
@@ -151,7 +161,8 @@ def test_check_buffers_low_max_buffer():
         ]
 
         result = check_buffers()
-        assert result == ["sudo sysctl -w net.core.rmem_max=2097152"]
+        sudo = get_sudo_prefix()
+        assert result == [f"{sudo}sysctl -w net.core.rmem_max=2097152"]
 
 
 def test_check_buffers_low_default_buffer():
@@ -166,7 +177,8 @@ def test_check_buffers_low_default_buffer():
         ]
 
         result = check_buffers()
-        assert result == ["sudo sysctl -w net.core.rmem_default=2097152"]
+        sudo = get_sudo_prefix()
+        assert result == [f"{sudo}sysctl -w net.core.rmem_default=2097152"]
 
 
 def test_check_buffers_both_low():
@@ -181,9 +193,10 @@ def test_check_buffers_both_low():
         ]
 
         result = check_buffers()
+        sudo = get_sudo_prefix()
         expected = [
-            "sudo sysctl -w net.core.rmem_max=2097152",
-            "sudo sysctl -w net.core.rmem_default=2097152",
+            f"{sudo}sysctl -w net.core.rmem_max=2097152",
+            f"{sudo}sysctl -w net.core.rmem_default=2097152",
         ]
         assert result == expected
 
@@ -195,9 +208,10 @@ def test_check_buffers_subprocess_exception():
         mock_run.side_effect = Exception("Command failed")
 
         result = check_buffers()
+        sudo = get_sudo_prefix()
         expected = [
-            "sudo sysctl -w net.core.rmem_max=2097152",
-            "sudo sysctl -w net.core.rmem_default=2097152",
+            f"{sudo}sysctl -w net.core.rmem_max=2097152",
+            f"{sudo}sysctl -w net.core.rmem_default=2097152",
         ]
         assert result == expected
 
@@ -212,9 +226,10 @@ def test_check_buffers_parsing_error():
         ]
 
         result = check_buffers()
+        sudo = get_sudo_prefix()
         expected = [
-            "sudo sysctl -w net.core.rmem_max=2097152",
-            "sudo sysctl -w net.core.rmem_default=2097152",
+            f"{sudo}sysctl -w net.core.rmem_max=2097152",
+            f"{sudo}sysctl -w net.core.rmem_default=2097152",
         ]
         assert result == expected
 
@@ -267,29 +282,26 @@ def test_autoconf_with_config_needed_success():
             # Command execution calls
             type(
                 "MockResult", (), {"stdout": "success", "returncode": 0}
-            )(),  # sudo ifconfig lo multicast
-            type("MockResult", (), {"stdout": "success", "returncode": 0})(),  # sudo route add...
-            type(
-                "MockResult", (), {"stdout": "success", "returncode": 0}
-            )(),  # sudo sysctl rmem_max
-            type(
-                "MockResult", (), {"stdout": "success", "returncode": 0}
-            )(),  # sudo sysctl rmem_default
+            )(),  # ifconfig lo multicast
+            type("MockResult", (), {"stdout": "success", "returncode": 0})(),  # route add...
+            type("MockResult", (), {"stdout": "success", "returncode": 0})(),  # sysctl rmem_max
+            type("MockResult", (), {"stdout": "success", "returncode": 0})(),  # sysctl rmem_default
         ]
 
         with patch("builtins.print") as mock_print:
             autoconf()
 
+            sudo = get_sudo_prefix()
             # Verify the expected print calls
             expected_calls = [
                 ("System configuration required. Executing commands...",),
-                ("  Running: sudo ifconfig lo multicast",),
+                (f"  Running: {sudo}ifconfig lo multicast",),
                 ("  ✓ Success",),
-                ("  Running: sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",),
+                (f"  Running: {sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",),
                 ("  ✓ Success",),
-                ("  Running: sudo sysctl -w net.core.rmem_max=2097152",),
+                (f"  Running: {sudo}sysctl -w net.core.rmem_max=2097152",),
                 ("  ✓ Success",),
-                ("  Running: sudo sysctl -w net.core.rmem_default=2097152",),
+                (f"  Running: {sudo}sysctl -w net.core.rmem_default=2097152",),
                 ("  ✓ Success",),
                 ("System configuration completed.",),
             ]
@@ -318,20 +330,11 @@ def test_autoconf_with_command_failures():
             # Command execution calls - first succeeds, second fails
             type(
                 "MockResult", (), {"stdout": "success", "returncode": 0}
-            )(),  # sudo ifconfig lo multicast
+            )(),  # ifconfig lo multicast
             subprocess.CalledProcessError(
                 1,
-                [
-                    "sudo",
-                    "route",
-                    "add",
-                    "-net",
-                    "224.0.0.0",
-                    "netmask",
-                    "240.0.0.0",
-                    "dev",
-                    "lo",
-                ],
+                get_sudo_prefix().split()
+                + ["route", "add", "-net", "224.0.0.0", "netmask", "240.0.0.0", "dev", "lo"],
                 "Permission denied",
                 "Operation not permitted",
             ),

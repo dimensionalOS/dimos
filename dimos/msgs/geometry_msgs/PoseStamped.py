@@ -48,7 +48,7 @@ class PoseStamped(Pose, Timestamped):
     @dispatch
     def __init__(self, *args, ts: float = 0, frame_id: str = "", **kwargs) -> None:
         self.frame_id = frame_id
-        self.ts = ts if ts is not 0 else time.time()
+        self.ts = ts if ts != 0 else time.time()
         super().__init__(*args, **kwargs)
 
     def lcm_encode(self) -> bytes:

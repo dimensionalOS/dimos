@@ -15,13 +15,14 @@
 import math
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import reactivex as rx
 from plum import dispatch
 from reactivex import operators as ops
 
-from dimos.core import In, Module, Out
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import Vector3
 
 # from dimos.robot.local_planner.local_planner import LocalPlanner
 from dimos.types.costmap import Costmap
@@ -64,17 +65,24 @@ def transform_to_robot_frame(global_vector: Vector, robot_position: Position) ->
 
 class SimplePlanner(Module):
     path: In[Path] = None
-    movecmd: Out[Vector] = None
+    movecmd: Out[Vector3] = None
 
     get_costmap: Callable[[], Costmap]
     get_robot_pos: Callable[[], Position]
+    set_move: Callable[[Vector3], Any]
     goal: Optional[Vector] = None
     speed: float = 0.3
 
-    def __init__(self, get_costmap: Callable[[], Costmap], get_robot_pos: Callable[[], Vector]):
+    def __init__(
+        self,
+        get_costmap: Callable[[], Costmap],
+        get_robot_pos: Callable[[], Vector],
+        set_move: Callable[[Vector3], Any],
+    ):
         Module.__init__(self)
         self.get_costmap = get_costmap
         self.get_robot_pos = get_robot_pos
+        self.set_move = set_move
 
     def get_move_stream(self, frequency: float = 40.0) -> rx.Observable:
         return rx.interval(1.0 / frequency, scheduler=get_scheduler()).pipe(
@@ -85,9 +93,12 @@ class SimplePlanner(Module):
             self.frequency_spy("movement_test"),
         )
 
-    async def start(self):
+    @rpc
+    def start(self):
         self.path.subscribe(self.set_goal)
-        self.get_move_stream(frequency=20.0).subscribe(self.movecmd.publish)
+        # weird bug with this
+        # self.get_move_stream(frequency=20.0).subscribe(self.movecmd.publish)
+        self.get_move_stream(frequency=20.0).subscribe(self.set_move)
 
     @dispatch
     def set_goal(self, goal: Path, stop_event=None, goal_theta=None) -> bool:
@@ -171,11 +182,11 @@ class SimplePlanner(Module):
 
         if phase < 0.5:
             # First half: move LEFT (positive X according to our documentation)
-            movement = Vector(0.2, 0, 0)  # Move left at 0.2 m/s
+            movement = Vector3(0.2, 0, 0)  # Move left at 0.2 m/s
             direction = "LEFT (positive X)"
         else:
             # Second half: move RIGHT (negative X according to our documentation)
-            movement = Vector(-0.2, 0, 0)  # Move right at 0.2 m/s
+            movement = Vector3(-0.2, 0, 0)  # Move right at 0.2 m/s
             direction = "RIGHT (negative X)"
 
         print("=== LEFT-RIGHT MOVEMENT TEST ===")

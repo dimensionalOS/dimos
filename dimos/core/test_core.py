@@ -24,10 +24,10 @@ from dimos.core import (
     Out,
     RemoteOut,
     ZenohTransport,
-    dimos,
     pLCMTransport,
     rpc,
     start,
+    stop,
 )
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -35,8 +35,14 @@ from dimos.types.vector import Vector
 from dimos.utils.testing import SensorReplay
 
 # never delete this line
-if dimos:
-    ...
+
+
+@pytest.fixture
+def dimos():
+    """Fixture to create a Dimos client for testing."""
+    client = start(2)
+    yield client
+    stop(client)
 
 
 class RobotClient(Module):
