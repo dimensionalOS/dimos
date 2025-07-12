@@ -84,7 +84,7 @@ class LCMSpyApp(App):
         # yield Header()
 
         self.table = DataTable(zebra_stripes=False, cursor_type=None)
-        self.table.add_column("Topic", width=30)
+        self.table.add_column("Topic")
         self.table.add_column("Freq (Hz)")
         self.table.add_column("Bandwidth")
         self.table.add_column("Total Traffic")
