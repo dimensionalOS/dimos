@@ -83,7 +83,7 @@ class WavefrontFrontierExplorer:
         self,
         min_frontier_size: int = 10,
         occupancy_threshold: int = 65,
-        subsample_resolution: int = 3,
+        subsample_resolution: int = 2,
         min_distance_from_robot: float = 0.5,
         explored_area_buffer: float = 0.5,
         min_distance_from_obstacles: float = 0.6,

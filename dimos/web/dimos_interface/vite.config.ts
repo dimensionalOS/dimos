@@ -22,6 +22,7 @@ export default defineConfig({
   plugins: [svelte()],
   server: {
     port: 3000,
+    host: '0.0.0.0',
     watch: {
       // Exclude node_modules, .git and other large directories
       ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**', 'lambda/**'],

@@ -18,6 +18,13 @@ import { writable, derived, get } from 'svelte/store';
 import { simulationManager, simulationStore } from '../utils/simulation';
 import { history } from './history';
 
+// Get the server URL dynamically based on current location
+const getServerUrl = () => {
+  // In production, use the same host as the frontend but on port 5555
+  const hostname = window.location.hostname;
+  return `http://${hostname}:5555`;
+};
+
 interface StreamState {
   isVisible: boolean;
   url: string | null;
@@ -65,7 +72,7 @@ export const combinedStreamState = derived(
 // Function to fetch available streams
 async function fetchAvailableStreams(): Promise<string[]> {
   try {
-    const response = await fetch('http://0.0.0.0:5555/streams', {
+    const response = await fetch(`${getServerUrl()}/streams`, {
       headers: {
         'Accept': 'application/json'
       }
@@ -100,7 +107,7 @@ export const showStream = async (streamKey?: string) => {
 
     streamStore.set({
       isVisible: true,
-      url: 'http://0.0.0.0:5555',
+      url: getServerUrl(),
       streamKeys: selectedStreams,
       isLoading: false,
       error: null,
@@ -134,7 +141,7 @@ export const connectTextStream = (key: string): void => {
   }
 
   // Create new EventSource
-  const eventSource = new EventSource(`http://0.0.0.0:5555/text_stream/${key}`);
+  const eventSource = new EventSource(`${getServerUrl()}/text_stream/${key}`);
   textEventSources[key] = eventSource;
   // Handle incoming messages
   eventSource.addEventListener('message', (event) => {
