@@ -27,7 +27,7 @@ from dimos.msgs.geometry_msgs import Vector3
 # from dimos.robot.local_planner.local_planner import LocalPlanner
 from dimos.types.costmap import Costmap
 from dimos.types.path import Path
-from dimos.types.position import Position
+from dimos.types.pose import Pose
 from dimos.types.vector import Vector, VectorLike, to_vector
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import get_scheduler
@@ -35,7 +35,7 @@ from dimos.utils.threadpool import get_scheduler
 logger = setup_logger("dimos.robot.unitree.global_planner")
 
 
-def transform_to_robot_frame(global_vector: Vector, robot_position: Position) -> Vector:
+def transform_to_robot_frame(global_vector: Vector, robot_position: Pose) -> Vector:
     """Transform a global coordinate vector to robot-relative coordinates.
 
     Args:
@@ -68,7 +68,7 @@ class SimplePlanner(Module):
     movecmd: Out[Vector3] = None
 
     get_costmap: Callable[[], Costmap]
-    get_robot_pos: Callable[[], Position]
+    get_robot_pos: Callable[[], Pose]
     set_move: Callable[[Vector3], Any]
     goal: Optional[Vector] = None
     speed: float = 0.3
