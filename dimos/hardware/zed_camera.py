@@ -84,6 +84,12 @@ class ZEDCamera(StereoCamera):
         self.point_cloud = sl.Mat()
         self.confidence_map = sl.Mat()
 
+        # Positional tracking
+        self.tracking_enabled = False
+        self.tracking_params = sl.PositionalTrackingParameters()
+        self.camera_pose = sl.Pose()
+        self.sensors_data = sl.SensorsData()
+
         self.is_opened = False
 
     def open(self) -> bool:
@@ -109,12 +115,160 @@ class ZEDCamera(StereoCamera):
             logger.error(f"Error opening ZED camera: {e}")
             return False
 
-    def close(self):
-        """Close the ZED camera."""
-        if self.is_opened:
-            self.zed.close()
-            self.is_opened = False
-            logger.info("ZED camera closed")
+    def enable_positional_tracking(
+        self,
+        enable_area_memory: bool = False,
+        enable_pose_smoothing: bool = True,
+        enable_imu_fusion: bool = True,
+        set_floor_as_origin: bool = False,
+        initial_world_transform: Optional[sl.Transform] = None,
+    ) -> bool:
+        """
+        Enable positional tracking on the ZED camera.
+
+        Args:
+            enable_area_memory: Enable area learning to correct tracking drift
+            enable_pose_smoothing: Enable pose smoothing
+            enable_imu_fusion: Enable IMU fusion if available
+            set_floor_as_origin: Set the floor as origin (useful for robotics)
+            initial_world_transform: Initial world transform
+
+        Returns:
+            True if tracking enabled successfully
+        """
+        if not self.is_opened:
+            logger.error("ZED camera not opened")
+            return False
+
+        try:
+            # Configure tracking parameters
+            self.tracking_params.enable_area_memory = enable_area_memory
+            self.tracking_params.enable_pose_smoothing = enable_pose_smoothing
+            self.tracking_params.enable_imu_fusion = enable_imu_fusion
+            self.tracking_params.set_floor_as_origin = set_floor_as_origin
+
+            if initial_world_transform is not None:
+                self.tracking_params.initial_world_transform = initial_world_transform
+
+            # Enable tracking
+            err = self.zed.enable_positional_tracking(self.tracking_params)
+            if err != sl.ERROR_CODE.SUCCESS:
+                logger.error(f"Failed to enable positional tracking: {err}")
+                return False
+
+            self.tracking_enabled = True
+            logger.info("Positional tracking enabled successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error enabling positional tracking: {e}")
+            return False
+
+    def disable_positional_tracking(self):
+        """Disable positional tracking."""
+        if self.tracking_enabled:
+            self.zed.disable_positional_tracking()
+            self.tracking_enabled = False
+            logger.info("Positional tracking disabled")
+
+    def get_pose(
+        self, reference_frame: sl.REFERENCE_FRAME = sl.REFERENCE_FRAME.WORLD
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get the current camera pose.
+
+        Args:
+            reference_frame: Reference frame (WORLD or CAMERA)
+
+        Returns:
+            Dictionary containing:
+                - position: [x, y, z] in meters
+                - rotation: [x, y, z, w] quaternion
+                - euler_angles: [roll, pitch, yaw] in radians
+                - timestamp: Pose timestamp in nanoseconds
+                - confidence: Tracking confidence (0-100)
+                - valid: Whether pose is valid
+        """
+        if not self.tracking_enabled:
+            logger.error("Positional tracking not enabled")
+            return None
+
+        try:
+            # Get current pose
+            tracking_state = self.zed.get_position(self.camera_pose, reference_frame)
+
+            if tracking_state == sl.POSITIONAL_TRACKING_STATE.OK:
+                # Extract translation
+                translation = self.camera_pose.get_translation().get()
+
+                # Extract rotation (quaternion)
+                rotation = self.camera_pose.get_orientation().get()
+
+                # Get Euler angles
+                euler = self.camera_pose.get_euler_angles()
+
+                return {
+                    "position": translation.tolist(),
+                    "rotation": rotation.tolist(),  # [x, y, z, w]
+                    "euler_angles": euler.tolist(),  # [roll, pitch, yaw]
+                    "timestamp": self.camera_pose.timestamp.get_nanoseconds(),
+                    "confidence": self.camera_pose.pose_confidence,
+                    "valid": True,
+                    "tracking_state": str(tracking_state),
+                }
+            else:
+                logger.warning(f"Tracking state: {tracking_state}")
+                return {"valid": False, "tracking_state": str(tracking_state)}
+
+        except Exception as e:
+            logger.error(f"Error getting pose: {e}")
+            return None
+
+    def get_imu_data(self) -> Optional[Dict[str, Any]]:
+        """
+        Get IMU sensor data if available.
+
+        Returns:
+            Dictionary containing:
+                - orientation: IMU orientation quaternion [x, y, z, w]
+                - angular_velocity: [x, y, z] in rad/s
+                - linear_acceleration: [x, y, z] in m/s²
+                - timestamp: IMU data timestamp
+        """
+        if not self.is_opened:
+            logger.error("ZED camera not opened")
+            return None
+
+        try:
+            # Get sensors data synchronized with images
+            if (
+                self.zed.get_sensors_data(self.sensors_data, sl.TIME_REFERENCE.IMAGE)
+                == sl.ERROR_CODE.SUCCESS
+            ):
+                imu = self.sensors_data.get_imu_data()
+
+                # Get IMU orientation
+                imu_orientation = imu.get_pose().get_orientation().get()
+
+                # Get angular velocity
+                angular_vel = imu.get_angular_velocity()
+
+                # Get linear acceleration
+                linear_accel = imu.get_linear_acceleration()
+
+                return {
+                    "orientation": imu_orientation.tolist(),
+                    "angular_velocity": angular_vel.tolist(),
+                    "linear_acceleration": linear_accel.tolist(),
+                    "timestamp": self.sensors_data.timestamp.get_nanoseconds(),
+                    "temperature": self.sensors_data.temperature.get(sl.SENSOR_LOCATION.IMU),
+                }
+            else:
+                return None
+
+        except Exception as e:
+            logger.error(f"Error getting IMU data: {e}")
+            return None
 
     def capture_frame(
         self,
@@ -210,6 +364,52 @@ class ZEDCamera(StereoCamera):
         except Exception as e:
             logger.error(f"Error capturing point cloud: {e}")
             return None
+
+    def capture_frame_with_pose(
+        self,
+    ) -> Tuple[
+        Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[Dict[str, Any]]
+    ]:
+        """
+        Capture a frame with synchronized pose data.
+
+        Returns:
+            Tuple of (left_image, right_image, depth_map, pose_data)
+        """
+        if not self.is_opened:
+            logger.error("ZED camera not opened")
+            return None, None, None, None
+
+        try:
+            # Grab frame
+            if self.zed.grab(self.runtime_params) == sl.ERROR_CODE.SUCCESS:
+                # Get images and depth
+                left_img, right_img, depth = self.capture_frame()
+
+                # Get synchronized pose if tracking is enabled
+                pose_data = None
+                if self.tracking_enabled:
+                    pose_data = self.get_pose()
+
+                return left_img, right_img, depth, pose_data
+            else:
+                logger.warning("Failed to grab frame from ZED camera")
+                return None, None, None, None
+
+        except Exception as e:
+            logger.error(f"Error capturing frame with pose: {e}")
+            return None, None, None, None
+
+    def close(self):
+        """Close the ZED camera."""
+        if self.is_opened:
+            # Disable tracking if enabled
+            if self.tracking_enabled:
+                self.disable_positional_tracking()
+
+            self.zed.close()
+            self.is_opened = False
+            logger.info("ZED camera closed")
 
     def get_camera_info(self) -> Dict[str, Any]:
         """Get ZED camera information and calibration parameters."""
