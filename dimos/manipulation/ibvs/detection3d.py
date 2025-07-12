@@ -24,7 +24,12 @@ import cv2
 from dimos.utils.logging_config import setup_logger
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.perception.pointcloud.utils import extract_centroids_from_masks
-from dimos.perception.detection2d.utils import plot_results
+from dimos.perception.detection2d.utils import plot_results, calculate_object_size_from_bbox
+
+from dimos.types.pose import Pose
+from dimos.types.vector import Vector
+from dimos.types.manipulation import ObjectData
+from dimos.manipulation.ibvs.utils import estimate_object_depth
 
 logger = setup_logger("dimos.perception.detection3d")
 
@@ -34,15 +39,15 @@ class Detection3DProcessor:
     Real-time 3D detection processor optimized for speed.
 
     Uses Sam (FastSAM) for segmentation and mask generation, then extracts
-    3D centroids and orientations from depth data.
+    3D centroids from depth data.
     """
 
     def __init__(
         self,
         camera_intrinsics: List[float],  # [fx, fy, cx, cy]
         min_confidence: float = 0.6,
-        min_points: int = 30,  # Reduced for speed
-        max_depth: float = 5.0,  # Reduced for typical manipulation scenarios
+        min_points: int = 30,
+        max_depth: float = 5.0,
     ):
         """
         Initialize the real-time 3D detection processor.
@@ -72,25 +77,20 @@ class Detection3DProcessor:
             f"min_points={min_points}, max_depth={max_depth}m"
         )
 
-    def process_frame(self, rgb_image: np.ndarray, depth_image: np.ndarray) -> Dict[str, Any]:
+    def process_frame(
+        self, rgb_image: np.ndarray, depth_image: np.ndarray, camera_pose: Optional[Any] = None
+    ) -> Dict[str, Any]:
         """
         Process a single RGB-D frame to extract 3D object detections.
-        Optimized for real-time performance.
 
         Args:
             rgb_image: RGB image (H, W, 3)
             depth_image: Depth image (H, W) in meters
+            camera_pose: Optional camera pose in world frame (Pose object in ZED coordinates)
 
         Returns:
             Dictionary containing:
-                - detections: List of detection dictionaries with:
-                    - bbox: 2D bounding box [x1, y1, x2, y2]
-                    - class_name: Object class name
-                    - confidence: Detection confidence
-                    - centroid: 3D centroid [x, y, z] in camera frame
-                    - orientation: Unit vector from camera to object
-                    - num_points: Number of valid 3D points
-                    - track_id: Tracking ID
+                - detections: List of ObjectData objects with 3D pose information
                 - processing_time: Total processing time in seconds
         """
         start_time = time.time()
@@ -128,37 +128,117 @@ class Detection3DProcessor:
         pose_dict = {p["mask_idx"]: p for p in poses}
 
         for i, (bbox, name, prob, track_id) in enumerate(zip(bboxes, names, probs, track_ids)):
-            detection = {
+            # Create ObjectData object
+            obj_data: ObjectData = {
+                "object_id": track_id,
                 "bbox": bbox.tolist() if isinstance(bbox, np.ndarray) else bbox,
-                "class_name": name,
                 "confidence": float(prob),
-                "track_id": track_id,
+                "label": name,
+                "movement_tolerance": 1.0,  # Default to freely movable
+                "segmentation_mask": numpy_masks[i] if i < len(numpy_masks) else np.array([]),
             }
 
             # Add 3D pose if available
             if i in pose_dict:
                 pose = pose_dict[i]
-                detection["centroid"] = pose["centroid"].tolist()
-                detection["orientation"] = pose["orientation"].tolist()
-                detection["num_points"] = pose["num_points"]
-                detection["has_3d"] = True
-            else:
-                detection["has_3d"] = False
+                obj_cam_pos = pose["centroid"]
 
-            detections.append(detection)
+                # Set depth and position in camera frame
+                obj_data["depth"] = float(obj_cam_pos[2])
+
+                obj_data["rotation"] = None
+
+                # Calculate object size from bbox and depth
+                width_m, height_m = calculate_object_size_from_bbox(
+                    bbox, obj_cam_pos[2], self.camera_intrinsics
+                )
+
+                # Calculate depth dimension using segmentation mask
+                depth_m = estimate_object_depth(
+                    depth_image, numpy_masks[i] if i < len(numpy_masks) else None, bbox
+                )
+
+                obj_data["size"] = {
+                    "width": max(width_m, 0.01),  # Minimum 1cm width
+                    "height": max(height_m, 0.01),  # Minimum 1cm height
+                    "depth": max(depth_m, 0.01),  # Minimum 1cm depth
+                }
+
+                # Extract average color from the region
+                x1, y1, x2, y2 = map(int, bbox)
+                roi = rgb_image[y1:y2, x1:x2]
+                if roi.size > 0:
+                    avg_color = np.mean(roi.reshape(-1, 3), axis=0)
+                    obj_data["color"] = avg_color.astype(np.uint8)
+                else:
+                    obj_data["color"] = np.array([128, 128, 128], dtype=np.uint8)
+
+                # Transform to world frame if camera pose is available
+                if camera_pose is not None:
+                    world_pos = self._transform_to_world(obj_cam_pos, camera_pose)
+                    obj_data["world_position"] = world_pos
+                    obj_data["position"] = world_pos  # Use world position
+                else:
+                    # If no camera pose, use camera coordinates
+                    obj_data["position"] = Vector(obj_cam_pos[0], obj_cam_pos[1], obj_cam_pos[2])
+
+            detections.append(obj_data)
 
         return {"detections": detections, "processing_time": time.time() - start_time}
 
+    def _transform_to_world(self, obj_pos: np.ndarray, camera_pose: Pose) -> Vector:
+        """
+        Transform object position from camera frame to world frame (ZED coordinates).
+
+        Args:
+            obj_pos: Object position in camera frame [x, y, z]
+            camera_pose: Camera pose in world frame
+
+        Returns:
+            Object position in world frame as Vector
+        """
+        # Simple transformation: rotate and translate
+        roll = camera_pose.rot.x
+        pitch = camera_pose.rot.y
+        yaw = camera_pose.rot.z
+
+        # Create rotation matrices
+        cos_roll = np.cos(roll)
+        sin_roll = np.sin(roll)
+        R_x = np.array([[1, 0, 0], [0, cos_roll, -sin_roll], [0, sin_roll, cos_roll]])
+
+        cos_pitch = np.cos(pitch)
+        sin_pitch = np.sin(pitch)
+        R_y = np.array([[cos_pitch, 0, sin_pitch], [0, 1, 0], [-sin_pitch, 0, cos_pitch]])
+
+        cos_yaw = np.cos(yaw)
+        sin_yaw = np.sin(yaw)
+        R_z = np.array([[cos_yaw, -sin_yaw, 0], [sin_yaw, cos_yaw, 0], [0, 0, 1]])
+
+        # Combined rotation (ZYX convention)
+        rot_matrix = R_z @ R_y @ R_x
+
+        # Rotate object position
+        rotated_pos = rot_matrix @ obj_pos
+
+        # Translate by camera position
+        world_pos = camera_pose.pos + Vector(rotated_pos[0], rotated_pos[1], rotated_pos[2])
+
+        return world_pos
+
     def visualize_detections(
-        self, rgb_image: np.ndarray, detections: List[Dict[str, Any]], show_3d: bool = True
+        self,
+        rgb_image: np.ndarray,
+        detections: List[ObjectData],
+        pbvs_controller: Optional[Any] = None,
     ) -> np.ndarray:
         """
-        Fast visualization of detections with optional 3D info using plot_results.
+        Visualize detections with 3D position overlay next to bounding boxes.
 
         Args:
             rgb_image: Original RGB image
-            detections: List of detection dictionaries
-            show_3d: Whether to show 3D centroids and orientations
+            detections: List of ObjectData objects
+            pbvs_controller: Optional PBVS controller to get robot frame coordinates
 
         Returns:
             Visualization image
@@ -168,56 +248,102 @@ class Detection3DProcessor:
 
         # Extract data for plot_results function
         bboxes = [det["bbox"] for det in detections]
-        track_ids = [det.get("track_id", i) for i, det in enumerate(detections)]
-        class_ids = [i for i in range(len(detections))]  # Use indices as class IDs
+        track_ids = [det.get("object_id", i) for i, det in enumerate(detections)]
+        class_ids = [i for i in range(len(detections))]
         confidences = [det["confidence"] for det in detections]
-        names = [det["class_name"] for det in detections]
+        names = [det["label"] for det in detections]
 
-        # Use plot_results for basic visualization (bboxes and labels)
+        # Use plot_results for basic visualization
         viz = plot_results(rgb_image, bboxes, track_ids, class_ids, confidences, names)
 
-        # Add 3D centroids if requested
-        if show_3d:
-            for det in detections:
-                if det.get("has_3d", False):
-                    # Project and draw centroid
-                    centroid = np.array(det["centroid"])
-                    fx, fy, cx, cy = self.camera_intrinsics
+        # Add 3D position overlay next to bounding boxes
+        fx, fy, cx, cy = self.camera_intrinsics
 
-                    if centroid[2] > 0:
-                        u = int(centroid[0] * fx / centroid[2] + cx)
-                        v = int(centroid[1] * fy / centroid[2] + cy)
+        for det in detections:
+            if "position" in det and "bbox" in det:
+                # Get position to display (robot frame if available, otherwise world frame)
+                world_position = det["position"]
+                display_position = world_position
+                frame_label = ""
 
-                        # Draw centroid circle
-                        cv2.circle(viz, (u, v), 6, (255, 0, 0), -1)
-                        cv2.circle(viz, (u, v), 8, (255, 255, 255), 2)
+                # Check if we should display robot frame coordinates
+                if pbvs_controller and pbvs_controller.manipulator_origin is not None:
+                    robot_frame_data = pbvs_controller.get_object_pose_robot_frame(world_position)
+                    if robot_frame_data:
+                        display_position, _ = robot_frame_data
+                        frame_label = "[R]"  # Robot frame indicator
+
+                bbox = det["bbox"]
+
+                if isinstance(display_position, Vector):
+                    display_xyz = np.array(
+                        [display_position.x, display_position.y, display_position.z]
+                    )
+                else:
+                    display_xyz = np.array(
+                        [display_position["x"], display_position["y"], display_position["z"]]
+                    )
+
+                # Get bounding box coordinates
+                x1, y1, x2, y2 = map(int, bbox)
+
+                # Add position text next to bounding box (top-right corner)
+                pos_text = f"{frame_label}({display_xyz[0]:.2f}, {display_xyz[1]:.2f}, {display_xyz[2]:.2f})"
+                text_x = x2 + 5  # Right edge of bbox + small offset
+                text_y = y1 + 15  # Top edge of bbox + small offset
+
+                # Add background rectangle for better readability
+                text_size = cv2.getTextSize(pos_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+                cv2.rectangle(
+                    viz,
+                    (text_x - 2, text_y - text_size[1] - 2),
+                    (text_x + text_size[0] + 2, text_y + 2),
+                    (0, 0, 0),
+                    -1,
+                )
+
+                cv2.putText(
+                    viz,
+                    pos_text,
+                    (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.4,
+                    (255, 255, 255),
+                    1,
+                )
 
         return viz
 
     def get_closest_detection(
-        self, detections: List[Dict[str, Any]], class_filter: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+        self, detections: List[ObjectData], class_filter: Optional[str] = None
+    ) -> Optional[ObjectData]:
         """
         Get the closest detection with valid 3D data.
 
         Args:
-            detections: List of detections
+            detections: List of ObjectData objects
             class_filter: Optional class name to filter by
 
         Returns:
-            Closest detection or None
+            Closest ObjectData or None
         """
         valid_detections = [
             d
             for d in detections
-            if d.get("has_3d", False) and (class_filter is None or d["class_name"] == class_filter)
+            if "position" in d and (class_filter is None or d["label"] == class_filter)
         ]
 
         if not valid_detections:
             return None
 
         # Sort by depth (Z coordinate)
-        return min(valid_detections, key=lambda d: d["centroid"][2])
+        def get_z_coord(d):
+            pos = d["position"]
+            if isinstance(pos, Vector):
+                return abs(pos.z)
+            return abs(pos["z"])
+
+        return min(valid_detections, key=get_z_coord)
 
     def cleanup(self):
         """Clean up resources."""

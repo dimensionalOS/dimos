@@ -98,7 +98,7 @@ class Sam2DSegmenter:
             source=image,
             device=self.device,
             retina_masks=True,
-            conf=0.6,
+            conf=0.5,
             iou=0.9,
             persist=True,
             verbose=False,
