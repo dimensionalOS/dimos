@@ -23,6 +23,7 @@ from dimos.utils.cli.lcmspy import GraphLCMSpy, GraphTopic, LCMSpy
 autoconf()
 
 
+@pytest.mark.lcm
 def test_spy_basic():
     lcm = PickleLCM(autoconf=True)
     lcm.start()
@@ -81,6 +82,7 @@ def test_spy_basic():
     print(f"Odom topic: {odom_topic_spy}")
 
 
+@pytest.mark.lcm
 def test_topic_statistics_direct():
     """Test Topic statistics directly without LCM"""
     from dimos.utils.cli.lcmspy import Topic as TopicSpy
@@ -131,6 +133,7 @@ def test_topic_cleanup():
     assert topic.message_history[0][0] > time.time() - 10  # Recent message
 
 
+@pytest.mark.lcm
 def test_graph_topic_basic():
     """Test GraphTopic basic functionality"""
     topic = GraphTopic("/test_graph")
@@ -146,6 +149,7 @@ def test_graph_topic_basic():
     assert topic.bandwidth_history[0] > 0
 
 
+@pytest.mark.lcm
 def test_graph_lcmspy_basic():
     """Test GraphLCMSpy basic functionality"""
     spy = GraphLCMSpy(graph_log_window=0.1)
@@ -165,6 +169,7 @@ def test_graph_lcmspy_basic():
     spy.stop()
 
 
+@pytest.mark.lcm
 def test_lcmspy_global_totals():
     """Test that LCMSpy tracks global totals as a Topic itself"""
     spy = LCMSpy()
@@ -194,6 +199,7 @@ def test_lcmspy_global_totals():
     spy.stop()
 
 
+@pytest.mark.lcm
 def test_graph_lcmspy_global_totals():
     """Test that GraphLCMSpy tracks global totals with history"""
     spy = GraphLCMSpy(graph_log_window=0.1)
