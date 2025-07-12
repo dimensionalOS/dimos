@@ -17,7 +17,10 @@ import time
 import pytest
 
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
+from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.cli.lcmspy import GraphLCMSpy, GraphTopic, LCMSpy
+
+autoconf()
 
 
 def test_spy_basic():
