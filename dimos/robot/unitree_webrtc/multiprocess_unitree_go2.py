@@ -153,7 +153,9 @@ async def run(ip):
     connection.video.transport = core.LCMTransport("/video", Image)
     connection.movecmd.transport = core.LCMTransport("/move", Vector3)
 
-    mapper = dimos.deploy(Map, voxel_size=0.5)
+    mapper = dimos.deploy(Map, voxel_size=0.5, global_publish_interval=10.0)
+
+    mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
 
     local_planner = dimos.deploy(
         SimplePlanner,

@@ -14,10 +14,11 @@
 
 from dataclasses import dataclass
 from typing import Optional, Tuple
-
+import time
 import numpy as np
 import open3d as o3d
 import reactivex.operators as ops
+from reactivex import interval
 from reactivex.observable import Observable
 
 from dimos.core import In, Module, Out, rpc
@@ -27,16 +28,37 @@ from dimos.types.costmap import Costmap, pointcloud_to_costmap
 
 class Map(Module):
     lidar: In[LidarMessage] = None
+    global_map: Out[LidarMessage] = None
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
 
-    def __init__(self, voxel_size: float = 0.05, cost_resolution: float = 0.05, **kwargs):
+    def __init__(
+        self,
+        voxel_size: float = 0.05,
+        cost_resolution: float = 0.05,
+        global_publish_interval: Optional[float] = None,
+        **kwargs,
+    ):
         self.voxel_size = voxel_size
         self.cost_resolution = cost_resolution
+        self.global_publish_interval = global_publish_interval
         super().__init__(**kwargs)
 
     @rpc
     def start(self):
         self.lidar.subscribe(self.add_frame)
+
+        if self.global_publish_interval is not None:
+            interval(self.global_publish_interval).subscribe(
+                lambda _: self.global_map.publish(self.to_lidar_message())
+            )
+
+    def to_lidar_message(self) -> LidarMessage:
+        return LidarMessage(
+            pointcloud=self.pointcloud,
+            origin=[0.0, 0.0, 0.0],
+            resolution=self.voxel_size,
+            ts=time.time(),
+        )
 
     @rpc
     def add_frame(self, frame: LidarMessage) -> "Map":
