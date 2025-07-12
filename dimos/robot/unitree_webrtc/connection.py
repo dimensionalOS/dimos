@@ -45,7 +45,6 @@ VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 class WebRTCRobot(ConnectionInterface):
     def __init__(self, ip: str, mode: str = "ai"):
         self.ip = ip
-        print("IP IS", ip)
         self.mode = mode
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
         self.connect()
@@ -96,8 +95,6 @@ class WebRTCRobot(ConnectionInterface):
             bool: True if command was sent successfully
         """
         x, y, yaw = velocity.x, velocity.y, velocity.z
-
-        print("MOVE REQUESTED", velocity)
 
         # WebRTC coordinate mapping:
         # x - Positive right, negative left
