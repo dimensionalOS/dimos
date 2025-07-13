@@ -17,7 +17,6 @@ import threading
 
 # this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_utils
 import dimos_utils.lcm_foxglove_bridge as bridge
-from foxglove_websocket import run_cancellable
 
 from dimos.core import Module, rpc
 
