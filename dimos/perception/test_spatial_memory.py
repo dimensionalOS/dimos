@@ -27,7 +27,7 @@ from reactivex.subject import Subject
 
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.stream.video_provider import VideoProvider
-from dimos.types.position import Position
+from dimos.types.pose import Pose
 from dimos.types.vector import Vector
 
 
@@ -117,7 +117,7 @@ class TestSpatialMemory:
                 nonlocal frame_counter
 
                 # Generate a unique position for this frame to ensure minimum distance threshold is met
-                pos = Position(frame_counter * 0.5, frame_counter * 0.5, 0)
+                pos = Pose(frame_counter * 0.5, frame_counter * 0.5, 0)
                 transform = {"position": pos, "timestamp": time.time()}
                 frame_counter += 1
 

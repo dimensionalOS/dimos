@@ -20,9 +20,9 @@ import math
 from dimos.types.vector import Vector, to_vector, to_numpy, VectorLike
 
 
-T = TypeVar("T", bound="Position")
+T = TypeVar("T", bound="Pose")
 
-PositionLike = Union["Position", VectorLike, Sequence[VectorLike]]
+PoseLike = Union["Pose", VectorLike, Sequence[VectorLike]]
 
 
 def yaw_to_matrix(yaw: float) -> np.ndarray:
@@ -31,10 +31,10 @@ def yaw_to_matrix(yaw: float) -> np.ndarray:
     return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
 
 
-class Position(Vector):
-    """A position in 3D space, consisting of a position vector and a rotation vector.
+class Pose(Vector):
+    """A pose in 3D space, consisting of a position vector and a rotation vector.
 
-    Position inherits from Vector and behaves like a vector for the position component.
+    Pose inherits from Vector and behaves like a vector for the position component.
     The rotation vector is stored separately and can be accessed via the rot property.
     """
 
@@ -51,7 +51,7 @@ class Position(Vector):
         self._rot = to_vector(rot)
 
     def __repr__(self) -> str:
-        return f"Position({self.pos.__repr__()}, {self.rot.__repr__()})"
+        return f"Pose({self.pos.__repr__()}, {self.rot.__repr__()})"
 
     def __str__(self) -> str:
         return self.__repr__()
@@ -63,8 +63,8 @@ class Position(Vector):
         return not self.is_zero()
 
     def serialize(self):
-        """Serialize the position to a dictionary."""
-        return {"type": "position", "pos": self.to_list(), "rot": self.rot.to_list()}
+        """Serialize the pose to a dictionary."""
+        return {"type": "pose", "pos": self.to_list(), "rot": self.rot.to_list()}
 
     def vector_to(self, target: Vector) -> Vector:
         direction = target - self.pos.to_2d()
@@ -78,8 +78,8 @@ class Position(Vector):
         return Vector(x, y)
 
     def __eq__(self, other) -> bool:
-        """Check if two positions are equal using numpy's allclose for floating point comparison."""
-        if not isinstance(other, Position):
+        """Check if two poses are equal using numpy's allclose for floating point comparison."""
+        if not isinstance(other, Pose):
             return False
         return np.allclose(self.pos._data, other.pos._data) and np.allclose(
             self.rot._data, other.rot._data
@@ -98,18 +98,18 @@ class Position(Vector):
         return to_vector(self._data)
 
     def __add__(self: T, other) -> T:
-        """Override Vector's __add__ to handle Position objects specially.
+        """Override Vector's __add__ to handle Pose objects specially.
 
-        When adding two Position objects, both position and rotation components are added.
+        When adding two Pose objects, both position and rotation components are added.
         """
-        if isinstance(other, Position):
+        if isinstance(other, Pose):
             # Add both position and rotation components
             result = super().__add__(other)
             result._rot = self.rot + other.rot
             return result
         else:
             # For other types, just use Vector's addition
-            return Position(super().__add__(other), self.rot)
+            return Pose(super().__add__(other), self.rot)
 
     @property
     def yaw(self) -> float:
@@ -117,11 +117,11 @@ class Position(Vector):
         return self.rot.z
 
     def __sub__(self: T, other) -> T:
-        """Override Vector's __sub__ to handle Position objects specially.
+        """Override Vector's __sub__ to handle Pose objects specially.
 
-        When subtracting two Position objects, both position and rotation components are subtracted.
+        When subtracting two Pose objects, both position and rotation components are subtracted.
         """
-        if isinstance(other, Position):
+        if isinstance(other, Pose):
             # Subtract both position and rotation components
             result = super().__sub__(other)
             result._rot = self.rot - other.rot
@@ -131,19 +131,19 @@ class Position(Vector):
             return super().__sub__(other)
 
     def __mul__(self: T, scalar: float) -> T:
-        return Position(self.pos * scalar, self.rot)
+        return Pose(self.pos * scalar, self.rot)
 
 
 @dispatch
-def to_position(pos: Position) -> Position:
+def to_pose(pos: Pose) -> Pose:
     return pos
 
 
 @dispatch
-def to_position(pos: VectorLike) -> Position:
-    return Position(pos)
+def to_pose(pos: VectorLike) -> Pose:
+    return Pose(pos)
 
 
 @dispatch
-def to_position(pos: Sequence[VectorLike]) -> Position:
-    return Position(*pos)
+def to_pose(pos: Sequence[VectorLike]) -> Pose:
+    return Pose(*pos)
