@@ -14,7 +14,7 @@
 
 import numpy as np
 import pytest
-from lcm_msgs.geometry_msgs import Quaternion as LCMQuaternion
+from dimos_utils.python_lcm_msgs.lcm_msgs.geometry_msgs import Quaternion as LCMQuaternion
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
