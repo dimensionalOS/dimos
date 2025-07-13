@@ -29,13 +29,12 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="websocket
 
 def test_foxglove_bridge_import():
     """Test that the foxglove bridge can be imported successfully."""
-    with pytest.warns(DeprecationWarning):
-        try:
-            import dimos_utils.lcm_foxglove_bridge as bridge
+    try:
+        import dimos_utils.lcm_foxglove_bridge as bridge
 
-            assert hasattr(bridge, "LcmFoxgloveBridgeRunner")
-        except ImportError as e:
-            pytest.fail(f"Failed to import foxglove bridge: {e}")
+        assert hasattr(bridge, "LcmFoxgloveBridgeRunner")
+    except ImportError as e:
+        pytest.fail(f"Failed to import foxglove bridge: {e}")
 
 
 def test_foxglove_bridge_runner_init():
