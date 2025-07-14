@@ -1,11 +1,12 @@
-.venv/
 .vscode/
 
 # Ignore Python cache files
 __pycache__/
 *.pyc
-.venv*
-venv*
+
+# Ignore virtual environment directories
+*venv*/
+.venv*/
 .ssh/
 
 # Ignore python tooling dirs

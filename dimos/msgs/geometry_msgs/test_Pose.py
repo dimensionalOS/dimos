@@ -16,7 +16,7 @@ import pickle
 
 import numpy as np
 import pytest
-from lcm_msgs.geometry_msgs import Pose as LCMPose
+from dimos_lcm.geometry_msgs import Pose as LCMPose
 
 from dimos.msgs.geometry_msgs.Pose import Pose, to_pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion

@@ -17,9 +17,9 @@ import time
 from io import BytesIO
 from typing import BinaryIO, TypeAlias
 
-from lcm_msgs.geometry_msgs import PoseStamped as LCMPoseStamped
-from lcm_msgs.std_msgs import Header as LCMHeader
-from lcm_msgs.std_msgs import Time as LCMTime
+from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
+from dimos_lcm.std_msgs import Header as LCMHeader
+from dimos_lcm.std_msgs import Time as LCMTime
 from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Pose import Pose
