@@ -18,6 +18,35 @@ from lcm_msgs.geometry_msgs import Orientation, Pose, PoseStamped, Vector3
 from lcm_msgs.std_msgs import Header
 
 
+# None of the tests actually pass apart from the first two.
+# The rest of the tests are a proposal for functionality to be added.
+#
+# Below mutable init is how current lcmgen can only be used,
+# This is not very ergonomical, and these are the most common objects we use,
+# so we need a way to both have a better init for them by default, coming
+# out of lcmgen,
+# as well as to have a better way to modify individual types by hand for
+# type specific convinience methods.
+#
+# Some examples:
+# header taking datetime or float, instead of a weird ros timestamp dictionary format,
+# Quaternion having .yaw() pitch() or to_euler() -> Vector3 methods,etc
+# Vector taking a list or tuple as init, not just kwargs
+#
+def test_vector_current_init():
+    vector = Vector3()
+    vector.x = 1.0
+    vector.y = 2.0
+    vector.z = 3.0
+
+
+def test_vector_defaults():
+    vector = Vector3()
+    assert vector.x == 0.0
+    assert vector.y == 0.0
+    assert vector.z == 0.0
+
+
 def test_vector_init():
     vector = Vector3(x=1.0, y=2.0, z=3.0)
     assert vector.x == 1.0
@@ -42,16 +71,6 @@ def test_vector_args_init():
 # while also keeping the new class within the original dep structure
 # (so Pose would refer to the new convinient Vector3 subclass,
 # without recoding the Pose itself?)
-#
-# for example I'd also subclass Header to take datetime as timestamp,
-# Quaternion to have to_euler() -> Vector3 conversion, .yaw() .pitch() etc etc
-
-
-def test_vector_defaults():
-    vector = Vector3()
-    assert vector.x == 0.0
-    assert vector.y == 0.0
-    assert vector.z == 0.0
 
 
 def test_vector_partial_defaults():
