@@ -30,6 +30,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
+from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.global_planner import AstarPlanner
 from dimos.robot.local_planner.simple import SimplePlanner
 from dimos.robot.unitree_webrtc.connection import VideoMessage, WebRTCRobot
@@ -182,6 +183,8 @@ async def run(ip):
     ctrl.plancmd.transport = core.LCMTransport("/global_target", Vector3)
     global_planner.target.connect(ctrl.plancmd)
 
+    foxglove_bridge = FoxgloveBridge()
+
     # we review the structure
     print("\n")
     for module in [connection, mapper, local_planner, global_planner, ctrl]:
@@ -198,6 +201,9 @@ async def run(ip):
 
     print(colors.green("starting global planner"))
     global_planner.start()
+
+    print(colors.green("starting foxglove bridge"))
+    foxglove_bridge.start()
 
     # uncomment to move the bot
     # print(colors.green("starting ctrl"))

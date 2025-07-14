@@ -20,7 +20,7 @@ from io import BytesIO
 from typing import BinaryIO, TypeAlias
 
 import numpy as np
-from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
+from dimos_lcm.geometry_msgs import Vector3 as LCMVector3
 from plum import dispatch
 
 # Types that can be converted to/from Vector
