@@ -15,8 +15,8 @@
 import asyncio
 import threading
 
-# this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_utils
-import dimos_utils.lcm_foxglove_bridge as bridge
+# this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_lcm
+import dimos_lcm.lcm_foxglove_bridge as bridge
 
 from dimos.core import Module, rpc
 

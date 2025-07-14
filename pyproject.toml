@@ -93,7 +93,7 @@ dependencies = [
     "dask[complete]==2025.5.1",
 
     # LCM / DimOS utilities
-    "dimos_utils @ git+https://github.com/dimensionalOS/dimos_utils.git@main#egg=dimos_utils",
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@main",
 
 ]
 

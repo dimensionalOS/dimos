@@ -14,12 +14,12 @@
 # limitations under the License.
 
 """
-use lcm_foxglove_bridge as a module from dimos_utils
+use lcm_foxglove_bridge as a module from dimos_lcm
 """
 
 import asyncio
 import threading
-import dimos_utils.lcm_foxglove_bridge as bridge
+import dimos_lcm.lcm_foxglove_bridge as bridge
 
 
 def run_bridge_example():

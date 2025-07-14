@@ -30,7 +30,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="websocket
 def test_foxglove_bridge_import():
     """Test that the foxglove bridge can be imported successfully."""
     try:
-        import dimos_utils.lcm_foxglove_bridge as bridge
+        import dimos_lcm.lcm_foxglove_bridge as bridge
 
         assert hasattr(bridge, "LcmFoxgloveBridgeRunner")
     except ImportError as e:
@@ -40,7 +40,7 @@ def test_foxglove_bridge_import():
 def test_foxglove_bridge_runner_init():
     """Test that LcmFoxgloveBridgeRunner can be initialized with default parameters."""
     try:
-        import dimos_utils.lcm_foxglove_bridge as bridge
+        import dimos_lcm.lcm_foxglove_bridge as bridge
 
         runner = bridge.LcmFoxgloveBridgeRunner(
             host="localhost", port=8765, debug=False, num_threads=2
@@ -56,7 +56,7 @@ def test_foxglove_bridge_runner_init():
 def test_foxglove_bridge_runner_params():
     """Test that LcmFoxgloveBridgeRunner accepts various parameter configurations."""
     try:
-        import dimos_utils.lcm_foxglove_bridge as bridge
+        import dimos_lcm.lcm_foxglove_bridge as bridge
 
         configs = [
             {"host": "0.0.0.0", "port": 8765, "debug": True, "num_threads": 1},
@@ -75,7 +75,7 @@ def test_foxglove_bridge_runner_params():
 def test_bridge_runner_has_run_method():
     """Test that the bridge runner has a run method that can be called."""
     try:
-        import dimos_utils.lcm_foxglove_bridge as bridge
+        import dimos_lcm.lcm_foxglove_bridge as bridge
 
         runner = bridge.LcmFoxgloveBridgeRunner(
             host="localhost", port=8765, debug=False, num_threads=1

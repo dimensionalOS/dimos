@@ -22,11 +22,11 @@ import numpy as np
 import open3d as o3d
 
 # Import LCM types
-from dimos_utils.python_lcm_msgs.lcm_msgs.sensor_msgs.PointCloud2 import (
+from dimos_lcm.sensor_msgs.PointCloud2 import (
     PointCloud2 as LCMPointCloud2,
 )
-from dimos_utils.python_lcm_msgs.lcm_msgs.sensor_msgs.PointField import PointField
-from dimos_utils.python_lcm_msgs.lcm_msgs.std_msgs.Header import Header
+from dimos_lcm.sensor_msgs.PointField import PointField
+from dimos_lcm.std_msgs.Header import Header
 
 from dimos.types.timestamped import Timestamped
 
