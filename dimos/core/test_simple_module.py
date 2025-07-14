@@ -50,9 +50,9 @@ class Controller(Module):
         def sendCmd():
             while True:
                 time.sleep(self.period)
-                vector = Vector3([0, 0, random.uniform(-1, 1)])
+                vector = Vector3(0, 0, random.uniform(-1, 1))
                 print("sending", vector)
-                self.cmd.publish(Vector3([0, 0, 0]))
+                self.cmd.publish(vector)
 
         thread = threading.Thread(target=sendCmd, daemon=True)
         thread.start()
