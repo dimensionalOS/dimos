@@ -110,6 +110,8 @@ def test_pose_fancy_init():
         frame_id="test_frame",
     )
 
+    assert pose.pose.position.x == 1.0
+
 
 def test_pose_partial_fancy_init():
     # partially implicit init
@@ -124,3 +126,9 @@ def test_pose_partial_fancy_init():
         stamp=1234567890,
         frame_id="test_frame",
     )
+
+    assert pose.pose.position.x == 1.0
+
+    # can Stamped modules provide access to the underlying data
+    # directly? Maybe manual Stamped subclass?
+    assert pose.position.y == 2.0
