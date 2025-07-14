@@ -37,24 +37,30 @@ class MyComponent(Module):
         print("handling control command:", target)
         self.current_pose.publish(target)
 
+    @rpc
+    def some_service_call(self, x: int) -> int:
+        return 3 + x
+
 
 class Controller(Module):
     cmd: Out[Vector3] = None
 
+    # we can accept some parameters in the constructor
+    # but make sure to call super().__init__(*args, **kwargs)
     def __init__(self, period=1, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.period = period
 
     @rpc
     def start(self):
-        def sendCmd():
+        def send_loop():
             while True:
                 time.sleep(self.period)
                 vector = Vector3(0, 0, random.uniform(-1, 1))
                 print("sending", vector)
                 self.cmd.publish(vector)
 
-        thread = threading.Thread(target=sendCmd, daemon=True)
+        thread = threading.Thread(target=send_loop, daemon=True)
         thread.start()
 
 
@@ -73,6 +79,8 @@ def test_my_component():
     controller.cmd.connect(component.ctrl)
     controller.start()
     component.start()
+
+    print("service call result is", component.some_service_call(3))
 
     while True:
         time.sleep(1)
