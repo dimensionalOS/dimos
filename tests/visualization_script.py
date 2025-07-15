@@ -308,6 +308,7 @@ class DrakeKinematicsEnv:
     def __init__(self, urdf_path: str, kinematic_chain_joints: List[str], links_to_ignore: Optional[List[str]] = None, collision_depth_threshold: float = 0.005):
         self._resources_to_cleanup = []
         self.collision_depth_threshold = collision_depth_threshold
+        self.initial_robot_collisions = set()  # Store initial robot-world collisions to ignore
 
         # Register cleanup at exit
         atexit.register(self.cleanup_resources)
@@ -426,6 +427,9 @@ class DrakeKinematicsEnv:
         # Add meshcat sliders for joint control
         self._add_joint_sliders()
         
+        # Identify initial robot-world collisions to ignore
+        self._identify_initial_robot_collisions()
+        
         # Force initial visualization update
         self._update_visualization()
         
@@ -451,18 +455,22 @@ class DrakeKinematicsEnv:
             return
 
         # Preprocess detected objects to extract planes and remove overlapping points
-        if "detected_objects" in results:
-            results["detected_objects"] = self._preprocess_plane_detection(results["detected_objects"])
-            # results["detected_objects"] = self._preprocess_overlapping_points(results["detected_objects"])
+        if "all_objects" in results:
+            # results["all_objects"] = self._preprocess_plane_detection(results["all_objects"])
+            results["all_objects"] = self._preprocess_overlapping_points(results["all_objects"])
+        
+        # if "misc_clusters" in results:
+        #     results["misc_clusters"] = self._preprocess_overlapping_points(results["misc_clusters"])
+        #     results["misc_clusters"] = self._preprocess_plane_detection(results["misc_clusters"])
         
         full_detected_pcd = o3d.geometry.PointCloud()
-        for obj in results["detected_objects"]:
+        for obj in results["all_objects"]:
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(obj["point_cloud_numpy"])
             full_detected_pcd += pcd
         
-        self.process_and_add_object_class("detected_objects", results)
-        # self.process_and_add_object_class("misc_clusters", results)
+        self.process_and_add_object_class("all_objects", results)
+        self.process_and_add_object_class("misc_clusters", results)
         # misc_clusters = results["misc_clusters"]
         # print(type(misc_clusters[0]["points"]))
         # print(np.asarray(misc_clusters[0]["points"]).shape)
@@ -1104,6 +1112,107 @@ class DrakeKinematicsEnv:
         except Exception as e:
             print(f"Error adding joint sliders: {e}")
 
+    def _identify_initial_robot_collisions(self):
+        """Identify initial robot-world collisions to ignore in future checks"""
+        try:
+            print("Identifying initial robot-world collisions to ignore...")
+            
+            # Get the scene graph context
+            scene_graph_context = self.scene_graph.GetMyContextFromRoot(self.diagram_context)
+            query_object = self.scene_graph.get_query_output_port().Eval(scene_graph_context)
+            
+            # Check for all collisions initially
+            collision_pairs = query_object.ComputePointPairPenetration()
+            
+            robot_collision_geometries = set()
+            
+            for pair in collision_pairs:
+                # Get geometry names
+                geom_A = query_object.inspector().GetName(pair.id_A)
+                geom_B = query_object.inspector().GetName(pair.id_B)
+                
+                # Check if this is a robot-world collision
+                is_robot_world_collision = False
+                robot_geom = None
+                world_geom = None
+                
+                # Check if one is robot and other is world object
+                if ("devkit_base_descr" in geom_A and ("all_objects" in geom_B or "misc_clusters" in geom_B)):
+                    is_robot_world_collision = True
+                    robot_geom = geom_A
+                    world_geom = geom_B
+                elif ("devkit_base_descr" in geom_B and ("all_objects" in geom_A or "misc_clusters" in geom_A)):
+                    is_robot_world_collision = True
+                    robot_geom = geom_B
+                    world_geom = geom_A
+                
+                if is_robot_world_collision:
+                    # Store the collision pair to ignore
+                    collision_key = tuple(sorted([geom_A, geom_B]))
+                    self.initial_robot_collisions.add(collision_key)
+                    
+                    # Also store the world geometry for potential removal
+                    robot_collision_geometries.add(world_geom)
+                    
+                    print(f"  Will ignore: {robot_geom} <-> {world_geom}")
+            
+            print(f"Found {len(self.initial_robot_collisions)} initial robot-world collisions to ignore")
+            print(f"Found {len(robot_collision_geometries)} world geometries colliding with robot")
+            
+            # Apply collision filtering to exclude these geometries from robot collision detection
+            if robot_collision_geometries:
+                self._apply_collision_filtering(robot_collision_geometries)
+            
+        except Exception as e:
+            print(f"Error identifying initial robot collisions: {e}")
+
+    def _apply_collision_filtering(self, robot_collision_geometries):
+        """Apply collision filtering to exclude certain geometries from robot collision detection"""
+        try:
+            print("Applying collision filtering to remove robot-world collision geometries...")
+            
+            # Get all registered geometry IDs that match the collision geometries
+            geometry_ids_to_filter = []
+            
+            if hasattr(self, 'registered_geometry_ids'):
+                for geom_id, geom_name in self.registered_geometry_ids:
+                    if geom_name in robot_collision_geometries:
+                        geometry_ids_to_filter.append(geom_id)
+                        print(f"  Filtering geometry: {geom_name}")
+            
+            if geometry_ids_to_filter:
+                # Get all robot body geometries
+                robot_bodies = []
+                for model_instance in self.model_instances:
+                    bodies = self.plant.GetBodiesForModelInstance(model_instance)
+                    robot_bodies.extend(bodies)
+                
+                # Get geometry IDs for robot bodies
+                robot_geometry_ids = []
+                for body in robot_bodies:
+                    body_geoms = self.plant.GetCollisionGeometriesForBody(body)
+                    robot_geometry_ids.extend(body_geoms)
+                
+                # Create collision filter to exclude these geometries from robot collision detection
+                if robot_geometry_ids and geometry_ids_to_filter:
+                    filter_manager = self.scene_graph.collision_filter_manager()
+                    decl = CollisionFilterDeclaration()
+                    
+                    # Exclude collisions between robot geometries and problematic world geometries
+                    for robot_geom_id in robot_geometry_ids:
+                        for world_geom_id in geometry_ids_to_filter:
+                            decl.ExcludeBetween(robot_geom_id, world_geom_id)
+                    
+                    filter_manager.Apply(decl)
+                    print(f"Applied collision filtering for {len(geometry_ids_to_filter)} world geometries")
+                else:
+                    print("No valid geometries found for collision filtering")
+            else:
+                print("No geometries to filter found")
+                
+        except Exception as e:
+            print(f"Error applying collision filtering: {e}")
+
     def _update_visualization(self):
         """Force update the visualization"""
         try:
@@ -1135,6 +1244,11 @@ class DrakeKinematicsEnv:
                     # Get geometry names
                     geom_A = query_object.inspector().GetName(pair.id_A)
                     geom_B = query_object.inspector().GetName(pair.id_B)
+                    
+                    # Check if this collision should be ignored (initial robot-world collision)
+                    collision_key = tuple(sorted([geom_A, geom_B]))
+                    if collision_key in self.initial_robot_collisions:
+                        continue  # Skip this collision
                     
                     # Get frame names (link names)
                     frame_A = query_object.inspector().GetFrameId(pair.id_A)
@@ -1323,6 +1437,9 @@ class DrakeKinematicsEnv:
             
         world = self.plant.world_body()
         proximity = ProximityProperties()
+        
+        # Store geometry IDs for potential collision filtering
+        self.registered_geometry_ids = getattr(self, 'registered_geometry_ids', [])
 
         for i, (mesh, object_id) in enumerate(meshes_with_ids):
             try:
@@ -1352,16 +1469,20 @@ class DrakeKinematicsEnv:
                 X_WG = DrakeRigidTransform(RotationMatrix(rpy), pos)
 
                 # Register collision and visual geometry with object-based naming
-                self.plant.RegisterCollisionGeometry(
+                collision_id = self.plant.RegisterCollisionGeometry(
                     body=world,
                     X_BG=X_WG,
                     shape=drake_mesh,
                     name=f"{hull_type}/object_{object_id}/collision_hull_{i}",
                     properties=proximity,
                 )
+                
+                # Store geometry ID for potential collision filtering
+                self.registered_geometry_ids.append((collision_id, f"{hull_type}/object_{object_id}/collision_hull_{i}"))
+                
                 # Generate a unique color for each object (all hulls from same object have same color)
                 hull_color = self.get_seeded_random_rgba(object_id)
-                self.plant.RegisterVisualGeometry(
+                visual_id = self.plant.RegisterVisualGeometry(
                     body=world,
                     X_BG=X_WG,
                     shape=drake_mesh,
