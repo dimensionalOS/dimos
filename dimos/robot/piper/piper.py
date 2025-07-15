@@ -34,21 +34,22 @@ logger = setup_logger("dimos.robot.piper")
 
 
 class Piper(Module):
-    joint: Out[JointState] = None
+    joint_state: Out[JointState] = None
     arm_status: Out[PiperStatusMsg] = None
-    end_pose: Out[PoseStamped] = None
-
-    set_pose_in: In[PoseStamped] = None
-    set_joint_in: In[JointState] = None
+    pose_state: Out[PoseStamped] = None
+    set_pose: In[PoseStamped] = None
+    set_joint: In[JointState] = None
 
     def __init__(
         self,
         can_port="can0",
-        auto_enable=True,
         gripper_exist=True,
         gripper_val_multiple=1,
         rate=10,  # hz
+        *args,
+        **kwargs,
     ) -> None:
+        super().__init(self, *args, **kwargs)
         self.can_port = can_port
         self.gripper_exist = gripper_exist
         self.gripper_val_multiple = gripper_val_multiple
@@ -81,13 +82,15 @@ class Piper(Module):
         sub_pos_th.start()
 
     def start(self):
-        self.set_pose_in.subscribe(self.set_pose)
-        self.set_joint_in.subscribe(self.set_joint)
+        self.set_pose.subscribe(self.set_pose)
+        self.set_joint.subscribe(self.set_joint)
+        thread = threading.Thread(target=self.publish_loop, daemon=True)
+        thread.start()
 
     def GetEnableFlag(self):
         return self.__enable_flag
 
-    def Pubilsh(self):
+    def publish_loop(self):
         """Robotic arm message publishing"""
         enable_flag = False
         # Set timeout (seconds)
@@ -196,7 +199,7 @@ class Piper(Module):
             effort_6,
         ]
         # Publish all messages
-        self.joint.publish(self.joint_states)
+        self.joint_state.publish(self.joint_states)
 
     def PublishArmEndPose(self):
         # End effector pose
@@ -216,7 +219,7 @@ class Piper(Module):
         endpos.pose.orientation.z = quaternion[2]
         endpos.pose.orientation.w = quaternion[3]
         endpos.header.stamp = rospy.Time.now()
-        self.end_pose.publish(endpos)
+        self.pose_state.publish(endpos)
 
         end_pose_euler = PiperEulerPose()
         end_pose_euler.header.stamp = rospy.Time.now()
@@ -383,13 +386,13 @@ class Piper(Module):
             gripper_effort = req.gripper_effort
             gripper_effort = round(max(0.5, min(req.gripper_effort, 2)) * 1e3)
             if req.gripper_code not in [0x00, 0x01, 0x02, 0x03]:
-                logger.warning("gripper_code should be in [0, 1, 2, 3], default val is 1")
+                logger.warn("gripper_code should be in [0, 1, 2, 3], default val is 1")
                 gripper_code = 1
                 response.code = 15901
             else:
                 gripper_code = req.gripper_code
             if req.set_zero not in [0x00, 0xAE]:
-                logger.warning("set_zero should be in [0, 0xAE], default val is 0")
+                logger.warn("set_zero should be in [0, 0xAE], default val is 0")
                 set_zero = 0
                 response.code = 15902
             else:
@@ -398,7 +401,7 @@ class Piper(Module):
             self.piper.GripperCtrl(abs(gripper_angle), gripper_effort, gripper_code, set_zero)
             response.status = True
         else:
-            logger.warning("gripper_exist param is False.")
+            logger.warn("gripper_exist param is False.")
             response.code = 15903
             response.status = False
         logger.info(f"Returning GripperResponse: {response.code}, {response.status}")
