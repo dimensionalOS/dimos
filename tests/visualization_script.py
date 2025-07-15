@@ -305,8 +305,9 @@ def visualize_results(pickle_path="manipulation_results.pkl"):
         print("No voxel grid available for visualization")
 
 class DrakeKinematicsEnv:
-    def __init__(self, urdf_path: str, kinematic_chain_joints: List[str], links_to_ignore: Optional[List[str]] = None):
+    def __init__(self, urdf_path: str, kinematic_chain_joints: List[str], links_to_ignore: Optional[List[str]] = None, collision_depth_threshold: float = 0.005):
         self._resources_to_cleanup = []
+        self.collision_depth_threshold = collision_depth_threshold
 
         # Register cleanup at exit
         atexit.register(self.cleanup_resources)
@@ -452,7 +453,7 @@ class DrakeKinematicsEnv:
         # Preprocess detected objects to extract planes and remove overlapping points
         if "detected_objects" in results:
             results["detected_objects"] = self._preprocess_plane_detection(results["detected_objects"])
-            results["detected_objects"] = self._preprocess_overlapping_points(results["detected_objects"])
+            # results["detected_objects"] = self._preprocess_overlapping_points(results["detected_objects"])
         
         full_detected_pcd = o3d.geometry.PointCloud()
         for obj in results["detected_objects"]:
@@ -1129,43 +1130,44 @@ class DrakeKinematicsEnv:
             collision_info = []
             
             for pair in collision_pairs:
-                # PenetrationAsPointPair indicates collision (penetration > 0)
-                # Get geometry names
-                geom_A = query_object.inspector().GetName(pair.id_A)
-                geom_B = query_object.inspector().GetName(pair.id_B)
-                
-                # Get frame names (link names)
-                frame_A = query_object.inspector().GetFrameId(pair.id_A)
-                frame_B = query_object.inspector().GetFrameId(pair.id_B)
-                
-                try:
-                    frame_A_name = query_object.inspector().GetName(frame_A)
-                    frame_B_name = query_object.inspector().GetName(frame_B)
+                # Only consider collisions with depth greater than threshold
+                if pair.depth > self.collision_depth_threshold:
+                    # Get geometry names
+                    geom_A = query_object.inspector().GetName(pair.id_A)
+                    geom_B = query_object.inspector().GetName(pair.id_B)
                     
-                    colliding_links.add(frame_A_name)
-                    colliding_links.add(frame_B_name)
+                    # Get frame names (link names)
+                    frame_A = query_object.inspector().GetFrameId(pair.id_A)
+                    frame_B = query_object.inspector().GetFrameId(pair.id_B)
                     
-                    collision_info.append({
-                        'frame_A': frame_A_name,
-                        'frame_B': frame_B_name,
-                        'geometry_A': geom_A,
-                        'geometry_B': geom_B,
-                        'depth': pair.depth  # Use depth instead of distance
-                    })
-                except:
-                    # If we can't get frame names, use geometry names
-                    colliding_links.add(geom_A)
-                    colliding_links.add(geom_B)
-                    
-                    collision_info.append({
-                        'frame_A': geom_A,
-                        'frame_B': geom_B,
-                        'geometry_A': geom_A,
-                        'geometry_B': geom_B,
-                        'depth': pair.depth  # Use depth instead of distance
-                    })
+                    try:
+                        frame_A_name = query_object.inspector().GetName(frame_A)
+                        frame_B_name = query_object.inspector().GetName(frame_B)
+                        
+                        colliding_links.add(frame_A_name)
+                        colliding_links.add(frame_B_name)
+                        
+                        collision_info.append({
+                            'frame_A': frame_A_name,
+                            'frame_B': frame_B_name,
+                            'geometry_A': geom_A,
+                            'geometry_B': geom_B,
+                            'depth': pair.depth
+                        })
+                    except:
+                        # If we can't get frame names, use geometry names
+                        colliding_links.add(geom_A)
+                        colliding_links.add(geom_B)
+                        
+                        collision_info.append({
+                            'frame_A': geom_A,
+                            'frame_B': geom_B,
+                            'geometry_A': geom_A,
+                            'geometry_B': geom_B,
+                            'depth': pair.depth
+                        })
             
-            return len(collision_pairs) > 0, list(colliding_links), collision_info
+            return len(collision_info) > 0, list(colliding_links), collision_info
             
         except Exception as e:
             print(f"Error checking collisions: {e}")
@@ -1204,6 +1206,7 @@ class DrakeKinematicsEnv:
         """Run the interactive loop with continuous collision checking"""
         print("Starting interactive joint control...")
         print("Use the sliders in the meshcat window to control joints")
+        print(f"Collision detection threshold: {self.collision_depth_threshold:.3f}m")
         print("Press Ctrl+C to exit")
         
         try:
