@@ -12,18 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
 import math
 import threading
 import time
-from typing import (
-    Optional,
-)
 
 import numpy as np
-
-# import rosnode
-# import rospy
 from geometry_msgs.msg import Pose, PoseStamped
 from piper_msgs.msg import PiperEulerPose, PiperStatusMsg, PosCmd
 from piper_msgs.srv import Enable, EnableResponse, GoZero, GoZeroResponse, Gripper, GripperResponse
@@ -44,6 +37,9 @@ class Piper(Module):
     joint: Out[JointState] = None
     arm_status: Out[PiperStatusMsg] = None
     end_pose: Out[PoseStamped] = None
+
+    set_pose_in: In[PoseStamped] = None
+    set_joint_in: In[JointState] = None
 
     def __init__(
         self,
@@ -83,14 +79,10 @@ class Piper(Module):
         sub_pos_th = threading.Thread(target=self.SubPosThread)
         sub_pos_th.daemon = True
         sub_pos_th.start()
-        sub_joint_th = threading.Thread(target=self.SubJointThread)
-        sub_enable_th = threading.Thread(target=self.SubEnableThread)
 
-        sub_joint_th.daemon = True
-        sub_enable_th.daemon = True
-
-        sub_joint_th.start()
-        sub_enable_th.start()
+    def start(self):
+        self.set_pose_in.subscribe(self.set_pose)
+        self.set_joint_in.subscribe(self.set_joint)
 
     def GetEnableFlag(self):
         return self.__enable_flag
@@ -237,22 +229,9 @@ class Piper(Module):
         end_pose_euler.yaw = yaw
         # self.end_pose_euler_pub.publish(end_pose_euler)
 
-    def SubPosThread(self):
-        """Robotic arm end effector pose subscription"""
-        rospy.Subscriber("pos_cmd", PosCmd, self.pos_callback, queue_size=1, tcp_nodelay=True)
-        rospy.spin()
-
-    def SubJointThread(self):
-        """Robotic arm joint subscription"""
-        rospy.Subscriber(
-            "joint_ctrl_single", JointState, self.joint_callback, queue_size=1, tcp_nodelay=True
-        )
-        # rospy.Subscriber('/move_group/fake_controller_joint_states', JointState, self.joint_callback)
-        rospy.spin()
-
     @rpc
-    def set_pos(self, pos_data):
-        """机械臂末端位姿订阅回调函数
+    def set_pose(self, pos_data):
+        """Robotic arm end effector pose subscription callback function
 
         Args:
             pos_data ():
@@ -300,7 +279,7 @@ class Piper(Module):
 
     @rpc
     def set_joint(self, joint_data):
-        """机械臂关节角回调函数
+        """Robotic arm joint angle callback function
 
         Args:
             joint_data ():
@@ -333,7 +312,7 @@ class Piper(Module):
             else:
                 joint_6 = None
             if self.GetEnableFlag():
-                # 设定电机速度
+                # Set motor speed
                 if joint_data.velocity != []:
                     all_zeros = all(v == 0 for v in joint_data.velocity)
                 else:
@@ -349,10 +328,10 @@ class Piper(Module):
                         logger.info("vel_all: %d", vel_all)
                         self.piper.MotionCtrl_2(0x01, 0x01, vel_all)
                     # elif(lens == 7):
-                    #     # 遍历速度列表
+                    #     # Iterate through speed list
                     #     for i, velocity in enumerate(joint_data.velocity):
-                    #         if velocity > 0:  # 如果速度是正数
-                    #             # 设置指定位置的关节速度为这个正数速度
+                    #         if velocity > 0:  # If speed is positive
+                    #             # Set joint speed at specified position to this positive speed
                     #             # self.piper.SearchMotorMaxAngleSpdAccLimit(i+1,0x01)
                     #             # self.piper.MotorAngleLimitMaxSpdSet(i+1)
                     else:
@@ -360,9 +339,9 @@ class Piper(Module):
                 else:
                     self.piper.MotionCtrl_2(0x01, 0x01, 50, 0)
 
-                # 给定关节角位置
+                # Set joint angle position
                 self.piper.JointCtrl(joint_0, joint_1, joint_2, joint_3, joint_4, joint_5)
-                # 如果末端夹爪存在，则发送末端夹爪控制
+                # If end gripper exists, send end gripper control
                 if self.gripper_exist and joint_6 is not None:
                     if abs(joint_6) < 200:
                         joint_6 = 0
@@ -372,7 +351,7 @@ class Piper(Module):
                         # logger.info("gripper_effort: %f", gripper_effort)
                         gripper_effort = round(gripper_effort * 1000)
                         self.piper.GripperCtrl(abs(joint_6), gripper_effort, 0x01, 0)
-                    # 默认1N
+                    # Default 1N
                     else:
                         self.piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
 
@@ -404,13 +383,13 @@ class Piper(Module):
             gripper_effort = req.gripper_effort
             gripper_effort = round(max(0.5, min(req.gripper_effort, 2)) * 1e3)
             if req.gripper_code not in [0x00, 0x01, 0x02, 0x03]:
-                rospy.logwarn("gripper_code should be in [0, 1, 2, 3], default val is 1")
+                logger.warning("gripper_code should be in [0, 1, 2, 3], default val is 1")
                 gripper_code = 1
                 response.code = 15901
             else:
                 gripper_code = req.gripper_code
             if req.set_zero not in [0x00, 0xAE]:
-                rospy.logwarn("set_zero should be in [0, 0xAE], default val is 0")
+                logger.warning("set_zero should be in [0, 0xAE], default val is 0")
                 set_zero = 0
                 response.code = 15902
             else:
@@ -419,7 +398,7 @@ class Piper(Module):
             self.piper.GripperCtrl(abs(gripper_angle), gripper_effort, gripper_code, set_zero)
             response.status = True
         else:
-            rospy.logwarn("gripper_exist param is False.")
+            logger.warning("gripper_exist param is False.")
             response.code = 15903
             response.status = False
         logger.info(f"Returning GripperResponse: {response.code}, {response.status}")
@@ -465,7 +444,7 @@ class Piper(Module):
                 enable_flag = any(enable_list)
                 self.piper.DisableArm(7)
                 self.piper.GripperCtrl(0, 1000, 0x02, 0)
-            print("使能状态:", enable_flag)
+            print("Enable state:", enable_flag)
             self.__enable_flag = enable_flag
             print("--------------------")
             if enable_flag == req.enable_request:
@@ -474,9 +453,9 @@ class Piper(Module):
             else:
                 loop_flag = False
                 enable_flag = False
-            # 检查是否超过超时时间
+            # Check if timeout exceeded
             if elapsed_time > timeout:
-                print("超时....")
+                print("Timeout...")
                 elapsed_time_flag = True
                 enable_flag = False
                 loop_flag = True
@@ -508,7 +487,7 @@ class Piper(Module):
         logger.info(f"-----------------------RESET---------------------------")
         logger.info(f"reset piper.")
         logger.info(f"-----------------------RESET---------------------------")
-        self.piper.MotionCtrl_1(0x02, 0, 0)  # 恢复
+        self.piper.MotionCtrl_1(0x02, 0, 0)  # Restore
         response.success = True
         response.message = "reset piper success"
         logger.info(f"Returning resetResponse: {response.success}, {response.message}")
