@@ -45,7 +45,7 @@ class PiperArm:
         result = subprocess.run(
             [
                 "bash",
-                "dimos/dimos/hardware/can_activate.sh",
+                "dimos/hardware/can_activate.sh",
             ],  # pass the script path directly if it has a shebang and execute perms
             stdout=subprocess.PIPE,  # capture stdout
             stderr=subprocess.PIPE,  # capture stderr
@@ -61,7 +61,7 @@ class PiperArm:
 
     def gotoZero(self):
         factor = 1000
-        position = [57.0, 0.0, 215.0, 0, 90.0, 0, 0]
+        position = [57.0, 0.0, 250.0, 0, 90.0, 0, 0]
         X = round(position[0] * factor)
         Y = round(position[1] * factor)
         Z = round(position[2] * factor)
@@ -89,7 +89,6 @@ class PiperArm:
         self.arm.EndPoseCtrl(
             int(pose[0]), int(pose[1]), int(pose[2]), int(pose[3]), int(pose[4]), int(pose[5])
         )
-        print(f"[PiperArm] Moving to pose: {pose}")
 
     def get_EE_pose(self):
         """Return the current end-effector pose as (x, y, z, r, p, y)"""
@@ -120,7 +119,7 @@ class PiperArm:
 
     def init_vel_controller(self):
         self.chain = kp.build_serial_chain_from_urdf(
-            open("dimos/dimos/hardware/piper_description.urdf"), "gripper_base"
+            open("dimos/hardware/piper_description.urdf"), "gripper_base"
         )
         self.J = self.chain.jacobian(np.zeros(6))
         self.J_pinv = np.linalg.pinv(self.J)
@@ -186,20 +185,11 @@ class PiperArm:
         P_dot = P_dot * factor
         Y_dot = Y_dot * factor
 
-        current_pose = self.get_EE_pose().end_pose
-        current_pose = np.array(
-            [
-                current_pose.X_axis,
-                current_pose.Y_axis,
-                current_pose.Z_axis,
-                current_pose.RX_axis,
-                current_pose.RY_axis,
-                current_pose.RZ_axis,
-            ]
-        )
-        current_pose = current_pose * factor
+        current_pose = self.get_EE_pose()
+        current_pose = np.array(current_pose)
+        current_pose = current_pose
         current_pose = current_pose + np.array([x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot]) * self.dt
-        current_pose = current_pose / factor
+        current_pose = current_pose
         self.cmd_EE_pose(
             current_pose[0],
             current_pose[1],
@@ -269,9 +259,9 @@ if __name__ == "__main__":
                 break
 
             # Optionally, clamp velocities to reasonable limits
-            x_dot = max(min(x_dot, 0.2), -0.2)
-            y_dot = max(min(y_dot, 0.2), -0.2)
-            z_dot = max(min(z_dot, 0.2), -0.2)
+            x_dot = max(min(x_dot, 0.5), -0.5)
+            y_dot = max(min(y_dot, 0.5), -0.5)
+            z_dot = max(min(z_dot, 0.5), -0.5)
 
             # Only linear velocities, angular set to zero
             arm.cmd_vel_ee(x_dot, y_dot, z_dot, 0, 0, 0)
