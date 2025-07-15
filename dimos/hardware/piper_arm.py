@@ -60,20 +60,19 @@ class PiperArm:
         self.arm.MotionCtrl_2(0x01, 0x01, 80, 0x00)
 
     def gotoZero(self):
-        factor = 57295.7795  # 1000*180/3.1415926
-        position = [0, 0, 0, 0, 0, 0, 0]
-
-        joint_0 = round(position[0] * factor)
-        joint_1 = round(position[1] * factor)
-        joint_2 = round(position[2] * factor)
-        joint_3 = round(position[3] * factor)
-        joint_4 = round(position[4] * factor)
-        joint_5 = round(position[5] * factor)
-        joint_6 = round(position[6] * 1000 * 1000)
-        self.arm.ModeCtrl(0x01, 0x01, 30, 0x00)
-        self.arm.JointCtrl(joint_0, joint_1, joint_2, joint_3, joint_4, joint_5)
+        factor = 1000
+        position = [57.0, 0.0, 215.0, 0, 90.0, 0, 0]
+        X = round(position[0] * factor)
+        Y = round(position[1] * factor)
+        Z = round(position[2] * factor)
+        RX = round(position[3] * factor)
+        RY = round(position[4] * factor)
+        RZ = round(position[5] * factor)
+        joint_6 = round(position[6] * factor)
+        print(X, Y, Z, RX, RY, RZ)
+        self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
+        self.arm.EndPoseCtrl(X, Y, Z, RX, RY, RZ)
         self.arm.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
-        pass
 
     def softStop(self):
         self.gotoZero()
@@ -95,8 +94,17 @@ class PiperArm:
     def get_EE_pose(self):
         """Return the current end-effector pose as (x, y, z, r, p, y)"""
         pose = self.arm.GetArmEndPoseMsgs()
-        print(f"[PiperArm] Current pose: {pose}")
-        return pose
+        # Extract individual pose values and convert to base units
+        # Position values are divided by 1000 to convert from SDK units to mm
+        # Rotation values are divided by 1000 to convert from SDK units to degrees
+        x = pose.end_pose.X_axis / 1000.0
+        y = pose.end_pose.Y_axis / 1000.0
+        z = pose.end_pose.Z_axis / 1000.0
+        r = pose.end_pose.RX_axis / 1000.0
+        p = pose.end_pose.RY_axis / 1000.0
+        y_rot = pose.end_pose.RZ_axis / 1000.0
+
+        return (x, y, z, r, p, y_rot)
 
     def cmd_gripper_ctrl(self, position):
         """Command end-effector gripper"""

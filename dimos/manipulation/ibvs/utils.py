@@ -130,7 +130,7 @@ def apply_transform(pose: Pose, transform_matrix: np.ndarray) -> Pose:
     return transform_matrix_to_pose(T_result)
 
 
-def zed_to_robot_convention(pose: Pose) -> Pose:
+def optical_to_robot_convention(pose: Pose) -> Pose:
     """
     Convert pose from ZED camera convention to robot arm convention.
 
@@ -200,10 +200,10 @@ def zed_to_robot_convention(pose: Pose) -> Pose:
     return Pose(Vector(robot_x, robot_y, robot_z), Vector(robot_roll, robot_pitch, robot_yaw))
 
 
-def robot_to_zed_convention(pose: Pose) -> Pose:
+def robot_to_optical_convention(pose: Pose) -> Pose:
     """
     Convert pose from robot arm convention to ZED camera convention.
-    This is the inverse of zed_to_robot_convention.
+    This is the inverse of optical_to_robot_convention.
 
     Args:
         pose: Pose in robot arm convention

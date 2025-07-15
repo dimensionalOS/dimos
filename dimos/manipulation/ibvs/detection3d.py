@@ -29,7 +29,12 @@ from dimos.perception.detection2d.utils import plot_results, calculate_object_si
 from dimos.types.pose import Pose
 from dimos.types.vector import Vector
 from dimos.types.manipulation import ObjectData
-from dimos.manipulation.ibvs.utils import estimate_object_depth
+from dimos.manipulation.ibvs.utils import (
+    estimate_object_depth,
+    optical_to_robot_convention,
+    pose_to_transform_matrix,
+    transform_matrix_to_pose,
+)
 
 logger = setup_logger("dimos.perception.detection3d")
 
@@ -47,7 +52,7 @@ class Detection3DProcessor:
         camera_intrinsics: List[float],  # [fx, fy, cx, cy]
         min_confidence: float = 0.6,
         min_points: int = 30,
-        max_depth: float = 5.0,
+        max_depth: float = 1.0,
     ):
         """
         Initialize the real-time 3D detection processor.
@@ -125,7 +130,7 @@ class Detection3DProcessor:
 
         # Build detection results
         detections = []
-        pose_dict = {p["mask_idx"]: p for p in poses}
+        pose_dict = {p["mask_idx"]: p for p in poses if p["centroid"][2] < self.max_depth}
 
         for i, (bbox, name, prob, track_id) in enumerate(zip(bboxes, names, probs, track_ids)):
             # Create ObjectData object
@@ -175,56 +180,60 @@ class Detection3DProcessor:
 
                 # Transform to world frame if camera pose is available
                 if camera_pose is not None:
-                    world_pos = self._transform_to_world(obj_cam_pos, camera_pose)
-                    obj_data["world_position"] = world_pos
-                    obj_data["position"] = world_pos  # Use world position
+                    # Get orientation as euler angles, default to no rotation if not available
+                    obj_cam_orientation = pose.get(
+                        "rotation", np.array([0.0, 0.0, 0.0])
+                    )  # Default to no rotation
+                    world_pose = self._transform_to_world(
+                        obj_cam_pos, obj_cam_orientation, camera_pose
+                    )
+                    obj_data["world_position"] = world_pose.pos
+                    obj_data["position"] = world_pose.pos  # Use world position
+                    obj_data["rotation"] = world_pose.rot  # Use world rotation
                 else:
                     # If no camera pose, use camera coordinates
                     obj_data["position"] = Vector(obj_cam_pos[0], obj_cam_pos[1], obj_cam_pos[2])
 
-            detections.append(obj_data)
+                detections.append(obj_data)
 
         return {"detections": detections, "processing_time": time.time() - start_time}
 
-    def _transform_to_world(self, obj_pos: np.ndarray, camera_pose: Pose) -> Vector:
+    def _transform_to_world(
+        self, obj_pos: np.ndarray, obj_orientation: np.ndarray, camera_pose: Pose
+    ) -> Pose:
         """
-        Transform object position from camera frame to world frame (ZED coordinates).
+        Transform object pose from optical frame to world frame.
 
         Args:
-            obj_pos: Object position in camera frame [x, y, z]
-            camera_pose: Camera pose in world frame
+            obj_pos: Object position in optical frame [x, y, z]
+            obj_orientation: Object orientation in optical frame [roll, pitch, yaw] in radians
+            camera_pose: Camera pose in world frame (x forward, y left, z up)
 
         Returns:
-            Object position in world frame as Vector
+            Object pose in world frame as Pose
         """
-        # Simple transformation: rotate and translate
-        roll = camera_pose.rot.x
-        pitch = camera_pose.rot.y
-        yaw = camera_pose.rot.z
+        # Create object pose in optical frame
+        obj_pose_optical = Pose(
+            Vector(obj_pos[0], obj_pos[1], obj_pos[2]),
+            Vector([obj_orientation[0], obj_orientation[1], obj_orientation[2]]),
+        )
 
-        # Create rotation matrices
-        cos_roll = np.cos(roll)
-        sin_roll = np.sin(roll)
-        R_x = np.array([[1, 0, 0], [0, cos_roll, -sin_roll], [0, sin_roll, cos_roll]])
+        # Transform object pose from optical frame to world frame convention
+        obj_pose_world_frame = optical_to_robot_convention(obj_pose_optical)
 
-        cos_pitch = np.cos(pitch)
-        sin_pitch = np.sin(pitch)
-        R_y = np.array([[cos_pitch, 0, sin_pitch], [0, 1, 0], [-sin_pitch, 0, cos_pitch]])
+        # Create transformation matrix from camera pose
+        T_world_camera = pose_to_transform_matrix(camera_pose)
 
-        cos_yaw = np.cos(yaw)
-        sin_yaw = np.sin(yaw)
-        R_z = np.array([[cos_yaw, -sin_yaw, 0], [sin_yaw, cos_yaw, 0], [0, 0, 1]])
+        # Create transformation matrix from object pose (relative to camera)
+        T_camera_object = pose_to_transform_matrix(obj_pose_world_frame)
 
-        # Combined rotation (ZYX convention)
-        rot_matrix = R_z @ R_y @ R_x
+        # Combine transformations: T_world_object = T_world_camera * T_camera_object
+        T_world_object = T_world_camera @ T_camera_object
 
-        # Rotate object position
-        rotated_pos = rot_matrix @ obj_pos
+        # Convert back to pose
+        world_pose = transform_matrix_to_pose(T_world_object)
 
-        # Translate by camera position
-        world_pos = camera_pose.pos + Vector(rotated_pos[0], rotated_pos[1], rotated_pos[2])
-
-        return world_pos
+        return world_pose
 
     def visualize_detections(
         self,

@@ -27,7 +27,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.manipulation.ibvs.utils import (
     pose_to_transform_matrix,
     apply_transform,
-    zed_to_robot_convention,
+    optical_to_robot_convention,
     calculate_yaw_to_origin,
 )
 
@@ -53,7 +53,7 @@ class PBVSController:
         max_velocity: float = 0.1,  # m/s
         max_angular_velocity: float = 0.5,  # rad/s
         target_tolerance: float = 0.05,  # 5cm
-        tracking_distance_threshold: float = 0.1,  # 10cm for target tracking
+        tracking_distance_threshold: float = 0.05,  # 10cm for target tracking
     ):
         """
         Initialize PBVS controller.
@@ -97,7 +97,7 @@ class PBVSController:
         This establishes the robot arm coordinate frame.
 
         Args:
-            camera_pose: Current camera pose in ZED world frame
+            camera_pose: Current camera pose in world frame
         """
         self.manipulator_origin_pose = camera_pose
 
@@ -111,10 +111,6 @@ class PBVSController:
             f"{camera_pose.pos.y:.3f}, {camera_pose.pos.z:.3f})"
         )
 
-        # Update current target if exists
-        if self.current_target and "position" in self.current_target:
-            self._update_target_robot_frame()
-
     def _update_target_robot_frame(self):
         """Update current target with robot frame coordinates."""
         if not self.current_target or "position" not in self.current_target:
@@ -127,14 +123,11 @@ class PBVSController:
         # Transform to manipulator frame
         target_pose_manip = apply_transform(target_pose_zed, self.manipulator_origin)
 
-        # Convert to robot convention
-        target_pose_robot = zed_to_robot_convention(target_pose_manip)
-
         # Calculate orientation pointing at origin (in robot frame)
-        yaw_to_origin = calculate_yaw_to_origin(target_pose_robot.pos)
+        yaw_to_origin = calculate_yaw_to_origin(target_pose_manip.pos)
 
         # Update target with robot frame pose
-        self.current_target["robot_position"] = target_pose_robot.pos
+        self.current_target["robot_position"] = target_pose_manip.pos
         self.current_target["robot_rotation"] = Vector(0.0, 0.0, yaw_to_origin)  # Level grasp
 
     def set_target(self, target_object: Dict[str, Any]) -> bool:
@@ -254,8 +247,7 @@ class PBVSController:
             self.update_target_tracking(new_detections)
 
         # Transform camera pose to robot frame
-        camera_pose_manip = apply_transform(camera_pose, self.manipulator_origin)
-        camera_pose_robot = zed_to_robot_convention(camera_pose_manip)
+        camera_pose_robot = apply_transform(camera_pose, self.manipulator_origin)
 
         # Get target in robot frame
         target_pos = self.current_target.get("robot_position")
@@ -265,6 +257,7 @@ class PBVSController:
             # Shouldn't happen but handle gracefully
             self._update_target_robot_frame()
             target_pos = self.current_target.get("robot_position", Vector(0, 0, 0))
+            target_rot = self.current_target.get("robot_rotation", Vector(0, 0, 0))
 
         # Calculate position error (target - camera)
         error = target_pos - camera_pose_robot.pos
@@ -341,48 +334,6 @@ class PBVSController:
         self.last_angular_velocity_cmd = angular_velocity
 
         return angular_velocity
-
-    def get_camera_pose_robot_frame(self, camera_pose_zed: Pose) -> Optional[Pose]:
-        """
-        Get camera pose in robot frame coordinates.
-
-        Args:
-            camera_pose_zed: Camera pose in ZED world frame
-
-        Returns:
-            Camera pose in robot frame or None if no origin set
-        """
-        if self.manipulator_origin is None:
-            return None
-
-        camera_pose_manip = apply_transform(camera_pose_zed, self.manipulator_origin)
-        return zed_to_robot_convention(camera_pose_manip)
-
-    def get_object_pose_robot_frame(
-        self, object_pos_zed: Vector
-    ) -> Optional[Tuple[Vector, Vector]]:
-        """
-        Get object pose in robot frame coordinates with orientation.
-
-        Args:
-            object_pos_zed: Object position in ZED world frame
-
-        Returns:
-            Tuple of (position, rotation) in robot frame or None if no origin set
-        """
-        if self.manipulator_origin is None:
-            return None
-
-        # Transform position
-        obj_pose_zed = Pose(object_pos_zed, Vector(0, 0, 0))
-        obj_pose_manip = apply_transform(obj_pose_zed, self.manipulator_origin)
-        obj_pose_robot = zed_to_robot_convention(obj_pose_manip)
-
-        # Calculate orientation pointing at origin
-        yaw_to_origin = calculate_yaw_to_origin(obj_pose_robot.pos)
-        orientation = Vector(0.0, 0.0, yaw_to_origin)  # Level grasp
-
-        return obj_pose_robot.pos, orientation
 
     def create_status_overlay(
         self, image: np.ndarray, camera_intrinsics: Optional[list] = None
