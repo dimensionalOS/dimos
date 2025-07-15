@@ -15,6 +15,7 @@
 import math
 import threading
 import time
+from abc import ABC, abstractmethod
 
 import numpy as np
 from geometry_msgs.msg import Pose, PoseStamped
@@ -33,28 +34,41 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger("dimos.robot.piper")
 
 
-class Piper(Module):
-    joint_state: Out[JointState] = None
-    arm_status: Out[PiperStatusMsg] = None
+# # https://wiki.ros.org/joint_trajectory_controller
+# # takes in https://docs.ros.org/en/api/trajectory_msgs/html/msg/JointTrajectory.html
+#
+# class TrajectoryController(Module):
+#     trajectory: In[JointTrajectory] = None
+#     set_joint: Out[JointState] = None
+#     def follow_trajectory(self):
+#         self.set_pose.subscribe(self.set_pose)
+
+
+class Arm(ABC):
     pose_state: Out[PoseStamped] = None
+    joint_state: Out[JointState] = None
     set_pose: In[PoseStamped] = None
     set_joint: In[JointState] = None
+
+
+class Piper(Arm, Module):
+    arm_status: Out[PiperStatusMsg] = None
 
     def __init__(
         self,
         can_port="can0",
         gripper_exist=True,
         gripper_val_multiple=1,
-        rate=10,  # hz
+        frequency=30,  # hz
         *args,
         **kwargs,
     ) -> None:
-        super().__init(self, *args, **kwargs)
+        Module.__init(self, *args, **kwargs)
         self.can_port = can_port
         self.gripper_exist = gripper_exist
         self.gripper_val_multiple = gripper_val_multiple
         self.gripper_val_mutiple = 1
-        self.rate = rate
+        self.frequency = frequency
 
         # joints
         self.joint_states = JointState()
@@ -76,10 +90,6 @@ class Piper(Module):
         self.piper.ConnectPort()
         self.piper.MotionCtrl_2(0x01, 0x01, 30, 0)
         self.block_ctrl_flag = False
-        # Start subscription threads
-        sub_pos_th = threading.Thread(target=self.SubPosThread)
-        sub_pos_th.daemon = True
-        sub_pos_th.start()
 
     def start(self):
         self.set_pose.subscribe(self.set_pose)
@@ -106,7 +116,7 @@ class Piper(Module):
             self.PublishArmState()
             self.PublishArmEndPose()
             self.PublishArmJointAndGripper()
-            time.sleep(self.rate)
+            time.sleep(1 / self.frequency)
 
     def PublishArmState(self):
         # Robotic arm state
