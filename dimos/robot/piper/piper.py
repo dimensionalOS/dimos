@@ -92,13 +92,6 @@ class Piper(Module):
 
     def publish_loop(self):
         """Robotic arm message publishing"""
-        enable_flag = False
-        # Set timeout (seconds)
-        timeout = 5
-        # Record time before entering loop
-        start_time = time.time()
-        elapsed_time_flag = False
-
         enable_flag = (
             self.piper.GetArmLowSpdInfoMsgs().motor_1.foc_status.driver_enable_status
             and self.piper.GetArmLowSpdInfoMsgs().motor_2.foc_status.driver_enable_status
