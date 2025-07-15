@@ -91,7 +91,10 @@ dependencies = [
 
     # Multiprocess 
     "dask[complete]==2025.5.1",
-    "lcm_msgs @ git+https://github.com/dimensionalOS/python_lcm_msgs.git@main#egg=lcm_msgs"
+
+    # LCM / DimOS utilities
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@main",
+
 ]
 
 [project.optional-dependencies]

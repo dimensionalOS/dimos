@@ -19,7 +19,7 @@ import traceback
 from io import BytesIO
 from typing import BinaryIO, TypeAlias
 
-from lcm_msgs.geometry_msgs import Pose as LCMPose
+from dimos_lcm.geometry_msgs import Pose as LCMPose
 from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable

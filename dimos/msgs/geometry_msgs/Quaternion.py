@@ -20,7 +20,7 @@ from io import BytesIO
 from typing import BinaryIO, TypeAlias
 
 import numpy as np
-from lcm_msgs.geometry_msgs import Quaternion as LCMQuaternion
+from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
 from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

@@ -21,8 +21,8 @@ import cv2
 import numpy as np
 
 # Import LCM types
-from lcm_msgs.sensor_msgs.Image import Image as LCMImage
-from lcm_msgs.std_msgs.Header import Header
+from dimos_lcm.sensor_msgs.Image import Image as LCMImage
+from dimos_lcm.std_msgs.Header import Header
 
 from dimos.types.timestamped import Timestamped
 
