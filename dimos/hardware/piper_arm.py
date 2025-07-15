@@ -27,6 +27,7 @@ import termios
 import tty
 import select
 
+
 class PiperArm:
     def __init__(self, arm_name: str = "arm"):
         self.init_can()
@@ -110,7 +111,9 @@ class PiperArm:
         print(f"[PiperArm] Resetting arm")
 
     def init_vel_controller(self):
-        self.chain = kp.build_serial_chain_from_urdf(open("dimos/dimos/hardware/piper_description.urdf"), "gripper_base")
+        self.chain = kp.build_serial_chain_from_urdf(
+            open("dimos/dimos/hardware/piper_description.urdf"), "gripper_base"
+        )
         self.J = self.chain.jacobian(np.zeros(6))
         self.J_pinv = np.linalg.pinv(self.J)
         self.dt = 0.01
@@ -125,20 +128,45 @@ class PiperArm:
 
         joint_state = self.arm.GetArmJointMsgs().joint_state
         # print(f"[PiperArm] Current Joints: {joint_state}", type(joint_state))
-        joint_angles = np.array([joint_state.joint_1, joint_state.joint_2, joint_state.joint_3, joint_state.joint_4, joint_state.joint_5, joint_state.joint_6])
+        joint_angles = np.array(
+            [
+                joint_state.joint_1,
+                joint_state.joint_2,
+                joint_state.joint_3,
+                joint_state.joint_4,
+                joint_state.joint_5,
+                joint_state.joint_6,
+            ]
+        )
         # print(f"[PiperArm] Current Joints: {joint_angles}", type(joint_angles))
-        factor = 57295.7795 #1000*180/3.1415926
-        joint_angles = joint_angles * factor                                    # convert to radians
+        factor = 57295.7795  # 1000*180/3.1415926
+        joint_angles = joint_angles * factor  # convert to radians
         # print(f"[PiperArm] Current Joints: {joint_angles}", type(joint_angles))
 
-        q = np.array([joint_angles[0], joint_angles[1], joint_angles[2], joint_angles[3], joint_angles[4], joint_angles[5]])
+        q = np.array(
+            [
+                joint_angles[0],
+                joint_angles[1],
+                joint_angles[2],
+                joint_angles[3],
+                joint_angles[4],
+                joint_angles[5],
+            ]
+        )
         # print(f"[PiperArm] Current Joints: {q}")
         time.sleep(0.005)
-        dq = self.J_pinv@np.array([x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot])*self.dt
+        dq = self.J_pinv @ np.array([x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot]) * self.dt
         newq = q + dq
 
         self.arm.MotionCtrl_2(0x01, 0x01, 100, 0x00)
-        self.arm.JointCtrl(int(round(newq[0])), int(round(newq[1])), int(round(newq[2])), int(round(newq[3])), int(round(newq[4])), int(round(newq[5])))
+        self.arm.JointCtrl(
+            int(round(newq[0])),
+            int(round(newq[1])),
+            int(round(newq[2])),
+            int(round(newq[3])),
+            int(round(newq[4])),
+            int(round(newq[5])),
+        )
         # print(f"[PiperArm] Moving to Joints to : {newq}")
 
     def cmd_vel_ee(self, x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot):
@@ -173,7 +201,6 @@ if __name__ == "__main__":
     print("get_EE_pose")
     arm.get_EE_pose()
 
-
     def get_key(timeout=0.1):
         """Non-blocking key reader for arrow keys."""
         fd = sys.stdin.fileno()
@@ -183,9 +210,9 @@ if __name__ == "__main__":
             rlist, _, _ = select.select([fd], [], [], timeout)
             if rlist:
                 ch1 = sys.stdin.read(1)
-                if ch1 == '\x1b':  # Arrow keys start with ESC
+                if ch1 == "\x1b":  # Arrow keys start with ESC
                     ch2 = sys.stdin.read(1)
-                    if ch2 == '[':
+                    if ch2 == "[":
                         ch3 = sys.stdin.read(1)
                         return ch1 + ch2 + ch3
                 else:
@@ -200,19 +227,19 @@ if __name__ == "__main__":
         x_dot, y_dot, z_dot = 0.0, 0.0, 0.0
         while True:
             key = get_key(timeout=0.1)
-            if key == '\x1b[A':      # Up arrow
+            if key == "\x1b[A":  # Up arrow
                 x_dot += 0.01
-            elif key == '\x1b[B':    # Down arrow
+            elif key == "\x1b[B":  # Down arrow
                 x_dot -= 0.01
-            elif key == '\x1b[C':    # Right arrow
+            elif key == "\x1b[C":  # Right arrow
                 y_dot += 0.01
-            elif key == '\x1b[D':    # Left arrow
+            elif key == "\x1b[D":  # Left arrow
                 y_dot -= 0.01
-            elif key == 'w':
+            elif key == "w":
                 z_dot += 0.01
-            elif key == 's':
+            elif key == "s":
                 z_dot -= 0.01
-            elif key == 'q':
+            elif key == "q":
                 print("Exiting teleop.")
                 arm.disable()
                 break
