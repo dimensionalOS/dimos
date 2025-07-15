@@ -53,11 +53,13 @@ class Arm(ABC):
 
 class Piper(Arm, Module):
     arm_status: Out[PiperStatusMsg] = None
+    mit_mode = False
 
     def __init__(
         self,
         can_port="can0",
         gripper_exist=True,
+        mit_mode=False,
         gripper_val_multiple=1,
         frequency=30,  # hz
         *args,
@@ -69,6 +71,7 @@ class Piper(Arm, Module):
         self.gripper_val_multiple = gripper_val_multiple
         self.gripper_val_mutiple = 1
         self.frequency = frequency
+        self.mit_mode = mit_mode
 
         # joints
         self.joint_states = JointState()
@@ -507,7 +510,7 @@ class Piper(Arm, Module):
         logger.info(f"-----------------------GOZERO---------------------------")
         logger.info(f"piper go zero .")
         logger.info(f"-----------------------GOZERO---------------------------")
-        if req.is_mit_mode:
+        if self.mit_mode:
             self.piper.MotionCtrl_2(0x01, 0x01, 50, 0xAD)
         else:
             self.piper.MotionCtrl_2(0x01, 0x01, 50, 0)
