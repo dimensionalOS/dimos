@@ -1147,11 +1147,17 @@ class DrakeKinematicsEnv:
                         colliding_links.add(frame_A_name)
                         colliding_links.add(frame_B_name)
                         
+                        # Extract object information from geometry names
+                        object_info_A = self._extract_object_info(geom_A)
+                        object_info_B = self._extract_object_info(geom_B)
+                        
                         collision_info.append({
                             'frame_A': frame_A_name,
                             'frame_B': frame_B_name,
                             'geometry_A': geom_A,
                             'geometry_B': geom_B,
+                            'object_info_A': object_info_A,
+                            'object_info_B': object_info_B,
                             'depth': pair.depth
                         })
                     except:
@@ -1159,11 +1165,17 @@ class DrakeKinematicsEnv:
                         colliding_links.add(geom_A)
                         colliding_links.add(geom_B)
                         
+                        # Extract object information from geometry names
+                        object_info_A = self._extract_object_info(geom_A)
+                        object_info_B = self._extract_object_info(geom_B)
+                        
                         collision_info.append({
                             'frame_A': geom_A,
                             'frame_B': geom_B,
                             'geometry_A': geom_A,
                             'geometry_B': geom_B,
+                            'object_info_A': object_info_A,
+                            'object_info_B': object_info_B,
                             'depth': pair.depth
                         })
             
@@ -1172,6 +1184,34 @@ class DrakeKinematicsEnv:
         except Exception as e:
             print(f"Error checking collisions: {e}")
             return False, [], []
+            
+    def _extract_object_info(self, geometry_name: str) -> str:
+        """Extract object information from geometry name"""
+        try:
+            # Parse geometry names like "detected_objects/object_1/collision_hull_2"
+            if "detected_objects" in geometry_name:
+                parts = geometry_name.split("/")
+                if len(parts) >= 3:
+                    object_part = parts[1]  # e.g., "object_1"
+                    hull_part = parts[2]    # e.g., "collision_hull_2"
+                    return f"{object_part} ({hull_part})"
+                else:
+                    return f"detected_object ({geometry_name})"
+            elif "misc_clusters" in geometry_name:
+                parts = geometry_name.split("/")
+                if len(parts) >= 3:
+                    object_part = parts[1]  # e.g., "object_0"
+                    hull_part = parts[2]    # e.g., "collision_hull_1"
+                    return f"misc_{object_part} ({hull_part})"
+                else:
+                    return f"misc_cluster ({geometry_name})"
+            elif geometry_name == "world":
+                return "world"
+            else:
+                # Robot links or other geometry
+                return geometry_name
+        except Exception as e:
+            return geometry_name
             
     def _update_joint_from_sliders(self):
         """Update joint positions based on slider values"""
@@ -1221,7 +1261,21 @@ class DrakeKinematicsEnv:
                     print(f"COLLISION DETECTED!")
                     print(f"Colliding links: {colliding_links}")
                     for info in collision_info:
-                        print(f"  {info['frame_A']} <-> {info['frame_B']}: depth = {info['depth']:.4f}")
+                        # Create a more informative collision message
+                        frame_A = info['frame_A']
+                        frame_B = info['frame_B']
+                        obj_A = info['object_info_A']
+                        obj_B = info['object_info_B']
+                        
+                        # Show which object is being collided with
+                        if obj_A != frame_A and obj_B != frame_B:
+                            print(f"  {frame_A} [{obj_A}] <-> {frame_B} [{obj_B}]: depth = {info['depth']:.4f}")
+                        elif obj_A != frame_A:
+                            print(f"  {frame_A} <-> {frame_B} [{obj_A}]: depth = {info['depth']:.4f}")
+                        elif obj_B != frame_B:
+                            print(f"  {frame_A} [{obj_B}] <-> {frame_B}: depth = {info['depth']:.4f}")
+                        else:
+                            print(f"  {frame_A} <-> {frame_B}: depth = {info['depth']:.4f}")
                     
                     # Update meshcat with collision status
                     self.meshcat.SetProperty("collision_status", "color", [1.0, 0.0, 0.0, 1.0])  # Red
