@@ -141,6 +141,22 @@ class PiperArm:
         self.arm.JointCtrl(int(round(newq[0])), int(round(newq[1])), int(round(newq[2])), int(round(newq[3])), int(round(newq[4])), int(round(newq[5])))
         # print(f"[PiperArm] Moving to Joints to : {newq}")
 
+    def cmd_vel_ee(self, x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot):
+        factor = 1000
+        x_dot = x_dot * factor
+        y_dot = y_dot * factor
+        z_dot = z_dot * factor
+        R_dot = R_dot * factor
+        P_dot = P_dot * factor
+        Y_dot = Y_dot * factor
+
+        current_pose = self.get_EE_pose().end_pose
+        current_pose = np.array([current_pose.X_axis, current_pose.Y_axis, current_pose.Z_axis, current_pose.RX_axis, current_pose.RY_axis, current_pose.RZ_axis])
+        current_pose = current_pose * factor
+        current_pose = current_pose + np.array([x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot])*self.dt
+        current_pose = current_pose / factor
+        self.cmd_EE_pose(current_pose[0], current_pose[1], current_pose[2], current_pose[3], current_pose[4], current_pose[5])
+
     def disable(self):
         self.softStop()
 
@@ -206,7 +222,8 @@ if __name__ == "__main__":
             z_dot = max(min(z_dot, 0.2), -0.2)
 
             # Only linear velocities, angular set to zero
-            arm.cmd_vel(x_dot, y_dot, z_dot, 0, 0, 0)
+            arm.cmd_vel_ee(x_dot, y_dot, z_dot, 0, 0, 0)
             print(f"Current linear velocity: x={x_dot:.3f} m/s, y={y_dot:.3f} m/s, z={z_dot:.3f} m/s")
 
     teleop_linear_vel(arm)
+
