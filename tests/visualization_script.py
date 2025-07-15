@@ -305,10 +305,15 @@ def visualize_results(pickle_path="manipulation_results.pkl"):
         print("No voxel grid available for visualization")
 
 class DrakeKinematicsEnv:
-    def __init__(self, urdf_path: str, kinematic_chain_joints: List[str], links_to_ignore: Optional[List[str]] = None, collision_depth_threshold: float = 0.005):
+    def __init__(self, urdf_path: str, kinematic_chain_joints: List[str], links_to_ignore: Optional[List[str]] = None, collision_depth_threshold: float = 0.005, use_rectangular_prisms: bool = False):
         self._resources_to_cleanup = []
         self.collision_depth_threshold = collision_depth_threshold
         self.initial_robot_collisions = set()  # Store initial robot-world collisions to ignore
+        self.filtered_geometry_names = set()  # Store names of geometries to exclude from IK
+        self.ik_plant = None  # Separate plant for collision-aware IK
+        self.ik_scene_graph = None
+        self.ik_diagram = None
+        self.ik_context = None
 
         # Register cleanup at exit
         atexit.register(self.cleanup_resources)
@@ -332,6 +337,7 @@ class DrakeKinematicsEnv:
         print(f"Meshcat started at: {self.meshcat.web_url()}")
         
         self.urdf_path = urdf_path
+        self.links_to_ignore = links_to_ignore
         self.builder = DiagramBuilder()
 
         self.plant, self.scene_graph = AddMultibodyPlantSceneGraph(self.builder, time_step=0.01)
@@ -429,6 +435,9 @@ class DrakeKinematicsEnv:
         
         # Identify initial robot-world collisions to ignore
         self._identify_initial_robot_collisions()
+        
+        # Create separate IK environment without filtered geometries
+        self._create_ik_environment()
         
         # Force initial visualization update
         self._update_visualization()
@@ -1105,6 +1114,64 @@ class DrakeKinematicsEnv:
                         print(f"Added slider for {joint_name}: [{lower_limit:.2f}, {upper_limit:.2f}], current: {current_pos:.2f}")
                 except RuntimeError:
                     print(f"Warning: Could not add slider for joint '{joint_name}'")
+            
+            # Add XYZ position sliders for end effector
+            if self.end_effector_frame is not None:
+                # Get current end effector pose
+                current_pose = self.plant.CalcRelativeTransform(
+                    self.plant_context, 
+                    self.plant.world_frame(), 
+                    self.end_effector_frame
+                )
+                
+                # Add XYZ sliders
+                self.meshcat.AddSlider(
+                    name="ee_x",
+                    min=-2.0,
+                    max=2.0,
+                    step=0.01,
+                    value=current_pose.translation()[0]
+                )
+                self.meshcat.AddSlider(
+                    name="ee_y", 
+                    min=-2.0,
+                    max=2.0,
+                    step=0.01,
+                    value=current_pose.translation()[1]
+                )
+                self.meshcat.AddSlider(
+                    name="ee_z",
+                    min=-2.0,
+                    max=2.0,
+                    step=0.01,
+                    value=current_pose.translation()[2]
+                )
+                
+                # Add RPY sliders
+                rpy = RollPitchYaw(current_pose.rotation())
+                self.meshcat.AddSlider(
+                    name="ee_roll",
+                    min=-3.14159,
+                    max=3.14159,
+                    step=0.01,
+                    value=rpy.roll_angle()
+                )
+                self.meshcat.AddSlider(
+                    name="ee_pitch",
+                    min=-3.14159,
+                    max=3.14159,
+                    step=0.01,
+                    value=rpy.pitch_angle()
+                )
+                self.meshcat.AddSlider(
+                    name="ee_yaw",
+                    min=-3.14159,
+                    max=3.14159,
+                    step=0.01,
+                    value=rpy.yaw_angle()
+                )
+                
+                print("Added end effector XYZ and RPY sliders")
                     
             # Add collision detection display
             self.meshcat.SetProperty("collision_status", "visible", True)
@@ -1153,6 +1220,7 @@ class DrakeKinematicsEnv:
                     
                     # Also store the world geometry for potential removal
                     robot_collision_geometries.add(world_geom)
+                    self.filtered_geometry_names.add(world_geom)
                     
                     print(f"  Will ignore: {robot_geom} <-> {world_geom}")
             
@@ -1212,6 +1280,252 @@ class DrakeKinematicsEnv:
                 
         except Exception as e:
             print(f"Error applying collision filtering: {e}")
+
+    def _create_ik_environment(self):
+        """Create separate Drake environment for collision-aware IK without filtered geometries"""
+        try:
+            print("Creating separate IK environment without filtered geometries...")
+            
+            # Create new builder for IK
+            ik_builder = DiagramBuilder()
+            self.ik_plant, self.ik_scene_graph = AddMultibodyPlantSceneGraph(ik_builder, time_step=0.01)
+            ik_parser = Parser(self.ik_plant)
+            
+            # Load the robot URDF
+            ik_model_instances = ik_parser.AddModelsFromUrl(f"file://{self.urdf_path}")
+            
+            # Set up collision filtering for ignored links (same as main plant)
+            if hasattr(self, 'links_to_ignore') and self.links_to_ignore:
+                bodies = []
+                for link_name in self.links_to_ignore:
+                    try:
+                        body = self.ik_plant.GetBodyByName(link_name)
+                        if body is not None:
+                            bodies.extend(self.ik_plant.GetBodiesWeldedTo(body))
+                    except RuntimeError:
+                        continue
+
+                if bodies:
+                    arm_geoms = self.ik_plant.CollectRegisteredGeometries(bodies)
+                    decl = CollisionFilterDeclaration().ExcludeWithin(arm_geoms)
+                    manager = self.ik_scene_graph.collision_filter_manager()
+                    manager.Apply(decl)
+            
+            # Add only the non-filtered geometries to IK environment
+            self._add_non_filtered_geometries_to_ik()
+            
+            # Finalize the IK plant
+            self.ik_plant.Finalize()
+            
+            # Build the IK diagram
+            self.ik_diagram = ik_builder.Build()
+            self.ik_context = self.ik_diagram.CreateDefaultContext()
+            self.ik_plant_context = self.ik_plant.GetMyContextFromRoot(self.ik_context)
+            
+            print("IK environment created successfully")
+            
+        except Exception as e:
+            print(f"Error creating IK environment: {e}")
+
+    def _add_non_filtered_geometries_to_ik(self):
+        """Add non-filtered geometries to the IK environment"""
+        try:
+            # Re-process point cloud data but exclude filtered geometries
+            pickle_path = "manipulation_results.pkl"
+            with open(pickle_path, "rb") as f:
+                data = pickle.load(f)
+            results = data["results"]
+            
+            # Process all_objects for IK (excluding filtered ones)
+            if "all_objects" in results:
+                filtered_objects = []
+                for i, obj in enumerate(results["all_objects"]):
+                    # Check if any geometry from this object should be filtered
+                    should_filter = False
+                    for geom_name in self.filtered_geometry_names:
+                        if f"all_objects/object_{i}/" in geom_name:
+                            should_filter = True
+                            break
+                    
+                    if not should_filter:
+                        filtered_objects.append(obj)
+                
+                print(f"Adding {len(filtered_objects)} non-filtered objects to IK environment")
+                self._process_and_add_object_class_to_ik("all_objects", filtered_objects)
+            
+            # Process misc_clusters for IK (excluding filtered ones)  
+            if "misc_clusters" in results:
+                filtered_clusters = []
+                for i, cluster in enumerate(results["misc_clusters"]):
+                    # Check if any geometry from this cluster should be filtered
+                    should_filter = False
+                    for geom_name in self.filtered_geometry_names:
+                        if f"misc_clusters/object_{i}/" in geom_name:
+                            should_filter = True
+                            break
+                    
+                    if not should_filter:
+                        filtered_clusters.append(cluster)
+                
+                print(f"Adding {len(filtered_clusters)} non-filtered clusters to IK environment")
+                self._process_and_add_object_class_to_ik("misc_clusters", filtered_clusters)
+                
+        except Exception as e:
+            print(f"Error adding geometries to IK environment: {e}")
+
+    def _process_and_add_object_class_to_ik(self, object_key: str, objects: list):
+        """Process and add object class to IK environment (similar to main environment)"""
+        try:
+            if not objects:
+                return
+                
+            all_decomposed_meshes = []
+            transform = self.get_transform("world", "camera_center_link")
+            
+            for i, obj in enumerate(objects):
+                try:
+                    if object_key == "misc_clusters":
+                        points = np.asarray(obj["points"])
+                    elif "point_cloud_numpy" in obj:
+                        points = obj["point_cloud_numpy"]
+                    elif "point_cloud" in obj and obj["point_cloud"]:
+                        points = np.array(obj["point_cloud"]["points"])
+                    else:
+                        continue
+                        
+                    if len(points) < 10:
+                        continue
+                    
+                    # Transform points (same as main environment)
+                    points = np.column_stack((points[:, 0], points[:, 2], -points[:, 1]))
+                    points = self.transform_point_cloud_with_open3d(points, transform)
+                        
+                    # Create convex hulls
+                    clustered_hulls = self._create_voxelized_clustered_convex_hulls(points, i)
+                    for hull in clustered_hulls:
+                        all_decomposed_meshes.append((hull, i))
+                        
+                except Exception as e:
+                    print(f"Warning: Failed to process object {i} for IK: {e}")
+            
+            if all_decomposed_meshes:
+                self._register_convex_hulls_to_ik(all_decomposed_meshes, object_key)
+                
+        except Exception as e:
+            print(f"Error processing object class for IK: {e}")
+
+    def _register_convex_hulls_to_ik(self, meshes_with_ids, hull_type: str):
+        """Register convex hulls to IK environment"""
+        try:
+            world = self.ik_plant.world_body()
+            proximity = ProximityProperties()
+
+            for i, (mesh, object_id) in enumerate(meshes_with_ids):
+                try:
+                    # Convert mesh (same as main environment)
+                    vertices = np.asarray(mesh.vertices)
+                    faces = np.asarray(mesh.triangles)
+                    
+                    if len(vertices) == 0 or len(faces) == 0:
+                        continue
+                        
+                    tmesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+                    tmesh_obj_blob = tmesh.export(file_type="obj")
+                    mem_file = MemoryFile(
+                        contents=tmesh_obj_blob,
+                        extension=".obj",
+                        filename_hint=f"ik_convex_hull_{i}.obj"
+                    )
+                    in_memory_mesh = InMemoryMesh()
+                    in_memory_mesh.mesh_file = mem_file
+                    drake_mesh = Mesh(in_memory_mesh, scale=1.0)
+
+                    pos = np.array([0.0, 0.0, 0.0])
+                    rpy = RollPitchYaw(0.0, 0.0, 0.0)
+                    X_WG = DrakeRigidTransform(RotationMatrix(rpy), pos)
+
+                    # Register only collision geometry (not visual for IK)
+                    self.ik_plant.RegisterCollisionGeometry(
+                        body=world,
+                        X_BG=X_WG,
+                        shape=drake_mesh,
+                        name=f"{hull_type}/object_{object_id}/ik_collision_hull_{i}",
+                        properties=proximity,
+                    )
+                        
+                except Exception as e:
+                    print(f"Warning: Failed to register IK mesh {i}: {e}")
+                    
+        except Exception as e:
+            print(f"Error registering convex hulls to IK: {e}")
+
+    def _solve_collision_aware_ik(self, target_pose: RigidTransform) -> Optional[np.ndarray]:
+        """Solve collision-aware IK for target end effector pose"""
+        try:
+            if self.ik_plant is None or self.end_effector_frame is None:
+                return None
+                
+            # Create IK solver
+            ik = InverseKinematics(self.ik_plant, self.ik_plant_context)
+            
+            # Add pose constraint for end effector
+            ik.AddPositionConstraint(
+                frameB=self.ik_plant.GetFrameByName("link6"),
+                p_BQ=np.array([0.0, 0.0, 0.0]),
+                frameA=self.ik_plant.world_frame(),
+                p_AQ_lower=target_pose.translation(),
+                p_AQ_upper=target_pose.translation()
+            )
+            
+            # Add orientation constraint
+            ik.AddOrientationConstraint(
+                frameAbar=self.ik_plant.world_frame(),
+                R_AbarA=target_pose.rotation(),
+                frameBbar=self.ik_plant.GetFrameByName("link6"),
+                R_BbarB=RotationMatrix.Identity(),
+                theta_bound=0.01
+            )
+            
+            # Add collision avoidance constraint
+            ik.AddMinimumDistanceLowerBoundConstraint(
+                bound=0.01,  # Minimum distance of 1cm
+                influence_distance_offset=0.1  # Start constraint when within 10cm
+            )
+            
+            # Add joint limits
+            for joint_name in self.kinematic_chain_joints:
+                try:
+                    joint = self.ik_plant.GetJointByName(joint_name)
+                    if joint.num_positions() > 0:
+                        lower_limits = joint.position_lower_limits()
+                        upper_limits = joint.position_upper_limits()
+                        if lower_limits.size > 0 and upper_limits.size > 0:
+                            ik.prog().AddBoundingBoxConstraint(
+                                lower_limits,
+                                upper_limits,
+                                ik.q()[joint.position_start():joint.position_start() + joint.num_positions()]
+                            )
+                except RuntimeError:
+                    continue
+            
+            # Set initial guess (current configuration)
+            current_positions = self.plant.GetPositions(self.plant_context)
+            ik.prog().SetInitialGuess(ik.q(), current_positions)
+            
+            # Solve IK
+            result = Solve(ik.prog())
+            
+            if result.is_success():
+                solution = result.GetSolution(ik.q())
+                print(f"IK solved successfully")
+                return solution
+            else:
+                print(f"IK failed: {result.get_solver_details()}")
+                return None
+                
+        except Exception as e:
+            print(f"Error in collision-aware IK: {e}")
+            return None
 
     def _update_visualization(self):
         """Force update the visualization"""
@@ -1332,24 +1646,76 @@ class DrakeKinematicsEnv:
         try:
             positions = self.plant.GetPositions(self.plant_context)
             updated = False
+            ik_updated = False
             
-            for joint_name in self.kinematic_chain_joints:
+            # Check if end effector XYZ/RPY sliders have changed
+            if self.end_effector_frame is not None:
                 try:
-                    joint = self.plant.GetJointByName(joint_name)
-                    if joint.num_positions() > 0:
-                        # Get slider value
-                        slider_value = self.meshcat.GetSliderValue(f"joint_{joint_name}")
-                        
-                        # Update position
-                        start_index = joint.position_start()
-                        if abs(positions[start_index] - slider_value) > 0.001:  # Only update if changed
-                            positions[start_index] = slider_value
-                            updated = True
-                            
-                except RuntimeError:
-                    continue
+                    # Get target pose from sliders
+                    target_x = self.meshcat.GetSliderValue("ee_x")
+                    target_y = self.meshcat.GetSliderValue("ee_y")
+                    target_z = self.meshcat.GetSliderValue("ee_z")
+                    target_roll = self.meshcat.GetSliderValue("ee_roll")
+                    target_pitch = self.meshcat.GetSliderValue("ee_pitch")
+                    target_yaw = self.meshcat.GetSliderValue("ee_yaw")
                     
-            if updated:
+                    # Get current end effector pose
+                    current_pose = self.plant.CalcRelativeTransform(
+                        self.plant_context, 
+                        self.plant.world_frame(), 
+                        self.end_effector_frame
+                    )
+                    
+                    # Check if target pose has changed significantly
+                    current_pos = current_pose.translation()
+                    current_rpy = RollPitchYaw(current_pose.rotation())
+                    
+                    pos_diff = np.linalg.norm([target_x - current_pos[0], target_y - current_pos[1], target_z - current_pos[2]])
+                    rpy_diff = abs(target_roll - current_rpy.roll_angle()) + abs(target_pitch - current_rpy.pitch_angle()) + abs(target_yaw - current_rpy.yaw_angle())
+                    
+                    if pos_diff > 0.01 or rpy_diff > 0.01:  # 1cm or 0.01 rad threshold
+                        # Create target pose
+                        target_translation = np.array([target_x, target_y, target_z])
+                        target_rotation = RotationMatrix(RollPitchYaw(target_roll, target_pitch, target_yaw))
+                        target_pose = RigidTransform(target_rotation, target_translation)
+                        
+                        # Solve collision-aware IK
+                        print(f"Solving IK for target pose: {target_translation}, RPY: [{target_roll:.3f}, {target_pitch:.3f}, {target_yaw:.3f}]")
+                        ik_solution = self._solve_collision_aware_ik(target_pose)
+                        
+                        if ik_solution is not None:
+                            # Update IK plant context with solution
+                            self.ik_plant.SetPositions(self.ik_plant_context, ik_solution)
+                            
+                            # Update main plant with IK solution
+                            positions = ik_solution
+                            ik_updated = True
+                            print("Applied IK solution")
+                        else:
+                            print("IK failed - keeping current configuration")
+                            
+                except Exception as e:
+                    print(f"Error in IK update: {e}")
+            
+            # If IK wasn't used, check individual joint sliders
+            if not ik_updated:
+                for joint_name in self.kinematic_chain_joints:
+                    try:
+                        joint = self.plant.GetJointByName(joint_name)
+                        if joint.num_positions() > 0:
+                            # Get slider value
+                            slider_value = self.meshcat.GetSliderValue(f"joint_{joint_name}")
+                            
+                            # Update position
+                            start_index = joint.position_start()
+                            if abs(positions[start_index] - slider_value) > 0.001:  # Only update if changed
+                                positions[start_index] = slider_value
+                                updated = True
+                                
+                    except RuntimeError:
+                        continue
+                        
+            if updated or ik_updated:
                 self.plant.SetPositions(self.plant_context, positions)
                 self._update_visualization()
                 
