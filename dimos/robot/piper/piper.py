@@ -63,7 +63,7 @@ class Piper(Arm, Module):
         *args,
         **kwargs,
     ) -> None:
-        Module.__init(self, *args, **kwargs)
+        Module.__init__(self, *args, **kwargs)
         self.can_port = can_port
         self.gripper_exist = gripper_exist
         self.gripper_val_multiple = gripper_val_multiple
@@ -472,7 +472,7 @@ class Piper(Arm, Module):
         return EnableResponse(response)
 
     @rpc
-    def stop(self, req):
+    def stop(self):
         response = TriggerResponse()
         response.success = False
         response.message = "stop piper failed"
@@ -486,7 +486,7 @@ class Piper(Arm, Module):
         return response
 
     @rpc
-    def reset(self, req):
+    def reset(self):
         response = TriggerResponse()
         response.success = False
         response.message = "reset piper failed"
@@ -500,7 +500,7 @@ class Piper(Arm, Module):
         return response
 
     @rpc
-    def zero(self, req):
+    def zero(self):
         response = GoZeroResponse()
         response.status = False
         response.code = 151000
@@ -518,7 +518,7 @@ class Piper(Arm, Module):
         return response
 
     @rpc
-    def block(self, req):
+    def block(self):
         response = SetBoolResponse()
         logger.info(f"-----------------------BLOCK_ARM---------------------------")
         if req.data:
