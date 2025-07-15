@@ -78,7 +78,7 @@ def main():
 
     # Initialize processors
     detector = Detection3DProcessor(intrinsics)
-    pbvs = PBVSController(position_gain=0.3, rotation_gain=0.2, target_tolerance=0.1)
+    pbvs = PBVSController(position_gain=0.3, rotation_gain=0.2, target_tolerance=0.025)
 
     # Setup window
     cv2.namedWindow("PBVS")

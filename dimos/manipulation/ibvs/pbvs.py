@@ -44,6 +44,8 @@ class PBVSController:
     - Velocity command generation with gain control
     - Automatic target tracking across frames
     - Frame transformations from ZED to robot conventions
+    - Pregrasp distance functionality
+    - 6DOF EE to camera transform handling
     """
 
     def __init__(
@@ -52,8 +54,12 @@ class PBVSController:
         rotation_gain: float = 0.3,
         max_velocity: float = 0.1,  # m/s
         max_angular_velocity: float = 0.5,  # rad/s
-        target_tolerance: float = 0.05,  # 5cm
-        tracking_distance_threshold: float = 0.05,  # 10cm for target tracking
+        target_tolerance: float = 0.01,  # 5cm
+        tracking_distance_threshold: float = 0.05,  # 5cm for target tracking
+        pregrasp_distance: float = 0.15,  # 15cm pregrasp distance
+        ee_to_camera_transform: Vector = Vector(
+            [0.0, 0.0, -0.06, 0.0, -1.57, 0.0]
+        ),  # 6DOF: [x,y,z,rx,ry,rz]
     ):
         """
         Initialize PBVS controller.
@@ -65,6 +71,8 @@ class PBVSController:
             max_angular_velocity: Maximum angular velocity command magnitude (rad/s)
             target_tolerance: Distance threshold for considering target reached (m)
             tracking_distance_threshold: Max distance for target association (m)
+            pregrasp_distance: Distance to maintain before grasping (m)
+            ee_to_camera_transform: 6DOF transform from EE to camera [x,y,z,rx,ry,rz]
         """
         self.position_gain = position_gain
         self.rotation_gain = rotation_gain
@@ -72,6 +80,8 @@ class PBVSController:
         self.max_angular_velocity = max_angular_velocity
         self.target_tolerance = target_tolerance
         self.tracking_distance_threshold = tracking_distance_threshold
+        self.pregrasp_distance = pregrasp_distance
+        self.ee_to_camera_transform_vec = ee_to_camera_transform
 
         # State variables
         self.current_target = None
@@ -85,11 +95,37 @@ class PBVSController:
         self.manipulator_origin = None  # Transform matrix from world to manipulator frame
         self.manipulator_origin_pose = None  # Original pose for reference
 
+        # Create 6DOF EE to camera transform matrix
+        self.ee_to_camera_transform = self._create_ee_to_camera_transform()
+
         logger.info(
             f"Initialized PBVS controller: pos_gain={position_gain}, rot_gain={rotation_gain}, "
             f"max_vel={max_velocity}m/s, max_ang_vel={max_angular_velocity}rad/s, "
-            f"target_tolerance={target_tolerance}m"
+            f"target_tolerance={target_tolerance}m, pregrasp_distance={pregrasp_distance}m, "
+            f"ee_to_camera_transform={ee_to_camera_transform.to_list()}"
         )
+
+    def _create_ee_to_camera_transform(self) -> np.ndarray:
+        """
+        Create 6DOF transform matrix from EE to camera frame.
+
+        Returns:
+            4x4 transformation matrix from EE to camera
+        """
+        # Extract position and rotation from 6DOF vector
+        pos = self.ee_to_camera_transform_vec.to_list()[:3]
+        rot = self.ee_to_camera_transform_vec.to_list()[3:6]
+
+        # Create transformation matrix
+        T_ee_to_cam = np.eye(4)
+        T_ee_to_cam[0:3, 3] = pos
+
+        # Apply rotation (using Rodrigues formula)
+        if np.linalg.norm(rot) > 1e-6:
+            rot_matrix = cv2.Rodrigues(np.array(rot))[0]
+            T_ee_to_cam[0:3, 0:3] = rot_matrix
+
+        return T_ee_to_cam
 
     def set_manipulator_origin(self, camera_pose: Pose):
         """
@@ -111,6 +147,42 @@ class PBVSController:
             f"{camera_pose.pos.y:.3f}, {camera_pose.pos.z:.3f})"
         )
 
+    def _apply_pregrasp_distance(self, target_pose: Pose) -> Pose:
+        """
+        Apply pregrasp distance to target pose by moving back towards robot origin.
+
+        Args:
+            target_pose: Target pose in robot frame
+
+        Returns:
+            Modified target pose with pregrasp distance applied
+        """
+        # Get approach vector (from target position towards robot origin)
+        target_pos = np.array([target_pose.pos.x, target_pose.pos.y, target_pose.pos.z])
+        robot_origin = np.array([0.0, 0.0, 0.0])  # Robot origin in robot frame
+        approach_vector = robot_origin - target_pos  # Vector pointing towards robot
+
+        # Normalize approach vector
+        approach_magnitude = np.linalg.norm(approach_vector)
+        if approach_magnitude > 1e-6:  # Avoid division by zero
+            norm_approach_vector = approach_vector / approach_magnitude
+        else:
+            norm_approach_vector = np.array([0.0, 0.0, 0.0])
+
+        # Move back by pregrasp distance towards robot
+        offset_vector = self.pregrasp_distance * norm_approach_vector
+
+        # Apply offset to target position
+        new_position = Vector(
+            [
+                target_pose.pos.x + offset_vector[0],
+                target_pose.pos.y + offset_vector[1],
+                target_pose.pos.z + offset_vector[2],
+            ]
+        )
+
+        return Pose(new_position, target_pose.rot)
+
     def _update_target_robot_frame(self):
         """Update current target with robot frame coordinates."""
         if not self.current_target or "position" not in self.current_target:
@@ -118,7 +190,7 @@ class PBVSController:
 
         # Get target position in ZED world frame
         target_pos = self.current_target["position"]
-        target_pose_zed = Pose(target_pos, Vector(0, 0, 0))
+        target_pose_zed = Pose(target_pos, Vector([0.0, 0.0, 0.0]))
 
         # Transform to manipulator frame
         target_pose_manip = apply_transform(target_pose_zed, self.manipulator_origin)
@@ -126,9 +198,15 @@ class PBVSController:
         # Calculate orientation pointing at origin (in robot frame)
         yaw_to_origin = calculate_yaw_to_origin(target_pose_manip.pos)
 
+        # Create target pose with proper orientation
+        target_pose_robot = Pose(target_pose_manip.pos, Vector([0.0, 1.57, yaw_to_origin]))
+
+        # Apply pregrasp distance
+        target_pose_pregrasp = self._apply_pregrasp_distance(target_pose_robot)
+
         # Update target with robot frame pose
-        self.current_target["robot_position"] = target_pose_manip.pos
-        self.current_target["robot_rotation"] = Vector(0.0, 0.0, yaw_to_origin)  # Level grasp
+        self.current_target["robot_position"] = target_pose_pregrasp.pos
+        self.current_target["robot_rotation"] = target_pose_pregrasp.rot
 
     def set_target(self, target_object: Dict[str, Any]) -> bool:
         """
@@ -217,6 +295,27 @@ class PBVSController:
             return True
         return False
 
+    def _get_ee_pose_from_camera(self, camera_pose: Pose) -> Pose:
+        """
+        Get end-effector pose from camera pose using 6DOF EE to camera transform.
+
+        Args:
+            camera_pose: Current camera pose in robot frame
+
+        Returns:
+            End-effector pose in robot frame
+        """
+        # Transform camera pose to EE frame
+        camera_transform = pose_to_transform_matrix(camera_pose)
+        ee_transform = camera_transform @ np.linalg.inv(self.ee_to_camera_transform)
+
+        # Extract position and rotation
+        ee_pos = Vector(ee_transform[0:3, 3])
+        ee_rot_matrix = ee_transform[0:3, 0:3]
+        ee_rot = Vector(cv2.Rodrigues(ee_rot_matrix)[0].flatten())
+
+        return Pose(ee_pos, ee_rot)
+
     def compute_control(
         self, camera_pose: Pose, new_detections: Optional[List[Dict[str, Any]]] = None
     ) -> Tuple[Optional[Vector], Optional[Vector], bool, bool]:
@@ -246,40 +345,55 @@ class PBVSController:
         if new_detections is not None:
             self.update_target_tracking(new_detections)
 
+        print(f"Camera pose: {camera_pose}")
+
         # Transform camera pose to robot frame
         camera_pose_robot = apply_transform(camera_pose, self.manipulator_origin)
 
+        # Get EE pose from camera pose
+        ee_pose_robot = self._get_ee_pose_from_camera(camera_pose_robot)
+
         # Get target in robot frame
         target_pos = self.current_target.get("robot_position")
-        target_rot = self.current_target.get("robot_rotation", Vector(0, 0, 0))
+        target_rot = self.current_target.get("robot_rotation")
 
-        if target_pos is None:
-            # Shouldn't happen but handle gracefully
-            self._update_target_robot_frame()
-            target_pos = self.current_target.get("robot_position", Vector(0, 0, 0))
-            target_rot = self.current_target.get("robot_rotation", Vector(0, 0, 0))
+        if target_pos is None or target_rot is None:
+            logger.warning("Target position or rotation not available")
+            return None, None, False, False
 
-        # Calculate position error (target - camera)
-        error = target_pos - camera_pose_robot.pos
+        # Calculate position error (target - EE position)
+        error = target_pos - ee_pose_robot.pos
         self.last_position_error = error
 
         # Compute velocity command with proportional control
-        velocity_cmd = error * self.position_gain
+        velocity_cmd = Vector(
+            [
+                error.x * self.position_gain,
+                error.y * self.position_gain,
+                error.z * self.position_gain,
+            ]
+        )
 
         # Limit velocity magnitude
         vel_magnitude = np.linalg.norm([velocity_cmd.x, velocity_cmd.y, velocity_cmd.z])
         if vel_magnitude > self.max_velocity:
             scale = self.max_velocity / vel_magnitude
-            velocity_cmd = velocity_cmd * scale
+            velocity_cmd = Vector(
+                [
+                    float(velocity_cmd.x * scale),
+                    float(velocity_cmd.y * scale),
+                    float(velocity_cmd.z * scale),
+                ]
+            )
 
         self.last_velocity_cmd = velocity_cmd
 
         # Compute angular velocity for orientation control
-        angular_velocity_cmd = self._compute_angular_velocity(target_rot, camera_pose_robot)
+        angular_velocity_cmd = self._compute_angular_velocity(target_rot, ee_pose_robot)
 
         # Check if target reached
         error_magnitude = np.linalg.norm([error.x, error.y, error.z])
-        target_reached = error_magnitude < self.target_tolerance
+        target_reached = bool(error_magnitude < self.target_tolerance)
         self.last_target_reached = target_reached
 
         # Clear target only if it's reached
@@ -298,7 +412,7 @@ class PBVSController:
 
         Args:
             target_rot: Target orientation (roll, pitch, yaw)
-            current_pose: Current camera/EE pose
+            current_pose: Current EE pose
 
         Returns:
             Angular velocity command as Vector
@@ -314,13 +428,15 @@ class PBVSController:
         while yaw_error < -np.pi:
             yaw_error += 2 * np.pi
 
-        self.last_rotation_error = Vector(roll_error, pitch_error, yaw_error)
+        self.last_rotation_error = Vector([roll_error, pitch_error, yaw_error])
 
         # Apply proportional control
         angular_velocity = Vector(
-            roll_error * self.rotation_gain,
-            pitch_error * self.rotation_gain,
-            yaw_error * self.rotation_gain,
+            [
+                roll_error * self.rotation_gain,
+                pitch_error * self.rotation_gain,
+                yaw_error * self.rotation_gain,
+            ]
         )
 
         # Limit angular velocity magnitude
@@ -334,6 +450,63 @@ class PBVSController:
         self.last_angular_velocity_cmd = angular_velocity
 
         return angular_velocity
+
+    def get_camera_pose_robot_frame(self, camera_pose_zed: Pose) -> Optional[Pose]:
+        """
+        Get camera pose in robot frame coordinates.
+
+        Args:
+            camera_pose_zed: Camera pose in ZED world frame
+
+        Returns:
+            Camera pose in robot frame or None if no origin set
+        """
+        if self.manipulator_origin is None:
+            return None
+
+        camera_pose_manip = apply_transform(camera_pose_zed, self.manipulator_origin)
+        return camera_pose_manip
+
+    def get_ee_pose_robot_frame(self, camera_pose_zed: Pose) -> Optional[Pose]:
+        """
+        Get end-effector pose in robot frame coordinates.
+
+        Args:
+            camera_pose_zed: Camera pose in ZED world frame
+
+        Returns:
+            End-effector pose in robot frame or None if no origin set
+        """
+        if self.manipulator_origin is None:
+            return None
+
+        camera_pose_robot = apply_transform(camera_pose_zed, self.manipulator_origin)
+        return self._get_ee_pose_from_camera(camera_pose_robot)
+
+    def get_object_pose_robot_frame(
+        self, object_pos_zed: Vector
+    ) -> Optional[Tuple[Vector, Vector]]:
+        """
+        Get object pose in robot frame coordinates with orientation.
+
+        Args:
+            object_pos_zed: Object position in ZED world frame
+
+        Returns:
+            Tuple of (position, rotation) in robot frame or None if no origin set
+        """
+        if self.manipulator_origin is None:
+            return None
+
+        # Transform position
+        obj_pose_zed = Pose(object_pos_zed, Vector([0.0, 0.0, 0.0]))
+        obj_pose_manip = apply_transform(obj_pose_zed, self.manipulator_origin)
+
+        # Calculate orientation pointing at origin
+        yaw_to_origin = calculate_yaw_to_origin(obj_pose_manip.pos)
+        orientation = Vector([0.0, 0.0, yaw_to_origin])  # Level grasp
+
+        return obj_pose_manip.pos, orientation
 
     def create_status_overlay(
         self, image: np.ndarray, camera_intrinsics: Optional[list] = None
@@ -353,7 +526,7 @@ class PBVSController:
 
         # Status panel
         if self.current_target:
-            panel_height = 140  # Increased for rotation display
+            panel_height = 140  # Adjusted panel height
             panel_y = height - panel_height
             overlay = viz_img.copy()
             cv2.rectangle(overlay, (0, panel_y), (width, height), (0, 0, 0), -1)
@@ -435,6 +608,18 @@ class PBVSController:
                     (255, 200, 0),
                     1,
                 )
+
+            # Add config info
+            ee_transform = self.ee_to_camera_transform_vec.to_list()
+            cv2.putText(
+                viz_img,
+                f"Pregrasp: {self.pregrasp_distance:.3f}m | EE Transform: [{ee_transform[0]:.2f},{ee_transform[1]:.2f},{ee_transform[2]:.2f}]",
+                (10, y + 125),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (255, 255, 255),
+                1,
+            )
 
             if self.last_target_reached:
                 cv2.putText(
