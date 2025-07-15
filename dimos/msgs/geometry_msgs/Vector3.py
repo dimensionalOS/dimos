@@ -45,7 +45,7 @@ class Vector3(LCMVector3):
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
-    name = "geometry_msgs.Vector3"
+    msg_name = "geometry_msgs.Vector3"
 
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO):
