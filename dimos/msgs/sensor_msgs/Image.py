@@ -42,7 +42,7 @@ class ImageFormat(Enum):
 class Image(Timestamped):
     """Standardized image type with LCM integration."""
 
-    name = "sensor_msgs.Image"
+    msg_name = "sensor_msgs.Image"
     data: np.ndarray
     format: ImageFormat = field(default=ImageFormat.BGR)
     frame_id: str = field(default="")

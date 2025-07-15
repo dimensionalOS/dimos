@@ -36,7 +36,7 @@ PoseConvertable: TypeAlias = (
 class Pose(LCMPose):
     position: Vector3
     orientation: Quaternion
-    name = "geometry_msgs.Pose"
+    msg_name = "geometry_msgs.Pose"
 
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO):

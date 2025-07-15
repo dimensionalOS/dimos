@@ -30,7 +30,7 @@ from dimos.protocol.pubsub.lcmpubsub import (
 class MockLCMMessage:
     """Mock LCM message for testing"""
 
-    name = "geometry_msgs.Mock"
+    msg_name = "geometry_msgs.Mock"
 
     def __init__(self, data):
         self.data = data

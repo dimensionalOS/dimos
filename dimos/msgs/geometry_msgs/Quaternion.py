@@ -34,7 +34,7 @@ class Quaternion(LCMQuaternion):
     y: float = 0.0
     z: float = 0.0
     w: float = 1.0
-    name = "geometry_msgs.Quaternion"
+    msg_name = "geometry_msgs.Quaternion"
 
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO):
