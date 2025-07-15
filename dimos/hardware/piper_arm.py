@@ -156,6 +156,7 @@ class PiperArm:
         current_pose = current_pose + np.array([x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot])*self.dt
         current_pose = current_pose / factor
         self.cmd_EE_pose(current_pose[0], current_pose[1], current_pose[2], current_pose[3], current_pose[4], current_pose[5])
+        time.sleep(self.dt)
 
     def disable(self):
         self.softStop()
