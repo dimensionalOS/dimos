@@ -15,8 +15,10 @@
 import numpy as np
 from typing import Tuple, Dict, Any
 import logging
+import cv2
 
 from dimos.types.vector import Vector
+from dimos.types.pose import Pose
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,237 @@ def normalize_angle(angle: float) -> float:
 def distance_angle_to_goal_xy(distance: float, angle: float) -> Tuple[float, float]:
     """Convert distance and angle to goal x, y in robot frame"""
     return distance * np.cos(angle), distance * np.sin(angle)
+
+
+def pose_to_matrix(pose: Pose) -> np.ndarray:
+    """
+    Convert pose to 4x4 homogeneous transform matrix.
+
+    Args:
+        pose: Pose object with position and rotation (euler angles)
+
+    Returns:
+        4x4 transformation matrix
+    """
+    # Extract position
+    tx, ty, tz = pose.pos.x, pose.pos.y, pose.pos.z
+
+    # Extract euler angles
+    roll, pitch, yaw = pose.rot.x, pose.rot.y, pose.rot.z
+
+    # Create rotation matrices
+    cos_roll, sin_roll = np.cos(roll), np.sin(roll)
+    cos_pitch, sin_pitch = np.cos(pitch), np.sin(pitch)
+    cos_yaw, sin_yaw = np.cos(yaw), np.sin(yaw)
+
+    # Roll (X), Pitch (Y), Yaw (Z) - ZYX convention
+    R_x = np.array([[1, 0, 0], [0, cos_roll, -sin_roll], [0, sin_roll, cos_roll]])
+
+    R_y = np.array([[cos_pitch, 0, sin_pitch], [0, 1, 0], [-sin_pitch, 0, cos_pitch]])
+
+    R_z = np.array([[cos_yaw, -sin_yaw, 0], [sin_yaw, cos_yaw, 0], [0, 0, 1]])
+
+    R = R_z @ R_y @ R_x
+
+    # Create 4x4 transform
+    T = np.eye(4)
+    T[:3, :3] = R
+    T[:3, 3] = [tx, ty, tz]
+
+    return T
+
+
+def matrix_to_pose(T: np.ndarray) -> Pose:
+    """
+    Convert 4x4 transformation matrix to Pose object.
+
+    Args:
+        T: 4x4 transformation matrix
+
+    Returns:
+        Pose object with position and rotation (euler angles)
+    """
+    # Extract position
+    pos = Vector(T[0, 3], T[1, 3], T[2, 3])
+
+    # Extract rotation (euler angles from rotation matrix)
+    R = T[:3, :3]
+    roll = np.arctan2(R[2, 1], R[2, 2])
+    pitch = np.arctan2(-R[2, 0], np.sqrt(R[2, 1] ** 2 + R[2, 2] ** 2))
+    yaw = np.arctan2(R[1, 0], R[0, 0])
+
+    rot = Vector(roll, pitch, yaw)
+
+    return Pose(pos, rot)
+
+
+def apply_transform(pose: Pose, transform_matrix: np.ndarray) -> Pose:
+    """
+    Apply a transformation matrix to a pose.
+
+    Args:
+        pose: Input pose
+        transform_matrix: 4x4 transformation matrix to apply
+
+    Returns:
+        Transformed pose
+    """
+    # Convert pose to matrix
+    T_pose = pose_to_matrix(pose)
+
+    # Apply transform
+    T_result = transform_matrix @ T_pose
+
+    # Convert back to pose
+    return matrix_to_pose(T_result)
+
+
+def optical_to_robot_frame(pose: Pose) -> Pose:
+    """
+    Convert pose from optical camera frame to robot frame convention.
+
+    Optical Camera Frame (e.g., ZED):
+    - X: Right
+    - Y: Down
+    - Z: Forward (away from camera)
+
+    Robot Frame (ROS/REP-103):
+    - X: Forward
+    - Y: Left
+    - Z: Up
+
+    Args:
+        pose: Pose in optical camera frame
+
+    Returns:
+        Pose in robot frame
+    """
+    # Position transformation
+    robot_x = pose.pos.z  # Forward = Camera Z
+    robot_y = -pose.pos.x  # Left = -Camera X
+    robot_z = -pose.pos.y  # Up = -Camera Y
+
+    # Rotation transformation using rotation matrices
+    # First, create rotation matrix from optical frame Euler angles
+    roll_optical, pitch_optical, yaw_optical = pose.rot.x, pose.rot.y, pose.rot.z
+
+    # Create rotation matrix for optical frame (ZYX convention)
+    cr, sr = np.cos(roll_optical), np.sin(roll_optical)
+    cp, sp = np.cos(pitch_optical), np.sin(pitch_optical)
+    cy, sy = np.cos(yaw_optical), np.sin(yaw_optical)
+
+    # Roll (X), Pitch (Y), Yaw (Z) - ZYX convention
+    R_x = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
+
+    R_y = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+
+    R_z = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
+
+    R_optical = R_z @ R_y @ R_x
+
+    # Coordinate frame transformation matrix from optical to robot
+    # X_robot = Z_optical, Y_robot = -X_optical, Z_robot = -Y_optical
+    T_frame = np.array(
+        [
+            [0, 0, 1],  # X_robot = Z_optical
+            [-1, 0, 0],  # Y_robot = -X_optical
+            [0, -1, 0],
+        ]
+    )  # Z_robot = -Y_optical
+
+    # Transform the rotation matrix
+    R_robot = T_frame @ R_optical @ T_frame.T
+
+    # Extract Euler angles from robot rotation matrix
+    # Using ZYX convention for robot frame as well
+    robot_roll = np.arctan2(R_robot[2, 1], R_robot[2, 2])
+    robot_pitch = np.arctan2(-R_robot[2, 0], np.sqrt(R_robot[2, 1] ** 2 + R_robot[2, 2] ** 2))
+    robot_yaw = np.arctan2(R_robot[1, 0], R_robot[0, 0])
+
+    # Normalize angles to [-π, π]
+    robot_roll = normalize_angle(robot_roll)
+    robot_pitch = normalize_angle(robot_pitch)
+    robot_yaw = normalize_angle(robot_yaw)
+
+    return Pose(Vector(robot_x, robot_y, robot_z), Vector(robot_roll, robot_pitch, robot_yaw))
+
+
+def robot_to_optical_frame(pose: Pose) -> Pose:
+    """
+    Convert pose from robot frame to optical camera frame convention.
+    This is the inverse of optical_to_robot_frame.
+
+    Args:
+        pose: Pose in robot frame
+
+    Returns:
+        Pose in optical camera frame
+    """
+    # Position transformation (inverse)
+    optical_x = -pose.pos.y  # Right = -Left
+    optical_y = -pose.pos.z  # Down = -Up
+    optical_z = pose.pos.x  # Forward = Forward
+
+    # Rotation transformation using rotation matrices
+    # First, create rotation matrix from Robot Euler angles
+    roll_robot, pitch_robot, yaw_robot = pose.rot.x, pose.rot.y, pose.rot.z
+
+    # Create rotation matrix for Robot frame (ZYX convention)
+    cr, sr = np.cos(roll_robot), np.sin(roll_robot)
+    cp, sp = np.cos(pitch_robot), np.sin(pitch_robot)
+    cy, sy = np.cos(yaw_robot), np.sin(yaw_robot)
+
+    # Roll (X), Pitch (Y), Yaw (Z) - ZYX convention
+    R_x = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
+
+    R_y = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+
+    R_z = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
+
+    R_robot = R_z @ R_y @ R_x
+
+    # Coordinate frame transformation matrix from Robot to optical (inverse of optical to Robot)
+    # This is the transpose of the forward transformation
+    T_frame_inv = np.array(
+        [
+            [0, -1, 0],  # X_optical = -Y_robot
+            [0, 0, -1],  # Y_optical = -Z_robot
+            [1, 0, 0],
+        ]
+    )  # Z_optical = X_robot
+
+    # Transform the rotation matrix
+    R_optical = T_frame_inv @ R_robot @ T_frame_inv.T
+
+    # Extract Euler angles from optical rotation matrix
+    # Using ZYX convention for optical frame as well
+    optical_roll = np.arctan2(R_optical[2, 1], R_optical[2, 2])
+    optical_pitch = np.arctan2(-R_optical[2, 0], np.sqrt(R_optical[2, 1] ** 2 + R_optical[2, 2] ** 2))
+    optical_yaw = np.arctan2(R_optical[1, 0], R_optical[0, 0])
+
+    # Normalize angles
+    optical_roll = normalize_angle(optical_roll)
+    optical_pitch = normalize_angle(optical_pitch)
+    optical_yaw = normalize_angle(optical_yaw)
+
+    return Pose(Vector(optical_x, optical_y, optical_z), Vector(optical_roll, optical_pitch, optical_yaw))
+
+
+def yaw_towards_point(position: Vector, target_point: Vector = Vector(0.0, 0.0, 0.0)) -> float:
+    """
+    Calculate yaw angle from target point to position (away from target).
+    This is commonly used for object orientation in grasping applications.
+    Assumes robot frame where X is forward and Y is left.
+
+    Args:
+        position: Current position in robot frame
+        target_point: Reference point (default: origin)
+
+    Returns:
+        Yaw angle in radians pointing from target_point to position
+    """
+    direction = position - target_point
+    return np.arctan2(direction.y, direction.x)
 
 
 def transform_robot_to_map(

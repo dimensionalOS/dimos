@@ -29,11 +29,11 @@ from dimos.perception.detection2d.utils import plot_results, calculate_object_si
 from dimos.types.pose import Pose
 from dimos.types.vector import Vector
 from dimos.types.manipulation import ObjectData
-from dimos.manipulation.ibvs.utils import (
-    estimate_object_depth,
-    optical_to_robot_convention,
-    pose_to_transform_matrix,
-    transform_matrix_to_pose,
+from dimos.manipulation.ibvs.utils import estimate_object_depth
+from dimos.utils.transform_utils import (
+    optical_to_robot_frame,
+    pose_to_matrix,
+    matrix_to_pose,
 )
 
 logger = setup_logger("dimos.perception.detection3d")
@@ -219,19 +219,19 @@ class Detection3DProcessor:
         )
 
         # Transform object pose from optical frame to world frame convention
-        obj_pose_world_frame = optical_to_robot_convention(obj_pose_optical)
+        obj_pose_world_frame = optical_to_robot_frame(obj_pose_optical)
 
         # Create transformation matrix from camera pose
-        T_world_camera = pose_to_transform_matrix(camera_pose)
+        T_world_camera = pose_to_matrix(camera_pose)
 
         # Create transformation matrix from object pose (relative to camera)
-        T_camera_object = pose_to_transform_matrix(obj_pose_world_frame)
+        T_camera_object = pose_to_matrix(obj_pose_world_frame)
 
         # Combine transformations: T_world_object = T_world_camera * T_camera_object
         T_world_object = T_world_camera @ T_camera_object
 
         # Convert back to pose
-        world_pose = transform_matrix_to_pose(T_world_object)
+        world_pose = matrix_to_pose(T_world_object)
 
         return world_pose
 
