@@ -15,8 +15,7 @@
 import numpy as np
 from typing import Dict, Any, Optional, List
 
-from dimos.types.pose import Pose
-from dimos.types.vector import Vector
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
 
 
 def parse_zed_pose(zed_pose_data: Dict[str, Any]) -> Optional[Pose]:
@@ -31,20 +30,18 @@ def parse_zed_pose(zed_pose_data: Dict[str, Any]) -> Optional[Pose]:
             - valid: Whether pose is valid
 
     Returns:
-        Pose object with position and rotation, or None if invalid
+        Pose object with position and orientation, or None if invalid
     """
     if not zed_pose_data or not zed_pose_data.get("valid", False):
         return None
 
     # Extract position
     position = zed_pose_data.get("position", [0, 0, 0])
-    pos_vector = Vector(position[0], position[1], position[2])
+    pos_vector = Vector3(position[0], position[1], position[2])
 
-    # Extract euler angles (roll, pitch, yaw)
-    euler = zed_pose_data.get("euler_angles", [0, 0, 0])
-    rot_vector = Vector(euler[0], euler[1], euler[2])  # roll, pitch, yaw
-
-    return Pose(pos_vector, rot_vector)
+    quat = zed_pose_data["rotation"]
+    orientation = Quaternion(quat[0], quat[1], quat[2], quat[3])
+    return Pose(pos_vector, orientation)
 
 
 def estimate_object_depth(

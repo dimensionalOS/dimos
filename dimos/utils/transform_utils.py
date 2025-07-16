@@ -15,10 +15,10 @@
 import numpy as np
 from typing import Tuple, Dict, Any
 import logging
-import cv2
+from scipy.spatial.transform import Rotation
 
 from dimos.types.vector import Vector
-from dimos.types.pose import Pose
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
 
 logger = logging.getLogger(__name__)
 
@@ -38,30 +38,18 @@ def pose_to_matrix(pose: Pose) -> np.ndarray:
     Convert pose to 4x4 homogeneous transform matrix.
 
     Args:
-        pose: Pose object with position and rotation (euler angles)
+        pose: Pose object with position and orientation (quaternion)
 
     Returns:
         4x4 transformation matrix
     """
     # Extract position
-    tx, ty, tz = pose.pos.x, pose.pos.y, pose.pos.z
+    tx, ty, tz = pose.position.x, pose.position.y, pose.position.z
 
-    # Extract euler angles
-    roll, pitch, yaw = pose.rot.x, pose.rot.y, pose.rot.z
-
-    # Create rotation matrices
-    cos_roll, sin_roll = np.cos(roll), np.sin(roll)
-    cos_pitch, sin_pitch = np.cos(pitch), np.sin(pitch)
-    cos_yaw, sin_yaw = np.cos(yaw), np.sin(yaw)
-
-    # Roll (X), Pitch (Y), Yaw (Z) - ZYX convention
-    R_x = np.array([[1, 0, 0], [0, cos_roll, -sin_roll], [0, sin_roll, cos_roll]])
-
-    R_y = np.array([[cos_pitch, 0, sin_pitch], [0, 1, 0], [-sin_pitch, 0, cos_pitch]])
-
-    R_z = np.array([[cos_yaw, -sin_yaw, 0], [sin_yaw, cos_yaw, 0], [0, 0, 1]])
-
-    R = R_z @ R_y @ R_x
+    # Create rotation matrix from quaternion using scipy
+    quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
+    rotation = Rotation.from_quat(quat)
+    R = rotation.as_matrix()
 
     # Create 4x4 transform
     T = np.eye(4)
@@ -79,20 +67,19 @@ def matrix_to_pose(T: np.ndarray) -> Pose:
         T: 4x4 transformation matrix
 
     Returns:
-        Pose object with position and rotation (euler angles)
+        Pose object with position and orientation (quaternion)
     """
     # Extract position
-    pos = Vector(T[0, 3], T[1, 3], T[2, 3])
+    pos = Vector3(T[0, 3], T[1, 3], T[2, 3])
 
-    # Extract rotation (euler angles from rotation matrix)
+    # Extract rotation matrix and convert to quaternion
     R = T[:3, :3]
-    roll = np.arctan2(R[2, 1], R[2, 2])
-    pitch = np.arctan2(-R[2, 0], np.sqrt(R[2, 1] ** 2 + R[2, 2] ** 2))
-    yaw = np.arctan2(R[1, 0], R[0, 0])
+    rotation = Rotation.from_matrix(R)
+    quat = rotation.as_quat()  # Returns [x, y, z, w]
+    
+    orientation = Quaternion(quat[0], quat[1], quat[2], quat[3])
 
-    rot = Vector(roll, pitch, yaw)
-
-    return Pose(pos, rot)
+    return Pose(pos, orientation)
 
 
 def apply_transform(pose: Pose, transform_matrix: np.ndarray) -> Pose:
@@ -137,53 +124,33 @@ def optical_to_robot_frame(pose: Pose) -> Pose:
         Pose in robot frame
     """
     # Position transformation
-    robot_x = pose.pos.z  # Forward = Camera Z
-    robot_y = -pose.pos.x  # Left = -Camera X
-    robot_z = -pose.pos.y  # Up = -Camera Y
+    robot_x = pose.position.z  # Forward = Camera Z
+    robot_y = -pose.position.x  # Left = -Camera X
+    robot_z = -pose.position.y  # Up = -Camera Y
 
-    # Rotation transformation using rotation matrices
-    # First, create rotation matrix from optical frame Euler angles
-    roll_optical, pitch_optical, yaw_optical = pose.rot.x, pose.rot.y, pose.rot.z
-
-    # Create rotation matrix for optical frame (ZYX convention)
-    cr, sr = np.cos(roll_optical), np.sin(roll_optical)
-    cp, sp = np.cos(pitch_optical), np.sin(pitch_optical)
-    cy, sy = np.cos(yaw_optical), np.sin(yaw_optical)
-
-    # Roll (X), Pitch (Y), Yaw (Z) - ZYX convention
-    R_x = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
-
-    R_y = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
-
-    R_z = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
-
-    R_optical = R_z @ R_y @ R_x
+    # Rotation transformation using quaternions
+    # First convert quaternion to rotation matrix
+    quat_optical = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
+    R_optical = Rotation.from_quat(quat_optical).as_matrix()
 
     # Coordinate frame transformation matrix from optical to robot
     # X_robot = Z_optical, Y_robot = -X_optical, Z_robot = -Y_optical
-    T_frame = np.array(
-        [
-            [0, 0, 1],  # X_robot = Z_optical
-            [-1, 0, 0],  # Y_robot = -X_optical
-            [0, -1, 0],
-        ]
-    )  # Z_robot = -Y_optical
+    T_frame = np.array([
+        [0, 0, 1],   # X_robot = Z_optical
+        [-1, 0, 0],  # Y_robot = -X_optical
+        [0, -1, 0]   # Z_robot = -Y_optical
+    ])
 
     # Transform the rotation matrix
     R_robot = T_frame @ R_optical @ T_frame.T
 
-    # Extract Euler angles from robot rotation matrix
-    # Using ZYX convention for robot frame as well
-    robot_roll = np.arctan2(R_robot[2, 1], R_robot[2, 2])
-    robot_pitch = np.arctan2(-R_robot[2, 0], np.sqrt(R_robot[2, 1] ** 2 + R_robot[2, 2] ** 2))
-    robot_yaw = np.arctan2(R_robot[1, 0], R_robot[0, 0])
+    # Convert back to quaternion
+    quat_robot = Rotation.from_matrix(R_robot).as_quat()  # [x, y, z, w]
 
-    # Normalize angles to [-π, π]
-    robot_roll = normalize_angle(robot_roll)
-    robot_pitch = normalize_angle(robot_pitch)
-    robot_yaw = normalize_angle(robot_yaw)
-
-    return Pose(Vector(robot_x, robot_y, robot_z), Vector(robot_roll, robot_pitch, robot_yaw))
+    return Pose(
+        Vector3(robot_x, robot_y, robot_z),
+        Quaternion(quat_robot[0], quat_robot[1], quat_robot[2], quat_robot[3])
+    )
 
 
 def robot_to_optical_frame(pose: Pose) -> Pose:
@@ -198,53 +165,32 @@ def robot_to_optical_frame(pose: Pose) -> Pose:
         Pose in optical camera frame
     """
     # Position transformation (inverse)
-    optical_x = -pose.pos.y  # Right = -Left
-    optical_y = -pose.pos.z  # Down = -Up
-    optical_z = pose.pos.x  # Forward = Forward
+    optical_x = -pose.position.y  # Right = -Left
+    optical_y = -pose.position.z  # Down = -Up
+    optical_z = pose.position.x   # Forward = Forward
 
-    # Rotation transformation using rotation matrices
-    # First, create rotation matrix from Robot Euler angles
-    roll_robot, pitch_robot, yaw_robot = pose.rot.x, pose.rot.y, pose.rot.z
-
-    # Create rotation matrix for Robot frame (ZYX convention)
-    cr, sr = np.cos(roll_robot), np.sin(roll_robot)
-    cp, sp = np.cos(pitch_robot), np.sin(pitch_robot)
-    cy, sy = np.cos(yaw_robot), np.sin(yaw_robot)
-
-    # Roll (X), Pitch (Y), Yaw (Z) - ZYX convention
-    R_x = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
-
-    R_y = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
-
-    R_z = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
-
-    R_robot = R_z @ R_y @ R_x
+    # Rotation transformation using quaternions
+    quat_robot = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
+    R_robot = Rotation.from_quat(quat_robot).as_matrix()
 
     # Coordinate frame transformation matrix from Robot to optical (inverse of optical to Robot)
     # This is the transpose of the forward transformation
-    T_frame_inv = np.array(
-        [
-            [0, -1, 0],  # X_optical = -Y_robot
-            [0, 0, -1],  # Y_optical = -Z_robot
-            [1, 0, 0],
-        ]
-    )  # Z_optical = X_robot
+    T_frame_inv = np.array([
+        [0, -1, 0],   # X_optical = -Y_robot
+        [0, 0, -1],   # Y_optical = -Z_robot
+        [1, 0, 0]     # Z_optical = X_robot
+    ])
 
     # Transform the rotation matrix
     R_optical = T_frame_inv @ R_robot @ T_frame_inv.T
 
-    # Extract Euler angles from optical rotation matrix
-    # Using ZYX convention for optical frame as well
-    optical_roll = np.arctan2(R_optical[2, 1], R_optical[2, 2])
-    optical_pitch = np.arctan2(-R_optical[2, 0], np.sqrt(R_optical[2, 1] ** 2 + R_optical[2, 2] ** 2))
-    optical_yaw = np.arctan2(R_optical[1, 0], R_optical[0, 0])
+    # Convert back to quaternion
+    quat_optical = Rotation.from_matrix(R_optical).as_quat()  # [x, y, z, w]
 
-    # Normalize angles
-    optical_roll = normalize_angle(optical_roll)
-    optical_pitch = normalize_angle(optical_pitch)
-    optical_yaw = normalize_angle(optical_yaw)
-
-    return Pose(Vector(optical_x, optical_y, optical_z), Vector(optical_roll, optical_pitch, optical_yaw))
+    return Pose(
+        Vector3(optical_x, optical_y, optical_z),
+        Quaternion(quat_optical[0], quat_optical[1], quat_optical[2], quat_optical[3])
+    )
 
 
 def yaw_towards_point(position: Vector, target_point: Vector = Vector(0.0, 0.0, 0.0)) -> float:
