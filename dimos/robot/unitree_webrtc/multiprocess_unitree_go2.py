@@ -16,7 +16,7 @@ import asyncio
 import contextvars
 import functools
 import time
-from typing import Callable
+from typing import Callable, Tuple
 
 from dask.distributed import get_client, get_worker
 from distributed import get_worker
@@ -158,7 +158,7 @@ class Unitree:
         local_planner = dimos.deploy(
             VFHPurePursuitPlanner,
             get_costmap=connection.get_local_costmap,
-            get_robot_pos=connection.get_pos,
+            get_robot_pose=connection.get_odom,
             move=connection.move,
         )
 
