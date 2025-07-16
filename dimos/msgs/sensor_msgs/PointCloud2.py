@@ -75,7 +75,7 @@ class PointCloud2(Timestamped):
             msg.is_bigendian = False
             msg.fields_length = 4  # x, y, z, intensity
             msg.fields = self._create_xyz_field()
-            return msg
+            return msg.encode()
 
         # Point cloud dimensions
         msg.height = 1  # Unorganized point cloud

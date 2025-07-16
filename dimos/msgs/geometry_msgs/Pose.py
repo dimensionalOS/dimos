@@ -82,17 +82,11 @@ class Pose(LCMPose):
         self.orientation = Quaternion(qx, qy, qz, qw)
 
     @dispatch
-    def __init__(self, position: VectorConvertable) -> None:
-        self.position = Vector3(position)
-        self.orientation = Quaternion()
-
-    @dispatch
-    def __init__(self, orientation: QuaternionConvertable) -> None:
-        self.position = Vector3()
-        self.orientation = Quaternion(orientation)
-
-    @dispatch
-    def __init__(self, position: VectorConvertable, orientation: QuaternionConvertable) -> None:
+    def __init__(
+        self,
+        position: VectorConvertable | Vector3 = [0, 0, 0],
+        orientation: QuaternionConvertable | Quaternion = [0, 0, 0, 1],
+    ) -> None:
         """Initialize a pose with position and orientation."""
         self.position = Vector3(position)
         self.orientation = Quaternion(orientation)
@@ -110,7 +104,7 @@ class Pose(LCMPose):
         self.orientation = Quaternion(pose_dict["orientation"])
 
     @dispatch
-    def __init__(self, pose: "Pose") -> None:
+    def __init__(self, pose: Pose) -> None:
         """Initialize from another Pose (copy constructor)."""
         self.position = Vector3(pose.position)
         self.orientation = Quaternion(pose.orientation)

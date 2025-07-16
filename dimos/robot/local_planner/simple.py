@@ -22,7 +22,8 @@ from plum import dispatch
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.robot.unitree_webrtc.type.odometry import Odometry
 
 # from dimos.robot.local_planner.local_planner import LocalPlanner
 from dimos.types.costmap import Costmap
@@ -65,24 +66,22 @@ def transform_to_robot_frame(global_vector: Vector, robot_position: Pose) -> Vec
 
 class SimplePlanner(Module):
     path: In[Path] = None
+    odom: In[PoseStamped] = None
     movecmd: Out[Vector3] = None
 
     get_costmap: Callable[[], Costmap]
-    get_robot_pos: Callable[[], Pose]
-    set_move: Callable[[Vector3], Any]
+
+    latest_odom: PoseStamped = None
+
     goal: Optional[Vector] = None
     speed: float = 0.3
 
     def __init__(
         self,
         get_costmap: Callable[[], Costmap],
-        get_robot_pos: Callable[[], Vector],
-        set_move: Callable[[Vector3], Any],
     ):
         Module.__init__(self)
         self.get_costmap = get_costmap
-        self.get_robot_pos = get_robot_pos
-        self.set_move = set_move
 
     def get_move_stream(self, frequency: float = 40.0) -> rx.Observable:
         return rx.interval(1.0 / frequency, scheduler=get_scheduler()).pipe(
@@ -96,9 +95,12 @@ class SimplePlanner(Module):
     @rpc
     def start(self):
         self.path.subscribe(self.set_goal)
-        # weird bug with this
-        # self.get_move_stream(frequency=20.0).subscribe(self.movecmd.publish)
-        self.get_move_stream(frequency=20.0).subscribe(self.set_move)
+
+        def setodom(odom: Odometry):
+            self.latest_odom = odom
+
+        self.odom.subscribe(setodom)
+        self.get_move_stream(frequency=20.0).subscribe(self.movecmd.publish)
 
     @dispatch
     def set_goal(self, goal: Path, stop_event=None, goal_theta=None) -> bool:
@@ -209,7 +211,7 @@ class SimplePlanner(Module):
         desired_yaw = math.atan2(direction_to_goal.y, direction_to_goal.x)
 
         # Get current robot yaw
-        current_yaw = self.get_robot_pos().rot.z
+        current_yaw = self.latest_odom.orientation.z
 
         # Calculate the yaw error using a more robust method to avoid oscillation
         yaw_error = math.atan2(
@@ -249,9 +251,9 @@ class SimplePlanner(Module):
 
     def _debug_direction(self, name: str, direction: Vector) -> Vector:
         """Debug helper to log direction information"""
-        robot_pos = self.get_robot_pos()
+        robot_pos = self.latest_odom
         print(
-            f"DEBUG {name}: direction={direction}, robot_pos={robot_pos.pos.to_2d()}, robot_yaw={math.degrees(robot_pos.rot.z):.1f}°, goal={self.goal}"
+            f"DEBUG {name}: direction={direction}, robot_pos={robot_pos.position.to_2d()}, robot_yaw={math.degrees(robot_pos.rot.z):.1f}°, goal={self.goal}"
         )
         return direction
 

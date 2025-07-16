@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import struct
 import time
 from io import BytesIO
@@ -46,24 +48,29 @@ class PoseStamped(Pose, Timestamped):
     frame_id: str
 
     @dispatch
-    def __init__(self, *args, ts: float = 0, frame_id: str = "", **kwargs) -> None:
+    def __init__(self, ts: float = 0.0, frame_id: str = "", **kwargs) -> None:
         self.frame_id = frame_id
         self.ts = ts if ts != 0 else time.time()
-        super().__init__(*args, **kwargs)
+        super().__init__(**kwargs)
 
     def lcm_encode(self) -> bytes:
         lcm_mgs = LCMPoseStamped()
         lcm_mgs.pose = self
         [lcm_mgs.header.stamp.sec, lcm_mgs.header.stamp.sec] = sec_nsec(self.ts)
         lcm_mgs.header.frame_id = self.frame_id
-
         return lcm_mgs.encode()
 
     @classmethod
-    def lcm_decode(cls, data: bytes | BinaryIO):
+    def lcm_decode(cls, data: bytes | BinaryIO) -> PoseStamped:
         lcm_msg = LCMPoseStamped.decode(data)
         return cls(
-            pose=Pose(lcm_msg.pose),
             ts=lcm_msg.header.stamp.sec + (lcm_msg.header.stamp.nsec / 1_000_000_000),
             frame_id=lcm_msg.header.frame_id,
+            position=[lcm_msg.pose.position.x, lcm_msg.pose.position.y, lcm_msg.pose.position.z],
+            orientation=[
+                lcm_msg.pose.orientation.x,
+                lcm_msg.pose.orientation.y,
+                lcm_msg.pose.orientation.z,
+                lcm_msg.pose.orientation.w,
+            ],  # noqa: E501,
         )
