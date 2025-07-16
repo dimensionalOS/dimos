@@ -187,6 +187,7 @@ class RemoteStream(Stream[T]):
     def state(self) -> State:  # noqa: D401
         return State.UNBOUND if self.owner is None else State.READY
 
+    # this won't work but nvm
     @property
     def transport(self) -> Transport[T]:
         return self._transport
@@ -204,6 +205,7 @@ class RemoteOut(RemoteStream[T]):
 
 class In(Stream[T]):
     connection: Optional[RemoteOut[T]] = None
+    _transport: Transport
 
     def __str__(self):
         mystr = super().__str__()
@@ -220,20 +222,34 @@ class In(Stream[T]):
 
     @property
     def transport(self) -> Transport[T]:
-        return self.connection.transport
+        if not self._transport:
+            self._transport = self.connection.transport
+        return self._transport
 
     @property
     def state(self) -> State:  # noqa: D401
         return State.UNBOUND if self.owner is None else State.READY
 
     def subscribe(self, cb):
-        # print("SUBBING", self, self.connection._transport)
-        self.connection._transport.subscribe(self, cb)
+        self.transport.subscribe(self, cb)
 
 
 class RemoteIn(RemoteStream[T]):
     def connect(self, other: RemoteOut[T]) -> None:
         return self.owner.connect_stream(self.name, other).result()
+
+    # this won't work but that's ok
+    @property
+    def transport(self) -> Transport[T]:
+        return self._transport
+
+    def publish(self, msg):
+        self.transport.broadcast(self, msg)
+
+    @transport.setter
+    def transport(self, value: Transport[T]) -> None:
+        self.owner.set_transport(self.name, value).result()
+        self._transport = value
 
 
 def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:

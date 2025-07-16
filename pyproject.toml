@@ -91,7 +91,10 @@ dependencies = [
 
     # Multiprocess 
     "dask[complete]==2025.5.1",
-    "lcm_msgs @ git+https://github.com/dimensionalOS/python_lcm_msgs.git@main#egg=lcm_msgs"
+
+    # LCM / DimOS utilities
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@main",
+
 ]
 
 [project.optional-dependencies]
@@ -145,8 +148,9 @@ dev = [
     "ruff==0.11.10",
     "mypy==1.15.0",
     "pre_commit==4.2.0",
-    "pytest",
-    "pytest-asyncio==0.26.0"
+    "pytest==8.3.5",
+    "pytest-asyncio==0.26.0",
+    "textual==3.7.1"
 ]
 
 [tool.ruff]
@@ -181,14 +185,18 @@ files = [
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
 markers = [
+    "heavy: resource heavy test",
     "vis: marks tests that run visuals and require a visual check by dev",
     "benchmark: benchmark, executes something multiple times, calculates avg, prints to console",
     "exclude: arbitrary exclusion from CI and default test exec",
     "tool: dev tooling",
     "needsdata: needs test data to be downloaded",
-    "ros: depend on ros"]
+    "ros: depend on ros",
+    "lcm: tests that run actual LCM bus (can't execute in CI)"
 
-addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not ros'"
+]
+
+addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy'"
 
 
 

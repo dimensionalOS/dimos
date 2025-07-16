@@ -15,10 +15,11 @@
 from __future__ import annotations
 
 import struct
+import traceback
 from io import BytesIO
 from typing import BinaryIO, TypeAlias
 
-from lcm_msgs.geometry_msgs import Pose as LCMPose
+from dimos_lcm.geometry_msgs import Pose as LCMPose
 from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
@@ -42,6 +43,7 @@ class Pose(LCMPose):
         if not hasattr(data, "read"):
             data = BytesIO(data)
         if data.read(8) != cls._get_packed_fingerprint():
+            traceback.print_exc()
             raise ValueError("Decode error")
         return cls._lcm_decode_one(data)
 

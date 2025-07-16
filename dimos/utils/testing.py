@@ -15,15 +15,24 @@
 import glob
 import os
 import pickle
-import subprocess
-import tarfile
-from functools import cache
+import time
 from pathlib import Path
-from typing import Any, Callable, Generic, Iterator, Optional, Type, TypeVar, Union
+from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
 
-from reactivex import from_iterable, interval
+from reactivex import (
+    concat_with_iterable,
+    empty,
+    from_iterable,
+    interval,
+    just,
+    merge,
+    timer,
+    concat,
+)
 from reactivex import operators as ops
+from reactivex import timer as rx_timer
 from reactivex.observable import Observable
+from reactivex.scheduler import TimeoutScheduler
 
 from dimos.utils.data import _get_data_dir, get_data
 
@@ -140,3 +149,73 @@ class SensorStorage(Generic[T]):
 
         self.cnt += 1
         return self.cnt
+
+
+class TimedSensorStorage(SensorStorage[T]):
+    def save_one(self, frame: T) -> int:
+        return super().save_one((time.time(), frame))
+
+
+class TimedSensorReplay(SensorReplay[T]):
+    def load_one(self, name: Union[int, str, Path]) -> Union[T, Any]:
+        if isinstance(name, int):
+            full_path = self.root_dir / f"/{name:03d}.pickle"
+        elif isinstance(name, Path):
+            full_path = name
+        else:
+            full_path = self.root_dir / Path(f"{name}.pickle")
+
+        with open(full_path, "rb") as f:
+            data = pickle.load(f)
+            if self.autocast:
+                return (data[0], self.autocast(data[1]))
+            return data
+
+    def iterate(self) -> Iterator[Union[T, Any]]:
+        return (x[1] for x in super().iterate())
+
+    def iterate_ts(self) -> Iterator[Union[Tuple[float, T], Any]]:
+        return super().iterate()
+
+    def stream(self) -> Observable[Union[T, Any]]:
+        def _subscribe(observer, scheduler=None):
+            from reactivex.disposable import CompositeDisposable, Disposable
+
+            scheduler = scheduler or TimeoutScheduler()  # default thread-based
+
+            iterator = self.iterate_ts()
+
+            try:
+                prev_ts, first_data = next(iterator)
+            except StopIteration:
+                observer.on_completed()
+                return Disposable()
+
+            # Emit the first sample immediately
+            observer.on_next(first_data)
+
+            disp = CompositeDisposable()
+
+            def emit_next(prev_timestamp):
+                try:
+                    ts, data = next(iterator)
+                except StopIteration:
+                    observer.on_completed()
+                    return
+
+                delay = max(0.0, ts - prev_timestamp)
+
+                def _action(sc, _state=None):
+                    observer.on_next(data)
+                    emit_next(ts)  # schedule the following sample
+
+                # Schedule the next emission relative to previous timestamp
+                disp.add(scheduler.schedule_relative(delay, _action))
+
+            emit_next(prev_ts)
+
+            return disp
+
+        from reactivex import create
+
+        return create(_subscribe)

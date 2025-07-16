@@ -121,28 +121,35 @@ class SkillLibrary:
             print(f"Stored args for later instance creation: {name} with args: {kwargs}")
 
     def call(self, name, **args):
-        # Get the stored args if available; otherwise, use an empty dict
-        stored_args = self._instances.get(name, {})
+        try:
+            # Get the stored args if available; otherwise, use an empty dict
+            stored_args = self._instances.get(name, {})
 
-        # Merge the arguments with priority given to stored arguments
-        complete_args = {**args, **stored_args}
+            # Merge the arguments with priority given to stored arguments
+            complete_args = {**args, **stored_args}
 
-        # Dynamically get the class from the module or current script
-        skill_class = getattr(self, name, None)
-        if skill_class is None:
-            for skill in self.get():
-                if name == skill.__name__:
-                    skill_class = skill
-                    break
+            # Dynamically get the class from the module or current script
+            skill_class = getattr(self, name, None)
             if skill_class is None:
-                raise ValueError(f"Skill class not found: {name}")
+                for skill in self.get():
+                    if name == skill.__name__:
+                        skill_class = skill
+                        break
+                if skill_class is None:
+                    error_msg = f"Skill '{name}' is not available. Please check if it's properly registered."
+                    logger.error(f"Skill class not found: {name}")
+                    return error_msg
 
-        # Initialize the instance with the merged arguments
-        instance = skill_class(**complete_args)
-        print(f"Instance created and function called for: {name} with args: {complete_args}")
+            # Initialize the instance with the merged arguments
+            instance = skill_class(**complete_args)
+            print(f"Instance created and function called for: {name} with args: {complete_args}")
 
-        # Call the instance directly
-        return instance()
+            # Call the instance directly
+            return instance()
+        except Exception as e:
+            error_msg = f"Error executing skill '{name}': {str(e)}"
+            logger.error(error_msg)
+            return error_msg
 
     # ==== Tools ====
 

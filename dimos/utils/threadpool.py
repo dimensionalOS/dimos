@@ -18,9 +18,11 @@ This module provides a shared ThreadPoolExecutor exposed through a
 ReactiveX scheduler, ensuring consistent thread management across the application.
 """
 
-import os
 import multiprocessing
+import os
+
 from reactivex.scheduler import ThreadPoolScheduler
+
 from .logging_config import logger
 
 
@@ -32,14 +34,14 @@ def get_max_workers() -> int:
         environment variable, defaulting to 4 times the CPU count.
     """
     env_value = os.getenv("DIMOS_MAX_WORKERS", "")
-    return int(env_value) if env_value.strip() else multiprocessing.cpu_count() * 4
+    return int(env_value) if env_value.strip() else multiprocessing.cpu_count()
 
 
 # Create a ThreadPoolScheduler with a configurable number of workers.
 try:
     max_workers = get_max_workers()
     scheduler = ThreadPoolScheduler(max_workers=max_workers)
-    logger.info(f"Using {max_workers} workers")
+    # logger.info(f"Using {max_workers} workers")
 except Exception as e:
     logger.error(f"Failed to initialize ThreadPoolScheduler: {e}")
     raise

@@ -128,7 +128,7 @@ def query_single_frame(
         openai_client=qwen_client,
         model_name=model_name,
         tokenizer=HuggingFaceTokenizer(model_name=f"Qwen/{model_name}"),
-        max_output_tokens_per_request=100,
+        max_output_tokens_per_request=8192,
         system_query=query,
         pool_scheduler=get_scheduler(),
     )

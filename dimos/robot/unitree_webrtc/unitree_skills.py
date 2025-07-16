@@ -50,14 +50,8 @@ UNITREE_WEBRTC_CONTROLS: List[Tuple[str, int, str]] = [
     (
         "RecoveryStand",
         1006,
-        "Recovers the robot to a state from which it can take more commands. Useful to run after multiple dynamic commands like front flips.",
+        "Recovers the robot to a state from which it can take more commands. Useful to run after multiple dynamic commands like front flips, Must run after skills like sit and jump and standup.",
     ),
-    (
-        "Euler",
-        1007,
-        "Adjusts the robot's orientation using Euler angles, providing precise control over its rotation.",
-    ),
-    # ("Move", 1008, "Move the robot using velocity commands."),  # Handled separately
     ("Sit", 1009, "Commands the robot to sit down from a standing or moving stance."),
     (
         "RiseSit",

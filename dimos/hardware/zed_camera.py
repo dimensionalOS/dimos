@@ -64,6 +64,7 @@ class ZEDCamera(StereoCamera):
         self.init_params = sl.InitParameters()
         self.init_params.camera_resolution = resolution
         self.init_params.depth_mode = depth_mode
+        self.init_params.coordinate_system = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
         self.init_params.coordinate_units = sl.UNIT.METER
         self.init_params.camera_fps = fps
 

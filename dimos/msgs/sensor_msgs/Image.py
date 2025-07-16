@@ -21,8 +21,8 @@ import cv2
 import numpy as np
 
 # Import LCM types
-from lcm_msgs.sensor_msgs.Image import Image as LCMImage
-from lcm_msgs.std_msgs.Header import Header
+from dimos_lcm.sensor_msgs.Image import Image as LCMImage
+from dimos_lcm.std_msgs.Header import Header
 
 from dimos.types.timestamped import Timestamped
 
@@ -42,6 +42,7 @@ class ImageFormat(Enum):
 class Image(Timestamped):
     """Standardized image type with LCM integration."""
 
+    name = "sensor_msgs.Image"
     data: np.ndarray
     format: ImageFormat = field(default=ImageFormat.BGR)
     frame_id: str = field(default="")
@@ -292,12 +293,13 @@ class Image(Timestamped):
         msg.data_length = len(image_bytes)
         msg.data = image_bytes
 
-        return msg
+        return msg.encode()
 
     @classmethod
-    def lcm_decode(cls, msg: LCMImage, **kwargs) -> "Image":
+    def lcm_decode(cls, data: bytes, **kwargs) -> "Image":
         """Create Image from LCM Image message."""
         # Parse encoding to determine format and data type
+        msg = LCMImage.decode(data)
         format_info = cls._parse_encoding(msg.encoding)
 
         # Convert bytes back to numpy array

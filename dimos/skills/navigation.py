@@ -60,18 +60,24 @@ class NavigateWithText(AbstractRobotSkill):
 
     This skill first attempts to locate an object in the robot's camera view using vision.
     If the object is found, it navigates to it. If not, it falls back to querying the
-    semantic map for a location matching the description. For example, "Find the kitchen"
-    will first look for a kitchen in view, then check the semantic map coordinates where
-    a kitchen was previously observed.
+    semantic map for a location matching the description. For example, "Find the Teddy Bear"
+    will first look for a Teddy Bear in view, then check the semantic map coordinates where
+    a Teddy Bear was previously observed.
 
     CALL THIS SKILL FOR ONE SUBJECT AT A TIME. For example: "Go to the person wearing a blue shirt in the living room",
     you should call this skill twice, once for the person wearing a blue shirt and once for the living room.
+
+    If skip_visual_search is True, this skill will skip the visual search for the object in view.
+    This is useful if you want to navigate to a general location such as a kitchen or office.
+    For example, "Go to the kitchen" will not look for a kitchen in view, but will check the semantic map coordinates where
+    a kitchen was previously observed.
     """
 
     query: str = Field("", description="Text query to search for in the semantic map")
 
     limit: int = Field(1, description="Maximum number of results to return")
     distance: float = Field(1.0, description="Desired distance to maintain from object in meters")
+    skip_visual_search: bool = Field(False, description="Skip visual search for object in view")
     timeout: float = Field(40.0, description="Maximum time to spend navigating in seconds")
 
     def __init__(self, robot=None, **data):
@@ -362,22 +368,24 @@ class NavigateWithText(AbstractRobotSkill):
 
         # First, try to find and navigate to the object in camera view
         logger.info(f"First attempting to find and navigate to visible object: '{self.query}'")
-        object_result = self._navigate_to_object()
 
-        if object_result and object_result["success"]:
-            logger.info(f"Successfully navigated to {self.query} in view")
-            return object_result
+        if not self.skip_visual_search:
+            object_result = self._navigate_to_object()
 
-        elif object_result and object_result["failure_reason"] == "Navigation":
+            if object_result and object_result["success"]:
+                logger.info(f"Successfully navigated to {self.query} in view")
+                return object_result
+
+            elif object_result and object_result["failure_reason"] == "Navigation":
+                logger.info(
+                    f"Failed to navigate to {self.query} in view: {object_result.get('error', 'Unknown error')}"
+                )
+                return object_result
+
+            # If object navigation failed, fall back to semantic map
             logger.info(
-                f"Failed to navigate to {self.query} in view: {object_result.get('error', 'Unknown error')}"
+                f"Object not found in view. Falling back to semantic map query for: '{self.query}'"
             )
-            return object_result
-
-        # If object navigation failed, fall back to semantic map
-        logger.info(
-            f"Object not found in view. Falling back to semantic map query for: '{self.query}'"
-        )
 
         return self._navigate_using_semantic_map()
 
@@ -404,12 +412,6 @@ class NavigateWithText(AbstractRobotSkill):
             except Exception as e:
                 logger.error(f"Error disposing navigation task: {e}")
             self._navigation_disposable = None
-
-        # Clean up spatial memory if it exists
-        if hasattr(self, "_spatial_memory") and self._spatial_memory is not None:
-            logger.info("Cleaning up spatial memory")
-            self._spatial_memory.cleanup()
-            self._spatial_memory = None
 
         return "Navigate skill stopped successfully."
 

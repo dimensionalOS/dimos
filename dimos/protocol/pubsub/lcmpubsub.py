@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
-import os
+import pickle
+import subprocess
+import sys
 import threading
 import traceback
 from dataclasses import dataclass
@@ -23,16 +25,8 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 import lcm
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
+from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf, check_system
 from dimos.protocol.service.spec import Service
-
-
-@dataclass
-class LCMConfig:
-    ttl: int = 0
-    url: str | None = None
-    # auto configure routing
-    auto_configure_multicast: bool = True
-    auto_configure_buffers: bool = False
 
 
 @runtime_checkable
@@ -60,7 +54,7 @@ class Topic:
         return f"{self.topic}#{self.lcm_type.name}"
 
 
-class LCMbase(PubSub[Topic, Any], Service[LCMConfig]):
+class LCMPubSubBase(PubSub[Topic, Any], LCMService):
     default_config = LCMConfig
     lc: lcm.LCM
     _stop_event: threading.Event
@@ -68,64 +62,23 @@ class LCMbase(PubSub[Topic, Any], Service[LCMConfig]):
     _callbacks: dict[str, list[Callable[[Any], None]]]
 
     def __init__(self, **kwargs) -> None:
+        LCMService.__init__(self, **kwargs)
         super().__init__(**kwargs)
-        self.lc = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
-        self._stop_event = threading.Event()
-        self._thread = None
         self._callbacks = {}
 
     def publish(self, topic: Topic, message: bytes):
         """Publish a message to the specified channel."""
-        self.lc.publish(str(topic), message)
+        self.l.publish(str(topic), message)
 
     def subscribe(
         self, topic: Topic, callback: Callable[[bytes, Topic], Any]
     ) -> Callable[[], None]:
-        lcm_subscription = self.lc.subscribe(str(topic), lambda _, msg: callback(msg, topic))
+        lcm_subscription = self.l.subscribe(str(topic), lambda _, msg: callback(msg, topic))
 
         def unsubscribe():
-            self.lc.unsubscribe(lcm_subscription)
+            self.l.unsubscribe(lcm_subscription)
 
         return unsubscribe
-
-    def start(self):
-        # TODO: proper error handling/log messages for these system calls
-        if self.config.auto_configure_multicast:
-            try:
-                os.system("sudo ifconfig lo multicast")
-                os.system("sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
-            except Exception as e:
-                print(f"Error configuring multicast: {e}")
-
-        if self.config.auto_configure_buffers:
-            try:
-                os.system("sudo sysctl -w net.core.rmem_max=2097152")
-                os.system("sudo sysctl -w net.core.rmem_default=2097152")
-            except Exception as e:
-                print(f"Error configuring buffers: {e}")
-
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._loop)
-        self._thread.daemon = True
-        self._thread.start()
-
-    def _loop(self) -> None:
-        """LCM message handling loop."""
-        while not self._stop_event.is_set():
-            try:
-                # Use timeout to allow periodic checking of stop_event
-                self.lc.handle_timeout(100)  # 100ms timeout
-            except Exception as e:
-                stack_trace = traceback.format_exc()
-                print(f"Error in LCM handling: {e}\n{stack_trace}")
-                if self._stop_event.is_set():
-                    break
-
-    def stop(self):
-        """Stop the LCM loop."""
-        self._stop_event.set()
-        if self._thread is not None:
-            self._thread.join()
 
 
 class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
@@ -142,11 +95,11 @@ class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
 
 class LCM(
     LCMEncoderMixin,
-    LCMbase,
+    LCMPubSubBase,
 ): ...
 
 
-class pickleLCM(
+class PickleLCM(
     PickleEncoderMixin,
-    LCMbase,
+    LCMPubSubBase,
 ): ...

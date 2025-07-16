@@ -106,14 +106,8 @@ class Observe(AbstractRobotSkill):
             # Process the frame with Qwen
             response = self._process_frame_with_qwen(frame)
 
-            # Add the response to the conversation history
-            # self._agent.append_to_history(
-            #     f"Observation: {response}",
-            # )
-            response = self._agent.run_observable_query(f"Observation: {response}")
-
             logger.info(f"Added Qwen observation to conversation history")
-            return f"Observation complete: {response[:100]}..."
+            return f"Observation complete: {response}"
 
         except Exception as e:
             error_msg = f"Error in Observe skill: {e}"
@@ -127,6 +121,10 @@ class Observe(AbstractRobotSkill):
         Returns:
             A single frame from the video stream, or None if no frame is available
         """
+        if self._video_stream is None:
+            logger.error("Video stream is None")
+            return None
+
         frame = None
         frame_subject = rx.subject.Subject()
 

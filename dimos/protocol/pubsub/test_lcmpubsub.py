@@ -12,12 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import subprocess
 import time
+from unittest.mock import patch
 
 import pytest
 
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
-from dimos.protocol.pubsub.lcmpubsub import LCM, LCMbase, Topic, pickleLCM
+from dimos.protocol.pubsub.lcmpubsub import (
+    LCM,
+    LCMPubSubBase,
+    PickleLCM,
+    Topic,
+)
 
 
 class MockLCMMessage:
@@ -39,8 +46,8 @@ class MockLCMMessage:
         return isinstance(other, MockLCMMessage) and self.data == other.data
 
 
-def test_lcmbase_pubsub():
-    lcm = LCMbase()
+def test_LCMPubSubBase_pubsub():
+    lcm = LCMPubSubBase(autoconf=True)
     lcm.start()
 
     received_messages = []
@@ -70,7 +77,7 @@ def test_lcmbase_pubsub():
 
 
 def test_lcm_autodecoder_pubsub():
-    lcm = LCM()
+    lcm = LCM(autoconf=True)
     lcm.start()
 
     received_messages = []
@@ -109,7 +116,7 @@ test_msgs = [
 # passes some geometry types through LCM
 @pytest.mark.parametrize("test_message", test_msgs)
 def test_lcm_geometry_msgs_pubsub(test_message):
-    lcm = LCM()
+    lcm = LCM(autoconf=True)
     lcm.start()
 
     received_messages = []
@@ -143,7 +150,7 @@ def test_lcm_geometry_msgs_pubsub(test_message):
 # passes some geometry types through pickle LCM
 @pytest.mark.parametrize("test_message", test_msgs)
 def test_lcm_geometry_msgs_autopickle_pubsub(test_message):
-    lcm = pickleLCM()
+    lcm = PickleLCM(autoconf=True)
     lcm.start()
 
     received_messages = []
