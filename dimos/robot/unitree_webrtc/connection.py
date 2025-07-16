@@ -199,7 +199,7 @@ class WebRTCRobot(ConnectionInterface):
         )
 
     @functools.cache
-    def odom_stream(self) -> Subject[Position]:
+    def odom_stream(self) -> Subject[Odometry]:
         return backpressure(self.raw_odom_stream().pipe(ops.map(Odometry.from_msg)))
 
     @functools.cache
