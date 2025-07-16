@@ -77,7 +77,7 @@ class PiperArm:
 
     def gotoZero(self):
         factor = 1000
-        position = [57.0, 0.0, 250.0, 0, 85.0, 0.0, 0]
+        position = [57.0, 0.0, 250.0, 0, 85.0, .0, 0]
         X = round(position[0] * factor)
         Y = round(position[1] * factor)
         Z = round(position[2] * factor)
@@ -93,11 +93,7 @@ class PiperArm:
     def softStop(self):
         self.gotoZero()
         time.sleep(1)
-        self.arm.MotionCtrl_2(
-            0x01,
-            0x00,
-            100,
-        )
+        self.arm.MotionCtrl_2(0x01, 0x00, 100, )
         self.arm.MotionCtrl_1(0x01, 0, 0)
         time.sleep(5)
 
@@ -146,6 +142,8 @@ class PiperArm:
         self.dt = 0.01
 
     def cmd_vel(self, x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot):
+
+
         joint_state = self.arm.GetArmJointMsgs().joint_state
         # print(f"[PiperArm] Current Joints (direct): {joint_state}", type(joint_state))
         joint_angles = np.array(
@@ -177,6 +175,8 @@ class PiperArm:
         dq = self.J_pinv @ np.array([x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot]) * self.dt
         newq = q + dq
 
+
+
         newq = newq * factor
 
         self.arm.MotionCtrl_2(0x01, 0x01, 100, 0xAD)
@@ -203,9 +203,7 @@ class PiperArm:
         current_pose = self.get_EE_pose()
         current_pose = np.array(current_pose)
         current_pose = current_pose
-        current_pose = (
-            current_pose + np.array([x_dot, y_dot, z_dot, RX_dot, PY_dot, YZ_dot]) * self.dt
-        )
+        current_pose = current_pose + np.array([x_dot, y_dot, z_dot, RX_dot, PY_dot, YZ_dot]) * self.dt
         current_pose = current_pose
         self.cmd_EE_pose(
             current_pose[0],
@@ -225,8 +223,8 @@ class PiperArm:
             time.sleep(0.01)
         self.arm.DisconnectPort()
 
-
 class VelocityController(Module):
+
     cmd_vel: In[Twist] = None
 
     def __init__(self, arm, period=0.01, *args, **kwargs):
@@ -234,19 +232,15 @@ class VelocityController(Module):
         self.arm = arm
         self.period = period
         self.latest_cmd = None
-        self.last_cmd_time = None
+
 
     @rpc
     def start(self):
         self.cmd_vel.subscribe(self.handle_cmd_vel)
 
         def control_loop():
+
             while True:
-                
-                # Check for timeout (1 second)
-                if self.last_cmd_time and (time.time() - self.last_cmd_time) > 1.0:
-                    print("No velocity command received for 1 second, stopping control loop")
-                    break
 
                 cmd_vel = self.latest_cmd
 
@@ -277,23 +271,10 @@ class VelocityController(Module):
 
                 J = self.chain.jacobian(q)
                 self.J_pinv = np.linalg.pinv(J)
-                dq = (
-                    self.J_pinv
-                    @ np.array(
-                        [
-                            cmd_vel.linear.X,
-                            cmd_vel.linear.y,
-                            cmd_vel.linear.z,
-                            cmd_vel.angular.x,
-                            cmd_vel.angular.y,
-                            cmd_vel.angular.z,
-                        ]
-                    )
-                    * self.dt
-                )
+                dq = self.J_pinv @ np.array([cmd_vel.linear.X, cmd_vel.linear.y, cmd_vel.linear.z, cmd_vel.angular.x, cmd_vel.angular.y, cmd_vel.angular.z]) * self.dt
                 newq = q + dq
 
-                newq = newq * factor  # convert radians to scaled degree units for joint control
+                newq = newq * factor #convert radians to scaled degree units for joint control
 
                 self.arm.MotionCtrl_2(0x01, 0x01, 100, 0xAD)
                 self.arm.JointCtrl(
@@ -305,14 +286,12 @@ class VelocityController(Module):
                     int(round(newq[5])),
                 )
                 time.sleep(self.period)
-
+        
         thread = threading.Thread(target=control_loop, daemon=True)
         thread.start()
 
     def handle_cmd_vel(self, cmd_vel: Twist):
         self.latest_cmd = cmd_vel
-        self.last_cmd_time = time.time()
-
 
 @pytest.mark.tool
 def run_velocity_controller():
@@ -327,6 +306,7 @@ def run_velocity_controller():
     print("Velocity controller started")
     while True:
         time.sleep(1)
+
 
 
 if __name__ == "__main__":
