@@ -121,8 +121,8 @@ class Quaternion(LCMQuaternion):
         # Use scipy for accurate quaternion to euler conversion
         quat = [self.x, self.y, self.z, self.w]
         rotation = R.from_quat(quat)
-        euler_angles = rotation.as_euler('xyz')  # roll, pitch, yaw
-        
+        euler_angles = rotation.as_euler("xyz")  # roll, pitch, yaw
+
         return Vector3(euler_angles[0], euler_angles[1], euler_angles[2])
 
     def __getitem__(self, idx: int) -> float:

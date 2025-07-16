@@ -123,7 +123,7 @@ class PBVSController:
 
         # Apply rotation using scipy (treating as euler angles)
         if np.linalg.norm(rot) > 1e-6:
-            rotation = R.from_euler('xyz', rot)
+            rotation = R.from_euler("xyz", rot)
             T_ee_to_cam[0:3, 0:3] = rotation.as_matrix()
 
         return T_ee_to_cam
@@ -159,7 +159,9 @@ class PBVSController:
             Modified target pose with pregrasp distance applied
         """
         # Get approach vector (from target position towards robot origin)
-        target_pos = np.array([target_pose.position.x, target_pose.position.y, target_pose.position.z])
+        target_pos = np.array(
+            [target_pose.position.x, target_pose.position.y, target_pose.position.z]
+        )
         robot_origin = np.array([0.0, 0.0, 0.0])  # Robot origin in robot frame
         approach_vector = robot_origin - target_pos  # Vector pointing towards robot
 
@@ -177,7 +179,7 @@ class PBVSController:
         new_position = Vector3(
             target_pose.position.x + offset_vector[0],
             target_pose.position.y + offset_vector[1],
-            target_pose.position.z + offset_vector[2]
+            target_pose.position.z + offset_vector[2],
         )
 
         return Pose(new_position, target_pose.orientation)
@@ -195,16 +197,20 @@ class PBVSController:
         target_pose_manip = apply_transform(target_pose_zed, self.manipulator_origin)
 
         # Calculate orientation pointing at origin (in robot frame)
-        yaw_to_origin = yaw_towards_point(Vector(target_pose_manip.position.x, 
-                                                  target_pose_manip.position.y, 
-                                                  target_pose_manip.position.z))
+        yaw_to_origin = yaw_towards_point(
+            Vector(
+                target_pose_manip.position.x,
+                target_pose_manip.position.y,
+                target_pose_manip.position.z,
+            )
+        )
 
         # Create target pose with proper orientation
         # Convert euler angles to quaternion using scipy
         euler = [0.0, 1.57, yaw_to_origin]  # roll=0, pitch=90deg, yaw=calculated
-        quat = R.from_euler('xyz', euler).as_quat()  # [x, y, z, w]
+        quat = R.from_euler("xyz", euler).as_quat()  # [x, y, z, w]
         target_orientation = Quaternion(quat[0], quat[1], quat[2], quat[3])
-        
+
         target_pose_robot = Pose(target_pose_manip.position, target_orientation)
 
         # Apply pregrasp distance
@@ -318,9 +324,9 @@ class PBVSController:
         # Extract position and rotation
         ee_pos = Vector3(ee_transform[0:3, 3])
         ee_rot_matrix = ee_transform[0:3, 0:3]
-        
+
         # Convert rotation matrix to quaternion
-        
+
         # Ensure the rotation matrix is valid (orthogonal with det=1)
         try:
             rotation = R.from_matrix(ee_rot_matrix)
@@ -380,7 +386,7 @@ class PBVSController:
         error = Vector3(
             target_pos.x - ee_pose_robot.position.x,
             target_pos.y - ee_pose_robot.position.y,
-            target_pos.z - ee_pose_robot.position.z
+            target_pos.z - ee_pose_robot.position.z,
         )
         self.last_position_error = error
 
@@ -437,25 +443,27 @@ class PBVSController:
             Angular velocity command as Vector
         """
         # Use quaternion error for better numerical stability
-        
+
         # Convert to scipy Rotation objects
         target_rot_scipy = R.from_quat([target_rot.x, target_rot.y, target_rot.z, target_rot.w])
-        current_rot_scipy = R.from_quat([
-            current_pose.orientation.x, 
-            current_pose.orientation.y, 
-            current_pose.orientation.z, 
-            current_pose.orientation.w
-        ])
-        
+        current_rot_scipy = R.from_quat(
+            [
+                current_pose.orientation.x,
+                current_pose.orientation.y,
+                current_pose.orientation.z,
+                current_pose.orientation.w,
+            ]
+        )
+
         # Compute rotation error: error = target * current^(-1)
         error_rot = target_rot_scipy * current_rot_scipy.inv()
-        
+
         # Convert to axis-angle representation for control
         error_axis_angle = error_rot.as_rotvec()
-        
+
         # Use axis-angle directly as angular velocity error (small angle approximation)
         roll_error = error_axis_angle[0]
-        pitch_error = error_axis_angle[1] 
+        pitch_error = error_axis_angle[1]
         yaw_error = error_axis_angle[2]
 
         self.last_rotation_error = Vector([roll_error, pitch_error, yaw_error])
@@ -529,17 +537,17 @@ class PBVSController:
             return None
 
         # Transform position
-        obj_pose_zed = Pose(object_pos_zed, Quaternion()) # Identity quaternion
+        obj_pose_zed = Pose(object_pos_zed, Quaternion())  # Identity quaternion
         obj_pose_manip = apply_transform(obj_pose_zed, self.manipulator_origin)
 
         # Calculate orientation pointing at origin
-        yaw_to_origin = yaw_towards_point(Vector(obj_pose_manip.position.x, 
-                                                  obj_pose_manip.position.y, 
-                                                  obj_pose_manip.position.z))
-        
+        yaw_to_origin = yaw_towards_point(
+            Vector(obj_pose_manip.position.x, obj_pose_manip.position.y, obj_pose_manip.position.z)
+        )
+
         # Convert euler angles to quaternion
         euler = [0.0, 0.0, yaw_to_origin]  # Level grasp
-        quat = R.from_euler('xyz', euler).as_quat()  # [x, y, z, w]
+        quat = R.from_euler("xyz", euler).as_quat()  # [x, y, z, w]
         orientation = Quaternion(quat[0], quat[1], quat[2], quat[3])
 
         return obj_pose_manip.position, orientation

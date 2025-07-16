@@ -76,7 +76,7 @@ def matrix_to_pose(T: np.ndarray) -> Pose:
     R = T[:3, :3]
     rotation = Rotation.from_matrix(R)
     quat = rotation.as_quat()  # Returns [x, y, z, w]
-    
+
     orientation = Quaternion(quat[0], quat[1], quat[2], quat[3])
 
     return Pose(pos, orientation)
@@ -135,11 +135,13 @@ def optical_to_robot_frame(pose: Pose) -> Pose:
 
     # Coordinate frame transformation matrix from optical to robot
     # X_robot = Z_optical, Y_robot = -X_optical, Z_robot = -Y_optical
-    T_frame = np.array([
-        [0, 0, 1],   # X_robot = Z_optical
-        [-1, 0, 0],  # Y_robot = -X_optical
-        [0, -1, 0]   # Z_robot = -Y_optical
-    ])
+    T_frame = np.array(
+        [
+            [0, 0, 1],  # X_robot = Z_optical
+            [-1, 0, 0],  # Y_robot = -X_optical
+            [0, -1, 0],  # Z_robot = -Y_optical
+        ]
+    )
 
     # Transform the rotation matrix
     R_robot = T_frame @ R_optical @ T_frame.T
@@ -149,7 +151,7 @@ def optical_to_robot_frame(pose: Pose) -> Pose:
 
     return Pose(
         Vector3(robot_x, robot_y, robot_z),
-        Quaternion(quat_robot[0], quat_robot[1], quat_robot[2], quat_robot[3])
+        Quaternion(quat_robot[0], quat_robot[1], quat_robot[2], quat_robot[3]),
     )
 
 
@@ -167,7 +169,7 @@ def robot_to_optical_frame(pose: Pose) -> Pose:
     # Position transformation (inverse)
     optical_x = -pose.position.y  # Right = -Left
     optical_y = -pose.position.z  # Down = -Up
-    optical_z = pose.position.x   # Forward = Forward
+    optical_z = pose.position.x  # Forward = Forward
 
     # Rotation transformation using quaternions
     quat_robot = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
@@ -175,11 +177,13 @@ def robot_to_optical_frame(pose: Pose) -> Pose:
 
     # Coordinate frame transformation matrix from Robot to optical (inverse of optical to Robot)
     # This is the transpose of the forward transformation
-    T_frame_inv = np.array([
-        [0, -1, 0],   # X_optical = -Y_robot
-        [0, 0, -1],   # Y_optical = -Z_robot
-        [1, 0, 0]     # Z_optical = X_robot
-    ])
+    T_frame_inv = np.array(
+        [
+            [0, -1, 0],  # X_optical = -Y_robot
+            [0, 0, -1],  # Y_optical = -Z_robot
+            [1, 0, 0],  # Z_optical = X_robot
+        ]
+    )
 
     # Transform the rotation matrix
     R_optical = T_frame_inv @ R_robot @ T_frame_inv.T
@@ -189,7 +193,7 @@ def robot_to_optical_frame(pose: Pose) -> Pose:
 
     return Pose(
         Vector3(optical_x, optical_y, optical_z),
-        Quaternion(quat_optical[0], quat_optical[1], quat_optical[2], quat_optical[3])
+        Quaternion(quat_optical[0], quat_optical[1], quat_optical[2], quat_optical[3]),
     )
 
 

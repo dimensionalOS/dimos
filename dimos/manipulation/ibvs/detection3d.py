@@ -215,13 +215,10 @@ class Detection3DProcessor:
         """
         # Create object pose in optical frame
         # Convert euler angles to quaternion
-        quat = R.from_euler('xyz', obj_orientation).as_quat()  # [x, y, z, w]
+        quat = R.from_euler("xyz", obj_orientation).as_quat()  # [x, y, z, w]
         obj_orientation_quat = Quaternion(quat[0], quat[1], quat[2], quat[3])
-        
-        obj_pose_optical = Pose(
-            Vector3(obj_pos[0], obj_pos[1], obj_pos[2]),
-            obj_orientation_quat
-        )
+
+        obj_pose_optical = Pose(Vector3(obj_pos[0], obj_pos[1], obj_pos[2]), obj_orientation_quat)
 
         # Transform object pose from optical frame to world frame convention
         obj_pose_world_frame = optical_to_robot_frame(obj_pose_optical)
