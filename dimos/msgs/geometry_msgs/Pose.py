@@ -110,7 +110,7 @@ class Pose(LCMPose):
         self.orientation = Quaternion(pose_dict["orientation"])
 
     @dispatch
-    def __init__(self, pose: "Pose") -> None:
+    def __init__(self, pose: Pose) -> None:
         """Initialize from another Pose (copy constructor)."""
         self.position = Vector3(pose.position)
         self.orientation = Quaternion(pose.orientation)
@@ -125,6 +125,18 @@ class Pose(LCMPose):
             lcm_pose.orientation.z,
             lcm_pose.orientation.w,
         )
+
+    # TODO this should be removed, it's a temp bugfix
+    @dispatch
+    def __init__(self, **kwargs) -> None:
+        pose = kwargs.get("pose")
+        if pose:
+            self.position = Vector3(pose.position)
+            self.orientation = Quaternion(pose.orientation)
+        else:
+            raise ValueError(
+                "Invalid keyword arguments for Pose initialization. Use position and orientation or pose."
+            )
 
     @property
     def x(self) -> float:

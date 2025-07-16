@@ -84,7 +84,7 @@ class RealRTC(WebRTCRobot): ...
 
 
 # inherit RealRTC instead of FakeRTC to run the real robot
-class ConnectionModule(FakeRTC, Module):
+class ConnectionModule(RealRTC, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
@@ -134,7 +134,7 @@ class ControlModule(Module):
         def plancmd():
             time.sleep(4)
             print(colors.red("requesting global plan"))
-            self.plancmd.publish(Vector3([0.750893, -6.017522, 0.307474]))
+            self.plancmd.publish(Vector3(0, 0, 0))
 
         thread = threading.Thread(target=plancmd, daemon=True)
         thread.start()
@@ -152,7 +152,6 @@ async def run(ip):
     connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
     connection.odom.transport = core.LCMTransport("/odom", Odometry)
     connection.video.transport = core.LCMTransport("/video", Image)
-    connection.movecmd.transport = core.LCMTransport("/move", Vector3)
 
     mapper = dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
 
@@ -161,8 +160,6 @@ async def run(ip):
     local_planner = dimos.deploy(
         SimplePlanner,
         get_costmap=connection.get_local_costmap,
-        get_robot_pos=connection.get_pos,
-        set_move=connection.move,
     )
 
     global_planner = dimos.deploy(
@@ -174,6 +171,10 @@ async def run(ip):
     global_planner.path.transport = core.pLCMTransport("/global_path")
 
     local_planner.path.connect(global_planner.path)
+
+    local_planner.odom.connect(connection.odom)
+
+    local_planner.movecmd.transport = core.LCMTransport("/move", Vector3)
     local_planner.movecmd.connect(connection.movecmd)
 
     ctrl = dimos.deploy(ControlModule)
@@ -181,9 +182,10 @@ async def run(ip):
     mapper.lidar.connect(connection.lidar)
 
     ctrl.plancmd.transport = core.LCMTransport("/global_target", Vector3)
+
     global_planner.target.connect(ctrl.plancmd)
 
-    foxglove_bridge = FoxgloveBridge()
+    # foxglove_bridge = FoxgloveBridge()
 
     # we review the structure
     print("\n")
@@ -203,11 +205,11 @@ async def run(ip):
     global_planner.start()
 
     print(colors.green("starting foxglove bridge"))
-    foxglove_bridge.start()
+    # foxglove_bridge.start()
 
     # uncomment to move the bot
-    # print(colors.green("starting ctrl"))
-    # ctrl.start()
+    print(colors.green("starting ctrl"))
+    ctrl.start()
 
     print(colors.red("READY"))
 
