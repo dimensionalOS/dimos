@@ -21,7 +21,8 @@ import numpy as np
 from typing import Optional, Tuple, Dict, Any, List
 import cv2
 
-from dimos.types.pose import Pose
+from scipy.spatial.transform import Rotation as R
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import (
@@ -114,16 +115,16 @@ class PBVSController:
         """
         # Extract position and rotation from 6DOF vector
         pos = self.ee_to_camera_transform_vec.to_list()[:3]
-        rot = self.ee_to_camera_transform_vec.to_list()[3:6]
+        rot = self.ee_to_camera_transform_vec.to_list()[3:6]  # euler angles: [rx, ry, rz]
 
         # Create transformation matrix
         T_ee_to_cam = np.eye(4)
         T_ee_to_cam[0:3, 3] = pos
 
-        # Apply rotation (using Rodrigues formula)
+        # Apply rotation using scipy (treating as euler angles)
         if np.linalg.norm(rot) > 1e-6:
-            rot_matrix = cv2.Rodrigues(np.array(rot))[0]
-            T_ee_to_cam[0:3, 0:3] = rot_matrix
+            rotation = R.from_euler('xyz', rot)
+            T_ee_to_cam[0:3, 0:3] = rotation.as_matrix()
 
         return T_ee_to_cam
 
@@ -143,8 +144,8 @@ class PBVSController:
         self.manipulator_origin = np.linalg.inv(T_world_to_origin)
 
         logger.info(
-            f"Set manipulator origin at pose: pos=({camera_pose.pos.x:.3f}, "
-            f"{camera_pose.pos.y:.3f}, {camera_pose.pos.z:.3f})"
+            f"Set manipulator origin at pose: pos=({camera_pose.position.x:.3f}, "
+            f"{camera_pose.position.y:.3f}, {camera_pose.position.z:.3f})"
         )
 
     def _apply_pregrasp_distance(self, target_pose: Pose) -> Pose:
@@ -158,7 +159,7 @@ class PBVSController:
             Modified target pose with pregrasp distance applied
         """
         # Get approach vector (from target position towards robot origin)
-        target_pos = np.array([target_pose.pos.x, target_pose.pos.y, target_pose.pos.z])
+        target_pos = np.array([target_pose.position.x, target_pose.position.y, target_pose.position.z])
         robot_origin = np.array([0.0, 0.0, 0.0])  # Robot origin in robot frame
         approach_vector = robot_origin - target_pos  # Vector pointing towards robot
 
@@ -173,15 +174,13 @@ class PBVSController:
         offset_vector = self.pregrasp_distance * norm_approach_vector
 
         # Apply offset to target position
-        new_position = Vector(
-            [
-                target_pose.pos.x + offset_vector[0],
-                target_pose.pos.y + offset_vector[1],
-                target_pose.pos.z + offset_vector[2],
-            ]
+        new_position = Vector3(
+            target_pose.position.x + offset_vector[0],
+            target_pose.position.y + offset_vector[1],
+            target_pose.position.z + offset_vector[2]
         )
 
-        return Pose(new_position, target_pose.rot)
+        return Pose(new_position, target_pose.orientation)
 
     def _update_target_robot_frame(self):
         """Update current target with robot frame coordinates."""
@@ -190,23 +189,30 @@ class PBVSController:
 
         # Get target position in ZED world frame
         target_pos = self.current_target["position"]
-        target_pose_zed = Pose(target_pos, Vector([0.0, 0.0, 0.0]))
+        target_pose_zed = Pose(target_pos, Quaternion())  # Identity quaternion
 
         # Transform to manipulator frame
         target_pose_manip = apply_transform(target_pose_zed, self.manipulator_origin)
 
         # Calculate orientation pointing at origin (in robot frame)
-        yaw_to_origin = yaw_towards_point(target_pose_manip.pos)
+        yaw_to_origin = yaw_towards_point(Vector(target_pose_manip.position.x, 
+                                                  target_pose_manip.position.y, 
+                                                  target_pose_manip.position.z))
 
         # Create target pose with proper orientation
-        target_pose_robot = Pose(target_pose_manip.pos, Vector([0.0, 1.57, yaw_to_origin]))
+        # Convert euler angles to quaternion using scipy
+        euler = [0.0, 1.57, yaw_to_origin]  # roll=0, pitch=90deg, yaw=calculated
+        quat = R.from_euler('xyz', euler).as_quat()  # [x, y, z, w]
+        target_orientation = Quaternion(quat[0], quat[1], quat[2], quat[3])
+        
+        target_pose_robot = Pose(target_pose_manip.position, target_orientation)
 
         # Apply pregrasp distance
         target_pose_pregrasp = self._apply_pregrasp_distance(target_pose_robot)
 
         # Update target with robot frame pose
-        self.current_target["robot_position"] = target_pose_pregrasp.pos
-        self.current_target["robot_rotation"] = target_pose_pregrasp.rot
+        self.current_target["robot_position"] = target_pose_pregrasp.position
+        self.current_target["robot_rotation"] = target_pose_pregrasp.orientation
 
     def set_target(self, target_object: Dict[str, Any]) -> bool:
         """
@@ -263,7 +269,7 @@ class PBVSController:
 
         # Get current target position (in ZED world frame for matching)
         target_pos = self.current_target["position"]
-        if isinstance(target_pos, Vector):
+        if isinstance(target_pos, (Vector, Vector3)):
             target_xyz = np.array([target_pos.x, target_pos.y, target_pos.z])
         else:
             target_xyz = np.array([target_pos["x"], target_pos["y"], target_pos["z"]])
@@ -277,7 +283,7 @@ class PBVSController:
                 continue
 
             det_pos = detection["position"]
-            if isinstance(det_pos, Vector):
+            if isinstance(det_pos, (Vector, Vector3)):
                 det_xyz = np.array([det_pos.x, det_pos.y, det_pos.z])
             else:
                 det_xyz = np.array([det_pos["x"], det_pos["y"], det_pos["z"]])
@@ -310,11 +316,22 @@ class PBVSController:
         ee_transform = camera_transform @ np.linalg.inv(self.ee_to_camera_transform)
 
         # Extract position and rotation
-        ee_pos = Vector(ee_transform[0:3, 3])
+        ee_pos = Vector3(ee_transform[0:3, 3])
         ee_rot_matrix = ee_transform[0:3, 0:3]
-        ee_rot = Vector(cv2.Rodrigues(ee_rot_matrix)[0].flatten())
+        
+        # Convert rotation matrix to quaternion
+        
+        # Ensure the rotation matrix is valid (orthogonal with det=1)
+        try:
+            rotation = R.from_matrix(ee_rot_matrix)
+            quat = rotation.as_quat()  # [x, y, z, w]
+            ee_orientation = Quaternion(quat[0], quat[1], quat[2], quat[3])
+        except ValueError as e:
+            logger.warning(f"Invalid rotation matrix in EE pose calculation: {e}")
+            # Fallback to identity quaternion
+            ee_orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
 
-        return Pose(ee_pos, ee_rot)
+        return Pose(ee_pos, ee_orientation)
 
     def compute_control(
         self, camera_pose: Pose, new_detections: Optional[List[Dict[str, Any]]] = None
@@ -360,7 +377,11 @@ class PBVSController:
             return None, None, False, False
 
         # Calculate position error (target - EE position)
-        error = target_pos - ee_pose_robot.pos
+        error = Vector3(
+            target_pos.x - ee_pose_robot.position.x,
+            target_pos.y - ee_pose_robot.position.y,
+            target_pos.z - ee_pose_robot.position.z
+        )
         self.last_position_error = error
 
         # Compute velocity command with proportional control
@@ -403,28 +424,39 @@ class PBVSController:
 
         return velocity_cmd, angular_velocity_cmd, target_reached, True
 
-    def _compute_angular_velocity(self, target_rot: Vector, current_pose: Pose) -> Vector:
+    def _compute_angular_velocity(self, target_rot: Quaternion, current_pose: Pose) -> Vector:
         """
         Compute angular velocity commands for orientation control.
-        Aims for level grasping with appropriate yaw.
+        Uses quaternion error computation for better numerical stability.
 
         Args:
-            target_rot: Target orientation (roll, pitch, yaw)
+            target_rot: Target orientation (quaternion)
             current_pose: Current EE pose
 
         Returns:
             Angular velocity command as Vector
         """
-        # Calculate rotation errors
-        roll_error = target_rot.x - current_pose.rot.x
-        pitch_error = target_rot.y - current_pose.rot.y
-        yaw_error = target_rot.z - current_pose.rot.z
-
-        # Normalize yaw error to [-pi, pi]
-        while yaw_error > np.pi:
-            yaw_error -= 2 * np.pi
-        while yaw_error < -np.pi:
-            yaw_error += 2 * np.pi
+        # Use quaternion error for better numerical stability
+        
+        # Convert to scipy Rotation objects
+        target_rot_scipy = R.from_quat([target_rot.x, target_rot.y, target_rot.z, target_rot.w])
+        current_rot_scipy = R.from_quat([
+            current_pose.orientation.x, 
+            current_pose.orientation.y, 
+            current_pose.orientation.z, 
+            current_pose.orientation.w
+        ])
+        
+        # Compute rotation error: error = target * current^(-1)
+        error_rot = target_rot_scipy * current_rot_scipy.inv()
+        
+        # Convert to axis-angle representation for control
+        error_axis_angle = error_rot.as_rotvec()
+        
+        # Use axis-angle directly as angular velocity error (small angle approximation)
+        roll_error = error_axis_angle[0]
+        pitch_error = error_axis_angle[1] 
+        yaw_error = error_axis_angle[2]
 
         self.last_rotation_error = Vector([roll_error, pitch_error, yaw_error])
 
@@ -497,14 +529,20 @@ class PBVSController:
             return None
 
         # Transform position
-        obj_pose_zed = Pose(object_pos_zed, Vector([0.0, 0.0, 0.0]))
+        obj_pose_zed = Pose(object_pos_zed, Quaternion()) # Identity quaternion
         obj_pose_manip = apply_transform(obj_pose_zed, self.manipulator_origin)
 
         # Calculate orientation pointing at origin
-        yaw_to_origin = yaw_towards_point(obj_pose_manip.pos)
-        orientation = Vector([0.0, 0.0, yaw_to_origin])  # Level grasp
+        yaw_to_origin = yaw_towards_point(Vector(obj_pose_manip.position.x, 
+                                                  obj_pose_manip.position.y, 
+                                                  obj_pose_manip.position.z))
+        
+        # Convert euler angles to quaternion
+        euler = [0.0, 0.0, yaw_to_origin]  # Level grasp
+        quat = R.from_euler('xyz', euler).as_quat()  # [x, y, z, w]
+        orientation = Quaternion(quat[0], quat[1], quat[2], quat[3])
 
-        return obj_pose_manip.pos, orientation
+        return obj_pose_manip.position, orientation
 
     def create_status_overlay(
         self, image: np.ndarray, camera_intrinsics: Optional[list] = None
