@@ -22,7 +22,7 @@ from plum import dispatch
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 
 # from dimos.robot.local_planner.local_planner import LocalPlanner
@@ -66,12 +66,12 @@ def transform_to_robot_frame(global_vector: Vector, robot_position: Pose) -> Vec
 
 class SimplePlanner(Module):
     path: In[Path] = None
-    odom: In[Odometry] = None
+    odom: In[PoseStamped] = None
     movecmd: Out[Vector3] = None
 
     get_costmap: Callable[[], Costmap]
 
-    latest_odom: Odometry = None
+    latest_odom: PoseStamped = None
 
     goal: Optional[Vector] = None
     speed: float = 0.3

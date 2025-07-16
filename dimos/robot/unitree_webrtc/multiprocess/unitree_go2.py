@@ -27,7 +27,7 @@ from reactivex.scheduler import ThreadPoolScheduler
 import dimos.core.colors as colors
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
 from dimos.robot.foxglove_bridge import FoxgloveBridge
@@ -84,7 +84,7 @@ class RealRTC(WebRTCRobot): ...
 
 
 # inherit RealRTC instead of FakeRTC to run the real robot
-class ConnectionModule(RealRTC, Module):
+class ConnectionModule(FakeRTC, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
@@ -150,7 +150,7 @@ async def run(ip):
     pubsub.lcm.autoconf()
 
     connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
-    connection.odom.transport = core.LCMTransport("/odom", Odometry)
+    connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
     connection.video.transport = core.LCMTransport("/video", Image)
 
     mapper = dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
@@ -185,7 +185,7 @@ async def run(ip):
 
     global_planner.target.connect(ctrl.plancmd)
 
-    # foxglove_bridge = FoxgloveBridge()
+    foxglove_bridge = FoxgloveBridge()
 
     # we review the structure
     print("\n")
@@ -205,7 +205,7 @@ async def run(ip):
     global_planner.start()
 
     print(colors.green("starting foxglove bridge"))
-    # foxglove_bridge.start()
+    foxglove_bridge.start()
 
     # uncomment to move the bot
     print(colors.green("starting ctrl"))
