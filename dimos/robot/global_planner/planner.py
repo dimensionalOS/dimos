@@ -67,6 +67,7 @@ class AstarPlanner(Planner):
         self,
         get_costmap: Callable[[], Costmap],
         get_robot_pos: Callable[[], Vector3],
+        set_local_nav: Callable[[Path, Optional[threading.Event], Optional[float]], bool],
     ):
         super().__init__()
         self.get_costmap = get_costmap
@@ -82,7 +83,6 @@ class AstarPlanner(Planner):
         print("current pos", pos)
         costmap = self.get_costmap().smudge()
 
-        print("current costmap", costmap)
         self.vis("target", goal)
 
         print("ASTAR ", costmap, goal, pos)
