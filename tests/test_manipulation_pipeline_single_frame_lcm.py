@@ -18,13 +18,11 @@ import os
 import sys
 import cv2
 import numpy as np
-import time
 import argparse
 import threading
 import pickle
 import matplotlib
-import json
-import copy
+import tests.test_header
 
 # Try to use TkAgg backend for live display, fallback to Agg if not available
 try:
@@ -42,8 +40,6 @@ from typing import Dict, List, Optional
 import lcm
 from lcm_msgs.sensor_msgs import Image as LCMImage
 from lcm_msgs.sensor_msgs import CameraInfo as LCMCameraInfo
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dimos.perception.pointcloud.utils import visualize_clustered_point_clouds, visualize_voxel_grid
 from dimos.perception.manip_aio_processer import ManipulationProcessor

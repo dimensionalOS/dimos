@@ -15,12 +15,12 @@
 """Test manipulation processor with direct visualization and grasp data output."""
 
 import os
-import sys
 import cv2
 import numpy as np
-import time
 import argparse
 import matplotlib
+import tests.test_header
+from dimos.utils.data import get_data
 
 # Try to use TkAgg backend for live display, fallback to Agg if not available
 try:
@@ -32,9 +32,6 @@ except:
         matplotlib.use("Agg")  # Fallback to non-interactive
 import matplotlib.pyplot as plt
 import open3d as o3d
-from typing import Dict, List
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dimos.perception.pointcloud.utils import visualize_clustered_point_clouds, visualize_voxel_grid
 from dimos.perception.manip_aio_processer import ManipulationProcessor
@@ -114,7 +111,7 @@ def run_processor(color_img, depth_img, intrinsics, grasp_server_url=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir", default="assets/rgbd_data")
+    parser.add_argument("--data-dir", default=get_data("rgbd_frames"))
     parser.add_argument("--wait-time", type=float, default=5.0)
     parser.add_argument(
         "--grasp-server-url",
