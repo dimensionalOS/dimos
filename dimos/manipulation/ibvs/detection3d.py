@@ -20,13 +20,14 @@ import time
 from typing import Dict, List, Optional, Any
 import numpy as np
 import cv2
+from scipy.spatial.transform import Rotation as R
 
 from dimos.utils.logging_config import setup_logger
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.perception.pointcloud.utils import extract_centroids_from_masks
 from dimos.perception.detection2d.utils import plot_results, calculate_object_size_from_bbox
 
-from dimos.types.pose import Pose
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
 from dimos.types.vector import Vector
 from dimos.types.manipulation import ObjectData
 from dimos.manipulation.ibvs.utils import estimate_object_depth
@@ -187,12 +188,12 @@ class Detection3DProcessor:
                     world_pose = self._transform_to_world(
                         obj_cam_pos, obj_cam_orientation, camera_pose
                     )
-                    obj_data["world_position"] = world_pose.pos
-                    obj_data["position"] = world_pose.pos  # Use world position
-                    obj_data["rotation"] = world_pose.rot  # Use world rotation
+                    obj_data["world_position"] = world_pose.position
+                    obj_data["position"] = world_pose.position  # Use world position
+                    obj_data["rotation"] = world_pose.orientation  # Use world rotation
                 else:
                     # If no camera pose, use camera coordinates
-                    obj_data["position"] = Vector(obj_cam_pos[0], obj_cam_pos[1], obj_cam_pos[2])
+                    obj_data["position"] = Vector3(obj_cam_pos[0], obj_cam_pos[1], obj_cam_pos[2])
 
                 detections.append(obj_data)
 
@@ -213,9 +214,13 @@ class Detection3DProcessor:
             Object pose in world frame as Pose
         """
         # Create object pose in optical frame
+        # Convert euler angles to quaternion
+        quat = R.from_euler('xyz', obj_orientation).as_quat()  # [x, y, z, w]
+        obj_orientation_quat = Quaternion(quat[0], quat[1], quat[2], quat[3])
+        
         obj_pose_optical = Pose(
-            Vector(obj_pos[0], obj_pos[1], obj_pos[2]),
-            Vector([obj_orientation[0], obj_orientation[1], obj_orientation[2]]),
+            Vector3(obj_pos[0], obj_pos[1], obj_pos[2]),
+            obj_orientation_quat
         )
 
         # Transform object pose from optical frame to world frame convention
@@ -284,7 +289,7 @@ class Detection3DProcessor:
 
                 bbox = det["bbox"]
 
-                if isinstance(display_position, Vector):
+                if isinstance(display_position, Vector3):
                     display_xyz = np.array(
                         [display_position.x, display_position.y, display_position.z]
                     )
@@ -348,7 +353,7 @@ class Detection3DProcessor:
         # Sort by depth (Z coordinate)
         def get_z_coord(d):
             pos = d["position"]
-            if isinstance(pos, Vector):
+            if isinstance(pos, Vector3):
                 return abs(pos.z)
             return abs(pos["z"])
 
