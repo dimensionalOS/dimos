@@ -18,8 +18,7 @@ from typing import BinaryIO, Literal, TypeAlias, TypedDict
 
 from scipy.spatial.transform import Rotation as R
 
-from dimos.msgs.geometry_msgs import PoseStamped as LCMPoseStamped
-from dimos.msgs.geometry_msgs import Quaternion, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.robot.unitree_webrtc.type.timeseries import (
     EpochLike,
     Timestamped,
@@ -81,27 +80,29 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-class Odometry(LCMPoseStamped):
+class Odometry(PoseStamped, Timestamped):
     name = "geometry_msgs.PoseStamped"
 
     @classmethod
     def from_msg(cls, msg: RawOdometryMessage) -> "Odometry":
         pose = msg["data"]["pose"]
-        orientation = pose["orientation"]
-        position = pose["position"]
 
         # Extract position
-        pos = Vector3(position.get("x"), position.get("y"), position.get("z"))
+        pos = Vector3(
+            pose["position"].get("x"),
+            pose["position"].get("y"),
+            pose["position"].get("z"),
+        )
 
         rot = Quaternion(
-            orientation.get("x"),
-            orientation.get("y"),
-            orientation.get("z"),
-            orientation.get("w"),
+            pose["orientation"].get("x"),
+            pose["orientation"].get("y"),
+            pose["orientation"].get("z"),
+            pose["orientation"].get("w"),
         )
 
         ts = to_timestamp(msg["data"]["header"]["stamp"])
-        return Odometry(pos, rot, ts=ts, frame_id="lidar")
+        return Odometry(position=pos, orientation=rot, ts=ts, frame_id="lidar")
 
     def __repr__(self) -> str:
         return f"Odom pos({self.position}), rot({self.orientation})"
