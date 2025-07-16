@@ -242,7 +242,6 @@ class VelocityController(Module):
 
         def control_loop():
             while True:
-                
                 # Check for timeout (1 second)
                 if self.last_cmd_time and (time.time() - self.last_cmd_time) > 1.0:
                     print("No velocity command received for 1 second, stopping control loop")
