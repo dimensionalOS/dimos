@@ -21,6 +21,8 @@ from abc import ABC, abstractmethod
 import cv2
 from reactivex import Observable
 from reactivex.subject import Subject
+import reactivex as rx
+from reactivex import operators as ops
 import threading
 import time
 import logging
@@ -28,6 +30,7 @@ from collections import deque
 from dimos.core import In, Module, Out, rpc
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import normalize_angle, distance_angle_to_goal_xy
+from dimos.utils.threadpool import get_scheduler
 
 from dimos.types.vector import VectorLike, Vector, to_tuple
 from dimos.types.path import Path
@@ -152,6 +155,10 @@ class BaseLocalPlanner(Module):
         self._costmap = None
         self._update_frequency = 10.0  # Hz - how often to update cached data
         self._update_timer = None
+        # Don't start periodic updates automatically - wait for start() to be called
+
+    async def start(self):
+        """Start the local planner's periodic updates and any other initialization."""
         self._start_periodic_updates()
 
     def _start_periodic_updates(self):
@@ -207,8 +214,11 @@ class BaseLocalPlanner(Module):
         """
         if self._robot_pose is None:
             return ((0.0, 0.0), 0.0)  # Fallback if not yet initialized
-        pos, rot = self._robot_pose.pos, self._robot_pose.rot
-        return (pos.x, pos.y), rot.z
+
+        pos = self._robot_pose.position
+        euler = self._robot_pose.orientation.to_euler()
+
+        return (pos.x, pos.y), euler.z
 
     def _get_costmap(self):
         """Get cached costmap data."""
@@ -990,6 +1000,32 @@ class BaseLocalPlanner(Module):
 
         return {"x_vel": 0.0, "angular_vel": 0.0}
 
+    def get_move_stream(self, frequency: float = None) -> rx.Observable:
+        """
+        Create an Observable stream that emits velocity commands at a specified frequency.
+
+        Args:
+            frequency: Control frequency in Hz. If None, uses self.control_frequency.
+
+        Returns:
+            Observable stream emitting velocity command dicts
+        """
+        if frequency is None:
+            frequency = self.control_frequency
+
+        return rx.interval(1.0 / frequency, scheduler=get_scheduler()).pipe(
+            # Plan and emit velocity commands
+            ops.map(lambda _: self.plan()),
+            # Filter out zero commands when navigation is complete
+            ops.filter(
+                lambda cmd: not (
+                    cmd.get("x_vel", 0.0) == 0.0
+                    and cmd.get("angular_vel", 0.0) == 0.0
+                    and self.is_goal_reached()
+                )
+            ),
+        )
+
     @rpc
     def navigate_to_goal_local(
         self,
@@ -1045,7 +1081,17 @@ class BaseLocalPlanner(Module):
         start_time = time.time()
         goal_reached = False
 
+        # Create the movement stream subscription
+        subscription = None
+
         try:
+            # Subscribe to the movement stream
+            subscription = self.get_move_stream().subscribe(
+                lambda vel_command: self.move(
+                    Vector(vel_command.get("x_vel", 0.0), 0, vel_command.get("angular_vel", 0.0))
+                )
+            )
+
             while time.time() - start_time < timeout and not (stop_event and stop_event.is_set()):
                 # Check if goal has been reached
                 if self.is_goal_reached():
@@ -1059,15 +1105,7 @@ class BaseLocalPlanner(Module):
                     goal_reached = False
                     break
 
-                # Get planned velocity towards the goal
-                vel_command = self.plan()
-                x_vel = vel_command.get("x_vel", 0.0)
-                angular_vel = vel_command.get("angular_vel", 0.0)
-
-                # Send velocity command
-                self.move(Vector(x_vel, 0, angular_vel))
-
-                # Control loop frequency - use robot's control frequency
+                # The movement stream is running in the background, just sleep
                 time.sleep(control_period)
 
             if not goal_reached:
@@ -1082,6 +1120,10 @@ class BaseLocalPlanner(Module):
             logger.error(f"Error during navigation to local goal: {e}")
             goal_reached = False  # Consider error as failure
         finally:
+            # Unsubscribe from the movement stream
+            if subscription:
+                subscription.dispose()
+
             logger.info("Stopping robot after navigation attempt.")
             self.move(Vector(0, 0, 0))  # Stop the robot
 
@@ -1124,7 +1166,17 @@ class BaseLocalPlanner(Module):
         start_time = time.time()
         path_completed = False
 
+        # Create the movement stream subscription
+        subscription = None
+
         try:
+            # Subscribe to the movement stream
+            subscription = self.get_move_stream().subscribe(
+                lambda vel_command: self.move(
+                    Vector(vel_command.get("x_vel", 0.0), 0, vel_command.get("angular_vel", 0.0))
+                )
+            )
+
             while time.time() - start_time < timeout and not (stop_event and stop_event.is_set()):
                 # Check if the entire path has been traversed
                 if self.is_goal_reached():
@@ -1138,15 +1190,7 @@ class BaseLocalPlanner(Module):
                     path_completed = False
                     break
 
-                # Get planned velocity towards the current waypoint target
-                vel_command = self.plan()
-                x_vel = vel_command.get("x_vel", 0.0)
-                angular_vel = vel_command.get("angular_vel", 0.0)
-
-                # Send velocity command
-                self.move(Vector(x_vel, 0, angular_vel))
-
-                # Control loop frequency - use robot's control frequency
+                # The movement stream is running in the background, just sleep
                 time.sleep(control_period)
 
             if not path_completed:
@@ -1161,6 +1205,10 @@ class BaseLocalPlanner(Module):
             logger.error(f"Error during path navigation: {e}")
             path_completed = False
         finally:
+            # Unsubscribe from the movement stream
+            if subscription:
+                subscription.dispose()
+
             logger.info("Stopping robot after path navigation attempt.")
             self.move(Vector(0, 0, 0))  # Stop the robot
 
