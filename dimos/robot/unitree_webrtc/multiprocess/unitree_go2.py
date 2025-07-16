@@ -84,7 +84,7 @@ class RealRTC(WebRTCRobot): ...
 
 
 # inherit RealRTC instead of FakeRTC to run the real robot
-class ConnectionModule(RealRTC, Module):
+class ConnectionModule(FakeRTC, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None

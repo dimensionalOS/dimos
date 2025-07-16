@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 import heapq
-from typing import Optional, Tuple
+import math
 from collections import deque
-from dimos.types.path import Path
-from dimos.types.vector import VectorLike, Vector
+from typing import Optional, Tuple
+
+from dimos.msgs.geometry_msgs import Vector3 as Vector
+from dimos.msgs.geometry_msgs.Vector3 import VectorLike
 from dimos.types.costmap import Costmap
+from dimos.types.path import Path
 
 
 def find_nearest_free_cell(
