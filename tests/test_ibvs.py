@@ -127,13 +127,6 @@ def main():
                         viz, "TARGET", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
                     )
 
-                # Print velocity commands for debugging (only if origin set)
-                if vel_cmd and ang_vel_cmd:
-                    print(f"Linear vel: ({vel_cmd.x:.3f}, {vel_cmd.y:.3f}, {vel_cmd.z:.3f}) m/s")
-                    print(
-                        f"Angular vel: ({ang_vel_cmd.x:.3f}, {ang_vel_cmd.y:.3f}, {ang_vel_cmd.z:.3f}) rad/s"
-                    )
-
             # Convert back to BGR for OpenCV display
             viz_bgr = cv2.cvtColor(viz, cv2.COLOR_RGB2BGR)
 
@@ -143,11 +136,11 @@ def main():
                 if pbvs.manipulator_origin is not None:
                     cam_robot = pbvs.get_camera_pose_robot_frame(camera_pose)
                     if cam_robot:
-                        pose_text = f"Camera [Robot]: ({cam_robot.pos.x:.2f}, {cam_robot.pos.y:.2f}, {cam_robot.pos.z:.2f})m"
+                        pose_text = f"Camera [Robot]: ({cam_robot.position.x:.2f}, {cam_robot.position.y:.2f}, {cam_robot.position.z:.2f})m"
                     else:
-                        pose_text = f"Camera [ZED]: ({camera_pose.pos.x:.2f}, {camera_pose.pos.y:.2f}, {camera_pose.pos.z:.2f})m"
+                        pose_text = f"Camera [ZED]: ({camera_pose.position.x:.2f}, {camera_pose.position.y:.2f}, {camera_pose.position.z:.2f})m"
                 else:
-                    pose_text = f"Camera [ZED]: ({camera_pose.pos.x:.2f}, {camera_pose.pos.y:.2f}, {camera_pose.pos.z:.2f})m"
+                    pose_text = f"Camera [ZED]: ({camera_pose.position.x:.2f}, {camera_pose.position.y:.2f}, {camera_pose.position.z:.2f})m"
 
                 cv2.putText(
                     viz_bgr, pose_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1
@@ -221,7 +214,7 @@ def main():
             elif key == ord("o") and camera_pose:
                 pbvs.set_manipulator_origin(camera_pose)
                 print(
-                    f"Set manipulator origin at: ({camera_pose.pos.x:.3f}, {camera_pose.pos.y:.3f}, {camera_pose.pos.z:.3f})"
+                    f"Set manipulator origin at: ({camera_pose.position.x:.3f}, {camera_pose.position.y:.3f}, {camera_pose.position.z:.3f})"
                 )
 
     except KeyboardInterrupt:
