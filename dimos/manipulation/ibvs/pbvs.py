@@ -24,11 +24,11 @@ import cv2
 from dimos.types.pose import Pose
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
-from dimos.manipulation.ibvs.utils import (
-    pose_to_transform_matrix,
+from dimos.utils.transform_utils import (
+    pose_to_matrix,
     apply_transform,
-    optical_to_robot_convention,
-    calculate_yaw_to_origin,
+    optical_to_robot_frame,
+    yaw_towards_point,
 )
 
 logger = setup_logger("dimos.manipulation.pbvs")
@@ -139,7 +139,7 @@ class PBVSController:
 
         # Create transform matrix from ZED world to manipulator origin
         # This is the inverse of the camera pose at origin
-        T_world_to_origin = pose_to_transform_matrix(camera_pose)
+        T_world_to_origin = pose_to_matrix(camera_pose)
         self.manipulator_origin = np.linalg.inv(T_world_to_origin)
 
         logger.info(
@@ -196,7 +196,7 @@ class PBVSController:
         target_pose_manip = apply_transform(target_pose_zed, self.manipulator_origin)
 
         # Calculate orientation pointing at origin (in robot frame)
-        yaw_to_origin = calculate_yaw_to_origin(target_pose_manip.pos)
+        yaw_to_origin = yaw_towards_point(target_pose_manip.pos)
 
         # Create target pose with proper orientation
         target_pose_robot = Pose(target_pose_manip.pos, Vector([0.0, 1.57, yaw_to_origin]))
@@ -306,7 +306,7 @@ class PBVSController:
             End-effector pose in robot frame
         """
         # Transform camera pose to EE frame
-        camera_transform = pose_to_transform_matrix(camera_pose)
+        camera_transform = pose_to_matrix(camera_pose)
         ee_transform = camera_transform @ np.linalg.inv(self.ee_to_camera_transform)
 
         # Extract position and rotation
@@ -344,8 +344,6 @@ class PBVSController:
         # Try to update target tracking if new detections provided
         if new_detections is not None:
             self.update_target_tracking(new_detections)
-
-        print(f"Camera pose: {camera_pose}")
 
         # Transform camera pose to robot frame
         camera_pose_robot = apply_transform(camera_pose, self.manipulator_origin)
@@ -503,7 +501,7 @@ class PBVSController:
         obj_pose_manip = apply_transform(obj_pose_zed, self.manipulator_origin)
 
         # Calculate orientation pointing at origin
-        yaw_to_origin = calculate_yaw_to_origin(obj_pose_manip.pos)
+        yaw_to_origin = yaw_towards_point(obj_pose_manip.pos)
         orientation = Vector([0.0, 0.0, yaw_to_origin])  # Level grasp
 
         return obj_pose_manip.pos, orientation
