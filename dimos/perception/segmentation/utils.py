@@ -241,6 +241,12 @@ def plot_results(image, masks, bboxes, track_ids, probs, names, alpha=0.5):
         if isinstance(mask, torch.Tensor):
             mask = mask.cpu().numpy()
 
+        # Ensure mask is in proper format for OpenCV resize
+        if mask.dtype == bool:
+            mask = mask.astype(np.uint8)
+        elif mask.dtype != np.uint8 and mask.dtype != np.float32:
+            mask = mask.astype(np.float32)
+
         mask_resized = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR)
 
         # Generate consistent color based on track_id
