@@ -13,13 +13,16 @@
 # limitations under the License.
 
 from enum import Enum
-from typing import Dict, List, Optional, Any, Union, TypedDict, Tuple, Literal
+from typing import Dict, List, Optional, Any, Union, TypedDict, Tuple, Literal, TYPE_CHECKING
 from dataclasses import dataclass, field, fields
 from abc import ABC, abstractmethod
 import uuid
 import numpy as np
 import time
 from dimos.types.vector import Vector
+
+if TYPE_CHECKING:
+    import open3d as o3d
 
 
 class ConstraintType(Enum):
@@ -72,6 +75,7 @@ class ForceConstraint(AbstractConstraint):
 class ObjectData(TypedDict, total=False):
     """Data about an object in the manipulation scene."""
 
+    # Basic detection information
     object_id: int  # Unique ID for the object
     bbox: List[float]  # Bounding box [x1, y1, x2, y2]
     depth: float  # Depth in meters from Metric3d
@@ -80,9 +84,16 @@ class ObjectData(TypedDict, total=False):
     label: str  # Semantic label (e.g., 'cup', 'table')
     movement_tolerance: float  # (0.0 = immovable, 1.0 = freely movable)
     segmentation_mask: np.ndarray  # Binary mask of the object's pixels
-    position: Dict[str, float]  # 3D position {x, y, z}
-    rotation: Dict[str, float]  # 3D rotation {roll, pitch, yaw}
-    size: Dict[str, float]  # Object dimensions {width, height}
+
+    # 3D pose and dimensions
+    position: Union[Dict[str, float], Vector]  # 3D position {x, y, z} or Vector
+    rotation: Union[Dict[str, float], Vector]  # 3D rotation {roll, pitch, yaw} or Vector
+    size: Dict[str, float]  # Object dimensions {width, height, depth}
+
+    # Point cloud data
+    point_cloud: "o3d.geometry.PointCloud"  # Open3D point cloud object
+    point_cloud_numpy: np.ndarray  # Nx6 array of XYZRGB points
+    color: np.ndarray  # RGB color for visualization [R, G, B]
 
 
 class ManipulationMetadata(TypedDict, total=False):

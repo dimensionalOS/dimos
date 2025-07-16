@@ -33,6 +33,7 @@ from dimos.perception.detection2d.utils import (
     calculate_object_size_from_bbox,
     calculate_position_rotation_from_bbox,
 )
+from dimos.perception.common.utils import draw_object_detection_visualization
 from dimos.types.vector import Vector
 from typing import Optional, Union, Callable
 from dimos.types.manipulation import ObjectData
@@ -234,68 +235,10 @@ class ObjectDetectionStream:
 
                 objects.append(object_data)
 
-                # Add visualization
-                x1, y1, x2, y2 = map(int, bbox)
-                color = (0, 255, 0)  # Green for detected objects
-                mask_color = (0, 200, 200)  # Yellow-green for masks
-
-                # Draw segmentation mask if available and valid
-                try:
-                    if self.draw_masks and object_data["segmentation_mask"] is not None:
-                        # Create a colored mask overlay
-                        mask = object_data["segmentation_mask"].astype(np.uint8)
-                        colored_mask = np.zeros_like(viz_frame)
-                        colored_mask[mask > 0] = mask_color
-
-                        # Apply the mask with transparency
-                        alpha = 0.5  # transparency factor
-                        mask_area = mask > 0
-                        viz_frame[mask_area] = cv2.addWeighted(
-                            viz_frame[mask_area], 1 - alpha, colored_mask[mask_area], alpha, 0
-                        )
-
-                        # Draw mask contour
-                        contours, _ = cv2.findContours(
-                            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-                        )
-                        cv2.drawContours(viz_frame, contours, -1, mask_color, 2)
-                except Exception as e:
-                    logger.warning(f"Error drawing segmentation mask: {e}")
-
-                # Draw bounding box with metadata
-                try:
-                    cv2.rectangle(viz_frame, (x1, y1), (x2, y2), color, 1)
-
-                    # Add text for class only (removed position data)
-                    # Handle possible None values for class_name or track_ids[i]
-                    class_text = class_name if class_name is not None else "Unknown"
-                    id_text = (
-                        track_ids[i] if i < len(track_ids) and track_ids[i] is not None else "?"
-                    )
-                    text = f"{class_text}, ID: {id_text}"
-
-                    # Draw text background with smaller font
-                    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)[0]
-                    cv2.rectangle(
-                        viz_frame,
-                        (x1, y1 - text_size[1] - 5),
-                        (x1 + text_size[0], y1),
-                        (0, 0, 0),
-                        -1,
-                    )
-
-                    # Draw text with smaller font
-                    cv2.putText(
-                        viz_frame,
-                        text,
-                        (x1, y1 - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.3,
-                        (255, 255, 255),
-                        1,
-                    )
-                except Exception as e:
-                    logger.warning(f"Error drawing bounding box or text: {e}")
+            # Create visualization using common function
+            viz_frame = draw_object_detection_visualization(
+                viz_frame, objects, draw_masks=self.draw_masks, font_scale=1.5
+            )
 
             return {"frame": frame, "viz_frame": viz_frame, "objects": objects}
 
