@@ -33,6 +33,7 @@ from dimos.protocol import pubsub
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.global_planner import AstarPlanner
 from dimos.robot.local_planner.simple import SimplePlanner
+from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
 from dimos.robot.unitree_webrtc.connection import VideoMessage, WebRTCRobot
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
@@ -157,7 +158,7 @@ async def run(ip):
     mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
 
     local_planner = dimos.deploy(
-        SimplePlanner,
+        VFHPurePursuitPlanner,
         get_costmap=connection.get_local_costmap,
     )
 
@@ -165,11 +166,12 @@ async def run(ip):
         AstarPlanner,
         get_costmap=mapper.costmap,
         get_robot_pos=connection.get_pos,
+        set_local_nav=local_planner.navigate_path_local,
     )
 
     global_planner.path.transport = core.pLCMTransport("/global_path")
 
-    local_planner.path.connect(global_planner.path)
+    # local_planner.path.connect(global_planner.path)
     local_planner.odom.connect(connection.odom)
 
     local_planner.movecmd.transport = core.LCMTransport("/move", Vector3)
