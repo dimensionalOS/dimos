@@ -23,14 +23,14 @@ from dimos.core import Module, In, Out, rpc
 from dimos.protocol.service.lcmservice import autoconf
 from dimos.msgs.geometry_msgs import Twist, Pose
 
+
 class TorsoBrige(Module):
- 
     twist_cmd: In[Twist] = None
     pose_state: Out[Pose] = None
 
-    def __init__(self, port: str = '/dev/ttyUSB1',
-                 baud: int = 9600, timeout: float = 0.1,
-                 *args, **kwargs):
+    def __init__(
+        self, port: str = "/dev/ttyUSB1", baud: int = 9600, timeout: float = 0.1, *args, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         # self.ser = serial.Serial(port, baud, timeout=timeout)
 
@@ -41,13 +41,15 @@ class TorsoBrige(Module):
 
     def _on_twist(self, msg: Twist):
         # take the six floats, format: <lx,ly,lz,ax,ay,az>
-        cmd = f"<{msg.linear.x:.3f}," \
-              f"{msg.linear.y:.3f}," \
-              f"{msg.linear.z:.3f}," \
-              f"{msg.angular.x:.3f}," \
-              f"{msg.angular.y:.3f}," \
-              f"{msg.angular.z:.3f}>"
-        self.ser.write(cmd.encode('ascii'))
+        cmd = (
+            f"<{msg.linear.x:.3f},"
+            f"{msg.linear.y:.3f},"
+            f"{msg.linear.z:.3f},"
+            f"{msg.angular.x:.3f},"
+            f"{msg.angular.y:.3f},"
+            f"{msg.angular.z:.3f}>"
+        )
+        self.ser.write(cmd.encode("ascii"))
         # mirror your pc_echo.py’s sleep to let Arduino respond
         time.sleep(0.05)
 
@@ -56,11 +58,11 @@ class TorsoBrige(Module):
             line = self.ser.readline()
             if not line:
                 continue
-            text = line.decode('ascii', 'ignore').strip()
+            text = line.decode("ascii", "ignore").strip()
             # expect “Pose,0.100,0.200,…”
             if not text.startswith("POSE"):
                 continue
-            parts = text.split(',')
+            parts = text.split(",")
             if len(parts) != 7:
                 continue
             # parse six floats
