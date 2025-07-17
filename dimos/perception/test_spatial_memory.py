@@ -25,9 +25,9 @@ from reactivex import Observable
 from reactivex import operators as ops
 from reactivex.subject import Subject
 
+from dimos.msgs.geometry_msgs import Pose
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.stream.video_provider import VideoProvider
-from dimos.types.pose import Pose
 from dimos.types.vector import Vector
 
 
