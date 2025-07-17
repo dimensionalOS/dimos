@@ -1126,7 +1126,6 @@ class BaseLocalPlanner(Module, ABC):
         Returns:
             bool: True if the entire path was successfully followed, False otherwise
         """
-        print("NAVIGATE PATH LOCAL", path)
         logger.info(
             f"Starting navigation along path with {len(path)} waypoints and timeout {timeout}s."
         )
