@@ -42,6 +42,21 @@ def test_pose_add_transform():
     assert np.isclose(transformed_pose.orientation.z, np.sin(angle / 2), atol=1e-10)
     assert np.isclose(transformed_pose.orientation.w, np.cos(angle / 2), atol=1e-10)
 
+    found_tf = initial_pose.find_transform(transformed_pose)
+
+    assert found_tf.translation == transform.translation
+    assert found_tf.rotation == transform.rotation
+    assert found_tf.translation.x == transform.translation.x
+    assert found_tf.translation.y == transform.translation.y
+    assert found_tf.translation.z == transform.translation.z
+
+    assert found_tf.rotation.x == transform.rotation.x
+    assert found_tf.rotation.y == transform.rotation.y
+    assert found_tf.rotation.z == transform.rotation.z
+    assert found_tf.rotation.w == transform.rotation.w
+
+    print(found_tf.rotation, found_tf.translation)
+
 
 def test_pose_add_transform_with_rotation():
     # Create a pose at (0, 0, 0) rotated 90 degrees around Z

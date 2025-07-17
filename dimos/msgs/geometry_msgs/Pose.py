@@ -170,6 +170,23 @@ class Pose(LCMPose):
     def __matmul__(self, transform: LCMTransform) -> Pose:
         return self + transform
 
+    def find_transform(self, other: PoseConvertable) -> LCMTransform:
+        other_pose = to_pose(other) if not isinstance(other, Pose) else other
+
+        inv_orientation = self.orientation.conjugate()
+
+        pos_diff = other_pose.position - self.position
+
+        local_translation = inv_orientation.rotate_vector(pos_diff)
+
+        relative_rotation = inv_orientation * other_pose.orientation
+
+        transform = LCMTransform()
+        transform.translation = local_translation
+        transform.rotation = relative_rotation
+
+        return transform
+
     def __add__(self, other: "Pose" | PoseConvertable | LCMTransform) -> "Pose":
         """Compose two poses or apply a transform (transform composition).
 
