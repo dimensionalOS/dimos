@@ -22,9 +22,9 @@ from plum import dispatch
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 
 # from dimos.robot.local_planner.local_planner import LocalPlanner
+from dimos.msgs.geometry_msgs import Pose, PoseLike, PoseStamped, Vector3, to_pose
 from dimos.types.costmap import Costmap
 from dimos.types.path import Path
 from dimos.types.vector import Vector, VectorLike, to_vector
@@ -34,33 +34,10 @@ from dimos.utils.threadpool import get_scheduler
 logger = setup_logger("dimos.robot.unitree.local_planner")
 
 
-def transform_to_robot_frame(global_vector: Vector3, robot_position: PoseStamped) -> Vector:
-    """Transform a global coordinate vector to robot-relative coordinates.
+def transform_to_robot_frame(global_vector: Vector3, global_robot_position: PoseStamped) -> Vector3:
+    goal = to_pose(global_vector)
 
-    Args:
-        global_vector: Vector in global coordinates
-        robot_position: Robot's position and orientation
-
-    Returns:
-        Vector in robot coordinates where X is forward/backward, Y is left/right
-    """
-    # Get the robot's yaw angle (rotation around Z-axis)
-    robot_yaw = robot_position.yaw
-
-    # Create rotation matrix to transform from global to robot frame
-    # We need to rotate the coordinate system by -robot_yaw to get robot-relative coordinates
-    cos_yaw = math.cos(-robot_yaw)
-    sin_yaw = math.sin(-robot_yaw)
-
-    print(cos_yaw, sin_yaw, global_vector)
-    # Apply 2D rotation transformation
-    # This transforms a global direction vector into the robot's coordinate frame
-    # In robot frame: X=forward/backward, Y=left/right
-    # In global frame: X=east/west, Y=north/south
-    robot_x = global_vector.x * cos_yaw - global_vector.y * sin_yaw  # Forward/backward
-    robot_y = global_vector.x * sin_yaw + global_vector.y * cos_yaw  # Left/right
-
-    return Vector3(-robot_x, robot_y, 0)
+    return Vector3(0, 0, 0)
 
 
 class SimplePlanner(Module):
@@ -72,7 +49,7 @@ class SimplePlanner(Module):
 
     latest_odom: Optional[PoseStamped] = None
 
-    goal: Optional[Vector] = None
+    goal: Optional[Pose] = None
     speed: float = 0.3
 
     def __init__(
@@ -116,10 +93,6 @@ class SimplePlanner(Module):
     def start(self):
         print(self.path.connection, self.path.transport)
         self.path.subscribe(self.set_goal)
-        self.movecmd.publish(Vector3(1, 2, 3))
-        self.movecmd.publish(Vector3(1, 2, 3))
-        self.movecmd.publish(Vector3(1, 2, 3))
-        self.movecmd.publish(Vector3(1, 2, 3))
 
         def setodom(odom: PoseStamped):
             self.latest_odom = odom
@@ -138,13 +111,13 @@ class SimplePlanner(Module):
 
     @dispatch
     def set_goal(self, goal: Path, stop_event=None, goal_theta=None) -> bool:
-        self.goal = goal.last().to_2d()
+        self.goal = to_pose(goal.last())
         logger.info(f"Setting goal: {self.goal}")
         return True
 
     @dispatch
     def set_goal(self, goal: VectorLike, stop_event=None, goal_theta=None) -> bool:
-        self.goal = to_vector(goal).to_2d()
+        self.goal = to_pose(goal.last())
         logger.info(f"Setting goal: {self.goal}")
         return True
 

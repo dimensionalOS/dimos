@@ -21,6 +21,7 @@ from dimos.msgs.geometry_msgs import Vector3 as Vector
 from dimos.msgs.geometry_msgs.Vector3 import VectorLike
 from dimos.types.costmap import Costmap
 from dimos.types.path import Path
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree.global_planner.astar")
 
@@ -119,7 +120,7 @@ def astar(
     # Convert world coordinates to grid coordinates directly using vector-like inputs
     start_vector = costmap.world_to_grid(start)
     goal_vector = costmap.world_to_grid(goal)
-    logger.info(f"ASTAR {costmap} {start_vector} -> {goal - vector}")
+    logger.info(f"ASTAR {costmap} {start_vector} -> {goal_vector}")
 
     # Store original positions for reference
     original_start = (int(start_vector.x), int(start_vector.y))
