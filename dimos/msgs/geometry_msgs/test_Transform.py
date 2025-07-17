@@ -19,13 +19,11 @@ from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 
 
 def test_pose_add_transform():
-    """Test adding a Transform to a Pose to get a new transformed Pose."""
-    # Create a pose at (1, 0, 0) with no rotation
     initial_pose = Pose(1.0, 0.0, 0.0)
 
-    # Create a transform that translates by (2, 1, 0) and rotates 90 degrees around Z
     transform = Transform()
     transform.translation = Vector3(2.0, 1.0, 0.0)
+
     # 90 degree rotation around Z axis
     angle = np.pi / 2
     transform.rotation = Quaternion(0.0, 0.0, np.sin(angle / 2), np.cos(angle / 2))
@@ -33,7 +31,6 @@ def test_pose_add_transform():
     # Apply the transform to the pose
     transformed_pose = initial_pose + transform
 
-    # The expected result:
     # - Transform is applied in the pose's frame
     # - Translation (2, 1, 0) is added directly to position (1, 0, 0)
     # - Result position: (3, 1, 0)
@@ -49,7 +46,6 @@ def test_pose_add_transform():
 
 
 def test_pose_add_transform_with_rotation():
-    """Test adding a Transform to a rotated Pose."""
     # Create a pose at (0, 0, 0) rotated 90 degrees around Z
     angle = np.pi / 2
     initial_pose = Pose(0.0, 0.0, 0.0, 0.0, 0.0, np.sin(angle / 2), np.cos(angle / 2))
