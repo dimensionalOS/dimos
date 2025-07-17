@@ -20,6 +20,7 @@ from typing import Literal, TypeAlias
 
 import numpy as np
 from aiortc import MediaStreamTrack
+from dimos_lcm.geometry_msgs import Twist
 from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD, VUI_COLOR
 from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-not-found]
     Go2WebRTCConnection,
@@ -80,21 +81,7 @@ class WebRTCRobot(ConnectionInterface):
         self.thread.start()
         self.connection_ready.wait()
 
-    def move(self, velocity: Vector3, duration: float = 0.0) -> bool:
-        """Send movement command to the robot using velocity commands.
-
-        Args:
-            velocity: Velocity vector [x, y, yaw] where:
-                     x: Forward/backward velocity (m/s)
-                     y: Left/right velocity (m/s)
-                     yaw: Rotational velocity (rad/s)
-            duration: How long to move (seconds). If 0, command is continuous
-
-        Returns:
-            bool: True if command was sent successfully
-        """
-        x, y, yaw = velocity.x, velocity.y, velocity.z
-
+    def move(self, twist: Twist) -> bool:
         # WebRTC coordinate mapping:
         # x - Positive right, negative left
         # y - positive forward, negative backwards
@@ -102,33 +89,16 @@ class WebRTCRobot(ConnectionInterface):
         async def async_move():
             self.conn.datachannel.pub_sub.publish_without_callback(
                 RTC_TOPIC["WIRELESS_CONTROLLER"],
-                data={"lx": y, "ly": x, "rx": -yaw, "ry": 0},
+                data={
+                    "lx": twist.linear.y,
+                    "ly": twist.linear.x,
+                    "rx": -twist.angular.z,
+                    "ry": 0,
+                },
             )
 
-        async def async_move_duration():
-            """Send movement commands continuously for the specified duration."""
-            start_time = time.time()
-            sleep_time = 0.01
-
-            while time.time() - start_time < duration:
-                await async_move()
-                await asyncio.sleep(sleep_time)
-
-        try:
-            if duration > 0:
-                # Send continuous move commands for the duration
-                future = asyncio.run_coroutine_threadsafe(async_move_duration(), self.loop)
-                future.result()
-                # Stop after duration
-                self.stop()
-            else:
-                # Single command for continuous movement
-                future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
-                future.result()
-            return True
-        except Exception as e:
-            print(f"Failed to send movement command: {e}")
-            return False
+        future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
+        future.result()
 
     # Generic conversion of unitree subscription to Subject (used for all subs)
     def unitree_sub_stream(self, topic_name: str):
@@ -284,7 +254,7 @@ class WebRTCRobot(ConnectionInterface):
         Returns:
             bool: True if stop command was sent successfully
         """
-        return self.move(Vector3(0.0, 0.0, 0.0))
+        return self.move(Vector(0.0, 0.0, 0.0))
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""

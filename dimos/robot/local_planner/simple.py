@@ -18,6 +18,7 @@ import traceback
 from typing import Callable, Optional
 
 import reactivex as rx
+from dimos_lcm.geometry_msgs import Twist
 from plum import dispatch
 from reactivex import operators as ops
 
@@ -33,6 +34,18 @@ from dimos.utils.threadpool import get_scheduler
 logger = setup_logger("dimos.robot.unitree.local_planner")
 
 
+def vector_to_twist(vector: Vector3) -> Twist:
+    """Convert a Vector3 to a Twist message."""
+    twist = Twist()
+    twist.linear.x = vector.x
+    twist.linear.y = vector.y
+    twist.linear.z = 0.0
+    twist.angular.x = 0.0
+    twist.angular.y = 0.0
+    twist.angular.z = vector.z
+    return twist
+
+
 def transform_to_robot_frame(global_vector: Vector3, global_robot_position: PoseStamped) -> Vector3:
     return global_robot_position.find_transform(global_vector).translation
 
@@ -40,13 +53,13 @@ def transform_to_robot_frame(global_vector: Vector3, global_robot_position: Pose
 class SimplePlanner(Module):
     path: In[Path] = None
     odom: In[PoseStamped] = None
-    movecmd: Out[Vector3] = None
+    movecmd: Out[Twist] = None
 
     get_costmap: Callable[[], Costmap]
 
     latest_odom: Optional[PoseStamped] = None
 
-    goal: Optional[Pose] = None
+    goal: Optional[PoseStamped] = None
     speed: float = 0.3
 
     def __init__(
@@ -69,17 +82,12 @@ class SimplePlanner(Module):
             ops.map(self._calculate_rotation_to_target),
             # filter out None results from calc_move
             ops.filter(lambda result: result is not None),
+            ops.map(vector_to_twist),
         )
 
     def _safe_transform_goal(self) -> Optional[Vector3]:
         """Safely transform goal to robot frame with error handling."""
         try:
-            if self.goal is None or self.latest_odom is None:
-                return None
-
-            # Convert PoseStamped to Pose for transform function
-            # Pose constructor takes (pos, rot) where pos and rot are VectorLike
-
             return transform_to_robot_frame(self.goal, self.latest_odom)
         except Exception as e:
             logger.error(f"Error transforming goal to robot frame: {e}")

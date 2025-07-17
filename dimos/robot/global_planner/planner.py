@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import Pose, PoseLike, Vector3, to_pose
+from dimos.msgs.geometry_msgs import Pose, PoseLike, PoseStamped, Vector3, to_pose
 from dimos.robot.global_planner.algo import astar
 from dimos.types.costmap import Costmap
 from dimos.types.path import Path
@@ -31,7 +31,7 @@ logger = setup_logger("dimos.robot.unitree.global_planner")
 
 @dataclass
 class Planner(Visualizable, Module):
-    target: In[Pose] = None
+    target: In[PoseStamped] = None
     path: Out[Path] = None
 
     def __init__(self):
