@@ -44,6 +44,29 @@ def test_pose_default_init():
     assert pose.z == 0.0
 
 
+def test_pose_pose_init():
+    """Test initialization with position coordinates only (identity orientation)."""
+    pose_data = Pose(1.0, 2.0, 3.0)
+
+    pose = to_pose(pose_data)
+
+    # Position should be as specified
+    assert pose.position.x == 1.0
+    assert pose.position.y == 2.0
+    assert pose.position.z == 3.0
+
+    # Orientation should be identity quaternion
+    assert pose.orientation.x == 0.0
+    assert pose.orientation.y == 0.0
+    assert pose.orientation.z == 0.0
+    assert pose.orientation.w == 1.0
+
+    # Test convenience properties
+    assert pose.x == 1.0
+    assert pose.y == 2.0
+    assert pose.z == 3.0
+
+
 def test_pose_position_init():
     """Test initialization with position coordinates only (identity orientation)."""
     pose = Pose(1.0, 2.0, 3.0)

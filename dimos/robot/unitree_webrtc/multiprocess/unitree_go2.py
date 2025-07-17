@@ -27,7 +27,7 @@ from reactivex.scheduler import ThreadPoolScheduler
 import dimos.core.colors as colors
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
 from dimos.robot.foxglove_bridge import FoxgloveBridge
@@ -127,14 +127,14 @@ class ConnectionModule(FakeRTC, Module):
 
 
 class ControlModule(Module):
-    plancmd: Out[Vector3] = None
+    plancmd: Out[Pose] = None
 
     @rpc
     def start(self):
         def plancmd():
             time.sleep(4)
             print(colors.red("requesting global plan"))
-            self.plancmd.publish(Vector3(0, 0, 0))
+            self.plancmd.publish(Pose(0, 0, 0, 0, 0, 0, 1))
 
         thread = threading.Thread(target=plancmd, daemon=True)
         thread.start()
@@ -179,7 +179,7 @@ async def run(ip):
 
     mapper.lidar.connect(connection.lidar)
 
-    ctrl.plancmd.transport = core.LCMTransport("/global_target", Vector3)
+    ctrl.plancmd.transport = core.LCMTransport("/global_target", Pose)
 
     global_planner.target.connect(ctrl.plancmd)
 

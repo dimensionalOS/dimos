@@ -220,13 +220,13 @@ class Pose(LCMPose):
 
 
 @dispatch
-def to_pose(value: "Pose") -> Pose:
+def to_pose(value: "Pose") -> "Pose":
     """Pass through Pose objects."""
     return value
 
 
 @dispatch
-def to_pose(value: PoseConvertable | Pose) -> Pose:
+def to_pose(value: PoseConvertable) -> Pose:
     """Convert a pose-compatible value to a Pose object."""
     return Pose(value)
 
