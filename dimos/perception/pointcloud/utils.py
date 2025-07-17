@@ -1087,8 +1087,6 @@ def extract_centroids_from_masks(
     depth_image: np.ndarray,
     masks: List[np.ndarray],
     camera_intrinsics: Union[List[float], np.ndarray],
-    min_points: int = 10,
-    max_depth: float = 10.0,
 ) -> List[Dict[str, Any]]:
     """
     Extract 3D centroids and orientations from segmentation masks.
@@ -1098,8 +1096,6 @@ def extract_centroids_from_masks(
         depth_image: Depth image (H, W) in meters
         masks: List of boolean masks (H, W)
         camera_intrinsics: Camera parameters as [fx, fy, cx, cy] or 3x3 matrix
-        min_points: Minimum number of valid 3D points required for a detection
-        max_depth: Maximum valid depth in meters
 
     Returns:
         List of dictionaries containing:
@@ -1129,20 +1125,10 @@ def extract_centroids_from_masks(
         # Get depth values at mask locations
         depths = depth_image[y_coords, x_coords]
 
-        # Filter valid depths
-        valid_mask = (depths > 0) & (depths < max_depth) & np.isfinite(depths)
-        if valid_mask.sum() < min_points:
-            continue
-
-        # Get valid coordinates and depths
-        valid_x = x_coords[valid_mask]
-        valid_y = y_coords[valid_mask]
-        valid_z = depths[valid_mask]
-
         # Convert to 3D points in camera frame
-        X = (valid_x - cx) * valid_z / fx
-        Y = (valid_y - cy) * valid_z / fy
-        Z = valid_z
+        X = (x_coords - cx) * depths / fx
+        Y = (y_coords - cy) * depths / fy
+        Z = depths
 
         # Calculate centroid
         centroid_x = np.mean(X)
@@ -1158,7 +1144,7 @@ def extract_centroids_from_masks(
             {
                 "centroid": centroid,
                 "orientation": orientation,
-                "num_points": int(valid_mask.sum()),
+                "num_points": int(mask.sum()),
                 "mask_idx": mask_idx,
             }
         )

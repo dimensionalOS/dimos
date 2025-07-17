@@ -54,6 +54,7 @@ class Detection3DProcessor:
         min_confidence: float = 0.6,
         min_points: int = 30,
         max_depth: float = 1.0,
+        max_object_size: float = 0.2,
     ):
         """
         Initialize the real-time 3D detection processor.
@@ -67,11 +68,13 @@ class Detection3DProcessor:
         self.camera_intrinsics = camera_intrinsics
         self.min_points = min_points
         self.max_depth = max_depth
+        self.max_object_size = max_object_size
 
         # Initialize Sam segmenter with tracking enabled but analysis disabled
         self.detector = Sam2DSegmenter(
             use_tracker=False,
             use_analyzer=False,
+            use_filtering=False,
             device="cuda" if cv2.cuda.getCudaEnabledDeviceCount() > 0 else "cpu",
         )
 
@@ -80,7 +83,7 @@ class Detection3DProcessor:
 
         logger.info(
             f"Initialized Detection3DProcessor with Sam segmenter, confidence={min_confidence}, "
-            f"min_points={min_points}, max_depth={max_depth}m"
+            f"min_points={min_points}, max_depth={max_depth}m, max_object_size={max_object_size}m"
         )
 
     def process_frame(
@@ -122,8 +125,6 @@ class Detection3DProcessor:
             depth_image=depth_image,
             masks=numpy_masks,
             camera_intrinsics=self.camera_intrinsics,
-            min_points=self.min_points,
-            max_depth=self.max_depth,
         )
 
         # Build detection results
@@ -149,6 +150,9 @@ class Detection3DProcessor:
                 # Set depth and position in camera frame
                 obj_data["depth"] = float(obj_cam_pos[2])
 
+                if obj_cam_pos[2] > self.max_depth:
+                    continue
+
                 obj_data["rotation"] = None
 
                 # Calculate object size from bbox and depth
@@ -166,6 +170,9 @@ class Detection3DProcessor:
                     "height": max(height_m, 0.01),  # Minimum 1cm height
                     "depth": max(depth_m, 0.01),  # Minimum 1cm depth
                 }
+
+                if min(obj_data["size"]["width"], obj_data["size"]["height"], obj_data["size"]["depth"]) > self.max_object_size:
+                    continue
 
                 # Extract average color from the region
                 x1, y1, x2, y2 = map(int, bbox)

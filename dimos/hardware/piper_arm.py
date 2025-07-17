@@ -130,7 +130,7 @@ class PiperArm:
         factor = 1000
         position = position * factor * factor
 
-        self.arm.GripperCtrl(abs(round(position)), factor, 0x01, 0)
+        self.arm.GripperCtrl(abs(round(position)), 250, 0x01, 0)
         print(f"[PiperArm] Commanding gripper position: {position}")
 
     def resetArm(self):

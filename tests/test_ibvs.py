@@ -32,7 +32,7 @@ from dimos.hardware.zed_camera import ZEDCamera
 from dimos.hardware.piper_arm import PiperArm
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.perception.common.utils import find_clicked_object
-from dimos.manipulation.visual_servoing.pbvs import PBVS
+from dimos.manipulation.visual_servoing.pbvs import PBVS, GraspStage
 from dimos.utils.transform_utils import (
     pose_to_matrix,
     matrix_to_pose,
@@ -160,7 +160,8 @@ def main():
         position_gain=0.3,
         rotation_gain=0.2,
         target_tolerance=0.05,
-        pregrasp_distance=0.2,
+        pregrasp_distance=0.25,
+        grasp_distance=0.01,
         direct_ee_control=DIRECT_EE_CONTROL,
     )
 
@@ -315,6 +316,7 @@ def main():
                     last_valid_target = current_target
                 if last_valid_target:
                     print("🤏 GRASP - Opening gripper for target object...")
+                    pbvs.set_grasp_stage(GraspStage.GRASP)
                     success = execute_grasp(arm, last_valid_target, grasp_width_offset=0.03)
                     if success:
                         print("✅ Gripper opened successfully")
