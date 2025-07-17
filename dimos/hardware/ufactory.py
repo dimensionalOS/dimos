@@ -14,6 +14,7 @@
 
 from dimos.hardware.end_effector import EndEffector
 
+
 class UFactoryEndEffector(EndEffector):
     def __init__(self, model=None, **kwargs):
         super().__init__(**kwargs)
@@ -21,6 +22,7 @@ class UFactoryEndEffector(EndEffector):
 
     def get_model(self):
         return self.model
+
 
 class UFactory7DOFArm:
     def __init__(self, arm_length=None):

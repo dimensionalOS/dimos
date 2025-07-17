@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import sys
 import os
 import tests.test_header
@@ -6,6 +20,7 @@ import tests.test_header
 
 from dotenv import load_dotenv
 
+
 # Sanity check for dotenv
 def test_dotenv():
     print("test_dotenv:")
@@ -13,9 +28,11 @@ def test_dotenv():
     openai_api_key = os.getenv("OPENAI_API_KEY")
     print("\t\tOPENAI_API_KEY: ", openai_api_key)
 
+
 # Sanity check for openai connection
 def test_openai_connection():
     from openai import OpenAI
+
     client = OpenAI()
     print("test_openai_connection:")
     response = client.chat.completions.create(
@@ -37,6 +54,7 @@ def test_openai_connection():
         max_tokens=300,
     )
     print("\t\tOpenAI Response: ", response.choices[0])
+
 
 test_dotenv()
 test_openai_connection()

@@ -149,8 +149,9 @@ class TrainingModule(LightningModule):
                 v = float(v)
             except Exception as e:
                 raise ValueError(
-                    "[EvalHook] eval_function should return a nested dict of float. "
-                    "Got '{}: {}' instead.".format(k, v)
+                    "[EvalHook] eval_function should return a nested dict of float. Got '{}: {}' instead.".format(
+                        k, v
+                    )
                 ) from e
         self.storage.put_scalars(**flattened_results, smoothing_hint=False)
 
@@ -191,9 +192,9 @@ def train(cfg, args):
     trainer_params = {
         # training loop is bounded by max steps, use a large max_epochs to make
         # sure max_steps is met first
-        "max_epochs": 10 ** 8,
+        "max_epochs": 10**8,
         "max_steps": cfg.SOLVER.MAX_ITER,
-        "val_check_interval": cfg.TEST.EVAL_PERIOD if cfg.TEST.EVAL_PERIOD > 0 else 10 ** 8,
+        "val_check_interval": cfg.TEST.EVAL_PERIOD if cfg.TEST.EVAL_PERIOD > 0 else 10**8,
         "num_nodes": args.num_machines,
         "gpus": args.num_gpus,
         "num_sanity_val_steps": 0,

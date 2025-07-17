@@ -116,7 +116,10 @@ class ROSObservableTopicAbility:
         # upstream ROS callback
         def _on_subscribe(obs, _):
             ros_sub = self._node.create_subscription(
-                self._sub_msg_type(msg_type), topic_name, self._maybe_conversion(msg_type, obs.on_next), qos_profile
+                self._sub_msg_type(msg_type),
+                topic_name,
+                self._maybe_conversion(msg_type, obs.on_next),
+                qos_profile,
             )
             return Disposable(lambda: self._node.destroy_subscription(ros_sub))
 
@@ -158,7 +161,9 @@ class ROSObservableTopicAbility:
     # odom.dispose()  # clean up the subscription
     #
     # see test_ros_observable_topic.py test_topic_latest for more details
-    def topic_latest(self, topic_name: str, msg_type: TopicType, timeout: float | None = 100.0, qos=QOS.SENSOR):
+    def topic_latest(
+        self, topic_name: str, msg_type: TopicType, timeout: float | None = 100.0, qos=QOS.SENSOR
+    ):
         """
         Blocks the current thread until the first message is received, then
         returns `reader()` (sync) and keeps one ROS subscription alive
@@ -173,7 +178,9 @@ class ROSObservableTopicAbility:
         conn = core.connect()  # starts the ROS subscription immediately
 
         try:
-            first_val = core.pipe(ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])).run()
+            first_val = core.pipe(
+                ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])
+            ).run()
         except Exception:
             conn.dispose()
             msg = f"{topic_name} message not received after {timeout} seconds. Is robot connected?"
@@ -204,7 +211,9 @@ class ROSObservableTopicAbility:
     # odom.dispose()  # clean up the subscription
     #
     # see test_ros_observable_topic.py test_topic_latest for more details
-    async def topic_latest_async(self, topic_name: str, msg_type: TopicType, qos=QOS.SENSOR, timeout: float = 30.0):
+    async def topic_latest_async(
+        self, topic_name: str, msg_type: TopicType, qos=QOS.SENSOR, timeout: float = 30.0
+    ):
         loop = asyncio.get_running_loop()
         first = loop.create_future()
         cache = {"val": None}

@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import tests.test_header
 import os
 
@@ -24,6 +38,7 @@ db_connection = Chroma(
     embedding_function=embeddings,
 )
 
+
 def add_vector(vector_id, vector_data):
     """Add a vector to the ChromaDB collection."""
     if not db_connection:
@@ -33,6 +48,7 @@ def add_vector(vector_id, vector_data):
         texts=[vector_data],
         metadatas=[{"name": vector_id}],
     )
+
 
 add_vector("id0", "Food")
 add_vector("id1", "Cat")
@@ -50,22 +66,22 @@ add_vector("id8", "Yellow")
 
 def get_vector(vector_id):
     """Retrieve a vector from the ChromaDB by its identifier."""
-    result = db_connection.get(include=['embeddings'], ids=[vector_id])
+    result = db_connection.get(include=["embeddings"], ids=[vector_id])
     return result
+
 
 print(get_vector("id1"))
 # print(get_vector("id3"))
 # print(get_vector("id0"))
 # print(get_vector("id2"))
 
+
 def query(query_texts, n_results=2):
     """Query the collection with a specific text and return up to n results."""
     if not db_connection:
         raise Exception("Collection not initialized. Call connect() first.")
-    return db_connection.similarity_search(
-        query=query_texts,
-        k=n_results
-    )
+    return db_connection.similarity_search(query=query_texts, k=n_results)
+
 
 results = query("Colors")
 print(results)

@@ -14,8 +14,9 @@
 
 from dimos.hardware.sensor import AbstractSensor
 
+
 class Camera(AbstractSensor):
-    def __init__(self, resolution=None, focal_length=None, sensor_size=None, sensor_type='Camera'):
+    def __init__(self, resolution=None, focal_length=None, sensor_size=None, sensor_type="Camera"):
         super().__init__(sensor_type)
         self.resolution = resolution  # (width, height) in pixels
         self.focal_length = focal_length  # in millimeters
@@ -41,10 +42,10 @@ class Camera(AbstractSensor):
         focal_length_y = self.focal_length / pixel_size_y
 
         return {
-            'focal_length_x': focal_length_x,
-            'focal_length_y': focal_length_y,
-            'principal_point_x': principal_point_x,
-            'principal_point_y': principal_point_y
+            "focal_length_x": focal_length_x,
+            "focal_length_y": focal_length_y,
+            "principal_point_x": principal_point_x,
+            "principal_point_y": principal_point_y,
         }
 
     def get_intrinsics(self):

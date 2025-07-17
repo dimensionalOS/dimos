@@ -196,7 +196,9 @@ class Sample(BaseModel):
 
         flatten_recursive(self)
         accumulator = accumulator.values() if output_type == "dict" else accumulator
-        if non_numerical == "forbid" and any(not isinstance(v, int | float | bool) for v in accumulator):
+        if non_numerical == "forbid" and any(
+            not isinstance(v, int | float | bool) for v in accumulator
+        ):
             raise ValueError("Non-numerical values found in flattened data.")
         if output_type == "np":
             return np.array(accumulator)
@@ -216,7 +218,10 @@ class Sample(BaseModel):
             dict: A simplified JSON schema representing the structure of the dictionary.
         """
         if isinstance(value, dict):
-            return {"type": "object", "properties": {k: Sample.obj_to_schema(v) for k, v in value.items()}}
+            return {
+                "type": "object",
+                "properties": {k: Sample.obj_to_schema(v) for k, v in value.items()},
+            }
         if isinstance(value, list | tuple | np.ndarray):
             if len(value) > 0:
                 return {"type": "array", "items": Sample.obj_to_schema(value[0])}
@@ -260,7 +265,9 @@ class Sample(BaseModel):
             if key not in properties:
                 properties[key] = Sample.obj_to_schema(value)
             if isinstance(value, Sample):
-                properties[key] = value.schema(resolve_refs=resolve_refs, include_descriptions=include_descriptions)
+                properties[key] = value.schema(
+                    resolve_refs=resolve_refs, include_descriptions=include_descriptions
+                )
             else:
                 properties[key] = Sample.obj_to_schema(value)
         return schema
@@ -497,7 +504,9 @@ class Sample(BaseModel):
             return []
 
         # Ensure all attributes are lists and have the same length
-        list_sizes = {len(getattr(self, attr)) for attr in attributes if isinstance(getattr(self, attr), list)}
+        list_sizes = {
+            len(getattr(self, attr)) for attr in attributes if isinstance(getattr(self, attr), list)
+        }
         if len(list_sizes) != 1:
             raise ValueError("Not all attribute lists have the same length.")
         list_size = list_sizes.pop()
@@ -505,7 +514,10 @@ class Sample(BaseModel):
         if to_dicts:
             return [{key: getattr(self, key)[i] for key in attributes} for i in range(list_size)]
 
-        return [self.__class__(**{key: getattr(self, key)[i] for key in attributes}) for i in range(list_size)]
+        return [
+            self.__class__(**{key: getattr(self, key)[i] for key in attributes})
+            for i in range(list_size)
+        ]
 
     @classmethod
     def default_space(cls) -> spaces.Dict:
@@ -543,7 +555,9 @@ class Sample(BaseModel):
             logging.debug("Generating space for key: '%s', value: %s", key, value)
             info = self.model_field_info(key)
             value = getattr(self, key) if hasattr(self, key) else value  # noqa: PLW2901
-            space_dict[key] = value.space() if isinstance(value, Sample) else self.space_for(value, info=info)
+            space_dict[key] = (
+                value.space() if isinstance(value, Sample) else self.space_for(value, info=info)
+            )
         return spaces.Dict(space_dict)
 
     def random_sample(self) -> "Sample":

@@ -15,6 +15,7 @@
 from typing import List, Any
 import numpy as np
 
+
 class SegmentationType:
     def __init__(self, masks: List[np.ndarray], metadata: Any = None):
         """
@@ -25,7 +26,7 @@ class SegmentationType:
             metadata (Any, optional): Additional metadata related to the segmentations.
         """
         self.masks = masks
-        self.metadata = metadata 
+        self.metadata = metadata
 
     def combine_masks(self):
         """Combine all masks into a single mask."""
@@ -37,6 +38,7 @@ class SegmentationType:
     def save_masks(self, directory: str):
         """Save each mask to a separate file."""
         import os
+
         os.makedirs(directory, exist_ok=True)
         for i, mask in enumerate(self.masks):
-            np.save(os.path.join(directory, f"mask_{i}.npy"), mask) 
+            np.save(os.path.join(directory, f"mask_{i}.npy"), mask)

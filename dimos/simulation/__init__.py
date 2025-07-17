@@ -12,9 +12,4 @@ except ImportError:
     GenesisSimulator = None  # type: ignore
     GenesisStream = None  # type: ignore
 
-__all__ = [
-    'IsaacSimulator',
-    'IsaacStream',
-    'GenesisSimulator',
-    'GenesisStream'
-] 
+__all__ = ["IsaacSimulator", "IsaacStream", "GenesisSimulator", "GenesisStream"]

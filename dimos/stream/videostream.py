@@ -14,11 +14,12 @@
 
 import cv2
 
+
 class VideoStream:
     def __init__(self, source=0):
         """
         Initialize the video stream from a camera source.
-        
+
         Args:
             source (int or str): Camera index or video file path.
         """

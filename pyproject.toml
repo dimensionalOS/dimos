@@ -1,21 +1,203 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["dimos"]
+
 [project]
 name = "dimos"
 authors = [
-    {name = "Stash Pomichter", email = "stash@dimensionalOS.com"},
+    {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.2"
+version = "0.0.4"
 description = "Powering agentive generalist robotics"
+requires-python = ">=3.10"
+
+dependencies = [
+    # Core requirements
+    "opencv-python",
+    "python-dotenv",
+    "openai",
+    "anthropic>=0.19.0",
+    "cerebras-cloud-sdk",
+    "numpy>=1.26.4,<2.0.0",
+    "colorlog==6.9.0",
+    "yapf==0.40.2",
+    "typeguard",
+    "empy==3.3.4",
+    "catkin_pkg",
+    "lark",
+    "plum-dispatch==2.5.7",
+    "ffmpeg-python",
+    "tiktoken>=0.8.0",
+    "Flask>=2.2",
+    "python-multipart==0.0.20",
+    "reactivex",
+    "rxpy-backpressure @ git+https://github.com/dimensionalOS/rxpy-backpressure.git",
+    "asyncio==3.4.3",
+    "go2-webrtc-connect @ git+https://github.com/dimensionalOS/go2_webrtc_connect.git",
+    
+    # Web Extensions
+    "fastapi>=0.115.6",
+    "sse-starlette>=2.2.1",
+    "uvicorn>=0.34.0",
+    
+    # Agent Memory
+    "langchain-chroma>=0.1.4",
+    "langchain-openai>=0.2.14",
+    
+    # Class Extraction
+    "pydantic",
+    
+    # Developer Specific
+    "ipykernel",
+    
+    # Unitree webrtc streaming
+    "aiortc==1.9.0",
+    "pycryptodome",
+    "sounddevice",
+    "pyaudio",
+    "requests",
+    "wasmtime",
+    
+    # Audio
+    "openai-whisper",
+    "soundfile",
+    
+    # Hugging Face
+    "transformers[torch]==4.49.0",
+    
+    # Vector Embedding
+    "sentence_transformers",
+    
+    
+    # Perception Dependencies
+    "ultralytics>=8.3.70",
+    "filterpy>=1.4.5",
+    "scipy>=1.15.1",
+    "scikit-learn",
+    "Pillow",
+    "clip @ git+https://github.com/openai/CLIP.git",
+    "timm>=1.0.15",
+    "lap>=0.5.12",
+
+    # Mapping
+    "open3d",
+
+    # Inference
+
+    "onnx",
+
+    # Multiprocess 
+    "dask[complete]==2025.5.1",
+
+    # LCM / DimOS utilities
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@ae2371c78e38511c97dcd13d7933474d6bc56073"
+    
+]
+
+
+[project.optional-dependencies]
+manipulation = [
+    
+    # Contact Graspnet Dependencies
+    "h5py>=3.7.0",
+    "pyrender>=0.1.45",
+    "trimesh>=3.22.0",
+    "python-fcl>=0.7.0.4",
+    "pyquaternion>=0.9.9",
+    "matplotlib>=3.7.1",
+    "rtree",
+    "pandas>=1.5.2",
+    "tqdm>=4.65.0",
+    "pyyaml>=6.0",
+    "contact-graspnet-pytorch @ git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git",
+    
+    # Visualization (Optional)
+    "kaleido>=0.2.1",
+    "plotly>=5.9.0",
+]
+
+cpu = [
+    # CPU inference backends
+    "onnxruntime",
+    "ctransformers==0.2.27",
+]
+
+cuda = [
+    "pycuda",
+    "onnxruntime-gpu>=1.17.1,<=1.18.1", # Only versions supporting both cuda11 and cuda12
+    "ctransformers[cuda]==0.2.27",
+    "mmengine>=0.10.3",
+    "mmcv>=2.1.0",
+    "xformers==0.0.20",
+
+    # Detic GPU stack 
+    "mss",
+    "dataclasses",
+    "ftfy",
+    "regex",
+    "fasttext",
+    "lvis",
+    "nltk",
+    "clip @ git+https://github.com/openai/CLIP.git",
+    "detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6",
+]
+
+dev = [
+    "ruff==0.11.10",
+    "mypy==1.15.0",
+    "pre_commit==4.2.0",
+    "pytest==8.3.5",
+    "pytest-asyncio==0.26.0",
+    "textual==3.7.1"
+]
 
 [tool.ruff]
-line-length = 120
+line-length = 100
+exclude = [
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+    "libs",
+    "external",
+    "src"
+]
+
+[tool.mypy]
+# mypy doesn't understand plum @dispatch decorator
+# so we gave up on this check globally
+disable_error_code = ["no-redef", "import-untyped", "import-not-found"]
+files = [
+    "dimos/msgs/**/*.py",
+    "dimos/protocol/**/*.py"
+]
 
 [tool.pytest.ini_options]
-testpaths = ["dimos/robot"]
-norecursedirs = ["dimos/robot/unitree/external"]
+testpaths = ["dimos"]
 markers = [
+    "heavy: resource heavy test",
     "vis: marks tests that run visuals and require a visual check by dev",
     "benchmark: benchmark, executes something multiple times, calculates avg, prints to console",
     "exclude: arbitrary exclusion from CI and default test exec",
-    "tool: dev tooling"
+    "tool: dev tooling",
+    "needsdata: needs test data to be downloaded",
+    "ros: depend on ros",
+    "lcm: tests that run actual LCM bus (can't execute in CI)"
+
 ]
-addopts = "-m 'not vis and not benchmark and not exclude and not tool'"
+
+addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy'"
+
+
+

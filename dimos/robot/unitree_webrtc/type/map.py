@@ -1,26 +1,70 @@
-import open3d as o3d
-import numpy as np
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from dataclasses import dataclass
-from typing import Tuple, Optional
-
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.costmap import Costmap
-
-from reactivex.observable import Observable
+from typing import Optional, Tuple
+import time
+import numpy as np
+import open3d as o3d
 import reactivex.operators as ops
+from reactivex import interval
+from reactivex.observable import Observable
+
+from dimos.core import In, Module, Out, rpc
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.types.costmap import Costmap, pointcloud_to_costmap
 
 
-@dataclass
-class Map:
+class Map(Module):
+    lidar: In[LidarMessage] = None
+    global_map: Out[LidarMessage] = None
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
-    voxel_size: float = 0.05
-    cost_resolution: float = 0.05
 
+    def __init__(
+        self,
+        voxel_size: float = 0.05,
+        cost_resolution: float = 0.05,
+        global_publish_interval: Optional[float] = None,
+        **kwargs,
+    ):
+        self.voxel_size = voxel_size
+        self.cost_resolution = cost_resolution
+        self.global_publish_interval = global_publish_interval
+        super().__init__(**kwargs)
+
+    @rpc
+    def start(self):
+        self.lidar.subscribe(self.add_frame)
+
+        if self.global_publish_interval is not None:
+            interval(self.global_publish_interval).subscribe(
+                lambda _: self.global_map.publish(self.to_lidar_message())
+            )
+
+    def to_lidar_message(self) -> LidarMessage:
+        return LidarMessage(
+            pointcloud=self.pointcloud,
+            origin=[0.0, 0.0, 0.0],
+            resolution=self.voxel_size,
+            ts=time.time(),
+        )
+
+    @rpc
     def add_frame(self, frame: LidarMessage) -> "Map":
         """Voxelise *frame* and splice it into the running map."""
         new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
-        return self
 
     def consume(self, observable: Observable[LidarMessage]) -> Observable["Map"]:
         """Reactive operator that folds a stream of `LidarMessage` into the map."""
@@ -30,7 +74,7 @@ class Map:
     def o3d_geometry(self) -> o3d.geometry.PointCloud:
         return self.pointcloud
 
-    @property
+    @rpc
     def costmap(self) -> Costmap:
         """Return a fully inflated cost-map in a `Costmap` wrapper."""
         inflate_radius_m = 0.5 * self.voxel_size if self.voxel_size > self.cost_resolution else 0.0
@@ -39,6 +83,7 @@ class Map:
             resolution=self.cost_resolution,
             inflate_radius_m=inflate_radius_m,
         )
+
         return Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution)
 
 
@@ -77,9 +122,11 @@ def splice_cylinder(
     map_pts = np.asarray(map_pcd.points)
     planar_dists_map = np.linalg.norm(map_pts[:, axes] - center[axes], axis=1)
 
-    victims = np.nonzero((planar_dists_map < radius) & (map_pts[:, axis] >= axis_min) & (map_pts[:, axis] <= axis_max))[
-        0
-    ]
+    victims = np.nonzero(
+        (planar_dists_map < radius)
+        & (map_pts[:, axis] >= axis_min)
+        & (map_pts[:, axis] <= axis_max)
+    )[0]
 
     survivors = map_pcd.select_by_index(victims, invert=True)
     return survivors + patch_pcd
@@ -101,68 +148,3 @@ def _inflate_lethal(costmap: np.ndarray, radius: int, lethal_val: int = 100) -> 
     out = costmap.copy()
     out[dilated] = lethal_val
     return out
-
-
-def pointcloud_to_costmap(
-    pcd: o3d.geometry.PointCloud,
-    *,
-    resolution: float = 0.05,
-    ground_z: float = 0.0,
-    obs_min_height: float = 0.15,
-    max_height: Optional[float] = 0.5,
-    inflate_radius_m: Optional[float] = None,
-    default_unknown: int = -1,
-    cost_free: int = 0,
-    cost_lethal: int = 100,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Rasterise *pcd* into a 2-D int8 cost-map with optional obstacle inflation.
-
-    Grid origin is **aligned** to the `resolution` lattice so that when
-    `resolution == voxel_size` every voxel centroid lands squarely inside a cell
-    (no alternating blank lines).
-    """
-
-    pts = np.asarray(pcd.points, dtype=np.float32)
-    if pts.size == 0:
-        return np.full((1, 1), default_unknown, np.int8), np.zeros(2, np.float32)
-
-    # 0. Ceiling filter --------------------------------------------------------
-    if max_height is not None:
-        pts = pts[pts[:, 2] <= max_height]
-        if pts.size == 0:
-            return np.full((1, 1), default_unknown, np.int8), np.zeros(2, np.float32)
-
-    # 1. Bounding box & aligned origin ---------------------------------------
-    xy_min = pts[:, :2].min(axis=0)
-    xy_max = pts[:, :2].max(axis=0)
-
-    # Align origin to the resolution grid (anchor = 0,0)
-    origin = np.floor(xy_min / resolution) * resolution
-
-    # Grid dimensions (inclusive) -------------------------------------------
-    Nx, Ny = (np.ceil((xy_max - origin) / resolution).astype(int) + 1).tolist()
-
-    # 2. Bin points ------------------------------------------------------------
-    idx_xy = np.floor((pts[:, :2] - origin) / resolution).astype(np.int32)
-    np.clip(idx_xy[:, 0], 0, Nx - 1, out=idx_xy[:, 0])
-    np.clip(idx_xy[:, 1], 0, Ny - 1, out=idx_xy[:, 1])
-
-    lin = idx_xy[:, 1] * Nx + idx_xy[:, 0]
-    z_max = np.full(Nx * Ny, -np.inf, np.float32)
-    np.maximum.at(z_max, lin, pts[:, 2])
-    z_max = z_max.reshape(Ny, Nx)
-
-    # 3. Cost rules -----------------------------------------------------------
-    costmap = np.full_like(z_max, default_unknown, np.int8)
-    known = z_max != -np.inf
-    costmap[known] = cost_free
-
-    lethal = z_max >= (ground_z + obs_min_height)
-    costmap[lethal] = cost_lethal
-
-    # 4. Optional inflation ----------------------------------------------------
-    if inflate_radius_m and inflate_radius_m > 0:
-        cells = int(np.ceil(inflate_radius_m / resolution))
-        costmap = _inflate_lethal(costmap, cells, lethal_val=cost_lethal)
-
-    return costmap, origin.astype(np.float32)

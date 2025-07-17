@@ -1,17 +1,13 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-# Part of the code is from https://github.com/rwightman/efficientdet-pytorch/blob/master/effdet/data/transforms.py 
+# Part of the code is from https://github.com/rwightman/efficientdet-pytorch/blob/master/effdet/data/transforms.py
 # Modified by Xingyi Zhou
 # The original code is under Apache-2.0 License
 import numpy as np
 import torch
 import torch.nn.functional as F
 from fvcore.transforms.transform import (
-    CropTransform,
-    HFlipTransform,
-    NoOpTransform,
     Transform,
-    TransformList,
 )
 from PIL import Image
 
@@ -25,12 +21,11 @@ __all__ = [
     "EfficientDetResizeCropTransform",
 ]
 
-class EfficientDetResizeCropTransform(Transform):
-    """
-    """
 
-    def __init__(self, scaled_h, scaled_w, offset_y, offset_x, img_scale, \
-        target_size, interp=None):
+class EfficientDetResizeCropTransform(Transform):
+    """ """
+
+    def __init__(self, scaled_h, scaled_w, offset_y, offset_x, img_scale, target_size, interp=None):
         """
         Args:
             h, w (int): original image size
@@ -54,9 +49,9 @@ class EfficientDetResizeCropTransform(Transform):
             right = min(self.scaled_w, self.offset_x + self.target_size[1])
             lower = min(self.scaled_h, self.offset_y + self.target_size[0])
             if len(ret.shape) <= 3:
-                ret = ret[self.offset_y: lower, self.offset_x: right]
+                ret = ret[self.offset_y : lower, self.offset_x : right]
             else:
-                ret = ret[..., self.offset_y: lower, self.offset_x: right, :]
+                ret = ret[..., self.offset_y : lower, self.offset_x : right, :]
         else:
             # PIL only supports uint8
             img = torch.from_numpy(img)
@@ -71,11 +66,10 @@ class EfficientDetResizeCropTransform(Transform):
             right = min(self.scaled_w, self.offset_x + self.target_size[1])
             lower = min(self.scaled_h, self.offset_y + self.target_size[0])
             if len(ret.shape) <= 3:
-                ret = ret[self.offset_y: lower, self.offset_x: right]
+                ret = ret[self.offset_y : lower, self.offset_x : right]
             else:
-                ret = ret[..., self.offset_y: lower, self.offset_x: right, :]
+                ret = ret[..., self.offset_y : lower, self.offset_x : right, :]
         return ret
-
 
     def apply_coords(self, coords):
         coords[:, 0] = coords[:, 0] * self.img_scale
@@ -84,15 +78,12 @@ class EfficientDetResizeCropTransform(Transform):
         coords[:, 1] -= self.offset_y
         return coords
 
-
     def apply_segmentation(self, segmentation):
         segmentation = self.apply_image(segmentation, interp=Image.NEAREST)
         return segmentation
 
-
     def inverse(self):
         raise NotImplementedError
-
 
     def inverse_apply_coords(self, coords):
         coords[:, 0] += self.offset_x
@@ -101,10 +92,8 @@ class EfficientDetResizeCropTransform(Transform):
         coords[:, 1] = coords[:, 1] / self.img_scale
         return coords
 
-
     def inverse_apply_box(self, box: np.ndarray) -> np.ndarray:
-        """
-        """
+        """ """
         idxs = np.array([(0, 1), (2, 1), (0, 3), (2, 3)]).flatten()
         coords = np.asarray(box).reshape(-1, 4)[:, idxs].reshape(-1, 2)
         coords = self.inverse_apply_coords(coords).reshape((-1, 4, 2))

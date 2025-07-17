@@ -65,8 +65,7 @@ class VisualizationDemo(object):
             if "instances" in predictions:
                 instances = predictions["instances"].to(self.cpu_device)
                 if use_video_vis:
-                    vis_output = visualizer.draw_instance_predictions(
-                        image, predictions=instances)
+                    vis_output = visualizer.draw_instance_predictions(image, predictions=instances)
                 else:
                     vis_output = visualizer.draw_instance_predictions(predictions=instances)
             elif "proposals" in predictions:
@@ -75,8 +74,7 @@ class VisualizationDemo(object):
                 instances.scores = instances.objectness_logits
                 instances.pred_classes[:] = -1
                 if use_video_vis:
-                    vis_output = visualizer.draw_instance_predictions(
-                        image, predictions=instances)
+                    vis_output = visualizer.draw_instance_predictions(image, predictions=instances)
                 else:
                     vis_output = visualizer.draw_instance_predictions(predictions=instances)
 

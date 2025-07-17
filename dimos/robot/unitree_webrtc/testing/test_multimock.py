@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import time
 import pytest
 
@@ -13,9 +27,12 @@ from dimos.robot.unitree_webrtc.type.timeseries import to_datetime
 from dimos.robot.unitree_webrtc.testing.multimock import Multimock
 
 
+@pytest.mark.needsdata
 @pytest.mark.vis
 def test_multimock_stream():
-    backpressure(Multimock("athens_odom").stream().pipe(ops.map(Odometry.from_msg))).subscribe(lambda x: print(x))
+    backpressure(Multimock("athens_odom").stream().pipe(ops.map(Odometry.from_msg))).subscribe(
+        lambda x: print(x)
+    )
     map = Map()
 
     def lidarmsg(msg):
@@ -28,6 +45,7 @@ def test_multimock_stream():
     time.sleep(5)
 
 
+@pytest.mark.needsdata
 def test_clock_mismatch():
     for odometry_raw in Multimock("athens_odom").iterate():
         print(
@@ -36,11 +54,13 @@ def test_clock_mismatch():
         )
 
 
+@pytest.mark.needsdata
 def test_odom_stream():
     for odometry_raw in Multimock("athens_odom").iterate():
         print(Odometry.from_msg(odometry_raw.data))
 
 
+@pytest.mark.needsdata
 def test_lidar_stream():
     for lidar_raw in Multimock("athens_lidar").iterate():
         lidarmsg = LidarMessage.from_msg(lidar_raw.data)
@@ -48,6 +68,7 @@ def test_lidar_stream():
         print(lidar_raw)
 
 
+@pytest.mark.needsdata
 def test_multimock_timeseries():
     odom = Odometry.from_msg(Multimock("athens_odom").load_one(1).data)
     lidar_raw = Multimock("athens_lidar").load_one(1).data
@@ -60,23 +81,29 @@ def test_multimock_timeseries():
     print(map.costmap)
 
 
+@pytest.mark.needsdata
 def test_origin_changes():
     for lidar_raw in Multimock("athens_lidar").iterate():
         print(LidarMessage.from_msg(lidar_raw.data).origin)
 
 
+@pytest.mark.needsdata
 @pytest.mark.vis
 def test_webui_multistream():
     websocket_vis = WebsocketVis()
     websocket_vis.start()
 
     odom_stream = Multimock("athens_odom").stream().pipe(ops.map(Odometry.from_msg))
-    lidar_stream = backpressure(Multimock("athens_lidar").stream().pipe(ops.map(LidarMessage.from_msg)))
+    lidar_stream = backpressure(
+        Multimock("athens_lidar").stream().pipe(ops.map(LidarMessage.from_msg))
+    )
 
     map = Map()
     map_stream = map.consume(lidar_stream)
 
-    costmap_stream = map_stream.pipe(ops.map(lambda x: ["costmap", map.costmap.smudge(preserve_unknown=False)]))
+    costmap_stream = map_stream.pipe(
+        ops.map(lambda x: ["costmap", map.costmap.smudge(preserve_unknown=False)])
+    )
 
     websocket_vis.connect(costmap_stream)
     websocket_vis.connect(odom_stream.pipe(ops.map(lambda pos: ["robot_pos", pos.pos.to_2d()])))

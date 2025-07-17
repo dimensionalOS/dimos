@@ -48,5 +48,10 @@ class PanopticEvaluator(object):
             predictions_json = os.path.join(self.output_dir, "predictions.json")
             with open(predictions_json, "w") as f:
                 f.write(json.dumps(json_data))
-            return pq_compute(self.gt_json, predictions_json, gt_folder=self.gt_folder, pred_folder=self.output_dir)
+            return pq_compute(
+                self.gt_json,
+                predictions_json,
+                gt_folder=self.gt_folder,
+                pred_folder=self.output_dir,
+            )
         return None

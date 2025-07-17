@@ -7,11 +7,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from fvcore.transforms.transform import (
-    CropTransform,
-    HFlipTransform,
-    NoOpTransform,
     Transform,
-    TransformList,
 )
 from PIL import Image
 
@@ -27,8 +23,7 @@ __all__ = [
 
 
 class EfficientDetResizeCropTransform(Transform):
-    """
-    """
+    """ """
 
     def __init__(self, scaled_h, scaled_w, offset_y, offset_x, img_scale, target_size, interp=None):
         """
@@ -56,9 +51,9 @@ class EfficientDetResizeCropTransform(Transform):
             lower = min(self.scaled_h, self.offset_y + self.target_size[0])
             # img = img.crop((self.offset_x, self.offset_y, right, lower))
             if len(ret.shape) <= 3:
-                ret = ret[self.offset_y: lower, self.offset_x: right]
+                ret = ret[self.offset_y : lower, self.offset_x : right]
             else:
-                ret = ret[..., self.offset_y: lower, self.offset_x: right, :]
+                ret = ret[..., self.offset_y : lower, self.offset_x : right, :]
         else:
             # PIL only supports uint8
             img = torch.from_numpy(img)
@@ -73,9 +68,9 @@ class EfficientDetResizeCropTransform(Transform):
             right = min(self.scaled_w, self.offset_x + self.target_size[1])
             lower = min(self.scaled_h, self.offset_y + self.target_size[0])
             if len(ret.shape) <= 3:
-                ret = ret[self.offset_y: lower, self.offset_x: right]
+                ret = ret[self.offset_y : lower, self.offset_x : right]
             else:
-                ret = ret[..., self.offset_y: lower, self.offset_x: right, :]
+                ret = ret[..., self.offset_y : lower, self.offset_x : right, :]
         return ret
 
     def apply_coords(self, coords):

@@ -141,8 +141,7 @@ $ ./analyze_model.py --num-inputs 100 --tasks flop \\
         "--num-inputs",
         default=100,
         type=int,
-        help="number of inputs used to compute statistics for flops/activations, "
-        "both are data dependent.",
+        help="number of inputs used to compute statistics for flops/activations, both are data dependent.",
     )
     args = parser.parse_args()
     assert not args.eval_only

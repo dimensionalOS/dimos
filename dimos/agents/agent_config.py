@@ -15,6 +15,7 @@
 from typing import List
 from dimos.agents.agent import Agent
 
+
 class AgentConfig:
     def __init__(self, agents: List[Agent] = None):
         """

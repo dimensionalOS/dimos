@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import math
 import os
 import time
@@ -31,28 +45,26 @@ def parse_args():
 def setup_web_interface(robot, port=5555):
     """Set up web interface with robot video and local planner visualization"""
     print(f"Setting up web interface on port {port}")
-    
+
     # Get video stream from robot
     video_stream = robot.video_stream_ros.pipe(
         ops.share(),
         ops.map(lambda frame: frame),
         ops.filter(lambda frame: frame is not None),
     )
-    
+
     # Get local planner visualization stream
     local_planner_stream = robot.local_planner_viz_stream.pipe(
         ops.share(),
         ops.map(lambda frame: frame),
         ops.filter(lambda frame: frame is not None),
     )
-    
+
     # Create web interface with streams
     web_interface = RobotWebInterface(
-        port=port,
-        robot_video=video_stream,
-        local_planner=local_planner_stream
+        port=port, robot_video=video_stream, local_planner=local_planner_stream
     )
-    
+
     return web_interface
 
 
@@ -61,7 +73,7 @@ def main():
 
     websocket_vis = WebsocketVis()
     websocket_vis.start()
-    
+
     web_interface = None
 
     if args.live:
@@ -69,13 +81,17 @@ def main():
         robot = UnitreeGo2(ros_control=ros_control, ip=os.getenv("ROBOT_IP"))
         planner = robot.global_planner
 
-        websocket_vis.connect(vector_stream("robot", lambda: robot.ros_control.transform_euler_pos("base_link")))
-        websocket_vis.connect(robot.ros_control.topic("map", Costmap).pipe(ops.map(lambda x: ["costmap", x])))
-        
+        websocket_vis.connect(
+            vector_stream("robot", lambda: robot.ros_control.transform_euler_pos("base_link"))
+        )
+        websocket_vis.connect(
+            robot.ros_control.topic("map", Costmap).pipe(ops.map(lambda x: ["costmap", x]))
+        )
+
         # Also set up the web interface with both streams
-        if hasattr(robot, 'video_stream_ros') and hasattr(robot, 'local_planner_viz_stream'):
+        if hasattr(robot, "video_stream_ros") and hasattr(robot, "local_planner_viz_stream"):
             web_interface = setup_web_interface(robot, port=args.port)
-            
+
             # Start web interface in a separate thread
             viz_thread = threading.Thread(target=web_interface.run, daemon=True)
             viz_thread.start()

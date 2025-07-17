@@ -24,7 +24,7 @@ from cv_bridge import CvBridge
 from enum import Enum, auto
 import threading
 import time
-from typing import Optional, Tuple, Dict, Any, Type
+from typing import Optional, Dict, Any, Type
 from abc import ABC, abstractmethod
 from rclpy.qos import (
     QoSProfile,
@@ -35,7 +35,7 @@ from rclpy.qos import (
 from dimos.stream.ros_video_provider import ROSVideoProvider
 import math
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import Point, Vector3, Twist
+from geometry_msgs.msg import Point, Vector3
 from dimos.robot.ros_command_queue import ROSCommandQueue
 from dimos.utils.logging_config import setup_logger
 
@@ -44,6 +44,8 @@ from nav_msgs.msg import OccupancyGrid
 import tf2_ros
 from dimos.robot.ros_transform import ROSTransformAbility
 from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
+from dimos.robot.connection_interface import ConnectionInterface
+from dimos.types.vector import Vector
 
 from nav_msgs.msg import Odometry
 
@@ -61,27 +63,31 @@ class RobotMode(Enum):
     MOVING = auto()
     ERROR = auto()
 
-class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
+
+class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInterface, ABC):
     """Abstract base class for ROS-controlled robots"""
-    def __init__(self, 
-                 node_name: str,
-                 camera_topics: Dict[str, str] = None,
-                 max_linear_velocity: float = 1.0,
-                 mock_connection: bool = False,
-                 max_angular_velocity: float = 2.0,
-                 state_topic: str = None,
-                 imu_topic: str = None,
-                 state_msg_type: Type = None,
-                 imu_msg_type: Type = None,
-                 webrtc_topic: str = None,
-                 webrtc_api_topic: str = None,
-                 webrtc_msg_type: Type = None,
-                 move_vel_topic: str = None,
-                 pose_topic: str = None,
-                 odom_topic: str = '/odom',
-                 global_costmap_topic: str = "map",
-                 costmap_topic: str = '/local_costmap/costmap',
-                 debug: bool = False):
+
+    def __init__(
+        self,
+        node_name: str,
+        camera_topics: Dict[str, str] = None,
+        max_linear_velocity: float = 1.0,
+        mock_connection: bool = False,
+        max_angular_velocity: float = 2.0,
+        state_topic: str = None,
+        imu_topic: str = None,
+        state_msg_type: Type = None,
+        imu_msg_type: Type = None,
+        webrtc_topic: str = None,
+        webrtc_api_topic: str = None,
+        webrtc_msg_type: Type = None,
+        move_vel_topic: str = None,
+        pose_topic: str = None,
+        odom_topic: str = "/odom",
+        global_costmap_topic: str = "map",
+        costmap_topic: str = "/local_costmap/costmap",
+        debug: bool = False,
+    ):
         """
         Initialize base ROS control interface
         Args:
@@ -159,9 +165,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             )
             self._subscriptions.append(self._global_costmap_sub)
         else:
-            logger.warning(
-                "No costmap topic provided - costmap data tracking will be unavailable"
-            )
+            logger.warning("No costmap topic provided - costmap data tracking will be unavailable")
 
         # Initialize data handling
         self._video_provider = None
@@ -204,25 +208,23 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             )
             self._subscriptions.append(self._imu_sub)
         else:
-            logger.warning("No IMU topic and/or message type provided - IMU data tracking will be unavailable")
-            
+            logger.warning(
+                "No IMU topic and/or message type provided - IMU data tracking will be unavailable"
+            )
+
         if self._odom_topic:
             self._odom_sub = self._node.create_subscription(
-                Odometry,
-                self._odom_topic,
-                self._odom_callback,
-                sensor_qos
+                Odometry, self._odom_topic, self._odom_callback, sensor_qos
             )
             self._subscriptions.append(self._odom_sub)
         else:
-            logger.warning("No odometry topic provided - odometry data tracking will be unavailable")
-        
+            logger.warning(
+                "No odometry topic provided - odometry data tracking will be unavailable"
+            )
+
         if self._costmap_topic:
             self._costmap_sub = self._node.create_subscription(
-                OccupancyGrid,
-                self._costmap_topic,
-                self._costmap_callback,
-                sensor_qos
+                OccupancyGrid, self._costmap_topic, self._costmap_callback, sensor_qos
             )
             self._subscriptions.append(self._costmap_sub)
         else:
@@ -236,9 +238,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             self._spin_client.wait_for_server()
 
         # Publishers
-        self._move_vel_pub = self._node.create_publisher(
-            Twist, move_vel_topic, command_qos
-        )
+        self._move_vel_pub = self._node.create_publisher(Twist, move_vel_topic, command_qos)
         self._pose_pub = self._node.create_publisher(Vector3, pose_topic, command_qos)
 
         if webrtc_msg_type:
@@ -256,12 +256,12 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             self._command_queue.start()
         else:
             logger.warning("No WebRTC message type provided - WebRTC commands will be unavailable")
-           
+
         # Initialize TF Buffer and Listener for transform abilities
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self._node)
         logger.info(f"TF Buffer and Listener initialized for {node_name}")
-        
+
         # Start ROS spin in a background thread via the executor
         self._spin_thread = threading.Thread(target=self._ros_spin, daemon=True)
         self._spin_thread.start()
@@ -295,12 +295,12 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
         """Callback for IMU data"""
         self._imu_state = msg
         # Log IMU state (very verbose)
-        #logger.debug(f"IMU state updated: {self._imu_state}")
+        # logger.debug(f"IMU state updated: {self._imu_state}")
 
     def _odom_callback(self, msg):
         """Callback for odometry data"""
         self._odom_data = msg
-            
+
     def _costmap_callback(self, msg):
         """Callback for costmap data"""
         self._costmap_data = msg
@@ -347,9 +347,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             ROS msg containing the robot state information
         """
         if not self._state_topic:
-            logger.warning(
-                "No state topic provided - robot state tracking will be unavailable"
-            )
+            logger.warning("No state topic provided - robot state tracking will be unavailable")
             return None
 
         return self._robot_state
@@ -365,28 +363,28 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             ROS msg containing the IMU state information
         """
         if not self._imu_topic:
-            logger.warning(
-                "No IMU topic provided - IMU data tracking will be unavailable"
-            )
+            logger.warning("No IMU topic provided - IMU data tracking will be unavailable")
             return None
         return self._imu_state
 
     def get_odometry(self) -> Optional[Odometry]:
         """
         Get current odometry data
-        
+
         Returns:
             Optional[Odometry]: Current odometry data or None if not available
         """
         if not self._odom_topic:
-            logger.warning("No odometry topic provided - odometry data tracking will be unavailable")
+            logger.warning(
+                "No odometry topic provided - odometry data tracking will be unavailable"
+            )
             return None
         return self._odom_data
-        
+
     def get_costmap(self) -> Optional[OccupancyGrid]:
         """
         Get current costmap data
-        
+
         Returns:
             Optional[OccupancyGrid]: Current costmap data or None if not available
         """
@@ -394,7 +392,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             logger.warning("No costmap topic provided - costmap data tracking will be unavailable")
             return None
         return self._costmap_data
-    
+
     def _image_callback(self, msg):
         """Convert ROS image to numpy array and push to data stream"""
         if self._video_provider and self._bridge:
@@ -416,9 +414,21 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
         """Data provider property for streaming data"""
         return self._video_provider
 
-    def _send_action_client_goal(
-        self, client, goal_msg, description=None, time_allowance=20.0
-    ):
+    def get_video_stream(self, fps: int = 30) -> Optional[Observable]:
+        """Get the video stream from the robot's camera.
+
+        Args:
+            fps: Frames per second for the video stream
+
+        Returns:
+            Observable: An observable stream of video frames or None if not available
+        """
+        if not self.video_provider:
+            return None
+
+        return self.video_provider.get_stream(fps=fps)
+
+    def _send_action_client_goal(self, client, goal_msg, description=None, time_allowance=20.0):
         """
         Generic function to send any action client goal and wait for completion.
 
@@ -441,16 +451,12 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
         self._action_success = None
 
         # Send the goal
-        send_goal_future = client.send_goal_async(
-            goal_msg, feedback_callback=lambda feedback: None
-        )
+        send_goal_future = client.send_goal_async(goal_msg, feedback_callback=lambda feedback: None)
         send_goal_future.add_done_callback(self._goal_response_callback)
 
         # Wait for completion
         start_time = time.time()
-        while (
-            self._action_success is None and time.time() - start_time < time_allowance
-        ):
+        while self._action_success is None and time.time() - start_time < time_allowance:
             time.sleep(0.1)
 
         elapsed = time.time() - start_time
@@ -463,76 +469,55 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             logger.error(f"Action timed out after {time_allowance}s")
             return False
         elif self._action_success:
-            logger.info(f"Action succeeded")
+            logger.info("Action succeeded")
             return True
         else:
-            logger.error(f"Action failed")
+            logger.error("Action failed")
             return False
 
-    def move(
-        self, distance: float, speed: float = 0.5, time_allowance: float = 120
-    ) -> bool:
-        """
-        Move the robot forward by a specified distance
+    def move(self, velocity: Vector, duration: float = 0.0) -> bool:
+        """Send velocity commands to the robot.
 
         Args:
-            distance: Distance to move forward in meters (must be positive)
-            speed: Speed to move at in m/s (default 0.5)
-            time_allowance: Maximum time to wait for the request to complete
+            velocity: Velocity vector [x, y, yaw] where:
+                     x: Linear velocity in x direction (m/s)
+                     y: Linear velocity in y direction (m/s)
+                     yaw: Angular velocity around z axis (rad/s)
+            duration: Duration to apply command (seconds). If 0, apply once.
 
         Returns:
-            bool: True if movement succeeded
+            bool: True if command was sent successfully
         """
+        x, y, yaw = velocity.x, velocity.y, velocity.z
+
+        # Clamp velocities to safe limits
+        x = self._clamp_velocity(x, self.MAX_LINEAR_VELOCITY)
+        y = self._clamp_velocity(y, self.MAX_LINEAR_VELOCITY)
+        yaw = self._clamp_velocity(yaw, self.MAX_ANGULAR_VELOCITY)
+
+        # Create and send command
+        cmd = Twist()
+        cmd.linear.x = float(x)
+        cmd.linear.y = float(y)
+        cmd.angular.z = float(yaw)
+
         try:
-            if distance <= 0:
-                logger.error("Distance must be positive")
-                return False
-
-            speed = min(abs(speed), self.MAX_LINEAR_VELOCITY)
-
-            # Define function to execute the move
-            def execute_move():
-                # Create DriveOnHeading goal
-                goal = DriveOnHeading.Goal()
-                goal.target.x = distance
-                goal.target.y = 0.0
-                goal.target.z = 0.0
-                goal.speed = speed
-                goal.time_allowance = Duration(sec=time_allowance)
-
-                logger.info(f"Moving forward: distance={distance}m, speed={speed}m/s")
-
-                return self._send_action_client_goal(
-                    self._drive_client,
-                    goal,
-                    f"Sending Action Client goal in ROSControl.execute_move for {distance}m at {speed}m/s",
-                    time_allowance,
-                )
-
-            # Queue the action
-            cmd_id = self._command_queue.queue_action_client_request(
-                action_name="move",
-                execute_func=execute_move,
-                priority=0,
-                timeout=time_allowance,
-                distance=distance,
-                speed=speed,
-            )
-            logger.info(
-                f"Queued move command: {cmd_id} - Distance: {distance}m, Speed: {speed}m/s"
-            )
+            if duration > 0:
+                start_time = time.time()
+                while time.time() - start_time < duration:
+                    self._move_vel_pub.publish(cmd)
+                    time.sleep(0.1)  # 10Hz update rate
+                # Stop after duration
+                self.stop()
+            else:
+                self._move_vel_pub.publish(cmd)
             return True
 
         except Exception as e:
-            logger.error(f"Forward movement failed: {e}")
-            import traceback
-
-            logger.error(traceback.format_exc())
+            self._logger.error(f"Failed to send movement command: {e}")
             return False
 
-    def reverse(
-        self, distance: float, speed: float = 0.5, time_allowance: float = 120
-    ) -> bool:
+    def reverse(self, distance: float, speed: float = 0.5, time_allowance: float = 120) -> bool:
         """
         Move the robot backward by a specified distance
 
@@ -602,9 +587,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             logger.error(traceback.format_exc())
             return False
 
-    def spin(
-        self, degrees: float, speed: float = 45.0, time_allowance: float = 120
-    ) -> bool:
+    def spin(self, degrees: float, speed: float = 45.0, time_allowance: float = 120) -> bool:
         """
         Rotate the robot by a specified angle
 
@@ -652,9 +635,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
                 degrees=degrees,
                 speed=speed,
             )
-            logger.info(
-                f"Queued spin command: {cmd_id} - Degrees: {degrees}, Speed: {speed}deg/s"
-            )
+            logger.info(f"Queued spin command: {cmd_id} - Degrees: {degrees}, Speed: {speed}deg/s")
             return True
 
         except Exception as e:
@@ -663,32 +644,6 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
 
             logger.error(traceback.format_exc())
             return False
-
-    def _goal_response_callback(self, future):
-        """Handle the goal response."""
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            logger.warn("Goal was rejected!")
-            print("[ROSControl] Goal was REJECTED by the action server")
-            self._action_success = False
-            return
-
-        logger.info("Goal accepted")
-        print("[ROSControl] Goal was ACCEPTED by the action server")
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(self._goal_result_callback)
-
-    def _goal_result_callback(self, future):
-        """Handle the goal result."""
-        try:
-            result = future.result().result
-            logger.info("Goal completed")
-            print(f"[ROSControl] Goal COMPLETED with result: {result}")
-            self._action_success = True
-        except Exception as e:
-            logger.error(f"Goal failed with error: {e}")
-            print(f"[ROSControl] Goal FAILED with error: {e}")
-            self._action_success = False
 
     def stop(self) -> bool:
         """Stop all robot movement"""
@@ -716,6 +671,10 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
         # Destroy node and shutdown rclpy
         self._node.destroy_node()
         rclpy.shutdown()
+
+    def disconnect(self) -> None:
+        """Disconnect from the robot and clean up resources."""
+        self.cleanup()
 
     def webrtc_req(
         self,
@@ -807,46 +766,6 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
             data=data,
         )
 
-    def move_vel(self, x: float, y: float, yaw: float, duration: float = 0.0) -> bool:
-        """
-        Send movement command to the robot using velocity commands
-
-        Args:
-            x: Forward/backward velocity (m/s)
-            y: Left/right velocity (m/s)
-            yaw: Rotational velocity (rad/s)
-            duration: How long to move (seconds). If 0, command is continuous
-
-        Returns:
-            bool: True if command was sent successfully
-        """
-        # Clamp velocities to safe limits
-        x = self._clamp_velocity(x, self.MAX_LINEAR_VELOCITY)
-        y = self._clamp_velocity(y, self.MAX_LINEAR_VELOCITY)
-        yaw = self._clamp_velocity(yaw, self.MAX_ANGULAR_VELOCITY)
-
-        # Create and send command
-        cmd = Twist()
-        cmd.linear.x = float(x)
-        cmd.linear.y = float(y)
-        cmd.angular.z = float(yaw)
-
-        try:
-            if duration > 0:
-                start_time = time.time()
-                while time.time() - start_time < duration:
-                    self._move_vel_pub.publish(cmd)
-                    time.sleep(0.1)  # 10Hz update rate
-                # Stop after duration
-                self.stop()
-            else:
-                self._move_vel_pub.publish(cmd)
-            return True
-
-        except Exception as e:
-            self._logger.error(f"Failed to send movement command: {e}")
-            return False
-
     def move_vel_control(self, x: float, y: float, yaw: float) -> bool:
         """
         Send a single velocity command without duration handling.
@@ -902,21 +821,47 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ABC):
         except Exception as e:
             logger.error(f"Failed to send pose command: {e}")
             return False
-            
+
     def get_position_stream(self):
         """
         Get a stream of position updates from ROS.
-        
+
         Returns:
             Observable that emits (x, y) tuples representing the robot's position
         """
         from dimos.robot.position_stream import PositionStreamProvider
-        
+
         # Create a position stream provider
         position_provider = PositionStreamProvider(
             ros_node=self._node,
             odometry_topic="/odom",  # Default odometry topic
-            use_odometry=True
+            use_odometry=True,
         )
-        
+
         return position_provider.get_position_stream()
+
+    def _goal_response_callback(self, future):
+        """Handle the goal response."""
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            logger.warn("Goal was rejected!")
+            print("[ROSControl] Goal was REJECTED by the action server")
+            self._action_success = False
+            return
+
+        logger.info("Goal accepted")
+        print("[ROSControl] Goal was ACCEPTED by the action server")
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(self._goal_result_callback)
+
+    def _goal_result_callback(self, future):
+        """Handle the goal result."""
+        try:
+            result = future.result().result
+            logger.info("Goal completed")
+            print(f"[ROSControl] Goal COMPLETED with result: {result}")
+            self._action_success = True
+        except Exception as e:
+            logger.error(f"Goal failed with error: {e}")
+            print(f"[ROSControl] Goal FAILED with error: {e}")
+            self._action_success = False

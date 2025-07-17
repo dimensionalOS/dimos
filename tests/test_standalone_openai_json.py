@@ -1,9 +1,24 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import tests.test_header
 import os
 
 # -----
 
 import dotenv
+
 dotenv.load_dotenv()
 
 import json
@@ -13,17 +28,18 @@ from pydantic import BaseModel
 
 MODEL = "gpt-4o-2024-08-06"
 
-math_tutor_prompt = '''
+math_tutor_prompt = """
     You are a helpful math tutor. You will be provided with a math problem,
     and your goal will be to output a step by step solution, along with a final answer.
     For each step, just provide the output as an equation use the explanation field to detail the reasoning.
-'''
+"""
 
-bad_prompt = '''
+bad_prompt = """
     Follow the instructions.
-'''
+"""
 
 client = OpenAI()
+
 
 class MathReasoning(BaseModel):
     class Step(BaseModel):
@@ -32,6 +48,7 @@ class MathReasoning(BaseModel):
 
     steps: list[Step]
     final_answer: str
+
 
 def get_math_solution(question: str):
     completion = client.beta.chat.completions.parse(
@@ -44,12 +61,14 @@ def get_math_solution(question: str):
     )
     return completion.choices[0].message
 
+
 # Web Server
 import http.server
 import socketserver
 import urllib.parse
 
 PORT = 5555
+
 
 class CustomHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -58,26 +77,31 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         query_params = urllib.parse.parse_qs(parsed_path.query)
 
         # Check for a specific query parameter, e.g., 'problem'
-        problem = query_params.get('problem', [''])[0]  # Default to an empty string if 'problem' isn't provided
+        problem = query_params.get("problem", [""])[
+            0
+        ]  # Default to an empty string if 'problem' isn't provided
 
         if problem:
             print(f"Problem: {problem}")
             solution = get_math_solution(problem)
-            
+
             if solution.refusal:
                 print(f"Refusal: {solution.refusal}")
 
             print(f"Solution: {solution}")
             self.send_response(200)
         else:
-            solution = json.dumps({"error": "Please provide a math problem using the 'problem' query parameter."})
+            solution = json.dumps(
+                {"error": "Please provide a math problem using the 'problem' query parameter."}
+            )
             self.send_response(400)
 
-        self.send_header('Content-type', 'application/json; charset=utf-8')
+        self.send_header("Content-type", "application/json; charset=utf-8")
         self.end_headers()
 
         # Write the message content
         self.wfile.write(str(solution).encode())
+
 
 with socketserver.TCPServer(("", PORT), CustomHandler) as httpd:
     print(f"Serving at port {PORT}")

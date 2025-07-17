@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import tests.test_header
 import os
 
@@ -6,6 +20,7 @@ import os
 from typing import List, Union, Dict
 
 import dotenv
+
 dotenv.load_dotenv()
 
 import json
@@ -16,17 +31,18 @@ from pydantic import BaseModel, Field
 
 MODEL = "gpt-4o-2024-08-06"
 
-math_tutor_prompt = '''
+math_tutor_prompt = """
     You are a helpful math tutor. You will be provided with a math problem,
     and your goal will be to output a step by step solution, along with a final answer.
     For each step, just provide the output as an equation use the explanation field to detail the reasoning.
-'''
+"""
 
-general_prompt = '''
+general_prompt = """
     Follow the instructions. Output a step by step solution, along with a final answer. Use the explanation field to detail the reasoning.
-'''
+"""
 
 client = OpenAI()
+
 
 class MathReasoning(BaseModel):
     class Step(BaseModel):
@@ -36,25 +52,27 @@ class MathReasoning(BaseModel):
     steps: list[Step]
     final_answer: str
 
+
 # region Function Calling
 class GetWeather(BaseModel):
-    latitude: str = Field(
-        ...,
-        description="latitude e.g. Bogotá, Colombia"
-    )
-    longitude: str = Field(
-        ...,
-        description="longitude e.g. Bogotá, Colombia"
-    )
+    latitude: str = Field(..., description="latitude e.g. Bogotá, Colombia")
+    longitude: str = Field(..., description="longitude e.g. Bogotá, Colombia")
+
 
 def get_weather(latitude, longitude):
-    response = requests.get(f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m,wind_speed_10m&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m&temperature_unit=fahrenheit")
+    response = requests.get(
+        f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m,wind_speed_10m&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m&temperature_unit=fahrenheit"
+    )
     data = response.json()
-    return data['current']['temperature_2m']
+    return data["current"]["temperature_2m"]
+
 
 def get_tools():
     return [pydantic_function_tool(GetWeather)]
+
+
 tools = get_tools()
+
 
 def call_function(name, args):
     if name == "get_weather":
@@ -67,7 +85,8 @@ def call_function(name, args):
         return get_weather(**args)
     else:
         return f"Local function not found: {name}"
-    
+
+
 def callback(message, messages, response_message, tool_calls):
     if message is None or message.tool_calls is None:
         print("No message or tools were called.")
@@ -83,14 +102,11 @@ def callback(message, messages, response_message, tool_calls):
 
         result = call_function(name, args)
         print(f"Function Call Results: {result}")
-        
-        messages.append({
-            "role": "tool",
-            "tool_call_id": tool_call.id,
-            "content": str(result),
-            "name": name
-        })
-    
+
+        messages.append(
+            {"role": "tool", "tool_call_id": tool_call.id, "content": str(result), "name": name}
+        )
+
     # Complete the second call, after the functions have completed.
     if has_called_tools:
         print("Sending Second Query.")
@@ -106,19 +122,18 @@ def callback(message, messages, response_message, tool_calls):
         print("No Need for Second Query.")
         return None
 
+
 # endregion Function Calling
+
 
 def get_math_solution(question: str):
     prompt = general_prompt
     messages = [
-            {"role": "system", "content": dedent(prompt)},
-            {"role": "user", "content": question},
-        ]
+        {"role": "system", "content": dedent(prompt)},
+        {"role": "user", "content": question},
+    ]
     response = client.beta.chat.completions.parse(
-        model=MODEL,
-        messages=messages, 
-        response_format=MathReasoning,
-        tools=tools
+        model=MODEL, messages=messages, response_format=MathReasoning, tools=tools
     )
 
     response_message = response.choices[0].message
@@ -128,11 +143,9 @@ def get_math_solution(question: str):
 
     return new_response or response.choices[0].message
 
+
 # Define Problem
-problems = [
-    "What is the derivative of 3x^2",
-    "What's the weather like in San Fran today?"
-]
+problems = ["What is the derivative of 3x^2", "What's the weather like in San Fran today?"]
 problem = problems[0]
 
 for problem in problems:
@@ -153,7 +166,7 @@ for problem in problems:
         print(f"Unable to Parse Solution")
         print(f"Solution: {solution}")
         break
-        
+
     # Print solution from class definitions
     print(f"Parsed: {parsed_solution}")
 

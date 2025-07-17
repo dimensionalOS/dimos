@@ -52,55 +52,16 @@ We are shipping a first look at the DIMOS x Unitree Go2 integration, allowing fo
   - Simulation bindings (Genesis, Isaacsim, etc.) to test your agentive application before deploying to a physical robot. 
 
 - **DimOS Interface / Development Tools**
-  - Local development interface to control your robot, orchestrate agents, visualize camera/lidar streams, and debug your dimensional agentive application.  
-
-## Docker Quick Start 🚀
-> **⚠️ Recommended to start**
-
-### Prerequisites
-
-- Docker and Docker Compose installed
-- A Unitree Go2 robot accessible on your network
-- The robot's IP address
-- OpenAI API Key
-
-### Configuration:
-
-Configure your environment variables in `.env`
-```bash
-OPENAI_API_KEY=<OPENAI_API_KEY>
-ALIBABA_API_KEY=<ALIBABA_API_KEY>
-ANTHROPIC_API_KEY=<ANTHROPIC_API_KEY>
-ROBOT_IP=<ROBOT_IP>
-CONN_TYPE=webrtc
-WEBRTC_SERVER_HOST=0.0.0.0
-WEBRTC_SERVER_PORT=9991
-DISPLAY=:0
-```
-
-### Run docker compose 
-```bash
-xhost +local:root # If running locally and desire RVIZ GUI
-docker compose -f docker/unitree/agents_interface/docker-compose.yml up --build
-```
-**Interface will start at http://localhost:3000**
-
-## Python Quick Start 🐍
-
-### Prerequisites
-
-- A Unitree Go2 robot accessible on your network
-- The robot's IP address
-- OpenAI/Claude/Alibaba API Key
-
+  - Local development interface to control your robot, orchestrate agents, visualize camera/lidar streams, and debug your dimensional agentive application.
+    
 ### Python Installation (Ubuntu 22.04)
 
 ```bash
 sudo apt install python3-venv
 
 # Clone the repository
-git clone --recurse-submodules https://github.com/dimensionalOS/dimos-unitree.git
-cd dimos-unitree
+git clone --recurse-submodules https://github.com/dimensionalOS/dimos.git
+cd dimos
 
 # Create and activate virtual environment
 python3 -m venv venv
@@ -109,13 +70,30 @@ source venv/bin/activate
 sudo apt install portaudio19-dev python3-pyaudio
 
 # Install torch and torchvision if not already installed
-pip install -r base-requirements.txt
+# Example CUDA 11.7, Pytorch 2.0.1 (replace with your required pytorch version if different)
+pip install torch==2.0.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```
 
-# Install dependencies
-pip install -r requirements.txt
+#### Install dependencies
+```bash
+# CPU only (reccomended to attempt first)
+pip install .[cpu,dev]
+
+# CUDA install
+pip install .[cuda,dev]
 
 # Copy and configure environment variables
 cp default.env .env
+```
+
+#### Test install 
+```bash 
+pytest -s dimos/
+```
+
+#### Run the Stack with a connected UnitreeGO2 over WebRTC
+```bash
+python tests/run.py
 ```
 
 ### Agent API keys

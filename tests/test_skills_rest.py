@@ -54,21 +54,20 @@ agent = ClaudeAgent(
         IMPORTANT:
         Only return the response directly asked of the user. E.G. if the user asks for the time,
         only return the time. If the user asks for the weather, only return the weather.
-        """),
+        """
+    ),
     model_name="claude-3-7-sonnet-latest",
-    thinking_budget_tokens=2000
+    thinking_budget_tokens=2000,
 )
 
 # Subscribe to agent responses and send them to the subject
-agent.get_response_observable().subscribe(
-    lambda x: agent_response_subject.on_next(x)
-)
+agent.get_response_observable().subscribe(lambda x: agent_response_subject.on_next(x))
 
 # Start the web interface
 web_interface.run()
 
 # Run this query in the web interface:
-# 
-# Make a web request to nist to get the current time. 
+#
+# Make a web request to nist to get the current time.
 # You should use http://worldclockapi.com/api/json/utc/now
 #

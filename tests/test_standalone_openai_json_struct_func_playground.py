@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import tests.test_header
 import os
 
@@ -105,31 +119,34 @@ import os
 import requests
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from openai import OpenAI
 
 client = OpenAI()
 
+
 def get_current_weather(latitude, longitude):
     """Get the current weather in a given latitude and longitude using the 7Timer API"""
     base = "http://www.7timer.info/bin/api.pl"
     request_url = f"{base}?lon={longitude}&lat={latitude}&product=civillight&output=json"
     response = requests.get(request_url)
-    
+
     # Parse response to extract the main weather data
     weather_data = response.json()
-    current_data = weather_data.get('dataseries', [{}])[0]
-    
+    current_data = weather_data.get("dataseries", [{}])[0]
+
     result = {
         "latitude": latitude,
         "longitude": longitude,
-        "temp": current_data.get('temp2m', {'max': 'Unknown', 'min': 'Unknown'}),
-        "humidity": "Unknown"
+        "temp": current_data.get("temp2m", {"max": "Unknown", "min": "Unknown"}),
+        "humidity": "Unknown",
     }
-    
+
     # Convert the dictionary to JSON string to match the given structure
     return json.dumps(result)
+
 
 def run_conversation(content):
     messages = [{"role": "user", "content": content}]
@@ -192,15 +209,14 @@ def run_conversation(content):
             )
 
         second_response = client.chat.completions.create(
-            model="gpt-3.5-turbo-0125",
-            messages=messages,
-            stream=True
+            model="gpt-3.5-turbo-0125", messages=messages, stream=True
         )
         return second_response
+
 
 if __name__ == "__main__":
     question = "What's the weather like in Paris and San Francisco?"
     response = run_conversation(question)
     for chunk in response:
-        print(chunk.choices[0].delta.content or "", end='', flush=True)
+        print(chunk.choices[0].delta.content or "", end="", flush=True)
 # Milestone 2

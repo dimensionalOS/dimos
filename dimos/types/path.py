@@ -134,7 +134,9 @@ class Path:
 
     def clear(self) -> None:
         """Remove all points from the path."""
-        self._points = np.zeros((0, self._points.shape[1] if len(self._points) > 0 else 0), dtype=float)
+        self._points = np.zeros(
+            (0, self._points.shape[1] if len(self._points) > 0 else 0), dtype=float
+        )
 
     def length(self) -> float:
         """Calculate the total length of the path.

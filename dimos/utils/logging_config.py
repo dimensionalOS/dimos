@@ -25,7 +25,9 @@ from typing import Optional
 logging.basicConfig(format="%(name)s - %(levelname)s - %(message)s")
 
 
-def setup_logger(name: str, level: Optional[int] = None, log_format: Optional[str] = None) -> logging.Logger:
+def setup_logger(
+    name: str, level: Optional[int] = None, log_format: Optional[str] = None
+) -> logging.Logger:
     """Set up a logger with color output.
 
     Args:

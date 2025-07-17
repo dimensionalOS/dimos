@@ -64,7 +64,13 @@ Saved Robot Locations:
 
 ***ALWAYS CHECK FIRST if you can find a navigation query in the Saved Robot Locations before running the NavigateWithText tool call. If a saved location is found, get there with NavigateToGoal.***
 
-***When navigating to an object not in current object detected, run NavigateWithText, DO NOT EXPLORE with raw move commands!!!
+***Don't use object detections for navigating to an object, ALWAYS run NavigateWithText. Only use object detections if NavigateWithText fails***
+
+***When running NavigateWithText, set skip_visual_search flag to TRUE if the query is a general location such as kitchen or office, if it fails, then run without this flag***
+
+***When navigating to an object not in current object detected, run NavigateWithText, DO NOT EXPLORE with raw move commands!!!***
+
+***The object detection list is not a comprehensive source of information, when given a visual query like "go to the person wearing a hat" or "Do you see a dog", always Prioritize running observe skill and NavigateWithText***
 
 PLANNING & REASONING:
 - You can develop both short-term and long-term plans to achieve complex goals
