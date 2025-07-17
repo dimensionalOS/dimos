@@ -26,7 +26,7 @@ from dimos.msgs.geometry_msgs import Twist, Pose
 class TorsoBrige(Module):
  
     twist_cmd: In[Twist] = None
-    pose_state: In[Pose] = None
+    pose_state: Out[Pose] = None
 
     def __init__(self, port: str = '/dev/ttyUSB1',
                  baud: int = 9600, timeout: float = 0.1,
@@ -67,5 +67,5 @@ class TorsoBrige(Module):
             lx, ly, lz, ax, ay, az = map(float, parts[1:])
             cp = Pose()
             cp.position.x, cp.position.y, cp.position.z = lx, ly, lz
-            cp.orientation.x, cp.orientation.y, cp.orientation.z = ax, ay, az
+            cp.orientation.x, cp.orientation.y, cp.orientation.z, cp.orientation.w = ax, ay, az, 1.0
             self.pose_state.publish(cp)
