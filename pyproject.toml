@@ -182,6 +182,7 @@ files = [
     "dimos/msgs/**/*.py",
     "dimos/protocol/**/*.py"
 ]
+addopts = "--disable-warnings"
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
