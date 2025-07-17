@@ -69,37 +69,12 @@ class Transform(LCMTransform):
     @dispatch
     def __init__(self, **kwargs):
         """Handle keyword arguments for LCM compatibility."""
-        if not kwargs:
-            # Empty kwargs means Transform() was called but no dispatch matched
-            self.translation = Vector3()
-            self.rotation = Quaternion()
-        elif "translation" in kwargs and "rotation" in kwargs:
-            self.translation = (
-                kwargs["translation"]
-                if isinstance(kwargs["translation"], Vector3)
-                else Vector3(kwargs["translation"])
-            )
-            self.rotation = (
-                kwargs["rotation"]
-                if isinstance(kwargs["rotation"], Quaternion)
-                else Quaternion(kwargs["rotation"])
-            )
-        elif "translation" in kwargs:
-            self.translation = (
-                kwargs["translation"]
-                if isinstance(kwargs["translation"], Vector3)
-                else Vector3(kwargs["translation"])
-            )
-            self.rotation = Quaternion()
-        elif "rotation" in kwargs:
-            self.translation = Vector3()
-            self.rotation = (
-                kwargs["rotation"]
-                if isinstance(kwargs["rotation"], Quaternion)
-                else Quaternion(kwargs["rotation"])
-            )
-        else:
-            raise TypeError(f"Invalid keyword arguments: {kwargs}")
+        # Get values with defaults and let dispatch handle type conversion
+        translation = kwargs.get("translation", Vector3())
+        rotation = kwargs.get("rotation", Quaternion())
+
+        # Call the appropriate positional init - dispatch will handle the types
+        self.__init__(translation, rotation)
 
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO):
