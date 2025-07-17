@@ -87,15 +87,6 @@ class AstarPlanner(Planner):
 
         print("current costmap", costmap)
 
-        # Check if goal is within costmap bounds
-        goal_grid = costmap.world_to_grid(goal)
-        print(f"Goal in grid coordinates: {goal_grid}")
-        print(f"Costmap dimensions: {costmap.width}x{costmap.height}")
-        print(f"Costmap origin: {costmap.origin}")
-
-        if not (0 <= goal_grid.x < costmap.width and 0 <= goal_grid.y < costmap.height):
-            print(f"WARNING: Goal {goal} is outside costmap bounds!")
-
         self.vis("target", goal)
 
         print("ASTAR ", costmap, goal, pos)
