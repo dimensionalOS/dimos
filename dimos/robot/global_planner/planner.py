@@ -38,6 +38,20 @@ class Planner(Visualizable, Module):
         Module.__init__(self)
         Visualizable.__init__(self)
 
+    @rpc
+    def set_goal(
+        self,
+        goal: VectorLike,
+        goal_theta: Optional[float] = None,
+        stop_event: Optional[threading.Event] = None,
+    ):
+        path = self.plan(goal)
+        if not path:
+            logger.warning("No path found to the goal.")
+            return False
+
+        print("pathing success", path)
+
 
 class AstarPlanner(Planner):
     target: In[Vector3] = None

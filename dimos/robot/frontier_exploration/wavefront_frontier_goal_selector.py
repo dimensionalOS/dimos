@@ -657,7 +657,9 @@ class WavefrontFrontierExplorer:
 
             # Navigate to the frontier
             logger.info(f"Navigating to frontier at {next_goal}")
-            navigation_successful = self.set_goal(next_goal, stop_event=stop_event)
+            navigation_successful = self.set_goal(
+                next_goal,
+            )
 
             if not navigation_successful:
                 logger.warning("Failed to navigate to frontier, continuing exploration")

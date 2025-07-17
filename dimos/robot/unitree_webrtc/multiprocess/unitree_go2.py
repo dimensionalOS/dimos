@@ -43,6 +43,28 @@ from dimos.types.vector import Vector
 from dimos.utils.data import get_data
 from dimos.utils.reactive import backpressure, getter_streaming
 from dimos.utils.testing import TimedSensorReplay
+from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
+    WavefrontFrontierExplorer,
+)
+
+import os
+import logging
+import warnings
+
+# Configure logging levels
+os.environ["DIMOS_LOG_LEVEL"] = "WARNING"
+
+# Suppress verbose loggers
+logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
+logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
+logging.getLogger("websockets.server").setLevel(logging.ERROR)
+logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
+logging.getLogger("asyncio").setLevel(logging.ERROR)
+logging.getLogger("root").setLevel(logging.WARNING)
+
+# Suppress warnings
+warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
+warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
 
 # can be swapped in for WebRTCRobot
@@ -85,7 +107,7 @@ class RealRTC(WebRTCRobot): ...
 
 
 # inherit RealRTC instead of FakeRTC to run the real robot
-class ConnectionModule(FakeRTC, Module):
+class ConnectionModule(RealRTC, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
@@ -187,6 +209,12 @@ async def run(ip):
 
     foxglove_bridge = FoxgloveBridge()
 
+    frontier_explorer = WavefrontFrontierExplorer(
+        set_goal=global_planner.set_goal,
+        get_costmap=mapper.costmap,
+        get_robot_pos=connection.get_pos,
+    )
+
     # we review the structure
     print("\n")
     for module in [connection, mapper, local_planner, global_planner, ctrl]:
@@ -213,6 +241,7 @@ async def run(ip):
     print(colors.red("READY"))
 
     await asyncio.sleep(2)
+    frontier_explorer.explore()
     print("querying system")
     print(mapper.costmap())
     while True:
