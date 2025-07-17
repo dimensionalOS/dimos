@@ -341,18 +341,36 @@ class UnitreeGo2Light:
         return self.mapper.costmap
 
     def get_video_stream(self, fps: int = 30) -> Observable:
-        """Get the video stream.
+        """Get the video stream with rate limiting and processing.
 
         Args:
-            fps: Frames per second (not used in LCM transport)
+            fps: Frames per second for rate limiting
 
         Returns:
             Observable stream of video frames
         """
-        if not self.connection:
-            raise RuntimeError("Connection not established. Call start() first.")
-        # Return the video stream from connection
-        return self.connection.video_stream()
+        # Import required modules for LCM subscription
+        from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+        from dimos.msgs.sensor_msgs import Image
+        from reactivex import create
+        from reactivex.disposable import Disposable
+
+        lcm_instance = LCM()
+        lcm_instance.start()
+
+        topic = Topic("/video", Image)
+
+        def subscribe(observer, scheduler=None):
+            unsubscribe_fn = lcm_instance.subscribe(topic, lambda msg, _: observer.on_next(msg))
+
+            return Disposable(unsubscribe_fn)
+
+        return create(subscribe).pipe(
+            ops.map(
+                lambda img: img.data if hasattr(img, "data") else img
+            ),  # Convert Image message to numpy array
+            ops.sample(1.0 / fps),
+        )
 
 
 if __name__ == "__main__":
