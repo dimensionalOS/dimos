@@ -38,19 +38,20 @@ class Planner(Visualizable, Module):
         Module.__init__(self)
         Visualizable.__init__(self)
 
-    # def set_goal(
-    #     self,
-    #     goal: VectorLike,
-    #     goal_theta: Optional[float] = None,
-    #     stop_event: Optional[threading.Event] = None,
-    # ):
-    #     path = self.plan(goal)
-    #     if not path:
-    #         logger.warning("No path found to the goal.")
-    #         return False
+    @rpc
+    def set_goal(
+        self,
+        goal: VectorLike,
+        goal_theta: Optional[float] = None,
+        stop_event: Optional[threading.Event] = None,
+    ):
+        path = self.plan(goal)
+        if not path:
+            logger.warning("No path found to the goal.")
+            return False
 
-    #     print("pathing success", path)
-    #     return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
+        print("pathing success", path)
+        return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
 
 
 class AstarPlanner(Planner):
@@ -59,6 +60,7 @@ class AstarPlanner(Planner):
 
     get_costmap: Callable[[], Costmap]
     get_robot_pos: Callable[[], Vector3]
+    set_local_nav: Callable[[Path, Optional[threading.Event], Optional[float]], bool]
 
     conservativism: int = 8
 
@@ -66,10 +68,12 @@ class AstarPlanner(Planner):
         self,
         get_costmap: Callable[[], Costmap],
         get_robot_pos: Callable[[], Vector3],
+        set_local_nav: Callable[[Path, Optional[threading.Event], Optional[float]], bool],
     ):
         super().__init__()
         self.get_costmap = get_costmap
         self.get_robot_pos = get_robot_pos
+        self.set_local_nav = set_local_nav
 
     @rpc
     def start(self):
@@ -80,9 +84,19 @@ class AstarPlanner(Planner):
         goal = to_vector(goal).to_2d()
         pos = self.get_robot_pos()
         print("current pos", pos)
-        costmap = self.get_costmap().smudge()
+        costmap = self.get_costmap()
 
         print("current costmap", costmap)
+
+        # Check if goal is within costmap bounds
+        goal_grid = costmap.world_to_grid(goal)
+        print(f"Goal in grid coordinates: {goal_grid}")
+        print(f"Costmap dimensions: {costmap.width}x{costmap.height}")
+        print(f"Costmap origin: {costmap.origin}")
+
+        if not (0 <= goal_grid.x < costmap.width and 0 <= goal_grid.y < costmap.height):
+            print(f"WARNING: Goal {goal} is outside costmap bounds!")
+
         self.vis("target", goal)
 
         print("ASTAR ", costmap, goal, pos)
