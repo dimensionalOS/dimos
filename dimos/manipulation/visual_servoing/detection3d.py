@@ -74,7 +74,7 @@ class Detection3DProcessor:
         self.detector = Sam2DSegmenter(
             use_tracker=False,
             use_analyzer=False,
-            use_filtering=False,
+            use_filtering=True,
             device="cuda" if cv2.cuda.getCudaEnabledDeviceCount() > 0 else "cpu",
         )
 

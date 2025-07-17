@@ -25,6 +25,7 @@ import cv2
 import numpy as np
 import sys
 import os
+import time
 
 import tests.test_header
 
@@ -59,7 +60,7 @@ def mouse_callback(event, x, y, flags, param):
         mouse_click = (x, y)
 
 
-def execute_grasp(arm, target_object, grasp_width_offset: float = 0.02) -> bool:
+def execute_grasp(arm, target_object, target_pose, grasp_width_offset: float = 0.02) -> bool:
     """
     Execute grasping by opening gripper to accommodate target object.
 
@@ -102,6 +103,8 @@ def execute_grasp(arm, target_object, grasp_width_offset: float = 0.02) -> bool:
     # Command gripper to open
     arm.cmd_gripper_ctrl(gripper_opening)
 
+    arm.cmd_ee_pose(target_pose, line_mode=True)
+
     return True
 
 
@@ -120,7 +123,10 @@ def main():
         print("  's' - SOFT STOP (emergency stop)")
         print("  'h' - GO HOME (return to safe position)")
         print("  'SPACE' - EXECUTE target pose (only moves when pressed)")
-        print("  'g' - EXECUTE GRASP (open gripper for target object)")
+        print("  'g' - RELEASE GRIPPER (open gripper to 100mm)")
+        print("GRASP PITCH CONTROLS:")
+        print("  '↑' - Increase grasp pitch by 15° (towards top-down)")
+        print("  '↓' - Decrease grasp pitch by 15° (towards level)")
 
     # Initialize hardware
     zed = ZEDCamera(resolution=sl.RESOLUTION.HD720, depth_mode=sl.DEPTH_MODE.NEURAL)
@@ -164,6 +170,10 @@ def main():
         grasp_distance=0.01,
         direct_ee_control=DIRECT_EE_CONTROL,
     )
+    
+    # Set custom grasp pitch (60 degrees - between level and top-down)
+    GRASP_PITCH_DEGREES = 0  # 0° = level grasp, 90° = top-down grasp
+    pbvs.set_grasp_pitch(GRASP_PITCH_DEGREES)
 
     # Setup window
     cv2.namedWindow("PBVS")
@@ -172,6 +182,10 @@ def main():
     # Control state for direct EE mode
     execute_target = False  # Only move when space is pressed
     last_valid_target = None
+    
+    # Rate limiting for pose execution
+    MIN_EXECUTION_PERIOD = 1.0  # Minimum seconds between pose executions
+    last_execution_time = 0
 
     try:
         while True:
@@ -210,14 +224,22 @@ def main():
             )
 
             # Apply commands to robot based on control mode
-            if DIRECT_EE_CONTROL and target_pose and execute_target:
-                # Direct EE pose control - only when space is pressed
-                print(
-                    f"🎯 EXECUTING target pose: pos=({target_pose.position.x:.3f}, {target_pose.position.y:.3f}, {target_pose.position.z:.3f})"
-                )
-                last_valid_target = pbvs.get_current_target()
-                arm.cmd_ee_pose(target_pose)
-                execute_target = False  # Reset flag after execution
+            if DIRECT_EE_CONTROL and target_pose:
+                # Check if enough time has passed since last execution
+                current_time = time.time()
+                if current_time - last_execution_time >= MIN_EXECUTION_PERIOD:
+                    # Direct EE pose control
+                    print(
+                        f"🎯 EXECUTING target pose: pos=({target_pose.position.x:.3f}, {target_pose.position.y:.3f}, {target_pose.position.z:.3f})"
+                    )
+                    last_valid_target = pbvs.get_current_target()
+                    if pbvs.grasp_stage == GraspStage.PRE_GRASP:
+                        arm.cmd_ee_pose(target_pose)
+                        last_execution_time = current_time
+                    elif pbvs.grasp_stage == GraspStage.GRASP and execute_target:
+                        execute_grasp(arm, last_valid_target, target_pose, grasp_width_offset=0.03)
+                        last_execution_time = current_time
+                    execute_target = False  # Reset flag after execution
             elif not DIRECT_EE_CONTROL and vel_cmd and ang_vel_cmd:
                 # Velocity control
                 arm.cmd_vel_ee(
@@ -274,7 +296,7 @@ def main():
 
                 cv2.putText(
                     viz_bgr,
-                    "s=STOP | h=HOME | SPACE=EXECUTE | g=GRASP",
+                    "s=STOP | h=HOME | SPACE=EXECUTE | g=RELEASE",
                     (10, 110),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.4,
@@ -304,26 +326,27 @@ def main():
                 if DIRECT_EE_CONTROL and target_pose:
                     execute_target = True
                     target_euler = quaternion_to_euler(target_pose.orientation, degrees=True)
+                    if pbvs.grasp_stage == GraspStage.PRE_GRASP:
+                        pbvs.set_grasp_stage(GraspStage.GRASP)
                     print("⚡ SPACE pressed - Target will execute on next frame!")
                     print(
                         f"📍 Target pose: pos=({target_pose.position.x:.3f}, {target_pose.position.y:.3f}, {target_pose.position.z:.3f}) "
                         f"rot=({target_euler.x:.1f}°, {target_euler.y:.1f}°, {target_euler.z:.1f}°)"
                     )
+            elif key == 82:  # Up arrow key (increase pitch)
+                current_pitch = pbvs.grasp_pitch_degrees
+                new_pitch = min(90.0, current_pitch + 15.0)
+                pbvs.set_grasp_pitch(new_pitch)
+                print(f"↑ Grasp pitch increased to {new_pitch:.0f}° (0°=level, 90°=top-down)")
+            elif key == 84:  # Down arrow key (decrease pitch)
+                current_pitch = pbvs.grasp_pitch_degrees
+                new_pitch = max(0.0, current_pitch - 15.0)
+                pbvs.set_grasp_pitch(new_pitch)
+                print(f"↓ Grasp pitch decreased to {new_pitch:.0f}° (0°=level, 90°=top-down)")
             elif key == ord("g"):
-                # G - Execute grasp (open gripper for target object)
-                current_target = pbvs.get_current_target()
-                if current_target:
-                    last_valid_target = current_target
-                if last_valid_target:
-                    print("🤏 GRASP - Opening gripper for target object...")
-                    pbvs.set_grasp_stage(GraspStage.GRASP)
-                    success = execute_grasp(arm, last_valid_target, grasp_width_offset=0.03)
-                    if success:
-                        print("✅ Gripper opened successfully")
-                    else:
-                        print("❌ Failed to execute grasp")
-                else:
-                    print("❌ No target selected for grasping")
+                # G - Release gripper (open to 100mm)
+                print("🖐️ RELEASE - Opening gripper to 100mm...")
+                arm.release_gripper()
 
     except KeyboardInterrupt:
         pass

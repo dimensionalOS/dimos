@@ -28,6 +28,7 @@ from dimos.types.manipulation import ObjectData
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import (
     yaw_towards_point,
+    pose_to_matrix,
     euler_to_quaternion,
 )
 from dimos.manipulation.visual_servoing.utils import find_best_object_match
@@ -105,6 +106,7 @@ class PBVS:
         self.pregrasp_distance = pregrasp_distance
         self.grasp_distance = grasp_distance
         self.direct_ee_control = direct_ee_control
+        self.grasp_pitch_degrees = 45.0  # Default grasp pitch in degrees (45° between level and top-down)
 
         # Target state
         self.current_target = None
@@ -167,6 +169,21 @@ class PBVS:
             stage: The new grasp stage
         """
         self.grasp_stage = stage
+
+    def set_grasp_pitch(self, pitch_degrees: float):
+        """
+        Set the grasp pitch angle in degrees.
+        
+        Args:
+            pitch_degrees: Grasp pitch angle in degrees (0-90)
+                          0° = level grasp (horizontal)
+                          90° = top-down grasp (vertical)
+        """
+        # Clamp to valid range
+        pitch_degrees = max(0.0, min(90.0, pitch_degrees))
+        self.grasp_pitch_degrees = pitch_degrees
+        # Reset target grasp pose to recompute with new pitch
+        self.target_grasp_pose = None
 
     def is_target_reached(self, ee_pose: Pose) -> bool:
         """
@@ -265,8 +282,12 @@ class PBVS:
         )
 
         # Create target pose with proper orientation
+        # Convert grasp pitch from degrees to radians with mapping:
+        # 0° (level) -> π/2 (1.57 rad), 90° (top-down) -> π (3.14 rad)
+        pitch_radians = 1.57 + (self.grasp_pitch_degrees * np.pi / 180.0 / 2.0)
+        
         # Convert euler angles to quaternion using utility function
-        euler = Vector3(0.0, 1.57, yaw_to_ee)  # roll=0, pitch=90deg, yaw=calculated
+        euler = Vector3(0.0, pitch_radians, yaw_to_ee)  # roll=0, pitch=mapped, yaw=calculated
         target_orientation = euler_to_quaternion(euler)
 
         target_pose = Pose(target_pos, target_orientation)
@@ -277,44 +298,39 @@ class PBVS:
             if self.grasp_stage == GraspStage.PRE_GRASP
             else self.grasp_distance
         )
-        self.target_grasp_pose = self._apply_grasp_distance(target_pose, ee_pose, distance)
+        self.target_grasp_pose = self._apply_grasp_distance(target_pose, distance)
 
-    def _apply_grasp_distance(self, target_pose: Pose, ee_pose: Pose, distance: float) -> Pose:
+    def _apply_grasp_distance(self, target_pose: Pose, distance: float) -> Pose:
         """
-        Apply appropriate grasp distance to target pose based on current stage.
+        Apply grasp distance offset to target pose along its approach direction.
 
         Args:
-            target_pose: Target pose
-            ee_pose: Current end-effector pose
+            target_pose: Target grasp pose
+            distance: Distance to offset along the approach direction (meters)
 
         Returns:
-            Modified target pose with appropriate distance applied
+            Target pose offset by the specified distance along its approach direction
         """
-        # Get approach vector (from target position towards EE)
-        target_pos = np.array(
-            [target_pose.position.x, target_pose.position.y, target_pose.position.z]
+        # Convert pose to transformation matrix to extract rotation
+        T_target = pose_to_matrix(target_pose)
+        rotation_matrix = T_target[:3, :3]
+        
+        # Define the approach vector based on the target pose orientation
+        # Assuming the gripper approaches along its local -z axis (common for downward grasps)
+        # You can change this to [1, 0, 0] for x-axis or [0, 1, 0] for y-axis based on your gripper
+        approach_vector_local = np.array([0, 0, -1])
+        
+        # Transform approach vector to world coordinates
+        approach_vector_world = rotation_matrix @ approach_vector_local
+        
+        # Apply offset along the approach direction
+        offset_position = Vector3(
+            target_pose.position.x + distance * approach_vector_world[0],
+            target_pose.position.y + distance * approach_vector_world[1],
+            target_pose.position.z + distance * approach_vector_world[2],
         )
-        ee_pos = np.array([ee_pose.position.x, ee_pose.position.y, ee_pose.position.z])
-        approach_vector = ee_pos - target_pos  # Vector pointing towards EE
-
-        # Normalize approach vector
-        approach_magnitude = np.linalg.norm(approach_vector)
-        if approach_magnitude > 1e-6:  # Avoid division by zero
-            norm_approach_vector = approach_vector / approach_magnitude
-        else:
-            norm_approach_vector = np.array([0.0, 0.0, 0.0])
-
-        # Move back by appropriate distance towards EE based on stage
-        offset_vector = distance * norm_approach_vector
-
-        # Apply offset to target position
-        new_position = Vector3(
-            target_pose.position.x + offset_vector[0],
-            target_pose.position.y + offset_vector[1],
-            target_pose.position.z + offset_vector[2],
-        )
-
-        return Pose(new_position, target_pose.orientation)
+        
+        return Pose(offset_position, target_pose.orientation)
 
     def compute_control(
         self, ee_pose: Pose, new_detections: Optional[List[ObjectData]] = None
