@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TypeVar, Union, Sequence
+import math
+from typing import Sequence, TypeVar, Union
+
 import numpy as np
 from plum import dispatch
-import math
 
-from dimos.types.vector import Vector, to_vector, to_numpy, VectorLike
-
+from dimos.types.vector import Vector, VectorLike, to_numpy, to_vector
 
 T = TypeVar("T", bound="Pose")
 
@@ -31,7 +31,7 @@ def yaw_to_matrix(yaw: float) -> np.ndarray:
     return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
 
 
-class Pose(Vector):
+class Posex(Vector):
     """A pose in 3D space, consisting of a position vector and a rotation vector.
 
     Pose inherits from Vector and behaves like a vector for the position component.
@@ -140,7 +140,7 @@ def to_pose(pos: Pose) -> Pose:
 
 
 @dispatch
-def to_pose(pos: VectorLike) -> Pose:
+def to_pose(pos: VectorLike | Vector3) -> Pose:
     return Pose(pos)
 
 
