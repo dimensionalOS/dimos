@@ -271,59 +271,59 @@ def transform_robot_to_map(
 def create_transform_from_6dof(translation: Vector3, euler_angles: Vector3) -> np.ndarray:
     """
     Create a 4x4 transformation matrix from 6DOF parameters.
-    
+
     Args:
         translation: Translation vector [x, y, z] in meters
         euler_angles: Euler angles [rx, ry, rz] in radians (XYZ convention)
-        
+
     Returns:
         4x4 transformation matrix
     """
     # Create transformation matrix
     T = np.eye(4)
-    
+
     # Set translation
     T[0:3, 3] = [translation.x, translation.y, translation.z]
-    
+
     # Set rotation using scipy
     if np.linalg.norm([euler_angles.x, euler_angles.y, euler_angles.z]) > 1e-6:
-        rotation = R.from_euler('xyz', [euler_angles.x, euler_angles.y, euler_angles.z])
+        rotation = R.from_euler("xyz", [euler_angles.x, euler_angles.y, euler_angles.z])
         T[0:3, 0:3] = rotation.as_matrix()
-    
+
     return T
 
 
 def invert_transform(T: np.ndarray) -> np.ndarray:
     """
     Invert a 4x4 transformation matrix efficiently.
-    
+
     Args:
         T: 4x4 transformation matrix
-        
+
     Returns:
         Inverted 4x4 transformation matrix
     """
     # For homogeneous transform matrices, we can use the special structure:
     # [R t]^-1 = [R^T -R^T*t]
     # [0 1]      [0    1    ]
-    
+
     Rot = T[:3, :3]
     t = T[:3, 3]
-    
+
     T_inv = np.eye(4)
     T_inv[:3, :3] = Rot.T
     T_inv[:3, 3] = -Rot.T @ t
-    
+
     return T_inv
 
 
 def compose_transforms(*transforms: np.ndarray) -> np.ndarray:
     """
     Compose multiple transformation matrices.
-    
+
     Args:
         *transforms: Variable number of 4x4 transformation matrices
-        
+
     Returns:
         Composed 4x4 transformation matrix (T1 @ T2 @ ... @ Tn)
     """
@@ -336,14 +336,16 @@ def compose_transforms(*transforms: np.ndarray) -> np.ndarray:
 def euler_to_quaternion(euler_angles: Vector3, degrees: bool = False) -> Quaternion:
     """
     Convert euler angles to quaternion.
-    
+
     Args:
         euler_angles: Euler angles as Vector3 [roll, pitch, yaw] in radians (XYZ convention)
-        
+
     Returns:
         Quaternion object [x, y, z, w]
     """
-    rotation = R.from_euler('xyz', [euler_angles.x, euler_angles.y, euler_angles.z], degrees=degrees)
+    rotation = R.from_euler(
+        "xyz", [euler_angles.x, euler_angles.y, euler_angles.z], degrees=degrees
+    )
     quat = rotation.as_quat()  # Returns [x, y, z, w]
     return Quaternion(quat[0], quat[1], quat[2], quat[3])
 
@@ -351,17 +353,19 @@ def euler_to_quaternion(euler_angles: Vector3, degrees: bool = False) -> Quatern
 def quaternion_to_euler(quaternion: Quaternion, degrees: bool = False) -> Vector3:
     """
     Convert quaternion to euler angles.
-    
+
     Args:
         quaternion: Quaternion object [x, y, z, w]
-        
+
     Returns:
         Euler angles as Vector3 [roll, pitch, yaw] in radians (XYZ convention)
     """
     quat = [quaternion.x, quaternion.y, quaternion.z, quaternion.w]
     rotation = R.from_quat(quat)
-    euler = rotation.as_euler('xyz', degrees=degrees)  # Returns [roll, pitch, yaw]
+    euler = rotation.as_euler("xyz", degrees=degrees)  # Returns [roll, pitch, yaw]
     if not degrees:
-        return Vector3(normalize_angle(euler[0]), normalize_angle(euler[1]), normalize_angle(euler[2]))
+        return Vector3(
+            normalize_angle(euler[0]), normalize_angle(euler[1]), normalize_angle(euler[2])
+        )
     else:
         return Vector3(euler[0], euler[1], euler[2])
