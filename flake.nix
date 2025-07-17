@@ -21,7 +21,7 @@
 
           ### Python + static analysis
           python312 python312Packages.pip python312Packages.setuptools
-          python312Packages.virtualenv ruff mypy pre-commit
+          python312Packages.virtualenv pre-commit
 
           ### Runtime deps
           python312Packages.pyaudio portaudio ffmpeg_6 ffmpeg_6.dev

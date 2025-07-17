@@ -146,7 +146,6 @@ async def run(ip):
 
     # This enables LCM transport
     # Ensures system multicast, udp sizes are auto-adjusted if needed
-    # TODO: this doesn't seem to work atm and LCMTransport instantiation can fail
     pubsub.lcm.autoconf()
 
     connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
@@ -171,11 +170,10 @@ async def run(ip):
     global_planner.path.transport = core.pLCMTransport("/global_path")
 
     local_planner.path.connect(global_planner.path)
-
     local_planner.odom.connect(connection.odom)
 
     local_planner.movecmd.transport = core.LCMTransport("/move", Vector3)
-    local_planner.movecmd.connect(connection.movecmd)
+    connection.movecmd.connect(local_planner.movecmd)
 
     ctrl = dimos.deploy(ControlModule)
 
@@ -207,13 +205,12 @@ async def run(ip):
     print(colors.green("starting foxglove bridge"))
     foxglove_bridge.start()
 
-    # uncomment to move the bot
     print(colors.green("starting ctrl"))
     ctrl.start()
 
     print(colors.red("READY"))
 
-    await asyncio.sleep(10)
+    await asyncio.sleep(2)
     print("querying system")
     print(mapper.costmap())
     while True:
