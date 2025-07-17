@@ -30,6 +30,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
 PoseConvertable: TypeAlias = (
     tuple[VectorConvertable, QuaternionConvertable]
     | LCMPose
+    | Vector3
     | dict[str, VectorConvertable | QuaternionConvertable]
 )
 

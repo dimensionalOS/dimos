@@ -18,7 +18,7 @@ from collections import deque
 from typing import Optional, Tuple
 
 from dimos.msgs.geometry_msgs import Vector3 as Vector
-from dimos.msgs.geometry_msgs.Vector3 import VectorLike
+from dimos.msgs.geometry_msgs import VectorLike
 from dimos.types.costmap import Costmap
 from dimos.types.path import Path
 from dimos.utils.logging_config import setup_logger

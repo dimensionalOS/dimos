@@ -24,10 +24,9 @@ from reactivex import operators as ops
 from dimos.core import In, Module, Out, rpc
 
 # from dimos.robot.local_planner.local_planner import LocalPlanner
-from dimos.msgs.geometry_msgs import Pose, PoseLike, PoseStamped, Vector3, to_pose
+from dimos.msgs.geometry_msgs import Pose, PoseLike, PoseStamped, Vector3, VectorLike, to_pose
 from dimos.types.costmap import Costmap
 from dimos.types.path import Path
-from dimos.types.vector import Vector, VectorLike, to_vector
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import get_scheduler
 
@@ -35,9 +34,7 @@ logger = setup_logger("dimos.robot.unitree.local_planner")
 
 
 def transform_to_robot_frame(global_vector: Vector3, global_robot_position: PoseStamped) -> Vector3:
-    goal = to_pose(global_vector)
-
-    return Vector3(0, 0, 0)
+    return global_robot_position.find_transform(global_vector).translation
 
 
 class SimplePlanner(Module):
@@ -74,7 +71,7 @@ class SimplePlanner(Module):
             ops.filter(lambda result: result is not None),
         )
 
-    def _safe_transform_goal(self) -> Optional[Vector]:
+    def _safe_transform_goal(self) -> Optional[Vector3]:
         """Safely transform goal to robot frame with error handling."""
         try:
             if self.goal is None or self.latest_odom is None:
@@ -121,7 +118,7 @@ class SimplePlanner(Module):
         logger.info(f"Setting goal: {self.goal}")
         return True
 
-    def calc_move(self, direction: Vector) -> Optional[Vector]:
+    def calc_move(self, direction: Vector3) -> Optional[Vector3]:
         """Calculate the movement vector based on the direction to the goal.
 
         Args:
@@ -179,7 +176,7 @@ class SimplePlanner(Module):
 
         return ops.map(freq_spy_fun)
 
-    def _test_translational_movement(self) -> Vector:
+    def _test_translational_movement(self) -> Vector3:
         """Test translational movement by alternating left and right movement.
 
         Returns:
@@ -192,11 +189,11 @@ class SimplePlanner(Module):
 
         if phase < 0.5:
             # First half: move LEFT (positive X according to our documentation)
-            movement = Vector(0.2, 0, 0)  # Move left at 0.2 m/s
+            movement = Vector3(0.2, 0, 0)  # Move left at 0.2 m/s
             direction = "LEFT (positive X)"
         else:
             # Second half: move RIGHT (negative X according to our documentation)
-            movement = Vector(-0.2, 0, 0)  # Move right at 0.2 m/s
+            movement = Vector3(-0.2, 0, 0)  # Move right at 0.2 m/s
             direction = "RIGHT (negative X)"
 
         print("=== LEFT-RIGHT MOVEMENT TEST ===")
@@ -206,7 +203,7 @@ class SimplePlanner(Module):
         print("===================================")
         return movement
 
-    def _calculate_rotation_to_target(self, direction_to_goal: Vector) -> Vector:
+    def _calculate_rotation_to_target(self, direction_to_goal: Vector3) -> Vector3:
         """Calculate the rotation needed for the robot to face the target.
 
         Args:
@@ -217,7 +214,7 @@ class SimplePlanner(Module):
         """
         if self.latest_odom is None:
             logger.warning("No odometry data available for rotation calculation")
-            return Vector(0, 0, 0)
+            return Vector3(0, 0, 0)
 
         # Calculate the desired yaw angle to face the target
         desired_yaw = math.atan2(direction_to_goal.y, direction_to_goal.x)
@@ -261,7 +258,7 @@ class SimplePlanner(Module):
         # Try flipping the sign in case the rotation convention is opposite
         return Vector3(0, 0, -angular_velocity)
 
-    def _debug_direction(self, name: str, direction: Vector) -> Vector:
+    def _debug_direction(self, name: str, direction: Vector3) -> Vector3:
         """Debug helper to log direction information"""
         robot_pos = self.latest_odom
         if robot_pos is None:
@@ -273,7 +270,7 @@ class SimplePlanner(Module):
         )
         return direction
 
-    def _debug_robot_command(self, robot_cmd: Vector) -> Vector:
+    def _debug_robot_command(self, robot_cmd: Vector3) -> Vector3:
         """Debug helper to log robot command information"""
         print(
             f"DEBUG robot_command: x={robot_cmd.x:.3f}, y={robot_cmd.y:.3f} (forward/backward, left/right)"
