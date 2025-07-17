@@ -167,6 +167,9 @@ class Pose(LCMPose):
             return False
         return self.position == other.position and self.orientation == other.orientation
 
+    def __matmul__(self, transform: LCMTransform) -> Pose:
+        return self + transform
+
     def __add__(self, other: "Pose" | PoseConvertable | LCMTransform) -> "Pose":
         """Compose two poses or apply a transform (transform composition).
 

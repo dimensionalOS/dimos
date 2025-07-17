@@ -28,7 +28,7 @@ def test_pose_add_transform():
         rotation=Quaternion(0.0, 0.0, np.sin(angle / 2), np.cos(angle / 2)),
     )
 
-    transformed_pose = initial_pose + transform
+    transformed_pose = initial_pose @ transform
 
     # - Translation (2, 1, 0) is added directly to position (1, 0, 0)
     # - Result position: (3, 1, 0)
@@ -62,8 +62,8 @@ def test_pose_add_transform_with_rotation():
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # No rotation
     )
 
-    transformed_pose1 = initial_pose + transform1
-    transformed_pose2 = initial_pose + transform1 + transform2
+    transformed_pose1 = initial_pose @ transform1
+    transformed_pose2 = initial_pose @ transform1 @ transform2
 
     # Test transformed_pose1: initial_pose + transform1
     # Since the pose is rotated 90° (facing +Y), moving forward (local X)
