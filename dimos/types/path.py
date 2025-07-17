@@ -11,9 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
+from typing import Iterator, List, Tuple, TypeVar, Union
 
 import numpy as np
-from typing import List, Union, Tuple, Iterator, TypeVar
+from dimos_lcm.nav_msgs import Path as LCMPPath
+
+from dimos.msgs.geometry_msgs import Vector3
 from dimos.types.vector import Vector
 
 T = TypeVar("T", bound="Path")
@@ -22,18 +27,30 @@ T = TypeVar("T", bound="Path")
 class Path:
     """A class representing a path as a sequence of points."""
 
+    msg_name = "nav_msgs.Path"
+
+    def lcm_encode(self) -> bytes:
+        """Encode the path to a bytes representation for LCM."""
+        for point in self:
+            print(point)
+
+        lcmpath = LCMPPath()
+        lcmpath.header.frame_id = "map"
+        lcmpath.header.stamp = 0  # Placeholder for timestamp
+        # Convert points to LCM format
+
     def __init__(
         self,
-        points: Union[List[Vector], List[np.ndarray], List[Tuple], np.ndarray, None] = None,
+        points: Union[List[Vector3], List[np.ndarray], List[Tuple], np.ndarray, None] = None,
     ):
         """Initialize a path from a list of points.
 
         Args:
-            points: List of Vector objects, numpy arrays, tuples, or a 2D numpy array where each row is a point.
+            points: List of Vector3 objects, numpy arrays, tuples, or a 2D numpy array where each row is a point.
                    If None, creates an empty path.
 
         Examples:
-            Path([Vector(1, 2), Vector(3, 4)])  # from Vector objects
+            Path([Vector3(1, 2), Vector(3, 4)])  # from Vector objects
             Path([(1, 2), (3, 4)])              # from tuples
             Path(np.array([[1, 2], [3, 4]]))    # from 2D numpy array
         """
@@ -48,14 +65,14 @@ class Path:
             # Convert various input types to numpy array
             converted = []
             for p in points:
-                if isinstance(p, Vector):
+                if isinstance(p, Vector3) or isinstance(p, Vector):
                     converted.append(p.data)
                 else:
                     converted.append(p)
             self._points = np.array(converted, dtype=float)
 
-    def serialize(self) -> Tuple:
-        """Serialize the vector to a tuple."""
+    def serialize(self) -> dict:
+        """Serialize the path to a dictionary."""
         return {
             "type": "path",
             "points": self._points.tolist(),
@@ -66,17 +83,17 @@ class Path:
         """Get the path points as a numpy array."""
         return self._points
 
-    def as_vectors(self) -> List[Vector]:
-        """Get the path points as Vector objects."""
-        return [Vector(p) for p in self._points]
+    def as_vectors(self) -> List[Vector3]:
+        """Get the path points as Vector3 objects."""
+        return [Vector3(p) for p in self._points]
 
-    def append(self, point: Union[Vector, np.ndarray, Tuple]) -> None:
+    def append(self, point: Union[Vector3, np.ndarray, Tuple]) -> None:
         """Append a point to the path.
 
         Args:
-            point: A Vector, numpy array, or tuple representing a point
+            point: A Vector3, numpy array, or tuple representing a point
         """
-        if isinstance(point, Vector):
+        if isinstance(point, Vector3):
             point_data = point.data
         else:
             point_data = np.array(point, dtype=float)
@@ -87,7 +104,7 @@ class Path:
         else:
             self._points = np.vstack((self._points, point_data))
 
-    def extend(self, points: Union[List[Vector], List[np.ndarray], List[Tuple], "Path"]) -> None:
+    def extend(self, points: Union[List[Vector3], List[np.ndarray], List[Tuple], "Path"]) -> None:
         """Extend the path with more points.
 
         Args:
@@ -102,14 +119,14 @@ class Path:
             for point in points:
                 self.append(point)
 
-    def insert(self, index: int, point: Union[Vector, np.ndarray, Tuple]) -> None:
+    def insert(self, index: int, point: Union[Vector3, np.ndarray, Tuple]) -> None:
         """Insert a point at a specific index.
 
         Args:
             index: The index at which to insert the point
-            point: A Vector, numpy array, or tuple representing a point
+            point: A Vector3, numpy array, or tuple representing a point
         """
-        if isinstance(point, Vector):
+        if isinstance(point, Vector3):
             point_data = point.data
         else:
             point_data = np.array(point, dtype=float)
@@ -295,7 +312,7 @@ class Path:
 
         return self.__class__(smoothed_points)
 
-    def nearest_point_index(self, point: Union[Vector, np.ndarray, Tuple]) -> int:
+    def nearest_point_index(self, point: Union[Vector3, np.ndarray, Tuple]) -> int:
         """Find the index of the closest point on the path to the given point.
 
         Args:
@@ -307,7 +324,7 @@ class Path:
         if len(self._points) == 0:
             raise ValueError("Cannot find nearest point in an empty path")
 
-        if isinstance(point, Vector):
+        if isinstance(point, Vector3):
             point_data = point.data
         else:
             point_data = np.array(point, dtype=float)
@@ -331,36 +348,41 @@ class Path:
         """Return the number of points in the path."""
         return len(self._points)
 
-    def __getitem__(self, idx) -> Union[np.ndarray, "Path"]:
+    def __getitem__(self, idx) -> Union[np.ndarray, Path]:
         """Get a point or slice of points from the path."""
         if isinstance(idx, slice):
             return self.__class__(self._points[idx])
         return self._points[idx].copy()
 
-    def get_vector(self, idx: int) -> Vector:
-        """Get a point at the given index as a Vector object."""
-        return Vector(self._points[idx])
+    def get_vector(self, idx: int) -> Vector3:
+        """Get a point at the given index as a Vector3 object."""
+        return Vector3(self._points[idx])
 
-    def last(self) -> Vector:
-        """Get the first point in the path as a Vector object."""
+    def last(self) -> Vector3:
+        """Get the last point in the path as a Vector3 object."""
         if len(self._points) == 0:
             return None
-        return Vector(self._points[-1])
+        return Vector3(self._points[-1])
 
-    def head(self) -> Vector:
-        """Get the first point in the path as a Vector object."""
+    def head(self) -> Vector3:
+        """Get the first point in the path as a Vector3 object."""
         if len(self._points) == 0:
             return None
-        return Vector(self._points[0])
+        return Vector3(self._points[0])
 
-    def tail(self) -> "Path":
+    def tail(self) -> Path:
         """Get all points except the first point as a new Path object."""
         if len(self._points) <= 1:
             return None
         return self.__class__(self._points[1:].copy())
 
-    def __iter__(self) -> Iterator[np.ndarray]:
+    def vectors(self) -> Iterator[Vector3]:
         """Iterate over the points in the path."""
+        for point in self._points:
+            yield Vector3(*point)
+
+    def __iter__(self) -> Iterator[np.ndarray]:
+        """Iterate over the points in the path as numpy arrays."""
         for point in self._points:
             yield point.copy()
 
@@ -368,9 +390,9 @@ class Path:
         """String representation of the path."""
         return f"↶ Path ({len(self._points)} Points)"
 
-    def ipush(self, point: Union[Vector, np.ndarray, Tuple]) -> "Path":
+    def ipush(self, point: Union[Vector3, np.ndarray, Tuple]) -> "Path":
         """Return a new Path with `point` appended."""
-        if isinstance(point, Vector):
+        if isinstance(point, Vector3):
             p = point.data
         else:
             p = np.asarray(point, dtype=float)
@@ -387,28 +409,11 @@ class Path:
             raise ValueError("max_len must be ≥ 0")
         return self.__class__(self._points[-max_len:])
 
-    def __add__(self, point):
-        """path + vec  ->  path.pushed(vec)"""
-        return self.pushed(point)
-
-
-if __name__ == "__main__":
-    # Test vectors in various directions
-    print(
-        Path(
-            [
-                Vector(1, 0),  # Right
-                Vector(1, 1),  # Up-Right
-                Vector(0, 1),  # Up
-                Vector(-1, 1),  # Up-Left
-                Vector(-1, 0),  # Left
-                Vector(-1, -1),  # Down-Left
-                Vector(0, -1),  # Down
-                Vector(1, -1),  # Down-Right
-                Vector(0.5, 0.5),  # Up-Right (shorter)
-                Vector(-3, 4),  # Up-Left (longer)
-            ]
-        )
-    )
-
-    print(Path())
+    def __add__(self, other):
+        """path + point  ->  path.ipush(point) or path + path -> path.extend(path)"""
+        if isinstance(other, Path):
+            new_path = Path(self._points.copy())
+            new_path.extend(other)
+            return new_path
+        else:
+            return self.ipush(other)

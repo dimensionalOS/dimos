@@ -27,7 +27,7 @@ from reactivex.scheduler import ThreadPoolScheduler
 import dimos.core.colors as colors
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
 from dimos.robot.foxglove_bridge import FoxgloveBridge
@@ -127,14 +127,14 @@ class ConnectionModule(FakeRTC, Module):
 
 
 class ControlModule(Module):
-    plancmd: Out[Vector3] = None
+    plancmd: Out[Pose] = None
 
     @rpc
     def start(self):
         def plancmd():
             time.sleep(4)
             print(colors.red("requesting global plan"))
-            self.plancmd.publish(Vector3(0, 0, 0))
+            self.plancmd.publish(Pose(0, 0, 0, 0, 0, 0, 1))
 
         thread = threading.Thread(target=plancmd, daemon=True)
         thread.start()
@@ -146,7 +146,6 @@ async def run(ip):
 
     # This enables LCM transport
     # Ensures system multicast, udp sizes are auto-adjusted if needed
-    # TODO: this doesn't seem to work atm and LCMTransport instantiation can fail
     pubsub.lcm.autoconf()
 
     connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
@@ -171,17 +170,16 @@ async def run(ip):
     global_planner.path.transport = core.pLCMTransport("/global_path")
 
     local_planner.path.connect(global_planner.path)
-
     local_planner.odom.connect(connection.odom)
 
     local_planner.movecmd.transport = core.LCMTransport("/move", Vector3)
-    local_planner.movecmd.connect(connection.movecmd)
+    connection.movecmd.connect(local_planner.movecmd)
 
     ctrl = dimos.deploy(ControlModule)
 
     mapper.lidar.connect(connection.lidar)
 
-    ctrl.plancmd.transport = core.LCMTransport("/global_target", Vector3)
+    ctrl.plancmd.transport = core.LCMTransport("/global_target", Pose)
 
     global_planner.target.connect(ctrl.plancmd)
 
@@ -207,13 +205,12 @@ async def run(ip):
     print(colors.green("starting foxglove bridge"))
     foxglove_bridge.start()
 
-    # uncomment to move the bot
     print(colors.green("starting ctrl"))
     ctrl.start()
 
     print(colors.red("READY"))
 
-    await asyncio.sleep(10)
+    await asyncio.sleep(2)
     print("querying system")
     print(mapper.costmap())
     while True:

@@ -74,3 +74,9 @@ class PoseStamped(Pose, Timestamped):
                 lcm_msg.pose.orientation.w,
             ],  # noqa: E501,
         )
+
+    def __str__(self) -> str:
+        return (
+            f"PoseStamped(pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}], "
+            f"euler=[{self.roll:.3f}, {self.pitch:.3f}, {self.yaw:.3f}])"
+        )

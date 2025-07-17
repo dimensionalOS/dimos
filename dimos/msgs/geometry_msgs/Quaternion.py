@@ -165,3 +165,73 @@ class Quaternion(LCMQuaternion):
         if not isinstance(other, Quaternion):
             return False
         return self.x == other.x and self.y == other.y and self.z == other.z and self.w == other.w
+
+    def __mul__(self, other: "Quaternion") -> "Quaternion":
+        """Multiply two quaternions (Hamilton product).
+
+        The result represents the composition of rotations:
+        q1 * q2 represents rotating by q2 first, then by q1.
+        """
+        if not isinstance(other, Quaternion):
+            raise TypeError(f"Cannot multiply Quaternion with {type(other)}")
+
+        # Hamilton product formula
+        w = self.w * other.w - self.x * other.x - self.y * other.y - self.z * other.z
+        x = self.w * other.x + self.x * other.w + self.y * other.z - self.z * other.y
+        y = self.w * other.y - self.x * other.z + self.y * other.w + self.z * other.x
+        z = self.w * other.z + self.x * other.y - self.y * other.x + self.z * other.w
+
+        return Quaternion(x, y, z, w)
+
+    def conjugate(self) -> Quaternion:
+        """Return the conjugate of the quaternion.
+
+        For unit quaternions, the conjugate represents the inverse rotation.
+        """
+        return Quaternion(-self.x, -self.y, -self.z, self.w)
+
+    def inverse(self) -> Quaternion:
+        """Return the inverse of the quaternion.
+
+        For unit quaternions, this is equivalent to the conjugate.
+        For non-unit quaternions, this is conjugate / norm^2.
+        """
+        norm_sq = self.x**2 + self.y**2 + self.z**2 + self.w**2
+        if norm_sq == 0:
+            raise ZeroDivisionError("Cannot invert zero quaternion")
+
+        # For unit quaternions (norm_sq ≈ 1), this simplifies to conjugate
+        if np.isclose(norm_sq, 1.0):
+            return self.conjugate()
+
+        # For non-unit quaternions
+        conj = self.conjugate()
+        return Quaternion(conj.x / norm_sq, conj.y / norm_sq, conj.z / norm_sq, conj.w / norm_sq)
+
+    def normalize(self) -> Quaternion:
+        """Return a normalized (unit) quaternion."""
+        norm = np.sqrt(self.x**2 + self.y**2 + self.z**2 + self.w**2)
+        if norm == 0:
+            raise ZeroDivisionError("Cannot normalize zero quaternion")
+        return Quaternion(self.x / norm, self.y / norm, self.z / norm, self.w / norm)
+
+    def rotate_vector(self, vector: Vector3) -> Vector3:
+        """Rotate a 3D vector by this quaternion.
+
+        Args:
+            vector: The vector to rotate
+
+        Returns:
+            The rotated vector
+        """
+        # For unit quaternions, conjugate equals inverse, so we use conjugate for efficiency
+        # The rotation formula is: q * v * q^* where q^* is the conjugate
+
+        # Convert vector to pure quaternion (w=0)
+        v_quat = Quaternion(vector.x, vector.y, vector.z, 0)
+
+        # Apply rotation: q * v * q^* (conjugate for unit quaternions)
+        rotated = self * v_quat * self.conjugate()
+
+        # Extract vector components
+        return Vector3(rotated.x, rotated.y, rotated.z)

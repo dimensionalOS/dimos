@@ -1,6 +1,6 @@
 {
   "name": "dimos-dev",
-  "image": "ghcr.io/dimensionalos/ros-dev:dev",
+  "image": "ghcr.io/dimensionalos/dev:dev",
   "customizations": {
     "vscode": {
       "extensions": [

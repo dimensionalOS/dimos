@@ -14,66 +14,52 @@
 
 import math
 import time
-from dataclasses import dataclass
-from typing import Any, Callable, Optional
+import traceback
+from typing import Callable, Optional
 
 import reactivex as rx
+from dimos_lcm.geometry_msgs import Twist
 from plum import dispatch
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
-from dimos.robot.unitree_webrtc.type.odometry import Odometry
 
 # from dimos.robot.local_planner.local_planner import LocalPlanner
+from dimos.msgs.geometry_msgs import Pose, PoseLike, PoseStamped, Vector3, VectorLike, to_pose
 from dimos.types.costmap import Costmap
 from dimos.types.path import Path
-from dimos.types.pose import Pose
-from dimos.types.vector import Vector, VectorLike, to_vector
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import get_scheduler
 
-logger = setup_logger("dimos.robot.unitree.global_planner")
+logger = setup_logger("dimos.robot.unitree.local_planner")
 
 
-def transform_to_robot_frame(global_vector: Vector, robot_position: Pose) -> Vector:
-    """Transform a global coordinate vector to robot-relative coordinates.
+def vector_to_twist(vector: Vector3) -> Twist:
+    """Convert a Vector3 to a Twist message."""
+    twist = Twist()
+    twist.linear.x = vector.x
+    twist.linear.y = vector.y
+    twist.linear.z = 0.0
+    twist.angular.x = 0.0
+    twist.angular.y = 0.0
+    twist.angular.z = vector.z
+    return twist
 
-    Args:
-        global_vector: Vector in global coordinates
-        robot_position: Robot's position and orientation
 
-    Returns:
-        Vector in robot coordinates where X is forward/backward, Y is left/right
-    """
-    # Get the robot's yaw angle (rotation around Z-axis)
-    robot_yaw = robot_position.rot.z
-
-    # Create rotation matrix to transform from global to robot frame
-    # We need to rotate the coordinate system by -robot_yaw to get robot-relative coordinates
-    cos_yaw = math.cos(-robot_yaw)
-    sin_yaw = math.sin(-robot_yaw)
-
-    # Apply 2D rotation transformation
-    # This transforms a global direction vector into the robot's coordinate frame
-    # In robot frame: X=forward/backward, Y=left/right
-    # In global frame: X=east/west, Y=north/south
-    robot_x = global_vector.x * cos_yaw - global_vector.y * sin_yaw  # Forward/backward
-    robot_y = global_vector.x * sin_yaw + global_vector.y * cos_yaw  # Left/right
-
-    return Vector(-robot_x, robot_y, 0)
+def transform_to_robot_frame(global_vector: Vector3, global_robot_position: PoseStamped) -> Vector3:
+    return global_robot_position.find_transform(global_vector).translation
 
 
 class SimplePlanner(Module):
     path: In[Path] = None
     odom: In[PoseStamped] = None
-    movecmd: Out[Vector3] = None
+    movecmd: Out[Twist] = None
 
     get_costmap: Callable[[], Costmap]
 
-    latest_odom: PoseStamped = None
+    latest_odom: Optional[PoseStamped] = None
 
-    goal: Optional[Vector] = None
+    goal: Optional[PoseStamped] = None
     speed: float = 0.3
 
     def __init__(
@@ -83,45 +69,71 @@ class SimplePlanner(Module):
         Module.__init__(self)
         self.get_costmap = get_costmap
 
-    def get_move_stream(self, frequency: float = 40.0) -> rx.Observable:
+    def get_move_stream(self, frequency: float = 20.0) -> rx.Observable:
         return rx.interval(1.0 / frequency, scheduler=get_scheduler()).pipe(
             # do we have a goal?
             ops.filter(lambda _: self.goal is not None),
-            # For testing: make robot move left/right instead of rotating
-            ops.map(lambda _: self._test_translational_movement()),
-            self.frequency_spy("movement_test"),
+            # do we have odometry data?
+            ops.filter(lambda _: self.latest_odom is not None),
+            # transform goal to robot frame with error handling
+            ops.map(lambda _: self._safe_transform_goal()),
+            # filter out None results (errors)
+            ops.filter(lambda result: result is not None),
+            ops.map(self._calculate_rotation_to_target),
+            # filter out None results from calc_move
+            ops.filter(lambda result: result is not None),
+            ops.map(vector_to_twist),
         )
+
+    def _safe_transform_goal(self) -> Optional[Vector3]:
+        """Safely transform goal to robot frame with error handling."""
+        try:
+            return transform_to_robot_frame(self.goal, self.latest_odom)
+        except Exception as e:
+            logger.error(f"Error transforming goal to robot frame: {e}")
+            print(traceback.format_exc())
+            return None
 
     @rpc
     def start(self):
+        print(self.path.connection, self.path.transport)
         self.path.subscribe(self.set_goal)
 
-        def setodom(odom: Odometry):
+        def setodom(odom: PoseStamped):
             self.latest_odom = odom
 
+        def pubmove(move: Vector3):
+            print("PUBMOVE", move, "\n\n")
+            # print(self.movecmd)
+            try:
+                self.movecmd.publish(move)
+            except Exception as e:
+                print(traceback.format_exc())
+                print(e)
+
         self.odom.subscribe(setodom)
-        self.get_move_stream(frequency=20.0).subscribe(self.movecmd.publish)
+        self.get_move_stream(frequency=20.0).subscribe(pubmove)
 
     @dispatch
     def set_goal(self, goal: Path, stop_event=None, goal_theta=None) -> bool:
-        self.goal = goal.last().to_2d()
+        self.goal = to_pose(goal.last())
         logger.info(f"Setting goal: {self.goal}")
         return True
 
     @dispatch
     def set_goal(self, goal: VectorLike, stop_event=None, goal_theta=None) -> bool:
-        self.goal = to_vector(goal).to_2d()
+        self.goal = to_pose(goal.last())
         logger.info(f"Setting goal: {self.goal}")
         return True
 
-    def calc_move(self, direction: Vector) -> Vector:
+    def calc_move(self, direction: Vector3) -> Optional[Vector3]:
         """Calculate the movement vector based on the direction to the goal.
 
         Args:
             direction: Direction vector towards the goal
 
         Returns:
-            Movement vector scaled by speed
+            Movement vector scaled by speed, or None if error occurs
         """
         try:
             # Normalize the direction vector and scale by speed
@@ -130,7 +142,8 @@ class SimplePlanner(Module):
             print("CALC MOVE", direction, normalized_direction, move_vector)
             return move_vector
         except Exception as e:
-            print("Error calculating move vector:", e)
+            logger.error(f"Error calculating move vector: {e}")
+            return None
 
     def spy(self, name: str):
         def spyfun(x):
@@ -171,7 +184,7 @@ class SimplePlanner(Module):
 
         return ops.map(freq_spy_fun)
 
-    def _test_translational_movement(self) -> Vector:
+    def _test_translational_movement(self) -> Vector3:
         """Test translational movement by alternating left and right movement.
 
         Returns:
@@ -198,7 +211,7 @@ class SimplePlanner(Module):
         print("===================================")
         return movement
 
-    def _calculate_rotation_to_target(self, direction_to_goal: Vector) -> Vector:
+    def _calculate_rotation_to_target(self, direction_to_goal: Vector3) -> Vector3:
         """Calculate the rotation needed for the robot to face the target.
 
         Args:
@@ -207,11 +220,15 @@ class SimplePlanner(Module):
         Returns:
             Vector with (x=0, y=0, z=angular_velocity) for rotation only
         """
+        if self.latest_odom is None:
+            logger.warning("No odometry data available for rotation calculation")
+            return Vector3(0, 0, 0)
+
         # Calculate the desired yaw angle to face the target
         desired_yaw = math.atan2(direction_to_goal.y, direction_to_goal.x)
 
         # Get current robot yaw
-        current_yaw = self.latest_odom.orientation.z
+        current_yaw = self.latest_odom.yaw
 
         # Calculate the yaw error using a more robust method to avoid oscillation
         yaw_error = math.atan2(
@@ -247,17 +264,21 @@ class SimplePlanner(Module):
 
         # Return movement command: no translation (x=0, y=0), only rotation (z=angular_velocity)
         # Try flipping the sign in case the rotation convention is opposite
-        return Vector(0, 0, -angular_velocity)
+        return Vector3(0, 0, -angular_velocity)
 
-    def _debug_direction(self, name: str, direction: Vector) -> Vector:
+    def _debug_direction(self, name: str, direction: Vector3) -> Vector3:
         """Debug helper to log direction information"""
         robot_pos = self.latest_odom
+        if robot_pos is None:
+            print(f"DEBUG {name}: direction={direction}, robot_pos=None, goal={self.goal}")
+            return direction
+
         print(
-            f"DEBUG {name}: direction={direction}, robot_pos={robot_pos.position.to_2d()}, robot_yaw={math.degrees(robot_pos.rot.z):.1f}°, goal={self.goal}"
+            f"DEBUG {name}: direction={direction}, robot_pos={robot_pos.position.to_2d()}, robot_yaw={math.degrees(robot_pos.orientation.z):.1f}°, goal={self.goal}"
         )
         return direction
 
-    def _debug_robot_command(self, robot_cmd: Vector) -> Vector:
+    def _debug_robot_command(self, robot_cmd: Vector3) -> Vector3:
         """Debug helper to log robot command information"""
         print(
             f"DEBUG robot_command: x={robot_cmd.x:.3f}, y={robot_cmd.y:.3f} (forward/backward, left/right)"

@@ -44,6 +44,29 @@ def test_pose_default_init():
     assert pose.z == 0.0
 
 
+def test_pose_pose_init():
+    """Test initialization with position coordinates only (identity orientation)."""
+    pose_data = Pose(1.0, 2.0, 3.0)
+
+    pose = to_pose(pose_data)
+
+    # Position should be as specified
+    assert pose.position.x == 1.0
+    assert pose.position.y == 2.0
+    assert pose.position.z == 3.0
+
+    # Orientation should be identity quaternion
+    assert pose.orientation.x == 0.0
+    assert pose.orientation.y == 0.0
+    assert pose.orientation.z == 0.0
+    assert pose.orientation.w == 1.0
+
+    # Test convenience properties
+    assert pose.x == 1.0
+    assert pose.y == 2.0
+    assert pose.z == 3.0
+
+
 def test_pose_position_init():
     """Test initialization with position coordinates only (identity orientation)."""
     pose = Pose(1.0, 2.0, 3.0)
@@ -553,3 +576,171 @@ def test_pickle_encode_decode():
     import timeit
 
     print(f"{timeit.timeit(encodepass, number=1000)} ms per cycle")
+
+
+def test_pose_addition_translation_only():
+    """Test pose addition with translation only (identity rotations)."""
+    # Two poses with only translations
+    pose1 = Pose(1.0, 2.0, 3.0)  # First translation
+    pose2 = Pose(4.0, 5.0, 6.0)  # Second translation
+
+    # Adding should combine translations
+    result = pose1 + pose2
+
+    assert result.position.x == 5.0  # 1 + 4
+    assert result.position.y == 7.0  # 2 + 5
+    assert result.position.z == 9.0  # 3 + 6
+
+    # Orientation should remain identity
+    assert result.orientation.x == 0.0
+    assert result.orientation.y == 0.0
+    assert result.orientation.z == 0.0
+    assert result.orientation.w == 1.0
+
+
+def test_pose_addition_with_rotation():
+    """Test pose addition with rotation applied to translation."""
+    # First pose: at origin, rotated 90 degrees around Z (yaw)
+    # 90 degree rotation quaternion around Z: (0, 0, sin(pi/4), cos(pi/4))
+    angle = np.pi / 2  # 90 degrees
+    pose1 = Pose(0.0, 0.0, 0.0, 0.0, 0.0, np.sin(angle / 2), np.cos(angle / 2))
+
+    # Second pose: 1 unit forward (along X in its frame)
+    pose2 = Pose(1.0, 0.0, 0.0)
+
+    # After rotation, the forward direction should be along Y
+    result = pose1 + pose2
+
+    # Position should be rotated
+    assert np.isclose(result.position.x, 0.0, atol=1e-10)
+    assert np.isclose(result.position.y, 1.0, atol=1e-10)
+    assert np.isclose(result.position.z, 0.0, atol=1e-10)
+
+    # Orientation should be same as pose1 (pose2 has identity rotation)
+    assert np.isclose(result.orientation.x, 0.0, atol=1e-10)
+    assert np.isclose(result.orientation.y, 0.0, atol=1e-10)
+    assert np.isclose(result.orientation.z, np.sin(angle / 2), atol=1e-10)
+    assert np.isclose(result.orientation.w, np.cos(angle / 2), atol=1e-10)
+
+
+def test_pose_addition_rotation_composition():
+    """Test that rotations are properly composed."""
+    # First pose: 45 degrees around Z
+    angle1 = np.pi / 4  # 45 degrees
+    pose1 = Pose(0.0, 0.0, 0.0, 0.0, 0.0, np.sin(angle1 / 2), np.cos(angle1 / 2))
+
+    # Second pose: another 45 degrees around Z
+    angle2 = np.pi / 4  # 45 degrees
+    pose2 = Pose(0.0, 0.0, 0.0, 0.0, 0.0, np.sin(angle2 / 2), np.cos(angle2 / 2))
+
+    # Result should be 90 degrees around Z
+    result = pose1 + pose2
+
+    # Check final angle is 90 degrees
+    expected_angle = angle1 + angle2  # 90 degrees
+    expected_qz = np.sin(expected_angle / 2)
+    expected_qw = np.cos(expected_angle / 2)
+
+    assert np.isclose(result.orientation.z, expected_qz, atol=1e-10)
+    assert np.isclose(result.orientation.w, expected_qw, atol=1e-10)
+
+
+def test_pose_addition_full_transform():
+    """Test full pose composition with translation and rotation."""
+    # Robot pose: at (2, 1, 0), facing 90 degrees left (positive yaw)
+    robot_yaw = np.pi / 2  # 90 degrees
+    robot_pose = Pose(2.0, 1.0, 0.0, 0.0, 0.0, np.sin(robot_yaw / 2), np.cos(robot_yaw / 2))
+
+    # Object in robot frame: 3 units forward, 1 unit right
+    object_in_robot = Pose(3.0, -1.0, 0.0)
+
+    # Compose to get object in world frame
+    object_in_world = robot_pose + object_in_robot
+
+    # Robot is facing left (90 degrees), so:
+    # - Robot's forward (X) is world's negative Y
+    # - Robot's right (negative Y) is world's X
+    # So object should be at: robot_pos + rotated_offset
+    # rotated_offset: (3, -1) rotated 90° CCW = (1, 3)
+    assert np.isclose(object_in_world.position.x, 3.0, atol=1e-10)  # 2 + 1
+    assert np.isclose(object_in_world.position.y, 4.0, atol=1e-10)  # 1 + 3
+    assert np.isclose(object_in_world.position.z, 0.0, atol=1e-10)
+
+    # Orientation should match robot's orientation (object has no rotation)
+    assert np.isclose(object_in_world.yaw, robot_yaw, atol=1e-10)
+
+
+def test_pose_addition_chain():
+    """Test chaining multiple pose additions."""
+    # Create a chain of transformations
+    pose1 = Pose(1.0, 0.0, 0.0)  # Move 1 unit in X
+    pose2 = Pose(0.0, 1.0, 0.0)  # Move 1 unit in Y (relative to pose1)
+    pose3 = Pose(0.0, 0.0, 1.0)  # Move 1 unit in Z (relative to pose1+pose2)
+
+    # Chain them together
+    result = pose1 + pose2 + pose3
+
+    # Should accumulate all translations
+    assert result.position.x == 1.0
+    assert result.position.y == 1.0
+    assert result.position.z == 1.0
+
+
+def test_pose_addition_with_convertible():
+    """Test pose addition with convertible types."""
+    pose1 = Pose(1.0, 2.0, 3.0)
+
+    # Add with tuple
+    pose_tuple = ([4.0, 5.0, 6.0], [0.0, 0.0, 0.0, 1.0])
+    result1 = pose1 + pose_tuple
+    assert result1.position.x == 5.0
+    assert result1.position.y == 7.0
+    assert result1.position.z == 9.0
+
+    # Add with dict
+    pose_dict = {"position": [1.0, 0.0, 0.0], "orientation": [0.0, 0.0, 0.0, 1.0]}
+    result2 = pose1 + pose_dict
+    assert result2.position.x == 2.0
+    assert result2.position.y == 2.0
+    assert result2.position.z == 3.0
+
+
+def test_pose_identity_addition():
+    """Test that adding identity pose leaves pose unchanged."""
+    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
+    identity = Pose()  # Identity pose at origin
+
+    result = pose + identity
+
+    # Should be unchanged
+    assert result.position.x == pose.position.x
+    assert result.position.y == pose.position.y
+    assert result.position.z == pose.position.z
+    assert result.orientation.x == pose.orientation.x
+    assert result.orientation.y == pose.orientation.y
+    assert result.orientation.z == pose.orientation.z
+    assert result.orientation.w == pose.orientation.w
+
+
+def test_pose_addition_3d_rotation():
+    """Test pose addition with 3D rotations."""
+    # First pose: rotated around X axis (roll)
+    roll = np.pi / 4  # 45 degrees
+    pose1 = Pose(1.0, 0.0, 0.0, np.sin(roll / 2), 0.0, 0.0, np.cos(roll / 2))
+
+    # Second pose: movement along Y and Z in local frame
+    pose2 = Pose(0.0, 1.0, 1.0)
+
+    # Compose transformations
+    result = pose1 + pose2
+
+    # The Y and Z movement should be rotated around X
+    # After 45° rotation around X:
+    # - Local Y -> world Y * cos(45°) - Z * sin(45°)
+    # - Local Z -> world Y * sin(45°) + Z * cos(45°)
+    cos45 = np.cos(roll)
+    sin45 = np.sin(roll)
+
+    assert np.isclose(result.position.x, 1.0, atol=1e-10)  # X unchanged
+    assert np.isclose(result.position.y, cos45 - sin45, atol=1e-10)
+    assert np.isclose(result.position.z, sin45 + cos45, atol=1e-10)
