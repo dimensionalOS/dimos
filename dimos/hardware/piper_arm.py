@@ -50,6 +50,7 @@ class PiperArm:
         self.resetArm()
         time.sleep(0.1)
         self.enable()
+        self.enable_gripper()  # Enable gripper after arm is enabled
         self.gotoZero()
         time.sleep(1)
         self.init_vel_controller()
@@ -104,7 +105,7 @@ class PiperArm:
         self.arm.MotionCtrl_1(0x01, 0, 0)
         time.sleep(5)
 
-    def cmd_ee_pose_values(self, x, y, z, r, p, y_):
+    def cmd_ee_pose_values(self, x, y, z, r, p, y_, line_mode=False):
         """Command end-effector to target pose in space (position + Euler angles)"""
         factor = 1000
         pose = [
@@ -115,20 +116,19 @@ class PiperArm:
             p * factor,
             y_ * factor,
         ]
-        print(f"[PiperArm] Commanding end-effector pose: {pose}")
-        self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
+        self.arm.MotionCtrl_2(0x01, 0x02 if line_mode else 0x00, 100, 0x00)
         self.arm.EndPoseCtrl(
             int(pose[0]), int(pose[1]), int(pose[2]), int(pose[3]), int(pose[4]), int(pose[5])
         )
 
-    def cmd_ee_pose(self, pose: Pose):
+    def cmd_ee_pose(self, pose: Pose, line_mode=False):
         """Command end-effector to target pose using Pose message"""
         # Convert quaternion to euler angles
         euler = quaternion_to_euler(pose.orientation, degrees=True)
 
         # Command the pose
         self.cmd_ee_pose_values(
-            pose.position.x, pose.position.y, pose.position.z, euler[0], euler[1], euler[2]
+            pose.position.x, pose.position.y, pose.position.z, euler[0], euler[1], euler[2], line_mode
         )
 
     def get_ee_pose(self):
@@ -159,6 +159,20 @@ class PiperArm:
 
         self.arm.GripperCtrl(abs(round(position)), 250, 0x01, 0)
         print(f"[PiperArm] Commanding gripper position: {position}")
+
+    def enable_gripper(self):
+        """Enable the gripper using the initialization sequence"""
+        print("[PiperArm] Enabling gripper...")
+        while not self.arm.EnablePiper():
+            time.sleep(0.01)
+        self.arm.GripperCtrl(0, 1000, 0x02, 0)
+        self.arm.GripperCtrl(0, 1000, 0x01, 0)
+        print("[PiperArm] Gripper enabled")
+
+    def release_gripper(self):
+        """Release gripper by opening to 100mm (10cm)"""
+        print("[PiperArm] Releasing gripper (opening to 100mm)...")
+        self.cmd_gripper_ctrl(0.1)  # 0.1m = 100mm = 10cm
 
     def resetArm(self):
         self.arm.MotionCtrl_1(0x02, 0, 0)
