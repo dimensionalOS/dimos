@@ -20,7 +20,6 @@ import time
 from typing import Dict, List, Optional, Any
 import numpy as np
 import cv2
-from scipy.spatial.transform import Rotation as R
 
 from dimos.utils.logging_config import setup_logger
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
@@ -28,13 +27,14 @@ from dimos.perception.pointcloud.utils import extract_centroids_from_masks
 from dimos.perception.detection2d.utils import plot_results, calculate_object_size_from_bbox
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
-from dimos.types.vector import Vector
 from dimos.types.manipulation import ObjectData
-from dimos.manipulation.ibvs.utils import estimate_object_depth
+from dimos.manipulation.visual_servoing.utils import estimate_object_depth
 from dimos.utils.transform_utils import (
     optical_to_robot_frame,
     pose_to_matrix,
     matrix_to_pose,
+    euler_to_quaternion,
+    compose_transforms,
 )
 
 logger = setup_logger("dimos.perception.detection3d")
@@ -84,22 +84,19 @@ class Detection3DProcessor:
         )
 
     def process_frame(
-        self, rgb_image: np.ndarray, depth_image: np.ndarray, camera_pose: Optional[Any] = None
-    ) -> Dict[str, Any]:
+        self, rgb_image: np.ndarray, depth_image: np.ndarray, transform: Optional[np.ndarray] = None
+    ) -> List[ObjectData]:
         """
         Process a single RGB-D frame to extract 3D object detections.
 
         Args:
             rgb_image: RGB image (H, W, 3)
             depth_image: Depth image (H, W) in meters
-            camera_pose: Optional camera pose in world frame (Pose object in ZED coordinates)
+            transform: Optional 4x4 transformation matrix to transform objects from camera frame to desired frame
 
         Returns:
-            Dictionary containing:
-                - detections: List of ObjectData objects with 3D pose information
-                - processing_time: Total processing time in seconds
+            List of ObjectData objects with 3D pose information
         """
-        start_time = time.time()
 
         # Convert RGB to BGR for Sam (OpenCV format)
         bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
@@ -109,7 +106,7 @@ class Detection3DProcessor:
 
         # Early exit if no detections
         if not masks or len(masks) == 0:
-            return {"detections": [], "processing_time": time.time() - start_time}
+            return []
 
         # Convert CUDA tensors to numpy arrays if needed
         numpy_masks = []
@@ -179,69 +176,68 @@ class Detection3DProcessor:
                 else:
                     obj_data["color"] = np.array([128, 128, 128], dtype=np.uint8)
 
-                # Transform to world frame if camera pose is available
-                if camera_pose is not None:
+                # Transform to desired frame if transform matrix is provided
+                if transform is not None:
                     # Get orientation as euler angles, default to no rotation if not available
                     obj_cam_orientation = pose.get(
                         "rotation", np.array([0.0, 0.0, 0.0])
                     )  # Default to no rotation
-                    world_pose = self._transform_to_world(
-                        obj_cam_pos, obj_cam_orientation, camera_pose
+                    transformed_pose = self._transform_object_pose(
+                        obj_cam_pos, obj_cam_orientation, transform
                     )
-                    obj_data["world_position"] = world_pose.position
-                    obj_data["position"] = world_pose.position  # Use world position
-                    obj_data["rotation"] = world_pose.orientation  # Use world rotation
+                    obj_data["position"] = transformed_pose.position
+                    obj_data["rotation"] = transformed_pose.orientation
                 else:
-                    # If no camera pose, use camera coordinates
+                    # If no transform, use camera coordinates
                     obj_data["position"] = Vector3(obj_cam_pos[0], obj_cam_pos[1], obj_cam_pos[2])
 
                 detections.append(obj_data)
 
-        return {"detections": detections, "processing_time": time.time() - start_time}
+        return detections
 
-    def _transform_to_world(
-        self, obj_pos: np.ndarray, obj_orientation: np.ndarray, camera_pose: Pose
+    def _transform_object_pose(
+        self, obj_pos: np.ndarray, obj_orientation: np.ndarray, transform_matrix: np.ndarray
     ) -> Pose:
         """
-        Transform object pose from optical frame to world frame.
+        Transform object pose from optical frame to desired frame using transformation matrix.
 
         Args:
             obj_pos: Object position in optical frame [x, y, z]
             obj_orientation: Object orientation in optical frame [roll, pitch, yaw] in radians
-            camera_pose: Camera pose in world frame (x forward, y left, z up)
+            transform_matrix: 4x4 transformation matrix from camera frame to desired frame
 
         Returns:
-            Object pose in world frame as Pose
+            Object pose in desired frame as Pose
         """
         # Create object pose in optical frame
-        # Convert euler angles to quaternion
-        quat = R.from_euler("xyz", obj_orientation).as_quat()  # [x, y, z, w]
-        obj_orientation_quat = Quaternion(quat[0], quat[1], quat[2], quat[3])
+        # Convert euler angles to quaternion using utility function
+        euler_vector = Vector3(obj_orientation[0], obj_orientation[1], obj_orientation[2])
+        obj_orientation_quat = euler_to_quaternion(euler_vector)
+        
+        obj_pose_optical = Pose(
+            Vector3(obj_pos[0], obj_pos[1], obj_pos[2]),
+            obj_orientation_quat
+        )
 
-        obj_pose_optical = Pose(Vector3(obj_pos[0], obj_pos[1], obj_pos[2]), obj_orientation_quat)
-
-        # Transform object pose from optical frame to world frame convention
-        obj_pose_world_frame = optical_to_robot_frame(obj_pose_optical)
-
-        # Create transformation matrix from camera pose
-        T_world_camera = pose_to_matrix(camera_pose)
+        # Transform object pose from optical frame to robot frame convention first
+        obj_pose_robot_frame = optical_to_robot_frame(obj_pose_optical)
 
         # Create transformation matrix from object pose (relative to camera)
-        T_camera_object = pose_to_matrix(obj_pose_world_frame)
+        T_camera_object = pose_to_matrix(obj_pose_robot_frame)
 
-        # Combine transformations: T_world_object = T_world_camera * T_camera_object
-        T_world_object = T_world_camera @ T_camera_object
+        # Use compose_transforms to combine transformations
+        T_desired_object = compose_transforms(transform_matrix, T_camera_object)
 
         # Convert back to pose
-        world_pose = matrix_to_pose(T_world_object)
+        desired_pose = matrix_to_pose(T_desired_object)
 
-        return world_pose
+        return desired_pose
 
     def visualize_detections(
         self,
         rgb_image: np.ndarray,
         detections: List[ObjectData],
-        pbvs_controller: Optional[Any] = None,
+        show_coordinates: bool = True,
     ) -> np.ndarray:
         """
         Visualize detections with 3D position overlay next to bounding boxes.
@@ -249,7 +245,7 @@ class Detection3DProcessor:
         Args:
             rgb_image: Original RGB image
             detections: List of ObjectData objects
-            pbvs_controller: Optional PBVS controller to get robot frame coordinates
+            show_coordinates: Whether to show 3D coordinates next to bounding boxes
 
         Returns:
             Visualization image
@@ -267,61 +263,45 @@ class Detection3DProcessor:
         # Use plot_results for basic visualization
         viz = plot_results(rgb_image, bboxes, track_ids, class_ids, confidences, names)
 
-        # Add 3D position overlay next to bounding boxes
-        fx, fy, cx, cy = self.camera_intrinsics
+        # Add 3D position coordinates if requested
+        if show_coordinates:
+            for det in detections:
+                if "position" in det and "bbox" in det:
+                    position = det["position"]
+                    bbox = det["bbox"]
 
-        for det in detections:
-            if "position" in det and "bbox" in det:
-                # Get position to display (robot frame if available, otherwise world frame)
-                world_position = det["position"]
-                display_position = world_position
-                frame_label = ""
+                    if isinstance(position, Vector3):
+                        pos_xyz = np.array([position.x, position.y, position.z])
+                    else:
+                        pos_xyz = np.array([position["x"], position["y"], position["z"]])
 
-                # Check if we should display robot frame coordinates
-                if pbvs_controller and pbvs_controller.manipulator_origin is not None:
-                    robot_frame_data = pbvs_controller.get_object_pose_robot_frame(world_position)
-                    if robot_frame_data:
-                        display_position, _ = robot_frame_data
-                        frame_label = "[R]"  # Robot frame indicator
+                    # Get bounding box coordinates
+                    x1, y1, x2, y2 = map(int, bbox)
 
-                bbox = det["bbox"]
+                    # Add position text next to bounding box (top-right corner)
+                    pos_text = f"({pos_xyz[0]:.2f}, {pos_xyz[1]:.2f}, {pos_xyz[2]:.2f})"
+                    text_x = x2 + 5  # Right edge of bbox + small offset
+                    text_y = y1 + 15  # Top edge of bbox + small offset
 
-                if isinstance(display_position, Vector3):
-                    display_xyz = np.array(
-                        [display_position.x, display_position.y, display_position.z]
+                    # Add background rectangle for better readability
+                    text_size = cv2.getTextSize(pos_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+                    cv2.rectangle(
+                        viz,
+                        (text_x - 2, text_y - text_size[1] - 2),
+                        (text_x + text_size[0] + 2, text_y + 2),
+                        (0, 0, 0),
+                        -1,
                     )
-                else:
-                    display_xyz = np.array(
-                        [display_position["x"], display_position["y"], display_position["z"]]
+
+                    cv2.putText(
+                        viz,
+                        pos_text,
+                        (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.4,
+                        (255, 255, 255),
+                        1,
                     )
-
-                # Get bounding box coordinates
-                x1, y1, x2, y2 = map(int, bbox)
-
-                # Add position text next to bounding box (top-right corner)
-                pos_text = f"{frame_label}({display_xyz[0]:.2f}, {display_xyz[1]:.2f}, {display_xyz[2]:.2f})"
-                text_x = x2 + 5  # Right edge of bbox + small offset
-                text_y = y1 + 15  # Top edge of bbox + small offset
-
-                # Add background rectangle for better readability
-                text_size = cv2.getTextSize(pos_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
-                cv2.rectangle(
-                    viz,
-                    (text_x - 2, text_y - text_size[1] - 2),
-                    (text_x + text_size[0] + 2, text_y + 2),
-                    (0, 0, 0),
-                    -1,
-                )
-
-                cv2.putText(
-                    viz,
-                    pos_text,
-                    (text_x, text_y),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    (255, 255, 255),
-                    1,
-                )
 
         return viz
 
