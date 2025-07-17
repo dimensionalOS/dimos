@@ -34,7 +34,7 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.global_planner import AstarPlanner
 from dimos.robot.local_planner.simple import SimplePlanner
 from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
-from dimos.robot.unitree_webrtc.connection import VideoMessage, WebRTCRobot
+from dimos.robot.unitree_webrtc.connection import VideoMessage, UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -46,10 +46,12 @@ from dimos.utils.testing import TimedSensorReplay
 from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
-
 import os
 import logging
 import warnings
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger("dimos.robot.unitree_webrtc.multiprocess.unitree_go2", level=logging.INFO)
 
 # Configure logging levels
 os.environ["DIMOS_LOG_LEVEL"] = "WARNING"
@@ -67,8 +69,8 @@ warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
 
-# can be swapped in for WebRTCRobot
-class FakeRTC(WebRTCRobot):
+# can be swapped in for UnitreeWebRTCConnection
+class FakeRTC(UnitreeWebRTCConnection):
     def __init__(self, *args, **kwargs):
         # ensures we download msgs from lfs store
         data = get_data("unitree_office_walk")
@@ -103,11 +105,7 @@ class FakeRTC(WebRTCRobot):
         print("move supressed", vector)
 
 
-class RealRTC(WebRTCRobot): ...
-
-
-# inherit RealRTC instead of FakeRTC to run the real robot
-class ConnectionModule(RealRTC, Module):
+class ConnectionModule(UnitreeWebRTCConnection, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
@@ -128,7 +126,7 @@ class ConnectionModule(RealRTC, Module):
     @rpc
     def start(self):
         super().__init__(self.ip)
-        # ensure that LFS data is available
+
         self.lidar_stream().subscribe(self.lidar.publish)
         self.odom_stream().subscribe(self.odom.publish)
         self.video_stream().subscribe(self.video.publish)
@@ -165,25 +163,58 @@ class ControlModule(Module):
 
 async def run(ip):
     dimos = core.start(4)
+
+    # Connection Module - Robot sensor data interface via WebRTC ===================================================
     connection = dimos.deploy(ConnectionModule, ip)
 
     # This enables LCM transport
     # Ensures system multicast, udp sizes are auto-adjusted if needed
     pubsub.lcm.autoconf()
 
-    connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
-    connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
-    connection.video.transport = core.LCMTransport("/video", Image)
+    # Configure ConnectionModule LCM transport outputs for sensor data streams
+    connection.lidar.transport = core.LCMTransport(
+        "/lidar", LidarMessage
+    )  # OUTPUT: LiDAR point cloud data to /lidar topic
+    connection.odom.transport = core.LCMTransport(
+        "/odom", PoseStamped
+    )  # OUTPUT: Robot odometry/pose data to /odom topic
+    connection.video.transport = core.LCMTransport(
+        "/video", Image
+    )  # OUTPUT: Camera video frames to /video topic
+    # ============================================================================================================================
 
+    # Map Module - Point cloud accumulation and costmap generation ==============================================================
     mapper = dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
 
-    mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
+    mapper.global_map.transport = core.LCMTransport(
+        "/global_map", LidarMessage
+    )  # OUTPUT: Accumulated point cloud map to /global_map topic
 
+    mapper.lidar.connect(
+        connection.lidar
+    )  # Connect ConnectionModule OUTPUT lidar to Map INPUT lidar for point cloud accumulation
+    # ============================================================================================================================
+
+    # Local planner Module, LCM transport configuration, and LCM connection =====================================================
     local_planner = dimos.deploy(
         VFHPurePursuitPlanner,
         get_costmap=connection.get_local_costmap,
     )
 
+    local_planner.odom.connect(
+        connection.odom
+    )  # Connects odometry LCM stream to BaseLocalPlanner odometry input
+
+    local_planner.movecmd.transport = core.LCMTransport(
+        "/move", Vector3
+    )  # Configures BaseLocalPlanner movecmd output to /move LCM topic
+
+    connection.movecmd.connect(
+        local_planner.movecmd
+    )  # Connects connection.movecmd input to local_planner.movecmd output
+    # ==============================================================================================================================
+
+    # Global Planner Module ==============================================================================
     global_planner = dimos.deploy(
         AstarPlanner,
         get_costmap=mapper.costmap,
@@ -191,22 +222,25 @@ async def run(ip):
         set_local_nav=local_planner.navigate_path_local,
     )
 
-    global_planner.path.transport = core.pLCMTransport("/global_path")
+    global_planner.path.transport = core.pLCMTransport(
+        "/global_path"
+    )  # Configure AstarPlanner OUTPUT path: Out[Path] to /global_path LCM topic
+    # ============================================================================================================================
 
-    # local_planner.path.connect(global_planner.path)
-    local_planner.odom.connect(connection.odom)
-
-    local_planner.movecmd.transport = core.LCMTransport("/move", Vector3)
-    connection.movecmd.connect(local_planner.movecmd)
-
+    # Global Planner Control Module ========================================================================================
+    # Debug module that sends (0,0,0) goal after 4 second delay
     ctrl = dimos.deploy(ControlModule)
 
-    mapper.lidar.connect(connection.lidar)
+    ctrl.plancmd.transport = core.LCMTransport(
+        "/global_target", Vector3
+    )  # Configure ControlModule OUTPUT to publish goal coordinates to /global_target
 
-    ctrl.plancmd.transport = core.LCMTransport("/global_target", Vector3)
+    global_planner.target.connect(
+        ctrl.plancmd
+    )  # Connect ControlModule OUTPUT to AstarPlanner INPUT - triggers A* planning when goal received
+    # ============================================================================================================================
 
-    global_planner.target.connect(ctrl.plancmd)
-
+    # Visualization
     foxglove_bridge = FoxgloveBridge()
 
     frontier_explorer = WavefrontFrontierExplorer(
@@ -215,30 +249,19 @@ async def run(ip):
         get_robot_pos=connection.get_pos,
     )
 
-    # we review the structure
+    # Prints full module IO
     print("\n")
     for module in [connection, mapper, local_planner, global_planner, ctrl]:
         print(module.io().result(), "\n")
 
-    print(colors.green("starting mapper"))
+    # Start modules =================
     mapper.start()
-
-    print(colors.green("starting connection"))
     connection.start()
-
-    print(colors.green("local planner start"))
     local_planner.start()
-
-    print(colors.green("starting global planner"))
     global_planner.start()
-
-    print(colors.green("starting foxglove bridge"))
     foxglove_bridge.start()
-
-    print(colors.green("starting ctrl"))
     ctrl.start()
-
-    print(colors.red("READY"))
+    # ===============================
 
     await asyncio.sleep(2)
     frontier_explorer.explore()
