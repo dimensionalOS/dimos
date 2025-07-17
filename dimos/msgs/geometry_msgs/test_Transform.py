@@ -229,3 +229,42 @@ def test_pose_add_transform_with_rotation():
     assert np.isclose(transformed_pose2.orientation.y, 0.0, atol=1e-10)
     assert np.isclose(transformed_pose2.orientation.z, np.sin(total_angle2 / 2), atol=1e-10)
     assert np.isclose(transformed_pose2.orientation.w, np.cos(total_angle2 / 2), atol=1e-10)
+
+
+def test_pose_add_lcm_transform():
+    """Test that Pose works with both LCMTransform and Transform types."""
+    initial_pose = Pose(1.0, 0.0, 0.0)
+
+    # Create an LCMTransform
+    lcm_transform = LCMTransform()
+    lcm_transform.translation = Vector3(2.0, 1.0, 0.0)
+    angle = np.pi / 2  # 90 degrees
+    lcm_transform.rotation = Quaternion(0.0, 0.0, np.sin(angle / 2), np.cos(angle / 2))
+
+    # Create a regular Transform with same values
+    transform = Transform(
+        translation=Vector3(2.0, 1.0, 0.0),
+        rotation=Quaternion(0.0, 0.0, np.sin(angle / 2), np.cos(angle / 2)),
+    )
+
+    # Test both + and @ operators with LCMTransform
+    pose_lcm_add = initial_pose + lcm_transform
+    pose_lcm_matmul = initial_pose @ lcm_transform
+
+    # Test both + and @ operators with Transform
+    pose_tf_add = initial_pose + transform
+    pose_tf_matmul = initial_pose @ transform
+
+    # All results should be the same
+    assert np.isclose(pose_lcm_add.position.x, 3.0, atol=1e-10)
+    assert np.isclose(pose_lcm_add.position.y, 1.0, atol=1e-10)
+    assert np.isclose(pose_lcm_add.position.z, 0.0, atol=1e-10)
+
+    # Check that all methods produce the same result
+    assert pose_lcm_add.position == pose_lcm_matmul.position
+    assert pose_lcm_add.position == pose_tf_add.position
+    assert pose_lcm_add.position == pose_tf_matmul.position
+
+    assert pose_lcm_add.orientation == pose_lcm_matmul.orientation
+    assert pose_lcm_add.orientation == pose_tf_add.orientation
+    assert pose_lcm_add.orientation == pose_tf_matmul.orientation

@@ -14,13 +14,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Optional, TypedDict
 
 import numpy as np
 from dimos_lcm.foxglove_msgs import ArrowPrimitive, Color, LinePrimitive
-from dimos_lcm.geometry_msgs import Point
-from dimos_lcm.geometry_msgs import Vector3
+from dimos_lcm.geometry_msgs import Point, Vector3
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Pose import Pose
@@ -50,23 +49,10 @@ class Arrow(ArrowPrimitive):
     @classmethod
     def from_transform(
         cls,
-        pose: "Pose | PoseStamped",
         transform: "Transform",
+        pose: "Pose | PoseStamped",
         arrow_config: ArrowConfig = {},
     ):
-        """
-        Create an arrow from pose position to where the transform takes it.
-
-        Args:
-            pose: Starting position and orientation (Pose or PoseStamped)
-            transform: Transform to apply to the pose (determines end position)
-            arrow_config: Optional configuration for arrow appearance
-
-        Returns:
-            Arrow primitive from pose position to transformed position
-        """
-        # Merge provided config with defaults
-
         config = {**default_config, **arrow_config}
 
         # Apply transform to pose to get end position
@@ -97,5 +83,29 @@ class Arrow(ArrowPrimitive):
         arrow.color = Color(
             r=config["color"][0], g=config["color"][1], b=config["color"][2], a=config["color"][3]
         )
+
+        return arrow
+
+    def lcm_encode(self) -> bytes:
+        """Encode Arrow to LCM binary format."""
+        return self.encode()
+
+    @classmethod
+    def lcm_decode(cls, data: bytes):
+        """Decode Arrow from LCM binary format.
+
+        Note: This returns an Arrow instance, not ArrowPrimitive.
+        """
+        # First decode as ArrowPrimitive
+        arrow_primitive = ArrowPrimitive.decode(data)
+
+        # Create a new Arrow instance and copy all fields
+        arrow = cls()
+        arrow.pose = arrow_primitive.pose
+        arrow.shaft_length = arrow_primitive.shaft_length
+        arrow.shaft_diameter = arrow_primitive.shaft_diameter
+        arrow.head_length = arrow_primitive.head_length
+        arrow.head_diameter = arrow_primitive.head_diameter
+        arrow.color = arrow_primitive.color
 
         return arrow

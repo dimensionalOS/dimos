@@ -24,6 +24,7 @@ from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
 
 # Types that can be converted to/from Pose
@@ -168,7 +169,7 @@ class Pose(LCMPose):
             return False
         return self.position == other.position and self.orientation == other.orientation
 
-    def __matmul__(self, transform: LCMTransform) -> Pose:
+    def __matmul__(self, transform: LCMTransform | Transform) -> Pose:
         return self + transform
 
     def find_transform(self, other: PoseConvertable) -> LCMTransform:
@@ -188,7 +189,7 @@ class Pose(LCMPose):
 
         return transform
 
-    def __add__(self, other: "Pose" | PoseConvertable | LCMTransform) -> "Pose":
+    def __add__(self, other: "Pose" | PoseConvertable | LCMTransform | Transform) -> "Pose":
         """Compose two poses or apply a transform (transform composition).
 
         The operation self + other represents applying transformation 'other'
@@ -217,7 +218,7 @@ class Pose(LCMPose):
             new_pose = pose + transform
         """
         # Handle Transform objects
-        if isinstance(other, LCMTransform):
+        if isinstance(other, (LCMTransform, Transform)):
             # Convert Transform to Pose using its translation and rotation
             other_position = Vector3(other.translation)
             other_orientation = Quaternion(other.rotation)
