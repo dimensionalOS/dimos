@@ -157,7 +157,8 @@ class Pose(LCMPose):
     def __str__(self) -> str:
         return (
             f"Pose(pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}], "
-            f"euler=[{self.roll:.3f}, {self.pitch:.3f}, {self.yaw:.3f}])"
+            f"euler=[{self.roll:.3f}, {self.pitch:.3f}, {self.yaw:.3f}]), "
+            f"quaternion=[{self.orientation}])"
         )
 
     def __eq__(self, other) -> bool:
