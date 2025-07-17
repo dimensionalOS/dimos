@@ -122,7 +122,9 @@ class Sam2DSegmenter:
                     filtered_probs,
                     filtered_names,
                     filtered_texture_values,
-                ) = filter_segmentation_results(image, masks, bboxes, track_ids, probs, names, areas)
+                ) = filter_segmentation_results(
+                    image, masks, bboxes, track_ids, probs, names, areas
+                )
             else:
                 # Use original results without filtering
                 filtered_masks = masks
