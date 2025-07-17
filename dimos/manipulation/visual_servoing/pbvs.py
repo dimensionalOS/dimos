@@ -36,17 +36,17 @@ logger = setup_logger("dimos.manipulation.pbvs")
 class PBVS:
     """
     High-level Position-Based Visual Servoing orchestrator.
-    
+
     Handles:
     - Object tracking and target management
     - Pregrasp distance computation
     - Grasp pose generation
     - Coordination with low-level controller
-    
+
     Note: This class is agnostic to camera mounting (eye-in-hand vs eye-to-hand).
     The caller is responsible for providing appropriate camera and EE poses.
     """
-    
+
     def __init__(
         self,
         position_gain: float = 0.5,
@@ -82,28 +82,28 @@ class PBVS:
             )
         else:
             self.controller = None
-            
+
         # Store parameters for direct mode error computation
         self.target_tolerance = target_tolerance
-        
+
         # Target tracking parameters
         self.tracking_distance_threshold = tracking_distance_threshold
         self.pregrasp_distance = pregrasp_distance
         self.direct_ee_control = direct_ee_control
-        
+
         # Target state
         self.current_target = None
         self.target_grasp_pose = None
-        
+
         # For direct control mode visualization
         self.last_position_error = None
         self.last_target_reached = False
-        
+
         logger.info(
             f"Initialized PBVS system with controller gains: pos={position_gain}, rot={rotation_gain}, "
             f"pregrasp_distance={pregrasp_distance}m"
         )
-    
+
     def set_target(self, target_object: Dict[str, Any]) -> bool:
         """
         Set a new target object for servoing.
@@ -120,7 +120,7 @@ class PBVS:
             logger.info(f"New target set: ID {target_object.get('object_id', 'unknown')}")
             return True
         return False
-    
+
     def clear_target(self):
         """Clear the current target."""
         self.current_target = None
@@ -130,37 +130,37 @@ class PBVS:
         if self.controller:
             self.controller.clear_state()
         logger.info("Target cleared")
-    
+
     def get_current_target(self):
         """
         Get the current target object.
-        
+
         Returns:
             Current target ObjectData or None if no target selected
         """
         return self.current_target
-    
+
     def is_target_reached(self, ee_pose: Pose) -> bool:
         """
         Check if the current target has been reached.
-        
+
         Args:
             ee_pose: Current end-effector pose
-            
+
         Returns:
             True if target is reached, False otherwise
         """
         if not self.target_grasp_pose:
             return False
-            
+
         # Calculate position error
         error_x = self.target_grasp_pose.position.x - ee_pose.position.x
         error_y = self.target_grasp_pose.position.y - ee_pose.position.y
         error_z = self.target_grasp_pose.position.z - ee_pose.position.z
-        
+
         error_magnitude = np.sqrt(error_x**2 + error_y**2 + error_z**2)
         return error_magnitude < self.target_tolerance
-    
+
     def update_target_tracking(self, new_detections: List[ObjectData]) -> bool:
         """
         Update target by matching to closest object in new detections.
@@ -203,7 +203,7 @@ class PBVS:
 
             if distance < self.tracking_distance_threshold:
                 best_match = detection
-            
+
             if distance < min_distance:
                 min_distance = distance
 
@@ -213,36 +213,35 @@ class PBVS:
             return True
         logger.info(f"Target tracking lost: closest target distance={min_distance:.3f}m")
         return False
-    
+
     def _update_target_grasp_pose(self, ee_pose: Pose):
         """
         Update target grasp pose based on current target and EE pose.
-        
+
         Args:
             ee_pose: Current end-effector pose
         """
         if not self.current_target or "position" not in self.current_target:
             return
-        
+
         # Get target position
         target_pos = self.current_target["position"]
-        
+
         # Calculate orientation pointing from target towards EE
         yaw_to_ee = yaw_towards_point(
-            Vector3(target_pos.x, target_pos.y, target_pos.z),
-            ee_pose.position
+            Vector3(target_pos.x, target_pos.y, target_pos.z), ee_pose.position
         )
-        
+
         # Create target pose with proper orientation
         # Convert euler angles to quaternion using utility function
         euler = Vector3(0.0, 1.65, yaw_to_ee)  # roll=0, pitch=90deg, yaw=calculated
         target_orientation = euler_to_quaternion(euler)
-        
+
         target_pose = Pose(target_pos, target_orientation)
-        
+
         # Apply pregrasp distance
         self.target_grasp_pose = self._apply_pregrasp_distance(target_pose, ee_pose)
-    
+
     def _apply_pregrasp_distance(self, target_pose: Pose, ee_pose: Pose) -> Pose:
         """
         Apply pregrasp distance to target pose by moving back towards EE.
@@ -255,7 +254,9 @@ class PBVS:
             Modified target pose with pregrasp distance applied
         """
         # Get approach vector (from target position towards EE)
-        target_pos = np.array([target_pose.position.x, target_pose.position.y, target_pose.position.z])
+        target_pos = np.array(
+            [target_pose.position.x, target_pose.position.y, target_pose.position.z]
+        )
         ee_pos = np.array([ee_pose.position.x, ee_pose.position.y, ee_pose.position.z])
         approach_vector = ee_pos - target_pos  # Vector pointing towards EE
 
@@ -273,11 +274,11 @@ class PBVS:
         new_position = Vector3(
             target_pose.position.x + offset_vector[0],
             target_pose.position.y + offset_vector[1],
-            target_pose.position.z + offset_vector[2]
+            target_pose.position.z + offset_vector[2],
         )
 
         return Pose(new_position, target_pose.orientation)
-    
+
     def compute_control(
         self, ee_pose: Pose, new_detections: Optional[List[ObjectData]] = None
     ) -> Tuple[Optional[Vector3], Optional[Vector3], bool, bool, Optional[Pose]]:
@@ -299,7 +300,7 @@ class PBVS:
         # Check if we have a target
         if not self.current_target or "position" not in self.current_target:
             return None, None, False, False, None
-        
+
         # Try to update target tracking if new detections provided
         # Continue with last known pose even if tracking is lost
         target_tracked = False
@@ -308,34 +309,34 @@ class PBVS:
                 target_tracked = True
             else:
                 target_tracked = False
-        
+
         # Update target grasp pose
         self._update_target_grasp_pose(ee_pose)
-        
+
         if self.target_grasp_pose is None:
             logger.warning("Failed to compute grasp pose")
             return None, None, False, False, None
-        
+
         # Check if target reached using our separate function
         target_reached = self.is_target_reached(ee_pose)
-        
+
         # Return appropriate values based on control mode
         if self.direct_ee_control:
             # Direct control mode - compute errors for visualization only
             self.last_position_error = Vector3(
                 self.target_grasp_pose.position.x - ee_pose.position.x,
                 self.target_grasp_pose.position.y - ee_pose.position.y,
-                self.target_grasp_pose.position.z - ee_pose.position.z
+                self.target_grasp_pose.position.z - ee_pose.position.z,
             )
             self.last_target_reached = target_reached
             return None, None, target_reached, target_tracked, self.target_grasp_pose
         else:
             # Velocity control mode - use controller
-            velocity_cmd, angular_velocity_cmd, controller_reached = self.controller.compute_control(
-                ee_pose, self.target_grasp_pose
+            velocity_cmd, angular_velocity_cmd, controller_reached = (
+                self.controller.compute_control(ee_pose, self.target_grasp_pose)
             )
             return velocity_cmd, angular_velocity_cmd, target_reached, target_tracked, None
-    
+
     def get_object_pose_camera_frame(
         self, object_pos: Vector3, camera_pose: Pose
     ) -> Tuple[Vector3, Quaternion]:
@@ -351,15 +352,16 @@ class PBVS:
         """
         # Calculate orientation pointing at camera
         yaw_to_camera = yaw_towards_point(Vector3(object_pos.x, object_pos.y, object_pos.z))
-        
+
         # Convert euler angles to quaternion using utility function
         euler = Vector3(0.0, 0.0, yaw_to_camera)  # Level grasp
         orientation = euler_to_quaternion(euler)
 
         return object_pos, orientation
-    
+
     def create_status_overlay(
-        self, image: np.ndarray,
+        self,
+        image: np.ndarray,
     ) -> np.ndarray:
         """
         Create PBVS status overlay on image.
@@ -377,19 +379,21 @@ class PBVS:
         else:
             # Use controller's overlay for velocity mode
             return self.controller.create_status_overlay(
-                image, 
+                image,
                 self.current_target,
                 self.direct_ee_control,
             )
-    
-    def _create_direct_status_overlay(self, image: np.ndarray, current_target: Optional[ObjectData] = None) -> np.ndarray:
+
+    def _create_direct_status_overlay(
+        self, image: np.ndarray, current_target: Optional[ObjectData] = None
+    ) -> np.ndarray:
         """
         Create status overlay for direct control mode.
-        
+
         Args:
             image: Input image
             current_target: Current target object
-            
+
         Returns:
             Image with status overlay
         """
@@ -407,7 +411,13 @@ class PBVS:
             # Status text
             y = panel_y + 20
             cv2.putText(
-                viz_img, "PBVS Status (Direct EE)", (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2
+                viz_img,
+                "PBVS Status (Direct EE)",
+                (10, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 255),
+                2,
             )
 
             # Add frame info
@@ -417,7 +427,11 @@ class PBVS:
 
             if self.last_position_error:
                 error_mag = np.linalg.norm(
-                    [self.last_position_error.x, self.last_position_error.y, self.last_position_error.z]
+                    [
+                        self.last_position_error.x,
+                        self.last_position_error.y,
+                        self.last_position_error.z,
+                    ]
                 )
                 color = (0, 255, 0) if self.last_target_reached else (0, 255, 255)
 
@@ -453,7 +467,7 @@ class PBVS:
                     (255, 255, 0),
                     1,
                 )
-                
+
             if self.target_grasp_pose:
                 grasp_pos = self.target_grasp_pose.position
                 cv2.putText(
@@ -465,18 +479,18 @@ class PBVS:
                     (0, 255, 255),
                     1,
                 )
-                
+
                 # Show pregrasp distance if we have both poses
                 if current_target and "position" in current_target:
                     target_pos = current_target["position"]
                     distance = np.sqrt(
-                        (grasp_pos.x - target_pos.x)**2 + 
-                        (grasp_pos.y - target_pos.y)**2 + 
-                        (grasp_pos.z - target_pos.z)**2
+                        (grasp_pos.x - target_pos.x) ** 2
+                        + (grasp_pos.y - target_pos.y) ** 2
+                        + (grasp_pos.z - target_pos.z) ** 2
                     )
                     cv2.putText(
                         viz_img,
-                        f"Pregrasp: {distance*1000:.1f}mm",
+                        f"Pregrasp: {distance * 1000:.1f}mm",
                         (10, y + 95),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.4,
@@ -502,7 +516,7 @@ class PBVSController:
     """
     Low-level Position-Based Visual Servoing controller.
     Pure control logic that computes velocity commands from poses.
-    
+
     Handles:
     - Position and orientation error computation
     - Velocity command generation with gain control
@@ -545,7 +559,7 @@ class PBVSController:
             f"max_vel={max_velocity}m/s, max_ang_vel={max_angular_velocity}rad/s, "
             f"target_tolerance={target_tolerance}m"
         )
-    
+
     def clear_state(self):
         """Clear controller state."""
         self.last_position_error = None
@@ -561,7 +575,7 @@ class PBVSController:
         Compute PBVS control with position and orientation servoing.
 
         Args:
-            ee_pose: Current end-effector pose  
+            ee_pose: Current end-effector pose
             grasp_pose: Target grasp pose
 
         Returns:
@@ -574,7 +588,7 @@ class PBVSController:
         error = Vector3(
             grasp_pose.position.x - ee_pose.position.x,
             grasp_pose.position.y - ee_pose.position.y,
-            grasp_pose.position.z - ee_pose.position.z
+            grasp_pose.position.z - ee_pose.position.z,
         )
         self.last_position_error = error
 
@@ -620,25 +634,27 @@ class PBVSController:
             Angular velocity command as Vector3
         """
         # Use quaternion error for better numerical stability
-        
+
         # Convert to scipy Rotation objects
         target_rot_scipy = R.from_quat([target_rot.x, target_rot.y, target_rot.z, target_rot.w])
-        current_rot_scipy = R.from_quat([
-            current_pose.orientation.x, 
-            current_pose.orientation.y, 
-            current_pose.orientation.z, 
-            current_pose.orientation.w
-        ])
-        
+        current_rot_scipy = R.from_quat(
+            [
+                current_pose.orientation.x,
+                current_pose.orientation.y,
+                current_pose.orientation.z,
+                current_pose.orientation.w,
+            ]
+        )
+
         # Compute rotation error: error = target * current^(-1)
         error_rot = target_rot_scipy * current_rot_scipy.inv()
-        
+
         # Convert to axis-angle representation for control
         error_axis_angle = error_rot.as_rotvec()
-        
+
         # Use axis-angle directly as angular velocity error (small angle approximation)
         roll_error = error_axis_angle[0]
-        pitch_error = error_axis_angle[1] 
+        pitch_error = error_axis_angle[1]
         yaw_error = error_axis_angle[2]
 
         self.last_rotation_error = Vector3(roll_error, pitch_error, yaw_error)
@@ -657,9 +673,7 @@ class PBVSController:
         if ang_vel_magnitude > self.max_angular_velocity:
             scale = self.max_angular_velocity / ang_vel_magnitude
             angular_velocity = Vector3(
-                angular_velocity.x * scale,
-                angular_velocity.y * scale,
-                angular_velocity.z * scale
+                angular_velocity.x * scale, angular_velocity.y * scale, angular_velocity.z * scale
             )
 
         self.last_angular_velocity_cmd = angular_velocity
@@ -667,8 +681,8 @@ class PBVSController:
         return angular_velocity
 
     def create_status_overlay(
-        self, 
-        image: np.ndarray, 
+        self,
+        image: np.ndarray,
         current_target: Optional[Dict[str, Any]] = None,
         direct_ee_control: bool = False,
     ) -> np.ndarray:
@@ -698,7 +712,13 @@ class PBVSController:
             y = panel_y + 20
             mode_text = "Direct EE" if direct_ee_control else "Velocity"
             cv2.putText(
-                viz_img, f"PBVS Status ({mode_text})", (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2
+                viz_img,
+                f"PBVS Status ({mode_text})",
+                (10, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 255),
+                2,
             )
 
             # Add frame info

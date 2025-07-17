@@ -107,7 +107,14 @@ class PiperArm:
     def cmd_ee_pose_values(self, x, y, z, r, p, y_):
         """Command end-effector to target pose in space (position + Euler angles)"""
         factor = 1000
-        pose = [x * factor * factor, y * factor * factor, z * factor * factor, r * factor, p * factor, y_ * factor]
+        pose = [
+            x * factor * factor,
+            y * factor * factor,
+            z * factor * factor,
+            r * factor,
+            p * factor,
+            y_ * factor,
+        ]
         print(f"[PiperArm] Commanding end-effector pose: {pose}")
         self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
         self.arm.EndPoseCtrl(
@@ -118,11 +125,10 @@ class PiperArm:
         """Command end-effector to target pose using Pose message"""
         # Convert quaternion to euler angles
         euler = quaternion_to_euler(pose.orientation, degrees=True)
-        
+
         # Command the pose
         self.cmd_ee_pose_values(
-            pose.position.x, pose.position.y, pose.position.z,
-            euler[0], euler[1], euler[2]
+            pose.position.x, pose.position.y, pose.position.z, euler[0], euler[1], euler[2]
         )
 
     def get_ee_pose(self):
@@ -132,16 +138,16 @@ class PiperArm:
         # Extract individual pose values and convert to base units
         # Position values are divided by 1000 to convert from SDK units to meters
         # Rotation values are divided by 1000 to convert from SDK units to radians
-        x = pose.end_pose.X_axis / factor / factor   # Convert mm to m
-        y = pose.end_pose.Y_axis / factor / factor # Convert mm to m
-        z = pose.end_pose.Z_axis / factor / factor # Convert mm to m
-        rx = pose.end_pose.RX_axis / factor 
-        ry = pose.end_pose.RY_axis / factor 
+        x = pose.end_pose.X_axis / factor / factor  # Convert mm to m
+        y = pose.end_pose.Y_axis / factor / factor  # Convert mm to m
+        z = pose.end_pose.Z_axis / factor / factor  # Convert mm to m
+        rx = pose.end_pose.RX_axis / factor
+        ry = pose.end_pose.RY_axis / factor
         rz = pose.end_pose.RZ_axis / factor
 
         # Create position vector (already in meters)
         position = Vector3(x, y, z)
-        
+
         orientation = euler_to_quaternion(Vector3(rx, ry, rz), degrees=True)
 
         return Pose(position, orientation)
@@ -223,24 +229,32 @@ class PiperArm:
         YZ_dot = YZ_dot * factor
 
         current_pose_msg = self.get_ee_pose()
-        
+
         # Convert quaternion to euler angles
-        quat = [current_pose_msg.orientation.x, current_pose_msg.orientation.y, 
-                current_pose_msg.orientation.z, current_pose_msg.orientation.w]
+        quat = [
+            current_pose_msg.orientation.x,
+            current_pose_msg.orientation.y,
+            current_pose_msg.orientation.z,
+            current_pose_msg.orientation.w,
+        ]
         rotation = R.from_quat(quat)
-        euler = rotation.as_euler('xyz')  # Returns [rx, ry, rz] in radians
-        
+        euler = rotation.as_euler("xyz")  # Returns [rx, ry, rz] in radians
+
         # Create current pose array [x, y, z, rx, ry, rz]
-        current_pose = np.array([
-            current_pose_msg.position.x,
-            current_pose_msg.position.y, 
-            current_pose_msg.position.z,
-            euler[0], euler[1], euler[2]
-        ])
-        
+        current_pose = np.array(
+            [
+                current_pose_msg.position.x,
+                current_pose_msg.position.y,
+                current_pose_msg.position.z,
+                euler[0],
+                euler[1],
+                euler[2],
+            ]
+        )
+
         # Apply velocity increment
         current_pose = current_pose + np.array([x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot]) * self.dt
-        
+
         self.cmd_ee_pose_values(
             current_pose[0],
             current_pose[1],

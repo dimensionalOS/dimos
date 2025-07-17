@@ -213,11 +213,8 @@ class Detection3DProcessor:
         # Convert euler angles to quaternion using utility function
         euler_vector = Vector3(obj_orientation[0], obj_orientation[1], obj_orientation[2])
         obj_orientation_quat = euler_to_quaternion(euler_vector)
-        
-        obj_pose_optical = Pose(
-            Vector3(obj_pos[0], obj_pos[1], obj_pos[2]),
-            obj_orientation_quat
-        )
+
+        obj_pose_optical = Pose(Vector3(obj_pos[0], obj_pos[1], obj_pos[2]), obj_orientation_quat)
 
         # Transform object pose from optical frame to robot frame convention first
         obj_pose_robot_frame = optical_to_robot_frame(obj_pose_optical)
