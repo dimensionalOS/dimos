@@ -13,9 +13,120 @@
 # limitations under the License.
 
 import numpy as np
-from dimos_lcm.geometry_msgs import Transform
+import pytest
+from dimos_lcm.geometry_msgs import Transform as LCMTransform
 
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
+
+
+def test_transform_initialization():
+    # Test default initialization (identity transform)
+    tf = Transform()
+    assert tf.translation.x == 0.0
+    assert tf.translation.y == 0.0
+    assert tf.translation.z == 0.0
+    assert tf.rotation.x == 0.0
+    assert tf.rotation.y == 0.0
+    assert tf.rotation.z == 0.0
+    assert tf.rotation.w == 1.0
+
+    # Test initialization with Vector3 and Quaternion
+    trans = Vector3(1.0, 2.0, 3.0)
+    rot = Quaternion(0.0, 0.0, 0.707107, 0.707107)  # 90 degrees around Z
+    tf2 = Transform(trans, rot)
+    assert tf2.translation == trans
+    assert tf2.rotation == rot
+
+    # Test copy constructor
+    tf3 = Transform(tf2)
+    assert tf3.translation == tf2.translation
+    assert tf3.rotation == tf2.rotation
+    assert tf3 == tf2
+    # Ensure it's a deep copy
+    tf3.translation.x = 10.0
+    assert tf2.translation.x == 1.0
+
+    # Test initialization from LCM Transform
+    lcm_tf = LCMTransform()
+    lcm_tf.translation = Vector3(4.0, 5.0, 6.0)
+    lcm_tf.rotation = Quaternion(0.0, 0.707107, 0.0, 0.707107)  # 90 degrees around Y
+    tf4 = Transform(lcm_tf)
+    assert tf4.translation.x == 4.0
+    assert tf4.translation.y == 5.0
+    assert tf4.translation.z == 6.0
+    assert np.isclose(tf4.rotation.x, 0.0)
+    assert np.isclose(tf4.rotation.y, 0.707107)
+    assert np.isclose(tf4.rotation.z, 0.0)
+    assert np.isclose(tf4.rotation.w, 0.707107)
+
+    # Test initialization with only translation
+    tf5 = Transform(Vector3(7.0, 8.0, 9.0))
+    assert tf5.translation.x == 7.0
+    assert tf5.translation.y == 8.0
+    assert tf5.translation.z == 9.0
+    assert tf5.rotation.w == 1.0  # Identity rotation
+
+    # Test initialization with only rotation
+    tf6 = Transform(Quaternion(0.0, 0.0, 0.0, 1.0))
+    assert tf6.translation.is_zero()  # Zero translation
+    assert tf6.rotation.w == 1.0
+
+    # Test keyword argument initialization
+    tf7 = Transform(translation=Vector3(1, 2, 3), rotation=Quaternion())
+    assert tf7.translation == Vector3(1, 2, 3)
+    assert tf7.rotation == Quaternion()
+
+    # Test keyword with only translation
+    tf8 = Transform(translation=Vector3(4, 5, 6))
+    assert tf8.translation == Vector3(4, 5, 6)
+    assert tf8.rotation.w == 1.0
+
+    # Test keyword with only rotation
+    tf9 = Transform(rotation=Quaternion(0, 0, 1, 0))
+    assert tf9.translation.is_zero()
+    assert tf9.rotation == Quaternion(0, 0, 1, 0)
+
+
+def test_transform_identity():
+    # Test identity class method
+    tf = Transform.identity()
+    assert tf.translation.is_zero()
+    assert tf.rotation.x == 0.0
+    assert tf.rotation.y == 0.0
+    assert tf.rotation.z == 0.0
+    assert tf.rotation.w == 1.0
+
+    # Identity should equal default constructor
+    assert tf == Transform()
+
+
+def test_transform_equality():
+    tf1 = Transform(Vector3(1, 2, 3), Quaternion(0, 0, 0, 1))
+    tf2 = Transform(Vector3(1, 2, 3), Quaternion(0, 0, 0, 1))
+    tf3 = Transform(Vector3(1, 2, 4), Quaternion(0, 0, 0, 1))  # Different z
+    tf4 = Transform(Vector3(1, 2, 3), Quaternion(0, 0, 1, 0))  # Different rotation
+
+    assert tf1 == tf2
+    assert tf1 != tf3
+    assert tf1 != tf4
+    assert tf1 != "not a transform"
+
+
+def test_transform_string_representations():
+    tf = Transform(Vector3(1.5, -2.0, 3.14), Quaternion(0, 0, 0.707107, 0.707107))
+
+    # Test repr
+    repr_str = repr(tf)
+    assert "Transform" in repr_str
+    assert "translation=" in repr_str
+    assert "rotation=" in repr_str
+    assert "1.5" in repr_str
+
+    # Test str
+    str_str = str(tf)
+    assert "Transform:" in str_str
+    assert "Translation:" in str_str
+    assert "Rotation:" in str_str
 
 
 def test_pose_add_transform():
