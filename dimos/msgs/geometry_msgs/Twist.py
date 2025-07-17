@@ -63,11 +63,9 @@ class Twist(LCMTwist):
     @dispatch
     def __init__(self, **kwargs):
         """Handle keyword arguments for LCM compatibility."""
-        # Get values with defaults and let dispatch handle type conversion
         linear = kwargs.get("linear", Vector3())
         angular = kwargs.get("angular", Vector3())
 
-        # Call the appropriate positional init - dispatch will handle the types
         self.__init__(linear, angular)
 
     @classmethod
