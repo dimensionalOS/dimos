@@ -101,10 +101,9 @@ class Sam2DSegmenter:
             device=self.device,
             retina_masks=True,
             conf=0.3,
-            iou=0.9,
+            iou=0.5,
             persist=True,
             verbose=False,
-            tracker=self.tracker_config,
         )
 
         if len(results) > 0:
