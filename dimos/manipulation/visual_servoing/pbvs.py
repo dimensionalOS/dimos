@@ -37,6 +37,7 @@ logger = setup_logger("dimos.manipulation.pbvs")
 
 class GraspStage(Enum):
     """Enum for different grasp stages."""
+
     PRE_GRASP = "pre_grasp"
     GRASP = "grasp"
 
@@ -44,7 +45,7 @@ class GraspStage(Enum):
 class PBVS:
     """
     High-level Position-Based Visual Servoing orchestrator.
-    
+
     Handles:
     - Object tracking and target management
     - Pregrasp distance computation
@@ -105,11 +106,11 @@ class PBVS:
         self.grasp_distance = grasp_distance
         self.direct_ee_control = direct_ee_control
 
-                # Target state
+        # Target state
         self.current_target = None
         self.target_grasp_pose = None
         self.grasp_stage = GraspStage.PRE_GRASP
-        
+
         # For direct control mode visualization
         self.last_position_error = None
         self.last_target_reached = False
@@ -157,39 +158,37 @@ class PBVS:
             Current target ObjectData or None if no target selected
         """
         return self.current_target
-    
+
     def set_grasp_stage(self, stage: GraspStage):
         """
         Set the grasp stage.
-        
+
         Args:
             stage: The new grasp stage
         """
         self.grasp_stage = stage
-    
 
-    
     def is_target_reached(self, ee_pose: Pose) -> bool:
         """
         Check if the current target stage has been reached.
-        
+
         Args:
             ee_pose: Current end-effector pose
-            
+
         Returns:
             True if current stage target is reached, False otherwise
         """
         if not self.target_grasp_pose:
             return False
-            
+
         # Calculate position error
         error_x = self.target_grasp_pose.position.x - ee_pose.position.x
         error_y = self.target_grasp_pose.position.y - ee_pose.position.y
         error_z = self.target_grasp_pose.position.z - ee_pose.position.z
-        
+
         error_magnitude = np.sqrt(error_x**2 + error_y**2 + error_z**2)
         stage_reached = error_magnitude < self.target_tolerance
-        
+
         # Handle stage transitions
         if stage_reached and self.grasp_stage == GraspStage.PRE_GRASP:
             return True  # Signal that pre-grasp target was reached
@@ -198,7 +197,7 @@ class PBVS:
             logger.info("Grasp position reached, clearing target")
             self.clear_target()
             return True
-            
+
         return False
 
     def update_target_tracking(self, new_detections: List[ObjectData]) -> bool:
@@ -221,26 +220,30 @@ class PBVS:
 
         # Use stage-dependent distance threshold
         max_distance = self.max_tracking_distance_threshold
-        
+
         # Find best match using standardized utility function
         match_result = find_best_object_match(
             target_obj=self.current_target,
             candidates=new_detections,
             max_distance=max_distance,
-            min_size_similarity=self.min_size_similarity
+            min_size_similarity=self.min_size_similarity,
         )
 
         if match_result.is_valid_match:
             self.current_target = match_result.matched_object
             self.target_grasp_pose = None  # Recompute grasp pose
-            logger.debug(f"Target tracking successful: distance={match_result.distance:.3f}m, "
-                        f"size_similarity={match_result.size_similarity:.2f}, "
-                        f"confidence={match_result.confidence:.2f}")
+            logger.debug(
+                f"Target tracking successful: distance={match_result.distance:.3f}m, "
+                f"size_similarity={match_result.size_similarity:.2f}, "
+                f"confidence={match_result.confidence:.2f}"
+            )
             return True
-        
-        logger.debug(f"Target tracking lost: distance={match_result.distance:.3f}m, "
-                    f"size_similarity={match_result.size_similarity:.2f}, "
-                    f"thresholds: distance={max_distance:.3f}m, size={self.min_size_similarity:.2f}")
+
+        logger.debug(
+            f"Target tracking lost: distance={match_result.distance:.3f}m, "
+            f"size_similarity={match_result.size_similarity:.2f}, "
+            f"thresholds: distance={max_distance:.3f}m, size={self.min_size_similarity:.2f}"
+        )
         return False
 
     def _update_target_grasp_pose(self, ee_pose: Pose):
@@ -269,7 +272,11 @@ class PBVS:
         target_pose = Pose(target_pos, target_orientation)
 
         # Apply grasp distance
-        distance = self.pregrasp_distance if self.grasp_stage == GraspStage.PRE_GRASP else self.grasp_distance
+        distance = (
+            self.pregrasp_distance
+            if self.grasp_stage == GraspStage.PRE_GRASP
+            else self.grasp_distance
+        )
         self.target_grasp_pose = self._apply_grasp_distance(target_pose, ee_pose, distance)
 
     def _apply_grasp_distance(self, target_pose: Pose, ee_pose: Pose, distance: float) -> Pose:
@@ -357,14 +364,18 @@ class PBVS:
                 self.target_grasp_pose.position.y - ee_pose.position.y,
                 self.target_grasp_pose.position.z - ee_pose.position.z,
             )
-        
+
         # Check if target reached using our separate function
         target_reached = self.is_target_reached(ee_pose)
-        
+
         # If stage transitioned, recompute target grasp pose
-        if target_reached and self.grasp_stage == GraspStage.GRASP and self.target_grasp_pose is None:
+        if (
+            target_reached
+            and self.grasp_stage == GraspStage.GRASP
+            and self.target_grasp_pose is None
+        ):
             self._update_target_grasp_pose(ee_pose)
-        
+
         # Return appropriate values based on control mode
         if self.direct_ee_control:
             # Direct control mode
@@ -531,7 +542,7 @@ class PBVS:
                         + (grasp_pos.y - target_pos.y) ** 2
                         + (grasp_pos.z - target_pos.z) ** 2
                     )
-                    
+
                     # Show current stage and distance
                     stage_text = f"Stage: {self.grasp_stage.value}"
                     cv2.putText(
@@ -543,7 +554,7 @@ class PBVS:
                         (255, 150, 255),
                         1,
                     )
-                    
+
                     distance_text = f"Distance: {distance * 1000:.1f}mm"
                     cv2.putText(
                         viz_img,
@@ -651,9 +662,9 @@ class PBVSController:
 
         # Compute velocity command with proportional control
         velocity_cmd = Vector3(
-                error.x * self.position_gain,
-                error.y * self.position_gain,
-                error.z * self.position_gain,
+            error.x * self.position_gain,
+            error.y * self.position_gain,
+            error.z * self.position_gain,
         )
 
         # Limit velocity magnitude
@@ -661,9 +672,9 @@ class PBVSController:
         if vel_magnitude > self.max_velocity:
             scale = self.max_velocity / vel_magnitude
             velocity_cmd = Vector3(
-                    float(velocity_cmd.x * scale),
-                    float(velocity_cmd.y * scale),
-                    float(velocity_cmd.z * scale),
+                float(velocity_cmd.x * scale),
+                float(velocity_cmd.y * scale),
+                float(velocity_cmd.z * scale),
             )
 
         self.last_velocity_cmd = velocity_cmd
@@ -691,36 +702,36 @@ class PBVSController:
             Angular velocity command as Vector3
         """
         # Use quaternion error for better numerical stability
-        
+
         # Convert to scipy Rotation objects
         target_rot_scipy = R.from_quat([target_rot.x, target_rot.y, target_rot.z, target_rot.w])
         current_rot_scipy = R.from_quat(
             [
-            current_pose.orientation.x, 
-            current_pose.orientation.y, 
-            current_pose.orientation.z, 
+                current_pose.orientation.x,
+                current_pose.orientation.y,
+                current_pose.orientation.z,
                 current_pose.orientation.w,
             ]
         )
-        
+
         # Compute rotation error: error = target * current^(-1)
         error_rot = target_rot_scipy * current_rot_scipy.inv()
-        
+
         # Convert to axis-angle representation for control
         error_axis_angle = error_rot.as_rotvec()
-        
+
         # Use axis-angle directly as angular velocity error (small angle approximation)
         roll_error = error_axis_angle[0]
-        pitch_error = error_axis_angle[1] 
+        pitch_error = error_axis_angle[1]
         yaw_error = error_axis_angle[2]
 
         self.last_rotation_error = Vector3(roll_error, pitch_error, yaw_error)
 
         # Apply proportional control
         angular_velocity = Vector3(
-                roll_error * self.rotation_gain,
-                pitch_error * self.rotation_gain,
-                yaw_error * self.rotation_gain,
+            roll_error * self.rotation_gain,
+            pitch_error * self.rotation_gain,
+            yaw_error * self.rotation_gain,
         )
 
         # Limit angular velocity magnitude
@@ -843,8 +854,8 @@ class PBVSController:
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.5,
                     (255, 200, 0),
-                1,
-            )
+                    1,
+                )
 
             if self.last_target_reached:
                 cv2.putText(

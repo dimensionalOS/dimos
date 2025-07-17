@@ -171,7 +171,14 @@ class Detection3DProcessor:
                     "depth": max(depth_m, 0.01),  # Minimum 1cm depth
                 }
 
-                if min(obj_data["size"]["width"], obj_data["size"]["height"], obj_data["size"]["depth"]) > self.max_object_size:
+                if (
+                    min(
+                        obj_data["size"]["width"],
+                        obj_data["size"]["height"],
+                        obj_data["size"]["depth"],
+                    )
+                    > self.max_object_size
+                ):
                     continue
 
                 # Extract average color from the region
