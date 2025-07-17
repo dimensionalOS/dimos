@@ -18,7 +18,7 @@ from typing import Iterator, List, Tuple, TypeVar, Union
 import numpy as np
 from dimos_lcm.nav_msgs import Path as LCMPPath
 
-from dimos.types.ros_polyfill import Vector3
+from dimos.msgs.geometry_msgs import Vector3
 from dimos.types.vector import Vector
 
 T = TypeVar("T", bound="Path")

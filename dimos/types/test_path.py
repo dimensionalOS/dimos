@@ -15,8 +15,8 @@
 import numpy as np
 import pytest
 
+from dimos.msgs.geometry_msgs import Vector3
 from dimos.types.path import Path
-from dimos.types.vector import Vector, Vector3
 
 
 @pytest.fixture
