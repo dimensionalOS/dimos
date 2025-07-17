@@ -61,10 +61,6 @@ def estimate_object_depth(
     """
     x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
 
-    # Quick bounds check
-    if x2 <= x1 or y2 <= y1:
-        return 0.05
-
     # Extract depth ROI once
     roi_depth = depth_image[y1:y2, x1:x2]
 

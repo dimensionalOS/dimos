@@ -15,9 +15,8 @@
 import numpy as np
 from typing import Tuple, Dict, Any
 import logging
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation as R
 
-from dimos.types.vector import Vector
 from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
 
 logger = logging.getLogger(__name__)
@@ -48,12 +47,12 @@ def pose_to_matrix(pose: Pose) -> np.ndarray:
 
     # Create rotation matrix from quaternion using scipy
     quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
-    rotation = Rotation.from_quat(quat)
-    R = rotation.as_matrix()
+    rotation = R.from_quat(quat)
+    Rot = rotation.as_matrix()
 
     # Create 4x4 transform
     T = np.eye(4)
-    T[:3, :3] = R
+    T[:3, :3] = Rot
     T[:3, 3] = [tx, ty, tz]
 
     return T
@@ -73,8 +72,8 @@ def matrix_to_pose(T: np.ndarray) -> Pose:
     pos = Vector3(T[0, 3], T[1, 3], T[2, 3])
 
     # Extract rotation matrix and convert to quaternion
-    R = T[:3, :3]
-    rotation = Rotation.from_matrix(R)
+    Rot = T[:3, :3]
+    rotation = R.from_matrix(Rot)
     quat = rotation.as_quat()  # Returns [x, y, z, w]
 
     orientation = Quaternion(quat[0], quat[1], quat[2], quat[3])
@@ -131,7 +130,7 @@ def optical_to_robot_frame(pose: Pose) -> Pose:
     # Rotation transformation using quaternions
     # First convert quaternion to rotation matrix
     quat_optical = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
-    R_optical = Rotation.from_quat(quat_optical).as_matrix()
+    R_optical = R.from_quat(quat_optical).as_matrix()
 
     # Coordinate frame transformation matrix from optical to robot
     # X_robot = Z_optical, Y_robot = -X_optical, Z_robot = -Y_optical
@@ -147,7 +146,7 @@ def optical_to_robot_frame(pose: Pose) -> Pose:
     R_robot = T_frame @ R_optical @ T_frame.T
 
     # Convert back to quaternion
-    quat_robot = Rotation.from_matrix(R_robot).as_quat()  # [x, y, z, w]
+    quat_robot = R.from_matrix(R_robot).as_quat()  # [x, y, z, w]
 
     return Pose(
         Vector3(robot_x, robot_y, robot_z),
@@ -173,7 +172,7 @@ def robot_to_optical_frame(pose: Pose) -> Pose:
 
     # Rotation transformation using quaternions
     quat_robot = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
-    R_robot = Rotation.from_quat(quat_robot).as_matrix()
+    R_robot = R.from_quat(quat_robot).as_matrix()
 
     # Coordinate frame transformation matrix from Robot to optical (inverse of optical to Robot)
     # This is the transpose of the forward transformation
@@ -189,7 +188,7 @@ def robot_to_optical_frame(pose: Pose) -> Pose:
     R_optical = T_frame_inv @ R_robot @ T_frame_inv.T
 
     # Convert back to quaternion
-    quat_optical = Rotation.from_matrix(R_optical).as_quat()  # [x, y, z, w]
+    quat_optical = R.from_matrix(R_optical).as_quat()  # [x, y, z, w]
 
     return Pose(
         Vector3(optical_x, optical_y, optical_z),
@@ -197,7 +196,7 @@ def robot_to_optical_frame(pose: Pose) -> Pose:
     )
 
 
-def yaw_towards_point(position: Vector, target_point: Vector = Vector(0.0, 0.0, 0.0)) -> float:
+def yaw_towards_point(position: Vector3, target_point: Vector3 = Vector3(0.0, 0.0, 0.0)) -> float:
     """
     Calculate yaw angle from target point to position (away from target).
     This is commonly used for object orientation in grasping applications.
@@ -210,29 +209,30 @@ def yaw_towards_point(position: Vector, target_point: Vector = Vector(0.0, 0.0, 
     Returns:
         Yaw angle in radians pointing from target_point to position
     """
-    direction = position - target_point
-    return np.arctan2(direction.y, direction.x)
+    direction_x = position.x - target_point.x
+    direction_y = position.y - target_point.y
+    return np.arctan2(direction_y, direction_x)
 
 
 def transform_robot_to_map(
-    robot_position: Vector, robot_rotation: Vector, position: Vector, rotation: Vector
-) -> Tuple[Vector, Vector]:
+    robot_position: Vector3, robot_rotation: Vector3, position: Vector3, rotation: Vector3
+) -> Tuple[Vector3, Vector3]:
     """Transform position and rotation from robot frame to map frame.
 
     Args:
         robot_position: Current robot position in map frame
         robot_rotation: Current robot rotation in map frame
-        position: Position in robot frame as Vector (x, y, z)
-        rotation: Rotation in robot frame as Vector (roll, pitch, yaw) in radians
+        position: Position in robot frame as Vector3 (x, y, z)
+        rotation: Rotation in robot frame as Vector3 (roll, pitch, yaw) in radians
 
     Returns:
         Tuple of (transformed_position, transformed_rotation) where:
-            - transformed_position: Vector (x, y, z) in map frame
-            - transformed_rotation: Vector (roll, pitch, yaw) in map frame
+            - transformed_position: Vector3 (x, y, z) in map frame
+            - transformed_rotation: Vector3 (roll, pitch, yaw) in map frame
 
     Example:
-        obj_pos_robot = Vector(1.0, 0.5, 0.0)  # 1m forward, 0.5m left of robot
-        obj_rot_robot = Vector(0.0, 0.0, 0.0)  # No rotation relative to robot
+        obj_pos_robot = Vector3(1.0, 0.5, 0.0)  # 1m forward, 0.5m left of robot
+        obj_rot_robot = Vector3(0.0, 0.0, 0.0)  # No rotation relative to robot
 
         map_pos, map_rot = transform_robot_to_map(robot_position, robot_rotation, obj_pos_robot, obj_rot_robot)
     """
@@ -262,7 +262,106 @@ def transform_robot_to_map(
     map_pitch = robot_rot.y + rot_pitch  # Add robot's pitch
     map_yaw_rot = normalize_angle(robot_yaw + rot_yaw)  # Add robot's yaw and normalize
 
-    transformed_position = Vector(map_x, map_y, map_z)
-    transformed_rotation = Vector(map_roll, map_pitch, map_yaw_rot)
+    transformed_position = Vector3(map_x, map_y, map_z)
+    transformed_rotation = Vector3(map_roll, map_pitch, map_yaw_rot)
 
     return transformed_position, transformed_rotation
+
+
+def create_transform_from_6dof(translation: Vector3, euler_angles: Vector3) -> np.ndarray:
+    """
+    Create a 4x4 transformation matrix from 6DOF parameters.
+    
+    Args:
+        translation: Translation vector [x, y, z] in meters
+        euler_angles: Euler angles [rx, ry, rz] in radians (XYZ convention)
+        
+    Returns:
+        4x4 transformation matrix
+    """
+    # Create transformation matrix
+    T = np.eye(4)
+    
+    # Set translation
+    T[0:3, 3] = [translation.x, translation.y, translation.z]
+    
+    # Set rotation using scipy
+    if np.linalg.norm([euler_angles.x, euler_angles.y, euler_angles.z]) > 1e-6:
+        rotation = R.from_euler('xyz', [euler_angles.x, euler_angles.y, euler_angles.z])
+        T[0:3, 0:3] = rotation.as_matrix()
+    
+    return T
+
+
+def invert_transform(T: np.ndarray) -> np.ndarray:
+    """
+    Invert a 4x4 transformation matrix efficiently.
+    
+    Args:
+        T: 4x4 transformation matrix
+        
+    Returns:
+        Inverted 4x4 transformation matrix
+    """
+    # For homogeneous transform matrices, we can use the special structure:
+    # [R t]^-1 = [R^T -R^T*t]
+    # [0 1]      [0    1    ]
+    
+    Rot = T[:3, :3]
+    t = T[:3, 3]
+    
+    T_inv = np.eye(4)
+    T_inv[:3, :3] = Rot.T
+    T_inv[:3, 3] = -Rot.T @ t
+    
+    return T_inv
+
+
+def compose_transforms(*transforms: np.ndarray) -> np.ndarray:
+    """
+    Compose multiple transformation matrices.
+    
+    Args:
+        *transforms: Variable number of 4x4 transformation matrices
+        
+    Returns:
+        Composed 4x4 transformation matrix (T1 @ T2 @ ... @ Tn)
+    """
+    result = np.eye(4)
+    for T in transforms:
+        result = result @ T
+    return result
+
+
+def euler_to_quaternion(euler_angles: Vector3, degrees: bool = False) -> Quaternion:
+    """
+    Convert euler angles to quaternion.
+    
+    Args:
+        euler_angles: Euler angles as Vector3 [roll, pitch, yaw] in radians (XYZ convention)
+        
+    Returns:
+        Quaternion object [x, y, z, w]
+    """
+    rotation = R.from_euler('xyz', [euler_angles.x, euler_angles.y, euler_angles.z], degrees=degrees)
+    quat = rotation.as_quat()  # Returns [x, y, z, w]
+    return Quaternion(quat[0], quat[1], quat[2], quat[3])
+
+
+def quaternion_to_euler(quaternion: Quaternion, degrees: bool = False) -> Vector3:
+    """
+    Convert quaternion to euler angles.
+    
+    Args:
+        quaternion: Quaternion object [x, y, z, w]
+        
+    Returns:
+        Euler angles as Vector3 [roll, pitch, yaw] in radians (XYZ convention)
+    """
+    quat = [quaternion.x, quaternion.y, quaternion.z, quaternion.w]
+    rotation = R.from_quat(quat)
+    euler = rotation.as_euler('xyz', degrees=degrees)  # Returns [roll, pitch, yaw]
+    if not degrees:
+        return Vector3(normalize_angle(euler[0]), normalize_angle(euler[1]), normalize_angle(euler[2]))
+    else:
+        return Vector3(euler[0], euler[1], euler[2])

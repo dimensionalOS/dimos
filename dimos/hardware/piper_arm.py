@@ -26,6 +26,9 @@ import sys
 import termios
 import tty
 import select
+from scipy.spatial.transform import Rotation as R
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
+from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 
 import random
 import threading
@@ -77,7 +80,7 @@ class PiperArm:
 
     def gotoZero(self):
         factor = 1000
-        position = [57.0, 0.0, 250.0, 0, 85.0, 0.0, 0]
+        position = [57.0, 0.0, 250.0, 0, 97.0, 0, 0]
         X = round(position[0] * factor)
         Y = round(position[1] * factor)
         Z = round(position[2] * factor)
@@ -88,7 +91,7 @@ class PiperArm:
         print(X, Y, Z, RX, RY, RZ)
         self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
         self.arm.EndPoseCtrl(X, Y, Z, RX, RY, RZ)
-        self.arm.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
+        self.arm.GripperCtrl(0, 1000, 0x01, 0)
 
     def softStop(self):
         self.gotoZero()
@@ -101,35 +104,54 @@ class PiperArm:
         self.arm.MotionCtrl_1(0x01, 0, 0)
         time.sleep(5)
 
-    def cmd_EE_pose(self, x, y, z, r, p, y_):
+    def cmd_ee_pose_values(self, x, y, z, r, p, y_):
         """Command end-effector to target pose in space (position + Euler angles)"""
         factor = 1000
-        pose = [x * factor, y * factor, z * factor, r * factor, p * factor, y_ * factor]
-        self.arm.MotionCtrl_2(0x01, 0x00, 100, 0xAD)
+        pose = [x * factor * factor, y * factor * factor, z * factor * factor, r * factor, p * factor, y_ * factor]
+        print(f"[PiperArm] Commanding end-effector pose: {pose}")
+        self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
         self.arm.EndPoseCtrl(
             int(pose[0]), int(pose[1]), int(pose[2]), int(pose[3]), int(pose[4]), int(pose[5])
         )
 
-    def get_EE_pose(self):
-        """Return the current end-effector pose as (x, y, z, r, p, y)"""
-        pose = self.arm.GetArmEndPoseMsgs()
-        # Extract individual pose values and convert to base units
-        # Position values are divided by 1000 to convert from SDK units to mm
-        # Rotation values are divided by 1000 to convert from SDK units to degrees
-        x = pose.end_pose.X_axis / 1000.0
-        y = pose.end_pose.Y_axis / 1000.0
-        z = pose.end_pose.Z_axis / 1000.0
-        r = pose.end_pose.RX_axis / 1000.0
-        p = pose.end_pose.RY_axis / 1000.0
-        y_rot = pose.end_pose.RZ_axis / 1000.0
+    def cmd_ee_pose(self, pose: Pose):
+        """Command end-effector to target pose using Pose message"""
+        # Convert quaternion to euler angles
+        euler = quaternion_to_euler(pose.orientation, degrees=True)
+        
+        # Command the pose
+        self.cmd_ee_pose_values(
+            pose.position.x, pose.position.y, pose.position.z,
+            euler[0], euler[1], euler[2]
+        )
 
-        return (x, y, z, r, p, y_rot)
+    def get_ee_pose(self):
+        """Return the current end-effector pose as Pose message with position in meters and quaternion orientation"""
+        pose = self.arm.GetArmEndPoseMsgs()
+        factor = 1000.0
+        # Extract individual pose values and convert to base units
+        # Position values are divided by 1000 to convert from SDK units to meters
+        # Rotation values are divided by 1000 to convert from SDK units to radians
+        x = pose.end_pose.X_axis / factor / factor   # Convert mm to m
+        y = pose.end_pose.Y_axis / factor / factor # Convert mm to m
+        z = pose.end_pose.Z_axis / factor / factor # Convert mm to m
+        rx = pose.end_pose.RX_axis / factor 
+        ry = pose.end_pose.RY_axis / factor 
+        rz = pose.end_pose.RZ_axis / factor
+
+        # Create position vector (already in meters)
+        position = Vector3(x, y, z)
+        
+        orientation = euler_to_quaternion(Vector3(rx, ry, rz), degrees=True)
+
+        return Pose(position, orientation)
 
     def cmd_gripper_ctrl(self, position):
         """Command end-effector gripper"""
-        position = position * 1000
+        factor = 1000
+        position = position * factor * factor
 
-        self.arm.GripperCtrl(abs(round(position)), 1000, 0x01, 0)
+        self.arm.GripperCtrl(abs(round(position)), factor, 0x01, 0)
         print(f"[PiperArm] Commanding gripper position: {position}")
 
     def resetArm(self):
@@ -200,14 +222,26 @@ class PiperArm:
         PY_dot = PY_dot * factor
         YZ_dot = YZ_dot * factor
 
-        current_pose = self.get_EE_pose()
-        current_pose = np.array(current_pose)
-        current_pose = current_pose
-        current_pose = (
-            current_pose + np.array([x_dot, y_dot, z_dot, RX_dot, PY_dot, YZ_dot]) * self.dt
-        )
-        current_pose = current_pose
-        self.cmd_EE_pose(
+        current_pose_msg = self.get_ee_pose()
+        
+        # Convert quaternion to euler angles
+        quat = [current_pose_msg.orientation.x, current_pose_msg.orientation.y, 
+                current_pose_msg.orientation.z, current_pose_msg.orientation.w]
+        rotation = R.from_quat(quat)
+        euler = rotation.as_euler('xyz')  # Returns [rx, ry, rz] in radians
+        
+        # Create current pose array [x, y, z, rx, ry, rz]
+        current_pose = np.array([
+            current_pose_msg.position.x,
+            current_pose_msg.position.y, 
+            current_pose_msg.position.z,
+            euler[0], euler[1], euler[2]
+        ])
+        
+        # Apply velocity increment
+        current_pose = current_pose + np.array([x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot]) * self.dt
+        
+        self.cmd_ee_pose_values(
             current_pose[0],
             current_pose[1],
             current_pose[2],
@@ -330,9 +364,6 @@ def run_velocity_controller():
 
 if __name__ == "__main__":
     arm = PiperArm()
-
-    print("get_EE_pose")
-    arm.get_EE_pose()
 
     def get_key(timeout=0.1):
         """Non-blocking key reader for arrow keys."""
