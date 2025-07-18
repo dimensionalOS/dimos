@@ -208,3 +208,180 @@ def test_lcm_encode_decode():
     assert isinstance(q_dest, Quaternion)
     assert q_dest is not q_source
     assert q_dest == q_source
+
+
+def test_quaternion_multiplication():
+    """Test quaternion multiplication (Hamilton product)."""
+    # Test identity multiplication
+    q1 = Quaternion(0.5, 0.5, 0.5, 0.5)
+    identity = Quaternion(0, 0, 0, 1)
+
+    result = q1 * identity
+    assert np.allclose([result.x, result.y, result.z, result.w], [q1.x, q1.y, q1.z, q1.w])
+
+    # Test multiplication order matters (non-commutative)
+    q2 = Quaternion(0.1, 0.2, 0.3, 0.4)
+    q3 = Quaternion(0.4, 0.3, 0.2, 0.1)
+
+    result1 = q2 * q3
+    result2 = q3 * q2
+
+    # Results should be different
+    assert not np.allclose(
+        [result1.x, result1.y, result1.z, result1.w], [result2.x, result2.y, result2.z, result2.w]
+    )
+
+    # Test specific multiplication case
+    # 90 degree rotations around Z axis
+    angle = np.pi / 2
+    q_90z = Quaternion(0, 0, np.sin(angle / 2), np.cos(angle / 2))
+
+    # Two 90 degree rotations should give 180 degrees
+    result = q_90z * q_90z
+    expected_angle = np.pi
+    assert np.isclose(result.x, 0, atol=1e-10)
+    assert np.isclose(result.y, 0, atol=1e-10)
+    assert np.isclose(result.z, np.sin(expected_angle / 2), atol=1e-10)
+    assert np.isclose(result.w, np.cos(expected_angle / 2), atol=1e-10)
+
+
+def test_quaternion_conjugate():
+    """Test quaternion conjugate."""
+    q = Quaternion(0.1, 0.2, 0.3, 0.4)
+    conj = q.conjugate()
+
+    # Conjugate should negate x, y, z but keep w
+    assert conj.x == -q.x
+    assert conj.y == -q.y
+    assert conj.z == -q.z
+    assert conj.w == q.w
+
+    # Test that q * q^* gives a real quaternion (x=y=z=0)
+    result = q * conj
+    assert np.isclose(result.x, 0, atol=1e-10)
+    assert np.isclose(result.y, 0, atol=1e-10)
+    assert np.isclose(result.z, 0, atol=1e-10)
+    # w should be the squared norm
+    expected_w = q.x**2 + q.y**2 + q.z**2 + q.w**2
+    assert np.isclose(result.w, expected_w, atol=1e-10)
+
+
+def test_quaternion_inverse():
+    """Test quaternion inverse."""
+    # Test with unit quaternion
+    q_unit = Quaternion(0, 0, 0, 1).normalize()  # Already normalized but being explicit
+    inv = q_unit.inverse()
+
+    # For unit quaternion, inverse equals conjugate
+    conj = q_unit.conjugate()
+    assert np.allclose([inv.x, inv.y, inv.z, inv.w], [conj.x, conj.y, conj.z, conj.w])
+
+    # Test that q * q^-1 = identity
+    q = Quaternion(0.5, 0.5, 0.5, 0.5)
+    inv = q.inverse()
+    result = q * inv
+
+    assert np.isclose(result.x, 0, atol=1e-10)
+    assert np.isclose(result.y, 0, atol=1e-10)
+    assert np.isclose(result.z, 0, atol=1e-10)
+    assert np.isclose(result.w, 1, atol=1e-10)
+
+    # Test inverse of non-unit quaternion
+    q_non_unit = Quaternion(2, 0, 0, 0)  # Non-unit quaternion
+    inv = q_non_unit.inverse()
+    result = q_non_unit * inv
+
+    assert np.isclose(result.x, 0, atol=1e-10)
+    assert np.isclose(result.y, 0, atol=1e-10)
+    assert np.isclose(result.z, 0, atol=1e-10)
+    assert np.isclose(result.w, 1, atol=1e-10)
+
+
+def test_quaternion_normalize():
+    """Test quaternion normalization."""
+    # Test non-unit quaternion
+    q = Quaternion(1, 2, 3, 4)
+    q_norm = q.normalize()
+
+    # Check that magnitude is 1
+    magnitude = np.sqrt(q_norm.x**2 + q_norm.y**2 + q_norm.z**2 + q_norm.w**2)
+    assert np.isclose(magnitude, 1.0, atol=1e-10)
+
+    # Check that direction is preserved
+    scale = np.sqrt(q.x**2 + q.y**2 + q.z**2 + q.w**2)
+    assert np.isclose(q_norm.x, q.x / scale, atol=1e-10)
+    assert np.isclose(q_norm.y, q.y / scale, atol=1e-10)
+    assert np.isclose(q_norm.z, q.z / scale, atol=1e-10)
+    assert np.isclose(q_norm.w, q.w / scale, atol=1e-10)
+
+
+def test_quaternion_rotate_vector():
+    """Test rotating vectors with quaternions."""
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+    # Test rotation of unit vectors
+    # 90 degree rotation around Z axis
+    angle = np.pi / 2
+    q_rot = Quaternion(0, 0, np.sin(angle / 2), np.cos(angle / 2))
+
+    # Rotate X unit vector
+    v_x = Vector3(1, 0, 0)
+    v_rotated = q_rot.rotate_vector(v_x)
+
+    # Should now point along Y axis
+    assert np.isclose(v_rotated.x, 0, atol=1e-10)
+    assert np.isclose(v_rotated.y, 1, atol=1e-10)
+    assert np.isclose(v_rotated.z, 0, atol=1e-10)
+
+    # Rotate Y unit vector
+    v_y = Vector3(0, 1, 0)
+    v_rotated = q_rot.rotate_vector(v_y)
+
+    # Should now point along negative X axis
+    assert np.isclose(v_rotated.x, -1, atol=1e-10)
+    assert np.isclose(v_rotated.y, 0, atol=1e-10)
+    assert np.isclose(v_rotated.z, 0, atol=1e-10)
+
+    # Test that Z vector is unchanged (rotation axis)
+    v_z = Vector3(0, 0, 1)
+    v_rotated = q_rot.rotate_vector(v_z)
+
+    assert np.isclose(v_rotated.x, 0, atol=1e-10)
+    assert np.isclose(v_rotated.y, 0, atol=1e-10)
+    assert np.isclose(v_rotated.z, 1, atol=1e-10)
+
+    # Test identity rotation
+    q_identity = Quaternion(0, 0, 0, 1)
+    v = Vector3(1, 2, 3)
+    v_rotated = q_identity.rotate_vector(v)
+
+    assert np.isclose(v_rotated.x, v.x, atol=1e-10)
+    assert np.isclose(v_rotated.y, v.y, atol=1e-10)
+    assert np.isclose(v_rotated.z, v.z, atol=1e-10)
+
+
+def test_quaternion_inverse_zero():
+    """Test that inverting zero quaternion raises error."""
+    q_zero = Quaternion(0, 0, 0, 0)
+
+    with pytest.raises(ZeroDivisionError, match="Cannot invert zero quaternion"):
+        q_zero.inverse()
+
+
+def test_quaternion_normalize_zero():
+    """Test that normalizing zero quaternion raises error."""
+    q_zero = Quaternion(0, 0, 0, 0)
+
+    with pytest.raises(ZeroDivisionError, match="Cannot normalize zero quaternion"):
+        q_zero.normalize()
+
+
+def test_quaternion_multiplication_type_error():
+    """Test that multiplying quaternion with non-quaternion raises error."""
+    q = Quaternion(1, 0, 0, 0)
+
+    with pytest.raises(TypeError, match="Cannot multiply Quaternion with"):
+        q * 5.0
+
+    with pytest.raises(TypeError, match="Cannot multiply Quaternion with"):
+        q * [1, 2, 3, 4]

@@ -19,17 +19,18 @@ This module provides frontier detection and exploration goal selection
 for autonomous navigation using the dimos Costmap and Vector types.
 """
 
-from typing import List, Tuple, Optional, Callable
+import threading
 from collections import deque
-import numpy as np
 from dataclasses import dataclass
 from enum import IntFlag
-import threading
-from dimos.utils.logging_config import setup_logger
+from typing import Callable, List, Optional, Tuple
 
-from dimos.types.costmap import Costmap, CostValues
-from dimos.types.vector import Vector
+import numpy as np
+
+from dimos.msgs.geometry_msgs import Vector3 as Vector
 from dimos.robot.frontier_exploration.utils import smooth_costmap_for_frontiers
+from dimos.types.costmap import Costmap, CostValues
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree.frontier_exploration")
 

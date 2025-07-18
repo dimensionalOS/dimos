@@ -14,38 +14,39 @@
 
 import asyncio
 import functools
+import logging
+import os
 import threading
 import time
+import warnings
 from typing import Callable
 
+from reactivex import Observable
 from reactivex import operators as ops
 
 import dimos.core.colors as colors
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.msgs.foxglove_msgs import Arrow
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
 from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
+    WavefrontFrontierExplorer,
+)
 from dimos.robot.global_planner import AstarPlanner
 from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
-from dimos.robot.unitree_webrtc.connection import VideoMessage, UnitreeWebRTCConnection
+from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection, VideoMessage
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector
 from dimos.utils.data import get_data
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import getter_streaming
 from dimos.utils.testing import TimedSensorReplay
-from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
-    WavefrontFrontierExplorer,
-)
-import os
-import logging
-import warnings
-from dimos.utils.logging_config import setup_logger
-from reactivex import Observable
 
 logger = setup_logger("dimos.robot.unitree_webrtc.multiprocess.unitree_go2", level=logging.INFO)
 
@@ -150,14 +151,14 @@ class ConnectionModule(UnitreeWebRTCConnection, Module):
 
 
 class ControlModule(Module):
-    plancmd: Out[Vector3] = None
+    plancmd: Out[Pose] = None
 
     @rpc
     def start(self):
         def plancmd():
             time.sleep(4)
             print(colors.red("requesting global plan"))
-            self.plancmd.publish(Vector3(0, 0, 0))
+            self.plancmd.publish(Pose(0, 0, 0, 0, 0, 0, 1))
 
         thread = threading.Thread(target=plancmd, daemon=True)
         thread.start()
@@ -350,10 +351,11 @@ class UnitreeGo2Light:
             Observable stream of video frames
         """
         # Import required modules for LCM subscription
-        from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
-        from dimos.msgs.sensor_msgs import Image
         from reactivex import create
         from reactivex.disposable import Disposable
+
+        from dimos.msgs.sensor_msgs import Image
+        from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 
         lcm_instance = LCM()
         lcm_instance.start()

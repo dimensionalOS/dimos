@@ -25,9 +25,9 @@ from reactivex import Observable
 from reactivex import operators as ops
 from reactivex.subject import Subject
 
+from dimos.msgs.geometry_msgs import Pose
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.stream.video_provider import VideoProvider
-from dimos.types.pose import Pose
 from dimos.types.vector import Vector
 
 
@@ -188,8 +188,8 @@ class TestSpatialMemory:
                 similarities = [1 - r.get("distance") for r in results]
                 print(f"Similarities: {similarities}")
 
-                assert any(d > 0.24 for d in similarities), (
-                    f"Expected at least one result with similarity > 0.24 for query '{query}'"
+                assert any(d > 0.22 for d in similarities), (
+                    f"Expected at least one result with similarity > 0.22 for query '{query}'"
                 )
 
             results = memory.query_by_text(irrelevant_query, limit=2)

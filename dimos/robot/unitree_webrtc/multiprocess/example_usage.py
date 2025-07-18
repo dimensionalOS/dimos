@@ -19,19 +19,20 @@
 
 import asyncio
 import os
-from dimos.robot.unitree_webrtc.multiprocess.unitree_go2 import UnitreeGo2Light
-from dimos.robot.unitree_webrtc.multiprocess.unitree_go2_heavy import UnitreeGo2Heavy
-from dimos.utils.reactive import backpressure
-from dimos.perception.object_detection_stream import ObjectDetectionStream
-from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.skills.skills import SkillLibrary, AbstractRobotSkill
-from dimos.utils.reactive import backpressure
+import threading
+
 import reactivex as rx
 import reactivex.operators as ops
-from dimos.stream.audio.pipelines import tts, stt
-import threading
+
 from dimos.agents.claude_agent import ClaudeAgent
+from dimos.perception.object_detection_stream import ObjectDetectionStream
+from dimos.robot.unitree_webrtc.multiprocess.unitree_go2 import UnitreeGo2Light
+from dimos.robot.unitree_webrtc.multiprocess.unitree_go2_heavy import UnitreeGo2Heavy
+from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
+from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
+from dimos.stream.audio.pipelines import stt, tts
+from dimos.utils.reactive import backpressure
+from dimos.web.robot_web_interface import RobotWebInterface
 
 
 async def run_light_robot():
@@ -46,9 +47,9 @@ async def run_light_robot():
     print(f"Robot position: {pose['position']}")
     print(f"Robot rotation: {pose['rotation']}")
 
-    from dimos.types.vector import Vector
+    from dimos.msgs.geometry_msgs import Vector3
 
-    robot.move(Vector(0.5, 0, 0), duration=2.0)
+    # robot.move(Vector3(0.5, 0, 0), duration=2.0)
 
     robot.explore()
 
@@ -146,7 +147,7 @@ async def run_heavy_robot():
 
 
 if __name__ == "__main__":
-    use_heavy = True
+    use_heavy = False
 
     if use_heavy:
         print("Running UnitreeGo2Heavy with GPU modules...")

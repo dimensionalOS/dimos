@@ -35,7 +35,7 @@ from dimos.robot.connection_interface import ConnectionInterface
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from dimos.types.pose import Pose
+from dimos.msgs.geometry_msgs import Pose
 from dimos.types.vector import Vector
 from dimos.utils.reactive import backpressure, callback_to_observable
 

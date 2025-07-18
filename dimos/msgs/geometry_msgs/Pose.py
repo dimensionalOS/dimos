@@ -20,15 +20,18 @@ from io import BytesIO
 from typing import BinaryIO, TypeAlias
 
 from dimos_lcm.geometry_msgs import Pose as LCMPose
+from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
 
 # Types that can be converted to/from Pose
 PoseConvertable: TypeAlias = (
     tuple[VectorConvertable, QuaternionConvertable]
     | LCMPose
+    | Vector3
     | dict[str, VectorConvertable | QuaternionConvertable]
 )
 
@@ -156,7 +159,8 @@ class Pose(LCMPose):
     def __str__(self) -> str:
         return (
             f"Pose(pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}], "
-            f"euler=[{self.roll:.3f}, {self.pitch:.3f}, {self.yaw:.3f}])"
+            f"euler=[{self.roll:.3f}, {self.pitch:.3f}, {self.yaw:.3f}]), "
+            f"quaternion=[{self.orientation}])"
         )
 
     def __eq__(self, other) -> bool:
@@ -165,15 +169,86 @@ class Pose(LCMPose):
             return False
         return self.position == other.position and self.orientation == other.orientation
 
+    def __matmul__(self, transform: LCMTransform | Transform) -> Pose:
+        return self + transform
+
+    def find_transform(self, other: PoseConvertable) -> LCMTransform:
+        other_pose = to_pose(other) if not isinstance(other, Pose) else other
+
+        inv_orientation = self.orientation.conjugate()
+
+        pos_diff = other_pose.position - self.position
+
+        local_translation = inv_orientation.rotate_vector(pos_diff)
+
+        relative_rotation = inv_orientation * other_pose.orientation
+
+        transform = LCMTransform()
+        transform.translation = local_translation
+        transform.rotation = relative_rotation
+
+        return transform
+
+    def __add__(self, other: "Pose" | PoseConvertable | LCMTransform | Transform) -> "Pose":
+        """Compose two poses or apply a transform (transform composition).
+
+        The operation self + other represents applying transformation 'other'
+        in the coordinate frame defined by 'self'. This is equivalent to:
+        - First apply transformation 'self' (from world to self's frame)
+        - Then apply transformation 'other' (from self's frame to other's frame)
+
+        This matches ROS tf convention where:
+        T_world_to_other = T_world_to_self * T_self_to_other
+
+        Args:
+            other: The pose or transform to compose with this one
+
+        Returns:
+            A new Pose representing the composed transformation
+
+        Example:
+            robot_pose = Pose(1, 0, 0)  # Robot at (1,0,0) facing forward
+            object_in_robot = Pose(2, 0, 0)  # Object 2m in front of robot
+            object_in_world = robot_pose + object_in_robot  # Object at (3,0,0) in world
+
+            # Or with a Transform:
+            transform = Transform()
+            transform.translation = Vector3(2, 0, 0)
+            transform.rotation = Quaternion(0, 0, 0, 1)
+            new_pose = pose + transform
+        """
+        # Handle Transform objects
+        if isinstance(other, (LCMTransform, Transform)):
+            # Convert Transform to Pose using its translation and rotation
+            other_position = Vector3(other.translation)
+            other_orientation = Quaternion(other.rotation)
+        elif isinstance(other, Pose):
+            other_position = other.position
+            other_orientation = other.orientation
+        else:
+            # Convert to Pose if it's a convertible type
+            other_pose = Pose(other)
+            other_position = other_pose.position
+            other_orientation = other_pose.orientation
+
+        # Compose orientations: self.orientation * other.orientation
+        new_orientation = self.orientation * other_orientation
+
+        # Transform other's position by self's orientation, then add to self's position
+        rotated_position = self.orientation.rotate_vector(other_position)
+        new_position = self.position + rotated_position
+
+        return Pose(new_position, new_orientation)
+
 
 @dispatch
-def to_pose(value: "Pose") -> Pose:
+def to_pose(value: "Pose") -> "Pose":
     """Pass through Pose objects."""
     return value
 
 
 @dispatch
-def to_pose(value: PoseConvertable | Pose) -> Pose:
+def to_pose(value: PoseConvertable) -> Pose:
     """Convert a pose-compatible value to a Pose object."""
     return Pose(value)
 

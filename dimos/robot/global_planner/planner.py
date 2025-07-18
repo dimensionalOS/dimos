@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs import Pose, PoseLike, PoseStamped, Vector3, to_pose
 from dimos.robot.global_planner.algo import astar
 from dimos.types.costmap import Costmap
 from dimos.types.path import Path
@@ -31,7 +31,7 @@ logger = setup_logger("dimos.robot.unitree.global_planner")
 
 @dataclass
 class Planner(Visualizable, Module):
-    target: In[Vector3] = None
+    target: In[PoseStamped] = None
     path: Out[Path] = None
 
     def __init__(self):
@@ -78,9 +78,9 @@ class AstarPlanner(Planner):
     def start(self):
         self.target.subscribe(self.plan)
 
-    def plan(self, goal: VectorLike) -> Path:
-        print("planning path to goal", goal)
-        goal = to_vector(goal).to_2d()
+    def plan(self, goallike: PoseLike) -> Path:
+        goal = to_pose(goallike)
+        logger.info(f"planning path to goal {goal}")
         pos = self.get_robot_pos()
         print("current pos", pos)
         costmap = self.get_costmap()
@@ -89,8 +89,7 @@ class AstarPlanner(Planner):
 
         self.vis("target", goal)
 
-        print("ASTAR ", costmap, goal, pos)
-        path = astar(costmap, goal, pos)
+        path = astar(costmap, goal.position, pos)
 
         if path:
             path = path.resample(0.1)

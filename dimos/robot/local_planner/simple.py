@@ -22,57 +22,50 @@ from plum import dispatch
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.msgs.foxglove_msgs import Arrow
 
 # from dimos.robot.local_planner.local_planner import LocalPlanner
+from dimos.msgs.geometry_msgs import (
+    Pose,
+    PoseLike,
+    PoseStamped,
+    Twist,
+    Vector3,
+    VectorLike,
+    to_pose,
+)
 from dimos.types.costmap import Costmap
 from dimos.types.path import Path
-from dimos.types.vector import Vector, VectorLike, to_vector
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import get_scheduler
 
 logger = setup_logger("dimos.robot.unitree.local_planner")
 
 
-def transform_to_robot_frame(global_vector: Vector3, robot_position: PoseStamped) -> Vector:
-    """Transform a global coordinate vector to robot-relative coordinates.
-
-    Args:
-        global_vector: Vector in global coordinates
-        robot_position: Robot's position and orientation
-
-    Returns:
-        Vector in robot coordinates where X is forward/backward, Y is left/right
-    """
-    # Get the robot's yaw angle (rotation around Z-axis)
-    robot_yaw = robot_position.yaw
-
-    # Create rotation matrix to transform from global to robot frame
-    # We need to rotate the coordinate system by -robot_yaw to get robot-relative coordinates
-    cos_yaw = math.cos(-robot_yaw)
-    sin_yaw = math.sin(-robot_yaw)
-
-    print(cos_yaw, sin_yaw, global_vector)
-    # Apply 2D rotation transformation
-    # This transforms a global direction vector into the robot's coordinate frame
-    # In robot frame: X=forward/backward, Y=left/right
-    # In global frame: X=east/west, Y=north/south
-    robot_x = global_vector.x * cos_yaw - global_vector.y * sin_yaw  # Forward/backward
-    robot_y = global_vector.x * sin_yaw + global_vector.y * cos_yaw  # Left/right
-
-    return Vector3(-robot_x, robot_y, 0)
+def vector_to_twist(vector: Vector3) -> Twist:
+    """Convert a Vector3 to a Twist message."""
+    twist = Twist()
+    twist.linear.x = vector.x
+    twist.linear.y = vector.y
+    twist.linear.z = 0.0
+    twist.angular.x = 0.0
+    twist.angular.y = 0.0
+    twist.angular.z = vector.z
+    return twist
 
 
 class SimplePlanner(Module):
     path: In[Path] = None
     odom: In[PoseStamped] = None
-    movecmd: Out[Vector3] = None
+    movecmd: Out[Twist] = None
+
+    arrow: Out[Arrow] = None
 
     get_costmap: Callable[[], Costmap]
 
     latest_odom: Optional[PoseStamped] = None
 
-    goal: Optional[Vector] = None
+    goal: Optional[PoseStamped] = None
     speed: float = 0.3
 
     def __init__(
@@ -81,6 +74,13 @@ class SimplePlanner(Module):
     ):
         Module.__init__(self)
         self.get_costmap = get_costmap
+
+    def transform_to_robot_frame(
+        self, global_target: Vector3, global_robot_position: PoseStamped
+    ) -> Vector3:
+        transform = global_robot_position.find_transform(global_target)
+        self.arrow.publish(Arrow.from_transform(transform, global_robot_position))
+        return transform.translation
 
     def get_move_stream(self, frequency: float = 20.0) -> rx.Observable:
         return rx.interval(1.0 / frequency, scheduler=get_scheduler()).pipe(
@@ -95,18 +95,13 @@ class SimplePlanner(Module):
             ops.map(self._calculate_rotation_to_target),
             # filter out None results from calc_move
             ops.filter(lambda result: result is not None),
+            ops.map(vector_to_twist),
         )
 
-    def _safe_transform_goal(self) -> Optional[Vector]:
+    def _safe_transform_goal(self) -> Optional[Vector3]:
         """Safely transform goal to robot frame with error handling."""
         try:
-            if self.goal is None or self.latest_odom is None:
-                return None
-
-            # Convert PoseStamped to Pose for transform function
-            # Pose constructor takes (pos, rot) where pos and rot are VectorLike
-
-            return transform_to_robot_frame(self.goal, self.latest_odom)
+            return self.transform_to_robot_frame(self.goal, self.latest_odom)
         except Exception as e:
             logger.error(f"Error transforming goal to robot frame: {e}")
             print(traceback.format_exc())
@@ -116,10 +111,6 @@ class SimplePlanner(Module):
     def start(self):
         print(self.path.connection, self.path.transport)
         self.path.subscribe(self.set_goal)
-        self.movecmd.publish(Vector3(1, 2, 3))
-        self.movecmd.publish(Vector3(1, 2, 3))
-        self.movecmd.publish(Vector3(1, 2, 3))
-        self.movecmd.publish(Vector3(1, 2, 3))
 
         def setodom(odom: PoseStamped):
             self.latest_odom = odom
@@ -138,17 +129,17 @@ class SimplePlanner(Module):
 
     @dispatch
     def set_goal(self, goal: Path, stop_event=None, goal_theta=None) -> bool:
-        self.goal = goal.last().to_2d()
+        self.goal = to_pose(goal.last())
         logger.info(f"Setting goal: {self.goal}")
         return True
 
     @dispatch
     def set_goal(self, goal: VectorLike, stop_event=None, goal_theta=None) -> bool:
-        self.goal = to_vector(goal).to_2d()
+        self.goal = to_pose(goal.last())
         logger.info(f"Setting goal: {self.goal}")
         return True
 
-    def calc_move(self, direction: Vector) -> Optional[Vector]:
+    def calc_move(self, direction: Vector3) -> Optional[Vector3]:
         """Calculate the movement vector based on the direction to the goal.
 
         Args:
@@ -206,7 +197,7 @@ class SimplePlanner(Module):
 
         return ops.map(freq_spy_fun)
 
-    def _test_translational_movement(self) -> Vector:
+    def _test_translational_movement(self) -> Vector3:
         """Test translational movement by alternating left and right movement.
 
         Returns:
@@ -219,11 +210,11 @@ class SimplePlanner(Module):
 
         if phase < 0.5:
             # First half: move LEFT (positive X according to our documentation)
-            movement = Vector(0.2, 0, 0)  # Move left at 0.2 m/s
+            movement = Vector3(0.2, 0, 0)  # Move left at 0.2 m/s
             direction = "LEFT (positive X)"
         else:
             # Second half: move RIGHT (negative X according to our documentation)
-            movement = Vector(-0.2, 0, 0)  # Move right at 0.2 m/s
+            movement = Vector3(-0.2, 0, 0)  # Move right at 0.2 m/s
             direction = "RIGHT (negative X)"
 
         print("=== LEFT-RIGHT MOVEMENT TEST ===")
@@ -233,7 +224,7 @@ class SimplePlanner(Module):
         print("===================================")
         return movement
 
-    def _calculate_rotation_to_target(self, direction_to_goal: Vector) -> Vector:
+    def _calculate_rotation_to_target(self, direction_to_goal: Vector3) -> Vector3:
         """Calculate the rotation needed for the robot to face the target.
 
         Args:
@@ -244,7 +235,7 @@ class SimplePlanner(Module):
         """
         if self.latest_odom is None:
             logger.warning("No odometry data available for rotation calculation")
-            return Vector(0, 0, 0)
+            return Vector3(0, 0, 0)
 
         # Calculate the desired yaw angle to face the target
         desired_yaw = math.atan2(direction_to_goal.y, direction_to_goal.x)
@@ -288,7 +279,7 @@ class SimplePlanner(Module):
         # Try flipping the sign in case the rotation convention is opposite
         return Vector3(0, 0, -angular_velocity)
 
-    def _debug_direction(self, name: str, direction: Vector) -> Vector:
+    def _debug_direction(self, name: str, direction: Vector3) -> Vector3:
         """Debug helper to log direction information"""
         robot_pos = self.latest_odom
         if robot_pos is None:
@@ -300,7 +291,7 @@ class SimplePlanner(Module):
         )
         return direction
 
-    def _debug_robot_command(self, robot_cmd: Vector) -> Vector:
+    def _debug_robot_command(self, robot_cmd: Vector3) -> Vector3:
         """Debug helper to log robot command information"""
         print(
             f"DEBUG robot_command: x={robot_cmd.x:.3f}, y={robot_cmd.y:.3f} (forward/backward, left/right)"
