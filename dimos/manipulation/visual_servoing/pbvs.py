@@ -18,20 +18,23 @@ Supports both eye-in-hand and eye-to-hand configurations.
 """
 
 import numpy as np
-from typing import Optional, Tuple, Dict, Any, List
-import cv2
+from typing import Optional, Tuple
 from enum import Enum
 
 from scipy.spatial.transform import Rotation as R
-from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
-from dimos.types.manipulation import ObjectData
+from dimos_lcm.geometry_msgs import Pose, Vector3, Quaternion, Point
+from dimos_lcm.vision_msgs import Detection3D, Detection3DArray
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import (
     yaw_towards_point,
     pose_to_matrix,
     euler_to_quaternion,
 )
-from dimos.manipulation.visual_servoing.utils import find_best_object_match
+from dimos.manipulation.visual_servoing.utils import (
+    find_best_object_match,
+    create_pbvs_status_overlay,
+    create_pbvs_controller_overlay,
+)
 
 logger = setup_logger("dimos.manipulation.pbvs")
 
@@ -64,7 +67,7 @@ class PBVS:
         max_velocity: float = 0.1,  # m/s
         max_angular_velocity: float = 0.5,  # rad/s
         target_tolerance: float = 0.01,  # 1cm
-        max_tracking_distance_threshold: float = 0.2,  # Max distance for target tracking (m)
+        max_tracking_distance_threshold: float = 0.1,  # Max distance for target tracking (m)
         min_size_similarity: float = 0.7,  # Min size similarity threshold (0.0-1.0)
         pregrasp_distance: float = 0.15,  # 15cm pregrasp distance
         grasp_distance: float = 0.05,  # 5cm grasp distance (final approach)
@@ -123,21 +126,21 @@ class PBVS:
             f"tracking_thresholds: distance={max_tracking_distance_threshold}m, size={min_size_similarity:.2f}"
         )
 
-    def set_target(self, target_object: Dict[str, Any]) -> bool:
+    def set_target(self, target_object: Detection3D) -> bool:
         """
         Set a new target object for servoing.
 
         Args:
-            target_object: Object dict with at least 'position' field
+            target_object: Detection3D object
 
         Returns:
             True if target was set successfully
         """
-        if target_object and "position" in target_object:
+        if target_object and target_object.bbox and target_object.bbox.center:
             self.current_target = target_object
             self.target_grasp_pose = None  # Will be computed when needed
             self.grasp_stage = GraspStage.PRE_GRASP  # Reset to pre-grasp stage
-            logger.info(f"New target set: ID {target_object.get('object_id', 'unknown')}")
+            logger.info(f"New target set: ID {target_object.id}")
             return True
         return False
 
@@ -152,12 +155,12 @@ class PBVS:
             self.controller.clear_state()
         logger.info("Target cleared")
 
-    def get_current_target(self):
+    def get_current_target(self) -> Optional[Detection3D]:
         """
         Get the current target object.
 
         Returns:
-            Current target ObjectData or None if no target selected
+            Current target Detection3D or None if no target selected
         """
         return self.current_target
 
@@ -217,7 +220,7 @@ class PBVS:
 
         return False
 
-    def update_target_tracking(self, new_detections: List[ObjectData]) -> bool:
+    def update_target_tracking(self, new_detections: Detection3DArray) -> bool:
         """
         Update target by matching to closest object in new detections.
         If tracking is lost, keeps the old target pose.
@@ -228,10 +231,10 @@ class PBVS:
         Returns:
             True if target was successfully tracked, False if lost (but target is kept)
         """
-        if not self.current_target or "position" not in self.current_target:
+        if not self.current_target or not self.current_target.bbox or not self.current_target.bbox.center:
             return False
 
-        if not new_detections:
+        if not new_detections or new_detections.detections_length == 0:
             logger.debug("No detections for target tracking - using last known pose")
             return False
 
@@ -241,7 +244,7 @@ class PBVS:
         # Find best match using standardized utility function
         match_result = find_best_object_match(
             target_obj=self.current_target,
-            candidates=new_detections,
+            candidates=new_detections.detections,
             max_distance=max_distance,
             min_size_similarity=self.min_size_similarity,
         )
@@ -270,11 +273,11 @@ class PBVS:
         Args:
             ee_pose: Current end-effector pose
         """
-        if not self.current_target:
+        if not self.current_target or not self.current_target.bbox or not self.current_target.bbox.center:
             return
 
         # Get target position
-        target_pos = self.current_target["position"]
+        target_pos = self.current_target.bbox.center.position
 
         # Calculate orientation pointing from target towards EE
         yaw_to_ee = yaw_towards_point(
@@ -324,7 +327,7 @@ class PBVS:
         approach_vector_world = rotation_matrix @ approach_vector_local
         
         # Apply offset along the approach direction
-        offset_position = Vector3(
+        offset_position = Point(
             target_pose.position.x + distance * approach_vector_world[0],
             target_pose.position.y + distance * approach_vector_world[1],
             target_pose.position.z + distance * approach_vector_world[2],
@@ -333,7 +336,7 @@ class PBVS:
         return Pose(offset_position, target_pose.orientation)
 
     def compute_control(
-        self, ee_pose: Pose, new_detections: Optional[List[ObjectData]] = None
+        self, ee_pose: Pose, new_detections: Optional[Detection3DArray] = None
     ) -> Tuple[Optional[Vector3], Optional[Vector3], bool, bool, Optional[Pose]]:
         """
         Compute PBVS control with position and orientation servoing.
@@ -351,7 +354,7 @@ class PBVS:
             - target_pose: Target EE pose (only in direct_ee_control mode, otherwise None)
         """
         # Check if we have a target
-        if not self.current_target or "position" not in self.current_target:
+        if not self.current_target or not self.current_target.bbox or not self.current_target.bbox.center:
             return None, None, False, False, None
 
         # Try to update target tracking if new detections provided
@@ -438,14 +441,21 @@ class PBVS:
 
         Args:
             image: Input image
-            camera_intrinsics: Optional [fx, fy, cx, cy] (not used)
 
         Returns:
             Image with PBVS status overlay
         """
         if self.direct_ee_control:
-            # Use our own error data for direct control mode
-            return self._create_direct_status_overlay(image, self.current_target)
+            # Use direct control overlay
+            return create_pbvs_status_overlay(
+                image,
+                self.current_target,
+                self.last_position_error,
+                self.last_target_reached,
+                self.target_grasp_pose,
+                self.grasp_stage.value,
+                is_direct_control=True,
+            )
         else:
             # Use controller's overlay for velocity mode
             return self.controller.create_status_overlay(
@@ -454,146 +464,6 @@ class PBVS:
                 self.direct_ee_control,
             )
 
-    def _create_direct_status_overlay(
-        self, image: np.ndarray, current_target: Optional[ObjectData] = None
-    ) -> np.ndarray:
-        """
-        Create status overlay for direct control mode.
-
-        Args:
-            image: Input image
-            current_target: Current target object
-
-        Returns:
-            Image with status overlay
-        """
-        viz_img = image.copy()
-        height, width = image.shape[:2]
-
-        # Status panel
-        if current_target is not None:
-            panel_height = 175  # Adjusted panel for target, grasp pose, stage, and distance info
-            panel_y = height - panel_height
-            overlay = viz_img.copy()
-            cv2.rectangle(overlay, (0, panel_y), (width, height), (0, 0, 0), -1)
-            viz_img = cv2.addWeighted(viz_img, 0.7, overlay, 0.3, 0)
-
-            # Status text
-            y = panel_y + 20
-            cv2.putText(
-                viz_img,
-                "PBVS Status (Direct EE)",
-                (10, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 255, 255),
-                2,
-            )
-
-            # Add frame info
-            cv2.putText(
-                viz_img, "Frame: Camera", (250, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1
-            )
-
-            if self.last_position_error:
-                error_mag = np.linalg.norm(
-                    [
-                        self.last_position_error.x,
-                        self.last_position_error.y,
-                        self.last_position_error.z,
-                    ]
-                )
-                color = (0, 255, 0) if self.last_target_reached else (0, 255, 255)
-
-                cv2.putText(
-                    viz_img,
-                    f"Pos Error: {error_mag:.3f}m ({error_mag * 100:.1f}cm)",
-                    (10, y + 25),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    color,
-                    1,
-                )
-
-                cv2.putText(
-                    viz_img,
-                    f"XYZ: ({self.last_position_error.x:.3f}, {self.last_position_error.y:.3f}, {self.last_position_error.z:.3f})",
-                    (10, y + 45),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    (200, 200, 200),
-                    1,
-                )
-
-            # Show target and grasp poses
-            if current_target:
-                target_pos = current_target["position"]
-                cv2.putText(
-                    viz_img,
-                    f"Target: ({target_pos.x:.3f}, {target_pos.y:.3f}, {target_pos.z:.3f})",
-                    (10, y + 65),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    (255, 255, 0),
-                    1,
-                )
-
-            if self.target_grasp_pose:
-                grasp_pos = self.target_grasp_pose.position
-                cv2.putText(
-                    viz_img,
-                    f"Grasp:  ({grasp_pos.x:.3f}, {grasp_pos.y:.3f}, {grasp_pos.z:.3f})",
-                    (10, y + 80),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    (0, 255, 255),
-                    1,
-                )
-
-                # Show pregrasp distance if we have both poses
-                if current_target:
-                    target_pos = current_target["position"]
-                    distance = np.sqrt(
-                        (grasp_pos.x - target_pos.x) ** 2
-                        + (grasp_pos.y - target_pos.y) ** 2
-                        + (grasp_pos.z - target_pos.z) ** 2
-                    )
-
-                    # Show current stage and distance
-                    stage_text = f"Stage: {self.grasp_stage.value}"
-                    cv2.putText(
-                        viz_img,
-                        stage_text,
-                        (10, y + 95),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.4,
-                        (255, 150, 255),
-                        1,
-                    )
-
-                    distance_text = f"Distance: {distance * 1000:.1f}mm"
-                    cv2.putText(
-                        viz_img,
-                        distance_text,
-                        (10, y + 110),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.4,
-                        (255, 200, 0),
-                        1,
-                    )
-
-            if self.last_target_reached:
-                cv2.putText(
-                    viz_img,
-                    "TARGET REACHED",
-                    (width - 150, y + 25),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 255, 0),
-                    2,
-                )
-
-        return viz_img
 
 
 class PBVSController:
@@ -767,7 +637,7 @@ class PBVSController:
     def create_status_overlay(
         self,
         image: np.ndarray,
-        current_target: Optional[Dict[str, Any]] = None,
+        current_target: Optional[Detection3D] = None,
         direct_ee_control: bool = False,
     ) -> np.ndarray:
         """
@@ -775,113 +645,19 @@ class PBVSController:
 
         Args:
             image: Input image
-            current_target: Current target object (for display)
+            current_target: Current target object Detection3D (for display)
             direct_ee_control: Whether in direct EE control mode
 
         Returns:
             Image with PBVS status overlay
         """
-        viz_img = image.copy()
-        height, width = image.shape[:2]
-
-        # Status panel
-        if current_target is not None:
-            panel_height = 160  # Adjusted panel height
-            panel_y = height - panel_height
-            overlay = viz_img.copy()
-            cv2.rectangle(overlay, (0, panel_y), (width, height), (0, 0, 0), -1)
-            viz_img = cv2.addWeighted(viz_img, 0.7, overlay, 0.3, 0)
-
-            # Status text
-            y = panel_y + 20
-            mode_text = "Direct EE" if direct_ee_control else "Velocity"
-            cv2.putText(
-                viz_img,
-                f"PBVS Status ({mode_text})",
-                (10, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 255, 255),
-                2,
-            )
-
-            # Add frame info
-            cv2.putText(
-                viz_img, "Frame: Camera", (250, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1
-            )
-
-            if self.last_position_error:
-                error_mag = np.linalg.norm(
-                    [
-                        self.last_position_error.x,
-                        self.last_position_error.y,
-                        self.last_position_error.z,
-                    ]
-                )
-                color = (0, 255, 0) if self.last_target_reached else (0, 255, 255)
-
-                cv2.putText(
-                    viz_img,
-                    f"Pos Error: {error_mag:.3f}m ({error_mag * 100:.1f}cm)",
-                    (10, y + 25),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    color,
-                    1,
-                )
-
-                cv2.putText(
-                    viz_img,
-                    f"XYZ: ({self.last_position_error.x:.3f}, {self.last_position_error.y:.3f}, {self.last_position_error.z:.3f})",
-                    (10, y + 45),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    (200, 200, 200),
-                    1,
-                )
-
-            if self.last_velocity_cmd and not direct_ee_control:
-                cv2.putText(
-                    viz_img,
-                    f"Lin Vel: ({self.last_velocity_cmd.x:.2f}, {self.last_velocity_cmd.y:.2f}, {self.last_velocity_cmd.z:.2f})m/s",
-                    (10, y + 65),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 200, 0),
-                    1,
-                )
-
-            if self.last_rotation_error:
-                cv2.putText(
-                    viz_img,
-                    f"Rot Error: ({self.last_rotation_error.x:.2f}, {self.last_rotation_error.y:.2f}, {self.last_rotation_error.z:.2f})rad",
-                    (10, y + 85),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    (200, 200, 200),
-                    1,
-                )
-
-            if self.last_angular_velocity_cmd and not direct_ee_control:
-                cv2.putText(
-                    viz_img,
-                    f"Ang Vel: ({self.last_angular_velocity_cmd.x:.2f}, {self.last_angular_velocity_cmd.y:.2f}, {self.last_angular_velocity_cmd.z:.2f})rad/s",
-                    (10, y + 105),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 200, 0),
-                    1,
-                )
-
-            if self.last_target_reached:
-                cv2.putText(
-                    viz_img,
-                    "TARGET REACHED",
-                    (width - 150, y + 25),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 255, 0),
-                    2,
-                )
-
-        return viz_img
+        return create_pbvs_controller_overlay(
+            image,
+            current_target,
+            self.last_position_error,
+            self.last_rotation_error,
+            self.last_velocity_cmd,
+            self.last_angular_velocity_cmd,
+            self.last_target_reached,
+            direct_ee_control,
+        )

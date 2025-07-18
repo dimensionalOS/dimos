@@ -82,7 +82,7 @@ class PiperArm:
         time.sleep(1)
         self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
         self.arm.MotionCtrl_1(0x01, 0, 0)
-        time.sleep(5)
+        time.sleep(3)
 
     def cmd_ee_pose_values(self, x, y, z, r, p, y_):
         """Command end-effector to target pose in space (position + Euler angles)"""
