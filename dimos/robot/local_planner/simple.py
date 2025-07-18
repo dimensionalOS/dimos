@@ -29,6 +29,7 @@ from dimos.msgs.geometry_msgs import (
     Pose,
     PoseLike,
     PoseStamped,
+    Transform,
     Twist,
     Vector3,
     VectorLike,
@@ -60,6 +61,7 @@ class SimplePlanner(Module):
     movecmd: Out[Twist] = None
 
     arrow: Out[Arrow] = None
+    transform: Out[Transform] = None
 
     get_costmap: Callable[[], Costmap]
 
@@ -80,6 +82,7 @@ class SimplePlanner(Module):
     ) -> Vector3:
         transform = global_robot_position.find_transform(global_target)
         self.arrow.publish(Arrow.from_transform(transform, global_robot_position))
+        self.transform.publish(transform)
         return transform.translation
 
     def get_move_stream(self, frequency: float = 20.0) -> rx.Observable:

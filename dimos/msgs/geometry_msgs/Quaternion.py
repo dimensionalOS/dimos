@@ -48,9 +48,6 @@ class Quaternion(LCMQuaternion):
     def _lcm_decode_one(cls, buf):
         return cls(struct.unpack(">dddd", buf.read(32)))
 
-    def lcm_encode(self):
-        return super().encode()
-
     @dispatch
     def __init__(self) -> None: ...
 

@@ -28,7 +28,7 @@ import dimos.core.colors as colors
 from dimos import core
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.foxglove_msgs import Arrow
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Twist, Vector3
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
 from dimos.robot.foxglove_bridge import FoxgloveBridge
@@ -170,6 +170,10 @@ async def run(ip):
 
     global_planner.path.transport = core.pLCMTransport("/global_path")
     local_planner.arrow.transport = core.LCMTransport("/arrow", Arrow)
+    local_planner.transform.transport = core.LCMTransport(
+        "/transform",
+        Transform,
+    )
 
     local_planner.path.connect(global_planner.path)
     local_planner.odom.connect(connection.odom)

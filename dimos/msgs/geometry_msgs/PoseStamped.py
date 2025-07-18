@@ -58,11 +58,11 @@ class PoseStamped(Pose, Timestamped):
         lcm_mgs.pose = self
         [lcm_mgs.header.stamp.sec, lcm_mgs.header.stamp.sec] = sec_nsec(self.ts)
         lcm_mgs.header.frame_id = self.frame_id
-        return lcm_mgs.encode()
+        return lcm_mgs.lcm_encode()
 
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO) -> PoseStamped:
-        lcm_msg = LCMPoseStamped.decode(data)
+        lcm_msg = LCMPoseStamped.lcm_decode(data)
         return cls(
             ts=lcm_msg.header.stamp.sec + (lcm_msg.header.stamp.nsec / 1_000_000_000),
             frame_id=lcm_msg.header.frame_id,

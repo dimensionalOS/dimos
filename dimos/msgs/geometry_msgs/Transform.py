@@ -76,23 +76,6 @@ class Transform(LCMTransform):
         # Call the appropriate positional init - dispatch will handle the types
         self.__init__(translation, rotation)
 
-    @classmethod
-    def lcm_decode(cls, data: bytes | BinaryIO):
-        if not hasattr(data, "read"):
-            data = BytesIO(data)
-        if data.read(8) != cls._get_packed_fingerprint():
-            raise ValueError("Decode error")
-        return cls._lcm_decode_one(data)
-
-    @classmethod
-    def _lcm_decode_one(cls, buf):
-        translation = Vector3._lcm_decode_one(buf)
-        rotation = Quaternion._lcm_decode_one(buf)
-        return cls(translation=translation, rotation=rotation)
-
-    def lcm_encode(self) -> bytes:
-        return super().encode()
-
     def __repr__(self) -> str:
         return f"Transform(translation={self.translation!r}, rotation={self.rotation!r})"
 
