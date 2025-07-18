@@ -26,7 +26,6 @@ from dimos.types.vector import Vector
 from dimos.perception.pointcloud.utils import (
     load_camera_matrix_from_yaml,
     create_point_cloud_and_extract_masks,
-    o3d_point_cloud_to_numpy,
 )
 from dimos.perception.pointcloud.cuboid_fit import fit_cuboid
 
