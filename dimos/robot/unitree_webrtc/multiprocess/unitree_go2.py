@@ -373,9 +373,25 @@ class UnitreeGo2Light:
         )
 
 
+async def run_light_robot():
+    """Run the lightweight robot without GPU modules."""
+    ip = os.getenv("ROBOT_IP")
+
+    robot = UnitreeGo2Light(ip)
+
+    await robot.start()
+
+    pose = robot.get_pose()
+    print(f"Robot position: {pose['position']}")
+    print(f"Robot rotation: {pose['rotation']}")
+    robot.explore()
+    # Keep the program running
+    while True:
+        await asyncio.sleep(1)
+
+
 if __name__ == "__main__":
     import os
 
-    robot = UnitreeGo2Light(os.getenv("ROBOT_IP"))
-    asyncio.run(robot.start())
-    # asyncio.run(run("192.168.9.140"))
+    print("Running UnitreeGo2Light...")
+    asyncio.run(run_light_robot())
