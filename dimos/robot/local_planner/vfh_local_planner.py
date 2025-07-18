@@ -38,8 +38,6 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
     def __init__(
         self,
         get_costmap: Callable[[], Optional[Costmap]],
-        get_robot_pose: Callable[[], Any],
-        move: Callable[[Vector], None],
         safety_threshold: float = 0.8,
         histogram_bins: int = 144,
         max_linear_vel: float = 0.8,
@@ -80,8 +78,6 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         # Initialize base class
         super().__init__(
             get_costmap=get_costmap,
-            get_robot_pose=get_robot_pose,
-            move=move,
             safety_threshold=safety_threshold,
             max_linear_vel=max_linear_vel,
             max_angular_vel=max_angular_vel,
@@ -129,7 +125,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             logger.warning("No costmap available for planning")
             return {"x_vel": 0.0, "angular_vel": 0.0}
 
-        robot_pos, robot_theta = self._get_robot_pose()
+        robot_pos, robot_theta = self._format_robot_pose()
         robot_x, robot_y = robot_pos
         robot_pose = (robot_x, robot_y, robot_theta)
 
@@ -346,7 +342,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
         if costmap is None:
             return False  # No costmap available
 
-        robot_pos, robot_theta = self._get_robot_pose()
+        robot_pos, robot_theta = self._format_robot_pose()
         robot_x, robot_y = robot_pos
 
         # Direction in world frame
@@ -382,7 +378,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
             if costmap is None:
                 raise ValueError("Costmap is None")
 
-            robot_pos, robot_theta = self._get_robot_pose()
+            robot_pos, robot_theta = self._format_robot_pose()
             robot_x, robot_y = robot_pos
             robot_pose = (robot_x, robot_y, robot_theta)
 

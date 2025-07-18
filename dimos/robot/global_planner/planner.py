@@ -38,19 +38,19 @@ class Planner(Visualizable, Module):
         Module.__init__(self)
         Visualizable.__init__(self)
 
-    # def set_goal(
-    #     self,
-    #     goal: VectorLike,
-    #     goal_theta: Optional[float] = None,
-    #     stop_event: Optional[threading.Event] = None,
-    # ):
-    #     path = self.plan(goal)
-    #     if not path:
-    #         logger.warning("No path found to the goal.")
-    #         return False
+    @rpc
+    def set_goal(
+        self,
+        goal: VectorLike,
+        goal_theta: Optional[float] = None,
+        stop_event: Optional[threading.Event] = None,
+    ):
+        path = self.plan(goal)
+        if not path:
+            logger.warning("No path found to the goal.")
+            return False
 
-    #     print("pathing success", path)
-    #     return self.set_local_nav(path, stop_event=stop_event, goal_theta=goal_theta)
+        print("pathing success", path)
 
 
 class AstarPlanner(Planner):
@@ -59,6 +59,7 @@ class AstarPlanner(Planner):
 
     get_costmap: Callable[[], Costmap]
     get_robot_pos: Callable[[], Vector3]
+    set_local_nav: Callable[[Path, Optional[threading.Event], Optional[float]], bool]
 
     conservativism: int = 8
 
@@ -66,10 +67,12 @@ class AstarPlanner(Planner):
         self,
         get_costmap: Callable[[], Costmap],
         get_robot_pos: Callable[[], Vector3],
+        set_local_nav: Callable[[Path, Optional[threading.Event], Optional[float]], bool] = None,
     ):
         super().__init__()
         self.get_costmap = get_costmap
         self.get_robot_pos = get_robot_pos
+        self.set_local_nav = set_local_nav
 
     @rpc
     def start(self):
@@ -79,10 +82,11 @@ class AstarPlanner(Planner):
         goal = to_pose(goallike)
         logger.info(f"planning path to goal {goal}")
         pos = self.get_robot_pos()
-        logger.info(f"current pos {pos}")
-        costmap = self.get_costmap().smudge()
+        print("current pos", pos)
+        costmap = self.get_costmap()
 
-        logger.info(f"current costmap {costmap}")
+        print("current costmap", costmap)
+
         self.vis("target", goal)
 
         path = astar(costmap, goal.position, pos)
@@ -91,5 +95,7 @@ class AstarPlanner(Planner):
             path = path.resample(0.1)
             self.vis("a*", path)
             self.path.publish(path)
+            if hasattr(self, "set_local_nav"):
+                self.set_local_nav(path)
             return path
         logger.warning("No path found to the goal.")
