@@ -13,16 +13,12 @@
 # limitations under the License.
 
 import asyncio
-import contextvars
 import functools
 import threading
 import time
 from typing import Callable
 
-from dask.distributed import get_client, get_worker
-from distributed import get_worker
 from reactivex import operators as ops
-from reactivex.scheduler import ThreadPoolScheduler
 
 import dimos.core.colors as colors
 from dimos import core
@@ -32,20 +28,45 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.global_planner import AstarPlanner
-from dimos.robot.local_planner.simple import SimplePlanner
-from dimos.robot.unitree_webrtc.connection import VideoMessage, WebRTCRobot
+from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
+from dimos.robot.unitree_webrtc.connection import VideoMessage, UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector
 from dimos.utils.data import get_data
-from dimos.utils.reactive import backpressure, getter_streaming
+from dimos.utils.reactive import getter_streaming
 from dimos.utils.testing import TimedSensorReplay
+from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
+    WavefrontFrontierExplorer,
+)
+import os
+import logging
+import warnings
+from dimos.utils.logging_config import setup_logger
+from reactivex import Observable
+
+logger = setup_logger("dimos.robot.unitree_webrtc.multiprocess.unitree_go2", level=logging.INFO)
+
+# Configure logging levels
+os.environ["DIMOS_LOG_LEVEL"] = "WARNING"
+
+# Suppress verbose loggers
+logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
+logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
+logging.getLogger("websockets.server").setLevel(logging.ERROR)
+logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
+logging.getLogger("asyncio").setLevel(logging.ERROR)
+logging.getLogger("root").setLevel(logging.WARNING)
+
+# Suppress warnings
+warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
+warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
 
-# can be swapped in for WebRTCRobot
-class FakeRTC(WebRTCRobot):
+# can be swapped in for UnitreeWebRTCConnection
+class FakeRTC(UnitreeWebRTCConnection):
     def __init__(self, *args, **kwargs):
         # ensures we download msgs from lfs store
         data = get_data("unitree_office_walk")
@@ -80,11 +101,7 @@ class FakeRTC(WebRTCRobot):
         print("move supressed", vector)
 
 
-class RealRTC(WebRTCRobot): ...
-
-
-# inherit RealRTC instead of FakeRTC to run the real robot
-class ConnectionModule(FakeRTC, Module):
+class ConnectionModule(UnitreeWebRTCConnection, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
@@ -104,12 +121,18 @@ class ConnectionModule(FakeRTC, Module):
 
     @rpc
     def start(self):
+        # Initialize the parent WebRTC connection
         super().__init__(self.ip)
-        # ensure that LFS data is available
+
+        # Connect sensor streams to LCM outputs
         self.lidar_stream().subscribe(self.lidar.publish)
         self.odom_stream().subscribe(self.odom.publish)
         self.video_stream().subscribe(self.video.publish)
+
+        # Connect LCM input to robot movement commands
         self.movecmd.subscribe(self.move)
+
+        # Set up streaming getters for latest sensor data
         self._odom = getter_streaming(self.odom_stream())
         self._lidar = getter_streaming(self.lidar_stream())
 
@@ -140,85 +163,219 @@ class ControlModule(Module):
         thread.start()
 
 
-async def run(ip):
-    dimos = core.start(4)
-    connection = dimos.deploy(ConnectionModule, ip)
+class UnitreeGo2Light:
+    def __init__(self, ip: str):
+        self.ip = ip
+        self.dimos = None
+        self.connection = None
+        self.mapper = None
+        self.local_planner = None
+        self.global_planner = None
+        self.frontier_explorer = None
+        self.foxglove_bridge = None
+        self.ctrl = None
 
-    # This enables LCM transport
-    # Ensures system multicast, udp sizes are auto-adjusted if needed
-    pubsub.lcm.autoconf()
+    async def start(self):
+        self.dimos = core.start(4)
 
-    connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
-    connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
-    connection.video.transport = core.LCMTransport("/video", Image)
+        # Connection Module - Robot sensor data interface via WebRTC ===================
+        self.connection = self.dimos.deploy(ConnectionModule, self.ip)
 
-    mapper = dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
+        # This enables LCM transport
+        # Ensures system multicast, udp sizes are auto-adjusted if needed
+        pubsub.lcm.autoconf()
 
-    mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
+        # Configure ConnectionModule LCM transport outputs for sensor data streams
+        # OUTPUT: LiDAR point cloud data to /lidar topic
+        self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
+        # OUTPUT: Robot odometry/pose data to /odom topic
+        self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
+        # OUTPUT: Camera video frames to /video topic
+        self.connection.video.transport = core.LCMTransport("/video", Image)
+        # ======================================================================
 
-    local_planner = dimos.deploy(
-        SimplePlanner,
-        get_costmap=connection.get_local_costmap,
-    )
+        # Map Module - Point cloud accumulation and costmap generation =========
+        self.mapper = self.dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
 
-    global_planner = dimos.deploy(
-        AstarPlanner,
-        get_costmap=mapper.costmap,
-        get_robot_pos=connection.get_pos,
-    )
+        # OUTPUT: Accumulated point cloud map to /global_map topic
+        self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
 
-    global_planner.path.transport = core.pLCMTransport("/global_path")
+        # Connect ConnectionModule OUTPUT lidar to Map INPUT lidar for point cloud accumulation
+        self.mapper.lidar.connect(self.connection.lidar)
+        # ====================================================================
 
-    local_planner.path.connect(global_planner.path)
-    local_planner.odom.connect(connection.odom)
+        # Local planner Module, LCM transport & connection ================
+        self.local_planner = self.dimos.deploy(
+            VFHPurePursuitPlanner,
+            get_costmap=self.connection.get_local_costmap,
+        )
 
-    local_planner.movecmd.transport = core.LCMTransport("/move", Vector3)
-    connection.movecmd.connect(local_planner.movecmd)
+        # Connects odometry LCM stream to BaseLocalPlanner odometry input
+        self.local_planner.odom.connect(self.connection.odom)
 
-    ctrl = dimos.deploy(ControlModule)
+        # Configures BaseLocalPlanner movecmd output to /move LCM topic
+        self.local_planner.movecmd.transport = core.LCMTransport("/move", Vector3)
 
-    mapper.lidar.connect(connection.lidar)
+        # Connects connection.movecmd input to local_planner.movecmd output
+        self.connection.movecmd.connect(self.local_planner.movecmd)
+        # ===================================================================
 
-    ctrl.plancmd.transport = core.LCMTransport("/global_target", Vector3)
+        # Global Planner Module ===============
+        self.global_planner = self.dimos.deploy(
+            AstarPlanner,
+            get_costmap=self.mapper.costmap,
+            get_robot_pos=self.connection.get_pos,
+            set_local_nav=self.local_planner.navigate_path_local,
+        )
 
-    global_planner.target.connect(ctrl.plancmd)
+        # Configure AstarPlanner OUTPUT path: Out[Path] to /global_path LCM topic
+        self.global_planner.path.transport = core.pLCMTransport("/global_path")
+        # ======================================
 
-    foxglove_bridge = FoxgloveBridge()
+        # Global Planner Control Module ===========================
+        # Debug module that sends (0,0,0) goal after 4 second delay
+        self.ctrl = self.dimos.deploy(ControlModule)
 
-    # we review the structure
-    print("\n")
-    for module in [connection, mapper, local_planner, global_planner, ctrl]:
-        print(module.io().result(), "\n")
+        # Configure ControlModule OUTPUT to publish goal coordinates to /global_target
+        self.ctrl.plancmd.transport = core.LCMTransport("/global_target", Vector3)
 
-    print(colors.green("starting mapper"))
-    mapper.start()
+        # Connect ControlModule OUTPUT to AstarPlanner INPUT - triggers A* planning when goal received
+        self.global_planner.target.connect(self.ctrl.plancmd)
+        # ==========================================
 
-    print(colors.green("starting connection"))
-    connection.start()
+        # Visualization ============================
+        self.foxglove_bridge = FoxgloveBridge()
+        # ==========================================
 
-    print(colors.green("local planner start"))
-    local_planner.start()
+        self.frontier_explorer = WavefrontFrontierExplorer(
+            set_goal=self.global_planner.set_goal,
+            get_costmap=self.mapper.costmap,
+            get_robot_pos=self.connection.get_pos,
+        )
 
-    print(colors.green("starting global planner"))
-    global_planner.start()
+        # Prints full module IO
+        print("\n")
+        for module in [
+            self.connection,
+            self.mapper,
+            self.local_planner,
+            self.global_planner,
+            self.ctrl,
+        ]:
+            print(module.io().result(), "\n")
 
-    print(colors.green("starting foxglove bridge"))
-    foxglove_bridge.start()
+        # Start modules =============================
+        self.mapper.start()
+        self.connection.start()
+        self.local_planner.start()
+        self.global_planner.start()
+        self.foxglove_bridge.start()
+        # self.ctrl.start() # DEBUG
 
-    print(colors.green("starting ctrl"))
-    ctrl.start()
+        await asyncio.sleep(2)
+        print("querying system")
+        print(self.mapper.costmap())
+        logger.info("UnitreeGo2Light initialized and started")
 
-    print(colors.red("READY"))
+    def get_pose(self) -> dict:
+        """Get the current pose (position and rotation) of the robot.
 
-    await asyncio.sleep(2)
-    print("querying system")
-    print(mapper.costmap())
-    while True:
-        await asyncio.sleep(1)
+        Returns:
+            Dictionary containing:
+                - position: Vector (x, y, z)
+                - rotation: Vector (roll, pitch, yaw) in radians
+        """
+        if not self.connection:
+            raise RuntimeError("Connection not established. Call start() first.")
+        odom = self.connection.get_odom()
+        position = Vector(odom.x, odom.y, odom.z)
+        rotation = Vector(odom.roll, odom.pitch, odom.yaw)
+        return {"position": position, "rotation": rotation}
+
+    def move(self, velocity: Vector, duration: float = 0.0) -> bool:
+        """Move the robot using velocity commands.
+
+        Args:
+            velocity: Velocity vector [x, y, yaw]
+            duration: Duration to apply command (seconds)
+
+        Returns:
+            bool: True if movement succeeded
+        """
+        if not self.connection:
+            raise RuntimeError("Connection not established. Call start() first.")
+        self.connection.move(Vector3(velocity.x, velocity.y, velocity.z))
+        if duration > 0:
+            time.sleep(duration)
+            self.connection.move(Vector3(0, 0, 0))  # Stop
+        return True
+
+    def explore(self, stop_event=None) -> bool:
+        """Start autonomous frontier exploration.
+
+        Args:
+            stop_event: Optional threading.Event to signal when exploration should stop
+
+        Returns:
+            bool: True if exploration completed successfully
+        """
+        if not self.frontier_explorer:
+            raise RuntimeError("Frontier explorer not initialized. Call start() first.")
+        return self.frontier_explorer.explore(stop_event=stop_event)
+
+    def standup(self):
+        """Make the robot stand up."""
+        if self.connection and hasattr(self.connection, "standup"):
+            return self.connection.standup()
+
+    def liedown(self):
+        """Make the robot lie down."""
+        if self.connection and hasattr(self.connection, "liedown"):
+            return self.connection.liedown()
+
+    @property
+    def costmap(self):
+        """Access to the costmap for navigation."""
+        if not self.mapper:
+            raise RuntimeError("Mapper not initialized. Call start() first.")
+        return self.mapper.costmap
+
+    def get_video_stream(self, fps: int = 30) -> Observable:
+        """Get the video stream with rate limiting and processing.
+
+        Args:
+            fps: Frames per second for rate limiting
+
+        Returns:
+            Observable stream of video frames
+        """
+        # Import required modules for LCM subscription
+        from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+        from dimos.msgs.sensor_msgs import Image
+        from reactivex import create
+        from reactivex.disposable import Disposable
+
+        lcm_instance = LCM()
+        lcm_instance.start()
+
+        topic = Topic("/video", Image)
+
+        def subscribe(observer, scheduler=None):
+            unsubscribe_fn = lcm_instance.subscribe(topic, lambda msg, _: observer.on_next(msg))
+
+            return Disposable(unsubscribe_fn)
+
+        return create(subscribe).pipe(
+            ops.map(
+                lambda img: img.data if hasattr(img, "data") else img
+            ),  # Convert Image message to numpy array
+            ops.sample(1.0 / fps),
+        )
 
 
 if __name__ == "__main__":
     import os
 
-    asyncio.run(run(os.getenv("ROBOT_IP")))
+    robot = UnitreeGo2Light(os.getenv("ROBOT_IP"))
+    asyncio.run(robot.start())
     # asyncio.run(run("192.168.9.140"))
