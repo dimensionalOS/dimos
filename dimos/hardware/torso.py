@@ -26,10 +26,10 @@ import dimos.protocol.service.lcmservice as lcmservice
 
 dev_serial = "/dev/ttyUSB0"
 
+
 class TorsoBrige(Module):
     twist_cmd: In[Twist] = None
     pose_state: Out[Pose] = None
-    
 
     def __init__(
         self, port: str = dev_serial, baud: int = 9600, timeout: float = 0.1, *args, **kwargs
@@ -77,6 +77,7 @@ class TorsoBrige(Module):
             cp.orientation.x, cp.orientation.y, cp.orientation.z, cp.orientation.w = ax, ay, az, 1.0
             self.pose_state.publish(cp)
 
+
 def TestTorsoBridge():
     lcmservice.autoconf()
     dimos = core.start(2)
@@ -87,7 +88,7 @@ def TestTorsoBridge():
     torso.twist_cmd.transport = core.LCMTransport("/cmd_vel", Twist)
 
     torso.start()
-    print("TorsoBridge started")    
+    print("TorsoBridge started")
 
     while True:
         time.sleep(1)
@@ -95,4 +96,3 @@ def TestTorsoBridge():
 
 if __name__ == "__main__":
     TestTorsoBridge()
-    
