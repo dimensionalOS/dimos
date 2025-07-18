@@ -23,6 +23,7 @@ from plum import dispatch
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
+from dimos.msgs.foxglove_msgs import Arrow
 
 # from dimos.robot.local_planner.local_planner import LocalPlanner
 from dimos.msgs.geometry_msgs import Pose, PoseLike, PoseStamped, Vector3, VectorLike, to_pose
@@ -46,14 +47,12 @@ def vector_to_twist(vector: Vector3) -> Twist:
     return twist
 
 
-def transform_to_robot_frame(global_vector: Vector3, global_robot_position: PoseStamped) -> Vector3:
-    return global_robot_position.find_transform(global_vector).translation
-
-
 class SimplePlanner(Module):
     path: In[Path] = None
     odom: In[PoseStamped] = None
     movecmd: Out[Twist] = None
+
+    arrow: Out[Arrow] = None
 
     get_costmap: Callable[[], Costmap]
 
@@ -68,6 +67,13 @@ class SimplePlanner(Module):
     ):
         Module.__init__(self)
         self.get_costmap = get_costmap
+
+    def transform_to_robot_frame(
+        self, global_target: Vector3, global_robot_position: PoseStamped
+    ) -> Vector3:
+        transform = global_robot_position.find_transform(global_target)
+        self.arrow.publish(Arrow.from_transform(transform, global_robot_position))
+        return transform.translation
 
     def get_move_stream(self, frequency: float = 20.0) -> rx.Observable:
         return rx.interval(1.0 / frequency, scheduler=get_scheduler()).pipe(
@@ -88,7 +94,7 @@ class SimplePlanner(Module):
     def _safe_transform_goal(self) -> Optional[Vector3]:
         """Safely transform goal to robot frame with error handling."""
         try:
-            return transform_to_robot_frame(self.goal, self.latest_odom)
+            return self.transform_to_robot_frame(self.goal, self.latest_odom)
         except Exception as e:
             logger.error(f"Error transforming goal to robot frame: {e}")
             print(traceback.format_exc())

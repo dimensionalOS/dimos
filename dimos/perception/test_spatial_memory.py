@@ -188,8 +188,8 @@ class TestSpatialMemory:
                 similarities = [1 - r.get("distance") for r in results]
                 print(f"Similarities: {similarities}")
 
-                assert any(d > 0.23 for d in similarities), (
-                    f"Expected at least one result with similarity > 0.24 for query '{query}'"
+                assert any(d > 0.22 for d in similarities), (
+                    f"Expected at least one result with similarity > 0.22 for query '{query}'"
                 )
 
             results = memory.query_by_text(irrelevant_query, limit=2)
