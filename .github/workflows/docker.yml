@@ -36,6 +36,7 @@ jobs:
               - docker/python/**
               - requirements*.txt
               - requirements.txt
+              - pyproject.toml
 
             dev:
               - docker/dev/**
