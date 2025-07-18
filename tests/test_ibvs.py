@@ -22,26 +22,26 @@ Click on objects to select targets.
 """
 
 import cv2
-import numpy as np
 import sys
-import os
 import time
 
-import tests.test_header
 
 from dimos.hardware.zed_camera import ZEDCamera
 from dimos.hardware.piper_arm import PiperArm
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
-from dimos.perception.common.utils import find_clicked_object
 from dimos.manipulation.visual_servoing.pbvs import PBVS, GraspStage
+from dimos.manipulation.visual_servoing.utils import (
+    find_clicked_detection,
+    get_detection2d_for_detection3d,
+    bbox2d_to_corners,
+)
 from dimos.utils.transform_utils import (
     pose_to_matrix,
     matrix_to_pose,
     create_transform_from_6dof,
     compose_transforms,
-    quaternion_to_euler,
 )
-from dimos.msgs.geometry_msgs import Vector3
+from dimos_lcm.geometry_msgs import Vector3
 
 try:
     import pyzed.sl as sl
@@ -54,7 +54,7 @@ except ImportError:
 mouse_click = None
 
 
-def mouse_callback(event, x, y, flags, param):
+def mouse_callback(event, x, y, _flags, _param):
     global mouse_click
     if event == cv2.EVENT_LBUTTONDOWN:
         mouse_click = (x, y)
@@ -66,8 +66,8 @@ def execute_grasp(arm, target_object, target_pose, grasp_width_offset: float = 0
 
     Args:
         arm: Robot arm interface with gripper control
-        target_object: ObjectData with size information
-        safety_margin: Multiplier for gripper opening (default 1.5x object size)
+        target_object: Detection3D with size information
+        grasp_width_offset: Additional width to add to object size for gripper opening
 
     Returns:
         True if grasp was executed, False if no target or no size data
@@ -76,33 +76,24 @@ def execute_grasp(arm, target_object, target_pose, grasp_width_offset: float = 0
         print("❌ No target object provided for grasping")
         return False
 
-    if "size" not in target_object:
+    if not target_object.bbox or not target_object.bbox.size:
         print("❌ Target has no size information for grasping")
         return False
 
     # Get object size from detection3d data (already in meters)
-    object_size = target_object["size"]
-    object_width = object_size["width"]
-    object_height = object_size["height"]
-    object_depth = object_size["depth"]
+    object_size = target_object.bbox.size
+    object_width = object_size.x
 
-    # Use the larger dimension (width or height) for gripper opening
-    # Depth is not relevant for gripper opening (that's approach direction)
-
-    # Calculate gripper opening with safety margin
+    # Calculate gripper opening with offset
     gripper_opening = object_width + grasp_width_offset
 
     # Clamp gripper opening to reasonable limits (0.5cm to 10cm)
-    gripper_opening = max(0.005, min(gripper_opening, 0.1))  # 0.5cm to 10cm
+    gripper_opening = max(0.005, min(gripper_opening, 0.1))
 
-    print(
-        f"🤏 Executing grasp: object size w={object_width * 1000:.1f}mm h={object_height * 1000:.1f}mm d={object_depth * 1000:.1f}mm, "
-        f"offset={grasp_width_offset * 1000:.1f}mm, opening gripper to {gripper_opening * 1000:.1f}mm"
-    )
+    print(f"🤏 Executing grasp: opening gripper to {gripper_opening * 1000:.1f}mm")
 
     # Command gripper to open
     arm.cmd_gripper_ctrl(gripper_opening)
-
     arm.cmd_ee_pose(target_pose, line_mode=True)
 
     return True
@@ -111,8 +102,8 @@ def execute_grasp(arm, target_object, target_pose, grasp_width_offset: float = 0
 def main():
     global mouse_click
 
-    # Control mode flag
-    DIRECT_EE_CONTROL = True  # Set to True for direct EE pose control, False for velocity control
+    # Configuration
+    DIRECT_EE_CONTROL = True  # True: direct EE pose control, False: velocity control
 
     print("=== PBVS Eye-in-Hand Test ===")
     print("Using EE pose as odometry for camera pose")
@@ -206,21 +197,25 @@ def main():
             camera_pose = matrix_to_pose(camera_transform)
 
             # Process detections using camera transform
-            detections = detector.process_frame(rgb, depth, camera_transform)
+            detection_3d_array, detection_2d_array = detector.process_frame(rgb, depth, camera_transform)
 
             # Handle click
             if mouse_click:
-                clicked = find_clicked_object(mouse_click, detections)
-                if clicked:
-                    pbvs.set_target(clicked)
+                clicked_3d = find_clicked_detection(
+                    mouse_click, 
+                    detection_2d_array.detections, 
+                    detection_3d_array.detections
+                )
+                if clicked_3d:
+                    pbvs.set_target(clicked_3d)
                 mouse_click = None
 
             # Create visualization with position overlays
-            viz = detector.visualize_detections(rgb, detections)
+            viz = detector.visualize_detections(rgb, detection_3d_array.detections, detection_2d_array.detections)
 
             # PBVS control
             vel_cmd, ang_vel_cmd, reached, target_tracked, target_pose = pbvs.compute_control(
-                ee_pose, detections
+                ee_pose, detection_3d_array
             )
 
             # Apply commands to robot based on control mode
@@ -246,17 +241,25 @@ def main():
                     vel_cmd.x, vel_cmd.y, vel_cmd.z, ang_vel_cmd.x, ang_vel_cmd.y, ang_vel_cmd.z
                 )
 
-            # Apply PBVS overlay
+            # Add PBVS status overlay
             viz = pbvs.create_status_overlay(viz)
 
             # Highlight target
             current_target = pbvs.get_current_target()
-            if target_tracked and current_target and "bbox" in current_target:
-                x1, y1, x2, y2 = map(int, current_target["bbox"])
-                cv2.rectangle(viz, (x1, y1), (x2, y2), (0, 255, 0), 3)
-                cv2.putText(
-                    viz, "TARGET", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
+            if target_tracked and current_target:
+                det_2d = get_detection2d_for_detection3d(
+                    current_target,
+                    detection_3d_array.detections,
+                    detection_2d_array.detections
                 )
+                if det_2d and det_2d.bbox:
+                    x1, y1, x2, y2 = bbox2d_to_corners(det_2d.bbox)
+                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                    
+                    cv2.rectangle(viz, (x1, y1), (x2, y2), (0, 255, 0), 3)
+                    cv2.putText(
+                        viz, "TARGET", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
+                    )
 
             # Convert back to BGR for OpenCV display
             viz_bgr = cv2.cvtColor(viz, cv2.COLOR_RGB2BGR)
@@ -281,71 +284,44 @@ def main():
             ee_text = f"EE: ({ee_pose.position.x:.2f}, {ee_pose.position.y:.2f}, {ee_pose.position.z:.2f})m"
             cv2.putText(viz_bgr, ee_text, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-            # Add direct EE control status
+            # Add control status
             if DIRECT_EE_CONTROL:
-                if target_pose:
-                    status_text = "Target Ready - Press SPACE to execute"
-                    status_color = (0, 255, 255)  # Yellow
-                else:
-                    status_text = "No target selected"
-                    status_color = (100, 100, 100)  # Gray
-
-                cv2.putText(
-                    viz_bgr, status_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1
-                )
-
-                cv2.putText(
-                    viz_bgr,
-                    "s=STOP | h=HOME | SPACE=EXECUTE | g=RELEASE",
-                    (10, 110),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    (255, 255, 255),
-                    1,
-                )
+                status_text = "Target Ready - Press SPACE to execute" if target_pose else "No target selected"
+                status_color = (0, 255, 255) if target_pose else (100, 100, 100)
+                cv2.putText(viz_bgr, status_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1)
+                cv2.putText(viz_bgr, "s=STOP | h=HOME | SPACE=EXECUTE | g=RELEASE",
+                            (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
             # Display
             cv2.imshow("PBVS", viz_bgr)
 
-            # Keyboard
+            # Handle keyboard input
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
             elif key == ord("r"):
                 pbvs.clear_target()
             elif key == ord("s"):
-                # SOFT STOP - Emergency stop
                 print("🛑 SOFT STOP - Emergency stopping robot!")
                 arm.softStop()
             elif key == ord("h"):
-                # GO HOME - Return to safe position
                 print("🏠 GO HOME - Returning to safe position...")
                 arm.gotoZero()
-            elif key == ord(" "):
-                # SPACE - Execute target pose (only in direct EE mode)
-                if DIRECT_EE_CONTROL and target_pose:
-                    execute_target = True
-                    target_euler = quaternion_to_euler(target_pose.orientation, degrees=True)
-                    if pbvs.grasp_stage == GraspStage.PRE_GRASP:
-                        pbvs.set_grasp_stage(GraspStage.GRASP)
-                    print("⚡ SPACE pressed - Target will execute on next frame!")
-                    print(
-                        f"📍 Target pose: pos=({target_pose.position.x:.3f}, {target_pose.position.y:.3f}, {target_pose.position.z:.3f}) "
-                        f"rot=({target_euler.x:.1f}°, {target_euler.y:.1f}°, {target_euler.z:.1f}°)"
-                    )
-            elif key == 82:  # Up arrow key (increase pitch)
-                current_pitch = pbvs.grasp_pitch_degrees
-                new_pitch = min(90.0, current_pitch + 15.0)
+            elif key == ord(" ") and DIRECT_EE_CONTROL and target_pose:
+                execute_target = True
+                if pbvs.grasp_stage == GraspStage.PRE_GRASP:
+                    pbvs.set_grasp_stage(GraspStage.GRASP)
+                print("⚡ Executing target pose")
+            elif key == 82:  # Up arrow - increase pitch
+                new_pitch = min(90.0, pbvs.grasp_pitch_degrees + 15.0)
                 pbvs.set_grasp_pitch(new_pitch)
-                print(f"↑ Grasp pitch increased to {new_pitch:.0f}° (0°=level, 90°=top-down)")
-            elif key == 84:  # Down arrow key (decrease pitch)
-                current_pitch = pbvs.grasp_pitch_degrees
-                new_pitch = max(0.0, current_pitch - 15.0)
+                print(f"↑ Grasp pitch: {new_pitch:.0f}°")
+            elif key == 84:  # Down arrow - decrease pitch
+                new_pitch = max(0.0, pbvs.grasp_pitch_degrees - 15.0)
                 pbvs.set_grasp_pitch(new_pitch)
-                print(f"↓ Grasp pitch decreased to {new_pitch:.0f}° (0°=level, 90°=top-down)")
+                print(f"↓ Grasp pitch: {new_pitch:.0f}°")
             elif key == ord("g"):
-                # G - Release gripper (open to 100mm)
-                print("🖐️ RELEASE - Opening gripper to 100mm...")
+                print("🖐️ Opening gripper")
                 arm.release_gripper()
 
     except KeyboardInterrupt:
