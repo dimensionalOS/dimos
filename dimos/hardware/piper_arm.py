@@ -27,8 +27,17 @@ import termios
 import tty
 import select
 from scipy.spatial.transform import Rotation as R
-from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
+
+import random
+import threading
+
+import pytest
+
+import dimos.core as core
+import dimos.protocol.service.lcmservice as lcmservice
+from dimos.core import In, Module, Out, rpc
+from dimos_lcm.geometry_msgs import Pose, Vector3, Twist
 
 
 class PiperArm:
@@ -40,6 +49,7 @@ class PiperArm:
         self.resetArm()
         time.sleep(0.1)
         self.enable()
+        self.enable_gripper()  # Enable gripper after arm is enabled
         self.gotoZero()
         time.sleep(1)
         self.init_vel_controller()
@@ -60,11 +70,17 @@ class PiperArm:
             pass
             time.sleep(0.01)
         print(f"[PiperArm] Enabled")
-        self.arm.MotionCtrl_2(0x01, 0x01, 80, 0x00)
+        # self.arm.ModeCtrl(
+        #     ctrl_mode=0x01,         # CAN command mode
+        #     move_mode=0x01,         # “Move-J”, but ignored in MIT
+        #     move_spd_rate_ctrl=100, # doesn’t matter in MIT
+        #     is_mit_mode=0xAD        # <-- the magic flag
+        # )
+        self.arm.MotionCtrl_2(0x01, 0x01, 80, 0xAD)
 
     def gotoZero(self):
         factor = 1000
-        position = [57.0, 0.0, 250.0, 0, 90.0, 0, 0]
+        position = [57.0, 0.0, 250.0, 0, 97.0, 0, 0]
         X = round(position[0] * factor)
         Y = round(position[1] * factor)
         Z = round(position[2] * factor)
@@ -80,28 +96,44 @@ class PiperArm:
     def softStop(self):
         self.gotoZero()
         time.sleep(1)
-        self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
+        self.arm.MotionCtrl_2(
+            0x01,
+            0x00,
+            100,
+        )
         self.arm.MotionCtrl_1(0x01, 0, 0)
         time.sleep(3)
 
-    def cmd_ee_pose_values(self, x, y, z, r, p, y_):
+    def cmd_ee_pose_values(self, x, y, z, r, p, y_, line_mode=False):
         """Command end-effector to target pose in space (position + Euler angles)"""
         factor = 1000
-        pose = [x * factor, y * factor, z * factor, r * factor, p * factor, y_ * factor]
-        self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
+        pose = [
+            x * factor * factor,
+            y * factor * factor,
+            z * factor * factor,
+            r * factor,
+            p * factor,
+            y_ * factor,
+        ]
+        self.arm.MotionCtrl_2(0x01, 0x02 if line_mode else 0x00, 100, 0x00)
         self.arm.EndPoseCtrl(
             int(pose[0]), int(pose[1]), int(pose[2]), int(pose[3]), int(pose[4]), int(pose[5])
         )
 
-    def cmd_ee_pose(self, pose: Pose):
+    def cmd_ee_pose(self, pose: Pose, line_mode=False):
         """Command end-effector to target pose using Pose message"""
         # Convert quaternion to euler angles
         euler = quaternion_to_euler(pose.orientation, degrees=True)
-        
+
         # Command the pose
         self.cmd_ee_pose_values(
-            pose.position.x, pose.position.y, pose.position.z,
-            euler[0], euler[1], euler[2]
+            pose.position.x,
+            pose.position.y,
+            pose.position.z,
+            euler[0],
+            euler[1],
+            euler[2],
+            line_mode,
         )
 
     def get_ee_pose(self):
@@ -111,16 +143,16 @@ class PiperArm:
         # Extract individual pose values and convert to base units
         # Position values are divided by 1000 to convert from SDK units to meters
         # Rotation values are divided by 1000 to convert from SDK units to radians
-        x = pose.end_pose.X_axis / factor / factor   # Convert mm to m
-        y = pose.end_pose.Y_axis / factor / factor # Convert mm to m
-        z = pose.end_pose.Z_axis / factor / factor # Convert mm to m
-        rx = pose.end_pose.RX_axis / factor 
-        ry = pose.end_pose.RY_axis / factor 
+        x = pose.end_pose.X_axis / factor / factor  # Convert mm to m
+        y = pose.end_pose.Y_axis / factor / factor  # Convert mm to m
+        z = pose.end_pose.Z_axis / factor / factor  # Convert mm to m
+        rx = pose.end_pose.RX_axis / factor
+        ry = pose.end_pose.RY_axis / factor
         rz = pose.end_pose.RZ_axis / factor
 
         # Create position vector (already in meters)
         position = Vector3(x, y, z)
-        
+
         orientation = euler_to_quaternion(Vector3(rx, ry, rz), degrees=True)
 
         return Pose(position, orientation)
@@ -133,9 +165,23 @@ class PiperArm:
         self.arm.GripperCtrl(abs(round(position)), 250, 0x01, 0)
         print(f"[PiperArm] Commanding gripper position: {position}")
 
+    def enable_gripper(self):
+        """Enable the gripper using the initialization sequence"""
+        print("[PiperArm] Enabling gripper...")
+        while not self.arm.EnablePiper():
+            time.sleep(0.01)
+        self.arm.GripperCtrl(0, 1000, 0x02, 0)
+        self.arm.GripperCtrl(0, 1000, 0x01, 0)
+        print("[PiperArm] Gripper enabled")
+
+    def release_gripper(self):
+        """Release gripper by opening to 100mm (10cm)"""
+        print("[PiperArm] Releasing gripper (opening to 100mm)...")
+        self.cmd_gripper_ctrl(0.1)  # 0.1m = 100mm = 10cm
+
     def resetArm(self):
         self.arm.MotionCtrl_1(0x02, 0, 0)
-        self.arm.MotionCtrl_2(0, 0, 0, 0x00)
+        self.arm.MotionCtrl_2(0, 0, 0, 0xAD)
         print(f"[PiperArm] Resetting arm")
 
     def init_vel_controller(self):
@@ -147,15 +193,8 @@ class PiperArm:
         self.dt = 0.01
 
     def cmd_vel(self, x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot):
-        x_dot = x_dot * 1000
-        y_dot = y_dot * 1000
-        z_dot = z_dot * 1000
-        R_dot = R_dot * 1000
-        P_dot = P_dot * 1000
-        Y_dot = Y_dot * 1000
-
         joint_state = self.arm.GetArmJointMsgs().joint_state
-        # print(f"[PiperArm] Current Joints: {joint_state}", type(joint_state))
+        # print(f"[PiperArm] Current Joints (direct): {joint_state}", type(joint_state))
         joint_angles = np.array(
             [
                 joint_state.joint_1,
@@ -168,8 +207,7 @@ class PiperArm:
         )
         # print(f"[PiperArm] Current Joints: {joint_angles}", type(joint_angles))
         factor = 57295.7795  # 1000*180/3.1415926
-        joint_angles = joint_angles * factor  # convert to radians
-        # print(f"[PiperArm] Current Joints: {joint_angles}", type(joint_angles))
+        joint_angles = joint_angles / factor  # convert to radians
 
         q = np.array(
             [
@@ -181,12 +219,14 @@ class PiperArm:
                 joint_angles[5],
             ]
         )
-        # print(f"[PiperArm] Current Joints: {q}")
-        time.sleep(0.005)
+        J = self.chain.jacobian(q)
+        self.J_pinv = np.linalg.pinv(J)
         dq = self.J_pinv @ np.array([x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot]) * self.dt
         newq = q + dq
 
-        self.arm.MotionCtrl_2(0x01, 0x01, 100, 0x00)
+        newq = newq * factor
+
+        self.arm.MotionCtrl_2(0x01, 0x01, 100, 0xAD)
         self.arm.JointCtrl(
             int(round(newq[0])),
             int(round(newq[1])),
@@ -195,23 +235,46 @@ class PiperArm:
             int(round(newq[4])),
             int(round(newq[5])),
         )
+        time.sleep(self.dt)
         # print(f"[PiperArm] Moving to Joints to : {newq}")
 
-    def cmd_vel_ee(self, x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot):
+    def cmd_vel_ee(self, x_dot, y_dot, z_dot, RX_dot, PY_dot, YZ_dot):
         factor = 1000
         x_dot = x_dot * factor
         y_dot = y_dot * factor
         z_dot = z_dot * factor
-        R_dot = R_dot * factor
-        P_dot = P_dot * factor
-        Y_dot = Y_dot * factor
+        RX_dot = RX_dot * factor
+        PY_dot = PY_dot * factor
+        YZ_dot = YZ_dot * factor
 
-        current_pose = self.get_EE_pose()
-        current_pose = np.array(current_pose)
-        current_pose = current_pose
+        current_pose_msg = self.get_ee_pose()
+
+        # Convert quaternion to euler angles
+        quat = [
+            current_pose_msg.orientation.x,
+            current_pose_msg.orientation.y,
+            current_pose_msg.orientation.z,
+            current_pose_msg.orientation.w,
+        ]
+        rotation = R.from_quat(quat)
+        euler = rotation.as_euler("xyz")  # Returns [rx, ry, rz] in radians
+
+        # Create current pose array [x, y, z, rx, ry, rz]
+        current_pose = np.array(
+            [
+                current_pose_msg.position.x,
+                current_pose_msg.position.y,
+                current_pose_msg.position.z,
+                euler[0],
+                euler[1],
+                euler[2],
+            ]
+        )
+
+        # Apply velocity increment
         current_pose = current_pose + np.array([x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot]) * self.dt
-        current_pose = current_pose
-        self.cmd_EE_pose(
+
+        self.cmd_ee_pose_values(
             current_pose[0],
             current_pose[1],
             current_pose[2],
@@ -228,6 +291,108 @@ class PiperArm:
             pass
             time.sleep(0.01)
         self.arm.DisconnectPort()
+
+
+class VelocityController(Module):
+    cmd_vel: In[Twist] = None
+
+    def __init__(self, arm, period=0.01, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.arm = arm
+        self.period = period
+        self.latest_cmd = None
+        self.last_cmd_time = None
+
+    @rpc
+    def start(self):
+        self.cmd_vel.subscribe(self.handle_cmd_vel)
+
+        def control_loop():
+            while True:
+                # Check for timeout (1 second)
+                if self.last_cmd_time and (time.time() - self.last_cmd_time) > 1.0:
+                    print("No velocity command received for 1 second, stopping control loop")
+                    break
+
+                cmd_vel = self.latest_cmd
+
+                joint_state = self.arm.GetArmJointMsgs().joint_state
+                # print(f"[PiperArm] Current Joints (direct): {joint_state}", type(joint_state))
+                joint_angles = np.array(
+                    [
+                        joint_state.joint_1,
+                        joint_state.joint_2,
+                        joint_state.joint_3,
+                        joint_state.joint_4,
+                        joint_state.joint_5,
+                        joint_state.joint_6,
+                    ]
+                )
+                factor = 57295.7795  # 1000*180/3.1415926
+                joint_angles = joint_angles / factor  # convert to radians
+                q = np.array(
+                    [
+                        joint_angles[0],
+                        joint_angles[1],
+                        joint_angles[2],
+                        joint_angles[3],
+                        joint_angles[4],
+                        joint_angles[5],
+                    ]
+                )
+
+                J = self.chain.jacobian(q)
+                self.J_pinv = np.linalg.pinv(J)
+                dq = (
+                    self.J_pinv
+                    @ np.array(
+                        [
+                            cmd_vel.linear.X,
+                            cmd_vel.linear.y,
+                            cmd_vel.linear.z,
+                            cmd_vel.angular.x,
+                            cmd_vel.angular.y,
+                            cmd_vel.angular.z,
+                        ]
+                    )
+                    * self.dt
+                )
+                newq = q + dq
+
+                newq = newq * factor  # convert radians to scaled degree units for joint control
+
+                self.arm.MotionCtrl_2(0x01, 0x01, 100, 0xAD)
+                self.arm.JointCtrl(
+                    int(round(newq[0])),
+                    int(round(newq[1])),
+                    int(round(newq[2])),
+                    int(round(newq[3])),
+                    int(round(newq[4])),
+                    int(round(newq[5])),
+                )
+                time.sleep(self.period)
+
+        thread = threading.Thread(target=control_loop, daemon=True)
+        thread.start()
+
+    def handle_cmd_vel(self, cmd_vel: Twist):
+        self.latest_cmd = cmd_vel
+        self.last_cmd_time = time.time()
+
+
+@pytest.mark.tool
+def run_velocity_controller():
+    lcmservice.autoconf()
+    dimos = core.start(2)
+
+    velocity_controller = dimos.deploy(VelocityController, arm=arm, period=0.01)
+    velocity_controller.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
+
+    velocity_controller.start()
+
+    print("Velocity controller started")
+    while True:
+        time.sleep(1)
 
 
 if __name__ == "__main__":
@@ -287,4 +452,4 @@ if __name__ == "__main__":
                 f"Current linear velocity: x={x_dot:.3f} m/s, y={y_dot:.3f} m/s, z={z_dot:.3f} m/s"
             )
 
-    teleop_linear_vel(arm)
+    run_velocity_controller()
