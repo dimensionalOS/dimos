@@ -22,7 +22,6 @@ from plum import dispatch
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.foxglove_msgs import Arrow
 
 # from dimos.robot.local_planner.local_planner import LocalPlanner
 from dimos.msgs.geometry_msgs import (
@@ -60,7 +59,6 @@ class SimplePlanner(Module):
     odom: In[PoseStamped] = None
     movecmd: Out[Twist] = None
 
-    arrow: Out[Arrow] = None
     transform: Out[Transform] = None
 
     get_costmap: Callable[[], Costmap]
@@ -81,7 +79,6 @@ class SimplePlanner(Module):
         self, global_target: Vector3, global_robot_position: PoseStamped
     ) -> Vector3:
         transform = global_robot_position.find_transform(global_target)
-        self.arrow.publish(Arrow.from_transform(transform, global_robot_position))
         self.transform.publish(transform)
         return transform.translation
 

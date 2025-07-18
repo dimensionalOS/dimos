@@ -26,7 +26,6 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
 from dimos.robot.global_planner import AstarPlanner
 from dimos.robot.local_planner.simple import SimplePlanner
-from dimos.robot.unitree_webrtc.connection import VideoMessage, WebRTCRobot
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.map import Map as Mapper

@@ -18,7 +18,7 @@ import numpy as np
 import os
 from dimos.robot.robot import Robot
 from dimos.robot.unitree_webrtc.type.map import Map
-from dimos.robot.unitree_webrtc.connection import WebRTCRobot
+from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.utils.reactive import getter_streaming
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
@@ -66,7 +66,7 @@ class UnitreeGo2(Robot):
             enable_perception: Whether to enable perception streams and spatial memory
         """
         # Create WebRTC connection interface
-        self.webrtc_connection = WebRTCRobot(
+        self.webrtc_connection = UnitreeWebRTCConnection(
             ip=ip,
             mode=mode,
         )
