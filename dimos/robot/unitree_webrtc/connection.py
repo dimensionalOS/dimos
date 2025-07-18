@@ -42,7 +42,7 @@ from dimos.utils.reactive import backpressure, callback_to_observable
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
 
-class WebRTCRobot(ConnectionInterface):
+class UnitreeWebRTCConnection(ConnectionInterface):
     def __init__(self, ip: str, mode: str = "ai"):
         self.ip = ip
         self.mode = mode
