@@ -63,32 +63,6 @@ def project_3d_points_to_2d(
     return points_2d
 
 
-def euler_to_rotation_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
-    """
-    Convert Euler angles to rotation matrix.
-
-    Args:
-        roll: Roll angle in radians
-        pitch: Pitch angle in radians
-        yaw: Yaw angle in radians
-
-    Returns:
-        3x3 rotation matrix
-    """
-    Rx = np.array([[1, 0, 0], [0, np.cos(roll), -np.sin(roll)], [0, np.sin(roll), np.cos(roll)]])
-
-    Ry = np.array(
-        [[np.cos(pitch), 0, np.sin(pitch)], [0, 1, 0], [-np.sin(pitch), 0, np.cos(pitch)]]
-    )
-
-    Rz = np.array([[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]])
-
-    # Combined rotation matrix
-    R = Rz @ Ry @ Rx
-
-    return R
-
-
 def create_gripper_geometry(
     grasp_data: dict,
     finger_length: float = 0.08,
@@ -525,31 +499,6 @@ def visualize_grasps_3d(
     geometries.append(origin_frame)
 
     o3d.visualization.draw_geometries(geometries, window_name="3D Grasp Visualization")
-
-
-def rotation_matrix_to_euler(rotation_matrix: np.ndarray) -> Tuple[float, float, float]:
-    """
-    Convert 3x3 rotation matrix to Euler angles (roll, pitch, yaw).
-
-    Args:
-        rotation_matrix: 3x3 rotation matrix
-
-    Returns:
-        Tuple of (roll, pitch, yaw) in radians
-    """
-    sy = np.sqrt(rotation_matrix[0, 0] ** 2 + rotation_matrix[1, 0] ** 2)
-    singular = sy < 1e-6
-
-    if not singular:
-        x = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2])  # roll
-        y = np.arctan2(-rotation_matrix[2, 0], sy)  # pitch
-        z = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])  # yaw
-    else:
-        x = np.arctan2(-rotation_matrix[1, 2], rotation_matrix[1, 1])  # roll
-        y = np.arctan2(-rotation_matrix[2, 0], sy)  # pitch
-        z = 0  # yaw
-
-    return x, y, z
 
 
 def parse_grasp_results(grasps: List[Dict]) -> List[Dict]:
