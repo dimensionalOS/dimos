@@ -84,11 +84,11 @@ class AstarPlanner(Planner):
         pos = self.get_robot_pos()
 
         logger.info(f"current pos {pos}")
-        
+
         costmap = self.get_costmap()
 
         logger.info(f"current costmap {costmap}")
-        
+
         self.vis("target", goal)
 
         path = astar(costmap, goal.position, pos)
