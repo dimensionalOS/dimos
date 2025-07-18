@@ -21,8 +21,8 @@ from typing import BinaryIO
 from dimos_lcm.geometry_msgs import Twist as LCMTwist
 from plum import dispatch
 
-from .Quaternion import Quaternion
-from .Vector3 import Vector3
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 
 
 class Twist(LCMTwist):
@@ -37,15 +37,16 @@ class Twist(LCMTwist):
         self.angular = Vector3()
 
     @dispatch
-    def __init__(self, linear: Vector3, angular: Vector3) -> None:
+    def __init__(self, linear: VectorLike, angular: VectorLike) -> None:
         """Initialize a twist from linear and angular velocities."""
-        self.linear = linear
-        self.angular = angular
+
+        self.linear = Vector3(linear)
+        self.angular = Vector3(angular)
 
     @dispatch
-    def __init__(self, linear: Vector3, angular: Quaternion) -> None:
+    def __init__(self, linear: VectorLike, angular: Quaternion) -> None:
         """Initialize a twist from linear velocity and angular as quaternion (converted to euler)."""
-        self.linear = linear
+        self.linear = Vector3(linear)
         self.angular = angular.to_euler()
 
     @dispatch
