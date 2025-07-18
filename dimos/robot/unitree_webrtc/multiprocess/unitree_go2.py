@@ -102,7 +102,7 @@ class FakeRTC(UnitreeWebRTCConnection):
         print("move supressed", vector)
 
 
-class ConnectionModule(FakeRTC, Module):
+class ConnectionModule(UnitreeWebRTCConnection, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
@@ -245,7 +245,7 @@ class UnitreeGo2Light:
         # ==========================================
 
         # Visualization ============================
-        # self.foxglove_bridge = FoxgloveBridge()
+        self.foxglove_bridge = FoxgloveBridge()
         # ==========================================
 
         self.frontier_explorer = WavefrontFrontierExplorer(
@@ -270,7 +270,7 @@ class UnitreeGo2Light:
         self.connection.start()
         self.local_planner.start()
         self.global_planner.start()
-        # self.foxglove_bridge.start()
+        self.foxglove_bridge.start()
         # self.ctrl.start() # DEBUG
 
         await asyncio.sleep(2)

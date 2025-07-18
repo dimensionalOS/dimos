@@ -49,7 +49,7 @@ async def run_light_robot():
 
     from dimos.msgs.geometry_msgs import Vector3
 
-    robot.move(Vector3(0.5, 0, 0), duration=2.0)
+    # robot.move(Vector3(0.5, 0, 0), duration=2.0)
 
     robot.explore()
 
