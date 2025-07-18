@@ -128,7 +128,13 @@ class PiperArm:
 
         # Command the pose
         self.cmd_ee_pose_values(
-            pose.position.x, pose.position.y, pose.position.z, euler[0], euler[1], euler[2], line_mode
+            pose.position.x,
+            pose.position.y,
+            pose.position.z,
+            euler[0],
+            euler[1],
+            euler[2],
+            line_mode,
         )
 
     def get_ee_pose(self):

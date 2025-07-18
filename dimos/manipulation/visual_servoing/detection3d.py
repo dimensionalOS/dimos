@@ -26,7 +26,18 @@ from dimos.perception.pointcloud.utils import extract_centroids_from_masks
 from dimos.perception.detection2d.utils import calculate_object_size_from_bbox
 
 from dimos_lcm.geometry_msgs import Pose, Vector3, Quaternion, Point
-from dimos_lcm.vision_msgs import Detection3D, Detection3DArray, BoundingBox3D, ObjectHypothesisWithPose, ObjectHypothesis, Detection2D, Detection2DArray, BoundingBox2D, Pose2D, Point2D
+from dimos_lcm.vision_msgs import (
+    Detection3D,
+    Detection3DArray,
+    BoundingBox3D,
+    ObjectHypothesisWithPose,
+    ObjectHypothesis,
+    Detection2D,
+    Detection2DArray,
+    BoundingBox2D,
+    Pose2D,
+    Point2D,
+)
 from dimos_lcm.std_msgs import Header
 from dimos.manipulation.visual_servoing.utils import estimate_object_depth, visualize_detections_3d
 from dimos.utils.transform_utils import (
@@ -109,7 +120,9 @@ class Detection3DProcessor:
 
         # Early exit if no detections
         if not masks or len(masks) == 0:
-            return Detection3DArray(detections_length=0, header=Header(), detections=[]), Detection2DArray(detections_length=0, header=Header(), detections=[])
+            return Detection3DArray(
+                detections_length=0, header=Header(), detections=[]
+            ), Detection2DArray(detections_length=0, header=Header(), detections=[])
 
         # Convert CUDA tensors to numpy arrays if needed
         numpy_masks = []
@@ -133,14 +146,13 @@ class Detection3DProcessor:
         pose_dict = {p["mask_idx"]: p for p in poses if p["centroid"][2] < self.max_depth}
 
         for i, (bbox, name, prob, track_id) in enumerate(zip(bboxes, names, probs, track_ids)):
-
             # Skip if no 3D pose data
             if i not in pose_dict:
                 continue
-                
+
             pose = pose_dict[i]
             obj_cam_pos = pose["centroid"]
-            
+
             if obj_cam_pos[2] > self.max_depth:
                 continue
 
@@ -175,68 +187,56 @@ class Detection3DProcessor:
                 # If no transform, use camera coordinates
                 center_pose = Pose(
                     Point(obj_cam_pos[0], obj_cam_pos[1], obj_cam_pos[2]),
-                    Quaternion(0.0, 0.0, 0.0, 1.0)  # Default orientation
+                    Quaternion(0.0, 0.0, 0.0, 1.0),  # Default orientation
                 )
 
             # Create Detection3D object
             detection = Detection3D(
                 results_length=1,
                 header=Header(),  # Empty header
-                results=[ObjectHypothesisWithPose(
-                    hypothesis=ObjectHypothesis(
-                        class_id=name,
-                        score=float(prob)
+                results=[
+                    ObjectHypothesisWithPose(
+                        hypothesis=ObjectHypothesis(class_id=name, score=float(prob))
                     )
-                )],
-                bbox=BoundingBox3D(
-                    center=center_pose,
-                    size=Vector3(size_x, size_y, size_z)
-                ),
-                id=str(track_id)
+                ],
+                bbox=BoundingBox3D(center=center_pose, size=Vector3(size_x, size_y, size_z)),
+                id=str(track_id),
             )
-            
+
             detections_3d.append(detection)
-            
+
             # Create corresponding Detection2D
             x1, y1, x2, y2 = bbox
             center_x = (x1 + x2) / 2.0
             center_y = (y1 + y2) / 2.0
             width = x2 - x1
             height = y2 - y1
-            
+
             detection_2d = Detection2D(
                 results_length=1,
                 header=Header(),
-                results=[ObjectHypothesisWithPose(
-                    hypothesis=ObjectHypothesis(
-                        class_id=name,
-                        score=float(prob)
+                results=[
+                    ObjectHypothesisWithPose(
+                        hypothesis=ObjectHypothesis(class_id=name, score=float(prob))
                     )
-                )],
+                ],
                 bbox=BoundingBox2D(
-                    center=Pose2D(
-                        position=Point2D(center_x, center_y),
-                        theta=0.0
-                    ),
+                    center=Pose2D(position=Point2D(center_x, center_y), theta=0.0),
                     size_x=float(width),
-                    size_y=float(height)
+                    size_y=float(height),
                 ),
-                id=str(track_id)
+                id=str(track_id),
             )
             detections_2d.append(detection_2d)
 
         # Create and return both arrays
         return (
             Detection3DArray(
-                detections_length=len(detections_3d),
-                header=Header(),
-                detections=detections_3d
+                detections_length=len(detections_3d), header=Header(), detections=detections_3d
             ),
             Detection2DArray(
-                detections_length=len(detections_2d),
-                header=Header(),
-                detections=detections_2d
-            )
+                detections_length=len(detections_2d), header=Header(), detections=detections_2d
+            ),
         )
 
     def _transform_object_pose(
@@ -295,12 +295,13 @@ class Detection3DProcessor:
         """
         # Extract 2D bboxes from Detection2D objects
         from dimos.manipulation.visual_servoing.utils import bbox2d_to_corners
+
         bboxes_2d = []
         for det_2d in detections_2d:
             if det_2d.bbox:
                 x1, y1, x2, y2 = bbox2d_to_corners(det_2d.bbox)
                 bboxes_2d.append([x1, y1, x2, y2])
-        
+
         return visualize_detections_3d(rgb_image, detections_3d, show_coordinates, bboxes_2d)
 
     def get_closest_detection(
@@ -321,7 +322,9 @@ class Detection3DProcessor:
             # Check if has valid bbox center position
             if d.bbox and d.bbox.center and d.bbox.center.position:
                 # Check class filter if specified
-                if class_filter is None or (d.results_length > 0 and d.results[0].hypothesis.class_id == class_filter):
+                if class_filter is None or (
+                    d.results_length > 0 and d.results[0].hypothesis.class_id == class_filter
+                ):
                     valid_detections.append(d)
 
         if not valid_detections:
