@@ -109,7 +109,9 @@ class PBVS:
         self.pregrasp_distance = pregrasp_distance
         self.grasp_distance = grasp_distance
         self.direct_ee_control = direct_ee_control
-        self.grasp_pitch_degrees = 45.0  # Default grasp pitch in degrees (45° between level and top-down)
+        self.grasp_pitch_degrees = (
+            45.0  # Default grasp pitch in degrees (45° between level and top-down)
+        )
 
         # Target state
         self.current_target = None
@@ -176,7 +178,7 @@ class PBVS:
     def set_grasp_pitch(self, pitch_degrees: float):
         """
         Set the grasp pitch angle in degrees.
-        
+
         Args:
             pitch_degrees: Grasp pitch angle in degrees (0-90)
                           0° = level grasp (horizontal)
@@ -231,7 +233,11 @@ class PBVS:
         Returns:
             True if target was successfully tracked, False if lost (but target is kept)
         """
-        if not self.current_target or not self.current_target.bbox or not self.current_target.bbox.center:
+        if (
+            not self.current_target
+            or not self.current_target.bbox
+            or not self.current_target.bbox.center
+        ):
             return False
 
         if not new_detections or new_detections.detections_length == 0:
@@ -273,7 +279,11 @@ class PBVS:
         Args:
             ee_pose: Current end-effector pose
         """
-        if not self.current_target or not self.current_target.bbox or not self.current_target.bbox.center:
+        if (
+            not self.current_target
+            or not self.current_target.bbox
+            or not self.current_target.bbox.center
+        ):
             return
 
         # Get target position
@@ -288,7 +298,7 @@ class PBVS:
         # Convert grasp pitch from degrees to radians with mapping:
         # 0° (level) -> π/2 (1.57 rad), 90° (top-down) -> π (3.14 rad)
         pitch_radians = 1.57 + (self.grasp_pitch_degrees * np.pi / 180.0 / 2.0)
-        
+
         # Convert euler angles to quaternion using utility function
         euler = Vector3(0.0, pitch_radians, yaw_to_ee)  # roll=0, pitch=mapped, yaw=calculated
         target_orientation = euler_to_quaternion(euler)
@@ -317,22 +327,22 @@ class PBVS:
         # Convert pose to transformation matrix to extract rotation
         T_target = pose_to_matrix(target_pose)
         rotation_matrix = T_target[:3, :3]
-        
+
         # Define the approach vector based on the target pose orientation
         # Assuming the gripper approaches along its local -z axis (common for downward grasps)
         # You can change this to [1, 0, 0] for x-axis or [0, 1, 0] for y-axis based on your gripper
         approach_vector_local = np.array([0, 0, -1])
-        
+
         # Transform approach vector to world coordinates
         approach_vector_world = rotation_matrix @ approach_vector_local
-        
+
         # Apply offset along the approach direction
         offset_position = Point(
             target_pose.position.x + distance * approach_vector_world[0],
             target_pose.position.y + distance * approach_vector_world[1],
             target_pose.position.z + distance * approach_vector_world[2],
         )
-        
+
         return Pose(offset_position, target_pose.orientation)
 
     def compute_control(
@@ -354,7 +364,11 @@ class PBVS:
             - target_pose: Target EE pose (only in direct_ee_control mode, otherwise None)
         """
         # Check if we have a target
-        if not self.current_target or not self.current_target.bbox or not self.current_target.bbox.center:
+        if (
+            not self.current_target
+            or not self.current_target.bbox
+            or not self.current_target.bbox.center
+        ):
             return None, None, False, False, None
 
         # Try to update target tracking if new detections provided
@@ -463,7 +477,6 @@ class PBVS:
                 self.current_target,
                 self.direct_ee_control,
             )
-
 
 
 class PBVSController:
