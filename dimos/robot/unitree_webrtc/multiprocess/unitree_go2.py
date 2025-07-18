@@ -27,7 +27,8 @@ from reactivex.scheduler import ThreadPoolScheduler
 import dimos.core.colors as colors
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Vector3
+from dimos.msgs.foxglove_msgs import Arrow
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
 from dimos.robot.foxglove_bridge import FoxgloveBridge
@@ -85,7 +86,7 @@ class RealRTC(WebRTCRobot): ...
 
 # inherit RealRTC instead of FakeRTC to run the real robot
 class ConnectionModule(FakeRTC, Module):
-    movecmd: In[Vector3] = None
+    movecmd: In[Twist] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
     video: Out[VideoMessage] = None
@@ -168,11 +169,12 @@ async def run(ip):
     )
 
     global_planner.path.transport = core.pLCMTransport("/global_path")
+    local_planner.arrow.transport = core.LCMTransport("/arrow", Arrow)
 
     local_planner.path.connect(global_planner.path)
     local_planner.odom.connect(connection.odom)
 
-    local_planner.movecmd.transport = core.LCMTransport("/move", Vector3)
+    local_planner.movecmd.transport = core.LCMTransport("/move", Twist)
     connection.movecmd.connect(local_planner.movecmd)
 
     ctrl = dimos.deploy(ControlModule)

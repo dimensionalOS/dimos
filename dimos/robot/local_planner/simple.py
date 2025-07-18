@@ -18,7 +18,6 @@ import traceback
 from typing import Callable, Optional
 
 import reactivex as rx
-from dimos_lcm.geometry_msgs import Twist
 from plum import dispatch
 from reactivex import operators as ops
 
@@ -26,7 +25,15 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.foxglove_msgs import Arrow
 
 # from dimos.robot.local_planner.local_planner import LocalPlanner
-from dimos.msgs.geometry_msgs import Pose, PoseLike, PoseStamped, Vector3, VectorLike, to_pose
+from dimos.msgs.geometry_msgs import (
+    Pose,
+    PoseLike,
+    PoseStamped,
+    Twist,
+    Vector3,
+    VectorLike,
+    to_pose,
+)
 from dimos.types.costmap import Costmap
 from dimos.types.path import Path
 from dimos.utils.logging_config import setup_logger
