@@ -24,6 +24,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.perception.pointcloud.utils import extract_centroids_from_masks
 from dimos.perception.detection2d.utils import calculate_object_size_from_bbox
+from dimos.perception.common.utils import bbox2d_to_corners
 
 from dimos_lcm.geometry_msgs import Pose, Vector3, Quaternion, Point
 from dimos_lcm.vision_msgs import (
@@ -294,7 +295,6 @@ class Detection3DProcessor:
             Visualization image
         """
         # Extract 2D bboxes from Detection2D objects
-        from dimos.manipulation.visual_servoing.utils import bbox2d_to_corners
 
         bboxes_2d = []
         for det_2d in detections_2d:

@@ -17,7 +17,7 @@ from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
 
 from dimos_lcm.geometry_msgs import Pose, Vector3, Quaternion, Point
-from dimos_lcm.vision_msgs import Detection3D, Detection2D, BoundingBox2D
+from dimos_lcm.vision_msgs import Detection3D, Detection2D
 import cv2
 from dimos.perception.detection2d.utils import plot_results
 
@@ -599,56 +599,7 @@ def create_pbvs_controller_overlay(
     return viz_img
 
 
-def bbox2d_to_corners(bbox_2d: BoundingBox2D) -> Tuple[float, float, float, float]:
-    """
-    Convert BoundingBox2D from center format to corner format.
-
-    Args:
-        bbox_2d: BoundingBox2D with center and size
-
-    Returns:
-        Tuple of (x1, y1, x2, y2) corner coordinates
-    """
-    center_x = bbox_2d.center.position.x
-    center_y = bbox_2d.center.position.y
-    half_width = bbox_2d.size_x / 2.0
-    half_height = bbox_2d.size_y / 2.0
-
-    x1 = center_x - half_width
-    y1 = center_y - half_height
-    x2 = center_x + half_width
-    y2 = center_y + half_height
-
-    return x1, y1, x2, y2
-
-
-def find_clicked_detection(
-    click_pos: Tuple[int, int], detections_2d: List[Detection2D], detections_3d: List[Detection3D]
-) -> Optional[Detection3D]:
-    """
-    Find which detection was clicked based on 2D bounding boxes.
-
-    Args:
-        click_pos: (x, y) click position
-        detections_2d: List of Detection2D objects
-        detections_3d: List of Detection3D objects (must be 1:1 correspondence)
-
-    Returns:
-        Corresponding Detection3D object if found, None otherwise
-    """
-    click_x, click_y = click_pos
-
-    for i, det_2d in enumerate(detections_2d):
-        if det_2d.bbox and i < len(detections_3d):
-            x1, y1, x2, y2 = bbox2d_to_corners(det_2d.bbox)
-
-            if x1 <= click_x <= x2 and y1 <= click_y <= y2:
-                return detections_3d[i]
-
-    return None
-
-
-def get_detection2d_for_detection3d(
+def match_detection_by_id(
     detection_3d: Detection3D, detections_3d: List[Detection3D], detections_2d: List[Detection2D]
 ) -> Optional[Detection2D]:
     """

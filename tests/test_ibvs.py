@@ -30,10 +30,12 @@ from dimos.hardware.zed_camera import ZEDCamera
 from dimos.hardware.piper_arm import PiperArm
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.manipulation.visual_servoing.pbvs import PBVS, GraspStage
-from dimos.manipulation.visual_servoing.utils import (
+from dimos.perception.common.utils import (
     find_clicked_detection,
-    get_detection2d_for_detection3d,
     bbox2d_to_corners,
+)
+from dimos.manipulation.visual_servoing.utils import (
+    match_detection_by_id,
 )
 from dimos.utils.transform_utils import (
     pose_to_matrix,
@@ -249,7 +251,7 @@ def main():
             # Highlight target
             current_target = pbvs.get_current_target()
             if target_tracked and current_target:
-                det_2d = get_detection2d_for_detection3d(
+                det_2d = match_detection_by_id(
                     current_target, detection_3d_array.detections, detection_2d_array.detections
                 )
                 if det_2d and det_2d.bbox:
