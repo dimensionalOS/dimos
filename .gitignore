@@ -41,3 +41,12 @@ dist/
 data/
 FastSAM-x.pt
 yolo11n.pt
+
+# Ignore build files
+build/
+
+# Ignore logs
+logs/
+
+# Ignore cache
+cache/

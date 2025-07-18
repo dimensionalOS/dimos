@@ -21,18 +21,21 @@ import pytest
 import dimos.core as core
 from dimos.core import Module, In, Out, rpc
 from dimos.protocol.service.lcmservice import autoconf
-from dimos.msgs.geometry_msgs import Twist, Pose
+from dimos.msgs.geometry_msgs import Pose, Vector3, Twist
+import dimos.protocol.service.lcmservice as lcmservice
 
+dev_serial = "/dev/ttyUSB0"
 
 class TorsoBrige(Module):
     twist_cmd: In[Twist] = None
     pose_state: Out[Pose] = None
+    
 
     def __init__(
-        self, port: str = "/dev/ttyUSB1", baud: int = 9600, timeout: float = 0.1, *args, **kwargs
+        self, port: str = dev_serial, baud: int = 9600, timeout: float = 0.1, *args, **kwargs
     ):
         super().__init__(*args, **kwargs)
-        # self.ser = serial.Serial(port, baud, timeout=timeout)
+        self.ser = serial.Serial(port, baud, timeout=timeout)
 
     @rpc
     def start(self):
@@ -40,6 +43,7 @@ class TorsoBrige(Module):
         self.twist_cmd.subscribe(self._on_twist)
 
     def _on_twist(self, msg: Twist):
+        print(f"[TorsoBrige] Received twist: {msg}")
         # take the six floats, format: <lx,ly,lz,ax,ay,az>
         cmd = (
             f"<{msg.linear.x:.3f},"
@@ -50,6 +54,7 @@ class TorsoBrige(Module):
             f"{msg.angular.z:.3f}>"
         )
         self.ser.write(cmd.encode("ascii"))
+        print(f"[TorsoBrige] Sent to serial: {cmd}")
         # mirror your pc_echo.py’s sleep to let Arduino respond
         time.sleep(0.05)
 
@@ -71,3 +76,23 @@ class TorsoBrige(Module):
             cp.position.x, cp.position.y, cp.position.z = lx, ly, lz
             cp.orientation.x, cp.orientation.y, cp.orientation.z, cp.orientation.w = ax, ay, az, 1.0
             self.pose_state.publish(cp)
+
+def TestTorsoBridge():
+    lcmservice.autoconf()
+    dimos = core.start(2)
+
+    torso = dimos.deploy(TorsoBrige, port=dev_serial, baud=9600)
+
+    torso.pose_state.transport = core.LCMTransport("/pose", Pose)
+    torso.twist_cmd.transport = core.LCMTransport("/cmd_vel", Twist)
+
+    torso.start()
+    print("TorsoBridge started")    
+
+    while True:
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    TestTorsoBridge()
+    

@@ -73,6 +73,8 @@ class LCMPubSubBase(PubSub[Topic, Any], LCMService):
     def subscribe(
         self, topic: Topic, callback: Callable[[bytes, Topic], Any]
     ) -> Callable[[], None]:
+
+        print(f"[LCMPubSubBase] Subscribing to topic: {str(topic)}")
         lcm_subscription = self.l.subscribe(str(topic), lambda _, msg: callback(msg, topic))
 
         def unsubscribe():
