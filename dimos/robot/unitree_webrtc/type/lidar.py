@@ -59,7 +59,7 @@ class LidarMessage(PointCloud2):
         super().__init__(
             pointcloud=kwargs.get("pointcloud"),
             ts=kwargs.get("ts"),
-            frame_id="lidar",
+            frame_id="world",
         )
 
         self.origin = kwargs.get("origin")
