@@ -21,6 +21,7 @@ import pickle
 import numpy as np
 import json
 import matplotlib
+from scipy.spatial.transform import Rotation
 
 # Try to use TkAgg backend for live display, fallback to Agg if not available
 try:
@@ -305,7 +306,7 @@ def visualize_results(pickle_path="manipulation_results.pkl"):
         print("No voxel grid available for visualization")
 
 class DrakeKinematicsEnv:
-    def __init__(self, urdf_path: str, kinematic_chain_joints: List[str], links_to_ignore: Optional[List[str]] = None, collision_depth_threshold: float = 0.005, use_rectangular_prisms: bool = False):
+    def __init__(self, urdf_path: str, kinematic_chain_joints: List[str], end_effector_link_name: str, links_to_ignore: Optional[List[str]] = None, collision_depth_threshold: float = 0.005, use_rectangular_prisms: bool = False):
         self._resources_to_cleanup = []
         self.collision_depth_threshold = collision_depth_threshold
         self.initial_robot_collisions = set()  # Store initial robot-world collisions to ignore
@@ -412,11 +413,12 @@ class DrakeKinematicsEnv:
 
         # Get important frames/bodies
         try:
-            self.end_effector_link = self.plant.GetBodyByName("link6")
-            self.end_effector_frame = self.plant.GetFrameByName("link6")
-            print("Found end effector link6")
+            self.end_effector_link_name = end_effector_link_name
+            self.end_effector_link = self.plant.GetBodyByName(end_effector_link_name)
+            self.end_effector_frame = self.plant.GetFrameByName(end_effector_link_name)
+            print(f"Found end effector {end_effector_link_name}")
         except RuntimeError:
-            print("Warning: link6 not found")
+            print(f"Warning: end effector link: {end_effector_link_name} not found")
             self.end_effector_link = None
             self.end_effector_frame = None
             
@@ -464,9 +466,9 @@ class DrakeKinematicsEnv:
             return
 
         # Preprocess detected objects to extract planes and remove overlapping points
-        if "all_objects" in results:
+        # if "all_objects" in results:
             # results["all_objects"] = self._preprocess_plane_detection(results["all_objects"])
-            results["all_objects"] = self._preprocess_overlapping_points(results["all_objects"])
+            # results["all_objects"] = self._preprocess_overlapping_points(results["all_objects"])
         
         # if "misc_clusters" in results:
         #     results["misc_clusters"] = self._preprocess_overlapping_points(results["misc_clusters"])
@@ -1459,7 +1461,7 @@ class DrakeKinematicsEnv:
         except Exception as e:
             print(f"Error registering convex hulls to IK: {e}")
 
-    def _solve_collision_aware_ik(self, target_pose: RigidTransform) -> Optional[np.ndarray]:
+    def _solve_collision_aware_ik(self, link_name: str, target_pose: RigidTransform) -> Optional[np.ndarray]:
         """Solve collision-aware IK for target end effector pose"""
         try:
             if self.ik_plant is None or self.end_effector_frame is None:
@@ -1470,7 +1472,7 @@ class DrakeKinematicsEnv:
             
             # Add pose constraint for end effector
             ik.AddPositionConstraint(
-                frameB=self.ik_plant.GetFrameByName("link6"),
+                frameB=self.ik_plant.GetFrameByName(link_name),
                 p_BQ=np.array([0.0, 0.0, 0.0]),
                 frameA=self.ik_plant.world_frame(),
                 p_AQ_lower=target_pose.translation(),
@@ -1481,7 +1483,7 @@ class DrakeKinematicsEnv:
             ik.AddOrientationConstraint(
                 frameAbar=self.ik_plant.world_frame(),
                 R_AbarA=target_pose.rotation(),
-                frameBbar=self.ik_plant.GetFrameByName("link6"),
+                frameBbar=self.ik_plant.GetFrameByName(link_name),
                 R_BbarB=RotationMatrix.Identity(),
                 theta_bound=0.01
             )
@@ -1515,13 +1517,125 @@ class DrakeKinematicsEnv:
             # Solve IK
             result = Solve(ik.prog())
             
-            if result.is_success():
+            # Get the solution regardless of success/failure
+            try:
                 solution = result.GetSolution(ik.q())
+            except Exception as e:
+                print(f"Could not get solution from IK result: {e}")
+                return None
+            
+            if result.is_success():
                 print(f"IK solved successfully")
                 return solution
             else:
-                print(f"IK failed: {result.get_solver_details()}")
-                return None
+                # Extract detailed failure information
+                solver_details = result.get_solver_details()
+                solution_result = result.get_solution_result()
+                print(f"IK failed but returning best attempt with the following details:")
+                print(f"  Solver ID: {result.get_solver_id()}")
+                print(f"  Solution result: {solution_result}")
+                
+                # Try to extract more specific details from the solver
+                if hasattr(solver_details, 'info'):
+                    print(f"  Solver info: {solver_details.info}")
+                if hasattr(solver_details, 'return_status'):
+                    print(f"  Return status: {solver_details.return_status}")
+                if hasattr(solver_details, 'exit_flag'):
+                    print(f"  Exit flag: {solver_details.exit_flag}")
+                if hasattr(solver_details, 'optimizer_time'):
+                    print(f"  Optimizer time: {solver_details.optimizer_time}")
+                if hasattr(solver_details, 'solve_time'):
+                    print(f"  Solve time: {solver_details.solve_time}")
+                
+                print(f"  Attempted joint solution: {solution}")
+                
+                # Check if the attempted solution violates joint limits
+                joint_limit_violations = 0
+                for joint_name in self.kinematic_chain_joints:
+                    try:
+                        joint = self.ik_plant.GetJointByName(joint_name)
+                        if joint.num_positions() > 0:
+                            joint_idx = joint.position_start()
+                            if joint_idx < len(solution):
+                                joint_value = solution[joint_idx]
+                                lower_limit = joint.position_lower_limits()[0] if joint.position_lower_limits().size > 0 else float('-inf')
+                                upper_limit = joint.position_upper_limits()[0] if joint.position_upper_limits().size > 0 else float('inf')
+                                
+                                if joint_value < lower_limit or joint_value > upper_limit:
+                                    print(f"    Joint {joint_name} violates limits: {joint_value} not in [{lower_limit:.3f}, {upper_limit:.3f}]")
+                                    joint_limit_violations += 1
+                    except RuntimeError:
+                        continue
+                
+                # Interpret common failure reasons
+                if solution_result.name == 'kIterationLimit':
+                    print(f"  Failure reason: Iteration limit reached - solver didn't converge in time")
+                elif solution_result.name == 'kInfeasible':
+                    print(f"  Failure reason: Problem is infeasible - target pose may be unreachable")
+                elif solution_result.name == 'kUnbounded':
+                    print(f"  Failure reason: Problem is unbounded")
+                else:
+                    print(f"  Failure reason: {solution_result.name}")
+                
+                print(f"  Joint limit violations: {joint_limit_violations}")
+                
+                # Calculate pose error between attempted solution and target
+                try:
+                    # Set the IK plant to the attempted solution to get the achieved pose
+                    temp_positions = self.ik_plant.GetPositions(self.ik_plant_context)
+                    self.ik_plant.SetPositions(self.ik_plant_context, solution)
+                    
+                    # Get the actual end effector pose achieved by this solution
+                    achieved_pose = self.ik_plant.CalcRelativeTransform(
+                        self.ik_plant_context,
+                        self.ik_plant.world_frame(),
+                        self.ik_plant.GetFrameByName(link_name)
+                    )
+                    
+                    # Calculate position error
+                    position_error = np.linalg.norm(target_pose.translation() - achieved_pose.translation())
+                    
+                    # Calculate orientation error (using rotation matrix difference)
+                    R_target = target_pose.rotation().matrix()
+                    R_achieved = achieved_pose.rotation().matrix()
+                    R_error = R_target.T @ R_achieved
+                    
+                    # Extract axis-angle representation for orientation error
+                    r_error = Rotation.from_matrix(R_error)
+                    axis_angle_error = r_error.as_rotvec()
+                    orientation_error_rad = np.linalg.norm(axis_angle_error)
+                    orientation_error_deg = np.degrees(orientation_error_rad)
+                    
+                    print(f"  Pose error analysis:")
+                    print(f"    Target position: {target_pose.translation()}")
+                    print(f"    Achieved position: {achieved_pose.translation()}")
+                    print(f"    Position error: {position_error:.4f} m")
+                    print(f"    Orientation error: {orientation_error_deg:.2f} degrees ({orientation_error_rad:.4f} rad)")
+                    
+                    # Restore original positions
+                    self.ik_plant.SetPositions(self.ik_plant_context, temp_positions)
+                    
+                    # Provide interpretation of the error
+                    if position_error < 0.01:  # 1cm
+                        print(f"    Position error is acceptable (< 1cm)")
+                    elif position_error < 0.05:  # 5cm
+                        print(f"    Position error is moderate (1-5cm)")
+                    else:
+                        print(f"    Position error is large (> 5cm)")
+                        
+                    if orientation_error_deg < 5:
+                        print(f"    Orientation error is acceptable (< 5°)")
+                    elif orientation_error_deg < 15:
+                        print(f"    Orientation error is moderate (5-15°)")
+                    else:
+                        print(f"    Orientation error is large (> 15°)")
+                        
+                except Exception as e:
+                    print(f"  Could not calculate pose error: {e}")
+                
+                # Still return the solution as it might be the best attempt
+                print(f"  Using attempted solution despite failure")
+                return solution
                 
         except Exception as e:
             print(f"Error in collision-aware IK: {e}")
@@ -1681,7 +1795,7 @@ class DrakeKinematicsEnv:
                         
                         # Solve collision-aware IK
                         print(f"Solving IK for target pose: {target_translation}, RPY: [{target_roll:.3f}, {target_pitch:.3f}, {target_yaw:.3f}]")
-                        ik_solution = self._solve_collision_aware_ik(target_pose)
+                        ik_solution = self._solve_collision_aware_ik(self.end_effector_link_name, target_pose)
                         
                         if ik_solution is not None:
                             # Update IK plant context with solution
@@ -1692,7 +1806,7 @@ class DrakeKinematicsEnv:
                             ik_updated = True
                             print("Applied IK solution")
                         else:
-                            print("IK failed - keeping current configuration")
+                            print("IK solver completely failed - keeping current configuration")
                             
                 except Exception as e:
                     print(f"Error in IK update: {e}")
@@ -1721,6 +1835,120 @@ class DrakeKinematicsEnv:
                 
         except Exception as e:
             print(f"Error updating joints from sliders: {e}")
+    
+    def get_joint_limits(self):
+        """Get joint limits for motion planning"""
+        limits = []
+        for joint_name in self.kinematic_chain_joints:
+            try:
+                joint = self.ik_plant.GetJointByName(joint_name)
+                if joint.num_positions() > 0:
+                    lower = joint.position_lower_limits()[0] if joint.position_lower_limits().size > 0 else -3.14159
+                    upper = joint.position_upper_limits()[0] if joint.position_upper_limits().size > 0 else 3.14159
+                    limits.append((lower, upper))
+            except RuntimeError:
+                limits.append((-3.14159, 3.14159))
+        return limits
+    
+    def get_current_joint_config(self):
+        """Get current joint configuration for kinematic chain only"""
+        full_config = self.plant.GetPositions(self.plant_context)
+        joint_config = np.zeros(len(self.kinematic_chain_joints))
+        
+        for i, joint_name in enumerate(self.kinematic_chain_joints):
+            try:
+                joint = self.plant.GetJointByName(joint_name)
+                if joint.num_positions() > 0:
+                    joint_idx = joint.position_start()
+                    if joint_idx < len(full_config):
+                        joint_config[i] = full_config[joint_idx]
+            except RuntimeError:
+                joint_config[i] = 0.0
+        return joint_config
+    
+    def set_joint_config(self, joint_config):
+        """Set joint configuration for kinematic chain"""
+        full_config = self.plant.GetPositions(self.plant_context).copy()
+        
+        for i, joint_name in enumerate(self.kinematic_chain_joints):
+            if i < len(joint_config):
+                try:
+                    joint = self.plant.GetJointByName(joint_name)
+                    if joint.num_positions() > 0:
+                        joint_idx = joint.position_start()
+                        if joint_idx < len(full_config):
+                            full_config[joint_idx] = joint_config[i]
+                except RuntimeError:
+                    continue
+        
+        self.plant.SetPositions(self.plant_context, full_config)
+        self._update_visualization()
+    
+    def check_collision_cost(self, joint_config):
+        """Check collision cost for a joint configuration using IK plant"""
+        try:
+            # Convert to full config for IK plant
+            full_config = self.ik_plant.GetPositions(self.ik_plant_context).copy()
+            
+            for i, joint_name in enumerate(self.kinematic_chain_joints):
+                if i < len(joint_config):
+                    try:
+                        joint = self.ik_plant.GetJointByName(joint_name)
+                        if joint.num_positions() > 0:
+                            joint_idx = joint.position_start()
+                            if joint_idx < len(full_config):
+                                full_config[joint_idx] = joint_config[i]
+                    except RuntimeError:
+                        continue
+            
+            # Set the IK plant to this configuration
+            self.ik_plant.SetPositions(self.ik_plant_context, full_config)
+            
+            # Check collisions
+            ik_scene_graph_context = self.ik_scene_graph.GetMyContextFromRoot(self.ik_context)
+            query_object = self.ik_scene_graph.get_query_output_port().Eval(ik_scene_graph_context)
+            collision_pairs = query_object.ComputePointPairPenetration()
+            
+            total_depth = 0.0
+            
+            for pair in collision_pairs:
+                if pair.depth > self.collision_depth_threshold:
+                    # Get geometry names to filter out ignored collisions
+                    geom_A = query_object.inspector().GetName(pair.id_A)
+                    geom_B = query_object.inspector().GetName(pair.id_B)
+                    
+                    # Skip initial robot collisions that we identified to ignore
+                    collision_key = tuple(sorted([geom_A, geom_B]))
+                    if collision_key in self.initial_robot_collisions:
+                        continue
+                    
+                    total_depth += pair.depth
+            
+            return total_depth
+            
+        except Exception as e:
+            print(f"Error checking collision cost: {e}")
+            return float('inf')
+    
+    def solve_ik_for_pose(self, target_pose):
+        """Solve IK for target pose and return joint configuration"""
+        ik_solution = self._solve_collision_aware_ik(self.end_effector_link_name, target_pose)
+        if ik_solution is None:
+            return None
+            
+        # Extract kinematic chain joints from IK solution
+        joint_config = np.zeros(len(self.kinematic_chain_joints))
+        for i, joint_name in enumerate(self.kinematic_chain_joints):
+            try:
+                joint = self.ik_plant.GetJointByName(joint_name)
+                if joint.num_positions() > 0:
+                    joint_idx = joint.position_start()
+                    if joint_idx < len(ik_solution):
+                        joint_config[i] = ik_solution[joint_idx]
+            except RuntimeError:
+                joint_config[i] = 0.0
+                
+        return joint_config
             
     def run_interactive_loop(self):
         """Run the interactive loop with continuous collision checking"""
@@ -2035,7 +2263,6 @@ if __name__ == "__main__":
             "joint5",
             "joint6",
             "joint7",
-            "joint8",
         ]
         
         links_to_ignore = [
@@ -2045,21 +2272,27 @@ if __name__ == "__main__":
             "pan_tilt_base",
             "pan_tilt_head",
             "pan_tilt_pan",
-            "base_link",
+            "link_base",
             "link1",
             "link2", 
             "link3",
             "link4",
             "link5",
             "link6",
+            "link7"
         ]
         
-        urdf_path = "./assets/devkit_base_descr.urdf"
+        urdf_path = "./assets/xarm_devkit_base_descr.urdf"
         urdf_path = os.path.abspath(urdf_path)
         
         print(f"Attempting to load URDF from: {urdf_path}")
         
-        env = DrakeKinematicsEnv(urdf_path, kinematic_chain_joints, links_to_ignore)
+        env = DrakeKinematicsEnv(
+            urdf_path=urdf_path,
+            kinematic_chain_joints=kinematic_chain_joints,
+            links_to_ignore=links_to_ignore,
+            end_effector_link_name="link7",
+        )
         # env.set_joint_positions([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         transform = env.get_transform("world", "camera_center_link")
         print(transform.transform.translation.x, transform.transform.translation.y, transform.transform.translation.z)
