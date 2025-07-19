@@ -81,19 +81,16 @@ class FakeRTC(UnitreeWebRTCConnection):
 
     @functools.cache
     def lidar_stream(self):
-        print("lidar stream start")
         lidar_store = TimedSensorReplay("unitree_office_walk/lidar", autocast=LidarMessage.from_msg)
         return lidar_store.stream()
 
     @functools.cache
     def odom_stream(self):
-        print("odom stream start")
         odom_store = TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
         return odom_store.stream()
 
     @functools.cache
     def video_stream(self, freq_hz=0.5):
-        print("video stream start")
         video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
         return video_store.stream().pipe(ops.sample(freq_hz))
 
@@ -106,6 +103,7 @@ class ConnectionModule(FakeRTC, Module):
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
     video: Out[VideoMessage] = None
+    tf: Out[Transform] = None
     ip: str
 
     _odom: Callable[[], Odometry]
@@ -119,6 +117,16 @@ class ConnectionModule(FakeRTC, Module):
         self.ip = ip
         Module.__init__(self, *args, **kwargs)
 
+    def _odom_to_tf(self, odom: Odometry) -> Transform:
+        """Convert Odometry to Transform."""
+        return Transform(
+            translation=odom.position,
+            rotation=odom.orientation,
+            frame_id="world",
+            child_frame_id="base_link",
+            ts=odom.ts,
+        )
+
     @rpc
     def start(self):
         # Initialize the parent WebRTC connection
@@ -128,6 +136,8 @@ class ConnectionModule(FakeRTC, Module):
         self.lidar_stream().subscribe(self.lidar.publish)
         self.odom_stream().subscribe(self.odom.publish)
         self.video_stream().subscribe(self.video.publish)
+
+        self.odom_stream().pipe(ops.map(self._odom_to_tf)).subscribe(self.tf.publish)
 
         # Connect LCM input to robot movement commands
         self.movecmd.subscribe(self.move)
@@ -192,6 +202,8 @@ class UnitreeGo2Light:
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
         # OUTPUT: Camera video frames to /video topic
         self.connection.video.transport = core.LCMTransport("/video", Image)
+        # OUTPUT: transforms to /tf topic
+        self.connection.tf.transport = core.LCMTransport("/tf", Transform)
         # ======================================================================
 
         # Map Module - Point cloud accumulation and costmap generation =========
