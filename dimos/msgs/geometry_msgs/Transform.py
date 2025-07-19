@@ -67,3 +67,44 @@ class Transform(Timestamped):
     def identity(cls) -> Transform:
         """Create an identity transform."""
         return cls()
+
+    def lcm_encode(self) -> bytes:
+        from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+
+        return TFMessage(self).lcm_encode()
+
+    @classmethod
+    def lcm_decode(cls, data: bytes | BinaryIO) -> Transform:
+        """Decode from LCM TFMessage bytes."""
+        from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
+
+        lcm_msg = LCMTFMessage.lcm_decode(data)
+
+        if not lcm_msg.transforms:
+            raise ValueError("No transforms found in LCM message")
+
+        # Get the first transform from the message
+        lcm_transform_stamped = lcm_msg.transforms[0]
+
+        # Extract timestamp from header
+        ts = lcm_transform_stamped.header.stamp.sec + (
+            lcm_transform_stamped.header.stamp.nsec / 1_000_000_000
+        )
+
+        # Create and return Transform instance
+        return cls(
+            translation=Vector3(
+                lcm_transform_stamped.transform.translation.x,
+                lcm_transform_stamped.transform.translation.y,
+                lcm_transform_stamped.transform.translation.z,
+            ),
+            rotation=Quaternion(
+                lcm_transform_stamped.transform.rotation.x,
+                lcm_transform_stamped.transform.rotation.y,
+                lcm_transform_stamped.transform.rotation.z,
+                lcm_transform_stamped.transform.rotation.w,
+            ),
+            frame_id=lcm_transform_stamped.header.frame_id,
+            child_frame_id=lcm_transform_stamped.child_frame_id,
+            ts=ts,
+        )

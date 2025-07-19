@@ -214,3 +214,17 @@ def test_pose_add_transform_with_rotation():
     assert np.isclose(transformed_pose2.orientation.y, 0.0, atol=1e-10)
     assert np.isclose(transformed_pose2.orientation.z, np.sin(total_angle2 / 2), atol=1e-10)
     assert np.isclose(transformed_pose2.orientation.w, np.cos(total_angle2 / 2), atol=1e-10)
+
+
+def test_lcm_encode_decode():
+    angle = np.pi / 2
+    transform = Transform(
+        translation=Vector3(2.0, 1.0, 0.0),
+        rotation=Quaternion(0.0, 0.0, np.sin(angle / 2), np.cos(angle / 2)),
+    )
+
+    data = transform.lcm_encode()
+
+    decoded_transform = Transform.lcm_decode(data)
+
+    assert decoded_transform == transform
