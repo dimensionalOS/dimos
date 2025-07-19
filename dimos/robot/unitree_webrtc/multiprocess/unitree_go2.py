@@ -29,12 +29,14 @@ from dimos import core
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.tf2_msgs import TFMessage
 from dimos.protocol import pubsub
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
 from dimos.robot.global_planner import AstarPlanner
+from dimos.robot.local_planner.simple import SimplePlanner
 from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection, VideoMessage
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -137,7 +139,7 @@ class ConnectionModule(FakeRTC, Module):
         self.odom_stream().subscribe(self.odom.publish)
         self.video_stream().subscribe(self.video.publish)
 
-        self.odom_stream().pipe(ops.map(self._odom_to_tf)).subscribe(self.tf.publish)
+        # self.odom_stream().pipe(ops.map(self._odom_to_tf)).subscribe(self.tf.publish)
 
         # Connect LCM input to robot movement commands
         self.movecmd.subscribe(self.move)
@@ -167,7 +169,8 @@ class ControlModule(Module):
         def plancmd():
             time.sleep(4)
             print(colors.red("requesting global plan"))
-            self.plancmd.publish(Pose(0, 0, 0, 0, 0, 0, 1))
+            # self.plancmd.publish(Pose(0, 0, 0, 0, 0, 0, 1))
+            self.plancmd.publish(Pose(4.0, 4.0, 0, 0, 0, 0, 1))
 
         thread = threading.Thread(target=plancmd, daemon=True)
         thread.start()
@@ -202,8 +205,6 @@ class UnitreeGo2Light:
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
         # OUTPUT: Camera video frames to /video topic
         self.connection.video.transport = core.LCMTransport("/video", Image)
-        # OUTPUT: transforms to /tf topic
-        self.connection.tf.transport = core.LCMTransport("/tf", Transform)
         # ======================================================================
 
         # Map Module - Point cloud accumulation and costmap generation =========
@@ -216,11 +217,26 @@ class UnitreeGo2Light:
         self.mapper.lidar.connect(self.connection.lidar)
         # ====================================================================
 
+        # Global Planner Module ===============
+        self.global_planner = self.dimos.deploy(
+            AstarPlanner,
+            get_costmap=self.mapper.costmap,
+            get_robot_pos=self.connection.get_pos,
+            # set_local_nav=self.local_planner.navigate_path_local,
+        )
+
+        # Configure AstarPlanner OUTPUT path: Out[Path] to /global_path LCM topic
+        self.global_planner.path.transport = core.pLCMTransport("/global_path")
+        # ======================================
+
         # Local planner Module, LCM transport & connection ================
         self.local_planner = self.dimos.deploy(
-            VFHPurePursuitPlanner,
+            SimplePlanner,
             get_costmap=self.connection.get_local_costmap,
         )
+        self.local_planner.tf.transport = core.LCMTransport("/tf", TFMessage)
+
+        self.local_planner.path.connect(self.global_planner.path)
 
         # Connects odometry LCM stream to BaseLocalPlanner odometry input
         self.local_planner.odom.connect(self.connection.odom)
@@ -232,24 +248,12 @@ class UnitreeGo2Light:
         self.connection.movecmd.connect(self.local_planner.movecmd)
         # ===================================================================
 
-        # Global Planner Module ===============
-        self.global_planner = self.dimos.deploy(
-            AstarPlanner,
-            get_costmap=self.mapper.costmap,
-            get_robot_pos=self.connection.get_pos,
-            set_local_nav=self.local_planner.navigate_path_local,
-        )
-
-        # Configure AstarPlanner OUTPUT path: Out[Path] to /global_path LCM topic
-        self.global_planner.path.transport = core.pLCMTransport("/global_path")
-        # ======================================
-
         # Global Planner Control Module ===========================
         # Debug module that sends (0,0,0) goal after 4 second delay
         self.ctrl = self.dimos.deploy(ControlModule)
 
         # Configure ControlModule OUTPUT to publish goal coordinates to /global_target
-        self.ctrl.plancmd.transport = core.LCMTransport("/global_target", Vector3)
+        self.ctrl.plancmd.transport = core.LCMTransport("/global_target", Pose)
 
         # Connect ControlModule OUTPUT to AstarPlanner INPUT - triggers A* planning when goal received
         self.global_planner.target.connect(self.ctrl.plancmd)
@@ -282,7 +286,7 @@ class UnitreeGo2Light:
         self.local_planner.start()
         self.global_planner.start()
         # self.foxglove_bridge.start()
-        # self.ctrl.start() # DEBUG
+        self.ctrl.start()  # DEBUG
 
         await asyncio.sleep(2)
         print("querying system")

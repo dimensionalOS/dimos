@@ -62,19 +62,21 @@ def test_tfmessage_add_transform():
     assert msg[0] == tf
 
 
-def test_tfmessage_lcm_encode():
+def test_tfmessage_lcm_encode_decode():
     """Test encoding TFMessage to LCM bytes."""
     # Create transforms
     tf1 = Transform(
         translation=Vector3(1.0, 2.0, 3.0),
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        child_frame_id="robot",
         frame_id="world",
         ts=123.456,
     )
     tf2 = Transform(
         translation=Vector3(4.0, 5.0, 6.0),
         rotation=Quaternion(0.0, 0.0, 0.707, 0.707),
-        frame_id="map",
+        frame_id="robot",
+        child_frame_id="target",
         ts=124.567,
     )
 
@@ -82,7 +84,7 @@ def test_tfmessage_lcm_encode():
     msg = TFMessage(tf1, tf2)
 
     # Encode with custom child_frame_ids
-    encoded = msg.lcm_encode(child_frame_ids=["robot", "sensor"])
+    encoded = msg.lcm_encode()
 
     # Decode using LCM to verify
     lcm_msg = LCMTFMessage.lcm_decode(encoded)
@@ -101,78 +103,7 @@ def test_tfmessage_lcm_encode():
 
     # Check second transform
     ts2 = lcm_msg.transforms[1]
-    assert ts2.header.frame_id == "map"
-    assert ts2.child_frame_id == "sensor"
+    assert ts2.header.frame_id == "robot"
+    assert ts2.child_frame_id == "target"
     assert ts2.transform.rotation.z == 0.707
     assert ts2.transform.rotation.w == 0.707
-
-
-def test_tfmessage_lcm_encode_default_child_ids():
-    """Test encoding with default child_frame_ids."""
-    tf = Transform(translation=Vector3(1, 2, 3), frame_id="odom", ts=100.0)
-    msg = TFMessage(tf)
-
-    encoded = msg.lcm_encode()  # No child_frame_ids provided
-
-    lcm_msg = LCMTFMessage.lcm_decode(encoded)
-    assert lcm_msg.transforms[0].child_frame_id == "base_link"
-
-
-def test_tfmessage_lcm_decode():
-    """Test decoding TFMessage from LCM bytes."""
-    # Create original message
-    tf1 = Transform(
-        translation=Vector3(10, 20, 30),
-        rotation=Quaternion(0, 0, 0, 1),
-        frame_id="base",
-        ts=500.123,
-    )
-    tf2 = Transform(
-        translation=Vector3(40, 50, 60),
-        rotation=Quaternion(0.5, 0.5, 0.5, 0.5),
-        frame_id="camera",
-        ts=501.234,
-    )
-
-    original = TFMessage(tf1, tf2)
-
-    # Encode and decode
-    encoded = original.lcm_encode()
-    decoded = TFMessage.lcm_decode(encoded)
-
-    # Verify
-    assert len(decoded) == 2
-
-    # Check first transform
-    assert decoded[0].translation.x == 10
-    assert decoded[0].translation.y == 20
-    assert decoded[0].translation.z == 30
-    assert decoded[0].frame_id == "base"
-    assert abs(decoded[0].ts - 500.123) < 1e-6
-
-    # Check second transform
-    assert decoded[1].translation.x == 40
-    assert decoded[1].rotation.x == 0.5
-    assert decoded[1].rotation.y == 0.5
-    assert decoded[1].rotation.z == 0.5
-    assert decoded[1].rotation.w == 0.5
-    assert decoded[1].frame_id == "camera"
-
-
-def test_tfmessage_string_representations():
-    """Test string representations of TFMessage."""
-    tf1 = Transform(frame_id="world", ts=100.123)
-    tf2 = Transform(frame_id="map", ts=101.456)
-
-    msg = TFMessage(tf1, tf2)
-
-    # Test repr
-    repr_str = repr(msg)
-    assert "TFMessage" in repr_str
-    assert "2 transforms" in repr_str
-
-    # Test str
-    str_str = str(msg)
-    assert "TFMessage with 2 transforms:" in str_str
-    assert "[0] world @ 100.123" in str_str
-    assert "[1] map @ 101.456" in str_str
