@@ -290,9 +290,7 @@ class PBVS:
         target_pos = self.current_target.bbox.center.position
 
         # Calculate orientation pointing from target towards EE
-        yaw_to_ee = yaw_towards_point(
-            Vector3(target_pos.x, target_pos.y, target_pos.z), ee_pose.position
-        )
+        yaw_to_ee = yaw_towards_point(target_pos, ee_pose.position)
 
         # Create target pose with proper orientation
         # Convert grasp pitch from degrees to radians with mapping:
@@ -438,7 +436,7 @@ class PBVS:
             Tuple of (position, rotation) in camera frame
         """
         # Calculate orientation pointing at camera
-        yaw_to_camera = yaw_towards_point(Vector3(object_pos.x, object_pos.y, object_pos.z))
+        yaw_to_camera = yaw_towards_point(object_pos)
 
         # Convert euler angles to quaternion using utility function
         euler = Vector3(0.0, 0.0, yaw_to_camera)  # Level grasp

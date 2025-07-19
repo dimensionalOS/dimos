@@ -130,9 +130,9 @@ class PiperArm:
             pose.position.x,
             pose.position.y,
             pose.position.z,
-            euler[0],
-            euler[1],
-            euler[2],
+            euler.x,
+            euler.y,
+            euler.z,
             line_mode,
         )
 
