@@ -59,7 +59,7 @@ class AstarPlanner(Planner):
 
     get_costmap: Callable[[], Costmap]
     get_robot_pos: Callable[[], Vector3]
-    set_local_nav: Callable[[Path, Optional[threading.Event], Optional[float]], bool]
+    set_local_nav: Callable[[Path, Optional[threading.Event], Optional[float]], bool] = None
 
     conservativism: int = 8
 
@@ -95,7 +95,7 @@ class AstarPlanner(Planner):
             path = path.resample(0.1)
             self.vis("a*", path)
             self.path.publish(path)
-            if hasattr(self, "set_local_nav"):
+            if hasattr(self, "set_local_nav") and self.set_local_nav:
                 self.set_local_nav(path)
             return path
         logger.warning("No path found to the goal.")

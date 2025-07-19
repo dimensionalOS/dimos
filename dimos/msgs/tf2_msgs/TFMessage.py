@@ -42,6 +42,7 @@ class TFMessage:
     """TFMessage that accepts Transform objects and encodes to LCM format."""
 
     transforms: list[Transform]
+    msg_name = "tf2_msgs.TFMessage"
 
     def __init__(self, *transforms: Transform) -> None:
         self.transforms = list(transforms)
@@ -51,7 +52,7 @@ class TFMessage:
         self.transforms.append(transform)
         self.transforms_length = len(self.transforms)
 
-    def lcm_encode(self, child_frame_ids: list[str] | None = None) -> bytes:
+    def lcm_encode(self) -> bytes:
         """Encode as LCM TFMessage.
 
         Args:
@@ -62,22 +63,19 @@ class TFMessage:
         lcm_transforms = []
 
         for i, transform in enumerate(self.transforms):
-            # Determine child_frame_id
-            if child_frame_ids and i < len(child_frame_ids):
-                child_frame_id = child_frame_ids[i]
-            else:
-                child_frame_id = "base_link"
-
             # Create TransformStamped
-            transform_stamped = LCMTransformStamped()
+            transform_stamped = LCMTransformStamped(
+                child_frame_id=transform.child_frame_id,
+            )
 
             # Build header
             sec = int(transform.ts)
             nsec = int((transform.ts - sec) * 1_000_000_000)
             transform_stamped.header = LCMHeader(
-                seq=1, stamp=LCMTime(sec=sec, nsec=nsec), frame_id=transform.frame_id
+                seq=1,
+                stamp=LCMTime(sec=sec, nsec=nsec),
+                frame_id=transform.frame_id,
             )
-            transform_stamped.child_frame_id = child_frame_id
 
             # Build transform
             transform_stamped.transform = LCMTransform(
