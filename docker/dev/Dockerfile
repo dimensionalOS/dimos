@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y \
     sudo \
     iproute2 # for LCM networking system config \
     pre-commit \
-    lcm
+    liblcm-bin
 
 
 # Configure git to trust any directory (resolves dubious ownership issues in containers)
