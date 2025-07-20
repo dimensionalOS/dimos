@@ -18,7 +18,8 @@ RUN apt-get update && apt-get install -y \
     net-tools \
     sudo \
     iproute2 # for LCM networking system config \
-    pre-commit
+    pre-commit \
+    lcm
 
 
 # Configure git to trust any directory (resolves dubious ownership issues in containers)
