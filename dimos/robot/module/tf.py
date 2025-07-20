@@ -79,14 +79,14 @@ class TF(Service[TFConfig]):
         self,
         parent_frame: str,
         child_frame: str,
-        time_point: Optional[float],
+        time_point: Optional[float] = None,
         time_tolerance: Optional[float] = None,
     ):
-        self.buffer.lookup_transform(
+        return self.buffer.lookup_transform(
             parent_frame,
             child_frame,
-            time_point or time.time(),
-            lcm_module=dimos_lcm,  # a remote exploit here?
+            datetime.now(),
+            lcm_module=dimos_lcm,
         )
 
     def can_transform(
