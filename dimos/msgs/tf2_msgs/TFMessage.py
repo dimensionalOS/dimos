@@ -59,33 +59,16 @@ class TFMessage:
             child_frame_ids: Optional list of child frame IDs for each transform.
                            If not provided, defaults to "base_link" for all.
         """
-        # Create LCM TransformStamped objects
-        lcm_transforms = []
 
-        for i, transform in enumerate(self.transforms):
-            # Create TransformStamped
-            transform_stamped = LCMTransformStamped(
-                child_frame_id=transform.child_frame_id,
-            )
+        print("WILL MAP", self.transforms)
+        res = list(map(lambda t: t.lcm_transform(), self.transforms))
+        print("RES IS", res)
 
-            # Build header
-            sec = int(transform.ts)
-            nsec = int((transform.ts - sec) * 1_000_000_000)
-            transform_stamped.header = LCMHeader(
-                seq=1,
-                stamp=LCMTime(sec=sec, nsec=nsec),
-                frame_id=transform.frame_id,
-            )
-
-            # Build transform
-            transform_stamped.transform = LCMTransform(
-                translation=transform.translation, rotation=transform.rotation
-            )
-
-            lcm_transforms.append(transform_stamped)
-
-        # Create LCM TFMessage
-        lcm_msg = LCMTFMessage(transforms_length=len(lcm_transforms), transforms=lcm_transforms)
+        print("HEADER", res[0].header)
+        lcm_msg = LCMTFMessage(
+            transforms_length=len(self.transforms),
+            transforms=res,
+        )
 
         return lcm_msg.lcm_encode()
 

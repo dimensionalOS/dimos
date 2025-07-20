@@ -25,6 +25,7 @@ from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.std_msgs import Header
 from dimos.types.timestamped import Timestamped
 
 
@@ -68,7 +69,18 @@ class Transform(Timestamped):
         """Create an identity transform."""
         return cls()
 
+    def lcm_transform(self) -> LCMTransformStamped:
+        return LCMTransformStamped(
+            child_frame_id=self.child_frame_id,
+            header=Header(self.ts, self.frame_id),
+            transform=LCMTransform(
+                translation=self.translation,
+                rotation=self.rotation,
+            ),
+        )
+
     def lcm_encode(self) -> bytes:
+        # we get a circular import otherwise
         from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
         return TFMessage(self).lcm_encode()

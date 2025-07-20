@@ -20,32 +20,9 @@ import pytest
 import tf_lcm_py
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
-import lcm
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.tf2_msgs import TFMessage
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
-from dimos.protocol.service import LCMConfig, LCMService, Service
-
-
-@dataclass
-class TFConfig[LCMConfig]:
-    topic: str = ("/tf",)
-    buffer_size: float = 10.0  # seconds
-
-
-class TFService(LCMService[TFConfig]):
-    default_config = TFConfig
-
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.buffer = tf_lcm_py.Buffer(self.config.buffer_size)
-
-        self.listener = tf_lcm_py.TransformListener(self.l, self.buffer)
-        self.broadcaster = tf_lcm_py.TransformBroadcaster()
-        self.static_broadcaster = tf_lcm_py.StaticTransformBroadcaster()
-
-    def start(self):
-        super().start()
 
 
 # Publishes a series of transforms representing a robot kinematic chain
