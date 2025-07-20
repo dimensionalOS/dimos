@@ -39,6 +39,9 @@
 
           ### Open3D & build-time
           eigen cmake ninja jsoncpp libjpeg libpng
+          
+          ### LCM (Lightweight Communications and Marshalling)
+          lcm
         ];
 
         # ------------------------------------------------------------
@@ -54,7 +57,17 @@
               pkgs.xorg.libXrender pkgs.xorg.libXdamage pkgs.xorg.libXcomposite
               pkgs.xorg.libxcb pkgs.xorg.libXScrnSaver pkgs.xorg.libXxf86vm
               pkgs.udev pkgs.portaudio pkgs.SDL2.dev pkgs.zlib pkgs.glib pkgs.gtk3
-              pkgs.gdk-pixbuf pkgs.gobject-introspection]}:$LD_LIBRARY_PATH"
+              pkgs.gdk-pixbuf pkgs.gobject-introspection pkgs.lcm]}:$LD_LIBRARY_PATH"
+
+            export PKG_CONFIG_PATH="${pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" [
+              pkgs.lcm pkgs.glib pkgs.gtk3 pkgs.cairo pkgs.pango pkgs.gdk-pixbuf
+              pkgs.libGL pkgs.libGLU pkgs.mesa pkgs.glfw pkgs.xorg.libX11
+              pkgs.xorg.libXi pkgs.xorg.libXext pkgs.xorg.libXrandr
+              pkgs.xorg.libXinerama pkgs.xorg.libXcursor pkgs.xorg.libXfixes
+              pkgs.xorg.libXrender pkgs.xorg.libXdamage pkgs.xorg.libXcomposite
+              pkgs.xorg.libxcb pkgs.xorg.libXScrnSaver pkgs.xorg.libXxf86vm
+              pkgs.SDL2 pkgs.zlib pkgs.portaudio pkgs.ffmpeg_6
+            ]}:$PKG_CONFIG_PATH"
 
             export DISPLAY=:0
 
