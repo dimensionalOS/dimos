@@ -25,11 +25,11 @@ class RosStamp(TypedDict):
     nanosec: int
 
 
-EpochLike = Union[int, float, datetime, RosStamp]
+TimeLike = Union[int, float, datetime, RosStamp]
 
 
-def to_timestamp(ts: EpochLike) -> float:
-    """Convert EpochLike to a timestamp in seconds."""
+def to_timestamp(ts: TimeLike) -> float:
+    """Convert TimeLike to a timestamp in seconds."""
     if isinstance(ts, datetime):
         return ts.timestamp()
     if isinstance(ts, (int, float)):
@@ -37,6 +37,37 @@ def to_timestamp(ts: EpochLike) -> float:
     if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
         return ts["sec"] + ts["nanosec"] / 1e9
     raise TypeError("unsupported timestamp type")
+
+
+def to_ros_stamp(ts: TimeLike) -> RosStamp:
+    """Convert TimeLike to a ROS-style timestamp dictionary."""
+    if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
+        return ts
+
+    timestamp = to_timestamp(ts)
+    sec = int(timestamp)
+    nanosec = int((timestamp - sec) * 1_000_000_000)
+    return {"sec": sec, "nanosec": nanosec}
+
+
+def to_datetime(ts: TimeLike, tz=None) -> datetime:
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            # Assume UTC for naive datetime
+            ts = ts.replace(tzinfo=timezone.utc)
+        if tz is not None:
+            return ts.astimezone(tz)
+        return ts.astimezone()  # Convert to local tz
+
+    # Convert to timestamp first
+    timestamp = to_timestamp(ts)
+
+    # Create datetime from timestamp
+    if tz is not None:
+        return datetime.fromtimestamp(timestamp, tz=tz)
+    else:
+        # Use local timezone by default
+        return datetime.fromtimestamp(timestamp).astimezone()
 
 
 class Timestamped:
