@@ -28,7 +28,7 @@ from datetime import datetime
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.logging_config import setup_logger
 from dimos.agents.memory.spatial_vector_db import SpatialVectorDB
 from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
@@ -51,7 +51,7 @@ class SpatialMemory(Module):
 
     # LCM inputs
     video: In[Image] = None
-    odom: In[PoseStamped] = None
+    odom: In[Odometry] = None
 
     def __init__(
         self,
@@ -96,7 +96,6 @@ class SpatialMemory(Module):
 
         self.db_path = db_path
         self.visual_memory_path = visual_memory_path
-        self.output_dir = output_dir
 
         # Setup ChromaDB client if not provided
         self._chroma_client = chroma_client
@@ -170,12 +169,10 @@ class SpatialMemory(Module):
 
         # Track latest data for processing
         self._latest_video_frame: Optional[np.ndarray] = None
-        self._latest_odom: Optional[PoseStamped] = None
+        self._latest_odom: Optional[Odometry] = None
         self._process_interval = 0.1  # Process at 10Hz
 
         logger.info(f"SpatialMemory initialized with model {embedding_model}")
-
-        # Remove automatic stream processing - will be handled via LCM in start()
 
     @rpc
     def start(self):
@@ -189,7 +186,7 @@ class SpatialMemory(Module):
             else:
                 logger.warning("Received image message without data attribute")
 
-        def set_odom(odom_msg: PoseStamped):
+        def set_odom(odom_msg: Odometry):
             self._latest_odom = odom_msg
 
         self.video.subscribe(set_video)
@@ -216,21 +213,72 @@ class SpatialMemory(Module):
         euler = orientation.to_euler()
         rotation_vec = Vector([euler.x, euler.y, euler.z])
 
-        # Create combined data dictionary
-        combined_data = {
-            "frame": self._latest_video_frame,
-            "position": position_vec,
-            "rotation": rotation_vec,
-        }
+        # Process the frame directly
+        try:
+            self.frame_count += 1
 
-        # Process with spatial memory's stream processor
-        result_observable = self.process_stream(just(combined_data))
+            # Check distance constraint
+            if self.last_position is not None:
+                distance_moved = (self.last_position - position_vec).length()
+                if distance_moved < self.min_distance_threshold:
+                    logger.debug(
+                        f"Position has not moved enough: {distance_moved:.4f}m < {self.min_distance_threshold}m, skipping frame"
+                    )
+                    return
 
-        # Subscribe to process the result
-        result_observable.subscribe(
-            on_next=lambda result: logger.debug(f"Processed frame: {result.get('frame_id')}"),
-            on_error=lambda e: logger.error(f"Error processing frame: {e}"),
-        )
+            # Check time constraint
+            if self.last_record_time is not None:
+                time_elapsed = time.time() - self.last_record_time
+                if time_elapsed < self.min_time_threshold:
+                    logger.debug(
+                        f"Time since last record too short: {time_elapsed:.2f}s < {self.min_time_threshold}s, skipping frame"
+                    )
+                    return
+
+            current_time = time.time()
+
+            # Get embedding for the frame
+            frame_embedding = self.embedding_provider.get_embedding(self._latest_video_frame)
+
+            frame_id = f"frame_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+            # Create metadata dictionary with primitive types only
+            metadata = {
+                "pos_x": float(position_vec.x),
+                "pos_y": float(position_vec.y),
+                "pos_z": float(position_vec.z),
+                "rot_x": float(rotation_vec.x),
+                "rot_y": float(rotation_vec.y),
+                "rot_z": float(rotation_vec.z),
+                "timestamp": current_time,
+                "frame_id": frame_id,
+            }
+
+            # Store in vector database
+            self.vector_db.add_image_vector(
+                vector_id=frame_id,
+                image=self._latest_video_frame,
+                embedding=frame_embedding,
+                metadata=metadata,
+            )
+
+            # Update tracking variables
+            self.last_position = position_vec
+            self.last_record_time = current_time
+            self.stored_frame_count += 1
+
+            logger.info(
+                f"Stored frame at position {position_vec}, rotation {rotation_vec}) "
+                f"stored {self.stored_frame_count}/{self.frame_count} frames"
+            )
+
+            # Periodically save visual memory to disk
+            if self._visual_memory is not None and self.visual_memory_path is not None:
+                if self.stored_frame_count % 100 == 0:
+                    self.save()
+
+        except Exception as e:
+            logger.error(f"Error processing frame: {e}")
 
     @rpc
     def query_by_location(
@@ -347,8 +395,6 @@ class SpatialMemory(Module):
         Returns:
             Observable of processing results, including the stored frame and its metadata
         """
-        self.last_position = None
-        self.last_record_time = None
 
         def process_combined_data(data):
             self.frame_count += 1
@@ -544,6 +590,17 @@ class SpatialMemory(Module):
                 return location
 
         return None
+
+    @rpc
+    def get_stats(self) -> Dict[str, int]:
+        """Get statistics about the spatial memory module.
+
+        Returns:
+            Dictionary containing:
+                - frame_count: Total number of frames processed
+                - stored_frame_count: Number of frames actually stored
+        """
+        return {"frame_count": self.frame_count, "stored_frame_count": self.stored_frame_count}
 
     def cleanup(self):
         """Clean up resources."""
