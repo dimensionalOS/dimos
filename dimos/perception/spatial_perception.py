@@ -22,10 +22,13 @@ import os
 from typing import Dict, List, Optional, Any
 
 import numpy as np
-from reactivex import Observable, disposable
+from reactivex import Observable, disposable, just, interval
 from reactivex import operators as ops
 from datetime import datetime
 
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.utils.logging_config import setup_logger
 from dimos.agents.memory.spatial_vector_db import SpatialVectorDB
 from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
@@ -36,14 +39,19 @@ from dimos.types.robot_location import RobotLocation
 logger = setup_logger("dimos.perception.spatial_memory")
 
 
-class SpatialMemory:
+class SpatialMemory(Module):
     """
-    A class for building and querying Robot spatial memory.
+    A Dask module for building and querying Robot spatial memory.
 
-    This class processes video frames from ROSControl, associates them with
-    XY locations, and stores them in a vector database for later retrieval.
-    It also maintains a list of named robot locations that can be queried by name.
+    This module processes video frames and odometry data from LCM streams,
+    associates them with XY locations, and stores them in a vector database
+    for later retrieval via RPC calls. It also maintains a list of named
+    robot locations that can be queried by name.
     """
+
+    # LCM inputs
+    video: In[Image] = None
+    odom: In[PoseStamped] = None
 
     def __init__(
         self,
@@ -83,6 +91,9 @@ class SpatialMemory:
         self.min_time_threshold = min_time_threshold
 
         # Set up paths for persistence
+        # Call parent Module init
+        super().__init__()
+
         self.db_path = db_path
         self.visual_memory_path = visual_memory_path
         self.output_dir = output_dir
@@ -157,12 +168,71 @@ class SpatialMemory:
         # List to store robot locations
         self.robot_locations: List[RobotLocation] = []
 
+        # Track latest data for processing
+        self._latest_video_frame: Optional[np.ndarray] = None
+        self._latest_odom: Optional[PoseStamped] = None
+        self._process_interval = 0.1  # Process at 10Hz
+
         logger.info(f"SpatialMemory initialized with model {embedding_model}")
 
-        # Start processing video stream if provided
-        if video_stream is not None and get_pose is not None:
-            self.start_continuous_processing(video_stream, get_pose)
+        # Remove automatic stream processing - will be handled via LCM in start()
 
+    @rpc
+    def start(self):
+        """Start the spatial memory module and subscribe to LCM streams."""
+
+        # Subscribe to LCM streams
+        def set_video(image_msg: Image):
+            # Convert Image message to numpy array
+            if hasattr(image_msg, "data"):
+                self._latest_video_frame = image_msg.data
+            else:
+                logger.warning("Received image message without data attribute")
+
+        def set_odom(odom_msg: PoseStamped):
+            self._latest_odom = odom_msg
+
+        self.video.subscribe(set_video)
+        self.odom.subscribe(set_odom)
+
+        # Start periodic processing using interval
+        interval(self._process_interval).subscribe(lambda _: self._process_frame())
+
+        logger.info("SpatialMemory module started and subscribed to LCM streams")
+
+    def _process_frame(self):
+        """Process the latest frame with pose data if available."""
+        if self._latest_video_frame is None or self._latest_odom is None:
+            return
+
+        # Extract position and rotation from odometry
+        position = self._latest_odom.position
+        orientation = self._latest_odom.orientation
+
+        # Convert to Vector objects
+        position_vec = Vector([position.x, position.y, position.z])
+
+        # Get euler angles from quaternion orientation
+        euler = orientation.to_euler()
+        rotation_vec = Vector([euler.x, euler.y, euler.z])
+
+        # Create combined data dictionary
+        combined_data = {
+            "frame": self._latest_video_frame,
+            "position": position_vec,
+            "rotation": rotation_vec,
+        }
+
+        # Process with spatial memory's stream processor
+        result_observable = self.process_stream(just(combined_data))
+
+        # Subscribe to process the result
+        result_observable.subscribe(
+            on_next=lambda result: logger.debug(f"Processed frame: {result.get('frame_id')}"),
+            on_error=lambda e: logger.error(f"Error processing frame: {e}"),
+        )
+
+    @rpc
     def query_by_location(
         self, x: float, y: float, radius: float = 2.0, limit: int = 5
     ) -> List[Dict]:
@@ -246,6 +316,7 @@ class SpatialMemory:
             if self.stored_frame_count % 100 == 0:
                 self.save()
 
+    @rpc
     def save(self) -> bool:
         """
         Save the visual memory component to disk.
@@ -348,6 +419,7 @@ class SpatialMemory:
             ops.map(process_combined_data), ops.filter(lambda result: result is not None)
         )
 
+    @rpc
     def query_by_image(self, image: np.ndarray, limit: int = 5) -> List[Dict]:
         """
         Query the vector database for images similar to the provided image.
@@ -362,6 +434,7 @@ class SpatialMemory:
         embedding = self.embedding_provider.get_embedding(image)
         return self.vector_db.query_by_embedding(embedding, limit)
 
+    @rpc
     def query_by_text(self, text: str, limit: int = 5) -> List[Dict]:
         """
         Query the vector database for images matching the provided text description.
@@ -379,6 +452,7 @@ class SpatialMemory:
         logger.info(f"Querying spatial memory with text: '{text}'")
         return self.vector_db.query_by_text(text, limit)
 
+    @rpc
     def add_robot_location(self, location: RobotLocation) -> bool:
         """
         Add a named robot location to spatial memory.
@@ -399,6 +473,51 @@ class SpatialMemory:
             logger.error(f"Error adding robot location: {e}")
             return False
 
+    @rpc
+    def add_named_location(
+        self,
+        name: str,
+        position: Optional[List[float]] = None,
+        rotation: Optional[List[float]] = None,
+        description: Optional[str] = None,
+    ) -> bool:
+        """
+        Add a named robot location to spatial memory using current or specified position.
+
+        Args:
+            name: Name of the location
+            position: Optional position [x, y, z], uses current position if None
+            rotation: Optional rotation [roll, pitch, yaw], uses current rotation if None
+            description: Optional description of the location
+
+        Returns:
+            True if successfully added, False otherwise
+        """
+        # Use current position/rotation if not provided
+        if position is None and self._latest_odom is not None:
+            pos = self._latest_odom.position
+            position = [pos.x, pos.y, pos.z]
+
+        if rotation is None and self._latest_odom is not None:
+            euler = self._latest_odom.orientation.to_euler()
+            rotation = [euler.x, euler.y, euler.z]
+
+        if position is None:
+            logger.error("No position available for robot location")
+            return False
+
+        # Create RobotLocation object
+        location = RobotLocation(
+            name=name,
+            position=Vector(position),
+            rotation=Vector(rotation) if rotation else Vector([0, 0, 0]),
+            description=description or f"Location: {name}",
+            timestamp=time.time(),
+        )
+
+        return self.add_robot_location(location)
+
+    @rpc
     def get_robot_locations(self) -> List[RobotLocation]:
         """
         Get all stored robot locations.
@@ -408,6 +527,7 @@ class SpatialMemory:
         """
         return self.robot_locations
 
+    @rpc
     def find_robot_location(self, name: str) -> Optional[RobotLocation]:
         """
         Find a robot location by name.
