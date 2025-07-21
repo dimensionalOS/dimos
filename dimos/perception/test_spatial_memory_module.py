@@ -38,8 +38,7 @@ import warnings
 
 logger = setup_logger("test_spatial_memory_module")
 
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="websockets.server")
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="websockets.legacy")
+pubsub.lcm.autoconf()
 
 
 class VideoReplayModule(Module):
@@ -124,9 +123,6 @@ class TestSpatialMemoryModule:
 
         # Start Dask
         dimos = core.start(4)
-
-        # Enable LCM transport
-        pubsub.lcm.autoconf()
 
         try:
             # Get test data paths
