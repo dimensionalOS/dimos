@@ -47,6 +47,13 @@ def pose_to_matrix(pose: Pose) -> np.ndarray:
 
     # Create rotation matrix from quaternion using scipy
     quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
+
+    # Check for zero norm quaternion and use identity if invalid
+    quat_norm = np.linalg.norm(quat)
+    if quat_norm == 0.0:
+        # Use identity quaternion [0, 0, 0, 1] if zero norm detected
+        quat = [0.0, 0.0, 0.0, 1.0]
+
     rotation = R.from_quat(quat)
     Rot = rotation.as_matrix()
 

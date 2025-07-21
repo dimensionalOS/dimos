@@ -45,9 +45,9 @@ class PiperArm:
         self.init_can()
         self.arm = C_PiperInterface_V2()
         self.arm.ConnectPort()
-        time.sleep(0.1)
+        time.sleep(0.5)
         self.resetArm()
-        time.sleep(0.1)
+        time.sleep(0.5)
         self.enable()
         self.enable_gripper()  # Enable gripper after arm is enabled
         self.gotoZero()

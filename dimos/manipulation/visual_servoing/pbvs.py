@@ -19,8 +19,6 @@ Supports both eye-in-hand and eye-to-hand configurations.
 
 import numpy as np
 from typing import Optional, Tuple
-from enum import Enum
-
 from scipy.spatial.transform import Rotation as R
 from dimos_lcm.geometry_msgs import Pose, Vector3, Quaternion, Point
 from dimos_lcm.vision_msgs import Detection3D, Detection3DArray
@@ -37,13 +35,6 @@ from dimos.manipulation.visual_servoing.utils import (
 )
 
 logger = setup_logger("dimos.manipulation.pbvs")
-
-
-class GraspStage(Enum):
-    """Enum for different grasp stages."""
-
-    PRE_GRASP = "pre_grasp"
-    GRASP = "grasp"
 
 
 class PBVS:
@@ -67,10 +58,8 @@ class PBVS:
         max_velocity: float = 0.1,  # m/s
         max_angular_velocity: float = 0.5,  # rad/s
         target_tolerance: float = 0.01,  # 1cm
-        max_tracking_distance_threshold: float = 0.1,  # Max distance for target tracking (m)
-        min_size_similarity: float = 0.7,  # Min size similarity threshold (0.0-1.0)
-        pregrasp_distance: float = 0.15,  # 15cm pregrasp distance
-        grasp_distance: float = 0.05,  # 5cm grasp distance (final approach)
+        max_tracking_distance_threshold: float = 0.08,  # Max distance for target tracking (m)
+        min_size_similarity: float = 0.6,  # Min size similarity threshold (0.0-1.0)
         direct_ee_control: bool = False,  # If True, output target poses instead of velocities
     ):
         """
@@ -84,8 +73,6 @@ class PBVS:
             target_tolerance: Distance threshold for considering target reached (m)
             max_tracking_distance: Maximum distance for valid target tracking (m)
             min_size_similarity: Minimum size similarity for valid target tracking (0.0-1.0)
-            pregrasp_distance: Distance to maintain before grasping (m)
-            grasp_distance: Distance for final grasp approach (m)
             direct_ee_control: If True, output target poses instead of velocity commands
         """
         # Initialize low-level controller only if not in direct control mode
@@ -106,8 +93,6 @@ class PBVS:
         # Target tracking parameters
         self.max_tracking_distance_threshold = max_tracking_distance_threshold
         self.min_size_similarity = min_size_similarity
-        self.pregrasp_distance = pregrasp_distance
-        self.grasp_distance = grasp_distance
         self.direct_ee_control = direct_ee_control
         self.grasp_pitch_degrees = (
             45.0  # Default grasp pitch in degrees (45° between level and top-down)
@@ -116,7 +101,6 @@ class PBVS:
         # Target state
         self.current_target = None
         self.target_grasp_pose = None
-        self.grasp_stage = GraspStage.PRE_GRASP
 
         # For direct control mode visualization
         self.last_position_error = None
@@ -124,7 +108,6 @@ class PBVS:
 
         logger.info(
             f"Initialized PBVS system with controller gains: pos={position_gain}, rot={rotation_gain}, "
-            f"pregrasp_distance={pregrasp_distance}m, grasp_distance={grasp_distance}m, "
             f"tracking_thresholds: distance={max_tracking_distance_threshold}m, size={min_size_similarity:.2f}"
         )
 
@@ -141,7 +124,6 @@ class PBVS:
         if target_object and target_object.bbox and target_object.bbox.center:
             self.current_target = target_object
             self.target_grasp_pose = None  # Will be computed when needed
-            self.grasp_stage = GraspStage.PRE_GRASP  # Reset to pre-grasp stage
             logger.info(f"New target set: ID {target_object.id}")
             return True
         return False
@@ -150,7 +132,6 @@ class PBVS:
         """Clear the current target."""
         self.current_target = None
         self.target_grasp_pose = None
-        self.grasp_stage = GraspStage.PRE_GRASP
         self.last_position_error = None
         self.last_target_reached = False
         if self.controller:
@@ -165,15 +146,6 @@ class PBVS:
             Current target Detection3D or None if no target selected
         """
         return self.current_target
-
-    def set_grasp_stage(self, stage: GraspStage):
-        """
-        Set the grasp stage.
-
-        Args:
-            stage: The new grasp stage
-        """
-        self.grasp_stage = stage
 
     def set_grasp_pitch(self, pitch_degrees: float):
         """
@@ -190,7 +162,7 @@ class PBVS:
         # Reset target grasp pose to recompute with new pitch
         self.target_grasp_pose = None
 
-    def is_target_reached(self, ee_pose: Pose) -> bool:
+    def is_target_reached(self, ee_pose: Pose, grasp_distance: float) -> bool:
         """
         Check if the current target stage has been reached.
 
@@ -209,18 +181,7 @@ class PBVS:
         error_z = self.target_grasp_pose.position.z - ee_pose.position.z
 
         error_magnitude = np.sqrt(error_x**2 + error_y**2 + error_z**2)
-        stage_reached = error_magnitude < self.target_tolerance
-
-        # Handle stage transitions
-        if stage_reached and self.grasp_stage == GraspStage.PRE_GRASP:
-            return True  # Signal that pre-grasp target was reached
-        elif stage_reached and self.grasp_stage == GraspStage.GRASP:
-            # Grasp reached, clear target
-            logger.info("Grasp position reached, clearing target")
-            self.clear_target()
-            return True
-
-        return False
+        return error_magnitude < self.target_tolerance
 
     def update_target_tracking(self, new_detections: Detection3DArray) -> bool:
         """
@@ -272,12 +233,13 @@ class PBVS:
         )
         return False
 
-    def _update_target_grasp_pose(self, ee_pose: Pose):
+    def _update_target_grasp_pose(self, ee_pose: Pose, grasp_distance: float):
         """
         Update target grasp pose based on current target and EE pose.
 
         Args:
             ee_pose: Current end-effector pose
+            grasp_distance: Distance to maintain from target (pregrasp or grasp distance)
         """
         if (
             not self.current_target
@@ -304,12 +266,7 @@ class PBVS:
         target_pose = Pose(target_pos, target_orientation)
 
         # Apply grasp distance
-        distance = (
-            self.pregrasp_distance
-            if self.grasp_stage == GraspStage.PRE_GRASP
-            else self.grasp_distance
-        )
-        self.target_grasp_pose = self._apply_grasp_distance(target_pose, distance)
+        self.target_grasp_pose = self._apply_grasp_distance(target_pose, grasp_distance)
 
     def _apply_grasp_distance(self, target_pose: Pose, distance: float) -> Pose:
         """
@@ -344,7 +301,10 @@ class PBVS:
         return Pose(offset_position, target_pose.orientation)
 
     def compute_control(
-        self, ee_pose: Pose, new_detections: Optional[Detection3DArray] = None
+        self,
+        ee_pose: Pose,
+        new_detections: Optional[Detection3DArray] = None,
+        grasp_distance: float = 0.15,
     ) -> Tuple[Optional[Vector3], Optional[Vector3], bool, bool, Optional[Pose]]:
         """
         Compute PBVS control with position and orientation servoing.
@@ -352,6 +312,7 @@ class PBVS:
         Args:
             ee_pose: Current end-effector pose
             new_detections: Optional new detections for target tracking
+            grasp_distance: Distance to maintain from target (meters)
 
         Returns:
             Tuple of (velocity_command, angular_velocity_command, target_reached, has_target, target_pose)
@@ -381,8 +342,10 @@ class PBVS:
         # Update target grasp pose
         if not self.current_target:
             logger.info("No current target")
+            return None, None, False, False, None
 
-        self._update_target_grasp_pose(ee_pose)
+        # Update target grasp pose with provided distance
+        self._update_target_grasp_pose(ee_pose, grasp_distance)
 
         if self.target_grasp_pose is None:
             logger.warning("Failed to compute grasp pose")
@@ -397,15 +360,7 @@ class PBVS:
             )
 
         # Check if target reached using our separate function
-        target_reached = self.is_target_reached(ee_pose)
-
-        # If stage transitioned, recompute target grasp pose
-        if (
-            target_reached
-            and self.grasp_stage == GraspStage.GRASP
-            and self.target_grasp_pose is None
-        ):
-            self._update_target_grasp_pose(ee_pose)
+        target_reached = self.is_target_reached(ee_pose, grasp_distance)
 
         # Return appropriate values based on control mode
         if self.direct_ee_control:
@@ -422,50 +377,31 @@ class PBVS:
             )
             return velocity_cmd, angular_velocity_cmd, target_reached, target_tracked, None
 
-    def get_object_pose_camera_frame(
-        self, object_pos: Vector3, camera_pose: Pose
-    ) -> Tuple[Vector3, Quaternion]:
-        """
-        Get object pose in camera frame coordinates with orientation.
-
-        Args:
-            object_pos: Object position in camera frame
-            camera_pose: Current camera pose
-
-        Returns:
-            Tuple of (position, rotation) in camera frame
-        """
-        # Calculate orientation pointing at camera
-        yaw_to_camera = yaw_towards_point(object_pos)
-
-        # Convert euler angles to quaternion using utility function
-        euler = Vector3(0.0, 0.0, yaw_to_camera)  # Level grasp
-        orientation = euler_to_quaternion(euler)
-
-        return object_pos, orientation
-
     def create_status_overlay(
         self,
         image: np.ndarray,
+        grasp_stage=None,
     ) -> np.ndarray:
         """
         Create PBVS status overlay on image.
 
         Args:
             image: Input image
+            grasp_stage: Current grasp stage (optional)
 
         Returns:
             Image with PBVS status overlay
         """
         if self.direct_ee_control:
             # Use direct control overlay
+            stage_value = grasp_stage.value if grasp_stage else "idle"
             return create_pbvs_status_overlay(
                 image,
                 self.current_target,
                 self.last_position_error,
                 self.last_target_reached,
                 self.target_grasp_pose,
-                self.grasp_stage.value,
+                stage_value,
                 is_direct_control=True,
             )
         else:
