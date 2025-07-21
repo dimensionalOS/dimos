@@ -28,16 +28,18 @@ import tty
 import select
 from scipy.spatial.transform import Rotation as R
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
+from dimos.utils.logging_config import setup_logger
 
-import random
 import threading
 
 import pytest
 
 import dimos.core as core
 import dimos.protocol.service.lcmservice as lcmservice
-from dimos.core import In, Module, Out, rpc
+from dimos.core import In, Module, rpc
 from dimos_lcm.geometry_msgs import Pose, Vector3, Twist
+
+logger = setup_logger("dimos.hardware.piper_arm")
 
 
 class PiperArm:
@@ -69,7 +71,7 @@ class PiperArm:
         while not self.arm.EnablePiper():
             pass
             time.sleep(0.01)
-        print(f"[PiperArm] Enabled")
+        logger.info("Arm enabled")
         # self.arm.ModeCtrl(
         #     ctrl_mode=0x01,         # CAN command mode
         #     move_mode=0x01,         # “Move-J”, but ignored in MIT
@@ -88,7 +90,7 @@ class PiperArm:
         RY = round(position[4] * factor)
         RZ = round(position[5] * factor)
         joint_6 = round(position[6] * factor)
-        print(X, Y, Z, RX, RY, RZ)
+        logger.debug(f"Going to zero position: X={X}, Y={Y}, Z={Z}, RX={RX}, RY={RY}, RZ={RZ}")
         self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
         self.arm.EndPoseCtrl(X, Y, Z, RX, RY, RZ)
         self.arm.GripperCtrl(0, 1000, 0x01, 0)
@@ -157,32 +159,32 @@ class PiperArm:
 
         return Pose(position, orientation)
 
-    def cmd_gripper_ctrl(self, position):
+    def cmd_gripper_ctrl(self, position, effort=250):
         """Command end-effector gripper"""
         factor = 1000
         position = position * factor * factor
 
-        self.arm.GripperCtrl(abs(round(position)), 250, 0x01, 0)
-        print(f"[PiperArm] Commanding gripper position: {position}")
+        self.arm.GripperCtrl(abs(round(position)), effort, 0x01, 0)
+        logger.debug(f"Commanding gripper position: {position}mm")
 
     def enable_gripper(self):
         """Enable the gripper using the initialization sequence"""
-        print("[PiperArm] Enabling gripper...")
+        logger.info("Enabling gripper...")
         while not self.arm.EnablePiper():
             time.sleep(0.01)
         self.arm.GripperCtrl(0, 1000, 0x02, 0)
         self.arm.GripperCtrl(0, 1000, 0x01, 0)
-        print("[PiperArm] Gripper enabled")
+        logger.info("Gripper enabled")
 
     def release_gripper(self):
         """Release gripper by opening to 100mm (10cm)"""
-        print("[PiperArm] Releasing gripper (opening to 100mm)...")
+        logger.info("Releasing gripper (opening to 100mm)")
         self.cmd_gripper_ctrl(0.1)  # 0.1m = 100mm = 10cm
 
     def resetArm(self):
         self.arm.MotionCtrl_1(0x02, 0, 0)
         self.arm.MotionCtrl_2(0, 0, 0, 0xAD)
-        print(f"[PiperArm] Resetting arm")
+        logger.info("Resetting arm")
 
     def init_vel_controller(self):
         self.chain = kp.build_serial_chain_from_urdf(
@@ -272,7 +274,9 @@ class PiperArm:
         )
 
         # Apply velocity increment
-        current_pose = current_pose + np.array([x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot]) * self.dt
+        current_pose = (
+            current_pose + np.array([x_dot, y_dot, z_dot, RX_dot, PY_dot, YZ_dot]) * self.dt
+        )
 
         self.cmd_ee_pose_values(
             current_pose[0],
@@ -311,7 +315,9 @@ class VelocityController(Module):
             while True:
                 # Check for timeout (1 second)
                 if self.last_cmd_time and (time.time() - self.last_cmd_time) > 1.0:
-                    print("No velocity command received for 1 second, stopping control loop")
+                    logger.warning(
+                        "No velocity command received for 1 second, stopping control loop"
+                    )
                     break
 
                 cmd_vel = self.latest_cmd
@@ -390,7 +396,7 @@ def run_velocity_controller():
 
     velocity_controller.start()
 
-    print("Velocity controller started")
+    logger.info("Velocity controller started")
     while True:
         time.sleep(1)
 
@@ -437,7 +443,7 @@ if __name__ == "__main__":
             elif key == "s":
                 z_dot -= 0.01
             elif key == "q":
-                print("Exiting teleop.")
+                logger.info("Exiting teleop")
                 arm.disable()
                 break
 
@@ -448,7 +454,7 @@ if __name__ == "__main__":
 
             # Only linear velocities, angular set to zero
             arm.cmd_vel_ee(x_dot, y_dot, z_dot, 0, 0, 0)
-            print(
+            logger.debug(
                 f"Current linear velocity: x={x_dot:.3f} m/s, y={y_dot:.3f} m/s, z={z_dot:.3f} m/s"
             )
 

@@ -66,7 +66,7 @@ class Detection3DProcessor:
         min_confidence: float = 0.6,
         min_points: int = 30,
         max_depth: float = 1.0,
-        max_object_size: float = 0.2,
+        max_object_size: float = 0.15,
     ):
         """
         Initialize the real-time 3D detection processor.
