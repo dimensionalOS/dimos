@@ -50,9 +50,6 @@ from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger("dimos.robot.unitree_webrtc.multiprocess.unitree_go2", level=logging.INFO)
 
-# Configure logging levels
-os.environ["DIMOS_LOG_LEVEL"] = "WARNING"
-
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
 logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
@@ -102,7 +99,7 @@ class FakeRTC(UnitreeWebRTCConnection):
         print("move supressed", vector)
 
 
-class ConnectionModule(UnitreeWebRTCConnection, Module):
+class ConnectionModule(FakeRTC, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
