@@ -53,7 +53,43 @@ class GraspStage(Enum):
     IDLE = "idle"  # No target set
     PRE_GRASP = "pre_grasp"  # Target set, moving to pre-grasp position
     GRASP = "grasp"  # Executing final grasp
-    CLOSE_AND_LIFT = "close_and_lift"  # Close gripper and lift
+    CLOSE_AND_RETRACT = "close_and_retract"  # Close gripper and retract
+
+
+class Feedback:
+    """
+    Feedback data returned by the manipulation system update.
+
+    Contains comprehensive state information about the manipulation process.
+    """
+
+    def __init__(
+        self,
+        grasp_stage: GraspStage,
+        target_tracked: bool,
+        last_commanded_pose: Optional[Pose] = None,
+        current_ee_pose: Optional[Pose] = None,
+        current_camera_pose: Optional[Pose] = None,
+        target_pose: Optional[Pose] = None,
+        waiting_for_reach: bool = False,
+        pose_count: int = 0,
+        max_poses: int = 0,
+        stabilization_time: float = 0.0,
+        grasp_successful: Optional[bool] = None,
+        adjustment_count: int = 0,
+    ):
+        self.grasp_stage = grasp_stage
+        self.target_tracked = target_tracked
+        self.last_commanded_pose = last_commanded_pose
+        self.current_ee_pose = current_ee_pose
+        self.current_camera_pose = current_camera_pose
+        self.target_pose = target_pose
+        self.waiting_for_reach = waiting_for_reach
+        self.pose_count = pose_count
+        self.max_poses = max_poses
+        self.stabilization_time = stabilization_time
+        self.grasp_successful = grasp_successful
+        self.adjustment_count = adjustment_count
 
 
 class Manipulation:
@@ -72,7 +108,6 @@ class Manipulation:
         self,
         camera: Any,  # Generic camera object with required interface
         arm: Any,  # Generic arm object with required interface
-        direct_ee_control: bool = True,
         ee_to_camera_6dof: Optional[list] = None,
     ):
         """
@@ -80,18 +115,16 @@ class Manipulation:
 
         Args:
             camera: Camera object with capture_frame_with_pose() and calculate_intrinsics() methods
-            arm: Robot arm object with get_ee_pose(), cmd_ee_pose(), cmd_vel_ee(),
-                 cmd_gripper_ctrl(), release_gripper(), softStop(), gotoZero(), and disable() methods
-            direct_ee_control: If True, use direct EE pose control; if False, use velocity control
+            arm: Robot arm object with get_ee_pose(), cmd_ee_pose(),
+                 cmd_gripper_ctrl(), release_gripper(), softStop(), gotoZero(), gotoObserve(), and disable() methods
             ee_to_camera_6dof: EE to camera transform [x, y, z, rx, ry, rz] in meters and radians
         """
         self.camera = camera
         self.arm = arm
-        self.direct_ee_control = direct_ee_control
 
         # Default EE to camera transform if not provided
         if ee_to_camera_6dof is None:
-            ee_to_camera_6dof = [-0.06, 0.03, -0.05, 0.0, -1.57, 0.0]
+            ee_to_camera_6dof = [-0.065, 0.03, -0.105, 0.0, -1.57, 0.0]
 
         # Create transform matrices
         pos = Vector3(ee_to_camera_6dof[0], ee_to_camera_6dof[1], ee_to_camera_6dof[2])
@@ -110,10 +143,7 @@ class Manipulation:
         # Initialize processors
         self.detector = Detection3DProcessor(camera_intrinsics)
         self.pbvs = PBVS(
-            position_gain=0.3,
-            rotation_gain=0.2,
             target_tolerance=0.05,
-            direct_ee_control=direct_ee_control,
         )
 
         # Control state
@@ -127,9 +157,9 @@ class Manipulation:
         # Grasp parameters
         self.grasp_width_offset = 0.03  # Default grasp width offset
         self.grasp_pitch_degrees = 30.0  # Default grasp pitch in degrees
-        self.pregrasp_distance = 0.3  # Distance to maintain before grasping (m)
-        self.grasp_distance = 0.01  # Distance for final grasp approach (m)
-        self.grasp_close_delay = 3.0  # Time to wait at grasp pose before closing (seconds)
+        self.pregrasp_distance = 0.25  # Distance to maintain before grasping (m)
+        self.grasp_distance_range = 0.03  # Range for grasp distance mapping (±5cm = ±0.05m)
+        self.grasp_close_delay = 2.0  # Time to wait at grasp pose before closing (seconds)
         self.grasp_reached_time = None  # Time when grasp pose was reached
         self.gripper_max_opening = 0.07  # Maximum gripper opening (m)
 
@@ -150,9 +180,13 @@ class Manipulation:
         self.current_visualization = None
         self.last_detection_3d_array = None
         self.last_detection_2d_array = None
-        self.last_target_tracked = False
 
-        # Log initialization only if needed for debugging
+        # Grasp result
+        self.last_grasp_successful = None  # True if last grasp was successful
+        self.final_pregrasp_pose = None  # Store the final pre-grasp pose for retraction
+
+        # Go to observe position
+        self.arm.gotoObserve()
 
     def set_grasp_stage(self, stage: GraspStage):
         """
@@ -205,27 +239,18 @@ class Manipulation:
         self.stabilization_start_time = None
         self.grasp_reached_time = None
         self.waiting_start_time = None
+        self.last_grasp_successful = None
+        self.final_pregrasp_pose = None
 
-    def execute_idle(self) -> bool:
-        """
-        Execute idle stage: just visualization, no control.
+        self.arm.gotoObserve()
 
-        Returns:
-            False (no target tracked in idle)
-        """
+    def execute_idle(self):
+        """Execute idle stage: just visualization, no control."""
         # Nothing to do in idle
-        return False
+        pass
 
-    def execute_pre_grasp(self, detection_3d_array: Detection3DArray) -> bool:
-        """
-        Execute pre-grasp stage: visual servoing to pre-grasp position.
-
-        Args:
-            detection_3d_array: Current 3D detections
-
-        Returns:
-            True if target is being tracked
-        """
+    def execute_pre_grasp(self, detection_3d_array: Detection3DArray):
+        """Execute pre-grasp stage: visual servoing to pre-grasp position."""
         # Get EE pose
         ee_pose = self.arm.get_ee_pose()
 
@@ -233,9 +258,9 @@ class Manipulation:
         if self.waiting_for_reach and self.last_commanded_pose:
             # Check for timeout
             if self._check_reach_timeout():
-                return False
+                return
 
-            reached = self.pbvs.is_target_reached(ee_pose, self.pregrasp_distance)
+            reached = self.pbvs.is_target_reached(ee_pose)
 
             if reached:
                 self.waiting_for_reach = False
@@ -245,7 +270,7 @@ class Manipulation:
                 time.sleep(0.3)
 
             # While waiting, don't process new commands
-            return self.last_target_tracked
+            return
 
         # Check timeout
         if (
@@ -255,26 +280,30 @@ class Manipulation:
             logger.warning(
                 f"Failed to get stable grasp after {self.stabilization_timeout} seconds, resetting"
             )
-            self.arm.gotoZero()
-            time.sleep(1.0)
+
             self.reset_to_idle()
-            return False
+            return
+
+        # Update tracking with new detections
+        target_tracked = False
+        if detection_3d_array:
+            target_tracked = self.pbvs.update_tracking(detection_3d_array)
+            if target_tracked:
+                self.target_updated = True
+                self.last_valid_target = self.pbvs.get_current_target()
 
         # PBVS control with pre-grasp distance
-        vel_cmd, ang_vel_cmd, _, target_tracked, target_pose = self.pbvs.compute_control(
-            ee_pose, detection_3d_array, self.pregrasp_distance
+        _, _, _, has_target, target_pose = self.pbvs.compute_control(
+            ee_pose, self.pregrasp_distance
         )
 
-        # Set target_updated flag if target was successfully tracked
-        if target_tracked and target_pose:
-            self.target_updated = True
-            self.last_valid_target = self.pbvs.get_current_target()
-
-        # Handle direct EE control
-        if self.direct_ee_control and target_pose and target_tracked:
+        # Handle pose control
+        if target_pose and has_target:
             # Check if we have enough reached poses and they're stable
             if self.check_target_stabilized():
                 logger.info("Target stabilized, transitioning to GRASP")
+                # Store the final pre-grasp pose for retraction
+                self.final_pregrasp_pose = self.last_commanded_pose
                 self.grasp_stage = GraspStage.GRASP
                 self.adjustment_count = 0
                 self.waiting_for_reach = False
@@ -287,29 +316,11 @@ class Manipulation:
                 self.target_updated = False  # Reset flag after commanding
                 self.adjustment_count += 1
 
-                # Command sent to robot
-
                 # Sleep for 200ms after commanding to avoid rapid commands
                 time.sleep(0.2)
 
-        elif not self.direct_ee_control and vel_cmd and ang_vel_cmd:
-            # Velocity control
-            self.arm.cmd_vel_ee(
-                vel_cmd.x, vel_cmd.y, vel_cmd.z, ang_vel_cmd.x, ang_vel_cmd.y, ang_vel_cmd.z
-            )
-
-        return target_tracked
-
-    def execute_grasp(self, detection_3d_array: Detection3DArray) -> bool:
-        """
-        Execute grasp stage: move to final grasp position.
-
-        Args:
-            detection_3d_array: Current 3D detections
-
-        Returns:
-            True if target is being tracked
-        """
+    def execute_grasp(self, detection_3d_array: Detection3DArray):
+        """Execute grasp stage: move to final grasp position."""
         # Get EE pose
         ee_pose = self.arm.get_ee_pose()
 
@@ -317,9 +328,9 @@ class Manipulation:
         if self.waiting_for_reach:
             # Check for timeout
             if self._check_reach_timeout():
-                return False
+                return
 
-            reached = self.pbvs.is_target_reached(ee_pose, self.grasp_distance)
+            reached = self.pbvs.is_target_reached(ee_pose)
 
             if reached and not self.grasp_reached_time:
                 # First time reaching grasp pose
@@ -327,26 +338,37 @@ class Manipulation:
                 self.waiting_start_time = None  # Reset timeout timer
                 # Robot reached grasp pose
 
-            # Wait for delay then transition to CLOSE_AND_LIFT
+            # Wait for delay then transition to CLOSE_AND_RETRACT
             if (
                 self.grasp_reached_time
                 and (time.time() - self.grasp_reached_time) >= self.grasp_close_delay
             ):
                 logger.info("Grasp delay completed, closing gripper")
-                self.grasp_stage = GraspStage.CLOSE_AND_LIFT
+                self.grasp_stage = GraspStage.CLOSE_AND_RETRACT
                 self.waiting_for_reach = False
 
             # While waiting, don't process new commands
-            return self.last_target_tracked
+            return
 
         # Only command grasp if not waiting and have valid target
         if self.last_valid_target:
-            # PBVS control with grasp distance
-            _, _, _, target_tracked, target_pose = self.pbvs.compute_control(
-                ee_pose, detection_3d_array, self.grasp_distance
+            # Update tracking with new detections
+            if detection_3d_array:
+                self.pbvs.update_tracking(detection_3d_array)
+
+            # Calculate grasp distance based on pitch angle
+            # Maps from -grasp_distance_range to +grasp_distance_range based on pitch
+            # 0° pitch (level grasp) -> -5cm (move 5cm closer to object)
+            # 90° pitch (top-down) -> +5cm (stay 5cm farther from object)
+            normalized_pitch = self.grasp_pitch_degrees / 90.0  # 0.0 to 1.0
+            grasp_distance = -self.grasp_distance_range + (
+                2 * self.grasp_distance_range * normalized_pitch
             )
 
-            if self.direct_ee_control and target_pose and target_tracked:
+            # PBVS control with calculated grasp distance
+            _, _, _, has_target, target_pose = self.pbvs.compute_control(ee_pose, grasp_distance)
+
+            if target_pose and has_target:
                 # Get object size and calculate gripper opening
                 object_size = self.last_valid_target.bbox.size
                 object_width = object_size.x
@@ -361,22 +383,47 @@ class Manipulation:
                 self.waiting_for_reach = True
                 self.waiting_start_time = time.time()  # Start timeout timer
 
-                return target_tracked
+    def execute_close_and_retract(self):
+        """Execute the close and retract sequence."""
+        # Close gripper and check if object is grasped (only once)
+        if self.last_grasp_successful is None:
+            _, object_present = self.arm.close_gripper()
+            self.last_grasp_successful = object_present
 
-        return False
+            if object_present:
+                logger.info("Object successfully grasped!")
+            else:
+                logger.warning("No object detected in gripper")
 
-    def execute_close_and_lift(self):
-        """Execute the close and lift sequence."""
-        # Close gripper
-        self.arm.cmd_gripper_ctrl(0.0)  # Close gripper completely
-        time.sleep(0.5)  # Wait for gripper to close
+        # Get EE pose
+        ee_pose = self.arm.get_ee_pose()
 
-        # Return to home position
-        self.arm.gotoZero()
+        # Check if waiting for robot to reach retraction pose
+        if self.waiting_for_reach:
+            # Check for timeout
+            if self._check_reach_timeout():
+                return
 
-        # Reset to IDLE after completion
-        logger.info("Grasp sequence completed")
-        self.reset_to_idle()
+            # Temporarily set PBVS target to check if reached
+            original_target = self.pbvs.target_grasp_pose
+            self.pbvs.target_grasp_pose = self.final_pregrasp_pose
+            reached = self.pbvs.is_target_reached(ee_pose)
+            self.pbvs.target_grasp_pose = original_target
+
+            if reached:
+                logger.info("Reached pre-grasp retraction position")
+                self.waiting_for_reach = False
+                logger.info(
+                    f"Grasp sequence completed (object_grasped={self.last_grasp_successful})"
+                )
+                self.reset_to_idle()
+
+        else:
+            # Command retraction to pre-grasp
+            logger.info("Retracting to pre-grasp position")
+            self.arm.cmd_ee_pose(self.final_pregrasp_pose, line_mode=True)
+            self.waiting_for_reach = True
+            self.waiting_start_time = time.time()
 
     def capture_and_process(
         self,
@@ -442,37 +489,36 @@ class Manipulation:
             return True
         return False
 
-    def update(self) -> bool:
+    def update(self) -> Optional[Feedback]:
         """
         Main update function that handles capture, processing, control, and visualization.
 
         Returns:
-            True if update was successful, False if capture failed
+            Feedback object with current state information, or None if capture failed
         """
         # Capture and process frame
         rgb, detection_3d_array, detection_2d_array, camera_pose = self.capture_and_process()
         if rgb is None:
-            return False
+            return None
 
         # Store for target selection
         self.last_detection_3d_array = detection_3d_array
         self.last_detection_2d_array = detection_2d_array
 
         # Execute stage-specific logic
-        target_tracked = False
-
         if self.grasp_stage == GraspStage.IDLE:
-            target_tracked = self.execute_idle()
+            self.execute_idle()
         elif self.grasp_stage == GraspStage.PRE_GRASP:
             if detection_3d_array:
-                target_tracked = self.execute_pre_grasp(detection_3d_array)
+                self.execute_pre_grasp(detection_3d_array)
         elif self.grasp_stage == GraspStage.GRASP:
             if detection_3d_array:
-                target_tracked = self.execute_grasp(detection_3d_array)
-        elif self.grasp_stage == GraspStage.CLOSE_AND_LIFT:
-            self.execute_close_and_lift()
+                self.execute_grasp(detection_3d_array)
+        elif self.grasp_stage == GraspStage.CLOSE_AND_RETRACT:
+            self.execute_close_and_retract()
 
-        self.last_target_tracked = target_tracked
+        # Update tracking status from PBVS
+        target_tracked = self.pbvs.get_current_target() is not None
 
         # Create visualization
         if self.waiting_for_reach:
@@ -485,7 +531,34 @@ class Manipulation:
             # Basic visualization with just the RGB image
             self.current_visualization = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
-        return True
+        # Get current EE pose
+        ee_pose = self.arm.get_ee_pose()
+
+        # Calculate stabilization time if applicable
+        stabilization_time = 0.0
+        if self.stabilization_start_time:
+            stabilization_time = time.time() - self.stabilization_start_time
+
+        # Get target pose from PBVS if available
+        target_pose = None
+        if self.pbvs.target_grasp_pose:
+            target_pose = self.pbvs.target_grasp_pose
+
+        # Create and return feedback
+        return Feedback(
+            grasp_stage=self.grasp_stage,
+            target_tracked=target_tracked,
+            last_commanded_pose=self.last_commanded_pose,
+            current_ee_pose=ee_pose,
+            current_camera_pose=camera_pose,
+            target_pose=target_pose,
+            waiting_for_reach=self.waiting_for_reach,
+            pose_count=len(self.reached_poses),
+            max_poses=self.pose_history_size,
+            stabilization_time=stabilization_time,
+            grasp_successful=self.last_grasp_successful,
+            adjustment_count=self.adjustment_count,
+        )
 
     def get_visualization(self) -> Optional[np.ndarray]:
         """
@@ -513,11 +586,7 @@ class Manipulation:
             print("SOFT STOP - Emergency stopping robot!")
             self.arm.softStop()
             return "stop"
-        elif key == ord("h"):
-            print("GO HOME - Returning to safe position...")
-            self.arm.gotoZero()
-            return "home"
-        elif key == ord(" ") and self.direct_ee_control and self.pbvs.target_grasp_pose:
+        elif key == ord(" ") and self.pbvs.target_grasp_pose:
             # Manual override - immediately transition to GRASP if in PRE_GRASP
             if self.grasp_stage == GraspStage.PRE_GRASP:
                 self.set_grasp_stage(GraspStage.GRASP)
@@ -588,10 +657,9 @@ class Manipulation:
         viz_bgr = cv2.cvtColor(viz, cv2.COLOR_RGB2BGR)
 
         # Add pose info
-        mode_text = "Direct EE" if self.direct_ee_control else "Velocity"
         cv2.putText(
             viz_bgr,
-            f"Eye-in-Hand ({mode_text})",
+            "Eye-in-Hand Visual Servoing",
             (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,
@@ -610,21 +678,18 @@ class Manipulation:
         )
         cv2.putText(viz_bgr, ee_text, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-        # Add control status for direct EE mode
-        if self.direct_ee_control:
-            status_text, status_color = self._get_status_text_and_color()
-            cv2.putText(
-                viz_bgr, status_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1
-            )
-            cv2.putText(
-                viz_bgr,
-                "s=STOP | h=HOME | SPACE=FORCE GRASP | g=RELEASE",
-                (10, 110),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (255, 255, 255),
-                1,
-            )
+        # Add control status
+        status_text, status_color = self._get_status_text_and_color()
+        cv2.putText(viz_bgr, status_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1)
+        cv2.putText(
+            viz_bgr,
+            "s=STOP | r=RESET | SPACE=FORCE GRASP | g=RELEASE",
+            (10, 110),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            (255, 255, 255),
+            1,
+        )
 
         return viz_bgr
 
@@ -714,8 +779,8 @@ class Manipulation:
                 return f"GRASP - Waiting to close ({time_remaining:.1f}s)", (0, 255, 0)
             else:
                 return "GRASP - Moving to grasp pose", (0, 255, 0)
-        else:  # CLOSE_AND_LIFT
-            return "CLOSE_AND_LIFT - Closing gripper and lifting", (255, 0, 255)
+        else:  # CLOSE_AND_RETRACT
+            return "CLOSE_AND_RETRACT - Closing gripper and retracting", (255, 0, 255)
 
     def check_target_stabilized(self) -> bool:
         """
@@ -737,6 +802,93 @@ class Manipulation:
 
         # Check if all axes are below threshold
         return np.all(std_devs < self.pose_stabilization_threshold)
+
+    def pick_and_place(
+        self, object_point: Tuple[int, int], target_point: Optional[Tuple[int, int]] = None
+    ) -> bool:
+        """
+        Execute a complete pick and place operation.
+
+        Similar to navigate_path_local, this function handles the complete pick operation
+        autonomously, including object selection, grasping, and optional placement.
+
+        Args:
+            object_point: (x, y) pixel coordinates of the object to pick
+            target_point: Optional (x, y) pixel coordinates for placement (not implemented yet)
+
+        Returns:
+            True if object was successfully picked, False otherwise
+        """
+        # Validate input
+        if not isinstance(object_point, tuple) or len(object_point) != 2:
+            logger.error(f"Invalid object_point: {object_point}. Expected (x, y) tuple.")
+            return False
+
+        logger.info(f"Starting pick operation at pixel ({object_point[0]}, {object_point[1]})")
+
+        # Reset to ensure clean state
+        self.reset_to_idle()
+
+        # Configuration
+        max_operation_time = 60.0  # Maximum time for complete pick operation
+        perception_init_time = 2.0  # Time to allow perception to stabilize
+
+        # Wait for perception to initialize
+        init_start = time.time()
+        perception_ready = False
+
+        while (time.time() - init_start) < perception_init_time:
+            feedback = self.update()
+            if feedback is not None:
+                perception_ready = True
+            time.sleep(0.1)
+
+        if not perception_ready:
+            logger.error("Perception system failed to initialize")
+            return False
+
+        # Select the target object
+        x, y = object_point
+        try:
+            if not self.pick_target(x, y):
+                logger.error(f"No valid object detected at pixel ({x}, {y})")
+                return False
+        except Exception as e:
+            logger.error(f"Exception during target selection: {e}")
+            return False
+
+        # Execute pick operation
+        operation_start = time.time()
+
+        while (time.time() - operation_start) < max_operation_time:
+            try:
+                # Update the manipulation system
+                feedback = self.update()
+                if feedback is None:
+                    logger.error("Lost perception during pick operation")
+                    self.reset_to_idle()
+                    return False
+
+                # Check if grasp sequence completed
+                if feedback.grasp_successful is not None:
+                    if feedback.grasp_successful:
+                        logger.info("Object successfully grasped")
+                        if target_point:
+                            logger.info("Place operation not yet implemented")
+                        return True
+                    else:
+                        logger.warning("Grasp attempt failed - no object detected in gripper")
+                        return False
+
+            except Exception as e:
+                logger.error(f"Unexpected error during pick operation: {e}")
+                self.reset_to_idle()
+                return False
+
+        # Operation timeout
+        logger.error(f"Pick operation exceeded maximum time of {max_operation_time}s")
+        self.reset_to_idle()
+        return False
 
     def cleanup(self):
         """Clean up resources (detector only, hardware cleanup is caller's responsibility)."""
