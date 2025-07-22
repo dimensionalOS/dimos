@@ -37,7 +37,7 @@ jobs:
   #         sudo rm -rf /usr/local/lib/android
           
   run-tests:
-    runs-on: dimos-runner-ubuntu-2204
+    runs-on: [self-hosted, Linux]
     container:
       image: ghcr.io/dimensionalos/${{ inputs.dev-image }}
 
