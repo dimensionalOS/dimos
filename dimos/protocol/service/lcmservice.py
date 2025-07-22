@@ -14,17 +14,16 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
 import traceback
-import os
-from functools import cache
 from dataclasses import dataclass
+from functools import cache
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 import lcm
-
 from dimos.protocol.service.spec import Service
 
 
@@ -135,8 +134,9 @@ def autoconf() -> None:
 @dataclass
 class LCMConfig:
     ttl: int = 0
-    url: str | None = None
+    url: str | None = os.getenv("LCM_DEFAULT_URL")
     autoconf: bool = False
+    check: bool = True
 
 
 @runtime_checkable
@@ -180,10 +180,11 @@ class LCMService(Service[LCMConfig]):
         if self.config.autoconf:
             autoconf()
         else:
-            try:
-                check_system()
-            except Exception as e:
-                print(f"Error checking system configuration: {e}")
+            if self.config.check:
+                try:
+                    check_system()
+                except Exception as e:
+                    print(f"Error checking system configuration: {e}")
 
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._loop)
