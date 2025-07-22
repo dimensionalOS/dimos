@@ -122,7 +122,7 @@ class TestSpatialMemoryModule:
         """Test SpatialMemory module with TimedSensorReplay inputs."""
 
         # Start Dask
-        dimos = core.start(4)
+        dimos = core.start(1)
 
         try:
             # Get test data paths
