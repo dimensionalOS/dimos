@@ -23,6 +23,7 @@ from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Transform, V
 from dimos.robot.module.tf import TF, TFConfig
 
 
+@pytest.mark.tool
 def test_tf_broadcast_and_query():
     """Test TF broadcasting and querying between two TF instances.
     If you run foxglove-bridge this will show up in the UI"""
@@ -82,8 +83,3 @@ def test_tf_broadcast_and_query():
     # Stop services
     broadcaster.stop()
     querier.stop()
-
-
-if __name__ == "__main__":
-    test_tf_broadcast_and_query()
-    print("Test passed!")

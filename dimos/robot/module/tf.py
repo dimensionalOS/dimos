@@ -22,7 +22,8 @@ from typing import Optional, TypeVar
 import dimos_lcm
 import numpy as np
 import pytest
-import tf_lcm_py as tf
+
+# import tf_lcm_py as tf
 from ABC import abstractmethod
 
 import lcm
