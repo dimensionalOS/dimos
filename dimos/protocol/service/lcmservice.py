@@ -37,6 +37,17 @@ def check_root() -> bool:
         return False
 
 
+@cache
+def is_dev_container() -> bool:
+    """Return True if we're running in a dev container or similar restricted environment."""
+    # Check if we can access the network sysctls (common limitation in containers)
+    try:
+        subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True, check=True)
+        return False
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return True
+
+
 def check_multicast() -> list[str]:
     """Check if multicast configuration is needed and return required commands."""
     commands_needed = []
@@ -92,6 +103,11 @@ def check_buffers() -> list[str]:
 
 def check_system() -> None:
     """Check if system configuration is needed and exit with required commands if not prepared."""
+    # Skip checks in dev containers or restricted environments
+    if is_dev_container():
+        print("Dev container detected: Skipping system network configuration checks.")
+        return
+
     commands_needed = []
     commands_needed.extend(check_multicast())
     commands_needed.extend(check_buffers())
@@ -106,6 +122,11 @@ def check_system() -> None:
 
 def autoconf() -> None:
     """Auto-configure system by running checks and executing required commands if needed."""
+    # Skip autoconf in dev containers or restricted environments
+    if is_dev_container():
+        print("Dev container detected: Skipping automatic system configuration.")
+        return
+
     commands_needed = []
     commands_needed.extend(check_multicast())
     commands_needed.extend(check_buffers())

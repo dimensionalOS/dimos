@@ -14,22 +14,20 @@
 
 """Heavy version of Unitree Go2 with GPU-required modules."""
 
-import os
 import asyncio
-from typing import Optional, List
+from typing import List, Optional
+
 import numpy as np
-from reactivex import Observable, operators as ops
+from reactivex import Observable
 from reactivex.disposable import CompositeDisposable
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.robot.unitree_webrtc.multiprocess.unitree_go2 import UnitreeGo2Light
-from dimos.perception.spatial_perception import SpatialMemory
-from dimos.perception.person_tracker import PersonTrackingStream
 from dimos.perception.object_tracker import ObjectTrackingStream
-from dimos.skills.skills import SkillLibrary, AbstractRobotSkill
+from dimos.perception.person_tracker import PersonTrackingStream
+from dimos.robot.unitree_webrtc.multiprocess.unitree_go2 import UnitreeGo2Light
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
+from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
-from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import get_scheduler
 
@@ -50,7 +48,6 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
     def __init__(
         self,
         ip: str,
-        output_dir: str = os.path.join(os.getcwd(), "assets", "output"),
         skill_library: Optional[SkillLibrary] = None,
         robot_capabilities: Optional[List[RobotCapability]] = None,
         spatial_memory_collection: str = "spatial_memory",
@@ -72,7 +69,6 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
         """
         super().__init__(ip)
 
-        self.output_dir = output_dir
         self.enable_perception = enable_perception
         self.disposables = CompositeDisposable()
         self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
@@ -84,24 +80,6 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
             RobotCapability.AUDIO,
         ]
 
-        # Create output directory
-        os.makedirs(self.output_dir, exist_ok=True)
-        logger.info(f"Robot outputs will be saved to: {self.output_dir}")
-
-        # Initialize memory directories
-        self.memory_dir = os.path.join(self.output_dir, "memory")
-        os.makedirs(self.memory_dir, exist_ok=True)
-
-        # Initialize spatial memory properties
-        self.spatial_memory_dir = os.path.join(self.memory_dir, "spatial_memory")
-        self.spatial_memory_collection = spatial_memory_collection
-        self.db_path = os.path.join(self.spatial_memory_dir, "chromadb_data")
-        self.visual_memory_path = os.path.join(self.spatial_memory_dir, "visual_memory.pkl")
-
-        # Create spatial memory directory
-        os.makedirs(self.spatial_memory_dir, exist_ok=True)
-        os.makedirs(self.db_path, exist_ok=True)
-
         # Camera configuration for Unitree Go2
         self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
         self.camera_pitch = np.deg2rad(0)  # negative for downward pitch
@@ -112,9 +90,9 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
             skill_library = MyUnitreeSkills()
         self.skill_library = skill_library
 
-        # Initialize spatial memory (will be created after connection is established)
-        self._spatial_memory = None
+        # Initialize spatial memory module (will be deployed after connection is established)
         self._video_stream = None
+        self.new_memory = new_memory
 
         # Tracking streams (initialized after start)
         self.person_tracker = None
@@ -132,19 +110,7 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
         # Now we have connection publishing to LCM, initialize video stream
         self._video_stream = self.get_video_stream(fps=10)  # Lower FPS for processing
 
-        # Initialize spatial memory if perception is enabled
-        if self.enable_perception and self._video_stream is not None:
-            self._spatial_memory = SpatialMemory(
-                collection_name=self.spatial_memory_collection,
-                db_path=self.db_path,
-                visual_memory_path=self.visual_memory_path,
-                new_memory=True,  # Always create new for now
-                output_dir=self.spatial_memory_dir,
-                video_stream=self._video_stream,
-                get_pose=self.get_pose,
-            )
-            logger.info("Spatial memory initialized")
-
+        if self.enable_perception:
             # Initialize person and object tracking
             self.person_tracker = PersonTrackingStream(
                 camera_intrinsics=self.camera_intrinsics,
@@ -176,15 +142,6 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
                 self.skill_library.initialize_skills()
 
         logger.info("UnitreeGo2Heavy initialized with all modules")
-
-    @property
-    def spatial_memory(self) -> Optional[SpatialMemory]:
-        """Get the robot's spatial memory.
-
-        Returns:
-            SpatialMemory instance or None if perception is disabled
-        """
-        return self._spatial_memory
 
     @property
     def video_stream(self) -> Optional[Observable]:

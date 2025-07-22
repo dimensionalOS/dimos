@@ -73,7 +73,7 @@ class DriveModule(Module):
         return self.received_messages
 
 
-if __name__ == "__main__":
+def test_streams():
     dimos = start(2)
 
     drive_module = dimos.deploy(DriveModule, speed=1.0)

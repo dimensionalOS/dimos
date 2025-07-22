@@ -35,7 +35,7 @@ class AddModule(Module):
         return n + n
 
 
-if __name__ == "__main__":
+def test_rpc():
     dimos = start(2)
 
     add_module = dimos.deploy(AddModule)

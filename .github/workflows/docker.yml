@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   check-changes:
-    runs-on: dimos-runner-ubuntu-2204
+    runs-on: [self-hosted, Linux]
     outputs:
       ros:    ${{ steps.filter.outputs.ros }}
       python: ${{ steps.filter.outputs.python }}
@@ -16,6 +16,10 @@ jobs:
       tests:  ${{ steps.filter.outputs.tests }}
       branch-tag: ${{ steps.set-tag.outputs.branch_tag }}
     steps:
+      - name: Fix permissions
+        run: |
+          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+          
       - uses: actions/checkout@v4
       - id: filter
         uses: dorny/paths-filter@v3
