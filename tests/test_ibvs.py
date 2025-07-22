@@ -50,7 +50,7 @@ def main():
 
     # Configuration
     DIRECT_EE_CONTROL = True  # True: direct EE pose control, False: velocity control
-    INITIAL_GRASP_PITCH_DEGREES = 45  # 0° = level grasp, 90° = top-down grasp
+    INITIAL_GRASP_PITCH_DEGREES = 30  # 0° = level grasp, 90° = top-down grasp
 
     print("=== PBVS Eye-in-Hand Test ===")
     print("Using EE pose as odometry for camera pose")
@@ -86,8 +86,6 @@ def main():
         manipulation = Manipulation(
             camera=zed,
             arm=arm,
-            direct_ee_control=DIRECT_EE_CONTROL,
-            ee_to_camera_6dof=[-0.06, 0.03, -0.05, 0.0, -1.57, 0.0],  # Adjust for your setup
         )
     except Exception as e:
         print(f"Failed to initialize manipulation system: {e}")
@@ -105,7 +103,8 @@ def main():
     try:
         while True:
             # Update manipulation system
-            if not manipulation.update():
+            feedback = manipulation.update()
+            if feedback is None:
                 continue
 
             # Handle mouse click

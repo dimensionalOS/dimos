@@ -16,6 +16,7 @@
 
 from typing import (
     Optional,
+    Tuple,
 )
 from piper_sdk import *  # from the official Piper SDK
 import numpy as np
@@ -82,7 +83,22 @@ class PiperArm:
 
     def gotoZero(self):
         factor = 1000
-        position = [57.0, 0.0, 250.0, 0, 97.0, 0, 0]
+        position = [57.0, 0.0, 215.0, 0, 90.0, 0, 0]
+        X = round(position[0] * factor)
+        Y = round(position[1] * factor)
+        Z = round(position[2] * factor)
+        RX = round(position[3] * factor)
+        RY = round(position[4] * factor)
+        RZ = round(position[5] * factor)
+        joint_6 = round(position[6] * factor)
+        logger.debug(f"Going to zero position: X={X}, Y={Y}, Z={Z}, RX={RX}, RY={RY}, RZ={RZ}")
+        self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
+        self.arm.EndPoseCtrl(X, Y, Z, RX, RY, RZ)
+        self.arm.GripperCtrl(0, 1000, 0x01, 0)
+
+    def gotoObserve(self):
+        factor = 1000
+        position = [57.0, 0.0, 280.0, 0, 120.0, 0, 0]
         X = round(position[0] * factor)
         Y = round(position[1] * factor)
         Z = round(position[2] * factor)
@@ -159,12 +175,13 @@ class PiperArm:
 
         return Pose(position, orientation)
 
-    def cmd_gripper_ctrl(self, position, effort=250):
+    def cmd_gripper_ctrl(self, position, effort=0.25):
         """Command end-effector gripper"""
         factor = 1000
-        position = position * factor * factor
+        position = position * factor * factor  # meters
+        effort = effort * factor  # N/m
 
-        self.arm.GripperCtrl(abs(round(position)), effort, 0x01, 0)
+        self.arm.GripperCtrl(abs(round(position)), abs(round(effort)), 0x01, 0)
         logger.debug(f"Commanding gripper position: {position}mm")
 
     def enable_gripper(self):
@@ -180,6 +197,58 @@ class PiperArm:
         """Release gripper by opening to 100mm (10cm)"""
         logger.info("Releasing gripper (opening to 100mm)")
         self.cmd_gripper_ctrl(0.1)  # 0.1m = 100mm = 10cm
+
+    def get_gripper_feedback(self) -> Tuple[float, float]:
+        """
+        Get current gripper feedback.
+
+        Returns:
+            Tuple of (angle_degrees, effort) where:
+                - angle_degrees: Current gripper angle in degrees
+                - effort: Current gripper effort (0.0 to 1.0 range)
+        """
+        gripper_msg = self.arm.GetArmGripperMsgs()
+        angle_degrees = (
+            gripper_msg.gripper_state.grippers_angle / 1000.0
+        )  # Convert from SDK units to degrees
+        effort = gripper_msg.gripper_state.grippers_effort / 1000.0  # Convert from SDK units to N/m
+        return angle_degrees, effort
+
+    def close_gripper(self, commanded_effort: float = 0.25) -> Tuple[bool, bool]:
+        """
+        Close the gripper and check if an object is grasped.
+
+        Args:
+            commanded_effort: Effort to use when closing gripper (default 0.25 N/m)
+
+        Returns:
+            Tuple of (gripper_closed, object_grasped) where:
+                - gripper_closed: True if gripper reached near-zero position
+                - object_grasped: True if effort > 80% of commanded effort (object detected)
+        """
+        # Command gripper to close (0.0 position)
+        self.cmd_gripper_ctrl(0.0, effort=commanded_effort)
+
+        # Wait for gripper to close
+        time.sleep(1.0)
+
+        # Get gripper feedback
+        angle_degrees, actual_effort = self.get_gripper_feedback()
+
+        # Check if gripper is closed (angle close to 0 within threshold)
+        angle_threshold = 0.02  # m
+        gripper_closed = abs(angle_degrees) < angle_threshold
+
+        # Check if object is grasped (effort > 80% of commanded effort)
+        effort_threshold = 0.8 * commanded_effort
+        object_present = abs(actual_effort) > effort_threshold
+
+        if object_present:
+            logger.info(f"Object detected in gripper (effort: {actual_effort:.3f} N/m)")
+        else:
+            logger.info(f"No object detected (effort: {actual_effort:.3f} N/m)")
+
+        return gripper_closed, object_present
 
     def resetArm(self):
         self.arm.MotionCtrl_1(0x02, 0, 0)

@@ -58,9 +58,9 @@ class PBVS:
         max_velocity: float = 0.1,  # m/s
         max_angular_velocity: float = 0.5,  # rad/s
         target_tolerance: float = 0.01,  # 1cm
-        max_tracking_distance_threshold: float = 0.08,  # Max distance for target tracking (m)
+        max_tracking_distance_threshold: float = 0.1,  # Max distance for target tracking (m)
         min_size_similarity: float = 0.6,  # Min size similarity threshold (0.0-1.0)
-        direct_ee_control: bool = False,  # If True, output target poses instead of velocities
+        direct_ee_control: bool = True,  # If True, output target poses instead of velocities
     ):
         """
         Initialize PBVS system.
@@ -162,7 +162,7 @@ class PBVS:
         # Reset target grasp pose to recompute with new pitch
         self.target_grasp_pose = None
 
-    def is_target_reached(self, ee_pose: Pose, grasp_distance: float) -> bool:
+    def is_target_reached(self, ee_pose: Pose) -> bool:
         """
         Check if the current target stage has been reached.
 
@@ -183,17 +183,18 @@ class PBVS:
         error_magnitude = np.sqrt(error_x**2 + error_y**2 + error_z**2)
         return error_magnitude < self.target_tolerance
 
-    def update_target_tracking(self, new_detections: Detection3DArray) -> bool:
+    def update_tracking(self, new_detections: Optional[Detection3DArray] = None) -> bool:
         """
-        Update target by matching to closest object in new detections.
+        Update target tracking with new detections.
         If tracking is lost, keeps the old target pose.
 
         Args:
-            new_detections: List of newly detected objects
+            new_detections: Optional new detections for target tracking
 
         Returns:
             True if target was successfully tracked, False if lost (but target is kept)
         """
+        # Check if we have a current target
         if (
             not self.current_target
             or not self.current_target.bbox
@@ -201,7 +202,9 @@ class PBVS:
         ):
             return False
 
-        if not new_detections or new_detections.detections_length == 0:
+        # Try to update target tracking if new detections provided
+        # Continue with last known pose even if tracking is lost
+        if new_detections is None or new_detections.detections_length == 0:
             logger.debug("No detections for target tracking - using last known pose")
             return False
 
@@ -257,7 +260,7 @@ class PBVS:
         # Create target pose with proper orientation
         # Convert grasp pitch from degrees to radians with mapping:
         # 0° (level) -> π/2 (1.57 rad), 90° (top-down) -> π (3.14 rad)
-        pitch_radians = 1.57 + (self.grasp_pitch_degrees * np.pi / 180.0 / 2.0)
+        pitch_radians = 1.57 + np.radians(self.grasp_pitch_degrees)
 
         # Convert euler angles to quaternion using utility function
         euler = Vector3(0.0, pitch_radians, yaw_to_ee)  # roll=0, pitch=mapped, yaw=calculated
@@ -303,7 +306,6 @@ class PBVS:
     def compute_control(
         self,
         ee_pose: Pose,
-        new_detections: Optional[Detection3DArray] = None,
         grasp_distance: float = 0.15,
     ) -> Tuple[Optional[Vector3], Optional[Vector3], bool, bool, Optional[Pose]]:
         """
@@ -311,7 +313,6 @@ class PBVS:
 
         Args:
             ee_pose: Current end-effector pose
-            new_detections: Optional new detections for target tracking
             grasp_distance: Distance to maintain from target (meters)
 
         Returns:
@@ -330,20 +331,6 @@ class PBVS:
         ):
             return None, None, False, False, None
 
-        # Try to update target tracking if new detections provided
-        # Continue with last known pose even if tracking is lost
-        target_tracked = False
-        if new_detections is not None:
-            if self.update_target_tracking(new_detections):
-                target_tracked = True
-            else:
-                target_tracked = False
-
-        # Update target grasp pose
-        if not self.current_target:
-            logger.info("No current target")
-            return None, None, False, False, None
-
         # Update target grasp pose with provided distance
         self._update_target_grasp_pose(ee_pose, grasp_distance)
 
@@ -360,22 +347,24 @@ class PBVS:
             )
 
         # Check if target reached using our separate function
-        target_reached = self.is_target_reached(ee_pose, grasp_distance)
+        target_reached = self.is_target_reached(ee_pose)
 
         # Return appropriate values based on control mode
         if self.direct_ee_control:
             # Direct control mode
             if self.target_grasp_pose:
                 self.last_target_reached = target_reached
-                return None, None, target_reached, target_tracked, self.target_grasp_pose
+                # Return has_target=True since we have a target
+                return None, None, target_reached, True, self.target_grasp_pose
             else:
-                return None, None, False, target_tracked, None
+                return None, None, False, True, None
         else:
             # Velocity control mode - use controller
             velocity_cmd, angular_velocity_cmd, controller_reached = (
                 self.controller.compute_control(ee_pose, self.target_grasp_pose)
             )
-            return velocity_cmd, angular_velocity_cmd, target_reached, target_tracked, None
+            # Return has_target=True since we have a target, regardless of tracking status
+            return velocity_cmd, angular_velocity_cmd, target_reached, True, None
 
     def create_status_overlay(
         self,
