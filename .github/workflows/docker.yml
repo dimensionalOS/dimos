@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   check-changes:
-    runs-on: [self-hosted, Linux]
+    runs-on: dimos-runner-ubuntu-2204
     outputs:
       ros:    ${{ steps.filter.outputs.ros }}
       python: ${{ steps.filter.outputs.python }}

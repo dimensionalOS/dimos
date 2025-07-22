@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   pre-commit:
-    runs-on: self-hosted
+    runs-on: dimos-runner-ubuntu-2204
     steps:
     - name: Fix permissions
       run: |
