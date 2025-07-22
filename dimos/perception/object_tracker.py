@@ -68,10 +68,22 @@ class ObjectTrackingStream:
                 K=K, camera_pitch=camera_pitch, camera_height=camera_height
             )
 
-        # Initialize depth model
-        self.depth_model = Metric3D(gt_depth_scale)
-        if camera_intrinsics is not None:
-            self.depth_model.update_intrinsic(camera_intrinsics)
+        # Initialize depth model with error handling
+        try:
+            self.depth_model = Metric3D(gt_depth_scale)
+            if camera_intrinsics is not None:
+                self.depth_model.update_intrinsic(camera_intrinsics)
+        except RuntimeError as e:
+            print(f"Error: Failed to initialize Metric3D depth model: {e}")
+            if "CUDA" in str(e):
+                print("This appears to be a CUDA initialization error. Please check:")
+                print("- CUDA is properly installed")
+                print("- GPU drivers are up to date")
+                print("- CUDA_VISIBLE_DEVICES environment variable is set correctly")
+            raise  # Re-raise the exception to fail initialization
+        except Exception as e:
+            print(f"Error: Unexpected error initializing Metric3D depth model: {e}")
+            raise
 
     def track(self, bbox, frame=None, distance=None, size=None):
         """
