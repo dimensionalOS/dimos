@@ -49,17 +49,13 @@ class TorsoBrige(Module):
     def _on_joint_state(self, msg: JointState):
         print(f"[TorsoBrige] Received twist: {msg}")
         # take the six floats, format: <lx,ly,lz,ax,ay,az>
-        cmd = (
-            f"<{msg.header.stamp.sec},"
-            f"{msg.name[2]},"
-            f"{msg.position[2]}>"
-        )
-        #check if the position has changed and if so, send the command
+        cmd = f"<{msg.header.stamp.sec},{msg.name[2]},{msg.position[2]}>"
+        # check if the position has changed and if so, send the command
         if msg.position[2] != self.last_position:
             self.ser.write(cmd.encode("ascii"))
             print(f"[TorsoBrige] Sent to serial: {cmd}")
             self.last_position = msg.position[2]
-    
+
         # mirror your pc_echo.py’s sleep to let Arduino respond
         time.sleep(0.05)
 
