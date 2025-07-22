@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import time
+from abc import abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, TypeVar
@@ -22,9 +23,6 @@ from typing import Optional, TypeVar
 import dimos_lcm
 import numpy as np
 import pytest
-
-# import tf_lcm_py as tf
-from ABC import abstractmethod
 
 import lcm
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
@@ -54,7 +52,7 @@ class TFSpec(Service[CONFIG]):
 
 
 @dataclass
-class TFConfig:
+class TFConfig(LCMConfig):
     topic: str = "/tf"
     buffer_size: float = 10.0  # seconds
     rate_limit: float = 10.0  # Hz
@@ -63,7 +61,7 @@ class TFConfig:
 
 @dataclass
 class GenericTFConfig(TFConfig):
-    pubsub: PubSub
+    pubsub: PubSub = None
 
 
 class GenericTF(TFSpec[TFConfig]):
@@ -92,6 +90,7 @@ class GenericTF(TFSpec[TFConfig]):
     def stop(): ...
 
 
+# this doesn't work due to tf_lcm_py package
 class TFLCM(LCMService, TFSpec[TFConfig]):
     """A service for managing and broadcasting transforms using LCM.
     This is not a separete module, You can include this in your module
@@ -109,6 +108,9 @@ class TFLCM(LCMService, TFSpec[TFConfig]):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
+
+        import tf_lcm_py as tf
+
         self.l = tf.LCM()
         self.buffer = tf.Buffer(self.config.buffer_size)
         self.listener = tf.TransformListener(self.l, self.buffer)

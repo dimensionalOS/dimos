@@ -20,13 +20,13 @@ import pytest
 
 import lcm
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Transform, Vector3
-from dimos.robot.module.tf import TF, TFConfig
 
 
 @pytest.mark.tool
 def test_tf_broadcast_and_query():
     """Test TF broadcasting and querying between two TF instances.
     If you run foxglove-bridge this will show up in the UI"""
+    from dimos.robot.module.tf import TF, TFConfig
 
     broadcaster = TF()
     querier = TF()

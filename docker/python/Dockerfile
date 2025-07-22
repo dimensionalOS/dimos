@@ -29,7 +29,8 @@ RUN apt-get install -y \
     qtchooser \
     qt5-qmake \
     qtbase5-dev-tools \
-    supervisor
+    supervisor \
+    liblcm-dev
 
 # Fix distutils-installed packages that block pip upgrades
 RUN apt-get purge -y python3-blinker python3-sympy python3-oauthlib || true
