@@ -214,30 +214,29 @@ class PiperArm:
         effort = gripper_msg.gripper_state.grippers_effort / 1000.0  # Convert from SDK units to N/m
         return angle_degrees, effort
 
-    def close_gripper(self, commanded_effort: float = 0.25) -> Tuple[bool, bool]:
+    def close_gripper(self, commanded_effort: float = 0.25) -> None:
         """
-        Close the gripper and check if an object is grasped.
+        Close the gripper.
 
         Args:
             commanded_effort: Effort to use when closing gripper (default 0.25 N/m)
-
-        Returns:
-            Tuple of (gripper_closed, object_grasped) where:
-                - gripper_closed: True if gripper reached near-zero position
-                - object_grasped: True if effort > 80% of commanded effort (object detected)
         """
         # Command gripper to close (0.0 position)
         self.cmd_gripper_ctrl(0.0, effort=commanded_effort)
+        logger.info("Closing gripper")
 
-        # Wait for gripper to close
-        time.sleep(1.0)
+    def gripper_object_detected(self, commanded_effort: float = 0.25) -> bool:
+        """
+        Check if an object is detected in the gripper based on effort feedback.
 
+        Args:
+            commanded_effort: The effort that was used when closing gripper (default 0.25 N/m)
+
+        Returns:
+            True if object is detected in gripper, False otherwise
+        """
         # Get gripper feedback
         angle_degrees, actual_effort = self.get_gripper_feedback()
-
-        # Check if gripper is closed (angle close to 0 within threshold)
-        angle_threshold = 0.02  # m
-        gripper_closed = abs(angle_degrees) < angle_threshold
 
         # Check if object is grasped (effort > 80% of commanded effort)
         effort_threshold = 0.8 * commanded_effort
@@ -248,7 +247,7 @@ class PiperArm:
         else:
             logger.info(f"No object detected (effort: {actual_effort:.3f} N/m)")
 
-        return gripper_closed, object_present
+        return object_present
 
     def resetArm(self):
         self.arm.MotionCtrl_1(0x02, 0, 0)
