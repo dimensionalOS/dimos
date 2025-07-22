@@ -16,6 +16,10 @@ jobs:
       tests:  ${{ steps.filter.outputs.tests }}
       branch-tag: ${{ steps.set-tag.outputs.branch_tag }}
     steps:
+      - name: Fix permissions
+        run: |
+          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+          
       - uses: actions/checkout@v4
       - id: filter
         uses: dorny/paths-filter@v3
