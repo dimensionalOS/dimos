@@ -15,6 +15,7 @@ import random
 import threading
 import time
 import serial
+import argparse
 
 import pytest
 
@@ -28,17 +29,18 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 dev_serial = "/dev/ttyUSB0"
 
 
-class TorsoBrige(Module):
+class SerialBrige(Module):
     joint_state: In[JointState] = None
     pose_state: Out[Pose] = None
 
     def __init__(
-        self, port: str = dev_serial, baud: int = 115200, timeout: float = 0.1, *args, **kwargs
+        self, port: str = dev_serial, baud: int = 115200, timeout: float = 0.1, joint_name: str = None, *args, **kwargs
     ):
-        print(f"Initializing TorsoBrige with port {port} and baud {baud}")
+        print(f"Initializing SerialBrige with port {port} and baud {baud} for joint {joint_name}")
         super().__init__(*args, **kwargs)
         self.ser = serial.Serial(port, baud, timeout=timeout)
         self.last_position = None
+        self.joint_name = joint_name
 
     @rpc
     def start(self):
@@ -47,19 +49,23 @@ class TorsoBrige(Module):
         print(f"Subscribed to {self.joint_state}")
 
     def _on_joint_state(self, msg: JointState):
-        print(f"[TorsoBrige] Received twist: {msg}")
-        # take the six floats, format: <lx,ly,lz,ax,ay,az>
+        print(f"[SerialBrige] Received joint state: {msg}")
+        if self.joint_name not in msg.name:
+            print(f"[SerialBrige] Joint name {self.joint_name} not found in message names: {msg.name}")
+            return
+        idx = msg.name.index(self.joint_name)
+        position = msg.position[idx]
+        # Format: <sec,joint_name,position>
         cmd = (
             f"<{msg.header.stamp.sec},"
-            f"{msg.name[2]},"
-            f"{msg.position[2]}>"
+            f"{self.joint_name},"
+            f"{position}>"
         )
-        #check if the position has changed and if so, send the command
-        if msg.position[2] != self.last_position:
+        # Check if the position has changed and if so, send the command
+        if position != self.last_position:
             self.ser.write(cmd.encode("ascii"))
-            print(f"[TorsoBrige] Sent to serial: {cmd}")
-            self.last_position = msg.position[2]
-    
+            print(f"[SerialBrige] Sent to serial: {cmd}")
+            self.last_position = position
         # mirror your pc_echo.py’s sleep to let Arduino respond
         time.sleep(0.05)
 
@@ -84,21 +90,25 @@ class TorsoBrige(Module):
             self.pose_state.publish(cp)
 
 
-def TestTorsoBridge():
+def TestSerialBridge(port, joint_name):
     lcmservice.autoconf()
     dimos = core.start(2)
 
-    torso = dimos.deploy(TorsoBrige, port=dev_serial, baud=115200)
+    torso = dimos.deploy(SerialBrige, port=port, baud=115200, joint_name=joint_name)
 
     torso.pose_state.transport = core.LCMTransport("/pose", Pose)
     torso.joint_state.transport = core.LCMTransport("/joint_states", JointState)
 
     torso.start()
-    print("TorsoBridge started")
+    print("SerialBridge started")
 
     while True:
         time.sleep(1)
 
 
 if __name__ == "__main__":
-    TestTorsoBridge()
+    parser = argparse.ArgumentParser(description="Serial bridge for robot joint control.")
+    parser.add_argument("--port", type=str, default=dev_serial, help="Serial device path (e.g. /dev/ttyUSB0)")
+    parser.add_argument("--joint", type=str, required=True, help="Joint name to control (must match JointState name)")
+    args = parser.parse_args()
+    TestSerialBridge(args.port, args.joint)
