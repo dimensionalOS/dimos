@@ -19,18 +19,20 @@ import time
 import pytest
 
 import lcm
-from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Transform, Vector3
 from dimos.robot.module.tf import TF, TFConfig
 
 
 def test_tf_broadcast_and_query():
-    """Test TF broadcasting and querying between two TF instances."""
+    """Test TF broadcasting and querying between two TF instances.
+    If you run foxglove-bridge this will show up in the UI"""
 
     broadcaster = TF()
     querier = TF()
 
     # Create a transform from world to robot
     current_time = time.time()
+
     world_to_robot = Transform(
         translation=Vector3(1.0, 2.0, 3.0),
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity rotation
@@ -62,11 +64,20 @@ def test_tf_broadcast_and_query():
         ts=current_time,
     )
 
+    random_object_in_view = Pose(
+        position=Vector3(1.0, 0.0, 0.0),
+    )
+
     broadcaster.send(robot_to_sensor)
     time.sleep(0.05)
 
     # Should be able to query the full chain
     assert querier.can_transform("world", "sensor", current_time)
+
+    t = querier.lookup("world", "sensor")
+    print("FOUND T", t)
+
+    # random_object_in_view.find_transform()
 
     # Stop services
     broadcaster.stop()

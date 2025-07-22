@@ -17,20 +17,39 @@
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TypeVar
 
 import dimos_lcm
 import numpy as np
 import pytest
 import tf_lcm_py as tf
+from ABC import abstractmethod
 
 import lcm
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.tf2_msgs import TFMessage
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService, Service
 
-print("TF LIB", tf)
+CONFIG = TypeVar("CONFIG")
+
+
+class TFSpec(Service[CONFIG]):
+    @abstractmethod
+    def send(self, *args: Transform) -> None: ...
+
+    @abstractmethod
+    def send_static(self, *args: Transform) -> None: ...
+
+    @abstractmethod
+    def lookup(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: Optional[float] = None,
+        time_tolerance: Optional[float] = None,
+    ): ...
 
 
 @dataclass
@@ -41,7 +60,38 @@ class TFConfig:
     autostart: bool = True
 
 
-class TF(Service[TFConfig]):
+@dataclass
+class GenericTFConfig(TFConfig):
+    pubsub: PubSub
+
+
+class GenericTF(TFSpec[TFConfig]):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if self.config.autostart:
+            self.start()
+
+    def start():
+        self.pubsub.subscribe(self.topic, self.receive_transform)
+
+    def receive_transform(self, msg: TFMessage, topic: Topic) -> None: ...
+
+    def send(self, *args: Transform) -> None: ...
+
+    def send_static(self, *args: Transform) -> None: ...
+
+    def lookup(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: Optional[float] = None,
+        time_tolerance: Optional[float] = None,
+    ): ...
+
+    def stop(): ...
+
+
+class TFLCM(LCMService, TFSpec[TFConfig]):
     """A service for managing and broadcasting transforms using LCM.
     This is not a separete module, You can include this in your module
     if you need to access transforms.
