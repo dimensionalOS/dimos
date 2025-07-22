@@ -34,7 +34,13 @@ class SerialBrige(Module):
     pose_state: Out[Pose] = None
 
     def __init__(
-        self, port: str = dev_serial, baud: int = 115200, timeout: float = 0.1, joint_name: str = None, *args, **kwargs
+        self,
+        port: str = dev_serial,
+        baud: int = 115200,
+        timeout: float = 0.1,
+        joint_name: str = None,
+        *args,
+        **kwargs,
     ):
         print(f"Initializing SerialBrige with port {port} and baud {baud} for joint {joint_name}")
         super().__init__(*args, **kwargs)
@@ -51,16 +57,14 @@ class SerialBrige(Module):
     def _on_joint_state(self, msg: JointState):
         print(f"[SerialBrige] Received joint state: {msg}")
         if self.joint_name not in msg.name:
-            print(f"[SerialBrige] Joint name {self.joint_name} not found in message names: {msg.name}")
+            print(
+                f"[SerialBrige] Joint name {self.joint_name} not found in message names: {msg.name}"
+            )
             return
         idx = msg.name.index(self.joint_name)
         position = msg.position[idx]
         # Format: <sec,joint_name,position>
-        cmd = (
-            f"<{msg.header.stamp.sec},"
-            f"{self.joint_name},"
-            f"{position}>"
-        )
+        cmd = f"<{msg.header.stamp.sec},{self.joint_name},{position}>"
         # Check if the position has changed and if so, send the command
         if position != self.last_position:
             self.ser.write(cmd.encode("ascii"))
@@ -108,7 +112,14 @@ def TestSerialBridge(port, joint_name):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Serial bridge for robot joint control.")
-    parser.add_argument("--port", type=str, default=dev_serial, help="Serial device path (e.g. /dev/ttyUSB0)")
-    parser.add_argument("--joint", type=str, required=True, help="Joint name to control (must match JointState name)")
+    parser.add_argument(
+        "--port", type=str, default=dev_serial, help="Serial device path (e.g. /dev/ttyUSB0)"
+    )
+    parser.add_argument(
+        "--joint",
+        type=str,
+        required=True,
+        help="Joint name to control (must match JointState name)",
+    )
     args = parser.parse_args()
     TestSerialBridge(args.port, args.joint)
