@@ -23,43 +23,49 @@ from dimos.core import Module, In, Out, rpc
 from dimos.protocol.service.lcmservice import autoconf
 from dimos.msgs.geometry_msgs import Pose, Vector3, Twist
 import dimos.protocol.service.lcmservice as lcmservice
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 dev_serial = "/dev/ttyUSB0"
 
 
 class TorsoBrige(Module):
-    twist_cmd: In[Twist] = None
+    joint_state: In[JointState] = None
     pose_state: Out[Pose] = None
 
     def __init__(
-        self, port: str = dev_serial, baud: int = 9600, timeout: float = 0.1, *args, **kwargs
+        self, port: str = dev_serial, baud: int = 115200, timeout: float = 0.1, *args, **kwargs
     ):
+        print(f"Initializing TorsoBrige with port {port} and baud {baud}")
         super().__init__(*args, **kwargs)
         self.ser = serial.Serial(port, baud, timeout=timeout)
+        self.last_position = None
 
     @rpc
     def start(self):
         # subscribe to incoming LCM Twist messages
-        self.twist_cmd.subscribe(self._on_twist)
+        self.joint_state.subscribe(self._on_joint_state)
+        print(f"Subscribed to {self.joint_state}")
 
-    def _on_twist(self, msg: Twist):
+    def _on_joint_state(self, msg: JointState):
         print(f"[TorsoBrige] Received twist: {msg}")
         # take the six floats, format: <lx,ly,lz,ax,ay,az>
         cmd = (
-            f"<{msg.linear.x:.3f},"
-            f"{msg.linear.y:.3f},"
-            f"{msg.linear.z:.3f},"
-            f"{msg.angular.x:.3f},"
-            f"{msg.angular.y:.3f},"
-            f"{msg.angular.z:.3f}>"
+            f"<{msg.header.stamp.sec},"
+            f"{msg.name[2]},"
+            f"{msg.position[2]}>"
         )
-        self.ser.write(cmd.encode("ascii"))
-        print(f"[TorsoBrige] Sent to serial: {cmd}")
+        #check if the position has changed and if so, send the command
+        if msg.position[2] != self.last_position:
+            self.ser.write(cmd.encode("ascii"))
+            print(f"[TorsoBrige] Sent to serial: {cmd}")
+            self.last_position = msg.position[2]
+    
         # mirror your pc_echo.py’s sleep to let Arduino respond
         time.sleep(0.05)
 
     def _reader(self):
         while True:
+            print("Reading from serial")
             line = self.ser.readline()
             if not line:
                 continue
@@ -82,10 +88,10 @@ def TestTorsoBridge():
     lcmservice.autoconf()
     dimos = core.start(2)
 
-    torso = dimos.deploy(TorsoBrige, port=dev_serial, baud=9600)
+    torso = dimos.deploy(TorsoBrige, port=dev_serial, baud=115200)
 
     torso.pose_state.transport = core.LCMTransport("/pose", Pose)
-    torso.twist_cmd.transport = core.LCMTransport("/cmd_vel", Twist)
+    torso.joint_state.transport = core.LCMTransport("/joint_states", JointState)
 
     torso.start()
     print("TorsoBridge started")
