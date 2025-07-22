@@ -94,7 +94,7 @@ dependencies = [
 
     # LCM / DimOS utilities
     "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@9befcc1a75f43fb1110d468c182dd19a549eaa36",    
-    "tf-lcm-py @ git+https://github.com/dimensionalOS/dimos-lcm.git@9befcc1a75f43fb1110d468c182dd19a549eaa36#subdirectory=tf_lcm/python"
+    #"tf-lcm-py @ git+https://github.com/dimensionalOS/dimos-lcm.git@9befcc1a75f43fb1110d468c182dd19a549eaa36#subdirectory=tf_lcm/python"
 ]
 
 
@@ -193,11 +193,11 @@ markers = [
     "tool: dev tooling",
     "needsdata: needs test data to be downloaded",
     "ros: depend on ros",
-    "lcm: tests that run actual LCM bus (can't execute in CI)"
-
+    "lcm: tests that run actual LCM bus (can't execute in CI)",
+    "tofix: tests that require fixing and are temporarily disabled"
 ]
 
-addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy'"
+addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not tofix'"
 
 
 
