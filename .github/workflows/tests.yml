@@ -42,7 +42,10 @@ jobs:
       image: ghcr.io/dimensionalos/${{ inputs.dev-image }}
 
     steps:
-
+      - name: Fix permissions
+        run: |
+          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+          
       - uses: actions/checkout@v4
         
       - name: Run tests
