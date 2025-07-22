@@ -17,17 +17,17 @@
 Test for foxglove bridge import and basic functionality
 """
 
-import pytest
 import threading
 import time
 import warnings
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="websockets.server")
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="websockets.legacy")
 
 
-@pytest.mark.tofix
 def test_foxglove_bridge_import():
     """Test that the foxglove bridge can be imported successfully."""
     try:
@@ -38,7 +38,6 @@ def test_foxglove_bridge_import():
         pytest.fail(f"Failed to import foxglove bridge: {e}")
 
 
-@pytest.mark.tofix
 def test_foxglove_bridge_runner_init():
     """Test that LcmFoxgloveBridgeRunner can be initialized with default parameters."""
     try:
@@ -55,7 +54,6 @@ def test_foxglove_bridge_runner_init():
         pytest.fail(f"Failed to initialize LcmFoxgloveBridgeRunner: {e}")
 
 
-@pytest.mark.tofix
 def test_foxglove_bridge_runner_params():
     """Test that LcmFoxgloveBridgeRunner accepts various parameter configurations."""
     try:
@@ -75,7 +73,6 @@ def test_foxglove_bridge_runner_params():
         pytest.fail(f"Failed to create runner with different configs: {e}")
 
 
-@pytest.mark.tofix
 def test_bridge_runner_has_run_method():
     """Test that the bridge runner has a run method that can be called."""
     try:

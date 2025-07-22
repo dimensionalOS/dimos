@@ -17,8 +17,6 @@ from dataclasses import dataclass
 
 import numpy as np
 import pytest
-import tf_lcm_py
-from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.tf2_msgs import TFMessage
@@ -27,7 +25,11 @@ from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 
 # Publishes a series of transforms representing a robot kinematic chain
 # to actual LCM messages, foxglove running in parallel should render this
+@pytest.mark.tofix
 def test_publish_transforms():
+    import tf_lcm_py
+    from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
+
     lcm = LCM(autoconf=True)
     lcm.start()
 
