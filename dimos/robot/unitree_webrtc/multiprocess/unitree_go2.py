@@ -19,7 +19,7 @@ import os
 import threading
 import time
 import warnings
-from typing import Callable
+from typing import Callable, Optional
 
 from reactivex import Observable
 from reactivex import operators as ops
@@ -27,9 +27,9 @@ from reactivex import operators as ops
 import dimos.core.colors as colors
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.foxglove_msgs import Arrow
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Twist, Vector3
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
@@ -99,7 +99,7 @@ class FakeRTC(UnitreeWebRTCConnection):
         print("move supressed", vector)
 
 
-class ConnectionModule(FakeRTC, Module):
+class ConnectionModule(UnitreeWebRTCConnection, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
@@ -162,7 +162,12 @@ class ControlModule(Module):
 
 
 class UnitreeGo2Light:
-    def __init__(self, ip: str):
+    def __init__(
+        self,
+        ip: str,
+        output_dir: str = os.path.join(os.getcwd(), "assets", "output"),
+    ):
+        self.output_dir = output_dir
         self.ip = ip
         self.dimos = None
         self.connection = None
@@ -172,6 +177,28 @@ class UnitreeGo2Light:
         self.frontier_explorer = None
         self.foxglove_bridge = None
         self.ctrl = None
+
+        # Spatial Memory Initialization ======================================
+        # Create output directory
+        os.makedirs(self.output_dir, exist_ok=True)
+        logger.info(f"Robot outputs will be saved to: {self.output_dir}")
+
+        # Initialize memory directories
+        self.memory_dir = os.path.join(self.output_dir, "memory")
+        os.makedirs(self.memory_dir, exist_ok=True)
+
+        # Initialize spatial memory properties
+        self.spatial_memory_dir = os.path.join(self.memory_dir, "spatial_memory")
+        self.spatial_memory_collection = "spatial_memory"
+        self.db_path = os.path.join(self.spatial_memory_dir, "chromadb_data")
+        self.visual_memory_path = os.path.join(self.spatial_memory_dir, "visual_memory.pkl")
+
+        # Create spatial memory directory
+        os.makedirs(self.spatial_memory_dir, exist_ok=True)
+        os.makedirs(self.db_path, exist_ok=True)
+
+        self.spatial_memory_module = None
+        # ==============================================================
 
     async def start(self):
         self.dimos = core.start(4)
@@ -225,6 +252,25 @@ class UnitreeGo2Light:
             get_robot_pos=self.connection.get_pos,
             set_local_nav=self.local_planner.navigate_path_local,
         )
+
+        # Spatial Memory Module ======================================
+        self.spatial_memory_module = self.dimos.deploy(
+            SpatialMemory,
+            collection_name=self.spatial_memory_collection,
+            db_path=self.db_path,
+            visual_memory_path=self.visual_memory_path,
+            output_dir=self.spatial_memory_dir,
+        )
+
+        # Connect video and odometry streams to spatial memory
+        self.spatial_memory_module.video.connect(self.connection.video)
+        self.spatial_memory_module.odom.connect(self.connection.odom)
+
+        # Start the spatial memory module
+        self.spatial_memory_module.start()
+
+        logger.info("Spatial memory module deployed and connected")
+        # ==============================================================
 
         # Configure AstarPlanner OUTPUT path: Out[Path] to /global_path LCM topic
         self.global_planner.path.transport = core.pLCMTransport("/global_path")
@@ -337,6 +383,15 @@ class UnitreeGo2Light:
         if not self.mapper:
             raise RuntimeError("Mapper not initialized. Call start() first.")
         return self.mapper.costmap
+
+    @property
+    def spatial_memory(self) -> Optional[SpatialMemory]:
+        """Get the robot's spatial memory module.
+
+        Returns:
+            SpatialMemory module instance or None if perception is disabled
+        """
+        return self.spatial_memory_module
 
     def get_video_stream(self, fps: int = 30) -> Observable:
         """Get the video stream with rate limiting and processing.
