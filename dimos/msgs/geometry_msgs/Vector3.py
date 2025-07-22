@@ -60,7 +60,7 @@ class Vector3(LCMVector3):
         return cls(struct.unpack(">ddd", buf.read(24)))
 
     def lcm_encode(self) -> bytes:
-        return super().encode()
+        return super().lcm_encode()
 
     @dispatch
     def __init__(self) -> None:

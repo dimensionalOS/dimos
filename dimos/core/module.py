@@ -23,12 +23,58 @@ from typing import (
 from dask.distributed import Actor, get_worker
 
 from dimos.core import colors
-from dimos.core.core import In, Out, RemoteIn, RemoteOut, T, Transport
+from dimos.core.core import In, Out, RemoteIn, RemoteOut, T, Transport, rpc
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 
 
+class RPCWrapper:
+    def __init__(self, actor_instance, actor_class):
+        self.rpc = LCMRPC()
+        self.actor_class = actor_class
+        self.remote_name = actor_class.__name__
+        self.actor_instance = actor_instance
+        self.rpcs = actor_class.rpcs.keys()
+        self.rpc.start()
+
+    def __reduce__(self):
+        # Return the class and the arguments needed to reconstruct the object
+        return (
+            self.__class__,
+            (self.actor_instance, self.actor_class),
+        )
+
+    # passthrough
+    def __getattr__(self, name: str):
+        # Check if accessing a known safe attribute to avoid recursion
+        if name in {
+            "__class__",
+            "__init__",
+            "__dict__",
+            "__getattr__",
+            "rpcs",
+            "remote_name",
+            "remote_instance",
+            "actor_instance",
+        }:
+            raise AttributeError(f"{name} is not found.")
+
+        if name in self.rpcs:
+            return lambda *args: self.rpc.call_sync(f"{self.remote_name}/{name}", args)
+
+        val = self.actor_instance.__getattr__(name)
+        # check if val is function
+        if callable(val):
+            raise AttributeError(
+                f"Cannot access method {self.remote_name}.{name}() directly. on Use @rpc decorator on this method if attending to call remotely."
+            )
+        return val
+
+
 class ModuleBase:
+    _module_init_called: bool = False
+
     def __init__(self, *args, **kwargs):
+        self._module_init_called = True
         try:
             get_worker()
             self.rpc = LCMRPC()
@@ -65,6 +111,7 @@ class ModuleBase:
             and hasattr(getattr(cls, name), "__rpc__")
         }
 
+    @rpc
     def io(self) -> str:
         def _box(name: str) -> str:
             return [
@@ -132,6 +179,10 @@ class DaskModule(ModuleBase):
         super().__init__(*args, **kwargs)
 
     def set_ref(self, ref) -> int:
+        if not self._module_init_called:
+            raise RuntimeError(
+                f"Module must be initialized\nmake sure to call super().__init__() in your {self.__class__.__name__} constructor"
+            )
         worker = get_worker()
         self.ref = ref
         self.worker = worker.name

@@ -14,17 +14,16 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
 import traceback
-import os
-from functools import cache
 from dataclasses import dataclass
+from functools import cache
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 import lcm
-
 from dimos.protocol.service.spec import Service
 
 
@@ -115,6 +114,7 @@ def autoconf() -> None:
         return
 
     print("System configuration required. Executing commands...")
+
     for cmd in commands_needed:
         print(f"  Running: {cmd}")
         try:
@@ -136,7 +136,7 @@ def autoconf() -> None:
 class LCMConfig:
     ttl: int = 0
     url: str | None = None
-    autoconf: bool = False
+    autoconf: bool = True
 
 
 @runtime_checkable

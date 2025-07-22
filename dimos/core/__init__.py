@@ -9,52 +9,13 @@ from rich.console import Console
 
 import dimos.core.colors as colors
 from dimos.core.core import In, Out, RemoteOut, rpc
-from dimos.core.module import Module, ModuleBase
+from dimos.core.module import Module, ModuleBase, RPCWrapper
 from dimos.core.transport import LCMTransport, ZenohTransport, pLCMTransport
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPC
 
 
 def patch_actor(actor, cls): ...
-
-
-class RPCClient:
-    def __init__(self, actor_instance, actor_class):
-        self.rpc = LCMRPC()
-        self.actor_class = actor_class
-        self.remote_name = actor_class.__name__
-        self.actor_instance = actor_instance
-        self.rpcs = actor_class.rpcs.keys()
-        self.rpc.start()
-
-    def __reduce__(self):
-        # Return the class and the arguments needed to reconstruct the object
-        return (
-            self.__class__,
-            (self.actor_instance, self.actor_class),
-        )
-
-    # passthrough
-    def __getattr__(self, name: str):
-        # Check if accessing a known safe attribute to avoid recursion
-        if name in {
-            "__class__",
-            "__init__",
-            "__dict__",
-            "__getattr__",
-            "rpcs",
-            "remote_name",
-            "remote_instance",
-            "actor_instance",
-        }:
-            raise AttributeError(f"{name} is not found.")
-
-        if name in self.rpcs:
-            return lambda *args: self.rpc.call_sync(f"{self.remote_name}/{name}", args)
-
-        # return super().__getattr__(name)
-        # Try to avoid recursion by directly accessing attributes that are known
-        return self.actor_instance.__getattr__(name)
 
 
 def patchdask(dask_client: Client):
@@ -75,7 +36,7 @@ def patchdask(dask_client: Client):
             worker = actor.set_ref(actor).result()
             print((f"deployed: {colors.green(actor)} @ {colors.blue('worker ' + str(worker))}"))
 
-            return RPCClient(actor, actor_class)
+            return RPCWrapper(actor, actor_class)
 
     dask_client.deploy = deploy
     return dask_client
