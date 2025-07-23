@@ -689,6 +689,9 @@ class ZEDModule(Module):
             # Publish depth image
             self._publish_depth_image(depth, header)
 
+            # Publish camera info periodically
+            self._publish_camera_info()
+
             # Publish pose if tracking enabled and valid
             if self.enable_tracking and pose_data and pose_data.get("valid", False):
                 self._publish_pose(pose_data, header)
@@ -822,7 +825,6 @@ class ZEDModule(Module):
             )
 
             self.camera_info.publish(msg)
-            logger.info("Published camera info")
 
         except Exception as e:
             logger.error(f"Error publishing camera info: {e}")
