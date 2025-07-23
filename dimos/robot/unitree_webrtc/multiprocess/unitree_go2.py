@@ -27,7 +27,6 @@ from reactivex import operators as ops
 import dimos.core.colors as colors
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.foxglove_msgs import Arrow
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub

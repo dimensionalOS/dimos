@@ -93,7 +93,7 @@ dependencies = [
     "dask[complete]==2025.5.1",
 
     # LCM / DimOS utilities
-    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@34f8fa016e31269912a8032ed4ae0ca71b94003b"    
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@ba3445d16be75a7ade6fb2a516b39a3e44319d5c"    
     # "tf-lcm-py @ git+https://github.com/dimensionalOS/dimos-lcm.git@9befcc1a75f43fb1110d468c182dd19a549eaa36#subdirectory=tf_lcm/python"
 ]
 
