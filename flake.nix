@@ -59,16 +59,6 @@
               pkgs.udev pkgs.portaudio pkgs.SDL2.dev pkgs.zlib pkgs.glib pkgs.gtk3
               pkgs.gdk-pixbuf pkgs.gobject-introspection pkgs.lcm]}:$LD_LIBRARY_PATH"
 
-            export PKG_CONFIG_PATH="${pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" [
-              pkgs.lcm pkgs.glib pkgs.gtk3 pkgs.cairo pkgs.pango pkgs.gdk-pixbuf
-              pkgs.libGL pkgs.libGLU pkgs.mesa pkgs.glfw pkgs.xorg.libX11
-              pkgs.xorg.libXi pkgs.xorg.libXext pkgs.xorg.libXrandr
-              pkgs.xorg.libXinerama pkgs.xorg.libXcursor pkgs.xorg.libXfixes
-              pkgs.xorg.libXrender pkgs.xorg.libXdamage pkgs.xorg.libXcomposite
-              pkgs.xorg.libxcb pkgs.xorg.libXScrnSaver pkgs.xorg.libXxf86vm
-              pkgs.SDL2 pkgs.zlib pkgs.portaudio pkgs.ffmpeg_6
-            ]}:$PKG_CONFIG_PATH"
-
             export DISPLAY=:0
 
             PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
