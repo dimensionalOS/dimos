@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Copyright 2025 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,84 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-from abc import abstractmethod
-from dataclasses import dataclass
+from typing import Optional, Union
 from datetime import datetime
-from typing import Optional, TypeVar
-
-import dimos_lcm
-import numpy as np
-import pytest
-
-import lcm
-from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
-from dimos.msgs.tf2_msgs import TFMessage
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
-from dimos.protocol.pubsub.spec import PubSub
+from dimos_lcm import tf
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService, Service
-
-CONFIG = TypeVar("CONFIG")
-
-
-class TFSpec(Service[CONFIG]):
-    @abstractmethod
-    def send(self, *args: Transform) -> None: ...
-
-    @abstractmethod
-    def send_static(self, *args: Transform) -> None: ...
-
-    @abstractmethod
-    def lookup(
-        self,
-        parent_frame: str,
-        child_frame: str,
-        time_point: Optional[float] = None,
-        time_tolerance: Optional[float] = None,
-    ): ...
-
-
-@dataclass
-class TFConfig(LCMConfig):
-    topic: str = "/tf"
-    buffer_size: float = 10.0  # seconds
-    rate_limit: float = 10.0  # Hz
-    autostart: bool = True
-
-
-@dataclass
-class GenericTFConfig(TFConfig):
-    pubsub: PubSub = None
-
-
-class GenericTF(TFSpec[TFConfig]):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        if self.config.autostart:
-            self.start()
-
-    def start():
-        self.pubsub.subscribe(self.topic, self.receive_transform)
-
-    def receive_transform(self, msg: TFMessage, topic: Topic) -> None: ...
-
-    def send(self, *args: Transform) -> None: ...
-
-    def send_static(self, *args: Transform) -> None: ...
-
-    def lookup(
-        self,
-        parent_frame: str,
-        child_frame: str,
-        time_point: Optional[float] = None,
-        time_tolerance: Optional[float] = None,
-    ): ...
-
-    def stop(): ...
+from dimos.protocol.tf.tf import TFSpec, TFConfig
+from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 
 
 # this doesn't work due to tf_lcm_py package
-class TFLCM(LCMService, TFSpec[TFConfig]):
+class TFLCM(TFSpec, LCMService):
     """A service for managing and broadcasting transforms using LCM.
     This is not a separete module, You can include this in your module
     if you need to access transforms.
@@ -104,7 +34,7 @@ class TFLCM(LCMService, TFSpec[TFConfig]):
     for each module.
     """
 
-    default_config = TFConfig
+    default_config = Union[TFConfig, LCMConfig]
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -139,7 +69,7 @@ class TFLCM(LCMService, TFSpec[TFConfig]):
             parent_frame,
             child_frame,
             datetime.now(),
-            lcm_module=dimos_lcm,
+            lcm_module=self.l,
         )
 
     def can_transform(
