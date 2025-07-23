@@ -12,14 +12,11 @@ RUN apt-get update && apt-get install -y \
     ccze \
     tmux \
     htop \
-    python-is-python3 \
     iputils-ping \
     wget \
     net-tools \
     sudo \
-    iproute2 # for LCM networking system config \
-    pre-commit \
-    liblcm-bin
+    pre-commit
 
 
 # Configure git to trust any directory (resolves dubious ownership issues in containers)

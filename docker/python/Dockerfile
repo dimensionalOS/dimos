@@ -4,6 +4,7 @@ FROM ${FROM_IMAGE}
 # Install basic requirements
 RUN apt-get update
 RUN apt-get install -y \
+    python-is-python3 \
     curl \
     gnupg2 \
     lsb-release \
@@ -30,6 +31,7 @@ RUN apt-get install -y \
     qt5-qmake \
     qtbase5-dev-tools \
     supervisor \
+    iproute2 # for LCM networking system config \
     liblcm-dev
 
 # Fix distutils-installed packages that block pip upgrades
