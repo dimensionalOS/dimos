@@ -37,7 +37,8 @@ package-lock.json
 # Ignore build artifacts
 dist/
 
-# Ignore data and modelfiles
-data/
+# Ignore data directory but keep .lfs subdirectory
+data/*
+!data/.lfs/
 FastSAM-x.pt
 yolo11n.pt
