@@ -90,16 +90,16 @@ class FakeRTC(UnitreeWebRTCConnection):
         return odom_store.stream()
 
     @functools.cache
-    def video_stream(self, freq_hz=0.5):
+    def video_stream(self):
         print("video stream start")
         video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
-        return video_store.stream().pipe(ops.sample(freq_hz))
+        return video_store.stream()
 
     def move(self, vector: Vector):
         print("move supressed", vector)
 
 
-class ConnectionModule(UnitreeWebRTCConnection, Module):
+class ConnectionModule(FakeRTC, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None

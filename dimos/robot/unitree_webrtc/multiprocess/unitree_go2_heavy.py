@@ -15,13 +15,15 @@
 """Heavy version of Unitree Go2 with GPU-required modules."""
 
 import asyncio
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 from reactivex import Observable
+from reactivex import operators as ops
 from reactivex.disposable import CompositeDisposable
 from reactivex.scheduler import ThreadPoolScheduler
 
+from dimos import core
 from dimos.perception.object_tracker import ObjectTrackingStream
 from dimos.perception.person_tracker import PersonTrackingStream
 from dimos.robot.unitree_webrtc.multiprocess.unitree_go2 import UnitreeGo2Light
@@ -94,11 +96,17 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
         self._video_stream = None
         self.new_memory = new_memory
 
-        # Tracking streams (initialized after start)
-        self.person_tracker = None
-        self.object_tracker = None
+        # Tracking modules (deployed after start)
+        self.person_tracker_module = None
+        self.object_tracker_module = None
+
+        # Tracking stream observables for backward compatibility
         self.person_tracking_stream = None
         self.object_tracking_stream = None
+
+        # References to tracker instances for skills
+        self.person_tracker = None
+        self.object_tracker = None
 
     async def start(self):
         """Start the robot modules and initialize heavy components."""
@@ -111,27 +119,60 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
         self._video_stream = self.get_video_stream(fps=10)  # Lower FPS for processing
 
         if self.enable_perception:
-            # Initialize person and object tracking
-            self.person_tracker = PersonTrackingStream(
-                camera_intrinsics=self.camera_intrinsics,
-                camera_pitch=self.camera_pitch,
-                camera_height=self.camera_height,
-            )
-            self.object_tracker = ObjectTrackingStream(
+            self.person_tracker_module = self.dimos.deploy(
+                PersonTrackingStream,
                 camera_intrinsics=self.camera_intrinsics,
                 camera_pitch=self.camera_pitch,
                 camera_height=self.camera_height,
             )
 
-            # Create tracking streams
-            self.person_tracking_stream = self.person_tracker.create_stream(self._video_stream)
-            self.object_tracking_stream = self.object_tracker.create_stream(self._video_stream)
+            # Configure person tracker LCM transport
+            self.person_tracker_module.video.connect(self.connection.video)
+            self.person_tracker_module.tracking_data.transport = core.pLCMTransport(
+                "/person_tracking"
+            )
 
-            logger.info("Person and object tracking initialized")
+            self.object_tracker_module = self.dimos.deploy(
+                ObjectTrackingStream,
+                camera_intrinsics=self.camera_intrinsics,
+                camera_pitch=self.camera_pitch,
+                camera_height=self.camera_height,
+            )
+
+            # Configure object tracker LCM transport
+            self.object_tracker_module.video.connect(self.connection.video)
+            self.object_tracker_module.tracking_data.transport = core.pLCMTransport(
+                "/object_tracking"
+            )
+
+            # Start the tracking modules
+            self.person_tracker_module.start()
+            self.object_tracker_module.start()
+
+            # Create Observable streams directly from the tracking outputs
+            logger.info("Creating Observable streams from tracking outputs")
+            self.person_tracking_stream = self.person_tracker_module.tracking_data.observable()
+            self.object_tracking_stream = self.object_tracker_module.tracking_data.observable()
+
+            self.person_tracking_stream.subscribe(
+                lambda x: logger.debug(
+                    f"Person tracking stream received: {type(x)} with {len(x.get('targets', []))} targets"
+                )
+            )
+            self.object_tracking_stream.subscribe(
+                lambda x: logger.debug(
+                    f"Object tracking stream received: {type(x)} with {len(x.get('targets', []))} targets"
+                )
+            )
+
+            # Create tracker references for skills to access RPC methods
+            self.person_tracker = self.person_tracker_module
+            self.object_tracker = self.object_tracker_module
+
+            logger.info("Person and object tracking modules deployed and connected")
         else:
             logger.info("Perception disabled or video stream unavailable")
 
-        # Initialize skills with robot reference
         if self.skill_library is not None:
             for skill in self.skill_library:
                 if isinstance(skill, AbstractRobotSkill):
@@ -177,10 +218,16 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
         if self.disposables:
             self.disposables.dispose()
 
-        # Clean up tracking streams
-        if self.person_tracker:
-            self.person_tracker = None
-        if self.object_tracker:
-            self.object_tracker = None
+        # Clean up tracking modules
+        if self.person_tracker_module:
+            self.person_tracker_module.cleanup()
+            self.person_tracker_module = None
+        if self.object_tracker_module:
+            self.object_tracker_module.cleanup()
+            self.object_tracker_module = None
+
+        # Clear references
+        self.person_tracker = None
+        self.object_tracker = None
 
         logger.info("UnitreeGo2Heavy cleanup completed")

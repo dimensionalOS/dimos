@@ -81,6 +81,7 @@ dependencies = [
     "clip @ git+https://github.com/openai/CLIP.git",
     "timm>=1.0.15",
     "lap>=0.5.12",
+    "opencv-contrib-python==4.10.0.84",
 
     # Mapping
     "open3d",
