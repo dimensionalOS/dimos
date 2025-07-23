@@ -28,14 +28,21 @@ import numpy as np
 
 from dimos.core import Module, In, Out, rpc
 from dimos_lcm.sensor_msgs import Image, CameraInfo
-from dimos_lcm.geometry_msgs import Vector3, Pose
+from dimos_lcm.geometry_msgs import Vector3, Pose, Point, Quaternion
 from dimos_lcm.vision_msgs import Detection3DArray, Detection2DArray
 
 from dimos.hardware.piper_arm import PiperArm
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.manipulation.visual_servoing.pbvs import PBVS
 from dimos.perception.common.utils import find_clicked_detection
-from dimos.manipulation.visual_servoing.utils import create_manipulation_visualization
+from dimos.manipulation.visual_servoing.utils import (
+    create_manipulation_visualization,
+    select_points_from_depth,
+    transform_points_3d,
+    update_target_grasp_pose,
+    apply_grasp_distance,
+    is_target_reached,
+)
 from dimos.utils.transform_utils import (
     pose_to_matrix,
     matrix_to_pose,
@@ -54,6 +61,8 @@ class GraspStage(Enum):
     PRE_GRASP = "pre_grasp"  # Target set, moving to pre-grasp position
     GRASP = "grasp"  # Executing final grasp
     CLOSE_AND_RETRACT = "close_and_retract"  # Close gripper and retract
+    PLACE = "place"  # Move to place position and release object
+    RETRACT = "retract"  # Retract from place position
 
 
 class Feedback:
@@ -72,7 +81,7 @@ class Feedback:
         current_camera_pose: Optional[Pose] = None,
         target_pose: Optional[Pose] = None,
         waiting_for_reach: bool = False,
-        grasp_successful: Optional[bool] = None,
+        success: Optional[bool] = None,
     ):
         self.grasp_stage = grasp_stage
         self.target_tracked = target_tracked
@@ -81,7 +90,7 @@ class Feedback:
         self.current_camera_pose = current_camera_pose
         self.target_pose = target_pose
         self.waiting_for_reach = waiting_for_reach
-        self.grasp_successful = grasp_successful
+        self.success = success
 
 
 class ManipulationModule(Module):
@@ -176,6 +185,7 @@ class ManipulationModule(Module):
         self.pick_success = None
         self.final_pregrasp_pose = None
         self.task_failed = False  # New variable for tracking task failure
+        self.overall_success = None  # Track overall pick and place success
 
         # Task control
         self.task_running = False
@@ -189,6 +199,11 @@ class ManipulationModule(Module):
 
         # Target selection
         self.target_click = None
+
+        # Place target position and object info
+        self.place_target_position = None
+        self.target_object_height = None
+        self.place_pose = None  # Store the calculated place pose for retraction
 
         # Move arm to observe position on init
         self.arm.gotoObserve()
@@ -274,11 +289,15 @@ class ManipulationModule(Module):
         key_code = ord(key) if len(key) == 1 else int(key)
 
         if key_code == ord("r"):
+            self.stop_event.set()
+            self.task_running = False
             self.reset_to_idle()
             return "reset"
         elif key_code == ord("s"):
             logger.info("SOFT STOP - Emergency stopping robot!")
             self.arm.softStop()
+            self.stop_event.set()
+            self.task_running = False
             return "stop"
         elif key_code == ord(" ") and self.pbvs and self.pbvs.target_grasp_pose:
             # Manual override - immediately transition to GRASP if in PRE_GRASP
@@ -304,13 +323,17 @@ class ManipulationModule(Module):
         return ""
 
     @rpc
-    def pick_and_place(self, target_x: int = None, target_y: int = None) -> Dict[str, Any]:
+    def pick_and_place(
+        self, target_x: int = None, target_y: int = None, place_x: int = None, place_y: int = None
+    ) -> Dict[str, Any]:
         """
         Start a pick and place task.
 
         Args:
             target_x: Optional X coordinate of target object
             target_y: Optional Y coordinate of target object
+            place_x: Optional X coordinate of place location
+            place_y: Optional Y coordinate of place location
 
         Returns:
             Dict with status and message
@@ -324,6 +347,45 @@ class ManipulationModule(Module):
         # Set target if coordinates provided
         if target_x is not None and target_y is not None:
             self.target_click = (target_x, target_y)
+
+        # Process place location if provided
+        if place_x is not None and self.latest_depth is not None:
+            # Select points around the place location from depth image
+            points_3d_camera = select_points_from_depth(
+                self.latest_depth,
+                (place_x, place_y),
+                self.camera_intrinsics,
+                radius=10,  # 10 pixel radius around place point
+            )
+
+            if points_3d_camera.size > 0:
+                # Get current camera transform to transform points to world frame
+                ee_pose = self.arm.get_ee_pose()
+                ee_transform = pose_to_matrix(ee_pose)
+                camera_transform = compose_transforms(ee_transform, self.T_ee_to_camera)
+
+                # Transform points from camera frame to world frame
+                points_3d_world = transform_points_3d(
+                    points_3d_camera,
+                    camera_transform,
+                    to_robot=True,  # Convert from optical to robot frame
+                )
+
+                # Average the 3D points to get place position
+                place_position = np.mean(points_3d_world, axis=0)
+
+                # Create place target pose with same orientation as current EE
+                # For now, just store the position - full implementation will come later
+                self.place_target_position = place_position
+                logger.info(
+                    f"Place target set at position: ({place_position[0]:.3f}, {place_position[1]:.3f}, {place_position[2]:.3f})"
+                )
+                logger.info("Note: Z-offset will be applied once target object is detected")
+            else:
+                logger.warning("No valid depth points found at place location")
+                self.place_target_position = None
+        else:
+            self.place_target_position = None
 
         # Reset task state
         self.task_failed = False
@@ -360,8 +422,8 @@ class ManipulationModule(Module):
                     continue
 
                 # Check if task is complete
-                if feedback.grasp_successful is not None:
-                    if feedback.grasp_successful:
+                if feedback.success is not None:
+                    if feedback.success:
                         logger.info("Pick and place completed successfully!")
                     else:
                         logger.warning("Pick and place failed - no object detected")
@@ -430,6 +492,8 @@ class ManipulationModule(Module):
         self.waiting_start_time = None
         self.pick_success = None
         self.final_pregrasp_pose = None
+        self.overall_success = None
+        self.place_pose = None
 
         self.arm.gotoObserve()
 
@@ -447,7 +511,9 @@ class ManipulationModule(Module):
             if self._check_reach_timeout():
                 return
 
-            reached = self.pbvs.is_target_reached(ee_pose)
+            reached = is_target_reached(
+                self.last_commanded_pose, ee_pose, self.pbvs.target_tolerance
+            )
 
             if reached:
                 self.waiting_for_reach = False
@@ -503,7 +569,10 @@ class ManipulationModule(Module):
             if self._check_reach_timeout():
                 return
 
-            if self.pbvs.is_target_reached(ee_pose) and not self.grasp_reached_time:
+            if (
+                is_target_reached(self.pbvs.target_grasp_pose, ee_pose, self.pbvs.target_tolerance)
+                and not self.grasp_reached_time
+            ):
                 self.grasp_reached_time = time.time()
                 self.waiting_start_time = None
 
@@ -552,10 +621,9 @@ class ManipulationModule(Module):
                 return
 
             # Check if reached retraction pose
-            original_target = self.pbvs.target_grasp_pose
-            self.pbvs.target_grasp_pose = self.final_pregrasp_pose
-            reached = self.pbvs.is_target_reached(ee_pose)
-            self.pbvs.target_grasp_pose = original_target
+            reached = is_target_reached(
+                self.final_pregrasp_pose, ee_pose, self.pbvs.target_tolerance
+            )
 
             if reached:
                 logger.info("Reached pre-grasp retraction position")
@@ -564,10 +632,17 @@ class ManipulationModule(Module):
                 logger.info(f"Grasp sequence completed")
                 if self.pick_success:
                     logger.info("Object successfully grasped!")
+                    # Transition to PLACE stage if place position is available
+                    if self.place_target_position is not None:
+                        logger.info("Transitioning to PLACE stage")
+                        self.grasp_stage = GraspStage.PLACE
+                    else:
+                        # No place position, just mark as overall success
+                        self.overall_success = True
                 else:
                     logger.warning("No object detected in gripper")
                     self.task_failed = True
-                # Don't reset to idle here - let the task loop handle it after detecting completion
+                    self.overall_success = False
         else:
             # Command retraction to pre-grasp
             logger.info("Retracting to pre-grasp position")
@@ -575,6 +650,80 @@ class ManipulationModule(Module):
             self.arm.close_gripper()
             self.waiting_for_reach = True
             self.waiting_start_time = time.time()
+
+    def execute_place(self):
+        """Execute place stage: move to place position and release object."""
+        ee_pose = self.arm.get_ee_pose()
+
+        if self.waiting_for_reach:
+            if self._check_reach_timeout():
+                return
+
+            # Check if reached place pose
+            place_pose = self.get_place_target_pose()
+            if place_pose:
+                reached = is_target_reached(place_pose, ee_pose, self.pbvs.target_tolerance)
+
+                if reached:
+                    logger.info("Reached place position, releasing gripper")
+                    self.arm.release_gripper()
+                    time.sleep(1.0)  # Give time for gripper to open
+
+                    # Store the place pose for retraction
+                    self.place_pose = place_pose
+
+                    # Transition to RETRACT stage
+                    logger.info("Transitioning to RETRACT stage")
+                    self.grasp_stage = GraspStage.RETRACT
+                    self.waiting_for_reach = False
+        else:
+            # Get place pose and command movement
+            place_pose = self.get_place_target_pose()
+            if place_pose:
+                logger.info("Moving to place position")
+                self.arm.cmd_ee_pose(place_pose, line_mode=True)
+                self.waiting_for_reach = True
+                self.waiting_start_time = time.time()
+            else:
+                logger.error("Failed to get place target pose")
+                self.task_failed = True
+                self.overall_success = False
+
+    def execute_retract(self):
+        """Execute retract stage: retract from place position."""
+        ee_pose = self.arm.get_ee_pose()
+
+        if self.waiting_for_reach:
+            if self._check_reach_timeout():
+                return
+
+            # Check if reached retract pose
+            if self.place_pose:
+                reached = is_target_reached(self.retract_pose, ee_pose, self.pbvs.target_tolerance)
+
+                if reached:
+                    logger.info("Reached retract position")
+                    # Return to observe position
+                    logger.info("Returning to observe position")
+                    self.arm.gotoObserve()
+                    self.arm.close_gripper()
+
+                    # Mark overall success
+                    self.overall_success = True
+                    logger.info("Pick and place completed successfully!")
+                    self.waiting_for_reach = False
+        else:
+            # Calculate and command retract pose
+            if self.place_pose:
+                self.retract_pose = apply_grasp_distance(self.place_pose, self.pregrasp_distance)
+                logger.info("Retracting from place position")
+                self.arm.cmd_ee_pose(self.retract_pose, line_mode=True)
+                self.waiting_for_reach = True
+                self.waiting_start_time = time.time()
+            else:
+                logger.error("No place pose stored for retraction")
+                self.task_failed = True
+                self.overall_success = False
 
     def capture_and_process(
         self,
@@ -610,6 +759,12 @@ class ManipulationModule(Module):
         )
         if clicked_3d and self.pbvs:
             self.pbvs.set_target(clicked_3d)
+
+            # Store target object height (z dimension)
+            if clicked_3d.bbox and clicked_3d.bbox.size:
+                self.target_object_height = clicked_3d.bbox.size.z
+                logger.info(f"Target object height: {self.target_object_height:.3f}m")
+
             logger.info(
                 f"Target selected: ID={clicked_3d.id}, pos=({clicked_3d.bbox.center.position.x:.3f}, {clicked_3d.bbox.center.position.y:.3f}, {clicked_3d.bbox.center.position.z:.3f})"
             )
@@ -653,6 +808,8 @@ class ManipulationModule(Module):
             GraspStage.PRE_GRASP: self.execute_pre_grasp,
             GraspStage.GRASP: self.execute_grasp,
             GraspStage.CLOSE_AND_RETRACT: self.execute_close_and_retract,
+            GraspStage.PLACE: self.execute_place,
+            GraspStage.RETRACT: self.execute_retract,
         }
         if self.grasp_stage in stage_handlers:
             stage_handlers[self.grasp_stage]()
@@ -670,7 +827,7 @@ class ManipulationModule(Module):
             current_camera_pose=camera_pose,
             target_pose=self.pbvs.target_grasp_pose if self.pbvs else None,
             waiting_for_reach=self.waiting_for_reach,
-            grasp_successful=self.pick_success,
+            success=self.overall_success,
         )
 
         # Create visualization only if task is running
@@ -724,6 +881,38 @@ class ManipulationModule(Module):
 
         # Check if all axes are below threshold
         return np.all(std_devs < self.pose_stabilization_threshold)
+
+    def get_place_target_pose(self) -> Optional[Pose]:
+        """Get the place target pose with z-offset applied based on object height."""
+        if self.place_target_position is None:
+            return None
+
+        # Create a copy of the place position
+        place_pos = self.place_target_position.copy()
+
+        # Apply z-offset if target object height is known
+        if self.target_object_height is not None:
+            z_offset = self.target_object_height / 2.0
+            place_pos[2] += z_offset + 0.05
+            logger.info(f"Applied z-offset of {z_offset:.3f}m to place position")
+
+        # Create place pose
+        place_center_pose = Pose(
+            Point(place_pos[0], place_pos[1], place_pos[2]), Quaternion(0.0, 0.0, 0.0, 1.0)
+        )
+
+        # Get current EE pose
+        ee_pose = self.arm.get_ee_pose()
+
+        # Use update_target_grasp_pose with no grasp distance and current pitch angle
+        place_pose = update_target_grasp_pose(
+            place_center_pose,
+            ee_pose,
+            grasp_distance=0.0,  # No grasp distance for placing
+            grasp_pitch_degrees=self.grasp_pitch_degrees,  # Use current grasp pitch
+        )
+
+        return place_pose
 
     def cleanup(self):
         """Clean up resources on module destruction."""

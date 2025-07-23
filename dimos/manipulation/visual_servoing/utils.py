@@ -13,13 +13,320 @@
 # limitations under the License.
 
 import numpy as np
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Union
 from dataclasses import dataclass
 
 from dimos_lcm.geometry_msgs import Pose, Vector3, Quaternion, Point
 from dimos_lcm.vision_msgs import Detection3D, Detection2D
 import cv2
 from dimos.perception.detection2d.utils import plot_results
+from dimos.perception.common.utils import project_2d_points_to_3d
+from dimos.utils.transform_utils import (
+    optical_to_robot_frame,
+    robot_to_optical_frame,
+    pose_to_matrix,
+    matrix_to_pose,
+    euler_to_quaternion,
+    compose_transforms,
+    yaw_towards_point,
+)
+
+
+def match_detection_by_id(
+    detection_3d: Detection3D, detections_3d: List[Detection3D], detections_2d: List[Detection2D]
+) -> Optional[Detection2D]:
+    """
+    Find the corresponding Detection2D for a given Detection3D.
+
+    Args:
+        detection_3d: The Detection3D to match
+        detections_3d: List of all Detection3D objects
+        detections_2d: List of all Detection2D objects (must be 1:1 correspondence)
+
+    Returns:
+        Corresponding Detection2D if found, None otherwise
+    """
+    for i, det_3d in enumerate(detections_3d):
+        if det_3d.id == detection_3d.id and i < len(detections_2d):
+            return detections_2d[i]
+    return None
+
+
+def transform_pose(
+    obj_pos: np.ndarray,
+    obj_orientation: np.ndarray,
+    transform_matrix: np.ndarray,
+    to_optical: bool = False,
+    to_robot: bool = False,
+) -> Pose:
+    """
+    Transform object pose with optional frame convention conversion.
+
+    Args:
+        obj_pos: Object position [x, y, z]
+        obj_orientation: Object orientation [roll, pitch, yaw] in radians
+        transform_matrix: 4x4 transformation matrix from camera frame to desired frame
+        to_optical: If True, input is in robot frame → convert result to optical frame
+        to_robot: If True, input is in optical frame → convert to robot frame first
+
+    Returns:
+        Object pose in desired frame as Pose
+    """
+    # Create object pose from input
+    # Convert euler angles to quaternion using utility function
+    euler_vector = Vector3(obj_orientation[0], obj_orientation[1], obj_orientation[2])
+    obj_orientation_quat = euler_to_quaternion(euler_vector)
+
+    input_pose = Pose(Point(obj_pos[0], obj_pos[1], obj_pos[2]), obj_orientation_quat)
+
+    # Apply input frame conversion based on flags
+    if to_robot:
+        # Input is in optical frame → convert to robot frame first
+        pose_for_transform = optical_to_robot_frame(input_pose)
+    else:
+        # Default or to_optical: use input pose as-is
+        pose_for_transform = input_pose
+
+    # Create transformation matrix from pose (relative to camera)
+    T_camera_object = pose_to_matrix(pose_for_transform)
+
+    # Use compose_transforms to combine transformations
+    T_desired_object = compose_transforms(transform_matrix, T_camera_object)
+
+    # Convert back to pose
+    result_pose = matrix_to_pose(T_desired_object)
+
+    # Apply output frame conversion based on flags
+    if to_optical:
+        # Input was robot frame → convert result to optical frame
+        desired_pose = robot_to_optical_frame(result_pose)
+    else:
+        # Default or to_robot: use result as-is
+        desired_pose = result_pose
+
+    return desired_pose
+
+
+def transform_points_3d(
+    points_3d: np.ndarray,
+    transform_matrix: np.ndarray,
+    to_optical: bool = False,
+    to_robot: bool = False,
+) -> np.ndarray:
+    """
+    Transform 3D points with optional frame convention conversion.
+    Applies the same transformation pipeline as transform_pose but for multiple points.
+
+    Args:
+        points_3d: Nx3 array of 3D points [x, y, z]
+        transform_matrix: 4x4 transformation matrix from camera frame to desired frame
+        to_optical: If True, input is in robot frame → convert result to optical frame
+        to_robot: If True, input is in optical frame → convert to robot frame first
+
+    Returns:
+        Nx3 array of transformed 3D points in desired frame
+    """
+    if points_3d.size == 0:
+        return np.zeros((0, 3), dtype=np.float32)
+
+    # Ensure points_3d is the right shape
+    points_3d = np.asarray(points_3d)
+    if points_3d.ndim == 1:
+        points_3d = points_3d.reshape(1, -1)
+
+    transformed_points = []
+
+    for point in points_3d:
+        # Create pose with identity orientation for each point
+        input_point_pose = Pose(
+            Point(point[0], point[1], point[2]),
+            Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
+        )
+
+        # Apply input frame conversion based on flags
+        if to_robot:
+            # Input is in optical frame → convert to robot frame first
+            pose_for_transform = optical_to_robot_frame(input_point_pose)
+        else:
+            # Default or to_optical: use input pose as-is
+            pose_for_transform = input_point_pose
+
+        # Create transformation matrix from point pose (relative to camera)
+        T_camera_point = pose_to_matrix(pose_for_transform)
+
+        # Use compose_transforms to combine transformations
+        T_desired_point = compose_transforms(transform_matrix, T_camera_point)
+
+        # Convert back to pose
+        result_pose = matrix_to_pose(T_desired_point)
+
+        # Apply output frame conversion based on flags
+        if to_optical:
+            # Input was robot frame → convert result to optical frame
+            desired_pose = robot_to_optical_frame(result_pose)
+        else:
+            # Default or to_robot: use result as-is
+            desired_pose = result_pose
+
+        transformed_point = [
+            desired_pose.position.x,
+            desired_pose.position.y,
+            desired_pose.position.z,
+        ]
+        transformed_points.append(transformed_point)
+
+    return np.array(transformed_points, dtype=np.float32)
+
+
+def select_points_from_depth(
+    depth_image: np.ndarray,
+    target_point: Tuple[int, int],
+    camera_intrinsics: Union[List[float], np.ndarray],
+    radius: int = 5,
+) -> np.ndarray:
+    """
+    Select points around a target point within a bounding box and project them to 3D.
+
+    Args:
+        depth_image: Depth image in meters (H, W)
+        target_point: (x, y) target point coordinates
+        radius: Half-width of the bounding box (so bbox size is radius*2 x radius*2)
+        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] list or 3x3 matrix
+
+    Returns:
+        Nx3 array of 3D points (X, Y, Z) in camera frame
+    """
+    x_target, y_target = target_point
+    height, width = depth_image.shape
+
+    # Define bounding box around target point
+    x_min = max(0, x_target - radius)
+    x_max = min(width, x_target + radius)
+    y_min = max(0, y_target - radius)
+    y_max = min(height, y_target + radius)
+
+    # Create coordinate grids for the bounding box (vectorized)
+    y_coords, x_coords = np.meshgrid(range(y_min, y_max), range(x_min, x_max), indexing="ij")
+
+    # Flatten to get all coordinate pairs
+    x_flat = x_coords.flatten()
+    y_flat = y_coords.flatten()
+
+    # Extract corresponding depth values using advanced indexing
+    depth_flat = depth_image[y_flat, x_flat]
+
+    # Create mask for valid depth values
+    valid_mask = (depth_flat > 0) & np.isfinite(depth_flat)
+
+    # Early exit if no valid points
+    if not np.any(valid_mask):
+        return np.zeros((0, 3), dtype=np.float32)
+
+    # Filter to get valid points and depths
+    points_2d = np.column_stack([x_flat[valid_mask], y_flat[valid_mask]]).astype(np.float32)
+    depth_values = depth_flat[valid_mask].astype(np.float32)
+
+    # Use the common utility function for 3D projection
+    points_3d = project_2d_points_to_3d(points_2d, depth_values, camera_intrinsics)
+
+    return points_3d
+
+
+def update_target_grasp_pose(
+    target_pose: Pose, ee_pose: Pose, grasp_distance: float = 0.0, grasp_pitch_degrees: float = 45.0
+) -> Optional[Pose]:
+    """
+    Update target grasp pose based on current target pose and EE pose.
+
+    Args:
+        target_pose: Target pose to grasp
+        ee_pose: Current end-effector pose
+        grasp_distance: Distance to maintain from target (pregrasp or grasp distance)
+        grasp_pitch_degrees: Grasp pitch angle in degrees (default 90° for top-down)
+
+    Returns:
+        Target grasp pose or None if target is invalid
+    """
+
+    # Get target position
+    target_pos = target_pose.position
+
+    # Calculate orientation pointing from target towards EE
+    yaw_to_ee = yaw_towards_point(target_pos, ee_pose.position)
+
+    # Create target pose with proper orientation
+    # Convert grasp pitch from degrees to radians with mapping:
+    # 0° (level) -> π/2 (1.57 rad), 90° (top-down) -> π (3.14 rad)
+    pitch_radians = 1.57 + np.radians(grasp_pitch_degrees)
+
+    # Convert euler angles to quaternion using utility function
+    euler = Vector3(0.0, pitch_radians, yaw_to_ee)  # roll=0, pitch=mapped, yaw=calculated
+    target_orientation = euler_to_quaternion(euler)
+
+    updated_pose = Pose(target_pos, target_orientation)
+
+    if grasp_distance > 0.0:
+        # Apply grasp distance
+        return apply_grasp_distance(updated_pose, grasp_distance)
+    else:
+        return updated_pose
+
+
+def apply_grasp_distance(target_pose: Pose, distance: float) -> Pose:
+    """
+    Apply grasp distance offset to target pose along its approach direction.
+
+    Args:
+        target_pose: Target grasp pose
+        distance: Distance to offset along the approach direction (meters)
+
+    Returns:
+        Target pose offset by the specified distance along its approach direction
+    """
+    # Convert pose to transformation matrix to extract rotation
+    T_target = pose_to_matrix(target_pose)
+    rotation_matrix = T_target[:3, :3]
+
+    # Define the approach vector based on the target pose orientation
+    # Assuming the gripper approaches along its local -z axis (common for downward grasps)
+    # You can change this to [1, 0, 0] for x-axis or [0, 1, 0] for y-axis based on your gripper
+    approach_vector_local = np.array([0, 0, -1])
+
+    # Transform approach vector to world coordinates
+    approach_vector_world = rotation_matrix @ approach_vector_local
+
+    # Apply offset along the approach direction
+    offset_position = Point(
+        target_pose.position.x + distance * approach_vector_world[0],
+        target_pose.position.y + distance * approach_vector_world[1],
+        target_pose.position.z + distance * approach_vector_world[2],
+    )
+
+    return Pose(offset_position, target_pose.orientation)
+
+
+def is_target_reached(target_pose: Pose, current_pose: Pose, tolerance: float = 0.01) -> bool:
+    """
+    Check if the target pose has been reached within tolerance.
+
+    Args:
+        target_pose: Target pose to reach
+        current_pose: Current pose (e.g., end-effector pose)
+        tolerance: Distance threshold for considering target reached (meters, default 0.01 = 1cm)
+
+    Returns:
+        True if target is reached within tolerance, False otherwise
+    """
+    if not target_pose:
+        return False
+
+    # Calculate position error
+    error_x = target_pose.position.x - current_pose.position.x
+    error_y = target_pose.position.y - current_pose.position.y
+    error_z = target_pose.position.z - current_pose.position.z
+
+    error_magnitude = np.sqrt(error_x**2 + error_y**2 + error_z**2)
+    return error_magnitude < tolerance
 
 
 @dataclass
@@ -291,6 +598,8 @@ def create_manipulation_visualization(
         "pre_grasp": (0, 255, 255),
         "grasp": (0, 255, 0),
         "close_and_retract": (255, 0, 255),
+        "place": (0, 150, 255),
+        "retract": (255, 150, 0),
     }.get(feedback.grasp_stage.value, (255, 255, 255))
 
     cv2.putText(
@@ -337,10 +646,10 @@ def create_manipulation_visualization(
             1,
         )
 
-    # Grasp result
-    if feedback.grasp_successful is not None:
-        result_text = "Grasp: SUCCESS" if feedback.grasp_successful else "Grasp: FAILED"
-        result_color = (0, 255, 0) if feedback.grasp_successful else (0, 0, 255)
+    # Overall result
+    if feedback.success is not None:
+        result_text = "Pick & Place: SUCCESS" if feedback.success else "Pick & Place: FAILED"
+        result_color = (0, 255, 0) if feedback.success else (0, 0, 255)
         cv2.putText(
             viz,
             result_text,
@@ -533,23 +842,3 @@ def visualize_detections_3d(
                 )
 
     return viz
-
-
-def match_detection_by_id(
-    detection_3d: Detection3D, detections_3d: List[Detection3D], detections_2d: List[Detection2D]
-) -> Optional[Detection2D]:
-    """
-    Find the corresponding Detection2D for a given Detection3D.
-
-    Args:
-        detection_3d: The Detection3D to match
-        detections_3d: List of all Detection3D objects
-        detections_2d: List of all Detection2D objects (must be 1:1 correspondence)
-
-    Returns:
-        Corresponding Detection2D if found, None otherwise
-    """
-    for i, det_3d in enumerate(detections_3d):
-        if det_3d.id == detection_3d.id and i < len(detections_2d):
-            return detections_2d[i]
-    return None

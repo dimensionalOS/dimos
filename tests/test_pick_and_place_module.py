@@ -49,6 +49,9 @@ logger = setup_logger("test_pick_and_place_module")
 mouse_click = None
 camera_mouse_click = None
 current_window = None
+pick_location = None  # Store pick location
+place_location = None  # Store place location
+place_mode = False  # Track if we're in place selection mode
 
 
 def mouse_callback(event, x, y, _flags, param):
@@ -120,7 +123,7 @@ class VisualizationNode:
 
     def run_visualization(self):
         """Run the visualization loop with user interaction."""
-        global mouse_click, camera_mouse_click
+        global mouse_click, camera_mouse_click, pick_location, place_location, place_mode
 
         # Setup windows
         cv2.namedWindow("Pick and Place")
@@ -131,21 +134,89 @@ class VisualizationNode:
 
         print("=== Pick and Place Module Test ===")
         print("Control mode: Module-based with LCM communication")
-        print("Click objects to select targets | 'r' - reset | 'q' - quit")
-        print("SAFETY CONTROLS:")
+        print("\nPICK AND PLACE WORKFLOW:")
+        print("1. Click on an object to select PICK location")
+        print("2. Click again to select PLACE location (auto pick & place)")
+        print("3. OR press 'p' after first click for pick-only task")
+        print("\nCONTROLS:")
+        print("  'p' - Execute pick-only task (after selecting pick location)")
+        print("  'r' - Reset everything")
+        print("  'q' - Quit")
         print("  's' - SOFT STOP (emergency stop)")
         print("  'g' - RELEASE GRIPPER (open gripper)")
         print("  'SPACE' - EXECUTE target pose (manual override)")
-        print("GRASP PITCH CONTROLS:")
+        print("\nGRASP PITCH CONTROLS:")
         print("  '↑' - Increase grasp pitch by 15° (towards top-down)")
         print("  '↓' - Decrease grasp pitch by 15° (towards level)")
-        print("  'p' - Start pick and place task")
-        print("\nNOTE: Click on objects in the Camera Feed window to select targets!")
+        print("\nNOTE: Click on objects in the Camera Feed window!")
 
         while self._running:
-            # Show camera feed (always available)
+            # Show camera feed with status overlay
             if self.latest_camera is not None:
-                cv2.imshow("Camera Feed", self.latest_camera)
+                display_image = self.latest_camera.copy()
+
+                # Add status text
+                status_text = ""
+                if pick_location is None:
+                    status_text = "Click to select PICK location"
+                    color = (0, 255, 0)
+                elif place_location is None:
+                    status_text = "Click to select PLACE location (or press 'p' for pick-only)"
+                    color = (0, 255, 255)
+                else:
+                    status_text = "Executing pick and place..."
+                    color = (255, 0, 255)
+
+                cv2.putText(
+                    display_image, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2
+                )
+
+                # Draw pick location marker if set
+                if pick_location is not None:
+                    # Simple circle marker
+                    cv2.circle(display_image, pick_location, 10, (0, 255, 0), 2)
+                    cv2.circle(display_image, pick_location, 2, (0, 255, 0), -1)
+
+                    # Simple label
+                    cv2.putText(
+                        display_image,
+                        "PICK",
+                        (pick_location[0] + 15, pick_location[1] + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 0),
+                        2,
+                    )
+
+                # Draw place location marker if set
+                if place_location is not None:
+                    # Simple circle marker
+                    cv2.circle(display_image, place_location, 10, (0, 255, 255), 2)
+                    cv2.circle(display_image, place_location, 2, (0, 255, 255), -1)
+
+                    # Simple label
+                    cv2.putText(
+                        display_image,
+                        "PLACE",
+                        (place_location[0] + 15, place_location[1] + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2,
+                    )
+
+                    # Draw simple arrow between pick and place
+                    if pick_location is not None:
+                        cv2.arrowedLine(
+                            display_image,
+                            pick_location,
+                            place_location,
+                            (255, 255, 0),
+                            2,
+                            tipLength=0.05,
+                        )
+
+                cv2.imshow("Camera Feed", display_image)
 
             # Show visualization if available
             if self.latest_viz is not None:
@@ -158,16 +229,32 @@ class VisualizationNode:
                     logger.info("Quit requested")
                     self._running = False
                     break
+                elif key == ord("r"):
+                    # Reset everything
+                    pick_location = None
+                    place_location = None
+                    place_mode = False
+                    logger.info("Reset pick and place selections")
+                    # Also send reset to manipulation module
+                    action = self.manipulation.handle_keyboard_command("r")
+                    if action:
+                        logger.info(f"Action: {action}")
                 elif key == ord("p"):
-                    # Start pick and place task
-                    if mouse_click:
-                        x, y = mouse_click
-                        result = self.manipulation.pick_and_place(x, y)
-                        logger.info(f"Pick and place task: {result}")
-                        mouse_click = None
+                    # Execute pick-only task if pick location is set
+                    if pick_location is not None:
+                        logger.info(f"Executing pick-only task at {pick_location}")
+                        result = self.manipulation.pick_and_place(
+                            pick_location[0],
+                            pick_location[1],
+                            None,  # No place location
+                            None,
+                        )
+                        logger.info(f"Pick task started: {result}")
+                        # Clear selection after sending
+                        pick_location = None
+                        place_location = None
                     else:
-                        result = self.manipulation.pick_and_place()
-                        logger.info(f"Pick and place task (no target): {result}")
+                        logger.warning("Please select a pick location first!")
                 else:
                     # Send keyboard command to manipulation module
                     if key in [82, 84]:  # Arrow keys
@@ -177,20 +264,57 @@ class VisualizationNode:
                     if action:
                         logger.info(f"Action: {action}")
 
-            # Handle mouse click from Camera Feed window
+            # Handle mouse clicks
             if camera_mouse_click:
-                # Start pick and place task with the clicked point
                 x, y = camera_mouse_click
-                result = self.manipulation.pick_and_place(x, y)
-                logger.info(f"Started pick and place at ({x}, {y}) from camera feed: {result}")
+
+                if pick_location is None:
+                    # First click - set pick location
+                    pick_location = (x, y)
+                    logger.info(f"Pick location set at ({x}, {y})")
+                elif place_location is None:
+                    # Second click - set place location and execute
+                    place_location = (x, y)
+                    logger.info(f"Place location set at ({x}, {y})")
+                    logger.info(f"Executing pick at {pick_location} and place at ({x}, {y})")
+
+                    # Start pick and place task with both locations
+                    result = self.manipulation.pick_and_place(
+                        pick_location[0], pick_location[1], x, y
+                    )
+                    logger.info(f"Pick and place task started: {result}")
+
+                    # Clear all points after sending mission
+                    pick_location = None
+                    place_location = None
+
                 camera_mouse_click = None
 
             # Handle mouse click from Pick and Place window (if viz is running)
             elif mouse_click and self.latest_viz is not None:
-                # If there's a pending click and we're not running a task, start one
+                # Similar logic for viz window clicks
                 x, y = mouse_click
-                result = self.manipulation.pick_and_place(x, y)
-                logger.info(f"Started pick and place at ({x}, {y}): {result}")
+
+                if pick_location is None:
+                    # First click - set pick location
+                    pick_location = (x, y)
+                    logger.info(f"Pick location set at ({x}, {y}) from viz window")
+                elif place_location is None:
+                    # Second click - set place location and execute
+                    place_location = (x, y)
+                    logger.info(f"Place location set at ({x}, {y}) from viz window")
+                    logger.info(f"Executing pick at {pick_location} and place at ({x}, {y})")
+
+                    # Start pick and place task with both locations
+                    result = self.manipulation.pick_and_place(
+                        pick_location[0], pick_location[1], x, y
+                    )
+                    logger.info(f"Pick and place task started: {result}")
+
+                    # Clear all points after sending mission
+                    pick_location = None
+                    place_location = None
+
                 mouse_click = None
 
             time.sleep(0.03)  # ~30 FPS

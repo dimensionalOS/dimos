@@ -40,13 +40,10 @@ from dimos_lcm.vision_msgs import (
     Point2D,
 )
 from dimos_lcm.std_msgs import Header
-from dimos.manipulation.visual_servoing.utils import estimate_object_depth, visualize_detections_3d
-from dimos.utils.transform_utils import (
-    optical_to_robot_frame,
-    pose_to_matrix,
-    matrix_to_pose,
-    euler_to_quaternion,
-    compose_transforms,
+from dimos.manipulation.visual_servoing.utils import (
+    estimate_object_depth,
+    visualize_detections_3d,
+    transform_pose,
 )
 
 logger = setup_logger("dimos.perception.detection3d")
@@ -180,8 +177,8 @@ class Detection3DProcessor:
                 obj_cam_orientation = pose.get(
                     "rotation", np.array([0.0, 0.0, 0.0])
                 )  # Default to no rotation
-                transformed_pose = self._transform_object_pose(
-                    obj_cam_pos, obj_cam_orientation, transform
+                transformed_pose = transform_pose(
+                    obj_cam_pos, obj_cam_orientation, transform, to_robot=True
                 )
                 center_pose = transformed_pose
             else:
@@ -239,41 +236,6 @@ class Detection3DProcessor:
                 detections_length=len(detections_2d), header=Header(), detections=detections_2d
             ),
         )
-
-    def _transform_object_pose(
-        self, obj_pos: np.ndarray, obj_orientation: np.ndarray, transform_matrix: np.ndarray
-    ) -> Pose:
-        """
-        Transform object pose from optical frame to desired frame using transformation matrix.
-
-        Args:
-            obj_pos: Object position in optical frame [x, y, z]
-            obj_orientation: Object orientation in optical frame [roll, pitch, yaw] in radians
-            transform_matrix: 4x4 transformation matrix from camera frame to desired frame
-
-        Returns:
-            Object pose in desired frame as Pose
-        """
-        # Create object pose in optical frame
-        # Convert euler angles to quaternion using utility function
-        euler_vector = Vector3(obj_orientation[0], obj_orientation[1], obj_orientation[2])
-        obj_orientation_quat = euler_to_quaternion(euler_vector)
-
-        obj_pose_optical = Pose(Point(obj_pos[0], obj_pos[1], obj_pos[2]), obj_orientation_quat)
-
-        # Transform object pose from optical frame to robot frame convention first
-        obj_pose_robot_frame = optical_to_robot_frame(obj_pose_optical)
-
-        # Create transformation matrix from object pose (relative to camera)
-        T_camera_object = pose_to_matrix(obj_pose_robot_frame)
-
-        # Use compose_transforms to combine transformations
-        T_desired_object = compose_transforms(transform_matrix, T_camera_object)
-
-        # Convert back to pose
-        desired_pose = matrix_to_pose(T_desired_object)
-
-        return desired_pose
 
     def visualize_detections(
         self,

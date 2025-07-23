@@ -26,6 +26,7 @@ import cv2
 import open3d as o3d
 from typing import List, Optional, Tuple, Union, Dict, Any
 from scipy.spatial import cKDTree
+from dimos.perception.common.utils import project_3d_points_to_2d
 
 
 def load_camera_matrix_from_yaml(
@@ -302,48 +303,6 @@ def filter_point_cloud_radius(
         return pcd, np.array([])
 
     return pcd.remove_radius_outlier(nb_points=nb_points, radius=radius)
-
-
-def project_3d_points_to_2d(
-    points_3d: np.ndarray, camera_intrinsics: Union[List[float], np.ndarray]
-) -> np.ndarray:
-    """
-    Project 3D points to 2D image coordinates using camera intrinsics.
-
-    Args:
-        points_3d: Nx3 array of 3D points (X, Y, Z)
-        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] list or 3x3 matrix
-
-    Returns:
-        Nx2 array of 2D image coordinates (u, v)
-    """
-    if len(points_3d) == 0:
-        return np.zeros((0, 2), dtype=np.int32)
-
-    # Filter out points with zero or negative depth
-    valid_mask = points_3d[:, 2] > 0
-    if not np.any(valid_mask):
-        return np.zeros((0, 2), dtype=np.int32)
-
-    valid_points = points_3d[valid_mask]
-
-    # Extract camera parameters
-    if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
-        fx, fy, cx, cy = camera_intrinsics
-    else:
-        fx = camera_intrinsics[0, 0]
-        fy = camera_intrinsics[1, 1]
-        cx = camera_intrinsics[0, 2]
-        cy = camera_intrinsics[1, 2]
-
-    # Project to image coordinates
-    u = (valid_points[:, 0] * fx / valid_points[:, 2]) + cx
-    v = (valid_points[:, 1] * fy / valid_points[:, 2]) + cy
-
-    # Round to integer pixel coordinates
-    points_2d = np.column_stack([u, v]).astype(np.int32)
-
-    return points_2d
 
 
 def overlay_point_clouds_on_image(

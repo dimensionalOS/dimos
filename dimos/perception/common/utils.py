@@ -14,7 +14,7 @@
 
 import cv2
 import numpy as np
-from typing import List, Tuple, Optional, Any
+from typing import List, Tuple, Optional, Any, Union
 from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
@@ -22,6 +22,103 @@ from dimos_lcm.vision_msgs import Detection3D, Detection2D, BoundingBox2D
 import torch
 
 logger = setup_logger("dimos.perception.common.utils")
+
+
+def project_3d_points_to_2d(
+    points_3d: np.ndarray, camera_intrinsics: Union[List[float], np.ndarray]
+) -> np.ndarray:
+    """
+    Project 3D points to 2D image coordinates using camera intrinsics.
+
+    Args:
+        points_3d: Nx3 array of 3D points (X, Y, Z)
+        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] list or 3x3 matrix
+
+    Returns:
+        Nx2 array of 2D image coordinates (u, v)
+    """
+    if len(points_3d) == 0:
+        return np.zeros((0, 2), dtype=np.int32)
+
+    # Filter out points with zero or negative depth
+    valid_mask = points_3d[:, 2] > 0
+    if not np.any(valid_mask):
+        return np.zeros((0, 2), dtype=np.int32)
+
+    valid_points = points_3d[valid_mask]
+
+    # Extract camera parameters
+    if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
+        fx, fy, cx, cy = camera_intrinsics
+    else:
+        camera_matrix = np.array(camera_intrinsics)
+        fx = camera_matrix[0, 0]
+        fy = camera_matrix[1, 1]
+        cx = camera_matrix[0, 2]
+        cy = camera_matrix[1, 2]
+
+    # Project to image coordinates
+    u = (valid_points[:, 0] * fx / valid_points[:, 2]) + cx
+    v = (valid_points[:, 1] * fy / valid_points[:, 2]) + cy
+
+    # Round to integer pixel coordinates
+    points_2d = np.column_stack([u, v]).astype(np.int32)
+
+    return points_2d
+
+
+def project_2d_points_to_3d(
+    points_2d: np.ndarray,
+    depth_values: np.ndarray,
+    camera_intrinsics: Union[List[float], np.ndarray],
+) -> np.ndarray:
+    """
+    Project 2D image points to 3D coordinates using depth values and camera intrinsics.
+
+    Args:
+        points_2d: Nx2 array of 2D image coordinates (u, v)
+        depth_values: N-length array of depth values (Z coordinates) for each point
+        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] list or 3x3 matrix
+
+    Returns:
+        Nx3 array of 3D points (X, Y, Z)
+    """
+    if len(points_2d) == 0:
+        return np.zeros((0, 3), dtype=np.float32)
+
+    # Ensure depth_values is a numpy array
+    depth_values = np.asarray(depth_values)
+
+    # Filter out points with zero or negative depth
+    valid_mask = depth_values > 0
+    if not np.any(valid_mask):
+        return np.zeros((0, 3), dtype=np.float32)
+
+    valid_points_2d = points_2d[valid_mask]
+    valid_depths = depth_values[valid_mask]
+
+    # Extract camera parameters
+    if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
+        fx, fy, cx, cy = camera_intrinsics
+    else:
+        camera_matrix = np.array(camera_intrinsics)
+        fx = camera_matrix[0, 0]
+        fy = camera_matrix[1, 1]
+        cx = camera_matrix[0, 2]
+        cy = camera_matrix[1, 2]
+
+    # Back-project to 3D coordinates
+    # X = (u - cx) * Z / fx
+    # Y = (v - cy) * Z / fy
+    # Z = depth
+    X = (valid_points_2d[:, 0] - cx) * valid_depths / fx
+    Y = (valid_points_2d[:, 1] - cy) * valid_depths / fy
+    Z = valid_depths
+
+    # Stack into 3D points
+    points_3d = np.column_stack([X, Y, Z]).astype(np.float32)
+
+    return points_3d
 
 
 def colorize_depth(depth_img: np.ndarray, max_depth: float = 5.0) -> Optional[np.ndarray]:

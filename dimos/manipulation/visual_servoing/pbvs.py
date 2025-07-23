@@ -29,8 +29,10 @@ from dimos.utils.transform_utils import (
     euler_to_quaternion,
 )
 from dimos.manipulation.visual_servoing.utils import (
+    update_target_grasp_pose,
     find_best_object_match,
     create_pbvs_visualization,
+    is_target_reached,
 )
 
 logger = setup_logger("dimos.manipulation.pbvs")
@@ -161,27 +163,6 @@ class PBVS:
         # Reset target grasp pose to recompute with new pitch
         self.target_grasp_pose = None
 
-    def is_target_reached(self, ee_pose: Pose) -> bool:
-        """
-        Check if the current target stage has been reached.
-
-        Args:
-            ee_pose: Current end-effector pose
-
-        Returns:
-            True if current stage target is reached, False otherwise
-        """
-        if not self.target_grasp_pose:
-            return False
-
-        # Calculate position error
-        error_x = self.target_grasp_pose.position.x - ee_pose.position.x
-        error_y = self.target_grasp_pose.position.y - ee_pose.position.y
-        error_z = self.target_grasp_pose.position.z - ee_pose.position.z
-
-        error_magnitude = np.sqrt(error_x**2 + error_y**2 + error_z**2)
-        return error_magnitude < self.target_tolerance
-
     def update_tracking(self, new_detections: Optional[Detection3DArray] = None) -> bool:
         """
         Update target tracking with new detections.
@@ -235,73 +216,6 @@ class PBVS:
         )
         return False
 
-    def _update_target_grasp_pose(self, ee_pose: Pose, grasp_distance: float):
-        """
-        Update target grasp pose based on current target and EE pose.
-
-        Args:
-            ee_pose: Current end-effector pose
-            grasp_distance: Distance to maintain from target (pregrasp or grasp distance)
-        """
-        if (
-            not self.current_target
-            or not self.current_target.bbox
-            or not self.current_target.bbox.center
-        ):
-            return
-
-        # Get target position
-        target_pos = self.current_target.bbox.center.position
-
-        # Calculate orientation pointing from target towards EE
-        yaw_to_ee = yaw_towards_point(target_pos, ee_pose.position)
-
-        # Create target pose with proper orientation
-        # Convert grasp pitch from degrees to radians with mapping:
-        # 0° (level) -> π/2 (1.57 rad), 90° (top-down) -> π (3.14 rad)
-        pitch_radians = 1.57 + np.radians(self.grasp_pitch_degrees)
-
-        # Convert euler angles to quaternion using utility function
-        euler = Vector3(0.0, pitch_radians, yaw_to_ee)  # roll=0, pitch=mapped, yaw=calculated
-        target_orientation = euler_to_quaternion(euler)
-
-        target_pose = Pose(target_pos, target_orientation)
-
-        # Apply grasp distance
-        self.target_grasp_pose = self._apply_grasp_distance(target_pose, grasp_distance)
-
-    def _apply_grasp_distance(self, target_pose: Pose, distance: float) -> Pose:
-        """
-        Apply grasp distance offset to target pose along its approach direction.
-
-        Args:
-            target_pose: Target grasp pose
-            distance: Distance to offset along the approach direction (meters)
-
-        Returns:
-            Target pose offset by the specified distance along its approach direction
-        """
-        # Convert pose to transformation matrix to extract rotation
-        T_target = pose_to_matrix(target_pose)
-        rotation_matrix = T_target[:3, :3]
-
-        # Define the approach vector based on the target pose orientation
-        # Assuming the gripper approaches along its local -z axis (common for downward grasps)
-        # You can change this to [1, 0, 0] for x-axis or [0, 1, 0] for y-axis based on your gripper
-        approach_vector_local = np.array([0, 0, -1])
-
-        # Transform approach vector to world coordinates
-        approach_vector_world = rotation_matrix @ approach_vector_local
-
-        # Apply offset along the approach direction
-        offset_position = Point(
-            target_pose.position.x + distance * approach_vector_world[0],
-            target_pose.position.y + distance * approach_vector_world[1],
-            target_pose.position.z + distance * approach_vector_world[2],
-        )
-
-        return Pose(offset_position, target_pose.orientation)
-
     def compute_control(
         self,
         ee_pose: Pose,
@@ -323,15 +237,13 @@ class PBVS:
             - target_pose: Target EE pose (only in direct_ee_control mode, otherwise None)
         """
         # Check if we have a target
-        if (
-            not self.current_target
-            or not self.current_target.bbox
-            or not self.current_target.bbox.center
-        ):
+        if not self.current_target:
             return None, None, False, False, None
 
         # Update target grasp pose with provided distance
-        self._update_target_grasp_pose(ee_pose, grasp_distance)
+        self.target_grasp_pose = update_target_grasp_pose(
+            self.current_target.bbox.center, ee_pose, grasp_distance, self.grasp_pitch_degrees
+        )
 
         if self.target_grasp_pose is None:
             logger.warning("Failed to compute grasp pose")
@@ -346,7 +258,7 @@ class PBVS:
             )
 
         # Check if target reached using our separate function
-        target_reached = self.is_target_reached(ee_pose)
+        target_reached = is_target_reached(self.target_grasp_pose, ee_pose, self.target_tolerance)
 
         # Return appropriate values based on control mode
         if self.direct_ee_control:

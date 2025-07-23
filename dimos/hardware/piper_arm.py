@@ -109,7 +109,6 @@ class PiperArm:
         logger.debug(f"Going to zero position: X={X}, Y={Y}, Z={Z}, RX={RX}, RY={RY}, RZ={RZ}")
         self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
         self.arm.EndPoseCtrl(X, Y, Z, RX, RY, RZ)
-        self.arm.GripperCtrl(0, 1000, 0x01, 0)
 
     def softStop(self):
         self.gotoZero()
@@ -214,7 +213,7 @@ class PiperArm:
         effort = gripper_msg.gripper_state.grippers_effort / 1000.0  # Convert from SDK units to N/m
         return angle_degrees, effort
 
-    def close_gripper(self, commanded_effort: float = 0.25) -> None:
+    def close_gripper(self, commanded_effort: float = 0.5) -> None:
         """
         Close the gripper.
 
