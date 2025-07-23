@@ -29,10 +29,9 @@ from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.manipulation.visual_servoing.pbvs import PBVS
 from dimos.perception.common.utils import (
     find_clicked_detection,
-    bbox2d_to_corners,
 )
 from dimos.manipulation.visual_servoing.utils import (
-    match_detection_by_id,
+    create_manipulation_visualization,
 )
 from dimos.utils.transform_utils import (
     pose_to_matrix,
@@ -72,11 +71,7 @@ class Feedback:
         current_camera_pose: Optional[Pose] = None,
         target_pose: Optional[Pose] = None,
         waiting_for_reach: bool = False,
-        pose_count: int = 0,
-        max_poses: int = 0,
-        stabilization_time: float = 0.0,
         grasp_successful: Optional[bool] = None,
-        adjustment_count: int = 0,
     ):
         self.grasp_stage = grasp_stage
         self.target_tracked = target_tracked
@@ -85,11 +80,7 @@ class Feedback:
         self.current_camera_pose = current_camera_pose
         self.target_pose = target_pose
         self.waiting_for_reach = waiting_for_reach
-        self.pose_count = pose_count
-        self.max_poses = max_poses
-        self.stabilization_time = stabilization_time
         self.grasp_successful = grasp_successful
-        self.adjustment_count = adjustment_count
 
 
 class Manipulation:
@@ -505,21 +496,12 @@ class Manipulation:
         if self.grasp_stage in stage_handlers:
             stage_handlers[self.grasp_stage]()
 
-        # Get tracking status and create visualization
+        # Get tracking status
         target_tracked = self.pbvs.get_current_target() is not None
-        self.current_visualization = (
-            self._create_waiting_visualization(rgb)
-            if self.waiting_for_reach
-            else self.create_visualization(
-                rgb, detection_3d_array, detection_2d_array, camera_pose, target_tracked
-            )
-            if detection_3d_array and detection_2d_array and camera_pose
-            else cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        )
 
-        # Create and return feedback
+        # Create feedback
         ee_pose = self.arm.get_ee_pose()
-        return Feedback(
+        feedback = Feedback(
             grasp_stage=self.grasp_stage,
             target_tracked=target_tracked,
             last_commanded_pose=self.last_commanded_pose,
@@ -527,14 +509,15 @@ class Manipulation:
             current_camera_pose=camera_pose,
             target_pose=self.pbvs.target_grasp_pose,
             waiting_for_reach=self.waiting_for_reach,
-            pose_count=len(self.reached_poses),
-            max_poses=self.pose_history_size,
-            stabilization_time=time.time() - self.stabilization_start_time
-            if self.stabilization_start_time
-            else 0.0,
             grasp_successful=self.pick_success,
-            adjustment_count=self.adjustment_count,
         )
+
+        # Create simple visualization using feedback
+        self.current_visualization = create_manipulation_visualization(
+            rgb, feedback, detection_3d_array, detection_2d_array
+        )
+
+        return feedback
 
     def get_visualization(self) -> Optional[np.ndarray]:
         """
@@ -585,179 +568,6 @@ class Manipulation:
 
         return ""
 
-    def create_visualization(
-        self,
-        rgb: np.ndarray,
-        detection_3d_array: Detection3DArray,
-        detection_2d_array: Detection2DArray,
-        camera_pose: Pose,
-        target_tracked: bool,
-    ) -> np.ndarray:
-        """
-        Create visualization with detections and status overlays.
-
-        Args:
-            rgb: RGB image
-            detection_3d_array: 3D detections
-            detection_2d_array: 2D detections
-            camera_pose: Current camera pose
-            target_tracked: Whether target is being tracked
-
-        Returns:
-            BGR image with visualizations
-        """
-        # Create visualization with position overlays
-        viz = self.detector.visualize_detections(
-            rgb, detection_3d_array.detections, detection_2d_array.detections
-        )
-
-        # Add PBVS status overlay
-        viz = self.pbvs.create_status_overlay(viz, self.grasp_stage)
-
-        # Highlight target
-        current_target = self.pbvs.get_current_target()
-        if target_tracked and current_target:
-            det_2d = match_detection_by_id(
-                current_target, detection_3d_array.detections, detection_2d_array.detections
-            )
-            if det_2d and det_2d.bbox:
-                x1, y1, x2, y2 = bbox2d_to_corners(det_2d.bbox)
-                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-
-                cv2.rectangle(viz, (x1, y1), (x2, y2), (0, 255, 0), 3)
-                cv2.putText(
-                    viz, "TARGET", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
-                )
-
-        # Convert back to BGR for OpenCV display
-        viz_bgr = cv2.cvtColor(viz, cv2.COLOR_RGB2BGR)
-
-        # Add pose info
-        cv2.putText(
-            viz_bgr,
-            "Eye-in-Hand Visual Servoing",
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (0, 255, 255),
-            1,
-        )
-
-        # Get EE pose for display
-        ee_pose = self.arm.get_ee_pose()
-
-        camera_text = f"Camera: ({camera_pose.position.x:.2f}, {camera_pose.position.y:.2f}, {camera_pose.position.z:.2f})m"
-        cv2.putText(viz_bgr, camera_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-
-        ee_text = (
-            f"EE: ({ee_pose.position.x:.2f}, {ee_pose.position.y:.2f}, {ee_pose.position.z:.2f})m"
-        )
-        cv2.putText(viz_bgr, ee_text, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-        # Add control status
-        status_text, status_color = self._get_status_text_and_color()
-        cv2.putText(viz_bgr, status_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1)
-        cv2.putText(
-            viz_bgr,
-            "s=STOP | r=RESET | SPACE=FORCE GRASP | g=RELEASE",
-            (10, 110),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.4,
-            (255, 255, 255),
-            1,
-        )
-
-        return viz_bgr
-
-    def _create_waiting_visualization(self, rgb: np.ndarray) -> np.ndarray:
-        """
-        Create a simple visualization while waiting for robot to reach pose.
-
-        Args:
-            rgb: RGB image
-
-        Returns:
-            BGR image with waiting status
-        """
-        viz_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-
-        # Add waiting status
-        cv2.putText(
-            viz_bgr,
-            "WAITING FOR ROBOT TO REACH TARGET...",
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 255),
-            2,
-        )
-
-        # Add current stage info
-        stage_text = f"Stage: {self.grasp_stage.value.upper()}"
-        cv2.putText(
-            viz_bgr,
-            stage_text,
-            (10, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (255, 255, 0),
-            1,
-        )
-
-        # Add progress info based on stage
-        if self.grasp_stage == GraspStage.PRE_GRASP:
-            progress_text = f"Reached poses: {len(self.reached_poses)}/{self.pose_history_size}"
-        elif self.grasp_stage == GraspStage.GRASP and self.grasp_reached_time:
-            time_remaining = max(
-                0, self.grasp_close_delay - (time.time() - self.grasp_reached_time)
-            )
-            progress_text = f"Closing gripper in: {time_remaining:.1f}s"
-        else:
-            progress_text = ""
-
-        if progress_text:
-            cv2.putText(
-                viz_bgr,
-                progress_text,
-                (10, 90),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 255, 255),
-                1,
-            )
-
-        return viz_bgr
-
-    def _get_status_text_and_color(self) -> Tuple[str, Tuple[int, int, int]]:
-        """
-        Get status text and color based on current stage and state.
-
-        Returns:
-            Tuple of (status_text, status_color)
-        """
-        if self.grasp_stage == GraspStage.IDLE:
-            return "IDLE - Click object to select target", (100, 100, 100)
-        elif self.grasp_stage == GraspStage.PRE_GRASP:
-            if self.waiting_for_reach:
-                return "PRE-GRASP - Waiting for robot to reach target...", (255, 255, 0)
-            else:
-                poses_text = f" ({len(self.reached_poses)}/{self.pose_history_size} poses)"
-                elapsed_time = (
-                    time.time() - self.stabilization_start_time
-                    if self.stabilization_start_time
-                    else 0
-                )
-                time_text = f" [{elapsed_time:.1f}s/{self.stabilization_timeout:.0f}s]"
-                return f"PRE-GRASP - Collecting stable poses{poses_text}{time_text}", (0, 255, 255)
-        elif self.grasp_stage == GraspStage.GRASP:
-            if self.grasp_reached_time:
-                time_remaining = self.grasp_close_delay - (time.time() - self.grasp_reached_time)
-                return f"GRASP - Waiting to close ({time_remaining:.1f}s)", (0, 255, 0)
-            else:
-                return "GRASP - Moving to grasp pose", (0, 255, 0)
-        else:  # CLOSE_AND_RETRACT
-            return "CLOSE_AND_RETRACT - Closing gripper and retracting", (255, 0, 255)
-
     def check_target_stabilized(self) -> bool:
         """
         Check if the commanded poses have stabilized.
@@ -778,94 +588,3 @@ class Manipulation:
 
         # Check if all axes are below threshold
         return np.all(std_devs < self.pose_stabilization_threshold)
-
-    def pick_and_place(
-        self, object_point: Tuple[int, int], target_point: Optional[Tuple[int, int]] = None
-    ) -> bool:
-        """
-        Execute a complete pick and place operation.
-
-        Similar to navigate_path_local, this function handles the complete pick operation
-        autonomously, including object selection, grasping, and optional placement.
-
-        Args:
-            object_point: (x, y) pixel coordinates of the object to pick
-            target_point: Optional (x, y) pixel coordinates for placement (not implemented yet)
-
-        Returns:
-            True if object was successfully picked, False otherwise
-        """
-        # Validate input
-        if not isinstance(object_point, tuple) or len(object_point) != 2:
-            logger.error(f"Invalid object_point: {object_point}. Expected (x, y) tuple.")
-            return False
-
-        logger.info(f"Starting pick operation at pixel ({object_point[0]}, {object_point[1]})")
-
-        # Reset to ensure clean state
-        self.reset_to_idle()
-
-        # Configuration
-        max_operation_time = 60.0  # Maximum time for complete pick operation
-        perception_init_time = 2.0  # Time to allow perception to stabilize
-
-        # Wait for perception to initialize
-        init_start = time.time()
-        perception_ready = False
-
-        while (time.time() - init_start) < perception_init_time:
-            feedback = self.update()
-            if feedback is not None:
-                perception_ready = True
-            time.sleep(0.1)
-
-        if not perception_ready:
-            logger.error("Perception system failed to initialize")
-            return False
-
-        # Select the target object
-        x, y = object_point
-        try:
-            if not self.pick_target(x, y):
-                logger.error(f"No valid object detected at pixel ({x}, {y})")
-                return False
-        except Exception as e:
-            logger.error(f"Exception during target selection: {e}")
-            return False
-
-        # Execute pick operation
-        operation_start = time.time()
-
-        while (time.time() - operation_start) < max_operation_time:
-            try:
-                # Update the manipulation system
-                feedback = self.update()
-                if feedback is None:
-                    logger.error("Lost perception during pick operation")
-                    self.reset_to_idle()
-                    return False
-
-                # Check if grasp sequence completed
-                if feedback.grasp_successful is not None:
-                    if feedback.grasp_successful:
-                        logger.info("Object successfully grasped")
-                        if target_point:
-                            logger.info("Place operation not yet implemented")
-                        return True
-                    else:
-                        logger.warning("Grasp attempt failed - no object detected in gripper")
-                        return False
-
-            except Exception as e:
-                logger.error(f"Unexpected error during pick operation: {e}")
-                self.reset_to_idle()
-                return False
-
-        # Operation timeout
-        logger.error(f"Pick operation exceeded maximum time of {max_operation_time}s")
-        self.reset_to_idle()
-        return False
-
-    def cleanup(self):
-        """Clean up resources (detector only, hardware cleanup is caller's responsibility)."""
-        self.detector.cleanup()

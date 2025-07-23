@@ -17,6 +17,10 @@ import cv2
 import open3d as o3d
 from typing import Optional, Tuple, Dict, Any
 import logging
+import time
+import threading
+from reactivex import interval
+from reactivex import operators as ops
 
 try:
     import pyzed.sl as sl
@@ -25,8 +29,17 @@ except ImportError:
     logging.warning("ZED SDK not found. Please install pyzed to use ZED camera functionality.")
 
 from dimos.hardware.stereo_camera import StereoCamera
+from dimos.core import Module, Out, rpc
+from dimos.utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+# Import LCM message types
+from dimos_lcm.sensor_msgs import Image
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.geometry_msgs import PoseStamped
+from dimos_lcm.std_msgs import Header, Time
+from dimos_lcm.geometry_msgs import Pose, Point, Quaternion
+
+logger = setup_logger(__name__)
 
 
 class ZEDCamera(StereoCamera):
@@ -512,3 +525,342 @@ class ZEDCamera(StereoCamera):
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.close()
+
+
+class ZEDModule(Module):
+    """
+    Dask module for ZED camera that publishes sensor data via LCM.
+
+    Publishes:
+        - /zed/color_image: RGB camera images
+        - /zed/depth_image: Depth images
+        - /zed/camera_info: Camera calibration information
+        - /zed/pose: Camera pose (if tracking enabled)
+    """
+
+    # Define LCM outputs
+    color_image: Out[Image] = None
+    depth_image: Out[Image] = None
+    camera_info: Out[CameraInfo] = None
+    pose: Out[PoseStamped] = None
+
+    def __init__(
+        self,
+        camera_id: int = 0,
+        resolution: str = "HD720",
+        depth_mode: str = "NEURAL",
+        fps: int = 30,
+        enable_tracking: bool = True,
+        enable_imu_fusion: bool = True,
+        set_floor_as_origin: bool = True,
+        publish_rate: float = 30.0,
+        frame_id: str = "zed_camera",
+        **kwargs,
+    ):
+        """
+        Initialize ZED Module.
+
+        Args:
+            camera_id: Camera ID (0 for first ZED)
+            resolution: Resolution string ("HD720", "HD1080", "HD2K", "VGA")
+            depth_mode: Depth mode string ("NEURAL", "ULTRA", "QUALITY", "PERFORMANCE")
+            fps: Camera frame rate
+            enable_tracking: Enable positional tracking
+            enable_imu_fusion: Enable IMU fusion for tracking
+            set_floor_as_origin: Set floor as origin for tracking
+            publish_rate: Rate to publish messages (Hz)
+            frame_id: TF frame ID for messages
+        """
+        super().__init__(**kwargs)
+
+        self.camera_id = camera_id
+        self.fps = fps
+        self.enable_tracking = enable_tracking
+        self.enable_imu_fusion = enable_imu_fusion
+        self.set_floor_as_origin = set_floor_as_origin
+        self.publish_rate = publish_rate
+        self.frame_id = frame_id
+
+        # Convert string parameters to ZED enums
+        self.resolution = getattr(sl.RESOLUTION, resolution, sl.RESOLUTION.HD720)
+        self.depth_mode = getattr(sl.DEPTH_MODE, depth_mode, sl.DEPTH_MODE.NEURAL)
+
+        # Internal state
+        self.zed_camera = None
+        self._running = False
+        self._subscription = None
+        self._sequence = 0
+
+        logger.info(f"ZEDModule initialized for camera {camera_id}")
+
+    @rpc
+    def start(self):
+        """Start the ZED module and begin publishing data."""
+        if self._running:
+            logger.warning("ZED module already running")
+            return
+
+        try:
+            # Initialize ZED camera
+            self.zed_camera = ZEDCamera(
+                camera_id=self.camera_id,
+                resolution=self.resolution,
+                depth_mode=self.depth_mode,
+                fps=self.fps,
+            )
+
+            # Open camera
+            if not self.zed_camera.open():
+                logger.error("Failed to open ZED camera")
+                return
+
+            # Enable tracking if requested
+            if self.enable_tracking:
+                success = self.zed_camera.enable_positional_tracking(
+                    enable_imu_fusion=self.enable_imu_fusion,
+                    set_floor_as_origin=self.set_floor_as_origin,
+                    enable_pose_smoothing=True,
+                    enable_area_memory=True,
+                )
+                if not success:
+                    logger.warning("Failed to enable positional tracking")
+                    self.enable_tracking = False
+
+            # Publish camera info once at startup
+            self._publish_camera_info()
+
+            # Start periodic frame capture and publishing
+            self._running = True
+            publish_interval = 1.0 / self.publish_rate
+
+            self._subscription = interval(publish_interval).subscribe(
+                lambda _: self._capture_and_publish()
+            )
+
+            logger.info(f"ZED module started, publishing at {self.publish_rate} Hz")
+
+        except Exception as e:
+            logger.error(f"Error starting ZED module: {e}")
+            self._running = False
+
+    @rpc
+    def stop(self):
+        """Stop the ZED module."""
+        if not self._running:
+            return
+
+        self._running = False
+
+        # Stop subscription
+        if self._subscription:
+            self._subscription.dispose()
+            self._subscription = None
+
+        # Close camera
+        if self.zed_camera:
+            self.zed_camera.close()
+            self.zed_camera = None
+
+        logger.info("ZED module stopped")
+
+    def _capture_and_publish(self):
+        """Capture frame and publish all data."""
+        if not self._running or not self.zed_camera:
+            return
+
+        try:
+            # Capture frame with pose
+            left_img, _, depth, pose_data = self.zed_camera.capture_frame_with_pose()
+
+            if left_img is None or depth is None:
+                return
+
+            # Get timestamp
+            timestamp_ns = time.time_ns()
+            timestamp = Time(sec=timestamp_ns // 1_000_000_000, nsec=timestamp_ns % 1_000_000_000)
+
+            # Create header
+            header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.frame_id)
+            self._sequence += 1
+
+            # Publish color image
+            self._publish_color_image(left_img, header)
+
+            # Publish depth image
+            self._publish_depth_image(depth, header)
+
+            # Publish pose if tracking enabled and valid
+            if self.enable_tracking and pose_data and pose_data.get("valid", False):
+                self._publish_pose(pose_data, header)
+
+        except Exception as e:
+            logger.error(f"Error in capture and publish: {e}")
+
+    def _publish_color_image(self, image: np.ndarray, header: Header):
+        """Publish color image as LCM message."""
+        try:
+            # Convert BGR to RGB if needed
+            if len(image.shape) == 3 and image.shape[2] == 3:
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            else:
+                image_rgb = image
+
+            # Create LCM Image message
+            height, width = image_rgb.shape[:2]
+            encoding = "rgb8" if len(image_rgb.shape) == 3 else "mono8"
+            step = width * (3 if len(image_rgb.shape) == 3 else 1)
+            data = image_rgb.tobytes()
+
+            msg = Image(
+                data_length=len(data),
+                header=header,
+                height=height,
+                width=width,
+                encoding=encoding,
+                is_bigendian=0,
+                step=step,
+                data=data,
+            )
+
+            self.color_image.publish(msg)
+
+        except Exception as e:
+            logger.error(f"Error publishing color image: {e}")
+
+    def _publish_depth_image(self, depth: np.ndarray, header: Header):
+        """Publish depth image as LCM message."""
+        try:
+            # Depth is float32 in meters
+            height, width = depth.shape[:2]
+            encoding = "32FC1"  # 32-bit float, single channel
+            step = width * 4  # 4 bytes per float
+            data = depth.astype(np.float32).tobytes()
+
+            msg = Image(
+                data_length=len(data),
+                header=header,
+                height=height,
+                width=width,
+                encoding=encoding,
+                is_bigendian=0,
+                step=step,
+                data=data,
+            )
+
+            self.depth_image.publish(msg)
+
+        except Exception as e:
+            logger.error(f"Error publishing depth image: {e}")
+
+    def _publish_camera_info(self):
+        """Publish camera calibration information."""
+        try:
+            info = self.zed_camera.get_camera_info()
+            if not info:
+                return
+
+            # Get calibration parameters
+            left_cam = info.get("left_cam", {})
+            resolution = info.get("resolution", {})
+
+            # Create CameraInfo message
+            header = Header(seq=0, stamp=Time(sec=int(time.time()), nsec=0), frame_id=self.frame_id)
+
+            # Create camera matrix K (3x3)
+            K = [
+                left_cam.get("fx", 0),
+                0,
+                left_cam.get("cx", 0),
+                0,
+                left_cam.get("fy", 0),
+                left_cam.get("cy", 0),
+                0,
+                0,
+                1,
+            ]
+
+            # Distortion coefficients
+            D = [
+                left_cam.get("k1", 0),
+                left_cam.get("k2", 0),
+                left_cam.get("p1", 0),
+                left_cam.get("p2", 0),
+                left_cam.get("k3", 0),
+            ]
+
+            # Identity rotation matrix
+            R = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+
+            # Projection matrix P (3x4)
+            P = [
+                left_cam.get("fx", 0),
+                0,
+                left_cam.get("cx", 0),
+                0,
+                0,
+                left_cam.get("fy", 0),
+                left_cam.get("cy", 0),
+                0,
+                0,
+                0,
+                1,
+                0,
+            ]
+
+            msg = CameraInfo(
+                D_length=len(D),
+                header=header,
+                height=resolution.get("height", 0),
+                width=resolution.get("width", 0),
+                distortion_model="plumb_bob",
+                D=D,
+                K=K,
+                R=R,
+                P=P,
+                binning_x=0,
+                binning_y=0,
+            )
+
+            self.camera_info.publish(msg)
+            logger.info("Published camera info")
+
+        except Exception as e:
+            logger.error(f"Error publishing camera info: {e}")
+
+    def _publish_pose(self, pose_data: Dict[str, Any], header: Header):
+        """Publish camera pose as PoseStamped message."""
+        try:
+            position = pose_data.get("position", [0, 0, 0])
+            rotation = pose_data.get("rotation", [0, 0, 0, 1])  # quaternion [x,y,z,w]
+
+            # Create Pose message
+            pose = Pose(
+                position=Point(x=position[0], y=position[1], z=position[2]),
+                orientation=Quaternion(x=rotation[0], y=rotation[1], z=rotation[2], w=rotation[3]),
+            )
+
+            # Create PoseStamped message
+            msg = PoseStamped(header=header, pose=pose)
+
+            self.pose.publish(msg)
+
+        except Exception as e:
+            logger.error(f"Error publishing pose: {e}")
+
+    @rpc
+    def get_camera_info(self) -> Dict[str, Any]:
+        """Get camera information and calibration parameters."""
+        if self.zed_camera:
+            return self.zed_camera.get_camera_info()
+        return {}
+
+    @rpc
+    def get_pose(self) -> Optional[Dict[str, Any]]:
+        """Get current camera pose if tracking is enabled."""
+        if self.zed_camera and self.enable_tracking:
+            return self.zed_camera.get_pose()
+        return None
+
+    def cleanup(self):
+        """Clean up resources on module destruction."""
+        self.stop()

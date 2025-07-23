@@ -30,8 +30,7 @@ from dimos.utils.transform_utils import (
 )
 from dimos.manipulation.visual_servoing.utils import (
     find_best_object_match,
-    create_pbvs_status_overlay,
-    create_pbvs_controller_overlay,
+    create_pbvs_visualization,
 )
 
 logger = setup_logger("dimos.manipulation.pbvs")
@@ -381,25 +380,14 @@ class PBVS:
         Returns:
             Image with PBVS status overlay
         """
-        if self.direct_ee_control:
-            # Use direct control overlay
-            stage_value = grasp_stage.value if grasp_stage else "idle"
-            return create_pbvs_status_overlay(
-                image,
-                self.current_target,
-                self.last_position_error,
-                self.last_target_reached,
-                self.target_grasp_pose,
-                stage_value,
-                is_direct_control=True,
-            )
-        else:
-            # Use controller's overlay for velocity mode
-            return self.controller.create_status_overlay(
-                image,
-                self.current_target,
-                self.direct_ee_control,
-            )
+        stage_value = grasp_stage.value if grasp_stage else "idle"
+        return create_pbvs_visualization(
+            image,
+            self.current_target,
+            self.last_position_error,
+            self.last_target_reached,
+            stage_value,
+        )
 
 
 class PBVSController:
@@ -574,7 +562,6 @@ class PBVSController:
         self,
         image: np.ndarray,
         current_target: Optional[Detection3D] = None,
-        direct_ee_control: bool = False,
     ) -> np.ndarray:
         """
         Create PBVS status overlay on image.
@@ -582,18 +569,14 @@ class PBVSController:
         Args:
             image: Input image
             current_target: Current target object Detection3D (for display)
-            direct_ee_control: Whether in direct EE control mode
 
         Returns:
             Image with PBVS status overlay
         """
-        return create_pbvs_controller_overlay(
+        return create_pbvs_visualization(
             image,
             current_target,
             self.last_position_error,
-            self.last_rotation_error,
-            self.last_velocity_cmd,
-            self.last_angular_velocity_cmd,
             self.last_target_reached,
-            direct_ee_control,
+            "velocity_control",
         )

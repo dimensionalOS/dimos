@@ -233,6 +233,228 @@ def estimate_object_depth(
 # ============= Visualization Functions =============
 
 
+def create_manipulation_visualization(
+    rgb_image: np.ndarray,
+    feedback,
+    detection_3d_array=None,
+    detection_2d_array=None,
+) -> np.ndarray:
+    """
+    Create simple visualization for manipulation class using feedback.
+
+    Args:
+        rgb_image: RGB image array
+        feedback: Feedback object containing all state information
+        detection_3d_array: Optional 3D detections for object visualization
+        detection_2d_array: Optional 2D detections for object visualization
+
+    Returns:
+        BGR image with visualization overlays
+    """
+    # Convert to BGR for OpenCV
+    viz = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+
+    # Draw detections if available
+    if detection_3d_array and detection_2d_array:
+        # Extract 2D bboxes
+        bboxes_2d = []
+        for det_2d in detection_2d_array.detections:
+            if det_2d.bbox:
+                x1 = det_2d.bbox.center.position.x - det_2d.bbox.size_x / 2
+                y1 = det_2d.bbox.center.position.y - det_2d.bbox.size_y / 2
+                x2 = det_2d.bbox.center.position.x + det_2d.bbox.size_x / 2
+                y2 = det_2d.bbox.center.position.y + det_2d.bbox.size_y / 2
+                bboxes_2d.append([x1, y1, x2, y2])
+
+        # Draw basic detections
+        rgb_with_detections = visualize_detections_3d(
+            rgb_image, detection_3d_array.detections, show_coordinates=True, bboxes_2d=bboxes_2d
+        )
+        viz = cv2.cvtColor(rgb_with_detections, cv2.COLOR_RGB2BGR)
+
+    # Add manipulation status overlay
+    status_y = 30
+    cv2.putText(
+        viz,
+        "Eye-in-Hand Visual Servoing",
+        (10, status_y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0, 255, 255),
+        2,
+    )
+
+    # Stage information
+    stage_text = f"Stage: {feedback.grasp_stage.value.upper()}"
+    stage_color = {
+        "idle": (100, 100, 100),
+        "pre_grasp": (0, 255, 255),
+        "grasp": (0, 255, 0),
+        "close_and_retract": (255, 0, 255),
+    }.get(feedback.grasp_stage.value, (255, 255, 255))
+
+    cv2.putText(
+        viz,
+        stage_text,
+        (10, status_y + 25),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        stage_color,
+        1,
+    )
+
+    # Target tracking status
+    if feedback.target_tracked:
+        cv2.putText(
+            viz,
+            "Target: TRACKED",
+            (10, status_y + 45),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 0),
+            1,
+        )
+    elif feedback.grasp_stage.value != "idle":
+        cv2.putText(
+            viz,
+            "Target: LOST",
+            (10, status_y + 45),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 0, 255),
+            1,
+        )
+
+    # Waiting status
+    if feedback.waiting_for_reach:
+        cv2.putText(
+            viz,
+            "Status: WAITING FOR ROBOT",
+            (10, status_y + 65),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 0),
+            1,
+        )
+
+    # Grasp result
+    if feedback.grasp_successful is not None:
+        result_text = "Grasp: SUCCESS" if feedback.grasp_successful else "Grasp: FAILED"
+        result_color = (0, 255, 0) if feedback.grasp_successful else (0, 0, 255)
+        cv2.putText(
+            viz,
+            result_text,
+            (10, status_y + 85),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            result_color,
+            2,
+        )
+
+    # Control hints (bottom of image)
+    hint_text = "Click object to grasp | s=STOP | r=RESET | g=RELEASE"
+    cv2.putText(
+        viz,
+        hint_text,
+        (10, viz.shape[0] - 10),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.4,
+        (200, 200, 200),
+        1,
+    )
+
+    return viz
+
+
+def create_pbvs_visualization(
+    image: np.ndarray,
+    current_target=None,
+    position_error=None,
+    target_reached=False,
+    grasp_stage="idle",
+) -> np.ndarray:
+    """
+    Create simple PBVS visualization overlay.
+
+    Args:
+        image: Input image (RGB or BGR)
+        current_target: Current target Detection3D
+        position_error: Position error Vector3
+        target_reached: Whether target is reached
+        grasp_stage: Current grasp stage string
+
+    Returns:
+        Image with PBVS overlay
+    """
+    viz = image.copy()
+
+    # Only show PBVS info if we have a target
+    if current_target is None:
+        return viz
+
+    # Create status panel at bottom
+    height, width = viz.shape[:2]
+    panel_height = 100
+    panel_y = height - panel_height
+
+    # Semi-transparent overlay
+    overlay = viz.copy()
+    cv2.rectangle(overlay, (0, panel_y), (width, height), (0, 0, 0), -1)
+    viz = cv2.addWeighted(viz, 0.7, overlay, 0.3, 0)
+
+    # PBVS Status
+    y_offset = panel_y + 20
+    cv2.putText(
+        viz,
+        "PBVS Control",
+        (10, y_offset),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0, 255, 255),
+        2,
+    )
+
+    # Position error
+    if position_error:
+        error_mag = np.linalg.norm([position_error.x, position_error.y, position_error.z])
+        error_text = f"Error: {error_mag * 100:.1f}cm"
+        error_color = (0, 255, 0) if target_reached else (0, 255, 255)
+        cv2.putText(
+            viz,
+            error_text,
+            (10, y_offset + 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            error_color,
+            1,
+        )
+
+    # Stage
+    cv2.putText(
+        viz,
+        f"Stage: {grasp_stage}",
+        (10, y_offset + 45),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (255, 150, 255),
+        1,
+    )
+
+    # Target reached indicator
+    if target_reached:
+        cv2.putText(
+            viz,
+            "TARGET REACHED",
+            (width - 150, y_offset + 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 0),
+            2,
+        )
+
+    return viz
+
+
 def visualize_detections_3d(
     rgb_image: np.ndarray,
     detections: List[Detection3D],
@@ -311,292 +533,6 @@ def visualize_detections_3d(
                 )
 
     return viz
-
-
-def create_pbvs_status_overlay(
-    image: np.ndarray,
-    current_target: Optional[Detection3D],
-    position_error: Optional[Vector3],
-    target_reached: bool,
-    target_grasp_pose: Optional[Pose],
-    grasp_stage: str,
-    is_direct_control: bool = False,
-) -> np.ndarray:
-    """
-    Create PBVS status overlay for direct control mode.
-
-    Args:
-        image: Input image
-        current_target: Current target Detection3D
-        position_error: Position error vector
-        target_reached: Whether target is reached
-        target_grasp_pose: Target grasp pose
-        grasp_stage: Current grasp stage
-        is_direct_control: Whether in direct control mode
-
-    Returns:
-        Image with status overlay
-    """
-    viz_img = image.copy()
-    height, width = image.shape[:2]
-
-    # Status panel
-    if current_target is not None:
-        panel_height = 175  # Adjusted panel for target, grasp pose, stage, and distance info
-        panel_y = height - panel_height
-        overlay = viz_img.copy()
-        cv2.rectangle(overlay, (0, panel_y), (width, height), (0, 0, 0), -1)
-        viz_img = cv2.addWeighted(viz_img, 0.7, overlay, 0.3, 0)
-
-        # Status text
-        y = panel_y + 20
-        mode_text = "Direct EE" if is_direct_control else "Velocity"
-        cv2.putText(
-            viz_img,
-            f"PBVS Status ({mode_text})",
-            (10, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 255),
-            2,
-        )
-
-        # Add frame info
-        cv2.putText(
-            viz_img, "Frame: Camera", (250, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1
-        )
-
-        if position_error:
-            error_mag = np.linalg.norm(
-                [
-                    position_error.x,
-                    position_error.y,
-                    position_error.z,
-                ]
-            )
-            color = (0, 255, 0) if target_reached else (0, 255, 255)
-
-            cv2.putText(
-                viz_img,
-                f"Pos Error: {error_mag:.3f}m ({error_mag * 100:.1f}cm)",
-                (10, y + 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                color,
-                1,
-            )
-
-            cv2.putText(
-                viz_img,
-                f"XYZ: ({position_error.x:.3f}, {position_error.y:.3f}, {position_error.z:.3f})",
-                (10, y + 45),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (200, 200, 200),
-                1,
-            )
-
-        # Show target and grasp poses
-        if current_target and current_target.bbox and current_target.bbox.center:
-            target_pos = current_target.bbox.center.position
-            cv2.putText(
-                viz_img,
-                f"Target: ({target_pos.x:.3f}, {target_pos.y:.3f}, {target_pos.z:.3f})",
-                (10, y + 65),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (255, 255, 0),
-                1,
-            )
-
-        if target_grasp_pose:
-            grasp_pos = target_grasp_pose.position
-            cv2.putText(
-                viz_img,
-                f"Grasp:  ({grasp_pos.x:.3f}, {grasp_pos.y:.3f}, {grasp_pos.z:.3f})",
-                (10, y + 80),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (0, 255, 255),
-                1,
-            )
-
-            # Show pregrasp distance if we have both poses
-            if current_target and current_target.bbox and current_target.bbox.center:
-                target_pos = current_target.bbox.center.position
-                distance = np.sqrt(
-                    (grasp_pos.x - target_pos.x) ** 2
-                    + (grasp_pos.y - target_pos.y) ** 2
-                    + (grasp_pos.z - target_pos.z) ** 2
-                )
-
-                # Show current stage and distance
-                stage_text = f"Stage: {grasp_stage}"
-                cv2.putText(
-                    viz_img,
-                    stage_text,
-                    (10, y + 95),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    (255, 150, 255),
-                    1,
-                )
-
-                distance_text = f"Distance: {distance * 1000:.1f}mm"
-                cv2.putText(
-                    viz_img,
-                    distance_text,
-                    (10, y + 110),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    (255, 200, 0),
-                    1,
-                )
-
-        if target_reached:
-            cv2.putText(
-                viz_img,
-                "TARGET REACHED",
-                (width - 150, y + 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 255, 0),
-                2,
-            )
-
-    return viz_img
-
-
-def create_pbvs_controller_overlay(
-    image: np.ndarray,
-    current_target: Optional[Detection3D],
-    position_error: Optional[Vector3],
-    rotation_error: Optional[Vector3],
-    velocity_cmd: Optional[Vector3],
-    angular_velocity_cmd: Optional[Vector3],
-    target_reached: bool,
-    direct_ee_control: bool = False,
-) -> np.ndarray:
-    """
-    Create PBVS controller status overlay on image.
-
-    Args:
-        image: Input image
-        current_target: Current target Detection3D (for display)
-        position_error: Position error vector
-        rotation_error: Rotation error vector
-        velocity_cmd: Linear velocity command
-        angular_velocity_cmd: Angular velocity command
-        target_reached: Whether target is reached
-        direct_ee_control: Whether in direct EE control mode
-
-    Returns:
-        Image with PBVS status overlay
-    """
-    viz_img = image.copy()
-    height, width = image.shape[:2]
-
-    # Status panel
-    if current_target is not None:
-        panel_height = 160  # Adjusted panel height
-        panel_y = height - panel_height
-        overlay = viz_img.copy()
-        cv2.rectangle(overlay, (0, panel_y), (width, height), (0, 0, 0), -1)
-        viz_img = cv2.addWeighted(viz_img, 0.7, overlay, 0.3, 0)
-
-        # Status text
-        y = panel_y + 20
-        mode_text = "Direct EE" if direct_ee_control else "Velocity"
-        cv2.putText(
-            viz_img,
-            f"PBVS Status ({mode_text})",
-            (10, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 255),
-            2,
-        )
-
-        # Add frame info
-        cv2.putText(
-            viz_img, "Frame: Camera", (250, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1
-        )
-
-        if position_error:
-            error_mag = np.linalg.norm(
-                [
-                    position_error.x,
-                    position_error.y,
-                    position_error.z,
-                ]
-            )
-            color = (0, 255, 0) if target_reached else (0, 255, 255)
-
-            cv2.putText(
-                viz_img,
-                f"Pos Error: {error_mag:.3f}m ({error_mag * 100:.1f}cm)",
-                (10, y + 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                color,
-                1,
-            )
-
-            cv2.putText(
-                viz_img,
-                f"XYZ: ({position_error.x:.3f}, {position_error.y:.3f}, {position_error.z:.3f})",
-                (10, y + 45),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (200, 200, 200),
-                1,
-            )
-
-        if velocity_cmd and not direct_ee_control:
-            cv2.putText(
-                viz_img,
-                f"Lin Vel: ({velocity_cmd.x:.2f}, {velocity_cmd.y:.2f}, {velocity_cmd.z:.2f})m/s",
-                (10, y + 65),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 200, 0),
-                1,
-            )
-
-        if rotation_error:
-            cv2.putText(
-                viz_img,
-                f"Rot Error: ({rotation_error.x:.2f}, {rotation_error.y:.2f}, {rotation_error.z:.2f})rad",
-                (10, y + 85),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (200, 200, 200),
-                1,
-            )
-
-        if angular_velocity_cmd and not direct_ee_control:
-            cv2.putText(
-                viz_img,
-                f"Ang Vel: ({angular_velocity_cmd.x:.2f}, {angular_velocity_cmd.y:.2f}, {angular_velocity_cmd.z:.2f})rad/s",
-                (10, y + 105),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 200, 0),
-                1,
-            )
-
-        if target_reached:
-            cv2.putText(
-                viz_img,
-                "TARGET REACHED",
-                (width - 150, y + 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 255, 0),
-                2,
-            )
-
-    return viz_img
 
 
 def match_detection_by_id(
