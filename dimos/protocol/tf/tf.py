@@ -86,6 +86,25 @@ class TBuffer(TimestampedCollection[Transform]):
         while self._items and self._items[0].ts < cutoff_time:
             self._items.pop(0)
 
+    def get(
+        self, time_point: Optional[float] = None, time_tolerance: Optional[float] = None
+    ) -> Optional[Transform]:
+        """Get transform at specified time or latest if no time given."""
+        if time_point is None:
+            # Return the latest transform
+            return self[-1] if len(self) > 0 else None
+
+        # Find closest transform within tolerance
+        closest = self.find_closest(time_point)
+        if closest is None:
+            return None
+
+        if time_tolerance is not None:
+            if abs(closest.ts - time_point) > time_tolerance:
+                return None
+
+        return closest
+
     def __str__(self) -> str:
         if not self._items:
             return "TBuffer(empty)"
@@ -118,7 +137,7 @@ class TBuffer(TimestampedCollection[Transform]):
 
 # stores multiple transform buffers
 # creates a new buffer on demand when new transform is detected
-class TTBuffer:
+class MultiTBuffer:
     def __init__(self, buffer_size: float = 10.0):
         self.buffers: dict[tuple[str, str], TBuffer] = {}
         self.buffer_size = buffer_size
@@ -130,7 +149,7 @@ class TTBuffer:
                 self.buffers[key] = TBuffer(self.buffer_size)
             self.buffers[key].add(transform)
 
-    def get_transform(
+    def get(
         self,
         parent_frame: str,
         child_frame: str,
@@ -141,28 +160,55 @@ class TTBuffer:
         if key not in self.buffers:
             return None
 
-        buffer = self.buffers[key]
+        return self.buffers[key].get(time_point, time_tolerance)
 
-        if time_point is None:
-            # Return the latest transform
-            return buffer[-1] if len(buffer) > 0 else None
+    def get_transform_search(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: Optional[float] = None,
+        time_tolerance: Optional[float] = None,
+    ) -> Optional[list[Transform]]:
+        """Search for shortest transform chain between parent and child frames using BFS."""
+        # Check if direct transform exists
+        if (parent_frame, child_frame) in self.buffers:
+            transform = self.buffers[(parent_frame, child_frame)].get(time_point, time_tolerance)
+            return [transform] if transform else None
 
-        # Find closest transform within tolerance
-        closest = buffer.find_closest(time_point)
-        if closest is None:
-            return None
+        # Build a graph of available transforms at the given time
+        graph = {}
+        for (from_frame, to_frame), buffer in self.buffers.items():
+            transform = buffer.get(time_point, time_tolerance)
+            if transform:
+                if from_frame not in graph:
+                    graph[from_frame] = []
+                graph[from_frame].append((to_frame, transform))
 
-        if time_tolerance is not None:
-            if abs(closest.ts - time_point) > time_tolerance:
-                return None
+        # BFS to find shortest path
+        from collections import deque
 
-        return closest
+        queue = deque([(parent_frame, [])])
+        visited = {parent_frame}
+
+        while queue:
+            current_frame, path = queue.popleft()
+
+            if current_frame == child_frame:
+                return path
+
+            if current_frame in graph:
+                for next_frame, transform in graph[current_frame]:
+                    if next_frame not in visited:
+                        visited.add(next_frame)
+                        queue.append((next_frame, path + [transform]))
+
+        return None
 
     def __str__(self) -> str:
         if not self.buffers:
-            return "TTBuffer(empty)"
+            return "MultiTBuffer(empty)"
 
-        lines = [f"TTBuffer({len(self.buffers)} buffers):"]
+        lines = [f"MultiTBuffer({len(self.buffers)} buffers):"]
         for buffer in self.buffers.values():
             lines.append(f"  {buffer}")
 
@@ -175,12 +221,12 @@ class PubSubTFConfig(TFConfig):
     pubsub: Optional[PubSub[TopicT, MsgT]] = None
 
 
-class PubSubTF(TTBuffer, TFSpec):
+class PubSubTF(MultiTBuffer, TFSpec):
     config: PubSubTFConfig
 
     def __init__(self, **kwargs) -> None:
         TFSpec.__init__(self, **kwargs)
-        TTBuffer.__init__(self, self.config.buffer_size)
+        MultiTBuffer.__init__(self, self.config.buffer_size)
         self.pubsub = self.config.pubsub
 
     def start(self):
@@ -204,7 +250,7 @@ class PubSubTF(TTBuffer, TFSpec):
         time_point: Optional[float] = None,
         time_tolerance: Optional[float] = None,
     ) -> Optional[Transform]:
-        return self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
+        return super().get(parent_frame, child_frame, time_point, time_tolerance)
 
     def receive_msg(self, channel: str, data: bytes) -> None:
         msg = TFMessage.lcm_decode(data)
