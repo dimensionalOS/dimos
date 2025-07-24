@@ -34,6 +34,7 @@ from dimos.types.vector import Vector
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.logging_config import setup_logger
+from unittest.mock import patch, MagicMock
 import warnings
 
 logger = setup_logger("test_spatial_memory_module")
@@ -107,7 +108,7 @@ class OdometryReplayModule(Module):
         logger.info("OdometryReplayModule stopped")
 
 
-@pytest.mark.heavy
+@pytest.mark.skip(reason="Run directly with python")
 class TestSpatialMemoryModule:
     @pytest.fixture(scope="function")
     def temp_dir(self):
@@ -210,4 +211,8 @@ class TestSpatialMemoryModule:
 
 
 if __name__ == "__main__":
-    pytest.main(["-v", "-s", __file__])
+    # pytest.main(["-v", "-s", __file__])
+    test = TestSpatialMemoryModule()
+    asyncio.run(
+        test.test_spatial_memory_module_with_replay(tempfile.mkdtemp(prefix="spatial_memory_test_"))
+    )
