@@ -246,8 +246,12 @@ Analyze the image and identify the single best frontier exploration goal."""
         # Query Qwen model for frontier prediction
         try:
             prompt = self._create_vision_prompt()
+
+            # Convert PIL image to numpy array for query_single_frame
+            annotated_array = np.array(annotated_image)
+
             response = query_single_frame(
-                annotated_image, prompt, api_key=self.api_key, model_name=self.model_name
+                annotated_array, prompt, api_key=self.api_key, model_name=self.model_name
             )
 
             print(f"DEBUG: Qwen response: {response}")

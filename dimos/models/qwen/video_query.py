@@ -85,15 +85,15 @@ def query_single_frame_observable(
 
 
 def query_single_frame(
-    image: "PIL.Image",
+    image: np.ndarray,
     query: str = "Return the center coordinates of the fridge handle as a tuple (x,y)",
     api_key: Optional[str] = None,
     model_name: str = "qwen2.5-vl-72b-instruct",
 ) -> str:
-    """Process a single PIL image with Qwen model.
+    """Process a single numpy image array with Qwen model.
 
     Args:
-        image: A PIL Image to process
+        image: A numpy array image to process (H, W, 3) in RGB format
         query: The query to ask about the image
         api_key: Alibaba API key. If None, will try to get from ALIBABA_API_KEY env var
         model_name: The Qwen model to use. Defaults to qwen2.5-vl-72b-instruct
@@ -103,8 +103,9 @@ def query_single_frame(
 
     Example:
         ```python
-        from PIL import Image
-        image = Image.open('image.jpg')
+        import cv2
+        image = cv2.imread('image.jpg')
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert to RGB
         response = query_single_frame(image, "Return the center coordinates of the object _____ as a tuple (x,y)")
         print(response)
         ```
@@ -133,8 +134,8 @@ def query_single_frame(
         pool_scheduler=get_scheduler(),
     )
 
-    # Convert PIL image to numpy array
-    frame = np.array(image)
+    # Use the numpy array directly (no conversion needed)
+    frame = image
 
     # Create a Subject that will emit the image once
     frame_subject = Subject()
@@ -200,18 +201,16 @@ def get_bbox_from_qwen_frame(frame, object_name: Optional[str] = None) -> Option
     """Get bounding box coordinates from Qwen for a specific object or any object using a single frame.
 
     Args:
-        frame: A single image frame (PIL Image or numpy array)
+        frame: A single image frame (numpy array in RGB format)
         object_name: Optional name of object to detect
 
     Returns:
         tuple: (bbox, size) where bbox is [x1, y1, x2, y2] or None if no detection
                and size is the estimated height in meters
     """
-    # Convert numpy array to PIL Image if needed
-    if isinstance(frame, np.ndarray):
-        from PIL import Image
-
-        frame = Image.fromarray(frame)
+    # Ensure frame is numpy array
+    if not isinstance(frame, np.ndarray):
+        raise ValueError("Frame must be a numpy array")
 
     prompt = (
         f"Look at this image and find the {object_name if object_name else 'most prominent object'}. Estimate the approximate height of the subject."

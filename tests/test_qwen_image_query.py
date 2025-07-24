@@ -15,6 +15,8 @@
 """Test the Qwen image query functionality."""
 
 import os
+import cv2
+import numpy as np
 from PIL import Image
 from dimos.models.qwen.video_query import query_single_frame
 
@@ -28,7 +30,16 @@ def test_qwen_image_query():
 
     # Load test image
     image_path = os.path.join(os.getcwd(), "assets", "test_spatial_memory", "frame_038.jpg")
-    image = Image.open(image_path)
+    pil_image = Image.open(image_path)
+
+    # Convert PIL image to numpy array in RGB format
+    image_array = np.array(pil_image)
+    if image_array.shape[-1] == 3:
+        # Ensure it's in RGB format (PIL loads as RGB by default)
+        image = image_array
+    else:
+        # Handle grayscale images
+        image = cv2.cvtColor(image_array, cv2.COLOR_GRAY2RGB)
 
     # Test basic object detection query
     response = query_single_frame(
