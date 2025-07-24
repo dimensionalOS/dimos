@@ -208,7 +208,7 @@ jobs:
       dev-image: dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
   # TODO: Remove when merge to main as workflow_run needed
   cleanup-runner:
-    needs: [run-tests, run-heavy-tests, run-ros-tests]
+    needs: [run-tests, run-heavy-tests, run-ros-tests, run-lcm-tests, run-module-tests]
     if: always()
     runs-on: [self-hosted, Linux]
     steps:
