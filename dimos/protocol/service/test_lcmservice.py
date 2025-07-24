@@ -145,8 +145,9 @@ def test_check_buffers_all_configured():
             )(),
         ]
 
-        result = check_buffers()
-        assert result == []
+        commands, buffer_size = check_buffers()
+        assert commands == []
+        assert buffer_size == 2097152
 
 
 def test_check_buffers_low_max_buffer():
@@ -160,9 +161,10 @@ def test_check_buffers_low_max_buffer():
             )(),
         ]
 
-        result = check_buffers()
+        commands, buffer_size = check_buffers()
         sudo = get_sudo_prefix()
-        assert result == [f"{sudo}sysctl -w net.core.rmem_max=2097152"]
+        assert commands == [f"{sudo}sysctl -w net.core.rmem_max=2097152"]
+        assert buffer_size == 1048576
 
 
 def test_check_buffers_low_default_buffer():
@@ -176,9 +178,10 @@ def test_check_buffers_low_default_buffer():
             )(),
         ]
 
-        result = check_buffers()
+        commands, buffer_size = check_buffers()
         sudo = get_sudo_prefix()
-        assert result == [f"{sudo}sysctl -w net.core.rmem_default=2097152"]
+        assert commands == [f"{sudo}sysctl -w net.core.rmem_default=2097152"]
+        assert buffer_size == 2097152
 
 
 def test_check_buffers_both_low():
@@ -192,13 +195,14 @@ def test_check_buffers_both_low():
             )(),
         ]
 
-        result = check_buffers()
+        commands, buffer_size = check_buffers()
         sudo = get_sudo_prefix()
         expected = [
             f"{sudo}sysctl -w net.core.rmem_max=2097152",
             f"{sudo}sysctl -w net.core.rmem_default=2097152",
         ]
-        assert result == expected
+        assert commands == expected
+        assert buffer_size == 1048576
 
 
 def test_check_buffers_subprocess_exception():
@@ -207,13 +211,14 @@ def test_check_buffers_subprocess_exception():
         # Mock subprocess exceptions
         mock_run.side_effect = Exception("Command failed")
 
-        result = check_buffers()
+        commands, buffer_size = check_buffers()
         sudo = get_sudo_prefix()
         expected = [
             f"{sudo}sysctl -w net.core.rmem_max=2097152",
             f"{sudo}sysctl -w net.core.rmem_default=2097152",
         ]
-        assert result == expected
+        assert commands == expected
+        assert buffer_size is None
 
 
 def test_check_buffers_parsing_error():
@@ -225,13 +230,47 @@ def test_check_buffers_parsing_error():
             type("MockResult", (), {"stdout": "also invalid", "returncode": 0})(),
         ]
 
-        result = check_buffers()
+        commands, buffer_size = check_buffers()
         sudo = get_sudo_prefix()
         expected = [
             f"{sudo}sysctl -w net.core.rmem_max=2097152",
             f"{sudo}sysctl -w net.core.rmem_default=2097152",
         ]
-        assert result == expected
+        assert commands == expected
+        assert buffer_size is None
+
+
+def test_check_buffers_dev_container():
+    """Test check_buffers in dev container where sysctl fails."""
+    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+        # Mock dev container behavior - sysctl returns non-zero
+        mock_run.side_effect = [
+            type(
+                "MockResult",
+                (),
+                {
+                    "stdout": "sysctl: cannot stat /proc/sys/net/core/rmem_max: No such file or directory",
+                    "returncode": 255,
+                },
+            )(),
+            type(
+                "MockResult",
+                (),
+                {
+                    "stdout": "sysctl: cannot stat /proc/sys/net/core/rmem_default: No such file or directory",
+                    "returncode": 255,
+                },
+            )(),
+        ]
+
+        commands, buffer_size = check_buffers()
+        sudo = get_sudo_prefix()
+        expected = [
+            f"{sudo}sysctl -w net.core.rmem_max=2097152",
+            f"{sudo}sysctl -w net.core.rmem_default=2097152",
+        ]
+        assert commands == expected
+        assert buffer_size is None
 
 
 def test_autoconf_no_config_needed():
@@ -256,10 +295,12 @@ def test_autoconf_no_config_needed():
             )(),
         ]
 
-        with patch("builtins.print") as mock_print:
+        with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
             autoconf()
-            # Should not print anything when no config is needed
-            mock_print.assert_not_called()
+            # Should not log anything when no config is needed
+            mock_logger.info.assert_not_called()
+            mock_logger.error.assert_not_called()
+            mock_logger.warning.assert_not_called()
 
 
 def test_autoconf_with_config_needed_success():
@@ -288,26 +329,27 @@ def test_autoconf_with_config_needed_success():
             type("MockResult", (), {"stdout": "success", "returncode": 0})(),  # sysctl rmem_default
         ]
 
-        with patch("builtins.print") as mock_print:
+        from unittest.mock import call
+
+        with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
             autoconf()
 
             sudo = get_sudo_prefix()
-            # Verify the expected print calls
-            expected_calls = [
-                ("System configuration required. Executing commands...",),
-                (f"  Running: {sudo}ifconfig lo multicast",),
-                ("  ✓ Success",),
-                (f"  Running: {sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",),
-                ("  ✓ Success",),
-                (f"  Running: {sudo}sysctl -w net.core.rmem_max=2097152",),
-                ("  ✓ Success",),
-                (f"  Running: {sudo}sysctl -w net.core.rmem_default=2097152",),
-                ("  ✓ Success",),
-                ("System configuration completed.",),
+            # Verify the expected log calls
+            expected_info_calls = [
+                call("System configuration required. Executing commands..."),
+                call(f"  Running: {sudo}ifconfig lo multicast"),
+                call("  ✓ Success"),
+                call(f"  Running: {sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"),
+                call("  ✓ Success"),
+                call(f"  Running: {sudo}sysctl -w net.core.rmem_max=2097152"),
+                call("  ✓ Success"),
+                call(f"  Running: {sudo}sysctl -w net.core.rmem_default=2097152"),
+                call("  ✓ Success"),
+                call("System configuration completed."),
             ]
-            from unittest.mock import call
 
-            mock_print.assert_has_calls([call(*args) for args in expected_calls])
+            mock_logger.info.assert_has_calls(expected_info_calls)
 
 
 def test_autoconf_with_command_failures():
@@ -340,12 +382,17 @@ def test_autoconf_with_command_failures():
             ),
         ]
 
-        with patch("builtins.print") as mock_print:
-            autoconf()
+        with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
+            # The function should raise on multicast/route failures
+            with pytest.raises(subprocess.CalledProcessError):
+                autoconf()
 
-            # Verify it handles the failure gracefully
-            print_calls = [call[0][0] for call in mock_print.call_args_list]
-            assert "System configuration required. Executing commands..." in print_calls
-            assert "  ✓ Success" in print_calls  # First command succeeded
-            assert any("✗ Failed" in call for call in print_calls)  # Second command failed
-            assert "System configuration completed." in print_calls
+            # Verify it logged the failure before raising
+            info_calls = [call[0][0] for call in mock_logger.info.call_args_list]
+            error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
+
+            assert "System configuration required. Executing commands..." in info_calls
+            assert "  ✓ Success" in info_calls  # First command succeeded
+            assert any(
+                "✗ Failed to configure multicast" in call for call in error_calls
+            )  # Second command failed
