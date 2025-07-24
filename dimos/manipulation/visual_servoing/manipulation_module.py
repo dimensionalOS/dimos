@@ -57,26 +57,22 @@ logger = setup_logger("dimos.manipulation.manipulation_module")
 class GraspStage(Enum):
     """Enum for different grasp stages."""
 
-    IDLE = "idle"  # No target set
-    PRE_GRASP = "pre_grasp"  # Target set, moving to pre-grasp position
-    GRASP = "grasp"  # Executing final grasp
-    CLOSE_AND_RETRACT = "close_and_retract"  # Close gripper and retract
-    PLACE = "place"  # Move to place position and release object
-    RETRACT = "retract"  # Retract from place position
+    IDLE = "idle"
+    PRE_GRASP = "pre_grasp"
+    GRASP = "grasp"
+    CLOSE_AND_RETRACT = "close_and_retract"
+    PLACE = "place"
+    RETRACT = "retract"
 
 
 class Feedback:
-    """
-    Feedback data returned by the manipulation system update.
-
-    Contains comprehensive state information about the manipulation process.
-    """
+    """Feedback data containing state information about the manipulation process."""
 
     def __init__(
         self,
         grasp_stage: GraspStage,
         target_tracked: bool,
-        last_commanded_pose: Optional[Pose] = None,
+        current_executed_pose: Optional[Pose] = None,
         current_ee_pose: Optional[Pose] = None,
         current_camera_pose: Optional[Pose] = None,
         target_pose: Optional[Pose] = None,
@@ -85,7 +81,7 @@ class Feedback:
     ):
         self.grasp_stage = grasp_stage
         self.target_tracked = target_tracked
-        self.last_commanded_pose = last_commanded_pose
+        self.current_executed_pose = current_executed_pose
         self.current_ee_pose = current_ee_pose
         self.current_camera_pose = current_camera_pose
         self.target_pose = target_pose
@@ -128,22 +124,21 @@ class ManipulationModule(Module):
 
         Args:
             ee_to_camera_6dof: EE to camera transform [x, y, z, rx, ry, rz] in meters and radians
+            workspace_min_radius: Minimum workspace radius in meters
+            workspace_max_radius: Maximum workspace radius in meters
+            min_grasp_pitch_degrees: Minimum grasp pitch angle (at max radius)
+            max_grasp_pitch_degrees: Maximum grasp pitch angle (at min radius)
         """
         super().__init__(**kwargs)
 
-        # Initialize arm directly
         self.arm = PiperArm()
 
-        # Default EE to camera transform if not provided
         if ee_to_camera_6dof is None:
             ee_to_camera_6dof = [-0.065, 0.03, -0.105, 0.0, -1.57, 0.0]
-
-        # Create transform matrices
         pos = Vector3(ee_to_camera_6dof[0], ee_to_camera_6dof[1], ee_to_camera_6dof[2])
         rot = Vector3(ee_to_camera_6dof[3], ee_to_camera_6dof[4], ee_to_camera_6dof[5])
         self.T_ee_to_camera = create_transform_from_6dof(pos, rot)
 
-        # Camera intrinsics will be set when camera info is received
         self.camera_intrinsics = None
         self.detector = None
         self.pbvs = None
@@ -151,19 +146,24 @@ class ManipulationModule(Module):
         # Control state
         self.last_valid_target = None
         self.waiting_for_reach = False
-        self.last_commanded_pose = None
+        self.current_executed_pose = None  # Track the actual pose sent to arm
         self.target_updated = False
         self.waiting_start_time = None
         self.reach_pose_timeout = 10.0
 
         # Grasp parameters
         self.grasp_width_offset = 0.03
-        self.grasp_pitch_degrees = 30.0
         self.pregrasp_distance = 0.25
         self.grasp_distance_range = 0.03
         self.grasp_close_delay = 2.0
         self.grasp_reached_time = None
         self.gripper_max_opening = 0.07
+
+        # Workspace limits and dynamic pitch parameters
+        self.workspace_min_radius = 0.2
+        self.workspace_max_radius = 0.75
+        self.min_grasp_pitch_degrees = 5.0
+        self.max_grasp_pitch_degrees = 75.0
 
         # Grasp stage tracking
         self.grasp_stage = GraspStage.IDLE
@@ -176,6 +176,13 @@ class ManipulationModule(Module):
         self.reached_poses = deque(maxlen=self.pose_history_size)
         self.adjustment_count = 0
 
+        # Pose reachability tracking
+        self.ee_pose_history = deque(maxlen=20)  # Keep history of EE poses
+        self.stuck_pose_threshold = 0.001  # 1mm movement threshold
+        self.stuck_pose_adjustment_degrees = 5.0
+        self.stuck_count = 0
+        self.max_stuck_reattempts = 7
+
         # State for visualization
         self.current_visualization = None
         self.last_detection_3d_array = None
@@ -184,8 +191,8 @@ class ManipulationModule(Module):
         # Grasp result and task tracking
         self.pick_success = None
         self.final_pregrasp_pose = None
-        self.task_failed = False  # New variable for tracking task failure
-        self.overall_success = None  # Track overall pick and place success
+        self.task_failed = False
+        self.overall_success = None
 
         # Task control
         self.task_running = False
@@ -201,11 +208,12 @@ class ManipulationModule(Module):
         self.target_click = None
 
         # Place target position and object info
+        self.home_pose = Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))
         self.place_target_position = None
         self.target_object_height = None
-        self.place_pose = None  # Store the calculated place pose for retraction
-
-        # Move arm to observe position on init
+        self.retract_distance = 0.12
+        self.place_pose = None
+        self.retract_pose = None
         self.arm.gotoObserve()
 
     @rpc
@@ -233,7 +241,6 @@ class ManipulationModule(Module):
     def _on_rgb_image(self, msg: Image):
         """Handle RGB image messages."""
         try:
-            # Convert LCM message to numpy array
             data = np.frombuffer(msg.data, dtype=np.uint8)
             if msg.encoding == "rgb8":
                 self.latest_rgb = data.reshape((msg.height, msg.width, 3))
@@ -245,7 +252,6 @@ class ManipulationModule(Module):
     def _on_depth_image(self, msg: Image):
         """Handle depth image messages."""
         try:
-            # Convert LCM message to numpy array
             if msg.encoding == "32FC1":
                 data = np.frombuffer(msg.data, dtype=np.float32)
                 self.latest_depth = data.reshape((msg.height, msg.width))
@@ -257,15 +263,8 @@ class ManipulationModule(Module):
     def _on_camera_info(self, msg: CameraInfo):
         """Handle camera info messages."""
         try:
-            # Extract camera intrinsics
-            self.camera_intrinsics = [
-                msg.K[0],  # fx
-                msg.K[4],  # fy
-                msg.K[2],  # cx
-                msg.K[5],  # cy
-            ]
+            self.camera_intrinsics = [msg.K[0], msg.K[4], msg.K[2], msg.K[5]]
 
-            # Initialize processors if not already done
             if self.detector is None:
                 self.detector = Detection3DProcessor(self.camera_intrinsics)
                 self.pbvs = PBVS(target_tolerance=0.05)
@@ -300,21 +299,10 @@ class ManipulationModule(Module):
             self.task_running = False
             return "stop"
         elif key_code == ord(" ") and self.pbvs and self.pbvs.target_grasp_pose:
-            # Manual override - immediately transition to GRASP if in PRE_GRASP
             if self.grasp_stage == GraspStage.PRE_GRASP:
                 self.set_grasp_stage(GraspStage.GRASP)
             logger.info("Executing target pose")
             return "execute"
-        elif key_code == 82:  # Up arrow - increase pitch
-            new_pitch = min(90.0, self.grasp_pitch_degrees + 15.0)
-            self.set_grasp_pitch(new_pitch)
-            logger.info(f"Grasp pitch: {new_pitch:.0f} degrees")
-            return "pitch_up"
-        elif key_code == 84:  # Down arrow - decrease pitch
-            new_pitch = max(0.0, self.grasp_pitch_degrees - 15.0)
-            self.set_grasp_pitch(new_pitch)
-            logger.info(f"Grasp pitch: {new_pitch:.0f} degrees")
-            return "pitch_down"
         elif key_code == ord("g"):
             logger.info("Opening gripper")
             self.arm.release_gripper()
@@ -344,59 +332,44 @@ class ManipulationModule(Module):
         if self.camera_intrinsics is None:
             return {"status": "error", "message": "Camera not initialized"}
 
-        # Set target if coordinates provided
         if target_x is not None and target_y is not None:
             self.target_click = (target_x, target_y)
-
-        # Process place location if provided
         if place_x is not None and self.latest_depth is not None:
-            # Select points around the place location from depth image
             points_3d_camera = select_points_from_depth(
                 self.latest_depth,
                 (place_x, place_y),
                 self.camera_intrinsics,
-                radius=10,  # 10 pixel radius around place point
+                radius=10,
             )
 
             if points_3d_camera.size > 0:
-                # Get current camera transform to transform points to world frame
                 ee_pose = self.arm.get_ee_pose()
                 ee_transform = pose_to_matrix(ee_pose)
                 camera_transform = compose_transforms(ee_transform, self.T_ee_to_camera)
 
-                # Transform points from camera frame to world frame
                 points_3d_world = transform_points_3d(
                     points_3d_camera,
                     camera_transform,
-                    to_robot=True,  # Convert from optical to robot frame
+                    to_robot=True,
                 )
 
-                # Average the 3D points to get place position
                 place_position = np.mean(points_3d_world, axis=0)
-
-                # Create place target pose with same orientation as current EE
-                # For now, just store the position - full implementation will come later
                 self.place_target_position = place_position
                 logger.info(
                     f"Place target set at position: ({place_position[0]:.3f}, {place_position[1]:.3f}, {place_position[2]:.3f})"
                 )
-                logger.info("Note: Z-offset will be applied once target object is detected")
             else:
                 logger.warning("No valid depth points found at place location")
                 self.place_target_position = None
         else:
             self.place_target_position = None
 
-        # Reset task state
         self.task_failed = False
         self.stop_event.clear()
 
-        # Ensure any previous thread has finished
         if self.task_thread and self.task_thread.is_alive():
             self.stop_event.set()
             self.task_thread.join(timeout=1.0)
-
-        # Start task in separate thread
         self.task_thread = threading.Thread(target=self._run_pick_and_place, daemon=True)
         self.task_thread.start()
 
@@ -409,30 +382,25 @@ class ManipulationModule(Module):
 
         try:
             while not self.stop_event.is_set():
-                # Check for task failure
                 if self.task_failed:
                     logger.error("Task failed, terminating pick and place")
                     self.stop_event.set()
                     break
 
-                # Update manipulation system
                 feedback = self.update()
                 if feedback is None:
                     time.sleep(0.01)
                     continue
 
-                # Check if task is complete
                 if feedback.success is not None:
                     if feedback.success:
                         logger.info("Pick and place completed successfully!")
                     else:
-                        logger.warning("Pick and place failed - no object detected")
-                    # Reset to idle state and stop the event loop
+                        logger.warning("Pick and place failed")
                     self.reset_to_idle()
                     self.stop_event.set()
                     break
 
-                # Small delay to prevent CPU overload
                 time.sleep(0.01)
 
         except Exception as e:
@@ -447,22 +415,166 @@ class ManipulationModule(Module):
         self.grasp_stage = stage
         logger.info(f"Grasp stage: {stage.value}")
 
-    def set_grasp_pitch(self, pitch_degrees: float):
-        """Set the grasp pitch angle."""
-        pitch_degrees = max(0.0, min(90.0, pitch_degrees))
-        self.grasp_pitch_degrees = pitch_degrees
-        if self.pbvs:
-            self.pbvs.set_grasp_pitch(pitch_degrees)
+    def calculate_dynamic_grasp_pitch(self, target_pose: Pose) -> float:
+        """
+        Calculate grasp pitch dynamically based on distance from robot base.
+        Maps workspace radius to grasp pitch angle.
 
-    def _check_reach_timeout(self) -> bool:
-        """Check if robot has exceeded timeout while reaching pose."""
-        if (
-            self.waiting_start_time
-            and (time.time() - self.waiting_start_time) > self.reach_pose_timeout
-        ):
-            logger.warning(f"Robot failed to reach pose within {self.reach_pose_timeout}s timeout")
+        Args:
+            target_pose: Target pose
+
+        Returns:
+            Grasp pitch angle in degrees
+        """
+        # Calculate 3D distance from robot base (assumes robot at origin)
+        position = target_pose.position
+        distance = np.sqrt(position.x**2 + position.y**2 + position.z**2)
+
+        # Clamp distance to workspace limits
+        distance = np.clip(distance, self.workspace_min_radius, self.workspace_max_radius)
+
+        # Linear interpolation: min_radius -> max_pitch, max_radius -> min_pitch
+        # Normalized distance (0 to 1)
+        normalized_dist = (distance - self.workspace_min_radius) / (
+            self.workspace_max_radius - self.workspace_min_radius
+        )
+
+        # Inverse mapping: closer objects need higher pitch
+        pitch_degrees = self.max_grasp_pitch_degrees - (
+            normalized_dist * (self.max_grasp_pitch_degrees - self.min_grasp_pitch_degrees)
+        )
+
+        return pitch_degrees
+
+    def check_within_workspace(self, target_pose: Pose) -> bool:
+        """
+        Check if pose is within workspace limits and log error if not.
+
+        Args:
+            target_pose: Target pose to validate
+
+        Returns:
+            True if within workspace, False otherwise
+        """
+        # Calculate 3D distance from robot base
+        position = target_pose.position
+        distance = np.sqrt(position.x**2 + position.y**2 + position.z**2)
+
+        if not (self.workspace_min_radius <= distance <= self.workspace_max_radius):
+            logger.error(
+                f"Target outside workspace limits: distance {distance:.3f}m not in [{self.workspace_min_radius:.2f}, {self.workspace_max_radius:.2f}]"
+            )
+            return False
+
+        return True
+
+    def _check_reach_timeout(self) -> Tuple[bool, float]:
+        """Check if robot has exceeded timeout while reaching pose.
+
+        Returns:
+            Tuple of (timed_out, time_elapsed)
+        """
+        if self.waiting_start_time:
+            time_elapsed = time.time() - self.waiting_start_time
+            if time_elapsed > self.reach_pose_timeout:
+                logger.warning(
+                    f"Robot failed to reach pose within {self.reach_pose_timeout}s timeout"
+                )
+                self.task_failed = True
+                self.reset_to_idle()
+                return True, time_elapsed
+            return False, time_elapsed
+        return False, 0.0
+
+    def _check_if_stuck(self) -> bool:
+        """
+        Check if robot is stuck by analyzing pose history.
+
+        Returns:
+            Tuple of (is_stuck, max_std_dev_mm)
+        """
+        if len(self.ee_pose_history) < self.ee_pose_history.maxlen:
+            return False
+
+        # Extract positions from pose history
+        positions = np.array(
+            [[p.position.x, p.position.y, p.position.z] for p in self.ee_pose_history]
+        )
+
+        # Calculate standard deviation of positions
+        std_devs = np.std(positions, axis=0)
+        # Check if all standard deviations are below stuck threshold
+        is_stuck = np.all(std_devs < self.stuck_pose_threshold)
+
+        return is_stuck
+
+    def check_reach_and_adjust(self, tolerance: Optional[float] = None) -> bool:
+        """
+        Check if robot has reached the current executed pose while waiting.
+        Handles timeout internally by failing the task.
+        Also detects if the robot is stuck (not moving towards target).
+
+        Args:
+            tolerance: Optional tolerance override (uses PBVS tolerance if not provided)
+
+        Returns:
+            True if reached, False if still waiting or not in waiting state
+        """
+        if not self.waiting_for_reach or not self.current_executed_pose:
+            return False
+
+        # Get current end-effector pose
+        ee_pose = self.arm.get_ee_pose()
+        target_pose = self.current_executed_pose
+
+        # Check for timeout - this will fail task and reset if timeout occurred
+        timed_out, time_elapsed = self._check_reach_timeout()
+        if timed_out:
+            return False
+
+        # Use provided tolerance or default to PBVS tolerance
+        if tolerance is None:
+            tolerance = self.pbvs.target_tolerance if self.pbvs else 0.01
+
+        # Add current pose to history
+        self.ee_pose_history.append(ee_pose)
+
+        # Check if robot is stuck
+        is_stuck = self._check_if_stuck()
+        if is_stuck:
+            if self.grasp_stage == GraspStage.RETRACT:
+                return True
+            self.stuck_count += 1
+            pitch_degrees = self.calculate_dynamic_grasp_pitch(target_pose)
+            if self.stuck_count % 2 == 0:
+                pitch_degrees += self.stuck_pose_adjustment_degrees * (1 + self.stuck_count // 2)
+            else:
+                pitch_degrees -= self.stuck_pose_adjustment_degrees * (1 + self.stuck_count // 2)
+
+            pitch_degrees = max(
+                self.min_grasp_pitch_degrees, min(self.max_grasp_pitch_degrees, pitch_degrees)
+            )
+            updated_target_pose = update_target_grasp_pose(target_pose, ee_pose, 0.0, pitch_degrees)
+            logger.info(
+                f"updated_target_pose: {updated_target_pose.position.x}, {updated_target_pose.position.y}, {updated_target_pose.position.z}"
+            )
+            self.arm.cmd_ee_pose(updated_target_pose, line_mode=True)
+            self.current_executed_pose = updated_target_pose
+            self.ee_pose_history.clear()
+            self.waiting_for_reach = True
+            self.waiting_start_time = time.time()
+            return False
+
+        if self.stuck_count >= self.max_stuck_reattempts:
             self.task_failed = True
             self.reset_to_idle()
+            return False
+
+        if is_target_reached(target_pose, ee_pose, tolerance):
+            self.waiting_for_reach = False
+            self.waiting_start_time = None
+            self.stuck_count = 0
+            self.ee_pose_history.clear()
             return True
         return False
 
@@ -483,9 +595,10 @@ class ManipulationModule(Module):
             self.pbvs.clear_target()
         self.grasp_stage = GraspStage.IDLE
         self.reached_poses.clear()
+        self.ee_pose_history.clear()
         self.adjustment_count = 0
         self.waiting_for_reach = False
-        self.last_commanded_pose = None
+        self.current_executed_pose = None
         self.target_updated = False
         self.stabilization_start_time = None
         self.grasp_reached_time = None
@@ -494,37 +607,23 @@ class ManipulationModule(Module):
         self.final_pregrasp_pose = None
         self.overall_success = None
         self.place_pose = None
+        self.retract_pose = None
+        self.stuck_count = 0
 
         self.arm.gotoObserve()
 
     def execute_idle(self):
-        """Execute idle stage: just visualization, no control."""
+        """Execute idle stage."""
         pass
 
     def execute_pre_grasp(self):
         """Execute pre-grasp stage: visual servoing to pre-grasp position."""
-        ee_pose = self.arm.get_ee_pose()
-
-        # Check if waiting for robot to reach commanded pose
-        if self.waiting_for_reach and self.last_commanded_pose:
-            # Check for timeout
-            if self._check_reach_timeout():
-                return
-
-            reached = is_target_reached(
-                self.last_commanded_pose, ee_pose, self.pbvs.target_tolerance
-            )
-
-            if reached:
-                self.waiting_for_reach = False
-                self.waiting_start_time = None
-                self.reached_poses.append(self.last_commanded_pose)
+        if self.waiting_for_reach:
+            if self.check_reach_and_adjust():
+                self.reached_poses.append(self.current_executed_pose)
                 self.target_updated = False
                 time.sleep(0.3)
-
             return
-
-        # Check stabilization timeout
         if (
             self.stabilization_start_time
             and (time.time() - self.stabilization_start_time) > self.stabilization_timeout
@@ -536,24 +635,28 @@ class ManipulationModule(Module):
             self.reset_to_idle()
             return
 
-        # PBVS control with pre-grasp distance
-        _, _, _, has_target, target_pose = self.pbvs.compute_control(
-            ee_pose, self.pregrasp_distance
-        )
+        ee_pose = self.arm.get_ee_pose()
+        dynamic_pitch = self.calculate_dynamic_grasp_pitch(self.pbvs.current_target.bbox.center)
 
-        # Handle pose control
+        _, _, _, has_target, target_pose = self.pbvs.compute_control(
+            ee_pose, self.pregrasp_distance, dynamic_pitch
+        )
         if target_pose and has_target:
-            # Check if we have enough reached poses and they're stable
+            # Validate target pose is within workspace
+            if not self.check_within_workspace(target_pose):
+                self.task_failed = True
+                self.reset_to_idle()
+                return
+
             if self.check_target_stabilized():
                 logger.info("Target stabilized, transitioning to GRASP")
-                self.final_pregrasp_pose = self.last_commanded_pose
+                self.final_pregrasp_pose = self.current_executed_pose
                 self.grasp_stage = GraspStage.GRASP
                 self.adjustment_count = 0
                 self.waiting_for_reach = False
             elif not self.waiting_for_reach and self.target_updated:
-                # Command the pose only if target has been updated
                 self.arm.cmd_ee_pose(target_pose)
-                self.last_commanded_pose = target_pose
+                self.current_executed_pose = target_pose
                 self.waiting_for_reach = True
                 self.waiting_start_time = time.time()
                 self.target_updated = False
@@ -562,126 +665,94 @@ class ManipulationModule(Module):
 
     def execute_grasp(self):
         """Execute grasp stage: move to final grasp position."""
-        ee_pose = self.arm.get_ee_pose()
-
-        # Handle waiting with special grasp logic
-        if self.waiting_for_reach:
-            if self._check_reach_timeout():
-                return
-
-            if (
-                is_target_reached(self.pbvs.target_grasp_pose, ee_pose, self.pbvs.target_tolerance)
-                and not self.grasp_reached_time
-            ):
+        if self.waiting_for_reach and self.pbvs and self.pbvs.target_grasp_pose:
+            if self.check_reach_and_adjust() and not self.grasp_reached_time:
                 self.grasp_reached_time = time.time()
-                self.waiting_start_time = None
 
-            # Check if delay completed
             if (
                 self.grasp_reached_time
                 and (time.time() - self.grasp_reached_time) >= self.grasp_close_delay
             ):
                 logger.info("Grasp delay completed, closing gripper")
                 self.grasp_stage = GraspStage.CLOSE_AND_RETRACT
-                self.waiting_for_reach = False
             return
-
-        # Only command grasp if not waiting and have valid target
         if self.last_valid_target:
-            # Calculate grasp distance based on pitch angle
-            normalized_pitch = self.grasp_pitch_degrees / 90.0
+            # Calculate dynamic pitch for current target
+            dynamic_pitch = self.calculate_dynamic_grasp_pitch(self.last_valid_target.bbox.center)
+            normalized_pitch = dynamic_pitch / 90.0
             grasp_distance = -self.grasp_distance_range + (
                 2 * self.grasp_distance_range * normalized_pitch
             )
 
-            # PBVS control with calculated grasp distance
-            _, _, _, has_target, target_pose = self.pbvs.compute_control(ee_pose, grasp_distance)
+            ee_pose = self.arm.get_ee_pose()
+            _, _, _, has_target, target_pose = self.pbvs.compute_control(
+                ee_pose, grasp_distance, dynamic_pitch
+            )
 
             if target_pose and has_target:
-                # Calculate gripper opening
+                # Validate grasp pose is within workspace
+                if not self.check_within_workspace(target_pose):
+                    self.task_failed = True
+                    self.reset_to_idle()
+                    return
+
                 object_width = self.last_valid_target.bbox.size.x
                 gripper_opening = max(
                     0.005, min(object_width + self.grasp_width_offset, self.gripper_max_opening)
                 )
 
                 logger.info(f"Executing grasp: gripper={gripper_opening * 1000:.1f}mm")
-
-                # Command gripper and pose
                 self.arm.cmd_gripper_ctrl(gripper_opening)
                 self.arm.cmd_ee_pose(target_pose, line_mode=True)
+                self.current_executed_pose = target_pose
                 self.waiting_for_reach = True
                 self.waiting_start_time = time.time()
 
     def execute_close_and_retract(self):
         """Execute the retraction sequence after gripper has been closed."""
-        ee_pose = self.arm.get_ee_pose()
-
-        if self.waiting_for_reach:
-            if self._check_reach_timeout():
-                return
-
-            # Check if reached retraction pose
-            reached = is_target_reached(
-                self.final_pregrasp_pose, ee_pose, self.pbvs.target_tolerance
-            )
-
-            if reached:
+        if self.waiting_for_reach and self.final_pregrasp_pose:
+            if self.check_reach_and_adjust():
                 logger.info("Reached pre-grasp retraction position")
-                self.waiting_for_reach = False
                 self.pick_success = self.arm.gripper_object_detected()
-                logger.info(f"Grasp sequence completed")
                 if self.pick_success:
                     logger.info("Object successfully grasped!")
-                    # Transition to PLACE stage if place position is available
                     if self.place_target_position is not None:
                         logger.info("Transitioning to PLACE stage")
                         self.grasp_stage = GraspStage.PLACE
                     else:
-                        # No place position, just mark as overall success
                         self.overall_success = True
                 else:
                     logger.warning("No object detected in gripper")
                     self.task_failed = True
                     self.overall_success = False
-        else:
-            # Command retraction to pre-grasp
+            return
+        if not self.waiting_for_reach:
             logger.info("Retracting to pre-grasp position")
             self.arm.cmd_ee_pose(self.final_pregrasp_pose, line_mode=True)
+            self.current_executed_pose = self.final_pregrasp_pose
             self.arm.close_gripper()
             self.waiting_for_reach = True
             self.waiting_start_time = time.time()
 
     def execute_place(self):
         """Execute place stage: move to place position and release object."""
-        ee_pose = self.arm.get_ee_pose()
-
         if self.waiting_for_reach:
-            if self._check_reach_timeout():
-                return
+            # Use the already executed pose instead of recalculating
+            if self.check_reach_and_adjust():
+                logger.info("Reached place position, releasing gripper")
+                self.arm.release_gripper()
+                time.sleep(1.0)
+                self.place_pose = self.current_executed_pose
+                logger.info("Transitioning to RETRACT stage")
+                self.grasp_stage = GraspStage.RETRACT
+            return
 
-            # Check if reached place pose
-            place_pose = self.get_place_target_pose()
-            if place_pose:
-                reached = is_target_reached(place_pose, ee_pose, self.pbvs.target_tolerance)
-
-                if reached:
-                    logger.info("Reached place position, releasing gripper")
-                    self.arm.release_gripper()
-                    time.sleep(1.0)  # Give time for gripper to open
-
-                    # Store the place pose for retraction
-                    self.place_pose = place_pose
-
-                    # Transition to RETRACT stage
-                    logger.info("Transitioning to RETRACT stage")
-                    self.grasp_stage = GraspStage.RETRACT
-                    self.waiting_for_reach = False
-        else:
-            # Get place pose and command movement
+        if not self.waiting_for_reach:
             place_pose = self.get_place_target_pose()
             if place_pose:
                 logger.info("Moving to place position")
                 self.arm.cmd_ee_pose(place_pose, line_mode=True)
+                self.current_executed_pose = place_pose
                 self.waiting_for_reach = True
                 self.waiting_start_time = time.time()
             else:
@@ -691,33 +762,25 @@ class ManipulationModule(Module):
 
     def execute_retract(self):
         """Execute retract stage: retract from place position."""
-        ee_pose = self.arm.get_ee_pose()
+        if self.waiting_for_reach and self.retract_pose:
+            if self.check_reach_and_adjust():
+                logger.info("Reached retract position")
+                logger.info("Returning to observe position")
+                self.arm.gotoObserve()
+                self.arm.close_gripper()
+                self.overall_success = True
+                logger.info("Pick and place completed successfully!")
+            return
 
-        if self.waiting_for_reach:
-            if self._check_reach_timeout():
-                return
-
-            # Check if reached retract pose
+        if not self.waiting_for_reach:
             if self.place_pose:
-                reached = is_target_reached(self.retract_pose, ee_pose, self.pbvs.target_tolerance)
-
-                if reached:
-                    logger.info("Reached retract position")
-                    # Return to observe position
-                    logger.info("Returning to observe position")
-                    self.arm.gotoObserve()
-                    self.arm.close_gripper()
-
-                    # Mark overall success
-                    self.overall_success = True
-                    logger.info("Pick and place completed successfully!")
-                    self.waiting_for_reach = False
-        else:
-            # Calculate and command retract pose
-            if self.place_pose:
-                self.retract_pose = apply_grasp_distance(self.place_pose, self.pregrasp_distance)
+                pose_pitch = self.calculate_dynamic_grasp_pitch(self.place_pose)
+                self.retract_pose = update_target_grasp_pose(
+                    self.place_pose, self.home_pose, self.retract_distance, pose_pitch
+                )
                 logger.info("Retracting from place position")
                 self.arm.cmd_ee_pose(self.retract_pose, line_mode=True)
+                self.current_executed_pose = self.retract_pose
                 self.waiting_for_reach = True
                 self.waiting_start_time = time.time()
             else:
@@ -731,17 +794,13 @@ class ManipulationModule(Module):
         Optional[np.ndarray], Optional[Detection3DArray], Optional[Detection2DArray], Optional[Pose]
     ]:
         """Capture frame from camera data and process detections."""
-        # Check if we have all required data
         if self.latest_rgb is None or self.latest_depth is None or self.detector is None:
             return None, None, None, None
 
-        # Get EE pose and camera transform
         ee_pose = self.arm.get_ee_pose()
         ee_transform = pose_to_matrix(ee_pose)
         camera_transform = compose_transforms(ee_transform, self.T_ee_to_camera)
         camera_pose = matrix_to_pose(camera_transform)
-
-        # Process detections
         detection_3d_array, detection_2d_array = self.detector.process_frame(
             self.latest_rgb, self.latest_depth, camera_transform
         )
@@ -758,51 +817,49 @@ class ManipulationModule(Module):
             (x, y), self.last_detection_2d_array.detections, self.last_detection_3d_array.detections
         )
         if clicked_3d and self.pbvs:
+            # Validate workspace
+            if not self.check_within_workspace(clicked_3d.bbox.center):
+                self.task_failed = True
+                return False
+
             self.pbvs.set_target(clicked_3d)
 
-            # Store target object height (z dimension)
             if clicked_3d.bbox and clicked_3d.bbox.size:
                 self.target_object_height = clicked_3d.bbox.size.z
                 logger.info(f"Target object height: {self.target_object_height:.3f}m")
 
+            position = clicked_3d.bbox.center.position
             logger.info(
-                f"Target selected: ID={clicked_3d.id}, pos=({clicked_3d.bbox.center.position.x:.3f}, {clicked_3d.bbox.center.position.y:.3f}, {clicked_3d.bbox.center.position.z:.3f})"
+                f"Target selected: ID={clicked_3d.id}, pos=({position.x:.3f}, {position.y:.3f}, {position.z:.3f})"
             )
             self.grasp_stage = GraspStage.PRE_GRASP
             self.reached_poses.clear()
             self.adjustment_count = 0
             self.waiting_for_reach = False
-            self.last_commanded_pose = None
+            self.current_executed_pose = None
             self.stabilization_start_time = time.time()
             return True
         return False
 
     def update(self) -> Optional[Dict[str, Any]]:
         """Main update function that handles capture, processing, control, and visualization."""
-        # Capture and process frame
         rgb, detection_3d_array, detection_2d_array, camera_pose = self.capture_and_process()
         if rgb is None:
             return None
 
-        # Store for target selection
         self.last_detection_3d_array = detection_3d_array
         self.last_detection_2d_array = detection_2d_array
-
-        # Handle target selection if click is pending
         if self.target_click:
             x, y = self.target_click
             if self.pick_target(x, y):
                 self.target_click = None
 
-        # Update tracking if we have detections and not in IDLE or CLOSE_AND_RETRACT
         if (
             detection_3d_array
             and self.grasp_stage in [GraspStage.PRE_GRASP, GraspStage.GRASP]
             and not self.waiting_for_reach
         ):
             self._update_tracking(detection_3d_array)
-
-        # Execute stage-specific logic
         stage_handlers = {
             GraspStage.IDLE: self.execute_idle,
             GraspStage.PRE_GRASP: self.execute_pre_grasp,
@@ -814,15 +871,12 @@ class ManipulationModule(Module):
         if self.grasp_stage in stage_handlers:
             stage_handlers[self.grasp_stage]()
 
-        # Get tracking status
         target_tracked = self.pbvs.get_current_target() is not None if self.pbvs else False
-
-        # Create feedback object
         ee_pose = self.arm.get_ee_pose()
         feedback = Feedback(
             grasp_stage=self.grasp_stage,
             target_tracked=target_tracked,
-            last_commanded_pose=self.last_commanded_pose,
+            current_executed_pose=self.current_executed_pose,
             current_ee_pose=ee_pose,
             current_camera_pose=camera_pose,
             target_pose=self.pbvs.target_grasp_pose if self.pbvs else None,
@@ -830,13 +884,11 @@ class ManipulationModule(Module):
             success=self.overall_success,
         )
 
-        # Create visualization only if task is running
         if self.task_running:
             self.current_visualization = create_manipulation_visualization(
                 rgb, feedback, detection_3d_array, detection_2d_array
             )
 
-            # Publish visualization
             if self.current_visualization is not None:
                 self._publish_visualization(self.current_visualization)
 
@@ -845,10 +897,7 @@ class ManipulationModule(Module):
     def _publish_visualization(self, viz_image: np.ndarray):
         """Publish visualization image to LCM."""
         try:
-            # Convert BGR to RGB for publishing
             viz_rgb = cv2.cvtColor(viz_image, cv2.COLOR_BGR2RGB)
-
-            # Create LCM Image message
             height, width = viz_rgb.shape[:2]
             data = viz_rgb.tobytes()
 
@@ -871,15 +920,10 @@ class ManipulationModule(Module):
         if len(self.reached_poses) < self.reached_poses.maxlen:
             return False
 
-        # Extract positions
         positions = np.array(
             [[p.position.x, p.position.y, p.position.z] for p in self.reached_poses]
         )
-
-        # Calculate standard deviation for each axis
         std_devs = np.std(positions, axis=0)
-
-        # Check if all axes are below threshold
         return np.all(std_devs < self.pose_stabilization_threshold)
 
     def get_place_target_pose(self) -> Optional[Pose]:
@@ -887,29 +931,25 @@ class ManipulationModule(Module):
         if self.place_target_position is None:
             return None
 
-        # Create a copy of the place position
         place_pos = self.place_target_position.copy()
-
-        # Apply z-offset if target object height is known
         if self.target_object_height is not None:
             z_offset = self.target_object_height / 2.0
-            place_pos[2] += z_offset + 0.05
-            logger.info(f"Applied z-offset of {z_offset:.3f}m to place position")
+            place_pos[2] += z_offset + 0.1
 
-        # Create place pose
         place_center_pose = Pose(
             Point(place_pos[0], place_pos[1], place_pos[2]), Quaternion(0.0, 0.0, 0.0, 1.0)
         )
 
-        # Get current EE pose
         ee_pose = self.arm.get_ee_pose()
 
-        # Use update_target_grasp_pose with no grasp distance and current pitch angle
+        # Calculate dynamic pitch for place position
+        dynamic_pitch = self.calculate_dynamic_grasp_pitch(place_center_pose)
+
         place_pose = update_target_grasp_pose(
             place_center_pose,
             ee_pose,
-            grasp_distance=0.0,  # No grasp distance for placing
-            grasp_pitch_degrees=self.grasp_pitch_degrees,  # Use current grasp pitch
+            grasp_distance=0.0,
+            grasp_pitch_degrees=dynamic_pitch,
         )
 
         return place_pose

@@ -145,9 +145,6 @@ class VisualizationNode:
         print("  's' - SOFT STOP (emergency stop)")
         print("  'g' - RELEASE GRIPPER (open gripper)")
         print("  'SPACE' - EXECUTE target pose (manual override)")
-        print("\nGRASP PITCH CONTROLS:")
-        print("  '↑' - Increase grasp pitch by 15° (towards top-down)")
-        print("  '↓' - Decrease grasp pitch by 15° (towards level)")
         print("\nNOTE: Click on objects in the Camera Feed window!")
 
         while self._running:

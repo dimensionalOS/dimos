@@ -29,6 +29,7 @@ from dimos.utils.transform_utils import (
     euler_to_quaternion,
     compose_transforms,
     yaw_towards_point,
+    get_distance,
 )
 
 
@@ -317,15 +318,8 @@ def is_target_reached(target_pose: Pose, current_pose: Pose, tolerance: float = 
     Returns:
         True if target is reached within tolerance, False otherwise
     """
-    if not target_pose:
-        return False
-
-    # Calculate position error
-    error_x = target_pose.position.x - current_pose.position.x
-    error_y = target_pose.position.y - current_pose.position.y
-    error_z = target_pose.position.z - current_pose.position.z
-
-    error_magnitude = np.sqrt(error_x**2 + error_y**2 + error_z**2)
+    # Calculate position error using distance utility
+    error_magnitude = get_distance(target_pose, current_pose)
     return error_magnitude < tolerance
 
 

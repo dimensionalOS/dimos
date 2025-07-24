@@ -378,3 +378,21 @@ def quaternion_to_euler(quaternion: Quaternion, degrees: bool = False) -> Vector
         )
     else:
         return Vector3(euler[0], euler[1], euler[2])
+
+
+def get_distance(pose1: Pose, pose2: Pose) -> float:
+    """
+    Calculate Euclidean distance between two poses.
+
+    Args:
+        pose1: First pose
+        pose2: Second pose
+
+    Returns:
+        Euclidean distance between the two poses in meters
+    """
+    dx = pose1.position.x - pose2.position.x
+    dy = pose1.position.y - pose2.position.y
+    dz = pose1.position.z - pose2.position.z
+
+    return np.linalg.norm(np.array([dx, dy, dz]))
