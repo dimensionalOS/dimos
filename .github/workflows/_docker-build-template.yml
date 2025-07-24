@@ -31,6 +31,11 @@ jobs:
           sudo rm -rf /usr/local/lib/android
           echo -e "post cleanup space:\n $(df -h)"
 
+      - name: Fix permissions
+        if: ${{ inputs.should-run }}
+        run: |
+          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+
       - uses: actions/checkout@v4
         if: ${{ inputs.should-run }}
 
