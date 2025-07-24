@@ -35,7 +35,7 @@ from dimos.types.robot_location import RobotLocation
 
 logger = setup_logger("dimos.perception.spatial_memory")
 
-print("test docker cicd builds 2")
+print("")
 
 
 class SpatialMemory:
