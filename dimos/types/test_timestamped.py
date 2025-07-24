@@ -14,7 +14,9 @@
 
 from datetime import datetime, timezone
 
-from dimos.types.timestamped import Timestamped, to_ros_stamp, to_datetime
+import pytest
+
+from dimos.types.timestamped import Timestamped, TimestampedCollection, to_datetime, to_ros_stamp
 
 
 def test_timestamped_dt_method():
@@ -94,3 +96,131 @@ def test_to_datetime():
     dt_utc = to_datetime(ts_float, tz=timezone.utc)
     assert dt_utc.tzinfo == timezone.utc
     assert abs(dt_utc.timestamp() - ts_float) < 1e-6
+
+
+class SimpleTimestamped(Timestamped):
+    def __init__(self, ts: float, data: str):
+        super().__init__(ts)
+        self.data = data
+
+
+@pytest.fixture
+def sample_items():
+    return [
+        SimpleTimestamped(1.0, "first"),
+        SimpleTimestamped(3.0, "third"),
+        SimpleTimestamped(5.0, "fifth"),
+        SimpleTimestamped(7.0, "seventh"),
+    ]
+
+
+@pytest.fixture
+def collection(sample_items):
+    return TimestampedCollection(sample_items)
+
+
+def test_empty_collection():
+    collection = TimestampedCollection()
+    assert len(collection) == 0
+    assert collection.duration() == 0.0
+    assert collection.time_range() is None
+    assert collection.find_closest(1.0) is None
+
+
+def test_add_items():
+    collection = TimestampedCollection()
+    item1 = SimpleTimestamped(2.0, "two")
+    item2 = SimpleTimestamped(1.0, "one")
+
+    collection.add(item1)
+    collection.add(item2)
+
+    assert len(collection) == 2
+    assert collection[0].data == "one"  # Should be sorted by timestamp
+    assert collection[1].data == "two"
+
+
+def test_find_closest(collection):
+    # Exact match
+    assert collection.find_closest(3.0).data == "third"
+
+    # Between items (closer to left)
+    assert collection.find_closest(1.5).data == "first"
+
+    # Between items (closer to right)
+    assert collection.find_closest(3.5).data == "third"
+
+    # Exactly in the middle (should pick the later one due to >= comparison)
+    assert collection.find_closest(4.0).data == "fifth"  # 4.0 is equidistant from 3.0 and 5.0
+
+    # Before all items
+    assert collection.find_closest(0.0).data == "first"
+
+    # After all items
+    assert collection.find_closest(10.0).data == "seventh"
+
+
+def test_find_before_after(collection):
+    # Find before
+    assert collection.find_before(2.0).data == "first"
+    assert collection.find_before(5.5).data == "fifth"
+    assert collection.find_before(1.0) is None  # Nothing before first item
+
+    # Find after
+    assert collection.find_after(2.0).data == "third"
+    assert collection.find_after(5.0).data == "seventh"
+    assert collection.find_after(7.0) is None  # Nothing after last item
+
+
+def test_merge_collections():
+    collection1 = TimestampedCollection(
+        [
+            SimpleTimestamped(1.0, "a"),
+            SimpleTimestamped(3.0, "c"),
+        ]
+    )
+    collection2 = TimestampedCollection(
+        [
+            SimpleTimestamped(2.0, "b"),
+            SimpleTimestamped(4.0, "d"),
+        ]
+    )
+
+    merged = collection1.merge(collection2)
+
+    assert len(merged) == 4
+    assert [item.data for item in merged] == ["a", "b", "c", "d"]
+
+
+def test_duration_and_range(collection):
+    assert collection.duration() == 6.0  # 7.0 - 1.0
+    assert collection.time_range() == (1.0, 7.0)
+
+
+def test_slice_by_time(collection):
+    # Slice inclusive of boundaries
+    sliced = collection.slice_by_time(2.0, 6.0)
+    assert len(sliced) == 2
+    assert sliced[0].data == "third"
+    assert sliced[1].data == "fifth"
+
+    # Empty slice
+    empty_slice = collection.slice_by_time(8.0, 10.0)
+    assert len(empty_slice) == 0
+
+    # Slice all
+    all_slice = collection.slice_by_time(0.0, 10.0)
+    assert len(all_slice) == 4
+
+
+def test_iteration(collection):
+    items = list(collection)
+    assert len(items) == 4
+    assert [item.ts for item in items] == [1.0, 3.0, 5.0, 7.0]
+
+
+def test_single_item_collection():
+    single = TimestampedCollection([SimpleTimestamped(5.0, "only")])
+    assert single.duration() == 0.0
+    assert single.time_range() == (5.0, 5.0)
+    assert single.find_closest(100.0).data == "only"

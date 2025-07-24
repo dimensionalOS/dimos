@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from datetime import datetime, timezone
-from typing import Generic, Iterable, Tuple, TypedDict, TypeVar, Union
+from typing import Generic, Iterable, List, Optional, Tuple, TypedDict, TypeVar, Union
+from sortedcontainers import SortedList
+import bisect
 
 # any class that carries a timestamp should inherit from this
 # this allows us to work with timeseries in consistent way, allign messages, replay etc
@@ -84,3 +86,84 @@ class Timestamped:
         sec = int(self.ts)
         nanosec = int((self.ts - sec) * 1_000_000_000)
         return [sec, nanosec]
+
+
+T = TypeVar("T", bound=Timestamped)
+
+
+class TimestampedCollection(Generic[T]):
+    """A collection of timestamped objects with efficient time-based operations."""
+
+    def __init__(self, items: Optional[Iterable[T]] = None):
+        self._items = SortedList(items or [], key=lambda x: x.ts)
+
+    def add(self, item: T) -> None:
+        """Add a timestamped item to the collection."""
+        self._items.add(item)
+
+    def find_closest(self, timestamp: float) -> Optional[T]:
+        """Find the timestamped object closest to the given timestamp."""
+        if not self._items:
+            return None
+
+        # Find insertion point using binary search on timestamps
+        timestamps = [item.ts for item in self._items]
+        idx = bisect.bisect_left(timestamps, timestamp)
+
+        # Check boundaries
+        if idx == 0:
+            return self._items[0]
+        if idx == len(self._items):
+            return self._items[-1]
+
+        # Compare distances to neighbors
+        left_diff = abs(timestamp - self._items[idx - 1].ts)
+        right_diff = abs(self._items[idx].ts - timestamp)
+
+        return self._items[idx - 1] if left_diff < right_diff else self._items[idx]
+
+    def find_before(self, timestamp: float) -> Optional[T]:
+        """Find the last item before the given timestamp."""
+        timestamps = [item.ts for item in self._items]
+        idx = bisect.bisect_left(timestamps, timestamp)
+        return self._items[idx - 1] if idx > 0 else None
+
+    def find_after(self, timestamp: float) -> Optional[T]:
+        """Find the first item after the given timestamp."""
+        timestamps = [item.ts for item in self._items]
+        idx = bisect.bisect_right(timestamps, timestamp)
+        return self._items[idx] if idx < len(self._items) else None
+
+    def merge(self, other: "TimestampedCollection[T]") -> "TimestampedCollection[T]":
+        """Merge two timestamped collections into a new one."""
+        result = TimestampedCollection[T]()
+        result._items = SortedList(self._items + other._items, key=lambda x: x.ts)
+        return result
+
+    def duration(self) -> float:
+        """Get the duration of the collection in seconds."""
+        if len(self._items) < 2:
+            return 0.0
+        return self._items[-1].ts - self._items[0].ts
+
+    def time_range(self) -> Optional[Tuple[float, float]]:
+        """Get the time range (start, end) of the collection."""
+        if not self._items:
+            return None
+        return (self._items[0].ts, self._items[-1].ts)
+
+    def slice_by_time(self, start: float, end: float) -> "TimestampedCollection[T]":
+        """Get a subset of items within the given time range."""
+        timestamps = [item.ts for item in self._items]
+        start_idx = bisect.bisect_left(timestamps, start)
+        end_idx = bisect.bisect_right(timestamps, end)
+        return TimestampedCollection(self._items[start_idx:end_idx])
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def __getitem__(self, idx: int) -> T:
+        return self._items[idx]
