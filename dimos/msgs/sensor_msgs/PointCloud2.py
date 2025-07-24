@@ -75,7 +75,7 @@ class PointCloud2(Timestamped):
             msg.is_bigendian = False
             msg.fields_length = 4  # x, y, z, intensity
             msg.fields = self._create_xyz_field()
-            return msg.encode()
+            return msg.lcm_encode()
 
         # Point cloud dimensions
         msg.height = 1  # Unorganized point cloud
@@ -105,11 +105,11 @@ class PointCloud2(Timestamped):
         msg.is_dense = True  # No invalid points
         msg.is_bigendian = False  # Little endian
 
-        return msg.encode()
+        return msg.lcm_encode()
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> "PointCloud2":
-        msg = LCMPointCloud2.decode(data)
+        msg = LCMPointCloud2.lcm_decode(data)
 
         if msg.width == 0 or msg.height == 0:
             # Empty point cloud

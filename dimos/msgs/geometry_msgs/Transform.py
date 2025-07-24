@@ -15,83 +15,42 @@
 from __future__ import annotations
 
 import struct
+import time
 from io import BytesIO
 from typing import BinaryIO
 
 from dimos_lcm.geometry_msgs import Transform as LCMTransform
+from dimos_lcm.geometry_msgs import TransformStamped as LCMTransformStamped
 from plum import dispatch
 
-from .Quaternion import Quaternion
-from .Vector3 import Vector3
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.std_msgs import Header
+from dimos.types.timestamped import Timestamped
 
 
-class Transform(LCMTransform):
+class Transform(Timestamped):
     translation: Vector3
     rotation: Quaternion
-    msg_name = "geometry_msgs.Transform"
+    ts: float
+    frame_id: str
+    child_frame_id: str
+    msg_name = "tf2_msgs.TFMessage"
 
-    @dispatch
-    def __init__(self) -> None:
-        """Initialize an identity transform."""
-        self.translation = Vector3()
-        self.rotation = Quaternion()
-
-    @dispatch
-    def __init__(self, translation: Vector3) -> None:
-        """Initialize a transform with only translation (identity rotation)."""
-        self.translation = translation
-        self.rotation = Quaternion()
-
-    @dispatch
-    def __init__(self, rotation: Quaternion) -> None:
-        """Initialize a transform with only rotation (zero translation)."""
-        self.translation = Vector3()
-        self.rotation = rotation
-
-    @dispatch
-    def __init__(self, translation: Vector3, rotation: Quaternion) -> None:
-        """Initialize a transform from translation and rotation."""
-        self.translation = translation
-        self.rotation = rotation
-
-    @dispatch
-    def __init__(self, transform: "Transform") -> None:
-        """Initialize from another Transform (copy constructor)."""
-        self.translation = Vector3(transform.translation)
-        self.rotation = Quaternion(transform.rotation)
-
-    @dispatch
-    def __init__(self, lcm_transform: LCMTransform) -> None:
-        """Initialize from an LCM Transform."""
-        self.translation = Vector3(lcm_transform.translation)
-        self.rotation = Quaternion(lcm_transform.rotation)
-
-    @dispatch
-    def __init__(self, **kwargs):
-        """Handle keyword arguments for LCM compatibility."""
-        # Get values with defaults and let dispatch handle type conversion
-        translation = kwargs.get("translation", Vector3())
-        rotation = kwargs.get("rotation", Quaternion())
-
-        # Call the appropriate positional init - dispatch will handle the types
-        self.__init__(translation, rotation)
-
-    @classmethod
-    def lcm_decode(cls, data: bytes | BinaryIO):
-        if not hasattr(data, "read"):
-            data = BytesIO(data)
-        if data.read(8) != cls._get_packed_fingerprint():
-            raise ValueError("Decode error")
-        return cls._lcm_decode_one(data)
-
-    @classmethod
-    def _lcm_decode_one(cls, buf):
-        translation = Vector3._lcm_decode_one(buf)
-        rotation = Quaternion._lcm_decode_one(buf)
-        return cls(translation=translation, rotation=rotation)
-
-    def lcm_encode(self) -> bytes:
-        return super().encode()
+    def __init__(
+        self,
+        translation: Vector3 | None = None,
+        rotation: Quaternion | None = None,
+        frame_id: str = "world",
+        child_frame_id: str = "base_link",
+        ts: float = 0.0,
+        **kwargs,
+    ) -> None:
+        self.frame_id = frame_id
+        self.child_frame_id = child_frame_id
+        self.ts = ts if ts != 0.0 else time.time()
+        self.translation = translation if translation is not None else Vector3()
+        self.rotation = rotation if rotation is not None else Quaternion()
 
     def __repr__(self) -> str:
         return f"Transform(translation={self.translation!r}, rotation={self.rotation!r})"
@@ -109,3 +68,55 @@ class Transform(LCMTransform):
     def identity(cls) -> Transform:
         """Create an identity transform."""
         return cls()
+
+    def lcm_transform(self) -> LCMTransformStamped:
+        return LCMTransformStamped(
+            child_frame_id=self.child_frame_id,
+            header=Header(self.ts, self.frame_id),
+            transform=LCMTransform(
+                translation=self.translation,
+                rotation=self.rotation,
+            ),
+        )
+
+    def lcm_encode(self) -> bytes:
+        # we get a circular import otherwise
+        from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+
+        return TFMessage(self).lcm_encode()
+
+    @classmethod
+    def lcm_decode(cls, data: bytes | BinaryIO) -> Transform:
+        """Decode from LCM TFMessage bytes."""
+        from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
+
+        lcm_msg = LCMTFMessage.lcm_decode(data)
+
+        if not lcm_msg.transforms:
+            raise ValueError("No transforms found in LCM message")
+
+        # Get the first transform from the message
+        lcm_transform_stamped = lcm_msg.transforms[0]
+
+        # Extract timestamp from header
+        ts = lcm_transform_stamped.header.stamp.sec + (
+            lcm_transform_stamped.header.stamp.nsec / 1_000_000_000
+        )
+
+        # Create and return Transform instance
+        return cls(
+            translation=Vector3(
+                lcm_transform_stamped.transform.translation.x,
+                lcm_transform_stamped.transform.translation.y,
+                lcm_transform_stamped.transform.translation.z,
+            ),
+            rotation=Quaternion(
+                lcm_transform_stamped.transform.rotation.x,
+                lcm_transform_stamped.transform.rotation.y,
+                lcm_transform_stamped.transform.rotation.z,
+                lcm_transform_stamped.transform.rotation.w,
+            ),
+            frame_id=lcm_transform_stamped.header.frame_id,
+            child_frame_id=lcm_transform_stamped.child_frame_id,
+            ts=ts,
+        )

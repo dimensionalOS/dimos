@@ -39,6 +39,9 @@
 
           ### Open3D & build-time
           eigen cmake ninja jsoncpp libjpeg libpng
+          
+          ### LCM (Lightweight Communications and Marshalling)
+          lcm
         ];
 
         # ------------------------------------------------------------
@@ -54,7 +57,7 @@
               pkgs.xorg.libXrender pkgs.xorg.libXdamage pkgs.xorg.libXcomposite
               pkgs.xorg.libxcb pkgs.xorg.libXScrnSaver pkgs.xorg.libXxf86vm
               pkgs.udev pkgs.portaudio pkgs.SDL2.dev pkgs.zlib pkgs.glib pkgs.gtk3
-              pkgs.gdk-pixbuf pkgs.gobject-introspection]}:$LD_LIBRARY_PATH"
+              pkgs.gdk-pixbuf pkgs.gobject-introspection pkgs.lcm]}:$LD_LIBRARY_PATH"
 
             export DISPLAY=:0
 

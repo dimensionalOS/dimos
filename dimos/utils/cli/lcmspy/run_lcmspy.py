@@ -28,8 +28,8 @@ from textual.reactive import reactive
 from textual.renderables.sparkline import Sparkline as SparklineRenderable
 from textual.widgets import DataTable, Footer, Header, Label, Sparkline
 
-from dimos.utils.cli.lcmspy import GraphLCMSpy
-from dimos.utils.cli.lcmspy import GraphTopic as SpyTopic
+from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy
+from dimos.utils.cli.lcmspy.lcmspy import GraphTopic as SpyTopic
 
 
 def gradient(max_value: float, value: float) -> str:

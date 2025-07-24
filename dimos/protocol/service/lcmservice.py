@@ -14,17 +14,16 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
 import traceback
-import os
-from functools import cache
 from dataclasses import dataclass
+from functools import cache
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 import lcm
-
 from dimos.protocol.service.spec import Service
 
 
@@ -137,6 +136,7 @@ class LCMConfig:
     ttl: int = 0
     url: str | None = None
     autoconf: bool = False
+    lcm: Optional[lcm.LCM] = None
 
 
 @runtime_checkable
@@ -172,7 +172,13 @@ class LCMService(Service[LCMConfig]):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+
+        # we support passing an existing LCM instance
+        if self.config.lcm:
+            self.l = self.config.lcm
+        else:
+            self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+
         self._stop_event = threading.Event()
         self._thread = None
 
