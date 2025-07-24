@@ -38,8 +38,7 @@ jobs:
               - .github/workflows/_docker-build-template.yml
               - .github/workflows/docker.yml
               - docker/python/**
-              - requirements*.txt
-              - requirements.txt
+              - pyproject.toml
 
             dev:
               - docker/dev/**
