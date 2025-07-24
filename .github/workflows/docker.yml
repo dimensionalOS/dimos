@@ -206,5 +206,5 @@ jobs:
         (needs.dev.result == 'skipped' &&
         needs.check-changes.outputs.tests == 'true'))
         }}
-      cmd: "python dimos/perception/test_spatial_memory_module.py"
+      cmd: "export PYTHONPATH=$(pwd):$PYTHONPATH && python dimos/perception/test_spatial_memory_module.py"
       dev-image: dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
