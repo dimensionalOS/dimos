@@ -134,7 +134,7 @@ class ManipulationModule(Module):
         self.arm = PiperArm()
 
         if ee_to_camera_6dof is None:
-            ee_to_camera_6dof = [-0.065, 0.03, -0.105, 0.0, -1.57, 0.0]
+            ee_to_camera_6dof = [-0.065, 0.03, -0.095, 0.0, -1.57, 0.0]
         pos = Vector3(ee_to_camera_6dof[0], ee_to_camera_6dof[1], ee_to_camera_6dof[2])
         rot = Vector3(ee_to_camera_6dof[3], ee_to_camera_6dof[4], ee_to_camera_6dof[5])
         self.T_ee_to_camera = create_transform_from_6dof(pos, rot)
@@ -149,7 +149,7 @@ class ManipulationModule(Module):
         self.current_executed_pose = None  # Track the actual pose sent to arm
         self.target_updated = False
         self.waiting_start_time = None
-        self.reach_pose_timeout = 10.0
+        self.reach_pose_timeout = 20.0
 
         # Grasp parameters
         self.grasp_width_offset = 0.03
@@ -163,7 +163,7 @@ class ManipulationModule(Module):
         self.workspace_min_radius = 0.2
         self.workspace_max_radius = 0.75
         self.min_grasp_pitch_degrees = 5.0
-        self.max_grasp_pitch_degrees = 75.0
+        self.max_grasp_pitch_degrees = 60.0
 
         # Grasp stage tracking
         self.grasp_stage = GraspStage.IDLE
@@ -267,7 +267,7 @@ class ManipulationModule(Module):
 
             if self.detector is None:
                 self.detector = Detection3DProcessor(self.camera_intrinsics)
-                self.pbvs = PBVS(target_tolerance=0.05)
+                self.pbvs = PBVS()
                 logger.info("Initialized detection and PBVS processors")
 
             self.latest_camera_info = msg
@@ -508,14 +508,11 @@ class ManipulationModule(Module):
 
         return is_stuck
 
-    def check_reach_and_adjust(self, tolerance: Optional[float] = None) -> bool:
+    def check_reach_and_adjust(self) -> bool:
         """
         Check if robot has reached the current executed pose while waiting.
         Handles timeout internally by failing the task.
         Also detects if the robot is stuck (not moving towards target).
-
-        Args:
-            tolerance: Optional tolerance override (uses PBVS tolerance if not provided)
 
         Returns:
             True if reached, False if still waiting or not in waiting state
@@ -532,17 +529,17 @@ class ManipulationModule(Module):
         if timed_out:
             return False
 
-        # Use provided tolerance or default to PBVS tolerance
-        if tolerance is None:
-            tolerance = self.pbvs.target_tolerance if self.pbvs else 0.01
-
         # Add current pose to history
         self.ee_pose_history.append(ee_pose)
 
         # Check if robot is stuck
         is_stuck = self._check_if_stuck()
         if is_stuck:
-            if self.grasp_stage == GraspStage.RETRACT:
+            if self.grasp_stage == GraspStage.RETRACT or self.grasp_stage == GraspStage.PLACE:
+                self.waiting_for_reach = False
+                self.waiting_start_time = None
+                self.stuck_count = 0
+                self.ee_pose_history.clear()
                 return True
             self.stuck_count += 1
             pitch_degrees = self.calculate_dynamic_grasp_pitch(target_pose)
@@ -555,10 +552,7 @@ class ManipulationModule(Module):
                 self.min_grasp_pitch_degrees, min(self.max_grasp_pitch_degrees, pitch_degrees)
             )
             updated_target_pose = update_target_grasp_pose(target_pose, ee_pose, 0.0, pitch_degrees)
-            logger.info(
-                f"updated_target_pose: {updated_target_pose.position.x}, {updated_target_pose.position.y}, {updated_target_pose.position.z}"
-            )
-            self.arm.cmd_ee_pose(updated_target_pose, line_mode=True)
+            self.arm.cmd_ee_pose(updated_target_pose)
             self.current_executed_pose = updated_target_pose
             self.ee_pose_history.clear()
             self.waiting_for_reach = True
@@ -570,7 +564,7 @@ class ManipulationModule(Module):
             self.reset_to_idle()
             return False
 
-        if is_target_reached(target_pose, ee_pose, tolerance):
+        if is_target_reached(target_pose, ee_pose, self.pbvs.target_tolerance):
             self.waiting_for_reach = False
             self.waiting_start_time = None
             self.stuck_count = 0
@@ -622,7 +616,7 @@ class ManipulationModule(Module):
             if self.check_reach_and_adjust():
                 self.reached_poses.append(self.current_executed_pose)
                 self.target_updated = False
-                time.sleep(0.3)
+                time.sleep(0.2)
             return
         if (
             self.stabilization_start_time
@@ -665,17 +659,17 @@ class ManipulationModule(Module):
 
     def execute_grasp(self):
         """Execute grasp stage: move to final grasp position."""
-        if self.waiting_for_reach and self.pbvs and self.pbvs.target_grasp_pose:
+        if self.waiting_for_reach:
             if self.check_reach_and_adjust() and not self.grasp_reached_time:
                 self.grasp_reached_time = time.time()
+            return
 
-            if (
-                self.grasp_reached_time
-                and (time.time() - self.grasp_reached_time) >= self.grasp_close_delay
-            ):
+        if self.grasp_reached_time:
+            if (time.time() - self.grasp_reached_time) >= self.grasp_close_delay:
                 logger.info("Grasp delay completed, closing gripper")
                 self.grasp_stage = GraspStage.CLOSE_AND_RETRACT
             return
+
         if self.last_valid_target:
             # Calculate dynamic pitch for current target
             dynamic_pitch = self.calculate_dynamic_grasp_pitch(self.last_valid_target.bbox.center)
