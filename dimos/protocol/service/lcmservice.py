@@ -107,6 +107,10 @@ def check_system() -> None:
     Multicast configuration is critical for LCM to work.
     Buffer sizes are performance optimizations - warn but don't fail in containers.
     """
+    if os.environ.get("CI"):
+        logger.debug("CI environment detected: Skipping system configuration checks.")
+        return
+
     multicast_commands = check_multicast()
     buffer_commands, current_buffer_size = check_buffers()
 
@@ -136,6 +140,10 @@ def check_system() -> None:
 
 def autoconf() -> None:
     """Auto-configure system by running checks and executing required commands if needed."""
+    if os.environ.get("CI"):
+        logger.info("CI environment detected: Skipping automatic system configuration.")
+        return
+
     commands_needed = []
 
     # Check multicast configuration
