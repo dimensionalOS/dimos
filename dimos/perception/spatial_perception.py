@@ -172,7 +172,7 @@ class SpatialMemory(Module):
         # Track latest data for processing
         self._latest_video_frame: Optional[np.ndarray] = None
         self._latest_odom: Optional[Odometry] = None
-        self._process_interval = 0.1  # Process at 10Hz
+        self._process_interval = 1
 
         logger.info(f"SpatialMemory initialized with model {embedding_model}")
 

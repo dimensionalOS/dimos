@@ -62,7 +62,8 @@ class VideoReplayModule(Module):
         self._subscription = (
             video_replay.stream()
             .pipe(
-                ops.sample(0.1)  # Limit to 10 FPS for testing
+                ops.sample(2),  # Sample every 2 seconds for resource-constrained systems
+                ops.take(5),  # Only take 5 frames total
             )
             .subscribe(self.video_out.publish)
         )
@@ -95,7 +96,14 @@ class OdometryReplayModule(Module):
         odom_replay = TimedSensorReplay(self.odom_path, autocast=Odometry.from_msg)
 
         # Subscribe to the replay stream and publish to LCM
-        self._subscription = odom_replay.stream().subscribe(self.odom_out.publish)
+        self._subscription = (
+            odom_replay.stream()
+            .pipe(
+                ops.sample(0.5),  # Sample every 500ms
+                ops.take(10),  # Only take 10 odometry updates total
+            )
+            .subscribe(self.odom_out.publish)
+        )
 
         logger.info("OdometryReplayModule started")
 
@@ -168,7 +176,7 @@ class TestSpatialMemoryModule:
 
             # Wait for some frames to be processed
             logger.info("Waiting for frames to be processed...")
-            await asyncio.sleep(5)  # Process for 5 seconds
+            await asyncio.sleep(3)
 
             # Stop the replay modules to prevent infinite streaming
             video_module.stop()
