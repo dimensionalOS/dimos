@@ -20,7 +20,7 @@ import lcm
 import pytest
 
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Transform, Vector3
-from dimos.protocol.tf.tf import TBuffer, TTBuffer
+from dimos.protocol.tf.tf import TBuffer, MultiTBuffer
 
 
 @pytest.mark.tool
@@ -77,9 +77,8 @@ def test_tf_broadcast_and_query():
     assert querier.can_transform("world", "sensor", current_time)
 
     t = querier.lookup("world", "sensor")
-    print("FOUND T", t)
 
-    # random_object_in_view.find_transform()
+    random_object_in_view.find_transform()
 
     # Stop services
     broadcaster.stop()
@@ -100,6 +99,34 @@ class TestTBuffer:
         buffer.add(transform)
         assert len(buffer) == 1
         assert buffer[0] == transform
+
+    def test_get(self):
+        buffer = TBuffer()
+        base_time = time.time()
+
+        # Add transforms at different times
+        for i in range(3):
+            transform = Transform(
+                translation=Vector3(float(i), 0.0, 0.0),
+                frame_id="world",
+                child_frame_id="robot",
+                ts=base_time + i * 0.5,
+            )
+            buffer.add(transform)
+
+        # Test getting latest transform
+        latest = buffer.get()
+        assert latest is not None
+        assert latest.translation.x == 2.0
+
+        # Test getting transform at specific time
+        middle = buffer.get(time_point=base_time + 0.75)
+        assert middle is not None
+        assert middle.translation.x == 2.0  # Closest to i=1
+
+        # Test time tolerance
+        result = buffer.get(time_point=base_time + 10.0, time_tolerance=0.1)
+        assert result is None  # Outside tolerance
 
     def test_buffer_pruning(self):
         buffer = TBuffer(buffer_size=1.0)  # 1 second buffer
@@ -128,9 +155,9 @@ class TestTBuffer:
         assert buffer[0].translation.x == 2.0
 
 
-class TestTTBuffer:
+class TestMultiTBuffer:
     def test_multiple_frame_pairs(self):
-        ttbuffer = TTBuffer(buffer_size=10.0)
+        ttbuffer = MultiTBuffer(buffer_size=10.0)
 
         # Add transforms for different frame pairs
         transform1 = Transform(
@@ -155,7 +182,7 @@ class TestTTBuffer:
         assert ("world", "robot2") in ttbuffer.buffers
 
     def test_get_latest_transform(self):
-        ttbuffer = TTBuffer()
+        ttbuffer = MultiTBuffer()
 
         # Add multiple transforms
         for i in range(3):
@@ -169,12 +196,12 @@ class TestTTBuffer:
             time.sleep(0.01)
 
         # Get latest transform
-        latest = ttbuffer.get_transform("world", "robot")
+        latest = ttbuffer.get("world", "robot")
         assert latest is not None
         assert latest.translation.x == 2.0
 
     def test_get_transform_at_time(self):
-        ttbuffer = TTBuffer()
+        ttbuffer = MultiTBuffer()
         base_time = time.time()
 
         # Add transforms at known times
@@ -189,14 +216,14 @@ class TestTTBuffer:
 
         # Get transform closest to middle time
         middle_time = base_time + 1.25  # Should be closest to i=2 (t=1.0) or i=3 (t=1.5)
-        result = ttbuffer.get_transform("world", "robot", time_point=middle_time)
+        result = ttbuffer.get("world", "robot", time_point=middle_time)
         assert result is not None
         # At t=1.25, it's equidistant from i=2 (t=1.0) and i=3 (t=1.5)
         # The implementation picks the later one when equidistant
         assert result.translation.x == 3.0
 
     def test_time_tolerance(self):
-        ttbuffer = TTBuffer()
+        ttbuffer = MultiTBuffer()
         base_time = time.time()
 
         # Add single transform
@@ -209,31 +236,189 @@ class TestTTBuffer:
         ttbuffer.receive_transform(transform)
 
         # Within tolerance
-        result = ttbuffer.get_transform(
-            "world", "robot", time_point=base_time + 0.1, time_tolerance=0.2
-        )
+        result = ttbuffer.get("world", "robot", time_point=base_time + 0.1, time_tolerance=0.2)
         assert result is not None
 
         # Outside tolerance
-        result = ttbuffer.get_transform(
-            "world", "robot", time_point=base_time + 0.5, time_tolerance=0.1
-        )
+        result = ttbuffer.get("world", "robot", time_point=base_time + 0.5, time_tolerance=0.1)
         assert result is None
 
     def test_nonexistent_frame_pair(self):
-        ttbuffer = TTBuffer()
+        ttbuffer = MultiTBuffer()
 
         # Try to get transform for non-existent frame pair
-        result = ttbuffer.get_transform("foo", "bar")
+        result = ttbuffer.get("foo", "bar")
         assert result is None
+
+    def test_get_transform_search_direct(self):
+        ttbuffer = MultiTBuffer()
+        base_time = time.time()
+
+        # Add direct transform
+        transform = Transform(
+            translation=Vector3(1.0, 0.0, 0.0),
+            frame_id="world",
+            child_frame_id="robot",
+            ts=base_time,
+        )
+        ttbuffer.receive_transform(transform)
+
+        # Search should return single transform
+        result = ttbuffer.get_transform_search("world", "robot")
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].translation.x == 1.0
+
+    def test_get_transform_search_chain(self):
+        ttbuffer = MultiTBuffer()
+        base_time = time.time()
+
+        # Create transform chain: world -> robot -> sensor
+        transform1 = Transform(
+            translation=Vector3(1.0, 0.0, 0.0),
+            frame_id="world",
+            child_frame_id="robot",
+            ts=base_time,
+        )
+        transform2 = Transform(
+            translation=Vector3(0.0, 2.0, 0.0),
+            frame_id="robot",
+            child_frame_id="sensor",
+            ts=base_time,
+        )
+        ttbuffer.receive_transform(transform1, transform2)
+
+        # Search should find chain
+        result = ttbuffer.get_transform_search("world", "sensor")
+        assert result is not None
+        assert len(result) == 2
+        assert result[0].translation.x == 1.0  # world -> robot
+        assert result[1].translation.y == 2.0  # robot -> sensor
+
+    def test_get_transform_search_complex_chain(self):
+        ttbuffer = MultiTBuffer()
+        base_time = time.time()
+
+        # Create more complex graph:
+        # world -> base -> arm -> hand
+        #      \-> robot -> sensor
+        transforms = [
+            Transform(
+                frame_id="world",
+                child_frame_id="base",
+                translation=Vector3(1.0, 0.0, 0.0),
+                ts=base_time,
+            ),
+            Transform(
+                frame_id="base",
+                child_frame_id="arm",
+                translation=Vector3(0.0, 1.0, 0.0),
+                ts=base_time,
+            ),
+            Transform(
+                frame_id="arm",
+                child_frame_id="hand",
+                translation=Vector3(0.0, 0.0, 1.0),
+                ts=base_time,
+            ),
+            Transform(
+                frame_id="world",
+                child_frame_id="robot",
+                translation=Vector3(2.0, 0.0, 0.0),
+                ts=base_time,
+            ),
+            Transform(
+                frame_id="robot",
+                child_frame_id="sensor",
+                translation=Vector3(0.0, 2.0, 0.0),
+                ts=base_time,
+            ),
+        ]
+
+        for t in transforms:
+            ttbuffer.receive_transform(t)
+
+        # Find path world -> hand (should go through base -> arm)
+        result = ttbuffer.get_transform_search("world", "hand")
+        assert result is not None
+        assert len(result) == 3
+        assert result[0].child_frame_id == "base"
+        assert result[1].child_frame_id == "arm"
+        assert result[2].child_frame_id == "hand"
+
+    def test_get_transform_search_no_path(self):
+        ttbuffer = MultiTBuffer()
+        base_time = time.time()
+
+        # Create disconnected transforms
+        transform1 = Transform(frame_id="world", child_frame_id="robot", ts=base_time)
+        transform2 = Transform(frame_id="base", child_frame_id="sensor", ts=base_time)
+        ttbuffer.receive_transform(transform1, transform2)
+
+        # No path exists
+        result = ttbuffer.get_transform_search("world", "sensor")
+        assert result is None
+
+    def test_get_transform_search_with_time(self):
+        ttbuffer = MultiTBuffer()
+        base_time = time.time()
+
+        # Add transforms at different times
+        old_transform = Transform(
+            frame_id="world",
+            child_frame_id="robot",
+            translation=Vector3(1.0, 0.0, 0.0),
+            ts=base_time - 10.0,
+        )
+        new_transform = Transform(
+            frame_id="world",
+            child_frame_id="robot",
+            translation=Vector3(2.0, 0.0, 0.0),
+            ts=base_time,
+        )
+        ttbuffer.receive_transform(old_transform, new_transform)
+
+        # Search at specific time
+        result = ttbuffer.get_transform_search("world", "robot", time_point=base_time)
+        assert result is not None
+        assert result[0].translation.x == 2.0
+
+        # Search with time tolerance
+        result = ttbuffer.get_transform_search(
+            "world", "robot", time_point=base_time + 1.0, time_tolerance=0.1
+        )
+        assert result is None  # Outside tolerance
+
+    def test_get_transform_search_shortest_path(self):
+        ttbuffer = MultiTBuffer()
+        base_time = time.time()
+
+        # Create graph with multiple paths:
+        # world -> A -> B -> target (3 hops)
+        # world -> target (direct, 1 hop)
+        transforms = [
+            Transform(frame_id="world", child_frame_id="A", ts=base_time),
+            Transform(frame_id="A", child_frame_id="B", ts=base_time),
+            Transform(frame_id="B", child_frame_id="target", ts=base_time),
+            Transform(frame_id="world", child_frame_id="target", ts=base_time),
+        ]
+
+        for t in transforms:
+            ttbuffer.receive_transform(t)
+
+        # BFS should find the direct path (shortest)
+        result = ttbuffer.get_transform_search("world", "target")
+        assert result is not None
+        assert len(result) == 1  # Direct path, not the 3-hop path
+        assert result[0].child_frame_id == "target"
 
     def test_string_representations(self):
         # Test empty buffers
         empty_buffer = TBuffer()
         assert str(empty_buffer) == "TBuffer(empty)"
 
-        empty_ttbuffer = TTBuffer()
-        assert str(empty_ttbuffer) == "TTBuffer(empty)"
+        empty_ttbuffer = MultiTBuffer()
+        assert str(empty_ttbuffer) == "MultiTBuffer(empty)"
 
         # Test TBuffer with data
         buffer = TBuffer()
@@ -252,8 +437,8 @@ class TestTTBuffer:
         assert "world -> robot" in buffer_str
         assert "0.20s" in buffer_str  # duration
 
-        # Test TTBuffer with multiple frame pairs
-        ttbuffer = TTBuffer()
+        # Test MultiTBuffer with multiple frame pairs
+        ttbuffer = MultiTBuffer()
         transforms = [
             Transform(frame_id="world", child_frame_id="robot1", ts=base_time),
             Transform(frame_id="world", child_frame_id="robot2", ts=base_time + 0.5),
@@ -264,10 +449,10 @@ class TestTTBuffer:
             ttbuffer.receive_transform(t)
 
         ttbuffer_str = str(ttbuffer)
-        print("\nTTBuffer string representation:")
+        print("\nMultiTBuffer string representation:")
         print(ttbuffer_str)
 
-        assert "TTBuffer(3 buffers):" in ttbuffer_str
+        assert "MultiTBuffer(3 buffers):" in ttbuffer_str
         assert "TBuffer(1 msgs" in ttbuffer_str
         assert "world -> robot1" in ttbuffer_str
         assert "world -> robot2" in ttbuffer_str
