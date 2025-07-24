@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import subprocess
 import time
 from unittest.mock import patch
@@ -275,59 +276,71 @@ def test_check_buffers_dev_container():
 
 def test_autoconf_no_config_needed():
     """Test autoconf when no configuration is needed."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
-        # Mock all checks passing
-        mock_run.side_effect = [
-            # check_multicast calls
-            type(
-                "MockResult",
-                (),
-                {
-                    "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP,MULTICAST> mtu 65536",
-                    "returncode": 0,
-                },
-            )(),
-            type("MockResult", (), {"stdout": "224.0.0.0/4 dev lo scope link", "returncode": 0})(),
-            # check_buffers calls
-            type("MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0})(),
-            type(
-                "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
-            )(),
-        ]
+    # Clear CI environment variable for this test
+    with patch.dict(os.environ, {"CI": ""}, clear=False):
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock all checks passing
+            mock_run.side_effect = [
+                # check_multicast calls
+                type(
+                    "MockResult",
+                    (),
+                    {
+                        "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP,MULTICAST> mtu 65536",
+                        "returncode": 0,
+                    },
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "224.0.0.0/4 dev lo scope link", "returncode": 0}
+                )(),
+                # check_buffers calls
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                )(),
+            ]
 
-        with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
-            autoconf()
-            # Should not log anything when no config is needed
-            mock_logger.info.assert_not_called()
+            with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
+                autoconf()
+                # Should not log anything when no config is needed
+                mock_logger.info.assert_not_called()
             mock_logger.error.assert_not_called()
             mock_logger.warning.assert_not_called()
 
 
 def test_autoconf_with_config_needed_success():
     """Test autoconf when configuration is needed and commands succeed."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
-        # Mock checks failing, then mock the execution succeeding
-        mock_run.side_effect = [
-            # check_multicast calls
-            type(
-                "MockResult",
-                (),
-                {"stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536", "returncode": 0},
-            )(),
-            type("MockResult", (), {"stdout": "", "returncode": 0})(),
-            # check_buffers calls
-            type("MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0})(),
-            type(
-                "MockResult", (), {"stdout": "net.core.rmem_default = 1048576", "returncode": 0}
-            )(),
-            # Command execution calls
-            type(
-                "MockResult", (), {"stdout": "success", "returncode": 0}
-            )(),  # ifconfig lo multicast
-            type("MockResult", (), {"stdout": "success", "returncode": 0})(),  # route add...
-            type("MockResult", (), {"stdout": "success", "returncode": 0})(),  # sysctl rmem_max
-            type("MockResult", (), {"stdout": "success", "returncode": 0})(),  # sysctl rmem_default
-        ]
+    # Clear CI environment variable for this test
+    with patch.dict(os.environ, {"CI": ""}, clear=False):
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock checks failing, then mock the execution succeeding
+            mock_run.side_effect = [
+                # check_multicast calls
+                type(
+                    "MockResult",
+                    (),
+                    {"stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536", "returncode": 0},
+                )(),
+                type("MockResult", (), {"stdout": "", "returncode": 0})(),
+                # check_buffers calls
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0}
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_default = 1048576", "returncode": 0}
+                )(),
+                # Command execution calls
+                type(
+                    "MockResult", (), {"stdout": "success", "returncode": 0}
+                )(),  # ifconfig lo multicast
+                type("MockResult", (), {"stdout": "success", "returncode": 0})(),  # route add...
+                type("MockResult", (), {"stdout": "success", "returncode": 0})(),  # sysctl rmem_max
+                type(
+                    "MockResult", (), {"stdout": "success", "returncode": 0}
+                )(),  # sysctl rmem_default
+            ]
 
         from unittest.mock import call
 
@@ -354,44 +367,48 @@ def test_autoconf_with_config_needed_success():
 
 def test_autoconf_with_command_failures():
     """Test autoconf when some commands fail."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
-        # Mock checks failing, then mock some commands failing
-        mock_run.side_effect = [
-            # check_multicast calls
-            type(
-                "MockResult",
-                (),
-                {"stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536", "returncode": 0},
-            )(),
-            type("MockResult", (), {"stdout": "", "returncode": 0})(),
-            # check_buffers calls (no buffer issues for simpler test)
-            type("MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0})(),
-            type(
-                "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
-            )(),
-            # Command execution calls - first succeeds, second fails
-            type(
-                "MockResult", (), {"stdout": "success", "returncode": 0}
-            )(),  # ifconfig lo multicast
-            subprocess.CalledProcessError(
-                1,
-                get_sudo_prefix().split()
-                + ["route", "add", "-net", "224.0.0.0", "netmask", "240.0.0.0", "dev", "lo"],
-                "Permission denied",
-                "Operation not permitted",
-            ),
-        ]
+    # Clear CI environment variable for this test
+    with patch.dict(os.environ, {"CI": ""}, clear=False):
+        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+            # Mock checks failing, then mock some commands failing
+            mock_run.side_effect = [
+                # check_multicast calls
+                type(
+                    "MockResult",
+                    (),
+                    {"stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536", "returncode": 0},
+                )(),
+                type("MockResult", (), {"stdout": "", "returncode": 0})(),
+                # check_buffers calls (no buffer issues for simpler test)
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                )(),
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                )(),
+                # Command execution calls - first succeeds, second fails
+                type(
+                    "MockResult", (), {"stdout": "success", "returncode": 0}
+                )(),  # ifconfig lo multicast
+                subprocess.CalledProcessError(
+                    1,
+                    get_sudo_prefix().split()
+                    + ["route", "add", "-net", "224.0.0.0", "netmask", "240.0.0.0", "dev", "lo"],
+                    "Permission denied",
+                    "Operation not permitted",
+                ),
+            ]
 
-        with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
-            # The function should raise on multicast/route failures
-            with pytest.raises(subprocess.CalledProcessError):
-                autoconf()
+            with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
+                # The function should raise on multicast/route failures
+                with pytest.raises(subprocess.CalledProcessError):
+                    autoconf()
 
-            # Verify it logged the failure before raising
-            info_calls = [call[0][0] for call in mock_logger.info.call_args_list]
-            error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
+                # Verify it logged the failure before raising
+                info_calls = [call[0][0] for call in mock_logger.info.call_args_list]
+                error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
 
-            assert "System configuration required. Executing commands..." in info_calls
+                assert "System configuration required. Executing commands..." in info_calls
             assert "  ✓ Success" in info_calls  # First command succeeded
             assert any(
                 "✗ Failed to configure multicast" in call for call in error_calls
