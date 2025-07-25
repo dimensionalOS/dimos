@@ -47,21 +47,6 @@ class Vector3(LCMVector3):
     z: float = 0.0
     msg_name = "geometry_msgs.Vector3"
 
-    @classmethod
-    def lcm_decode(cls, data: bytes | BinaryIO):
-        if not hasattr(data, "read"):
-            data = BytesIO(data)
-        if data.read(8) != cls._get_packed_fingerprint():
-            raise ValueError("Decode error")
-        return cls._lcm_decode_one(data)
-
-    @classmethod
-    def _lcm_decode_one(cls, buf):
-        return cls(struct.unpack(">ddd", buf.read(24)))
-
-    def lcm_encode(self) -> bytes:
-        return super().encode()
-
     @dispatch
     def __init__(self) -> None:
         """Initialize a zero 3D vector."""

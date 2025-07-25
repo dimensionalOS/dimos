@@ -17,7 +17,9 @@ import time
 import pytest
 
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
-from dimos.utils.cli.lcmspy import GraphLCMSpy, GraphTopic, LCMSpy
+from dimos.protocol.service.lcmservice import autoconf
+from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy, GraphTopic, LCMSpy
+from dimos.utils.cli.lcmspy.lcmspy import Topic as TopicSpy
 
 
 @pytest.mark.lcm
@@ -82,7 +84,6 @@ def test_spy_basic():
 @pytest.mark.lcm
 def test_topic_statistics_direct():
     """Test Topic statistics directly without LCM"""
-    from dimos.utils.cli.lcmspy import Topic as TopicSpy
 
     topic = TopicSpy("/test")
 
@@ -109,7 +110,6 @@ def test_topic_statistics_direct():
 
 def test_topic_cleanup():
     """Test that old messages are properly cleaned up"""
-    from dimos.utils.cli.lcmspy import Topic as TopicSpy
 
     topic = TopicSpy("/test")
 

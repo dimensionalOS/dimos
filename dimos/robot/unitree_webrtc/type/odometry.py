@@ -83,6 +83,9 @@ class RawOdometryMessage(TypedDict):
 class Odometry(PoseStamped, Timestamped):
     name = "geometry_msgs.PoseStamped"
 
+    def __init__(self, frame_id: str = "base_link", *args, **kwargs) -> None:
+        super().__init__(frame_id=frame_id, *args, **kwargs)
+
     @classmethod
     def from_msg(cls, msg: RawOdometryMessage) -> "Odometry":
         pose = msg["data"]["pose"]
@@ -102,7 +105,7 @@ class Odometry(PoseStamped, Timestamped):
         )
 
         ts = to_timestamp(msg["data"]["header"]["stamp"])
-        return Odometry(position=pos, orientation=rot, ts=ts, frame_id="lidar")
+        return Odometry(position=pos, orientation=rot, ts=ts, frame_id="world")
 
     def __repr__(self) -> str:
         return f"Odom pos({self.position}), rot({self.orientation})"

@@ -18,8 +18,14 @@ use lcm_foxglove_bridge as a module from dimos_lcm
 """
 
 import asyncio
+import os
 import threading
-import dimos_lcm.lcm_foxglove_bridge as bridge
+
+import dimos_lcm
+from dimos_lcm.foxglove_bridge import FoxgloveBridge
+
+dimos_lcm_path = os.path.dirname(os.path.abspath(dimos_lcm.__file__))
+print(f"Using dimos_lcm from: {dimos_lcm_path}")
 
 
 def run_bridge_example():
@@ -30,11 +36,9 @@ def run_bridge_example():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            bridge_runner = bridge.LcmFoxgloveBridgeRunner(
-                host="0.0.0.0", port=8765, debug=True, num_threads=4
-            )
+            bridge_instance = FoxgloveBridge(host="0.0.0.0", port=8765, debug=True, num_threads=4)
 
-            loop.run_until_complete(bridge_runner.run())
+            loop.run_until_complete(bridge_instance.run())
         except Exception as e:
             print(f"Bridge error: {e}")
         finally:

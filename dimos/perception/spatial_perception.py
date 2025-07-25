@@ -38,8 +38,6 @@ from dimos.types.robot_location import RobotLocation
 
 logger = setup_logger("dimos.perception.spatial_memory")
 
-print("")
-
 
 class SpatialMemory(Module):
     """

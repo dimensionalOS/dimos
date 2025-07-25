@@ -137,7 +137,7 @@ class LCMSpy(LCMService, Topic):
 
     def start(self):
         super().start()
-        self.l.subscribe("/.*", self.msg)
+        self.l.subscribe(".*", self.msg)
 
     def stop(self):
         """Stop the LCM spy and clean up resources"""
