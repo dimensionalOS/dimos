@@ -194,11 +194,13 @@ markers = [
     "tool: dev tooling",
     "needsdata: needs test data to be downloaded",
     "ros: depend on ros",
-    "lcm: tests that run actual LCM bus (can't execute in CI)"
+    "lcm: tests that run actual LCM bus (can't execute in CI)",
+    "module: tests that need to run directly as modules",
+    "gpu: tests that require GPU"
 
 ]
 
-addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy'"
+addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module'"
 
 
 

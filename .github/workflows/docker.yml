@@ -221,11 +221,11 @@ jobs:
           git lfs fetch
           git lfs checkout
         
-      - name: Run spatial memory module test
+      - name: Run module tests
         env:
           CI: "true"
         run: |
-          /entrypoint.sh bash -c "export PYTHONPATH=$(pwd):$PYTHONPATH && python dimos/perception/test_spatial_memory_module.py"
+          /entrypoint.sh bash -c "pytest -m module"
       
   # TODO: Remove when merge to main as workflow_run needed
   cleanup-runner:
