@@ -94,10 +94,6 @@ def save_debug_image_with_points(
     # Create a copy to avoid modifying original
     debug_image = image.copy()
 
-    # Convert RGB to BGR for OpenCV if needed
-    if len(debug_image.shape) == 3 and debug_image.shape[2] == 3:
-        debug_image = cv2.cvtColor(debug_image, cv2.COLOR_RGB2BGR)
-
     # Draw pick point crosshair (green)
     if pick_point:
         x, y = pick_point
@@ -341,6 +337,10 @@ class PickAndPlace(AbstractManipulationSkill):
         frame = self._get_camera_frame()
         if frame is None:
             return {"success": False, "error": "Failed to capture camera frame"}
+
+        # Convert RGB to BGR for OpenCV if needed
+        if len(frame.shape) == 3 and frame.shape[2] == 3:
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
         # Get pick and place points from Qwen
         pick_point = None

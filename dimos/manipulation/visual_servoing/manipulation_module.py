@@ -171,7 +171,7 @@ class ManipulationModule(Module):
         # Pose stabilization tracking
         self.pose_history_size = 4
         self.pose_stabilization_threshold = 0.01
-        self.stabilization_timeout = 15.0
+        self.stabilization_timeout = 25.0
         self.stabilization_start_time = None
         self.reached_poses = deque(maxlen=self.pose_history_size)
         self.adjustment_count = 0
