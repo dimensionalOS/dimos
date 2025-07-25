@@ -99,7 +99,7 @@ class FakeRTC(UnitreeWebRTCConnection):
         print("move supressed", vector)
 
 
-class ConnectionModule(UnitreeWebRTCConnection, Module):
+class ConnectionModule(FakeRTC, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
