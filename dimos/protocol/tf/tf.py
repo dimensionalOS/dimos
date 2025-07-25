@@ -16,7 +16,9 @@
 
 import time
 from abc import abstractmethod
+from collections import deque
 from dataclasses import dataclass
+from functools import reduce
 from typing import Optional, TypeVar
 
 from dimos.msgs.geometry_msgs import Transform
@@ -37,8 +39,8 @@ class TFConfig:
 
 # generic specification for transform service
 class TFSpec(Service[TFConfig]):
-    def __init__(self, *kwargs):
-        super().__init__(*kwargs)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     @abstractmethod
     def send(self, *args: Transform) -> None: ...
@@ -149,7 +151,7 @@ class MultiTBuffer:
                 self.buffers[key] = TBuffer(self.buffer_size)
             self.buffers[key].add(transform)
 
-    def get(
+    def get_transform(
         self,
         parent_frame: str,
         child_frame: str,
@@ -161,6 +163,33 @@ class MultiTBuffer:
             return None
 
         return self.buffers[key].get(time_point, time_tolerance)
+
+    def get(self, *args, **kwargs) -> Optional[Transform]:
+        simple = self.get_transform(*args, **kwargs)
+        if simple is not None:
+            return simple
+
+        complex: list[Transform] = self.get_transform_search(*args, **kwargs)
+
+        if complex is None:
+            return None
+
+        return reduce(lambda t1, t2: t1 + t2, complex)
+
+    def graph(
+        self,
+        time_point: Optional[float] = None,
+        time_tolerance: Optional[float] = None,
+    ) -> dict[str, list[tuple[str, Transform]]]:
+        # Build a graph of available transforms at the given time
+        graph = {}
+        for (from_frame, to_frame), buffer in self.buffers.items():
+            transform = buffer.get(time_point, time_tolerance)
+            if transform:
+                if from_frame not in graph:
+                    graph[from_frame] = []
+                graph[from_frame].append((to_frame, transform))
+        return graph
 
     def get_transform_search(
         self,
@@ -175,20 +204,14 @@ class MultiTBuffer:
             transform = self.buffers[(parent_frame, child_frame)].get(time_point, time_tolerance)
             return [transform] if transform else None
 
-        # Build a graph of available transforms at the given time
-        graph = {}
-        for (from_frame, to_frame), buffer in self.buffers.items():
-            transform = buffer.get(time_point, time_tolerance)
-            if transform:
-                if from_frame not in graph:
-                    graph[from_frame] = []
-                graph[from_frame].append((to_frame, transform))
-
         # BFS to find shortest path
-        from collections import deque
-
         queue = deque([(parent_frame, [])])
         visited = {parent_frame}
+
+        # build a graph of available transforms at the given time for the search
+        # not a fan of this, perhaps MultiTBuffer should already store the data
+        # in a traversible format
+        graph = self.graph(time_point, time_tolerance)
 
         while queue:
             current_frame, path = queue.popleft()
@@ -222,22 +245,27 @@ class PubSubTFConfig(TFConfig):
 
 
 class PubSubTF(MultiTBuffer, TFSpec):
-    config: PubSubTFConfig
+    default_config = PubSubTFConfig
 
     def __init__(self, **kwargs) -> None:
         TFSpec.__init__(self, **kwargs)
         MultiTBuffer.__init__(self, self.config.buffer_size)
         self.pubsub = self.config.pubsub
 
-    def start(self):
+    def start(self, sub=True) -> None:
         self.pubsub.start()
-        self.pubsub.subscribe(self.config.topic, self.receive_msg)
+        if sub:
+            self.pubsub.subscribe(self.config.topic, self.receive_msg)
+
+    def stop(self):
+        self.pubsub.stop()
 
     def send(self, *args: Transform) -> None:
         """Send transforms using the configured PubSub."""
         if not self.pubsub:
             raise ValueError("PubSub is not configured.")
 
+        self.receive_transform(*args)
         self.pubsub.publish(self.config.topic, TFMessage(*args))
 
     def send_static(self, *args: Transform) -> None:

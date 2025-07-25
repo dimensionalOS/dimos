@@ -16,18 +16,17 @@
 
 import time
 
-import lcm
 import pytest
 
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Transform, Vector3
-from dimos.protocol.tf.tf import TBuffer, MultiTBuffer
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
+from dimos.protocol.tf.tf import MultiTBuffer, TBuffer
 
 
 @pytest.mark.tool
 def test_tf_broadcast_and_query():
     """Test TF broadcasting and querying between two TF instances.
     If you run foxglove-bridge this will show up in the UI"""
-    from dimos.robot.module.tf import TF, TFConfig
+    from dimos.robot.module.tf import TF
 
     broadcaster = TF()
     querier = TF()
@@ -457,3 +456,104 @@ class TestMultiTBuffer:
         assert "world -> robot1" in ttbuffer_str
         assert "world -> robot2" in ttbuffer_str
         assert "robot1 -> sensor" in ttbuffer_str
+
+    def test_get_with_transform_chain_composition(self):
+        ttbuffer = MultiTBuffer()
+        base_time = time.time()
+
+        # Create transform chain: world -> robot -> sensor
+        # world -> robot: translate by (1, 0, 0)
+        transform1 = Transform(
+            translation=Vector3(1.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity
+            frame_id="world",
+            child_frame_id="robot",
+            ts=base_time,
+        )
+
+        # robot -> sensor: translate by (0, 2, 0) and rotate 90 degrees around Z
+        import math
+
+        # 90 degrees around Z: quaternion (0, 0, sin(45°), cos(45°))
+        transform2 = Transform(
+            translation=Vector3(0.0, 2.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4)),
+            frame_id="robot",
+            child_frame_id="sensor",
+            ts=base_time,
+        )
+
+        ttbuffer.receive_transform(transform1, transform2)
+
+        # Get composed transform from world to sensor
+        result = ttbuffer.get("world", "sensor")
+        assert result is not None
+
+        # The composed transform should:
+        # 1. Apply world->robot translation: (1, 0, 0)
+        # 2. Apply robot->sensor translation in robot frame: (0, 2, 0)
+        # Total translation: (1, 2, 0)
+        assert abs(result.translation.x - 1.0) < 1e-6
+        assert abs(result.translation.y - 2.0) < 1e-6
+        assert abs(result.translation.z - 0.0) < 1e-6
+
+        # Rotation should be 90 degrees around Z (same as transform2)
+        assert abs(result.rotation.x - 0.0) < 1e-6
+        assert abs(result.rotation.y - 0.0) < 1e-6
+        assert abs(result.rotation.z - math.sin(math.pi / 4)) < 1e-6
+        assert abs(result.rotation.w - math.cos(math.pi / 4)) < 1e-6
+
+        # Frame IDs should be correct
+        assert result.frame_id == "world"
+        assert result.child_frame_id == "sensor"
+
+    def test_get_with_longer_transform_chain(self):
+        ttbuffer = MultiTBuffer()
+        base_time = time.time()
+
+        # Create longer chain: world -> base -> arm -> hand
+        # Each adds a translation along different axes
+        transforms = [
+            Transform(
+                translation=Vector3(1.0, 0.0, 0.0),  # Move 1 along X
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="world",
+                child_frame_id="base",
+                ts=base_time,
+            ),
+            Transform(
+                translation=Vector3(0.0, 2.0, 0.0),  # Move 2 along Y
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="base",
+                child_frame_id="arm",
+                ts=base_time,
+            ),
+            Transform(
+                translation=Vector3(0.0, 0.0, 3.0),  # Move 3 along Z
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="arm",
+                child_frame_id="hand",
+                ts=base_time,
+            ),
+        ]
+
+        for t in transforms:
+            ttbuffer.receive_transform(t)
+
+        # Get composed transform from world to hand
+        result = ttbuffer.get("world", "hand")
+        assert result is not None
+
+        # Total translation should be sum of all: (1, 2, 3)
+        assert abs(result.translation.x - 1.0) < 1e-6
+        assert abs(result.translation.y - 2.0) < 1e-6
+        assert abs(result.translation.z - 3.0) < 1e-6
+
+        # Rotation should still be identity (all rotations were identity)
+        assert abs(result.rotation.x - 0.0) < 1e-6
+        assert abs(result.rotation.y - 0.0) < 1e-6
+        assert abs(result.rotation.z - 0.0) < 1e-6
+        assert abs(result.rotation.w - 1.0) < 1e-6
+
+        assert result.frame_id == "world"
+        assert result.child_frame_id == "hand"
