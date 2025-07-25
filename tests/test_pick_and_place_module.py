@@ -14,7 +14,7 @@
 # limitations under the License.
 
 """
-Test script for pick and place manipulation module.
+Run script for Piper Arm robot with pick and place functionality.
 Subscribes to visualization images and handles mouse/keyboard input.
 """
 
@@ -32,18 +32,14 @@ except ImportError:
     print("Error: ZED SDK not installed.")
     sys.exit(1)
 
-from dimos import core
-from dimos.hardware.zed_camera import ZEDModule
-from dimos.manipulation.visual_servoing.manipulation_module import ManipulationModule
-from dimos.protocol import pubsub
+from dimos.robot.agilex.piper_arm import PiperArmRobot
 from dimos.utils.logging_config import setup_logger
 
 # Import LCM message types
-from dimos_lcm.sensor_msgs import Image as LCMImage
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import Image
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 
-logger = setup_logger("test_pick_and_place_module")
+logger = setup_logger("dimos.tests.test_pick_and_place_module")
 
 # Global for mouse events
 mouse_click = None
@@ -67,16 +63,16 @@ def mouse_callback(event, x, y, _flags, param):
 class VisualizationNode:
     """Node that subscribes to visualization images and handles user input."""
 
-    def __init__(self, manipulation_module):
+    def __init__(self, robot: PiperArmRobot):
         self.lcm = LCM()
         self.latest_viz = None
         self.latest_camera = None
         self._running = False
-        self.manipulation = manipulation_module
+        self.robot = robot
 
         # Subscribe to visualization topic
-        self.viz_topic = Topic("/manipulation/viz", LCMImage)
-        self.camera_topic = Topic("/zed/color_image", LCMImage)
+        self.viz_topic = Topic("/manipulation/viz", Image)
+        self.camera_topic = Topic("/zed/color_image", Image)
 
     def start(self):
         """Start the visualization node."""
@@ -95,7 +91,7 @@ class VisualizationNode:
         self._running = False
         cv2.destroyAllWindows()
 
-    def _on_viz_image(self, msg: LCMImage, topic: str):
+    def _on_viz_image(self, msg: Image, topic: str):
         """Handle visualization image messages."""
         try:
             # Convert LCM message to numpy array
@@ -108,7 +104,7 @@ class VisualizationNode:
         except Exception as e:
             logger.error(f"Error processing viz image: {e}")
 
-    def _on_camera_image(self, msg: LCMImage, topic: str):
+    def _on_camera_image(self, msg: Image, topic: str):
         """Handle camera image messages."""
         try:
             # Convert LCM message to numpy array
@@ -132,7 +128,7 @@ class VisualizationNode:
         cv2.namedWindow("Camera Feed")
         cv2.setMouseCallback("Camera Feed", mouse_callback, "Camera Feed")
 
-        print("=== Pick and Place Module Test ===")
+        print("=== Piper Arm Robot - Pick and Place ===")
         print("Control mode: Module-based with LCM communication")
         print("\nPICK AND PLACE WORKFLOW:")
         print("1. Click on an object to select PICK location")
@@ -232,15 +228,15 @@ class VisualizationNode:
                     place_location = None
                     place_mode = False
                     logger.info("Reset pick and place selections")
-                    # Also send reset to manipulation module
-                    action = self.manipulation.handle_keyboard_command("r")
+                    # Also send reset to robot
+                    action = self.robot.handle_keyboard_command("r")
                     if action:
                         logger.info(f"Action: {action}")
                 elif key == ord("p"):
                     # Execute pick-only task if pick location is set
                     if pick_location is not None:
                         logger.info(f"Executing pick-only task at {pick_location}")
-                        result = self.manipulation.pick_and_place(
+                        result = self.robot.pick_and_place(
                             pick_location[0],
                             pick_location[1],
                             None,  # No place location
@@ -253,11 +249,11 @@ class VisualizationNode:
                     else:
                         logger.warning("Please select a pick location first!")
                 else:
-                    # Send keyboard command to manipulation module
+                    # Send keyboard command to robot
                     if key in [82, 84]:  # Arrow keys
-                        action = self.manipulation.handle_keyboard_command(str(key))
+                        action = self.robot.handle_keyboard_command(str(key))
                     else:
-                        action = self.manipulation.handle_keyboard_command(chr(key))
+                        action = self.robot.handle_keyboard_command(chr(key))
                     if action:
                         logger.info(f"Action: {action}")
 
@@ -276,9 +272,7 @@ class VisualizationNode:
                     logger.info(f"Executing pick at {pick_location} and place at ({x}, {y})")
 
                     # Start pick and place task with both locations
-                    result = self.manipulation.pick_and_place(
-                        pick_location[0], pick_location[1], x, y
-                    )
+                    result = self.robot.pick_and_place(pick_location[0], pick_location[1], x, y)
                     logger.info(f"Pick and place task started: {result}")
 
                     # Clear all points after sending mission
@@ -303,9 +297,7 @@ class VisualizationNode:
                     logger.info(f"Executing pick at {pick_location} and place at ({x}, {y})")
 
                     # Start pick and place task with both locations
-                    result = self.manipulation.pick_and_place(
-                        pick_location[0], pick_location[1], x, y
-                    )
+                    result = self.robot.pick_and_place(pick_location[0], pick_location[1], x, y)
                     logger.info(f"Pick and place task started: {result}")
 
                     # Clear all points after sending mission
@@ -317,64 +309,22 @@ class VisualizationNode:
             time.sleep(0.03)  # ~30 FPS
 
 
-async def test_pick_and_place_module():
-    """Test the pick and place manipulation module."""
-    logger.info("Starting Pick and Place Module test")
+async def run_piper_arm_with_viz():
+    """Run the Piper Arm robot with visualization."""
+    logger.info("Starting Piper Arm Robot")
 
-    # Start Dask
-    dimos = core.start(2)  # Need 2 workers for ZED and manipulation modules
-
-    # Enable LCM auto-configuration
-    pubsub.lcm.autoconf()
+    # Create robot instance
+    robot = PiperArmRobot()
 
     try:
-        # Deploy ZED module
-        logger.info("Deploying ZED module...")
-        zed = dimos.deploy(
-            ZEDModule,
-            camera_id=0,
-            resolution="HD720",
-            depth_mode="NEURAL",
-            fps=30,
-            enable_tracking=False,  # We don't need tracking for manipulation
-            publish_rate=30.0,
-            frame_id="zed_camera",
-        )
+        # Start the robot
+        await robot.start()
 
-        # Configure ZED LCM transports
-        zed.color_image.transport = core.LCMTransport("/zed/color_image", LCMImage)
-        zed.depth_image.transport = core.LCMTransport("/zed/depth_image", LCMImage)
-        zed.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
-
-        # Deploy manipulation module
-        logger.info("Deploying manipulation module...")
-        manipulation = dimos.deploy(ManipulationModule)
-
-        # Connect manipulation inputs to ZED outputs
-        manipulation.rgb_image.connect(zed.color_image)
-        manipulation.depth_image.connect(zed.depth_image)
-        manipulation.camera_info.connect(zed.camera_info)
-
-        # Configure manipulation output
-        manipulation.viz_image.transport = core.LCMTransport("/manipulation/viz", LCMImage)
-
-        # Print module info
-        logger.info("Modules configured:")
-        print("\nZED Module:")
-        print(zed.io().result())
-        print("\nManipulation Module:")
-        print(manipulation.io().result())
-
-        # Start modules
-        logger.info("Starting modules...")
-        zed.start()
-        manipulation.start()
-
-        # Give modules time to initialize
+        # Give modules time to fully initialize
         await asyncio.sleep(2)
 
         # Create and start visualization node
-        viz_node = VisualizationNode(manipulation)
+        viz_node = VisualizationNode(robot)
         viz_node.start()
 
         # Run visualization in separate thread
@@ -385,26 +335,21 @@ async def test_pick_and_place_module():
         while viz_node._running:
             await asyncio.sleep(0.1)
 
-        # Stop modules
-        logger.info("Stopping modules...")
-        manipulation.stop()
-        zed.stop()
-
         # Stop visualization
         viz_node.stop()
 
     except Exception as e:
-        logger.error(f"Error in test: {e}")
+        logger.error(f"Error running robot: {e}")
         import traceback
 
         traceback.print_exc()
 
     finally:
         # Clean up
-        dimos.close()
-        logger.info("Test completed")
+        robot.stop()
+        logger.info("Robot stopped")
 
 
 if __name__ == "__main__":
-    # Run the test
-    asyncio.run(test_pick_and_place_module())
+    # Run the robot
+    asyncio.run(run_piper_arm_with_viz())

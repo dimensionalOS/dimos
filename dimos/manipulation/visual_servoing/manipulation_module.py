@@ -234,8 +234,8 @@ class ManipulationModule(Module):
         if self.task_thread and self.task_thread.is_alive():
             self.task_thread.join(timeout=5.0)
 
-        # Disable arm
-        self.arm.disable()
+        # Reset to idle
+        self.reset_to_idle()
         logger.info("Manipulation module stopped")
 
     def _on_rgb_image(self, msg: Image):
@@ -273,6 +273,13 @@ class ManipulationModule(Module):
             self.latest_camera_info = msg
         except Exception as e:
             logger.error(f"Error processing camera info: {e}")
+
+    @rpc
+    def get_single_rgb_frame(self) -> Optional[np.ndarray]:
+        """
+        get the latest rgb frame from the camera
+        """
+        return self.latest_rgb
 
     @rpc
     def handle_keyboard_command(self, key: str) -> str:
@@ -948,6 +955,9 @@ class ManipulationModule(Module):
 
         return place_pose
 
+    @rpc
     def cleanup(self):
         """Clean up resources on module destruction."""
-        self.stop()
+        if self.detector and hasattr(self.detector, "cleanup"):
+            self.detector.cleanup()
+        self.arm.disable()
