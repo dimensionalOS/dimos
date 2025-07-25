@@ -116,7 +116,7 @@ class OdometryReplayModule(Module):
         logger.info("OdometryReplayModule stopped")
 
 
-@pytest.mark.skip(reason="Run directly with python")
+@pytest.mark.gpu
 class TestSpatialMemoryModule:
     @pytest.fixture(scope="function")
     def temp_dir(self):
@@ -219,9 +219,8 @@ class TestSpatialMemoryModule:
 
 
 if __name__ == "__main__":
-    # pytest.main(["-v", "-s", __file__])
-    test = TestSpatialMemoryModule()
-    asyncio.run(
-        test.test_spatial_memory_module_with_replay(tempfile.mkdtemp(prefix="spatial_memory_test_"))
-    )
-    # print("skipping")
+    pytest.main(["-v", "-s", __file__])
+    # test = TestSpatialMemoryModule()
+    # asyncio.run(
+    #     test.test_spatial_memory_module_with_replay(tempfile.mkdtemp(prefix="spatial_memory_test_"))
+    # )
