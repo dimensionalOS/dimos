@@ -60,11 +60,8 @@ class TFMessage:
                            If not provided, defaults to "base_link" for all.
         """
 
-        print("WILL MAP", self.transforms)
         res = list(map(lambda t: t.lcm_transform(), self.transforms))
-        print("RES IS", res)
 
-        print("HEADER", res[0].header)
         lcm_msg = LCMTFMessage(
             transforms_length=len(self.transforms),
             transforms=res,

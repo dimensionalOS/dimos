@@ -24,6 +24,7 @@ from functools import cache
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 import lcm
+
 from dimos.protocol.service.spec import Service
 
 
@@ -161,7 +162,7 @@ class Topic:
     def __str__(self) -> str:
         if self.lcm_type is None:
             return self.topic
-        return f"{self.topic}#{self.lcm_type.name}"
+        return f"{self.topic}#{self.lcm_type.msg_name}"
 
 
 class LCMService(Service[LCMConfig]):

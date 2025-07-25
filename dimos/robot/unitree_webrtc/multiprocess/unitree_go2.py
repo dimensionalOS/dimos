@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import asyncio
 import functools
 import logging
@@ -27,9 +28,10 @@ from reactivex import operators as ops
 import dimos.core.colors as colors
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Twist, Vector3
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
+from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
@@ -101,7 +103,7 @@ class FakeRTC(UnitreeWebRTCConnection):
         print("move supressed", vector)
 
 
-class ConnectionModule(UnitreeWebRTCConnection, Module):
+class ConnectionModule(FakeRTC, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[LidarMessage] = None
@@ -117,17 +119,19 @@ class ConnectionModule(UnitreeWebRTCConnection, Module):
 
     def __init__(self, ip: str, *args, **kwargs):
         self.ip = ip
+        self.tf = TF()
         Module.__init__(self, *args, **kwargs)
 
     @rpc
     def start(self):
         # Initialize the parent WebRTC connection
         super().__init__(self.ip)
-
+        self.tf = TF()
         # Connect sensor streams to LCM outputs
         self.lidar_stream().subscribe(self.lidar.publish)
         self.odom_stream().subscribe(self.odom.publish)
         self.video_stream().subscribe(self.video.publish)
+        self.tf_stream().subscribe(self.tf.publish)
 
         # Connect LCM input to robot movement commands
         self.movecmd.subscribe(self.move)
@@ -183,7 +187,6 @@ class UnitreeGo2Light:
 
         # This enables LCM transport
         # Ensures system multicast, udp sizes are auto-adjusted if needed
-        pubsub.lcm.autoconf()
 
         # Configure ConnectionModule LCM transport outputs for sensor data streams
         # OUTPUT: LiDAR point cloud data to /lidar topic
@@ -193,6 +196,7 @@ class UnitreeGo2Light:
         # OUTPUT: Camera video frames to /video topic
         self.connection.video.transport = core.LCMTransport("/video", Image)
         # ======================================================================
+        # self.connection.tf.transport = core.LCMTransport("/tf", LidarMessage)
 
         # Map Module - Point cloud accumulation and costmap generation =========
         self.mapper = self.dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
@@ -377,6 +381,7 @@ class UnitreeGo2Light:
 async def run_light_robot():
     """Run the lightweight robot without GPU modules."""
     ip = os.getenv("ROBOT_IP")
+    pubsub.lcm.autoconf()
 
     robot = UnitreeGo2Light(ip)
 
