@@ -28,7 +28,6 @@ import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
 from pydantic import Field
-from PIL import Image
 
 from dimos.skills.skills import AbstractRobotSkill
 from dimos.agents.agent import LLMAgent
@@ -200,20 +199,19 @@ class ObserveStream(AbstractRobotSkill):
         logger.info("Processing frame with Qwen VLM")
 
         try:
-            # Convert frame to PIL Image format
+            # Ensure frame is in RGB format for Qwen
             if isinstance(frame, np.ndarray):
-                # OpenCV uses BGR, PIL uses RGB
+                # OpenCV uses BGR, convert to RGB if needed
                 if frame.shape[-1] == 3:  # Check if it has color channels
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    pil_image = Image.fromarray(frame_rgb)
                 else:
-                    pil_image = Image.fromarray(frame)
+                    frame_rgb = frame
             else:
-                pil_image = frame
+                raise ValueError("Frame must be a numpy array")
 
             # Use Qwen to process the frame
             model_name = "qwen2.5-vl-72b-instruct"  # Using the most capable model
-            response = query_single_frame(pil_image, self.query_text, model_name=model_name)
+            response = query_single_frame(frame_rgb, self.query_text, model_name=model_name)
 
             logger.info(f"Qwen response received: {response[:100]}...")
 

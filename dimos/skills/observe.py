@@ -164,22 +164,19 @@ class Observe(AbstractRobotSkill):
         logger.info(f"Processing frame with Qwen model: {self._model_name}")
 
         try:
-            # Convert numpy array to PIL Image if needed
-            from PIL import Image
-
+            # Ensure frame is in RGB format for Qwen
             if isinstance(frame, np.ndarray):
-                # OpenCV uses BGR, PIL uses RGB
+                # OpenCV uses BGR, convert to RGB if needed
                 if frame.shape[-1] == 3:  # Check if it has color channels
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    pil_image = Image.fromarray(frame_rgb)
                 else:
-                    pil_image = Image.fromarray(frame)
+                    frame_rgb = frame
             else:
-                pil_image = frame
+                raise ValueError("Frame must be a numpy array")
 
             # Query Qwen with the frame (direct function call)
             response = query_single_frame(
-                pil_image,
+                frame_rgb,
                 self.query_text,
                 model_name=self._model_name,
             )
