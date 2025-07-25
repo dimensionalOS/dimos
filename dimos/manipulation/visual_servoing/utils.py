@@ -73,7 +73,6 @@ def transform_pose(
     Returns:
         Object pose in desired frame as Pose
     """
-    # Create object pose from input
     # Convert euler angles to quaternion using utility function
     euler_vector = Vector3(obj_orientation[0], obj_orientation[1], obj_orientation[2])
     obj_orientation_quat = euler_to_quaternion(euler_vector)
@@ -130,7 +129,6 @@ def transform_points_3d(
     if points_3d.size == 0:
         return np.zeros((0, 3), dtype=np.float32)
 
-    # Ensure points_3d is the right shape
     points_3d = np.asarray(points_3d)
     if points_3d.ndim == 1:
         points_3d = points_3d.reshape(1, -1)
@@ -138,7 +136,6 @@ def transform_points_3d(
     transformed_points = []
 
     for point in points_3d:
-        # Create pose with identity orientation for each point
         input_point_pose = Pose(
             Point(point[0], point[1], point[2]),
             Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
@@ -200,7 +197,6 @@ def select_points_from_depth(
     x_target, y_target = target_point
     height, width = depth_image.shape
 
-    # Define bounding box around target point
     x_min = max(0, x_target - radius)
     x_max = min(width, x_target + radius)
     y_min = max(0, y_target - radius)
@@ -216,18 +212,14 @@ def select_points_from_depth(
     # Extract corresponding depth values using advanced indexing
     depth_flat = depth_image[y_flat, x_flat]
 
-    # Create mask for valid depth values
     valid_mask = (depth_flat > 0) & np.isfinite(depth_flat)
 
-    # Early exit if no valid points
     if not np.any(valid_mask):
         return np.zeros((0, 3), dtype=np.float32)
 
-    # Filter to get valid points and depths
     points_2d = np.column_stack([x_flat[valid_mask], y_flat[valid_mask]]).astype(np.float32)
     depth_values = depth_flat[valid_mask].astype(np.float32)
 
-    # Use the common utility function for 3D projection
     points_3d = project_2d_points_to_3d(points_2d, depth_values, camera_intrinsics)
 
     return points_3d
@@ -249,7 +241,6 @@ def update_target_grasp_pose(
         Target grasp pose or None if target is invalid
     """
 
-    # Get target position
     target_pos = target_pose.position
 
     # Calculate orientation pointing from target towards EE
@@ -267,7 +258,6 @@ def update_target_grasp_pose(
     updated_pose = Pose(target_pos, target_orientation)
 
     if grasp_distance > 0.0:
-        # Apply grasp distance
         return apply_grasp_distance(updated_pose, grasp_distance)
     else:
         return updated_pose

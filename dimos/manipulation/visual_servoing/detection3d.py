@@ -46,7 +46,7 @@ from dimos.manipulation.visual_servoing.utils import (
     transform_pose,
 )
 
-logger = setup_logger("dimos.perception.detection3d")
+logger = setup_logger("dimos.manipulation.visual_servoing.detection3d")
 
 
 class Detection3DProcessor:
@@ -84,10 +84,8 @@ class Detection3DProcessor:
             use_tracker=False,
             use_analyzer=False,
             use_filtering=True,
-            device="cuda" if cv2.cuda.getCudaEnabledDeviceCount() > 0 else "cpu",
         )
 
-        # Store confidence threshold for filtering
         self.min_confidence = min_confidence
 
         logger.info(
@@ -116,7 +114,6 @@ class Detection3DProcessor:
         # Run Sam segmentation with tracking
         masks, bboxes, track_ids, probs, names = self.detector.process_image(bgr_image)
 
-        # Early exit if no detections
         if not masks or len(masks) == 0:
             return Detection3DArray(
                 detections_length=0, header=Header(), detections=[]
@@ -138,13 +135,11 @@ class Detection3DProcessor:
             camera_intrinsics=self.camera_intrinsics,
         )
 
-        # Build detection results
         detections_3d = []
         detections_2d = []
         pose_dict = {p["mask_idx"]: p for p in poses if p["centroid"][2] < self.max_depth}
 
         for i, (bbox, name, prob, track_id) in enumerate(zip(bboxes, names, probs, track_ids)):
-            # Skip if no 3D pose data
             if i not in pose_dict:
                 continue
 
