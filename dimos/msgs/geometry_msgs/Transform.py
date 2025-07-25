@@ -14,14 +14,11 @@
 
 from __future__ import annotations
 
-import struct
 import time
-from io import BytesIO
 from typing import BinaryIO
 
 from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from dimos_lcm.geometry_msgs import TransformStamped as LCMTransformStamped
-from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -115,6 +112,37 @@ class Transform(Timestamped):
             child_frame_id=other.child_frame_id,
             ts=self.ts,
         )
+
+    @classmethod
+    def from_pose(cls, pose: "Pose | PoseStamped") -> "Transform":
+        """Create a Transform from a Pose or PoseStamped.
+
+        Args:
+            pose: A Pose or PoseStamped object to convert
+
+        Returns:
+            A Transform with the same translation and rotation as the pose
+        """
+        # Import locally to avoid circular imports
+        from dimos.msgs.geometry_msgs.Pose import Pose
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
+        # Handle both Pose and PoseStamped
+        if isinstance(pose, PoseStamped):
+            return cls(
+                translation=pose.position,
+                rotation=pose.orientation,
+                frame_id=pose.frame_id,
+                child_frame_id="",  # PoseStamped doesn't have child_frame_id
+                ts=pose.ts,
+            )
+        elif isinstance(pose, Pose):
+            return cls(
+                translation=pose.position,
+                rotation=pose.orientation,
+            )
+        else:
+            raise TypeError(f"Expected Pose or PoseStamped, got {type(pose).__name__}")
 
     def lcm_encode(self) -> bytes:
         # we get a circular import otherwise

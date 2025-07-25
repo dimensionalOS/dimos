@@ -19,7 +19,7 @@ import pytest
 from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from dimos_lcm.geometry_msgs import TransformStamped as LCMTransformStamped
 
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Transform, Vector3
 
 
 def test_transform_initialization():
@@ -304,3 +304,80 @@ def test_transform_addition():
     # Test 5: Type error
     with pytest.raises(TypeError):
         t1 + "not a transform"
+
+
+def test_transform_from_pose():
+    """Test converting Pose to Transform"""
+    # Create a Pose with position and orientation
+    pose = Pose(
+        position=Vector3(1.0, 2.0, 3.0),
+        orientation=Quaternion(0.0, 0.0, 0.707, 0.707),  # 90 degrees around Z
+    )
+
+    # Convert to Transform
+    transform = Transform.from_pose(pose)
+
+    # Check that translation and rotation match
+    assert transform.translation == pose.position
+    assert transform.rotation == pose.orientation
+    assert transform.frame_id == "world"  # default frame_id
+    assert transform.child_frame_id == "base_link"  # default child_frame_id
+
+
+def test_transform_from_pose_stamped():
+    """Test converting PoseStamped to Transform"""
+    # Create a PoseStamped with position, orientation, timestamp and frame
+    test_time = time.time()
+    pose_stamped = PoseStamped(
+        ts=test_time,
+        frame_id="map",
+        position=Vector3(4.0, 5.0, 6.0),
+        orientation=Quaternion(0.0, 0.707, 0.0, 0.707),  # 90 degrees around Y
+    )
+
+    # Convert to Transform
+    transform = Transform.from_pose(pose_stamped)
+
+    # Check that all fields match
+    assert transform.translation == pose_stamped.position
+    assert transform.rotation == pose_stamped.orientation
+    assert transform.frame_id == pose_stamped.frame_id
+    assert transform.ts == pose_stamped.ts
+    assert transform.child_frame_id == ""  # PoseStamped doesn't have child_frame_id
+
+
+def test_transform_from_pose_variants():
+    """Test from_pose with different Pose initialization methods"""
+    # Test with Pose created from x,y,z
+    pose1 = Pose(1.0, 2.0, 3.0)
+    transform1 = Transform.from_pose(pose1)
+    assert transform1.translation.x == 1.0
+    assert transform1.translation.y == 2.0
+    assert transform1.translation.z == 3.0
+    assert transform1.rotation.w == 1.0  # Identity quaternion
+
+    # Test with Pose created from tuple
+    pose2 = Pose(([7.0, 8.0, 9.0], [0.0, 0.0, 0.0, 1.0]))
+    transform2 = Transform.from_pose(pose2)
+    assert transform2.translation.x == 7.0
+    assert transform2.translation.y == 8.0
+    assert transform2.translation.z == 9.0
+
+    # Test with Pose created from dict
+    pose3 = Pose({"position": [10.0, 11.0, 12.0], "orientation": [0.0, 0.0, 0.0, 1.0]})
+    transform3 = Transform.from_pose(pose3)
+    assert transform3.translation.x == 10.0
+    assert transform3.translation.y == 11.0
+    assert transform3.translation.z == 12.0
+
+
+def test_transform_from_pose_invalid_type():
+    """Test that from_pose raises TypeError for invalid types"""
+    with pytest.raises(TypeError):
+        Transform.from_pose("not a pose")
+
+    with pytest.raises(TypeError):
+        Transform.from_pose(42)
+
+    with pytest.raises(TypeError):
+        Transform.from_pose(None)
