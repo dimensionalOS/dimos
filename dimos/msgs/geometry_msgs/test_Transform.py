@@ -228,3 +228,79 @@ def test_lcm_encode_decode():
     decoded_transform = Transform.lcm_decode(data)
 
     assert decoded_transform == transform
+
+
+def test_transform_addition():
+    # Test 1: Simple translation addition (no rotation)
+    t1 = Transform(
+        translation=Vector3(1, 0, 0),
+        rotation=Quaternion(0, 0, 0, 1),  # identity rotation
+    )
+    t2 = Transform(
+        translation=Vector3(2, 0, 0),
+        rotation=Quaternion(0, 0, 0, 1),  # identity rotation
+    )
+    t3 = t1 + t2
+    assert t3.translation == Vector3(3, 0, 0)
+    assert t3.rotation == Quaternion(0, 0, 0, 1)
+
+    # Test 2: 90-degree rotation composition
+    # First transform: move 1 unit in X
+    t1 = Transform(
+        translation=Vector3(1, 0, 0),
+        rotation=Quaternion(0, 0, 0, 1),  # identity
+    )
+    # Second transform: move 1 unit in X with 90-degree rotation around Z
+    angle = np.pi / 2
+    t2 = Transform(
+        translation=Vector3(1, 0, 0),
+        rotation=Quaternion(0, 0, np.sin(angle / 2), np.cos(angle / 2)),
+    )
+    t3 = t1 + t2
+    assert t3.translation == Vector3(2, 0, 0)
+    # Rotation should be 90 degrees around Z
+    assert np.isclose(t3.rotation.x, 0.0, atol=1e-10)
+    assert np.isclose(t3.rotation.y, 0.0, atol=1e-10)
+    assert np.isclose(t3.rotation.z, np.sin(angle / 2), atol=1e-10)
+    assert np.isclose(t3.rotation.w, np.cos(angle / 2), atol=1e-10)
+
+    # Test 3: Rotation affects translation
+    # First transform: 90-degree rotation around Z
+    t1 = Transform(
+        translation=Vector3(0, 0, 0),
+        rotation=Quaternion(0, 0, np.sin(angle / 2), np.cos(angle / 2)),  # 90° around Z
+    )
+    # Second transform: move 1 unit in X
+    t2 = Transform(
+        translation=Vector3(1, 0, 0),
+        rotation=Quaternion(0, 0, 0, 1),  # identity
+    )
+    t3 = t1 + t2
+    # X direction rotated 90° becomes Y direction
+    assert np.isclose(t3.translation.x, 0.0, atol=1e-10)
+    assert np.isclose(t3.translation.y, 1.0, atol=1e-10)
+    assert np.isclose(t3.translation.z, 0.0, atol=1e-10)
+    # Rotation remains 90° around Z
+    assert np.isclose(t3.rotation.z, np.sin(angle / 2), atol=1e-10)
+    assert np.isclose(t3.rotation.w, np.cos(angle / 2), atol=1e-10)
+
+    # Test 4: Frame tracking
+    t1 = Transform(
+        translation=Vector3(1, 0, 0),
+        rotation=Quaternion(0, 0, 0, 1),
+        frame_id="world",
+        child_frame_id="robot",
+    )
+    t2 = Transform(
+        translation=Vector3(2, 0, 0),
+        rotation=Quaternion(0, 0, 0, 1),
+        frame_id="robot",
+        child_frame_id="sensor",
+    )
+    t3 = t1 + t2
+    assert t3.frame_id == "world"
+    assert t3.child_frame_id == "sensor"
+
+    # Test 5: Type error
+    with pytest.raises(TypeError):
+        t1 + "not a transform"

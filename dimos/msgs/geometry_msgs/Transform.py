@@ -79,6 +79,43 @@ class Transform(Timestamped):
             ),
         )
 
+    def __add__(self, other: "Transform") -> "Transform":
+        """Compose two transforms (transform composition).
+
+        The operation self + other represents applying transformation 'other'
+        in the coordinate frame defined by 'self'. This is equivalent to:
+        - First apply transformation 'self' (from frame A to frame B)
+        - Then apply transformation 'other' (from frame B to frame C)
+
+        Args:
+            other: The transform to compose with this one
+
+        Returns:
+            A new Transform representing the composed transformation
+
+        Example:
+            t1 = Transform(Vector3(1, 0, 0), Quaternion(0, 0, 0, 1))
+            t2 = Transform(Vector3(2, 0, 0), Quaternion(0, 0, 0, 1))
+            t3 = t1 + t2  # Combined transform: translation (3, 0, 0)
+        """
+        if not isinstance(other, Transform):
+            raise TypeError(f"Cannot add Transform and {type(other).__name__}")
+
+        # Compose orientations: self.rotation * other.rotation
+        new_rotation = self.rotation * other.rotation
+
+        # Transform other's translation by self's rotation, then add to self's translation
+        rotated_translation = self.rotation.rotate_vector(other.translation)
+        new_translation = self.translation + rotated_translation
+
+        return Transform(
+            translation=new_translation,
+            rotation=new_rotation,
+            frame_id=self.frame_id,
+            child_frame_id=other.child_frame_id,
+            ts=self.ts,
+        )
+
     def lcm_encode(self) -> bytes:
         # we get a circular import otherwise
         from dimos.msgs.tf2_msgs.TFMessage import TFMessage
