@@ -19,7 +19,7 @@ import pytest
 from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from dimos_lcm.geometry_msgs import TransformStamped as LCMTransformStamped
 
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Transform, Vector3
 
 
 def test_transform_initialization():
@@ -228,3 +228,156 @@ def test_lcm_encode_decode():
     decoded_transform = Transform.lcm_decode(data)
 
     assert decoded_transform == transform
+
+
+def test_transform_addition():
+    # Test 1: Simple translation addition (no rotation)
+    t1 = Transform(
+        translation=Vector3(1, 0, 0),
+        rotation=Quaternion(0, 0, 0, 1),  # identity rotation
+    )
+    t2 = Transform(
+        translation=Vector3(2, 0, 0),
+        rotation=Quaternion(0, 0, 0, 1),  # identity rotation
+    )
+    t3 = t1 + t2
+    assert t3.translation == Vector3(3, 0, 0)
+    assert t3.rotation == Quaternion(0, 0, 0, 1)
+
+    # Test 2: 90-degree rotation composition
+    # First transform: move 1 unit in X
+    t1 = Transform(
+        translation=Vector3(1, 0, 0),
+        rotation=Quaternion(0, 0, 0, 1),  # identity
+    )
+    # Second transform: move 1 unit in X with 90-degree rotation around Z
+    angle = np.pi / 2
+    t2 = Transform(
+        translation=Vector3(1, 0, 0),
+        rotation=Quaternion(0, 0, np.sin(angle / 2), np.cos(angle / 2)),
+    )
+    t3 = t1 + t2
+    assert t3.translation == Vector3(2, 0, 0)
+    # Rotation should be 90 degrees around Z
+    assert np.isclose(t3.rotation.x, 0.0, atol=1e-10)
+    assert np.isclose(t3.rotation.y, 0.0, atol=1e-10)
+    assert np.isclose(t3.rotation.z, np.sin(angle / 2), atol=1e-10)
+    assert np.isclose(t3.rotation.w, np.cos(angle / 2), atol=1e-10)
+
+    # Test 3: Rotation affects translation
+    # First transform: 90-degree rotation around Z
+    t1 = Transform(
+        translation=Vector3(0, 0, 0),
+        rotation=Quaternion(0, 0, np.sin(angle / 2), np.cos(angle / 2)),  # 90° around Z
+    )
+    # Second transform: move 1 unit in X
+    t2 = Transform(
+        translation=Vector3(1, 0, 0),
+        rotation=Quaternion(0, 0, 0, 1),  # identity
+    )
+    t3 = t1 + t2
+    # X direction rotated 90° becomes Y direction
+    assert np.isclose(t3.translation.x, 0.0, atol=1e-10)
+    assert np.isclose(t3.translation.y, 1.0, atol=1e-10)
+    assert np.isclose(t3.translation.z, 0.0, atol=1e-10)
+    # Rotation remains 90° around Z
+    assert np.isclose(t3.rotation.z, np.sin(angle / 2), atol=1e-10)
+    assert np.isclose(t3.rotation.w, np.cos(angle / 2), atol=1e-10)
+
+    # Test 4: Frame tracking
+    t1 = Transform(
+        translation=Vector3(1, 0, 0),
+        rotation=Quaternion(0, 0, 0, 1),
+        frame_id="world",
+        child_frame_id="robot",
+    )
+    t2 = Transform(
+        translation=Vector3(2, 0, 0),
+        rotation=Quaternion(0, 0, 0, 1),
+        frame_id="robot",
+        child_frame_id="sensor",
+    )
+    t3 = t1 + t2
+    assert t3.frame_id == "world"
+    assert t3.child_frame_id == "sensor"
+
+    # Test 5: Type error
+    with pytest.raises(TypeError):
+        t1 + "not a transform"
+
+
+def test_transform_from_pose():
+    """Test converting Pose to Transform"""
+    # Create a Pose with position and orientation
+    pose = Pose(
+        position=Vector3(1.0, 2.0, 3.0),
+        orientation=Quaternion(0.0, 0.0, 0.707, 0.707),  # 90 degrees around Z
+    )
+
+    # Convert to Transform
+    transform = Transform.from_pose("base_link", pose)
+
+    # Check that translation and rotation match
+    assert transform.translation == pose.position
+    assert transform.rotation == pose.orientation
+    assert transform.frame_id == "world"  # default frame_id
+    assert transform.child_frame_id == "base_link"  # passed as first argument
+
+
+def test_transform_from_pose_stamped():
+    """Test converting PoseStamped to Transform"""
+    # Create a PoseStamped with position, orientation, timestamp and frame
+    test_time = time.time()
+    pose_stamped = PoseStamped(
+        ts=test_time,
+        frame_id="map",
+        position=Vector3(4.0, 5.0, 6.0),
+        orientation=Quaternion(0.0, 0.707, 0.0, 0.707),  # 90 degrees around Y
+    )
+
+    # Convert to Transform
+    transform = Transform.from_pose("robot_base", pose_stamped)
+
+    # Check that all fields match
+    assert transform.translation == pose_stamped.position
+    assert transform.rotation == pose_stamped.orientation
+    assert transform.frame_id == pose_stamped.frame_id
+    assert transform.ts == pose_stamped.ts
+    assert transform.child_frame_id == "robot_base"  # passed as first argument
+
+
+def test_transform_from_pose_variants():
+    """Test from_pose with different Pose initialization methods"""
+    # Test with Pose created from x,y,z
+    pose1 = Pose(1.0, 2.0, 3.0)
+    transform1 = Transform.from_pose("base_link", pose1)
+    assert transform1.translation.x == 1.0
+    assert transform1.translation.y == 2.0
+    assert transform1.translation.z == 3.0
+    assert transform1.rotation.w == 1.0  # Identity quaternion
+
+    # Test with Pose created from tuple
+    pose2 = Pose(([7.0, 8.0, 9.0], [0.0, 0.0, 0.0, 1.0]))
+    transform2 = Transform.from_pose("base_link", pose2)
+    assert transform2.translation.x == 7.0
+    assert transform2.translation.y == 8.0
+    assert transform2.translation.z == 9.0
+
+    # Test with Pose created from dict
+    pose3 = Pose({"position": [10.0, 11.0, 12.0], "orientation": [0.0, 0.0, 0.0, 1.0]})
+    transform3 = Transform.from_pose("base_link", pose3)
+    assert transform3.translation.x == 10.0
+    assert transform3.translation.y == 11.0
+    assert transform3.translation.z == 12.0
+
+
+def test_transform_from_pose_invalid_type():
+    """Test that from_pose raises TypeError for invalid types"""
+    with pytest.raises(TypeError):
+        Transform.from_pose("not a pose")
+
+    with pytest.raises(TypeError):
+        Transform.from_pose(42)
+
+    with pytest.raises(TypeError):
+        Transform.from_pose(None)

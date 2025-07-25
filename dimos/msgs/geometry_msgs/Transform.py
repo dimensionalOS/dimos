@@ -14,14 +14,11 @@
 
 from __future__ import annotations
 
-import struct
 import time
-from io import BytesIO
 from typing import BinaryIO
 
 from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from dimos_lcm.geometry_msgs import TransformStamped as LCMTransformStamped
-from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -78,6 +75,74 @@ class Transform(Timestamped):
                 rotation=self.rotation,
             ),
         )
+
+    def __add__(self, other: "Transform") -> "Transform":
+        """Compose two transforms (transform composition).
+
+        The operation self + other represents applying transformation 'other'
+        in the coordinate frame defined by 'self'. This is equivalent to:
+        - First apply transformation 'self' (from frame A to frame B)
+        - Then apply transformation 'other' (from frame B to frame C)
+
+        Args:
+            other: The transform to compose with this one
+
+        Returns:
+            A new Transform representing the composed transformation
+
+        Example:
+            t1 = Transform(Vector3(1, 0, 0), Quaternion(0, 0, 0, 1))
+            t2 = Transform(Vector3(2, 0, 0), Quaternion(0, 0, 0, 1))
+            t3 = t1 + t2  # Combined transform: translation (3, 0, 0)
+        """
+        if not isinstance(other, Transform):
+            raise TypeError(f"Cannot add Transform and {type(other).__name__}")
+
+        # Compose orientations: self.rotation * other.rotation
+        new_rotation = self.rotation * other.rotation
+
+        # Transform other's translation by self's rotation, then add to self's translation
+        rotated_translation = self.rotation.rotate_vector(other.translation)
+        new_translation = self.translation + rotated_translation
+
+        return Transform(
+            translation=new_translation,
+            rotation=new_rotation,
+            frame_id=self.frame_id,
+            child_frame_id=other.child_frame_id,
+            ts=self.ts,
+        )
+
+    @classmethod
+    def from_pose(cls, frame_id: str, pose: "Pose | PoseStamped") -> "Transform":
+        """Create a Transform from a Pose or PoseStamped.
+
+        Args:
+            pose: A Pose or PoseStamped object to convert
+
+        Returns:
+            A Transform with the same translation and rotation as the pose
+        """
+        # Import locally to avoid circular imports
+        from dimos.msgs.geometry_msgs.Pose import Pose
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
+        # Handle both Pose and PoseStamped
+        if isinstance(pose, PoseStamped):
+            return cls(
+                translation=pose.position,
+                rotation=pose.orientation,
+                frame_id=pose.frame_id,
+                child_frame_id=frame_id,
+                ts=pose.ts,
+            )
+        elif isinstance(pose, Pose):
+            return cls(
+                translation=pose.position,
+                rotation=pose.orientation,
+            )
+        else:
+            raise TypeError(f"Expected Pose or PoseStamped, got {type(pose).__name__}")
 
     def lcm_encode(self) -> bytes:
         # we get a circular import otherwise
