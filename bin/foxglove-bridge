@@ -4,4 +4,4 @@
 
 script_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-python $script_dir/../dimos/utils/cli/lcmspy/run_lcmspy.py "$@" 
+python $script_dir/../dimos/utils/cli/foxglove_bridge/run_foxglove_bridge.py "$@" 

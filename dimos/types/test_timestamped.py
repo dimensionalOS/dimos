@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime
+from datetime import datetime, timezone
 
-from dimos.types.timestamped import Timestamped
+import pytest
+
+from dimos.types.timestamped import Timestamped, TimestampedCollection, to_datetime, to_ros_stamp
 
 
 def test_timestamped_dt_method():
@@ -24,3 +26,201 @@ def test_timestamped_dt_method():
     assert isinstance(dt, datetime)
     assert abs(dt.timestamp() - ts) < 1e-6
     assert dt.tzinfo is not None, "datetime should be timezone-aware"
+
+
+def test_to_ros_stamp():
+    """Test the to_ros_stamp function with different input types."""
+
+    # Test with float timestamp
+    ts_float = 1234567890.123456789
+    result = to_ros_stamp(ts_float)
+    assert result["sec"] == 1234567890
+    # Float precision limitation - check within reasonable range
+    assert abs(result["nanosec"] - 123456789) < 1000
+
+    # Test with integer timestamp
+    ts_int = 1234567890
+    result = to_ros_stamp(ts_int)
+    assert result["sec"] == 1234567890
+    assert result["nanosec"] == 0
+
+    # Test with datetime object
+    dt = datetime(2009, 2, 13, 23, 31, 30, 123456, tzinfo=timezone.utc)
+    result = to_ros_stamp(dt)
+    assert result["sec"] == 1234567890
+    assert abs(result["nanosec"] - 123456000) < 1000  # Allow small rounding error
+
+    # Test with RosStamp (passthrough)
+    ros_stamp = {"sec": 1234567890, "nanosec": 123456789}
+    result = to_ros_stamp(ros_stamp)
+    assert result is ros_stamp  # Should be the exact same object
+
+
+def test_to_datetime():
+    """Test the to_datetime function with different input types."""
+
+    # Test with float timestamp
+    ts_float = 1234567890.123456
+    dt = to_datetime(ts_float)
+    assert isinstance(dt, datetime)
+    assert dt.tzinfo is not None  # Should have timezone
+    assert abs(dt.timestamp() - ts_float) < 1e-6
+
+    # Test with integer timestamp
+    ts_int = 1234567890
+    dt = to_datetime(ts_int)
+    assert isinstance(dt, datetime)
+    assert dt.tzinfo is not None
+    assert dt.timestamp() == ts_int
+
+    # Test with RosStamp
+    ros_stamp = {"sec": 1234567890, "nanosec": 123456000}
+    dt = to_datetime(ros_stamp)
+    assert isinstance(dt, datetime)
+    assert dt.tzinfo is not None
+    expected_ts = 1234567890.123456
+    assert abs(dt.timestamp() - expected_ts) < 1e-6
+
+    # Test with datetime (already has timezone)
+    dt_input = datetime(2009, 2, 13, 23, 31, 30, tzinfo=timezone.utc)
+    dt_result = to_datetime(dt_input)
+    assert dt_result.tzinfo is not None
+    # Should convert to local timezone by default
+
+    # Test with naive datetime (no timezone)
+    dt_naive = datetime(2009, 2, 13, 23, 31, 30)
+    dt_result = to_datetime(dt_naive)
+    assert dt_result.tzinfo is not None
+
+    # Test with specific timezone
+    dt_utc = to_datetime(ts_float, tz=timezone.utc)
+    assert dt_utc.tzinfo == timezone.utc
+    assert abs(dt_utc.timestamp() - ts_float) < 1e-6
+
+
+class SimpleTimestamped(Timestamped):
+    def __init__(self, ts: float, data: str):
+        super().__init__(ts)
+        self.data = data
+
+
+@pytest.fixture
+def sample_items():
+    return [
+        SimpleTimestamped(1.0, "first"),
+        SimpleTimestamped(3.0, "third"),
+        SimpleTimestamped(5.0, "fifth"),
+        SimpleTimestamped(7.0, "seventh"),
+    ]
+
+
+@pytest.fixture
+def collection(sample_items):
+    return TimestampedCollection(sample_items)
+
+
+def test_empty_collection():
+    collection = TimestampedCollection()
+    assert len(collection) == 0
+    assert collection.duration() == 0.0
+    assert collection.time_range() is None
+    assert collection.find_closest(1.0) is None
+
+
+def test_add_items():
+    collection = TimestampedCollection()
+    item1 = SimpleTimestamped(2.0, "two")
+    item2 = SimpleTimestamped(1.0, "one")
+
+    collection.add(item1)
+    collection.add(item2)
+
+    assert len(collection) == 2
+    assert collection[0].data == "one"  # Should be sorted by timestamp
+    assert collection[1].data == "two"
+
+
+def test_find_closest(collection):
+    # Exact match
+    assert collection.find_closest(3.0).data == "third"
+
+    # Between items (closer to left)
+    assert collection.find_closest(1.5).data == "first"
+
+    # Between items (closer to right)
+    assert collection.find_closest(3.5).data == "third"
+
+    # Exactly in the middle (should pick the later one due to >= comparison)
+    assert collection.find_closest(4.0).data == "fifth"  # 4.0 is equidistant from 3.0 and 5.0
+
+    # Before all items
+    assert collection.find_closest(0.0).data == "first"
+
+    # After all items
+    assert collection.find_closest(10.0).data == "seventh"
+
+
+def test_find_before_after(collection):
+    # Find before
+    assert collection.find_before(2.0).data == "first"
+    assert collection.find_before(5.5).data == "fifth"
+    assert collection.find_before(1.0) is None  # Nothing before first item
+
+    # Find after
+    assert collection.find_after(2.0).data == "third"
+    assert collection.find_after(5.0).data == "seventh"
+    assert collection.find_after(7.0) is None  # Nothing after last item
+
+
+def test_merge_collections():
+    collection1 = TimestampedCollection(
+        [
+            SimpleTimestamped(1.0, "a"),
+            SimpleTimestamped(3.0, "c"),
+        ]
+    )
+    collection2 = TimestampedCollection(
+        [
+            SimpleTimestamped(2.0, "b"),
+            SimpleTimestamped(4.0, "d"),
+        ]
+    )
+
+    merged = collection1.merge(collection2)
+
+    assert len(merged) == 4
+    assert [item.data for item in merged] == ["a", "b", "c", "d"]
+
+
+def test_duration_and_range(collection):
+    assert collection.duration() == 6.0  # 7.0 - 1.0
+    assert collection.time_range() == (1.0, 7.0)
+
+
+def test_slice_by_time(collection):
+    # Slice inclusive of boundaries
+    sliced = collection.slice_by_time(2.0, 6.0)
+    assert len(sliced) == 2
+    assert sliced[0].data == "third"
+    assert sliced[1].data == "fifth"
+
+    # Empty slice
+    empty_slice = collection.slice_by_time(8.0, 10.0)
+    assert len(empty_slice) == 0
+
+    # Slice all
+    all_slice = collection.slice_by_time(0.0, 10.0)
+    assert len(all_slice) == 4
+
+
+def test_iteration(collection):
+    items = list(collection)
+    assert len(items) == 4
+    assert [item.ts for item in items] == [1.0, 3.0, 5.0, 7.0]
+
+
+def test_single_item_collection():
+    single = TimestampedCollection([SimpleTimestamped(5.0, "only")])
+    assert single.duration() == 0.0
+    assert single.time_range() == (5.0, 5.0)
+    assert single.find_closest(100.0).data == "only"

@@ -22,18 +22,19 @@ from plum import dispatch
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.foxglove_msgs import Arrow
 
 # from dimos.robot.local_planner.local_planner import LocalPlanner
 from dimos.msgs.geometry_msgs import (
     Pose,
     PoseLike,
     PoseStamped,
+    Transform,
     Twist,
     Vector3,
     VectorLike,
     to_pose,
 )
+from dimos.msgs.tf2_msgs import TFMessage
 from dimos.types.costmap import Costmap
 from dimos.types.path import Path
 from dimos.utils.logging_config import setup_logger
@@ -59,7 +60,7 @@ class SimplePlanner(Module):
     odom: In[PoseStamped] = None
     movecmd: Out[Twist] = None
 
-    arrow: Out[Arrow] = None
+    tf: Out[Transform] = None
 
     get_costmap: Callable[[], Costmap]
 
@@ -75,12 +76,25 @@ class SimplePlanner(Module):
         Module.__init__(self)
         self.get_costmap = get_costmap
 
+    def _odom_to_tf(self, odom: PoseStamped) -> Transform:
+        """Convert Odometry to Transform."""
+        return Transform(
+            translation=odom.position,
+            rotation=odom.orientation,
+            frame_id="world",
+            child_frame_id="base_link",
+            ts=odom.ts,
+        )
+
     def transform_to_robot_frame(
         self, global_target: Vector3, global_robot_position: PoseStamped
     ) -> Vector3:
-        transform = global_robot_position.find_transform(global_target)
-        self.arrow.publish(Arrow.from_transform(transform, global_robot_position))
-        return transform.translation
+        tf1 = self._odom_to_tf(global_robot_position)
+        tf2 = global_robot_position.find_transform(global_target)
+        tf2.child_frame_id = "target"
+        tf2.frame_id = "base_link"
+        self.tf.publish(TFMessage(tf1, tf2))
+        return tf2.translation
 
     def get_move_stream(self, frequency: float = 20.0) -> rx.Observable:
         return rx.interval(1.0 / frequency, scheduler=get_scheduler()).pipe(
@@ -95,7 +109,6 @@ class SimplePlanner(Module):
             ops.map(self._calculate_rotation_to_target),
             # filter out None results from calc_move
             ops.filter(lambda result: result is not None),
-            ops.map(vector_to_twist),
         )
 
     def _safe_transform_goal(self) -> Optional[Vector3]:

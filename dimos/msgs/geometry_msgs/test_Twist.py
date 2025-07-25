@@ -183,6 +183,8 @@ def test_twist_lcm_encoding():
     decoded = Twist.lcm_decode(encoded)
     assert decoded.linear == tw.linear
     assert decoded.angular == tw.angular
+
+    assert isinstance(decoded.linear, Vector3)
     assert decoded == tw
 
 

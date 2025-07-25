@@ -72,7 +72,7 @@ class pLCMTransport(PubSubTransport[T]):
         if not self._started:
             self.lcm.start()
             self._started = True
-        self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
+        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
 class LCMTransport(PubSubTransport[T]):
@@ -96,7 +96,7 @@ class LCMTransport(PubSubTransport[T]):
         if not self._started:
             self.lcm.start()
             self._started = True
-        self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
+        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
 class ZenohTransport(PubSubTransport[T]): ...

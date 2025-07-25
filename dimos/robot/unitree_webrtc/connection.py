@@ -30,12 +30,12 @@ from reactivex.observable import Observable
 from reactivex.subject import Subject
 
 from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import Pose, Transform
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.connection_interface import ConnectionInterface
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from dimos.msgs.geometry_msgs import Pose
 from dimos.types.vector import Vector
 from dimos.utils.reactive import backpressure, callback_to_observable
 
@@ -176,6 +176,11 @@ class UnitreeWebRTCConnection(ConnectionInterface):
                 ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame))
             )
         )
+
+    @functools.cache
+    def tf_stream(self) -> Subject[Transform]:
+        base_link = functools.partial(Transform.from_pose, "base_link")
+        return backpressure(self.odom_stream().pipe(ops.map(base_link)))
 
     @functools.cache
     def odom_stream(self) -> Subject[Pose]:
