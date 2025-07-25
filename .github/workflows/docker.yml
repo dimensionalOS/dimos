@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   check-changes:
-    runs-on: dimos-runner-ubuntu-2204
+    runs-on: [self-hosted, Linux]
     outputs:
       ros:    ${{ steps.filter.outputs.ros }}
       python: ${{ steps.filter.outputs.python }}
@@ -16,6 +16,10 @@ jobs:
       tests:  ${{ steps.filter.outputs.tests }}
       branch-tag: ${{ steps.set-tag.outputs.branch_tag }}
     steps:
+      - name: Fix permissions
+        run: |
+          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+          
       - uses: actions/checkout@v4
       - id: filter
         uses: dorny/paths-filter@v3
@@ -34,8 +38,6 @@ jobs:
               - .github/workflows/_docker-build-template.yml
               - .github/workflows/docker.yml
               - docker/python/**
-              - requirements*.txt
-              - requirements.txt
               - pyproject.toml
 
             dev:
@@ -74,6 +76,7 @@ jobs:
     if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
+      should-run: true
       from-image: ubuntu:22.04
       to-image: ghcr.io/dimensionalos/ros:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile:  ros
@@ -177,3 +180,45 @@ jobs:
         }}
       cmd: "pytest -m heavy"
       dev-image: dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+
+  # TODO: Remove when merge to main as workflow_run needed
+  cleanup-runner:
+    needs: [run-tests, run-heavy-tests, run-ros-tests]
+    if: always()
+    runs-on: [self-hosted, Linux]
+    steps:
+      - name: Check disk usage
+        id: disk-check
+        run: |
+          USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
+          echo "Disk usage: ${USAGE}%"
+          echo "usage=${USAGE}" >> $GITHUB_OUTPUT
+          
+      - name: Clean Docker images
+        if: steps.disk-check.outputs.usage > 50
+        run: |
+          echo "=== Docker usage before cleanup ==="
+          docker system df
+          
+          echo -e "\n=== Removing dangling images ==="
+          docker images -f "dangling=true" -q | xargs -r docker rmi || true
+          
+          echo -e "\n=== Docker usage after cleanup ==="
+          docker system df
+          
+          echo -e "\n=== Disk usage after cleanup ==="
+          df -h /
+          
+      - name: Aggressive cleanup if disk critically full
+        if: steps.disk-check.outputs.usage > 90
+        run: |
+          echo "=== CRITICAL: Disk usage above 90% - Aggressive cleanup ==="
+          
+          echo -e "\n=== Removing images older than 3 days ==="
+          docker image prune -a --filter "until=72h" -f
+          
+          echo -e "\n=== Final docker usage ==="
+          docker system df
+          
+          echo -e "\n=== Final disk usage ==="
+          df -h /

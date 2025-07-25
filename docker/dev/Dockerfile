@@ -22,9 +22,16 @@ RUN apt-get update && apt-get install -y \
 # Configure git to trust any directory (resolves dubious ownership issues in containers)
 RUN git config --global --add safe.directory '*'
 
-COPY . /app/
 WORKDIR /app
+
+COPY pyproject.toml /app/
+RUN mkdir -p /app/dimos
+RUN touch /app/dimos/__init__.py
+
+# Install dependencies
 RUN --mount=type=cache,target=/root/.cache/pip pip install .[dev]
+
+COPY . /app/
 
 # Copy files and add version to motd
 COPY /assets/dimensionalascii.txt /etc/motd
