@@ -278,7 +278,7 @@ def test_autoconf_no_config_needed():
     """Test autoconf when no configuration is needed."""
     # Clear CI environment variable for this test
     with patch.dict(os.environ, {"CI": ""}, clear=False):
-        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
             # Mock all checks passing
             mock_run.side_effect = [
                 # check_multicast calls
@@ -314,7 +314,7 @@ def test_autoconf_with_config_needed_success():
     """Test autoconf when configuration is needed and commands succeed."""
     # Clear CI environment variable for this test
     with patch.dict(os.environ, {"CI": ""}, clear=False):
-        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
             # Mock checks failing, then mock the execution succeeding
             mock_run.side_effect = [
                 # check_multicast calls
@@ -342,34 +342,34 @@ def test_autoconf_with_config_needed_success():
                 )(),  # sysctl rmem_default
             ]
 
-        from unittest.mock import call
+            from unittest.mock import call
 
-        with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
-            autoconf()
+            with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
+                autoconf()
 
-            sudo = get_sudo_prefix()
-            # Verify the expected log calls
-            expected_info_calls = [
-                call("System configuration required. Executing commands..."),
-                call(f"  Running: {sudo}ifconfig lo multicast"),
-                call("  ✓ Success"),
-                call(f"  Running: {sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"),
-                call("  ✓ Success"),
-                call(f"  Running: {sudo}sysctl -w net.core.rmem_max=2097152"),
-                call("  ✓ Success"),
-                call(f"  Running: {sudo}sysctl -w net.core.rmem_default=2097152"),
-                call("  ✓ Success"),
-                call("System configuration completed."),
-            ]
+                sudo = get_sudo_prefix()
+                # Verify the expected log calls
+                expected_info_calls = [
+                    call("System configuration required. Executing commands..."),
+                    call(f"  Running: {sudo}ifconfig lo multicast"),
+                    call("  ✓ Success"),
+                    call(f"  Running: {sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"),
+                    call("  ✓ Success"),
+                    call(f"  Running: {sudo}sysctl -w net.core.rmem_max=2097152"),
+                    call("  ✓ Success"),
+                    call(f"  Running: {sudo}sysctl -w net.core.rmem_default=2097152"),
+                    call("  ✓ Success"),
+                    call("System configuration completed."),
+                ]
 
-            mock_logger.info.assert_has_calls(expected_info_calls)
+                mock_logger.info.assert_has_calls(expected_info_calls)
 
 
 def test_autoconf_with_command_failures():
     """Test autoconf when some commands fail."""
     # Clear CI environment variable for this test
     with patch.dict(os.environ, {"CI": ""}, clear=False):
-        with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
             # Mock checks failing, then mock some commands failing
             mock_run.side_effect = [
                 # check_multicast calls
