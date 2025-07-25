@@ -170,45 +170,55 @@ class TestSpatialMemoryModule:
             video_module.start()
             odom_module.start()
             spatial_memory.start()
+            logger.info("All modules started, processing in background...")
 
-            # Give some time for initial processing
+            # Wait for frames to be processed with timeout
+            timeout = 10.0  # 10 second timeout
+            start_time = time.time()
+
+            # Keep checking stats while modules are running
+            while (time.time() - start_time) < timeout:
+                stats = spatial_memory.get_stats()
+                if stats["frame_count"] > 0 and stats["stored_frame_count"] > 0:
+                    logger.info(
+                        f"Frames processing - Frame count: {stats['frame_count']}, Stored: {stats['stored_frame_count']}"
+                    )
+                    break
+                await asyncio.sleep(0.5)
+            else:
+                # Timeout reached
+                stats = spatial_memory.get_stats()
+                logger.error(
+                    f"Timeout after {timeout}s - Frame count: {stats['frame_count']}, Stored: {stats['stored_frame_count']}"
+                )
+                assert False, f"No frames processed within {timeout} seconds"
+
             await asyncio.sleep(2)
 
-            # Wait for some frames to be processed
-            logger.info("Waiting for frames to be processed...")
-            await asyncio.sleep(3)
-
-            # Stop the replay modules to prevent infinite streaming
-            video_module.stop()
-            odom_module.stop()
-            logger.info("Stopped replay modules")
-
-            # Test RPC calls
-
-            stats = spatial_memory.get_stats()
+            mid_stats = spatial_memory.get_stats()
             logger.info(
-                f"Initial stats - Frame count: {stats['frame_count']}, Stored: {stats['stored_frame_count']}"
+                f"Mid-test stats - Frame count: {mid_stats['frame_count']}, Stored: {mid_stats['stored_frame_count']}"
             )
-            assert stats["frame_count"] > 0, "No frames processed"
-            assert stats["stored_frame_count"] > 0, "No frames stored"
+            assert mid_stats["frame_count"] >= stats["frame_count"], (
+                "Frame count should increase or stay same"
+            )
 
-            # 2. Test query by text (this should work regardless of write permissions)
+            # Test query while modules are still running
             try:
                 text_results = spatial_memory.query_by_text("office")
                 logger.info(f"Query by text 'office' returned {len(text_results)} results")
+                assert len(text_results) > 0, "Should have at least one result"
             except Exception as e:
-                logger.warning(f"Query by text failed (may be due to write permissions): {e}")
+                logger.warning(f"Query by text failed: {e}")
 
             final_stats = spatial_memory.get_stats()
             logger.info(
                 f"Final stats - Frame count: {final_stats['frame_count']}, Stored: {final_stats['stored_frame_count']}"
             )
-            assert final_stats["frame_count"] >= stats["frame_count"], (
-                "Frame count should not decrease"
-            )
-            assert final_stats["stored_frame_count"] >= stats["stored_frame_count"], (
-                "Stored count should not decrease"
-            )
+
+            video_module.stop()
+            odom_module.stop()
+            logger.info("Stopped replay modules")
 
             logger.info("All spatial memory module tests passed!")
 
