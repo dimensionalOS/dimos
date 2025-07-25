@@ -16,7 +16,7 @@ import asyncio
 import threading
 
 # this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_lcm
-import dimos_lcm.lcm_foxglove_bridge as bridge
+from dimos_lcm.foxglove_bridge import FoxgloveBridge as LCMFoxgloveBridge
 
 from dimos.core import Module, rpc
 
@@ -35,7 +35,8 @@ class FoxgloveBridge(Module):
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
             try:
-                self._loop.run_until_complete(bridge.main())
+                bridge = LCMFoxgloveBridge(host="0.0.0.0", port=8765, debug=False, num_threads=4)
+                self._loop.run_until_complete(bridge.run())
             except Exception as e:
                 print(f"Foxglove bridge error: {e}")
 

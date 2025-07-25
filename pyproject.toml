@@ -93,8 +93,8 @@ dependencies = [
     "dask[complete]==2025.5.1",
 
     # LCM / DimOS utilities
-    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@ae2371c78e38511c97dcd13d7933474d6bc56073"
-    
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@ba3445d16be75a7ade6fb2a516b39a3e44319d5c"    
+    # "tf-lcm-py @ git+https://github.com/dimensionalOS/dimos-lcm.git@9befcc1a75f43fb1110d468c182dd19a549eaa36#subdirectory=tf_lcm/python"
 ]
 
 
@@ -182,7 +182,6 @@ files = [
     "dimos/msgs/**/*.py",
     "dimos/protocol/**/*.py"
 ]
-addopts = "--disable-warnings"
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
@@ -194,11 +193,11 @@ markers = [
     "tool: dev tooling",
     "needsdata: needs test data to be downloaded",
     "ros: depend on ros",
-    "lcm: tests that run actual LCM bus (can't execute in CI)"
-
+    "lcm: tests that run actual LCM bus (can't execute in CI)",
+    "tofix: tests that require fixing and are temporarily disabled"
 ]
 
-addopts = "-v -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy'"
+addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not tofix'"
 
 
 

@@ -17,11 +17,12 @@
 Test for foxglove bridge import and basic functionality
 """
 
-import pytest
 import threading
 import time
 import warnings
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="websockets.server")
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="websockets.legacy")
@@ -30,33 +31,29 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="websocket
 def test_foxglove_bridge_import():
     """Test that the foxglove bridge can be imported successfully."""
     try:
-        import dimos_lcm.lcm_foxglove_bridge as bridge
-
-        assert hasattr(bridge, "LcmFoxgloveBridgeRunner")
+        from dimos_lcm.foxglove_bridge import FoxgloveBridge
     except ImportError as e:
         pytest.fail(f"Failed to import foxglove bridge: {e}")
 
 
 def test_foxglove_bridge_runner_init():
-    """Test that LcmFoxgloveBridgeRunner can be initialized with default parameters."""
+    """Test that LcmFoxgloveBridge can be initialized with default parameters."""
     try:
-        import dimos_lcm.lcm_foxglove_bridge as bridge
+        from dimos_lcm.foxglove_bridge import FoxgloveBridge
 
-        runner = bridge.LcmFoxgloveBridgeRunner(
-            host="localhost", port=8765, debug=False, num_threads=2
-        )
+        runner = FoxgloveBridge(host="localhost", port=8765, debug=False, num_threads=2)
 
         # Check that the runner was created successfully
         assert runner is not None
 
     except Exception as e:
-        pytest.fail(f"Failed to initialize LcmFoxgloveBridgeRunner: {e}")
+        pytest.fail(f"Failed to initialize LcmFoxgloveBridge: {e}")
 
 
 def test_foxglove_bridge_runner_params():
-    """Test that LcmFoxgloveBridgeRunner accepts various parameter configurations."""
+    """Test that LcmFoxgloveBridge accepts various parameter configurations."""
     try:
-        import dimos_lcm.lcm_foxglove_bridge as bridge
+        from dimos_lcm.foxglove_bridge import FoxgloveBridge
 
         configs = [
             {"host": "0.0.0.0", "port": 8765, "debug": True, "num_threads": 1},
@@ -65,7 +62,7 @@ def test_foxglove_bridge_runner_params():
         ]
 
         for config in configs:
-            runner = bridge.LcmFoxgloveBridgeRunner(**config)
+            runner = FoxgloveBridge(**config)
             assert runner is not None
 
     except Exception as e:
@@ -75,11 +72,9 @@ def test_foxglove_bridge_runner_params():
 def test_bridge_runner_has_run_method():
     """Test that the bridge runner has a run method that can be called."""
     try:
-        import dimos_lcm.lcm_foxglove_bridge as bridge
+        from dimos_lcm.foxglove_bridge import FoxgloveBridge
 
-        runner = bridge.LcmFoxgloveBridgeRunner(
-            host="localhost", port=8765, debug=False, num_threads=1
-        )
+        runner = FoxgloveBridge(host="localhost", port=8765, debug=False, num_threads=1)
 
         # Check that the run method exists
         assert hasattr(runner, "run")

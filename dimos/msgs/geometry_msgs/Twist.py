@@ -69,23 +69,6 @@ class Twist(LCMTwist):
 
         self.__init__(linear, angular)
 
-    @classmethod
-    def lcm_decode(cls, data: bytes | BinaryIO):
-        if not hasattr(data, "read"):
-            data = BytesIO(data)
-        if data.read(8) != cls._get_packed_fingerprint():
-            raise ValueError("Decode error")
-        return cls._lcm_decode_one(data)
-
-    @classmethod
-    def _lcm_decode_one(cls, buf):
-        linear = Vector3._lcm_decode_one(buf)
-        angular = Vector3._lcm_decode_one(buf)
-        return cls(linear=linear, angular=angular)
-
-    def lcm_encode(self) -> bytes:
-        return super().encode()
-
     def __repr__(self) -> str:
         return f"Twist(linear={self.linear!r}, angular={self.angular!r})"
 

@@ -14,13 +14,13 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
 import traceback
-import os
-from functools import cache
 from dataclasses import dataclass
+from functools import cache
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 import lcm
@@ -137,6 +137,7 @@ class LCMConfig:
     ttl: int = 0
     url: str | None = None
     autoconf: bool = False
+    lcm: Optional[lcm.LCM] = None
 
 
 @runtime_checkable
@@ -161,7 +162,7 @@ class Topic:
     def __str__(self) -> str:
         if self.lcm_type is None:
             return self.topic
-        return f"{self.topic}#{self.lcm_type.name}"
+        return f"{self.topic}#{self.lcm_type.msg_name}"
 
 
 class LCMService(Service[LCMConfig]):
@@ -172,7 +173,13 @@ class LCMService(Service[LCMConfig]):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+
+        # we support passing an existing LCM instance
+        if self.config.lcm:
+            self.l = self.config.lcm
+        else:
+            self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+
         self._stop_event = threading.Event()
         self._thread = None
 

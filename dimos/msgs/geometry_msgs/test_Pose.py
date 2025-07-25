@@ -556,6 +556,9 @@ def test_lcm_encode_decode():
         assert isinstance(pose_dest, Pose)
         assert pose_dest is not pose_source
         assert pose_dest == pose_source
+        # Verify we get our custom types back
+        assert isinstance(pose_dest.position, Vector3)
+        assert isinstance(pose_dest.orientation, Quaternion)
 
     import timeit
 

@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import time
+from abc import abstractmethod
+from collections import deque
+from dataclasses import dataclass
+from functools import reduce
+from typing import Optional, TypeVar
+
+from dimos.msgs.geometry_msgs import Transform
+from dimos.msgs.tf2_msgs import TFMessage
+from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.spec import PubSub
+from dimos.protocol.service.lcmservice import Service
+from dimos.types.timestamped import TimestampedCollection
+
+CONFIG = TypeVar("CONFIG")
+
+
+# generic configuration for transform service
+@dataclass
+class TFConfig:
+    buffer_size: float = 10.0  # seconds
+    rate_limit: float = 10.0  # Hz
+
+
+# generic specification for transform service
+class TFSpec(Service[TFConfig]):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    @abstractmethod
+    def publish(self, *args: Transform) -> None: ...
+
+    @abstractmethod
+    def publish_static(self, *args: Transform) -> None: ...
+
+    @abstractmethod
+    def get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: Optional[float] = None,
+        time_tolerance: Optional[float] = None,
+    ): ...
+
+    def receive_transform(self, *args: Transform) -> None: ...
+
+    def receive_tfmessage(self, msg: TFMessage) -> None:
+        for transform in msg.transforms:
+            self.receive_transform(transform)
+
+
+MsgT = TypeVar("MsgT")
+TopicT = TypeVar("TopicT")
+
+
+# stores a single transform
+class TBuffer(TimestampedCollection[Transform]):
+    def __init__(self, buffer_size: float = 10.0):
+        super().__init__()
+        self.buffer_size = buffer_size
+
+    def add(self, transform: Transform) -> None:
+        super().add(transform)
+        self._prune_old_transforms()
+
+    def _prune_old_transforms(self) -> None:
+        if not self._items:
+            return
+
+        current_time = time.time()
+        cutoff_time = current_time - self.buffer_size
+
+        while self._items and self._items[0].ts < cutoff_time:
+            self._items.pop(0)
+
+    def get(
+        self, time_point: Optional[float] = None, time_tolerance: Optional[float] = None
+    ) -> Optional[Transform]:
+        """Get transform at specified time or latest if no time given."""
+        if time_point is None:
+            # Return the latest transform
+            return self[-1] if len(self) > 0 else None
+
+        # Find closest transform within tolerance
+        closest = self.find_closest(time_point)
+        if closest is None:
+            return None
+
+        if time_tolerance is not None:
+            if abs(closest.ts - time_point) > time_tolerance:
+                return None
+
+        return closest
+
+    def __str__(self) -> str:
+        if not self._items:
+            return "TBuffer(empty)"
+
+        # Get unique frame info from the transforms
+        frame_pairs = set()
+        if self._items:
+            frame_pairs.add((self._items[0].frame_id, self._items[0].child_frame_id))
+
+        time_range = self.time_range()
+        if time_range:
+            start_time = time.strftime("%H:%M:%S", time.localtime(time_range[0]))
+            end_time = time.strftime("%H:%M:%S", time.localtime(time_range[1]))
+            duration = time_range[1] - time_range[0]
+
+            frame_str = (
+                f"{self._items[0].frame_id} -> {self._items[0].child_frame_id}"
+                if self._items
+                else "unknown"
+            )
+
+            return (
+                f"TBuffer({len(self._items)} msgs, "
+                f"{duration:.2f}s [{start_time} - {end_time}], "
+                f"{frame_str})"
+            )
+
+        return f"TBuffer({len(self._items)} msgs)"
+
+
+# stores multiple transform buffers
+# creates a new buffer on demand when new transform is detected
+class MultiTBuffer:
+    def __init__(self, buffer_size: float = 10.0):
+        self.buffers: dict[tuple[str, str], TBuffer] = {}
+        self.buffer_size = buffer_size
+
+    def receive_transform(self, *args: Transform) -> None:
+        for transform in args:
+            key = (transform.frame_id, transform.child_frame_id)
+            if key not in self.buffers:
+                self.buffers[key] = TBuffer(self.buffer_size)
+            self.buffers[key].add(transform)
+
+    def get_transform(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: Optional[float] = None,
+        time_tolerance: Optional[float] = None,
+    ) -> Optional[Transform]:
+        key = (parent_frame, child_frame)
+        if key not in self.buffers:
+            return None
+
+        return self.buffers[key].get(time_point, time_tolerance)
+
+    def get(self, *args, **kwargs) -> Optional[Transform]:
+        simple = self.get_transform(*args, **kwargs)
+        if simple is not None:
+            return simple
+
+        complex: list[Transform] = self.get_transform_search(*args, **kwargs)
+
+        if complex is None:
+            return None
+
+        return reduce(lambda t1, t2: t1 + t2, complex)
+
+    def graph(
+        self,
+        time_point: Optional[float] = None,
+        time_tolerance: Optional[float] = None,
+    ) -> dict[str, list[tuple[str, Transform]]]:
+        # Build a graph of available transforms at the given time
+        graph = {}
+        for (from_frame, to_frame), buffer in self.buffers.items():
+            transform = buffer.get(time_point, time_tolerance)
+            if transform:
+                if from_frame not in graph:
+                    graph[from_frame] = []
+                graph[from_frame].append((to_frame, transform))
+        return graph
+
+    def get_transform_search(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: Optional[float] = None,
+        time_tolerance: Optional[float] = None,
+    ) -> Optional[list[Transform]]:
+        """Search for shortest transform chain between parent and child frames using BFS."""
+        # Check if direct transform exists
+        if (parent_frame, child_frame) in self.buffers:
+            transform = self.buffers[(parent_frame, child_frame)].get(time_point, time_tolerance)
+            return [transform] if transform else None
+
+        # BFS to find shortest path
+        queue = deque([(parent_frame, [])])
+        visited = {parent_frame}
+
+        # build a graph of available transforms at the given time for the search
+        # not a fan of this, perhaps MultiTBuffer should already store the data
+        # in a traversible format
+        graph = self.graph(time_point, time_tolerance)
+
+        while queue:
+            current_frame, path = queue.popleft()
+
+            if current_frame == child_frame:
+                return path
+
+            if current_frame in graph:
+                for next_frame, transform in graph[current_frame]:
+                    if next_frame not in visited:
+                        visited.add(next_frame)
+                        queue.append((next_frame, path + [transform]))
+
+        return None
+
+    def __str__(self) -> str:
+        if not self.buffers:
+            return "MultiTBuffer(empty)"
+
+        lines = [f"MultiTBuffer({len(self.buffers)} buffers):"]
+        for buffer in self.buffers.values():
+            lines.append(f"  {buffer}")
+
+        return "\n".join(lines)
+
+
+@dataclass
+class PubSubTFConfig(TFConfig):
+    topic: TopicT = None  # Required field but needs default for dataclass inheritance
+    pubsub: Optional[PubSub[TopicT, MsgT]] = None
+
+
+class PubSubTF(MultiTBuffer, TFSpec):
+    default_config = PubSubTFConfig
+
+    def __init__(self, **kwargs) -> None:
+        TFSpec.__init__(self, **kwargs)
+        MultiTBuffer.__init__(self, self.config.buffer_size)
+
+        # Check if pubsub is a class (callable) or an instance
+        if callable(self.config.pubsub):
+            self.pubsub = self.config.pubsub()
+        else:
+            self.pubsub = self.config.pubsub
+
+    def start(self, sub=True) -> None:
+        self.pubsub.start()
+        if sub:
+            self.pubsub.subscribe(self.config.topic, self.receive_msg)
+
+    def stop(self):
+        self.pubsub.stop()
+
+    def publish(self, *args: Transform) -> None:
+        """Send transforms using the configured PubSub."""
+        if not self.pubsub:
+            raise ValueError("PubSub is not configured.")
+
+        self.receive_transform(*args)
+        self.pubsub.publish(self.config.topic, TFMessage(*args))
+
+    def publish_static(self, *args: Transform) -> None:
+        raise NotImplementedError("Static transforms not implemented in PubSubTF.")
+
+    def get(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: Optional[float] = None,
+        time_tolerance: Optional[float] = None,
+    ) -> Optional[Transform]:
+        return super().get(parent_frame, child_frame, time_point, time_tolerance)
+
+    def receive_msg(self, channel: str, data: bytes) -> None:
+        msg = TFMessage.lcm_decode(data)
+        self.receive_tfmessage(msg)
+
+
+@dataclass
+class LCMPubsubConfig(TFConfig):
+    topic = Topic("/tf", TFMessage)
+    pubsub = LCM
+
+
+class LCMTF(PubSubTF):
+    default_config = LCMPubsubConfig
+
+
+TF = LCMTF

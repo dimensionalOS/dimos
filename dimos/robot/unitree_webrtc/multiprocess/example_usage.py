@@ -43,15 +43,15 @@ async def run_light_robot():
 
     await robot.start()
 
-    pose = robot.get_pose()
-    print(f"Robot position: {pose['position']}")
-    print(f"Robot rotation: {pose['rotation']}")
+    # pose = robot.get_pose()
+    # print(f"Robot position: {pose['position']}")
+    # print(f"Robot rotation: {pose['rotation']}")
 
-    from dimos.msgs.geometry_msgs import Vector3
+    # from dimos.msgs.geometry_msgs import Vector3
 
     # robot.move(Vector3(0.5, 0, 0), duration=2.0)
 
-    robot.explore()
+    # robot.explore()
 
     while True:
         await asyncio.sleep(1)

@@ -41,22 +41,6 @@ class Pose(LCMPose):
     orientation: Quaternion
     msg_name = "geometry_msgs.Pose"
 
-    @classmethod
-    def lcm_decode(cls, data: bytes | BinaryIO):
-        if not hasattr(data, "read"):
-            data = BytesIO(data)
-        if data.read(8) != cls._get_packed_fingerprint():
-            traceback.print_exc()
-            raise ValueError("Decode error")
-        return cls._lcm_decode_one(data)
-
-    @classmethod
-    def _lcm_decode_one(cls, buf):
-        return cls(Vector3._decode_one(buf), Quaternion._decode_one(buf))
-
-    def lcm_encode(self) -> bytes:
-        return super().encode()
-
     @dispatch
     def __init__(self) -> None:
         """Initialize a pose at origin with identity orientation."""
@@ -172,7 +156,7 @@ class Pose(LCMPose):
     def __matmul__(self, transform: LCMTransform | Transform) -> Pose:
         return self + transform
 
-    def find_transform(self, other: PoseConvertable) -> LCMTransform:
+    def find_transform(self, other: PoseConvertable) -> Transform:
         other_pose = to_pose(other) if not isinstance(other, Pose) else other
 
         inv_orientation = self.orientation.conjugate()
@@ -183,11 +167,10 @@ class Pose(LCMPose):
 
         relative_rotation = inv_orientation * other_pose.orientation
 
-        transform = LCMTransform()
-        transform.translation = local_translation
-        transform.rotation = relative_rotation
-
-        return transform
+        return Transform(
+            translation=local_translation,
+            rotation=relative_rotation,
+        )
 
     def __add__(self, other: "Pose" | PoseConvertable | LCMTransform | Transform) -> "Pose":
         """Compose two poses or apply a transform (transform composition).
