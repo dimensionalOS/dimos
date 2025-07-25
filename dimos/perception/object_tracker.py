@@ -168,6 +168,8 @@ class ObjectTrackingStream(Module):
         Returns:
             bool: True if intention to track is set (bbox is valid)
         """
+        if frame is None:
+            frame = self._latest_frame
         x1, y1, x2, y2 = map(int, bbox)
         w, h = x2 - x1, y2 - y1
         if w <= 0 or h <= 0:
@@ -445,11 +447,4 @@ class ObjectTrackingStream(Module):
     def cleanup(self):
         """Clean up resources."""
         self.stop_track()
-
-        try:
-            import pycuda.driver as cuda
-
-            if cuda.Context.get_current():
-                cuda.Context.pop()
-        except:
-            pass
+        # CUDA cleanup is now handled by WorkerPlugin in dimos.core

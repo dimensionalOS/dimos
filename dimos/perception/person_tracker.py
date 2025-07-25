@@ -254,10 +254,5 @@ class PersonTrackingStream(Module):
     @rpc
     def cleanup(self):
         """Clean up resources."""
-        try:
-            import pycuda.driver as cuda
-
-            if cuda.Context.get_current():
-                cuda.Context.pop()
-        except:
-            pass
+        # CUDA cleanup is now handled by WorkerPlugin in dimos.core
+        pass
