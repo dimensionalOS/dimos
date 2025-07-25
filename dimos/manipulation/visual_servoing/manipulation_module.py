@@ -51,7 +51,7 @@ from dimos.utils.transform_utils import (
 )
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.manipulation.manipulation_module")
+logger = setup_logger("dimos.manipulation.visual_servoing.manipulation_module")
 
 
 class GraspStage(Enum):
@@ -234,7 +234,6 @@ class ManipulationModule(Module):
         if self.task_thread and self.task_thread.is_alive():
             self.task_thread.join(timeout=5.0)
 
-        # Reset to idle
         self.reset_to_idle()
         logger.info("Manipulation module stopped")
 
@@ -536,7 +535,6 @@ class ManipulationModule(Module):
         if timed_out:
             return False
 
-        # Add current pose to history
         self.ee_pose_history.append(ee_pose)
 
         # Check if robot is stuck

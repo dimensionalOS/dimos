@@ -29,7 +29,7 @@ from dimos.utils.logging_config import setup_logger
 # Import LCM message types
 from dimos_lcm.sensor_msgs import CameraInfo
 
-logger = setup_logger("dimos.robot.agilex.piper_arm", level=logging.INFO)
+logger = setup_logger("dimos.robot.agilex.piper_arm")
 
 
 class PiperArmRobot:

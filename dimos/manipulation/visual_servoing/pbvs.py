@@ -334,7 +334,6 @@ class PBVSController:
         self.max_angular_velocity = max_angular_velocity
         self.target_tolerance = target_tolerance
 
-        # State variables for visualization
         self.last_position_error = None
         self.last_rotation_error = None
         self.last_velocity_cmd = None

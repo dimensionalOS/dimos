@@ -42,14 +42,12 @@ class Sam2DSegmenter:
         self,
         model_path="models_fastsam",
         model_name="FastSAM-s.onnx",
-        device="cpu",
         min_analysis_interval=5.0,
         use_tracker=True,
         use_analyzer=True,
         use_rich_labeling=False,
         use_filtering=True,
     ):
-        self.device = device
         if is_cuda_available():
             logger.info("Using CUDA for SAM 2d segmenter")
             if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18

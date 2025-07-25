@@ -45,9 +45,9 @@ logger = setup_logger("dimos.hardware.piper_arm")
 
 class PiperArm:
     def __init__(self, arm_name: str = "arm"):
-        self.init_can()
         self.arm = C_PiperInterface_V2()
         self.arm.ConnectPort()
+        self.resetArm()
         time.sleep(0.5)
         self.resetArm()
         time.sleep(0.5)
@@ -56,17 +56,6 @@ class PiperArm:
         self.gotoZero()
         time.sleep(1)
         self.init_vel_controller()
-
-    def init_can(self):
-        result = subprocess.run(
-            [
-                "bash",
-                "dimos/hardware/can_activate.sh",
-            ],  # pass the script path directly if it has a shebang and execute perms
-            stdout=subprocess.PIPE,  # capture stdout
-            stderr=subprocess.PIPE,  # capture stderr
-            text=True,  # return strings instead of bytes
-        )
 
     def enable(self):
         while not self.arm.EnablePiper():
@@ -250,7 +239,7 @@ class PiperArm:
 
     def resetArm(self):
         self.arm.MotionCtrl_1(0x02, 0, 0)
-        self.arm.MotionCtrl_2(0, 0, 0, 0xAD)
+        self.arm.MotionCtrl_2(0, 0, 0, 0x00)
         logger.info("Resetting arm")
 
     def init_vel_controller(self):
