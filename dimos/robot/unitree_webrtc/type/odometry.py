@@ -105,7 +105,7 @@ class Odometry(PoseStamped, Timestamped):
         )
 
         ts = to_timestamp(msg["data"]["header"]["stamp"])
-        return Odometry(position=pos, orientation=rot, ts=ts, frame_id="lidar")
+        return Odometry(position=pos, orientation=rot, ts=ts, frame_id="world")
 
     def __repr__(self) -> str:
         return f"Odom pos({self.position}), rot({self.orientation})"
