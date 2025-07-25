@@ -220,7 +220,8 @@ class TestSpatialMemoryModule:
 
 if __name__ == "__main__":
     # pytest.main(["-v", "-s", __file__])
-    test = TestSpatialMemoryModule()
-    asyncio.run(
-        test.test_spatial_memory_module_with_replay(tempfile.mkdtemp(prefix="spatial_memory_test_"))
-    )
+    # test = TestSpatialMemoryModule()
+    # asyncio.run(
+    #     test.test_spatial_memory_module_with_replay(tempfile.mkdtemp(prefix="spatial_memory_test_"))
+    # )
+    print("skipping")
