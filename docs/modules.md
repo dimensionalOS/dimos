@@ -15,11 +15,18 @@ class MyModule(Module):
     # Declare inputs/outputs as class attributes initialized to None
     data_in: In[Vector3] = None  
     data_out: Out[Vector3] = None
+<<<<<<< HEAD
 
     def __init__():
         # Call parent Module init
         super().__init__()
 
+=======
+    
+    # Call parent Module init
+    super().__init__()
+    
+>>>>>>> a10428336687dc181140e627207cf40bf735adcf
     @rpc
     def remote_method(self, param):
         """Methods decorated with @rpc can be called remotely"""
@@ -35,9 +42,14 @@ from dimos import core
 # Start Dask cluster with N workers
 dimos = core.start(4)
 
+<<<<<<< HEAD
 # Deploying modules allows for passing initialization parameters.
 # In this case param1 and param2 are passed into Module init
 module = dimos.deploy(Module, param1="value1", param2=123)
+=======
+# Deploy modules with initialization parameters
+my_module = dimos.deploy(MyModule, param1="value1", param2=123)
+>>>>>>> a10428336687dc181140e627207cf40bf735adcf
 ```
 
 ### 3. Stream Connections
@@ -64,6 +76,10 @@ module.start()  # Calls the @rpc start() method if defined
 print(module.io().result())  # Shows inputs, outputs, and RPC methods
 
 # Clean shutdown
+<<<<<<< HEAD
+=======
+dimos.close()
+>>>>>>> a10428336687dc181140e627207cf40bf735adcf
 dimos.shutdown()
 ```
 
