@@ -81,6 +81,7 @@ dependencies = [
     "clip @ git+https://github.com/openai/CLIP.git",
     "timm>=1.0.15",
     "lap>=0.5.12",
+    "opencv-contrib-python==4.10.0.84",
 
     # Mapping
     "open3d",
@@ -194,7 +195,9 @@ markers = [
     "needsdata: needs test data to be downloaded",
     "ros: depend on ros",
     "lcm: tests that run actual LCM bus (can't execute in CI)",
-    "tofix: tests that require fixing and are temporarily disabled"
+    "module: tests that need to run directly as modules",
+    "gpu: tests that require GPU"
+
 ]
 
 addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"

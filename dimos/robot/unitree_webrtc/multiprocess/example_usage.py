@@ -33,6 +33,7 @@ from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.stream.audio.pipelines import stt, tts
 from dimos.utils.reactive import backpressure
 from dimos.web.robot_web_interface import RobotWebInterface
+from dimos.perception.object_detection_stream import ObjectDetectionStream
 
 
 async def run_light_robot():
@@ -78,9 +79,6 @@ async def run_heavy_robot():
     if robot.has_capability(RobotCapability.VISION):
         print("Robot has vision capability")
 
-    if robot.person_tracking_stream:
-        print("Person tracking enabled")
-
     # Start exploration with spatial memory recording
     print(robot.spatial_memory.query_by_text("kitchen"))
 
@@ -93,24 +91,38 @@ async def run_heavy_robot():
 
     video_stream = robot.get_video_stream()  # WebRTC doesn't use ROS video stream
 
-    # # Initialize ObjectDetectionStream with robot
-    # object_detector = ObjectDetectionStream(
-    #     camera_intrinsics=robot.camera_intrinsics,
-    #     get_pose=robot.get_pose,
-    #     video_stream=video_stream,
-    #     draw_masks=True,
-    # )
+    # Initialize ObjectDetectionStream with robot
+    object_detector = ObjectDetectionStream(
+        camera_intrinsics=robot.camera_intrinsics,
+        get_pose=robot.get_pose,
+        video_stream=video_stream,
+        draw_masks=True,
+    )
 
-    # # Create visualization stream for web interface
-    # viz_stream = backpressure(object_detector.get_stream()).pipe(
-    #     ops.share(),
-    #     ops.map(lambda x: x["viz_frame"] if x is not None else None),
-    #     ops.filter(lambda x: x is not None),
-    # )
+    # Create visualization stream for web interface
+    viz_stream = backpressure(object_detector.get_stream()).pipe(
+        ops.share(),
+        ops.map(lambda x: x["viz_frame"] if x is not None else None),
+        ops.filter(lambda x: x is not None),
+    )
+
+    # Get tracking visualization streams if available
+    tracking_streams = {}
+    if robot.person_tracking_stream:
+        tracking_streams["person_tracking"] = robot.person_tracking_stream.pipe(
+            ops.map(lambda x: x.get("viz_frame") if x else None),
+            ops.filter(lambda x: x is not None),
+        )
+    if robot.object_tracking_stream:
+        tracking_streams["object_tracking"] = robot.object_tracking_stream.pipe(
+            ops.map(lambda x: x.get("viz_frame") if x else None),
+            ops.filter(lambda x: x is not None),
+        )
 
     streams = {
         "unitree_video": robot.get_video_stream(),  # Changed from get_ros_video_stream to get_video_stream for WebRTC
-        # "object_detection": viz_stream,  # Uncommented object detection
+        "object_detection": viz_stream,  # Uncommented object detection
+        **tracking_streams,  # Add tracking streams if available
     }
     text_streams = {
         "agent_responses": agent_response_stream,
@@ -147,7 +159,7 @@ async def run_heavy_robot():
 
 
 if __name__ == "__main__":
-    use_heavy = False
+    use_heavy = True
 
     if use_heavy:
         print("Running UnitreeGo2Heavy with GPU modules...")
