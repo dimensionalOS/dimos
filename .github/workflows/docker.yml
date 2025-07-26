@@ -129,10 +129,7 @@ jobs:
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       should-run: ${{
-        needs.check-changes.result == 'success' &&
-        ((needs.ros-python.result == 'success') ||
-        (needs.ros-python.result == 'skipped' &&
-        needs.check-changes.outputs.dev == 'true'))
+        needs.check-changes.result == 'success' && ((needs.ros-python.result == 'success') || (needs.ros-python.result == 'skipped')) && (needs.check-changes.outputs.dev == 'true')
         }}
       from-image: ghcr.io/dimensionalos/ros-python:${{ needs.ros-python.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
       to-image: ghcr.io/dimensionalos/ros-dev:${{ needs.check-changes.outputs.branch-tag }}
@@ -181,9 +178,58 @@ jobs:
       cmd: "pytest -m heavy"
       dev-image: dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
+  run-lcm-tests:
+    needs: [check-changes, dev]
+    if: always()
+    uses: ./.github/workflows/tests.yml
+    with:
+      should-run: ${{
+        needs.check-changes.result == 'success' &&
+        ((needs.dev.result == 'success') ||
+        (needs.dev.result == 'skipped' &&
+        needs.check-changes.outputs.tests == 'true'))
+        }}
+      cmd: "pytest -m lcm"
+      dev-image: dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+
+  # Run module tests directly to avoid pytest forking issues
+  run-module-tests:
+    needs: [check-changes, dev]
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      ((needs.dev.result == 'success') ||
+      (needs.dev.result == 'skipped' &&
+      needs.check-changes.outputs.tests == 'true'))
+      }}
+    runs-on: [self-hosted, x64]
+    container:
+      image: ghcr.io/dimensionalos/dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+    steps:
+      - name: Fix permissions
+        run: |
+          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+          
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          
+      - name: Configure Git LFS
+        run: |
+          git config --global --add safe.directory '*'
+          git lfs install
+          git lfs fetch
+          git lfs checkout
+        
+      - name: Run module tests
+        env:
+          CI: "true"
+        run: |
+          /entrypoint.sh bash -c "pytest -m module"
+      
   # TODO: Remove when merge to main as workflow_run needed
   cleanup-runner:
-    needs: [run-tests, run-heavy-tests, run-ros-tests]
+    needs: [run-tests, run-heavy-tests, run-ros-tests, run-lcm-tests, run-module-tests]
     if: always()
     runs-on: [self-hosted, Linux]
     steps:

@@ -202,6 +202,19 @@ class RemoteOut(RemoteStream[T]):
     def connect(self, other: RemoteIn[T]):
         return other.connect(self)
 
+    def observable(self):
+        """Create an Observable stream from this remote output."""
+        from reactivex import create
+
+        def subscribe(observer, scheduler=None):
+            def on_msg(msg):
+                observer.on_next(msg)
+
+            self._transport.subscribe(self, on_msg)
+            return lambda: None
+
+        return create(subscribe)
+
 
 class In(Stream[T]):
     connection: Optional[RemoteOut[T]] = None

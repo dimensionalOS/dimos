@@ -21,11 +21,15 @@ import threading
 import traceback
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, Callable, Optional, Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable, Any, Callable
+
 
 import lcm
 
 from dimos.protocol.service.spec import Service
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger("dimos.protocol.service.lcmservice")
 
 
 @cache
@@ -65,71 +69,122 @@ def check_multicast() -> list[str]:
     return commands_needed
 
 
-def check_buffers() -> list[str]:
-    """Check if buffer configuration is needed and return required commands."""
+def check_buffers() -> tuple[list[str], Optional[int]]:
+    """Check if buffer configuration is needed and return required commands and current size.
+
+    Returns:
+        Tuple of (commands_needed, current_max_buffer_size)
+    """
     commands_needed = []
+    current_max = None
 
     sudo = "" if check_root() else "sudo "
 
     # Check current buffer settings
     try:
         result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
-        current_max = int(result.stdout.split("=")[1].strip())
-        if current_max < 2097152:
+        current_max = int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
+        if not current_max or current_max < 2097152:
             commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
-    except Exception:
+    except:
         commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
 
     try:
         result = subprocess.run(["sysctl", "net.core.rmem_default"], capture_output=True, text=True)
-        current_default = int(result.stdout.split("=")[1].strip())
-        if current_default < 2097152:
+        current_default = (
+            int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
+        )
+        if not current_default or current_default < 2097152:
             commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
-    except Exception:
+    except:
         commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
 
-    return commands_needed
+    return commands_needed, current_max
 
 
 def check_system() -> None:
-    """Check if system configuration is needed and exit with required commands if not prepared."""
-    commands_needed = []
-    commands_needed.extend(check_multicast())
-    commands_needed.extend(check_buffers())
+    """Check if system configuration is needed and exit only for critical issues.
 
-    if commands_needed:
-        print("System configuration required. Please run the following commands:")
-        for cmd in commands_needed:
-            print(f"  {cmd}")
-        print("\nThen restart your application.")
+    Multicast configuration is critical for LCM to work.
+    Buffer sizes are performance optimizations - warn but don't fail in containers.
+    """
+    if os.environ.get("CI"):
+        logger.debug("CI environment detected: Skipping system configuration checks.")
+        return
+
+    multicast_commands = check_multicast()
+    buffer_commands, current_buffer_size = check_buffers()
+
+    # Check multicast first - this is critical
+    if multicast_commands:
+        logger.error(
+            "Critical: Multicast configuration required. Please run the following commands:"
+        )
+        for cmd in multicast_commands:
+            logger.error(f"  {cmd}")
+        logger.error("\nThen restart your application.")
         sys.exit(1)
+
+    # Buffer configuration is just for performance
+    elif buffer_commands:
+        if current_buffer_size:
+            logger.warning(
+                f"UDP buffer size limited to {current_buffer_size} bytes ({current_buffer_size // 1024}KB). Large LCM packets may fail."
+            )
+        else:
+            logger.warning("UDP buffer sizes are limited. Large LCM packets may fail.")
+        logger.warning("For better performance, consider running:")
+        for cmd in buffer_commands:
+            logger.warning(f"  {cmd}")
+        logger.warning("Note: This may not be possible in Docker containers.")
 
 
 def autoconf() -> None:
     """Auto-configure system by running checks and executing required commands if needed."""
+    if os.environ.get("CI"):
+        logger.info("CI environment detected: Skipping automatic system configuration.")
+        return
+
     commands_needed = []
+
+    # Check multicast configuration
     commands_needed.extend(check_multicast())
-    commands_needed.extend(check_buffers())
+
+    # Check buffer configuration
+    buffer_commands, _ = check_buffers()
+    commands_needed.extend(buffer_commands)
 
     if not commands_needed:
         return
 
-    print("System configuration required. Executing commands...")
+    logger.info("System configuration required. Executing commands...")
+
     for cmd in commands_needed:
-        print(f"  Running: {cmd}")
+        logger.info(f"  Running: {cmd}")
         try:
             # Split command into parts for subprocess
             cmd_parts = cmd.split()
-            result = subprocess.run(cmd_parts, capture_output=True, text=True, check=True)
-            print("  ✓ Success")
+            subprocess.run(cmd_parts, capture_output=True, text=True, check=True)
+            logger.info("  ✓ Success")
         except subprocess.CalledProcessError as e:
-            print(f"  ✗ Failed: {e}")
-            print(f"    stdout: {e.stdout}")
-            print(f"    stderr: {e.stderr}")
+            # Check if this is a multicast/route command or a sysctl command
+            if "route" in cmd or "multicast" in cmd:
+                # Multicast/route failures should still fail
+                logger.error(f"  ✗ Failed to configure multicast: {e}")
+                logger.error(f"    stdout: {e.stdout}")
+                logger.error(f"    stderr: {e.stderr}")
+                raise
+            elif "sysctl" in cmd:
+                # Sysctl failures are just warnings (likely docker/container)
+                logger.warning(
+                    f"  ✗ Not able to auto-configure UDP buffer sizes (likely docker image): {e}"
+                )
         except Exception as e:
-            print(f"  ✗ Error: {e}")
+            logger.error(f"  ✗ Error: {e}")
+            if "route" in cmd or "multicast" in cmd:
+                raise
 
-    print("System configuration completed.")
+    logger.info("System configuration completed.")
 
 
 @dataclass

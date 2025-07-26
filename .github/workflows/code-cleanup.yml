@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   pre-commit:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
     - name: Fix permissions
       run: |
