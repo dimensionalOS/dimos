@@ -21,15 +21,13 @@ from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy, GraphTopic, LCMSpy
 from dimos.utils.cli.lcmspy.lcmspy import Topic as TopicSpy
 
-autoconf()
-
 
 @pytest.mark.lcm
 def test_spy_basic():
     lcm = PickleLCM(autoconf=True)
     lcm.start()
 
-    lcmspy = LCMSpy()
+    lcmspy = LCMSpy(autoconf=True)
     lcmspy.start()
 
     video_topic = Topic(topic="/video")
@@ -151,7 +149,7 @@ def test_graph_topic_basic():
 @pytest.mark.lcm
 def test_graph_lcmspy_basic():
     """Test GraphLCMSpy basic functionality"""
-    spy = GraphLCMSpy(graph_log_window=0.1)
+    spy = GraphLCMSpy(autoconf=True, graph_log_window=0.1)
     spy.start()
     time.sleep(0.2)  # Wait for thread to start
 
@@ -171,7 +169,7 @@ def test_graph_lcmspy_basic():
 @pytest.mark.lcm
 def test_lcmspy_global_totals():
     """Test that LCMSpy tracks global totals as a Topic itself"""
-    spy = LCMSpy()
+    spy = LCMSpy(autoconf=True)
     spy.start()
 
     # Send messages to different topics
@@ -201,7 +199,7 @@ def test_lcmspy_global_totals():
 @pytest.mark.lcm
 def test_graph_lcmspy_global_totals():
     """Test that GraphLCMSpy tracks global totals with history"""
-    spy = GraphLCMSpy(graph_log_window=0.1)
+    spy = GraphLCMSpy(autoconf=True, graph_log_window=0.1)
     spy.start()
     time.sleep(0.2)
 
