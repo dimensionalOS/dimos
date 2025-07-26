@@ -15,6 +15,13 @@
 from __future__ import annotations
 
 import traceback
+from typing import Any, Callable, Generic, List, Optional, Protocol, TypeVar
+
+import dimos.core.colors as colors
+
+T = TypeVar("T")
+
+import traceback
 from typing import (
     Any,
     Callable,
@@ -30,7 +37,7 @@ from typing import (
 )
 
 import dimos.core.colors as colors
-from dimos.core.core import In, Transport
+from dimos.core.stream import In, Transport
 from dimos.protocol.pubsub.lcmpubsub import LCM, PickleLCM
 from dimos.protocol.pubsub.lcmpubsub import Topic as LCMTopic
 
@@ -97,6 +104,53 @@ class LCMTransport(PubSubTransport[T]):
             self.lcm.start()
             self._started = True
         return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
+
+
+class DaskTransport(Transport[T]):
+    subscribers: List[Callable[[T], None]]
+    _started: bool = False
+
+    def __init__(self):
+        self.subscribers = []
+
+    def __str__(self) -> str:
+        return colors.yellow("DaskTransport")
+
+    def __reduce__(self):
+        return (DaskTransport, ())
+
+    def broadcast(self, selfstream: RemoteIn[T], msg: T) -> None:
+        for subscriber in self.subscribers:
+            # there is some sort of a bug here with losing worker loop
+            #            print(subscriber.owner, subscriber.owner._worker, subscriber.owner._client)
+            #            subscriber.owner._try_bind_worker_client()
+            #            print(subscriber.owner, subscriber.owner._worker, subscriber.owner._client)
+
+            subscriber.owner.dask_receive_msg(subscriber.name, msg).result()
+
+    def dask_receive_msg(self, msg) -> None:
+        for subscriber in self.subscribers:
+            try:
+                subscriber(msg)
+            except Exception as e:
+                print(
+                    colors.red("Error in DaskTransport subscriber callback:"),
+                    e,
+                    traceback.format_exc(),
+                )
+
+    # for outputs
+    def dask_register_subscriber(self, remoteInput: RemoteIn[T]) -> None:
+        self.subscribers.append(remoteInput)
+
+    # for inputs
+    def subscribe(self, selfstream: In[T], callback: Callable[[T], None]) -> None:
+        if not self._started:
+            selfstream.connection.owner.dask_register_subscriber(
+                selfstream.connection.name, selfstream
+            ).result()
+            self._started = True
+        self.subscribers.append(callback)
 
 
 class ZenohTransport(PubSubTransport[T]): ...

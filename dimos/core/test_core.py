@@ -128,7 +128,6 @@ def test_classmethods():
     # Test class property access
     class_rpcs = Navigation.rpcs
     print("Class rpcs:", class_rpcs)
-
     # Test instance property access
     nav = Navigation()
     instance_rpcs = nav.rpcs
