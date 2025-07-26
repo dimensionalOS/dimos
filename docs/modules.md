@@ -15,10 +15,11 @@ class MyModule(Module):
     # Declare inputs/outputs as class attributes initialized to None
     data_in: In[Vector3] = None  
     data_out: Out[Vector3] = None
-    
-    # Call parent Module init
-    super().__init__()
-    
+
+    def __init__():
+        # Call parent Module init
+        super().__init__()
+
     @rpc
     def remote_method(self, param):
         """Methods decorated with @rpc can be called remotely"""
@@ -34,8 +35,9 @@ from dimos import core
 # Start Dask cluster with N workers
 dimos = core.start(4)
 
-# Deploy modules with initialization parameters
-my_module = dimos.deploy(MyModule, param1="value1", param2=123)
+# Deploying modules allows for passing initialization parameters.
+# In this case param1 and param2 are passed into Module init
+module = dimos.deploy(Module, param1="value1", param2=123)
 ```
 
 ### 3. Stream Connections
@@ -62,7 +64,6 @@ module.start()  # Calls the @rpc start() method if defined
 print(module.io().result())  # Shows inputs, outputs, and RPC methods
 
 # Clean shutdown
-dimos.close()
 dimos.shutdown()
 ```
 
@@ -106,7 +107,61 @@ pubsub.lcm.autoconf()
 
 This architecture enables building complex robotic systems as composable, distributed modules that communicate efficiently via streams and RPC, scaling from single machines to clusters.
 
-## Multiprocess Application Design  
+# Dimensional Install 
+## Python Installation (Ubuntu 22.04)
 
-1. @lesh can you add considerations here for best practices, issues, etc. One for example I will add is handling CUDA properly in multiprocess which is WIP. 
+```bash
+sudo apt install python3-venv
+
+# Clone the repository (dev branch, no submodules)
+git clone -b dev https://github.com/dimensionalOS/dimos.git
+cd dimos
+
+# Create and activate virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+sudo apt install portaudio19-dev python3-pyaudio
+
+# Install torch and torchvision if not already installed
+# Example CUDA 11.7, Pytorch 2.0.1 (replace with your required pytorch version if different)
+pip install torch==2.0.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```
+
+### Install dependencies
+```bash
+# CPU only (reccomended to attempt first)
+pip install .[cpu,dev]
+
+# CUDA install
+pip install .[cuda,dev]
+
+# Copy and configure environment variables
+cp default.env .env
+```
+
+### Test install 
+```bash 
+# Run standard tests
+pytest -s dimos/
+
+# Test modules functionality
+pytest -s -m module dimos/
+
+# Test LCM communication
+pytest -s -m lcm dimos/
+```
+
+# Unitree Go2 Quickstart
+
+To quickly test the modules system, you can run the Unitree Go2 multiprocess example directly:
+
+```bash
+# Make sure you have the required environment variables set
+export ROBOT_IP=<your_robot_ip>
+
+# Run the multiprocess Unitree Go2 example
+python dimos/robot/unitree_webrtc/multiprocess/unitree_go2.py
+```
+
 
