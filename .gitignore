@@ -41,6 +41,4 @@ dist/
 data/*
 !data/.lfs/
 FastSAM-x.pt
-yolo11n.pt 
-
-dimos-lcm/
+yolo11n.pt
