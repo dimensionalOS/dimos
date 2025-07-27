@@ -136,7 +136,13 @@ def test_tf_main():
     # this doesn't work atm
     robot_to_charger = broadcaster.get("robot", "charger")
 
-    assert robot_to_charger != None
+    # Expected: robot->world->charger
+    print(f"robot_to_charger translation: {robot_to_charger.translation}")
+    print(f"robot_to_charger rotation: {robot_to_charger.rotation}")
+
+    assert abs(robot_to_charger.translation.x - 1.0) < 0.001
+    assert abs(robot_to_charger.translation.y - (-4.0)) < 0.001
+    assert abs(robot_to_charger.translation.z - (-3.0)) < 0.001
 
     # Stop services (they were autostarted but don't know how to autostop)
     broadcaster.stop()
