@@ -202,7 +202,7 @@ jobs:
       (needs.dev.result == 'skipped' &&
       needs.check-changes.outputs.tests == 'true'))
       }}
-    runs-on: [self-hosted, x64]
+    runs-on: [self-hosted, x64, 16gb]
     container:
       image: ghcr.io/dimensionalos/dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
     steps:
