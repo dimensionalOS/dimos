@@ -17,7 +17,7 @@
 import time
 from abc import abstractmethod
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import reduce
 from typing import Optional, TypeVar
 
@@ -48,6 +48,8 @@ class TFSpec(Service[TFConfig]):
 
     @abstractmethod
     def publish_static(self, *args: Transform) -> None: ...
+
+    def get_frames(self) -> set[str]: ...
 
     @abstractmethod
     def get(
@@ -130,9 +132,10 @@ class TBuffer(TimestampedCollection[Transform]):
             )
 
             return (
-                f"TBuffer({len(self._items)} msgs, "
-                f"{duration:.2f}s [{start_time} - {end_time}], "
-                f"{frame_str})"
+                f"TBuffer("
+                f"{frame_str}, "
+                f"{len(self._items)} msgs, "
+                f"{duration:.2f}s [{start_time} - {end_time}])"
             )
 
         return f"TBuffer({len(self._items)} msgs)"
@@ -151,6 +154,13 @@ class MultiTBuffer:
             if key not in self.buffers:
                 self.buffers[key] = TBuffer(self.buffer_size)
             self.buffers[key].add(transform)
+
+    def get_frames(self) -> set[str]:
+        frames = set()
+        for parent, child in self.buffers:
+            frames.add(parent)
+            frames.add(child)
+        return frames
 
     def get_transform(
         self,
@@ -230,9 +240,9 @@ class MultiTBuffer:
 
     def __str__(self) -> str:
         if not self.buffers:
-            return "MultiTBuffer(empty)"
+            return f"{self.__class__.__name__}(empty)"
 
-        lines = [f"MultiTBuffer({len(self.buffers)} buffers):"]
+        lines = [f"{self.__class__.__name__}({len(self.buffers)} buffers):"]
         for buffer in self.buffers.values():
             lines.append(f"  {buffer}")
 
@@ -243,6 +253,7 @@ class MultiTBuffer:
 class PubSubTFConfig(TFConfig):
     topic: TopicT = None  # Required field but needs default for dataclass inheritance
     pubsub: Optional[PubSub[TopicT, MsgT]] = None
+    autostart: bool = True
 
 
 class PubSubTF(MultiTBuffer, TFSpec):
@@ -253,10 +264,16 @@ class PubSubTF(MultiTBuffer, TFSpec):
         MultiTBuffer.__init__(self, self.config.buffer_size)
 
         # Check if pubsub is a class (callable) or an instance
-        if callable(self.config.pubsub):
-            self.pubsub = self.config.pubsub()
+        if self.config.pubsub is not None:
+            if callable(self.config.pubsub):
+                self.pubsub = self.config.pubsub()
+            else:
+                self.pubsub = self.config.pubsub
         else:
-            self.pubsub = self.config.pubsub
+            raise ValueError("PubSub configuration is missing")
+
+        if self.config.autostart:
+            self.start()
 
     def start(self, sub=True) -> None:
         self.pubsub.start()
@@ -286,15 +303,15 @@ class PubSubTF(MultiTBuffer, TFSpec):
     ) -> Optional[Transform]:
         return super().get(parent_frame, child_frame, time_point, time_tolerance)
 
-    def receive_msg(self, channel: str, data: bytes) -> None:
-        msg = TFMessage.lcm_decode(data)
+    def receive_msg(self, msg: TFMessage, topic: TopicT) -> None:
         self.receive_tfmessage(msg)
 
 
 @dataclass
-class LCMPubsubConfig(TFConfig):
-    topic = Topic("/tf", TFMessage)
-    pubsub = LCM
+class LCMPubsubConfig(PubSubTFConfig):
+    topic: TopicT = field(default_factory=lambda: Topic("/tf", TFMessage))
+    pubsub: type[PubSub[TopicT, MsgT]] = LCM
+    autostart: bool = True
 
 
 class LCMTF(PubSubTF):

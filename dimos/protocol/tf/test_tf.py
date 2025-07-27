@@ -18,16 +18,17 @@ import time
 
 import pytest
 
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
-from dimos.protocol.tf.tf import MultiTBuffer, TBuffer
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Transform, Vector3
+from dimos.protocol.tf.tf import TF, MultiTBuffer, TBuffer
 
 
-@pytest.mark.tool
-def test_tf_broadcast_and_query():
+def test_tf_main():
     """Test TF broadcasting and querying between two TF instances.
     If you run foxglove-bridge this will show up in the UI"""
-    from dimos.robot.module.tf import TF
 
+    # here we create broadcasting and receiving TF instance.
+    # this is to verify that comms work multiprocess, but normally
+    # you'd use only one instance in your module
     broadcaster = TF()
     querier = TF()
 
@@ -43,13 +44,10 @@ def test_tf_broadcast_and_query():
     )
 
     # Broadcast the transform
-    broadcaster.send(world_to_robot)
+    broadcaster.publish(world_to_robot)
 
     # Give time for the message to propagate
     time.sleep(0.05)
-
-    # Query should now be able to find the transform
-    assert querier.can_transform("world", "robot", current_time)
 
     # Verify frames are available
     frames = querier.get_frames()
@@ -65,21 +63,53 @@ def test_tf_broadcast_and_query():
         ts=current_time,
     )
 
-    random_object_in_view = Pose(
-        position=Vector3(1.0, 0.0, 0.0),
-    )
+    broadcaster.publish(robot_to_sensor)
 
-    broadcaster.send(robot_to_sensor)
     time.sleep(0.05)
 
-    # Should be able to query the full chain
-    assert querier.can_transform("world", "sensor", current_time)
+    # we can now query (from a separate process given we use querier) the transform tree
+    chain_transform = querier.get("world", "sensor")
 
-    t = querier.lookup("world", "sensor")
+    # broadcaster will agree with us
+    assert broadcaster.get("world", "sensor") == chain_transform
 
-    random_object_in_view.find_transform()
+    # The chain should compose: world->robot (1,2,3) + robot->sensor (0.5,0,0.2)
+    # Expected translation: (1.5, 2.0, 3.2)
+    assert abs(chain_transform.translation.x - 1.5) < 0.001
+    assert abs(chain_transform.translation.y - 2.0) < 0.001
+    assert abs(chain_transform.translation.z - 3.2) < 0.001
 
-    # Stop services
+    # we see something on camera
+    random_object_in_view = PoseStamped(
+        frame_id="random_object",
+        position=Vector3(1, 0, 0),
+    )
+
+    print("Random obj", random_object_in_view)
+
+    # we calculate a transform from sensor to the object
+    random_t = random_object_in_view.new_transform("sensor").inverse()
+
+    print("randm t", random_t)
+
+    # we broadcast our object location
+    broadcaster.publish(random_t)
+
+    print(broadcaster)
+
+    # we know where the object is in the world frame now
+    world_object = broadcaster.get("world", "random_object")
+
+    # both instances agree
+    assert querier.get("world", "random_object") == world_object
+
+    print("world object", world_object)
+
+    assert abs(world_object.translation.x - 1.5) < 0.001
+    assert abs(world_object.translation.y - 3.0) < 0.001
+    assert abs(world_object.translation.z - 3.2) < 0.001
+
+    # Stop services (they were autostarted but don't know how to autostop)
     broadcaster.stop()
     querier.stop()
 
