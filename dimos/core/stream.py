@@ -195,7 +195,9 @@ class In(Stream[T]):
         except Exception as e:
             raise Exception(f"No value received after {timeout} seconds") from e
 
-    @cache
+    def hot_latest(self) -> Callable[[], T]:
+        return reactive.getter_streaming(self.observable())
+
     def pure_observable(self):
         def _subscribe(observer, scheduler=None):
             unsubscribe = self.subscribe(observer.on_next)
@@ -205,9 +207,8 @@ class In(Stream[T]):
 
     # default return is backpressured because most
     # use cases will want this by default
-    @cache
     def observable(self):
-        return backpressure(self.pure_observable)
+        return backpressure(self.pure_observable())
 
     # returns unsubscribe function
     def subscribe(self, cb) -> Callable[[], None]:

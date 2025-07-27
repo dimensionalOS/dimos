@@ -23,7 +23,7 @@ from typing import (
 from dask.distributed import Actor, get_worker
 
 from dimos.core import colors
-from dimos.core.core import T
+from dimos.core.core import T, rpc
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 
@@ -66,6 +66,7 @@ class ModuleBase:
             and hasattr(getattr(cls, name), "__rpc__")
         }
 
+    @rpc
     def io(self) -> str:
         def _box(name: str) -> str:
             return [

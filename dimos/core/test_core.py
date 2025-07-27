@@ -14,6 +14,7 @@
 
 import time
 from threading import Event, Thread
+from typing import Callable, Optional
 
 import pytest
 
@@ -29,78 +30,26 @@ from dimos.core import (
     start,
     stop,
 )
+from dimos.core.testing import MockRobotClient, dimos
+from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from dimos.types.vector import Vector
 from dimos.utils.testing import SensorReplay
 
-# never delete this line
-
-
-@pytest.fixture
-def dimos():
-    """Fixture to create a Dimos client for testing."""
-    client = start(2)
-    yield client
-    stop(client)
-
-
-class RobotClient(Module):
-    odometry: Out[Odometry] = None
-    lidar: Out[LidarMessage] = None
-    mov: In[Vector] = None
-
-    mov_msg_count = 0
-
-    def mov_callback(self, msg):
-        self.mov_msg_count += 1
-
-    def __init__(self):
-        super().__init__()
-        self._stop_event = Event()
-        self._thread = None
-
-    def start(self):
-        self._thread = Thread(target=self.odomloop)
-        self._thread.start()
-        self.mov.subscribe(self.mov_callback)
-
-    def odomloop(self):
-        odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
-        lidardata = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
-
-        lidariter = lidardata.iterate()
-        self._stop_event.clear()
-        while not self._stop_event.is_set():
-            for odom in odomdata.iterate():
-                if self._stop_event.is_set():
-                    return
-                print(odom)
-                odom.pubtime = time.perf_counter()
-                self.odometry.publish(odom)
-
-                lidarmsg = next(lidariter)
-                lidarmsg.pubtime = time.perf_counter()
-                self.lidar.publish(lidarmsg)
-                time.sleep(0.1)
-
-    def stop(self):
-        self._stop_event.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=1.0)  # Wait up to 1 second for clean shutdown
+assert dimos
 
 
 class Navigation(Module):
-    mov: Out[Vector] = None
+    mov: Out[Vector3] = None
     lidar: In[LidarMessage] = None
-    target_position: In[Vector] = None
+    target_position: In[Vector3] = None
     odometry: In[Odometry] = None
 
     odom_msg_count = 0
     lidar_msg_count = 0
 
     @rpc
-    def navigate_to(self, target: Vector) -> bool: ...
+    def navigate_to(self, target: Vector3) -> bool: ...
 
     def __init__(self):
         super().__init__()
@@ -141,7 +90,7 @@ def test_classmethods():
     # Check that we have the expected RPC methods
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
-    assert len(class_rpcs) == 2, "Should have exactly 2 RPC methods"
+    assert len(class_rpcs) == 3
 
     # Check that the values are callable
     assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
@@ -154,20 +103,18 @@ def test_classmethods():
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
 
 
-@pytest.mark.tool
-def test_deployment(dimos):
-    robot = dimos.deploy(RobotClient)
-    target_stream = RemoteOut[Vector](Vector, "target")
+def test_basic_deployment(dimos):
+    robot = dimos.deploy(MockRobotClient)
 
     print("\n")
     print("lidar stream", robot.lidar)
-    print("target stream", target_stream)
     print("odom stream", robot.odometry)
 
     nav = dimos.deploy(Navigation)
 
     # this one encodes proper LCM messages
     robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
+
     # odometry & mov using just a pickle over LCM
     robot.odometry.transport = pLCMTransport("/odom")
     nav.mov.transport = pLCMTransport("/mov")
@@ -176,13 +123,13 @@ def test_deployment(dimos):
     nav.odometry.connect(robot.odometry)
     robot.mov.connect(nav.mov)
 
-    print("\n" + robot.io().result() + "\n")
-    print("\n" + nav.io().result() + "\n")
-    robot.start().result()
-    nav.start().result()
+    print("\n" + robot.io() + "\n")
+    print("\n" + nav.io() + "\n")
+    robot.start()
+    nav.start()
 
     time.sleep(1)
-    robot.stop().result()
+    robot.stop()
 
     print("robot.mov_msg_count", robot.mov_msg_count)
     print("nav.odom_msg_count", nav.odom_msg_count)
@@ -191,8 +138,3 @@ def test_deployment(dimos):
     assert robot.mov_msg_count >= 8
     assert nav.odom_msg_count >= 8
     assert nav.lidar_msg_count >= 8
-
-
-if __name__ == "__main__":
-    client = start(1)  # single process for CI memory
-    test_deployment(client)
