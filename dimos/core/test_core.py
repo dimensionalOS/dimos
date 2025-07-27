@@ -103,6 +103,7 @@ def test_classmethods():
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
 
 
+@pytest.mark.module
 def test_basic_deployment(dimos):
     robot = dimos.deploy(MockRobotClient)
 

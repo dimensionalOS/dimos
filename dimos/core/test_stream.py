@@ -148,8 +148,8 @@ class SpyLCMTransport(LCMTransport):
         # Increment counter
         self.active_subscribers += 1
 
-        # Create wrapper that decrements counter when called
         def wrapped_unsubscribe():
+            # Create wrapper that decrements counter when called
             if wrapped_unsubscribe in self._subscriber_map:
                 self.active_subscribers -= 1
                 del self._subscriber_map[wrapped_unsubscribe]
@@ -197,6 +197,7 @@ def test_subscription(dimos, subscriber_class):
     assert total_msg_n == subscriber.sub1_msgs_len() + subscriber.sub2_msgs_len()
 
 
+@pytest.mark.module
 def test_get_next(dimos):
     robot = dimos.deploy(MockRobotClient)
 
@@ -224,6 +225,7 @@ def test_get_next(dimos):
     assert next_odom != odom
 
 
+@pytest.mark.module
 def test_hot_getter(dimos):
     robot = dimos.deploy(MockRobotClient)
 
