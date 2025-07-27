@@ -187,7 +187,7 @@ class MultiTBuffer:
 
         return reduce(lambda t1, t2: t1 + t2, complex)
 
-    def graph(
+    def _graph(
         self,
         time_point: Optional[float] = None,
         time_tolerance: Optional[float] = None,
@@ -222,7 +222,7 @@ class MultiTBuffer:
         # build a graph of available transforms at the given time for the search
         # not a fan of this, perhaps MultiTBuffer should already store the data
         # in a traversible format
-        graph = self.graph(time_point, time_tolerance)
+        graph = self._graph(time_point, time_tolerance)
 
         while queue:
             current_frame, path = queue.popleft()
@@ -237,6 +237,26 @@ class MultiTBuffer:
                         queue.append((next_frame, path + [transform]))
 
         return None
+
+    def graph(self) -> str:
+        import subprocess
+
+        def connection_str(connection: tuple[str, str]):
+            (frame_from, frame_to) = connection
+            return f"{frame_from} -> {frame_to}"
+
+        graph_str = "\n".join(map(connection_str, self.buffers.keys()))
+
+        try:
+            result = subprocess.run(
+                ["diagon", "GraphDAG", "-style=Unicode"],
+                input=graph_str,
+                capture_output=True,
+                text=True,
+            )
+            return result.stdout if result.returncode == 0 else graph_str
+        except Exception:
+            return "no diagon installed"
 
     def __str__(self) -> str:
         if not self.buffers:

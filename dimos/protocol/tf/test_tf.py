@@ -118,6 +118,9 @@ def test_tf_main():
 
     print("world object", world_object)
 
+    # if you have "diagon" https://diagon.arthursonzogni.com/ installed you can draw a graph
+    print(broadcaster.graph())
+
     assert abs(world_object.translation.x - 1.5) < 0.001
     assert abs(world_object.translation.y - 3.0) < 0.001
     assert abs(world_object.translation.z - 3.2) < 0.001
@@ -222,6 +225,28 @@ class TestMultiTBuffer:
         assert len(ttbuffer.buffers) == 2
         assert ("world", "robot1") in ttbuffer.buffers
         assert ("world", "robot2") in ttbuffer.buffers
+
+    def test_graph(self):
+        ttbuffer = MultiTBuffer(buffer_size=10.0)
+
+        # Add transforms for different frame pairs
+        transform1 = Transform(
+            translation=Vector3(1.0, 0.0, 0.0),
+            frame_id="world",
+            child_frame_id="robot1",
+            ts=time.time(),
+        )
+
+        transform2 = Transform(
+            translation=Vector3(2.0, 0.0, 0.0),
+            frame_id="world",
+            child_frame_id="robot2",
+            ts=time.time(),
+        )
+
+        ttbuffer.receive_transform(transform1, transform2)
+
+        print(ttbuffer.graph())
 
     def test_get_latest_transform(self):
         ttbuffer = MultiTBuffer()
