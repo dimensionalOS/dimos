@@ -35,7 +35,7 @@ from typing import (
 )
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub
-from dimos.protocol.rpc.spec import RPC, RPCClient, RPCServer
+from dimos.protocol.rpc.spec import RPC, Args, RPCClient, RPCInspectable, RPCServer
 from dimos.protocol.service.spec import Service
 
 MsgT = TypeVar("MsgT")
@@ -46,16 +46,10 @@ TopicGen = Callable[[str, bool], TopicT]
 MsgGen = Callable[[str, list], MsgT]
 
 
-class RPCInspectable(Protocol):
-    @classmethod
-    @property
-    def rpcs() -> dict[str, Callable]: ...
-
-
 class RPCReq(TypedDict):
     id: float | None
     name: str
-    args: list
+    args: Args
 
 
 class RPCRes(TypedDict):
@@ -63,7 +57,7 @@ class RPCRes(TypedDict):
     res: Any
 
 
-class PubSubRPCMixin(RPC, Generic[TopicT]):
+class PubSubRPCMixin(RPC, Generic[TopicT, MsgT]):
     @abstractmethod
     def _decodeRPCRes(self, msg: MsgT) -> RPCRes: ...
 
@@ -76,13 +70,13 @@ class PubSubRPCMixin(RPC, Generic[TopicT]):
     @abstractmethod
     def _encodeRPCRes(self, res: RPCRes) -> MsgT: ...
 
-    def call(self, name: str, arguments: list, cb: Optional[Callable]):
+    def call(self, name: str, arguments: Args, cb: Optional[Callable]):
         if cb is None:
             return self.call_nowait(name, arguments)
 
         return self.call_cb(name, arguments, cb)
 
-    def call_cb(self, name: str, arguments: list, cb: Callable) -> Any:
+    def call_cb(self, name: str, arguments: Args, cb: Callable) -> Any:
         topic_req = self.topicgen(name, False)
         topic_res = self.topicgen(name, True)
 
@@ -104,7 +98,7 @@ class PubSubRPCMixin(RPC, Generic[TopicT]):
         self.publish(topic_req, self._encodeRPCReq(req))
         return unsub
 
-    def call_nowait(self, name: str, arguments: list) -> None:
+    def call_nowait(self, name: str, arguments: Args) -> None:
         topic_req = self.topicgen(name, False)
         req = {"name": name, "args": arguments, "id": None}
         self.publish(topic_req, self._encodeRPCReq(req))
@@ -121,10 +115,12 @@ class PubSubRPCMixin(RPC, Generic[TopicT]):
 
             if req.get("name") != name:
                 return
-            response = f(*req.get("args"))
+            args: Args = req.get("args")
+            response = f(*args[0], **args[1])
 
             self.publish(topic_res, self._encodeRPCRes({"id": req.get("id"), "res": response}))
 
+        print("SUB", topic_req)
         self.subscribe(topic_req, receive_call)
 
 
