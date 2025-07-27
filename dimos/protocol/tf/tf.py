@@ -17,7 +17,7 @@
 import time
 from abc import abstractmethod
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import reduce
 from typing import Optional, TypeVar
 
@@ -48,6 +48,8 @@ class TFSpec(Service[TFConfig]):
 
     @abstractmethod
     def publish_static(self, *args: Transform) -> None: ...
+
+    def get_frames(self) -> set[str]: ...
 
     @abstractmethod
     def get(
@@ -130,9 +132,10 @@ class TBuffer(TimestampedCollection[Transform]):
             )
 
             return (
-                f"TBuffer({len(self._items)} msgs, "
-                f"{duration:.2f}s [{start_time} - {end_time}], "
-                f"{frame_str})"
+                f"TBuffer("
+                f"{frame_str}, "
+                f"{len(self._items)} msgs, "
+                f"{duration:.2f}s [{start_time} - {end_time}])"
             )
 
         return f"TBuffer({len(self._items)} msgs)"
@@ -152,6 +155,23 @@ class MultiTBuffer:
                 self.buffers[key] = TBuffer(self.buffer_size)
             self.buffers[key].add(transform)
 
+    def get_frames(self) -> set[str]:
+        frames = set()
+        for parent, child in self.buffers:
+            frames.add(parent)
+            frames.add(child)
+        return frames
+
+    def get_connections(self, frame_id: str) -> set[str]:
+        """Get all frames connected to the given frame (both as parent and child)."""
+        connections = set()
+        for parent, child in self.buffers:
+            if parent == frame_id:
+                connections.add(child)
+            if child == frame_id:
+                connections.add(parent)
+        return connections
+
     def get_transform(
         self,
         parent_frame: str,
@@ -159,11 +179,18 @@ class MultiTBuffer:
         time_point: Optional[float] = None,
         time_tolerance: Optional[float] = None,
     ) -> Optional[Transform]:
+        # Check forward direction
         key = (parent_frame, child_frame)
-        if key not in self.buffers:
-            return None
+        if key in self.buffers:
+            return self.buffers[key].get(time_point, time_tolerance)
 
-        return self.buffers[key].get(time_point, time_tolerance)
+        # Check reverse direction and return inverse
+        reverse_key = (child_frame, parent_frame)
+        if reverse_key in self.buffers:
+            transform = self.buffers[reverse_key].get(time_point, time_tolerance)
+            return transform.inverse() if transform else None
+
+        return None
 
     def get(self, *args, **kwargs) -> Optional[Transform]:
         simple = self.get_transform(*args, **kwargs)
@@ -177,21 +204,6 @@ class MultiTBuffer:
 
         return reduce(lambda t1, t2: t1 + t2, complex)
 
-    def graph(
-        self,
-        time_point: Optional[float] = None,
-        time_tolerance: Optional[float] = None,
-    ) -> dict[str, list[tuple[str, Transform]]]:
-        # Build a graph of available transforms at the given time
-        graph = {}
-        for (from_frame, to_frame), buffer in self.buffers.items():
-            transform = buffer.get(time_point, time_tolerance)
-            if transform:
-                if from_frame not in graph:
-                    graph[from_frame] = []
-                graph[from_frame].append((to_frame, transform))
-        return graph
-
     def get_transform_search(
         self,
         parent_frame: str,
@@ -200,19 +212,14 @@ class MultiTBuffer:
         time_tolerance: Optional[float] = None,
     ) -> Optional[list[Transform]]:
         """Search for shortest transform chain between parent and child frames using BFS."""
-        # Check if direct transform exists
-        if (parent_frame, child_frame) in self.buffers:
-            transform = self.buffers[(parent_frame, child_frame)].get(time_point, time_tolerance)
-            return [transform] if transform else None
+        # Check if direct transform exists (already checked in get_transform, but for clarity)
+        direct = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
+        if direct is not None:
+            return [direct]
 
         # BFS to find shortest path
         queue = deque([(parent_frame, [])])
         visited = {parent_frame}
-
-        # build a graph of available transforms at the given time for the search
-        # not a fan of this, perhaps MultiTBuffer should already store the data
-        # in a traversible format
-        graph = self.graph(time_point, time_tolerance)
 
         while queue:
             current_frame, path = queue.popleft()
@@ -220,19 +227,47 @@ class MultiTBuffer:
             if current_frame == child_frame:
                 return path
 
-            if current_frame in graph:
-                for next_frame, transform in graph[current_frame]:
-                    if next_frame not in visited:
-                        visited.add(next_frame)
+            # Get all connections for current frame
+            connections = self.get_connections(current_frame)
+
+            for next_frame in connections:
+                if next_frame not in visited:
+                    visited.add(next_frame)
+
+                    # Get the transform between current and next frame
+                    transform = self.get_transform(
+                        current_frame, next_frame, time_point, time_tolerance
+                    )
+                    if transform:
                         queue.append((next_frame, path + [transform]))
 
         return None
 
+    def graph(self) -> str:
+        import subprocess
+
+        def connection_str(connection: tuple[str, str]):
+            (frame_from, frame_to) = connection
+            return f"{frame_from} -> {frame_to}"
+
+        graph_str = "\n".join(map(connection_str, self.buffers.keys()))
+
+        try:
+            result = subprocess.run(
+                ["diagon", "GraphDAG", "-style=Unicode"],
+                input=graph_str,
+                capture_output=True,
+                text=True,
+            )
+            return result.stdout if result.returncode == 0 else graph_str
+        except Exception:
+            return "no diagon installed"
+
     def __str__(self) -> str:
         if not self.buffers:
-            return "MultiTBuffer(empty)"
+            return f"{self.__class__.__name__}(empty)"
 
-        lines = [f"MultiTBuffer({len(self.buffers)} buffers):"]
+        lines = [f"{self.__class__.__name__}({len(self.buffers)} buffers):"]
         for buffer in self.buffers.values():
             lines.append(f"  {buffer}")
 
@@ -243,6 +278,7 @@ class MultiTBuffer:
 class PubSubTFConfig(TFConfig):
     topic: TopicT = None  # Required field but needs default for dataclass inheritance
     pubsub: Optional[PubSub[TopicT, MsgT]] = None
+    autostart: bool = True
 
 
 class PubSubTF(MultiTBuffer, TFSpec):
@@ -253,10 +289,16 @@ class PubSubTF(MultiTBuffer, TFSpec):
         MultiTBuffer.__init__(self, self.config.buffer_size)
 
         # Check if pubsub is a class (callable) or an instance
-        if callable(self.config.pubsub):
-            self.pubsub = self.config.pubsub()
+        if self.config.pubsub is not None:
+            if callable(self.config.pubsub):
+                self.pubsub = self.config.pubsub()
+            else:
+                self.pubsub = self.config.pubsub
         else:
-            self.pubsub = self.config.pubsub
+            raise ValueError("PubSub configuration is missing")
+
+        if self.config.autostart:
+            self.start()
 
     def start(self, sub=True) -> None:
         self.pubsub.start()
@@ -286,15 +328,15 @@ class PubSubTF(MultiTBuffer, TFSpec):
     ) -> Optional[Transform]:
         return super().get(parent_frame, child_frame, time_point, time_tolerance)
 
-    def receive_msg(self, channel: str, data: bytes) -> None:
-        msg = TFMessage.lcm_decode(data)
+    def receive_msg(self, msg: TFMessage, topic: TopicT) -> None:
         self.receive_tfmessage(msg)
 
 
 @dataclass
-class LCMPubsubConfig(TFConfig):
-    topic = Topic("/tf", TFMessage)
-    pubsub = LCM
+class LCMPubsubConfig(PubSubTFConfig):
+    topic: TopicT = field(default_factory=lambda: Topic("/tf", TFMessage))
+    pubsub: type[PubSub[TopicT, MsgT]] = LCM
+    autostart: bool = True
 
 
 class LCMTF(PubSubTF):

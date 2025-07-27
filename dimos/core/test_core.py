@@ -14,6 +14,7 @@
 
 import time
 from threading import Event, Thread
+from typing import Callable, Optional
 
 import pytest
 
@@ -29,81 +30,26 @@ from dimos.core import (
     start,
     stop,
 )
+from dimos.core.testing import MockRobotClient, dimos
+from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from dimos.types.vector import Vector
 from dimos.utils.testing import SensorReplay
 
-# never delete this line
-
-
-@pytest.fixture
-def dimos():
-    """Fixture to create a Dimos client for testing."""
-    client = start(2)
-    yield client
-    stop(client)
-
-
-class RobotClient(Module):
-    odometry: Out[Odometry] = None
-    lidar: Out[LidarMessage] = None
-    mov: In[Vector] = None
-
-    mov_msg_count = 0
-
-    def mov_callback(self, msg):
-        self.mov_msg_count += 1
-
-    def __init__(self):
-        super().__init__()
-        self._stop_event = Event()
-        self._thread = None
-
-    @rpc
-    def start(self):
-        self._thread = Thread(target=self.odomloop)
-        self._thread.start()
-        self.mov.subscribe(self.mov_callback)
-
-    @rpc
-    def odomloop(self):
-        odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
-        lidardata = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
-
-        lidariter = lidardata.iterate()
-        self._stop_event.clear()
-        while not self._stop_event.is_set():
-            for odom in odomdata.iterate():
-                if self._stop_event.is_set():
-                    return
-                print(odom)
-                odom.pubtime = time.perf_counter()
-                self.odometry.publish(odom)
-
-                lidarmsg = next(lidariter)
-                lidarmsg.pubtime = time.perf_counter()
-                self.lidar.publish(lidarmsg)
-                time.sleep(0.1)
-
-    @rpc
-    def stop(self):
-        self._stop_event.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=1.0)  # Wait up to 1 second for clean shutdown
+assert dimos
 
 
 class Navigation(Module):
-    mov: Out[Vector] = None
+    mov: Out[Vector3] = None
     lidar: In[LidarMessage] = None
-    target_position: In[Vector] = None
+    target_position: In[Vector3] = None
     odometry: In[Odometry] = None
 
     odom_msg_count = 0
     lidar_msg_count = 0
 
     @rpc
-    def navigate_to(self, target: Vector) -> bool: ...
+    def navigate_to(self, target: Vector3) -> bool: ...
 
     def __init__(self):
         super().__init__()
@@ -131,7 +77,6 @@ def test_classmethods():
     # Test class property access
     class_rpcs = Navigation.rpcs
     print("Class rpcs:", class_rpcs)
-
     # Test instance property access
     nav = Navigation()
     instance_rpcs = nav.rpcs
@@ -145,7 +90,7 @@ def test_classmethods():
     # Check that we have the expected RPC methods
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
-    assert len(class_rpcs) == 2, "Should have exactly 2 RPC methods"
+    assert len(class_rpcs) == 3
 
     # Check that the values are callable
     assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
@@ -159,19 +104,18 @@ def test_classmethods():
 
 
 @pytest.mark.module
-def test_deployment(dimos):
-    robot = dimos.deploy(RobotClient)
-    target_stream = RemoteOut[Vector](Vector, "target")
+def test_basic_deployment(dimos):
+    robot = dimos.deploy(MockRobotClient)
 
     print("\n")
     print("lidar stream", robot.lidar)
-    print("target stream", target_stream)
     print("odom stream", robot.odometry)
 
     nav = dimos.deploy(Navigation)
 
     # this one encodes proper LCM messages
     robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
+
     # odometry & mov using just a pickle over LCM
     robot.odometry.transport = pLCMTransport("/odom")
     nav.mov.transport = pLCMTransport("/mov")

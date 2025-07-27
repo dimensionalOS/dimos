@@ -16,23 +16,31 @@
 
 import time
 
-import pytest
-
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
+from dimos.core import TF
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.protocol.tf.tf import MultiTBuffer, TBuffer
 
 
-@pytest.mark.tool
-def test_tf_broadcast_and_query():
+def test_tf_main():
     """Test TF broadcasting and querying between two TF instances.
     If you run foxglove-bridge this will show up in the UI"""
-    from dimos.robot.module.tf import TF
 
+    # here we create broadcasting and receiving TF instance.
+    # this is to verify that comms work multiprocess, normally
+    # you'd use only one instance in your module
     broadcaster = TF()
     querier = TF()
 
     # Create a transform from world to robot
     current_time = time.time()
+
+    world_to_charger = Transform(
+        translation=Vector3(2.0, -2.0, 0.0),
+        rotation=Quaternion.from_euler(Vector3(0, 0, 2)),
+        frame_id="world",
+        child_frame_id="charger",
+        ts=current_time,
+    )
 
     world_to_robot = Transform(
         translation=Vector3(1.0, 2.0, 3.0),
@@ -43,13 +51,10 @@ def test_tf_broadcast_and_query():
     )
 
     # Broadcast the transform
-    broadcaster.send(world_to_robot)
-
+    broadcaster.publish(world_to_robot)
+    broadcaster.publish(world_to_charger)
     # Give time for the message to propagate
     time.sleep(0.05)
-
-    # Query should now be able to find the transform
-    assert querier.can_transform("world", "robot", current_time)
 
     # Verify frames are available
     frames = querier.get_frames()
@@ -65,21 +70,81 @@ def test_tf_broadcast_and_query():
         ts=current_time,
     )
 
-    random_object_in_view = Pose(
-        position=Vector3(1.0, 0.0, 0.0),
-    )
+    broadcaster.publish(robot_to_sensor)
 
-    broadcaster.send(robot_to_sensor)
     time.sleep(0.05)
 
-    # Should be able to query the full chain
-    assert querier.can_transform("world", "sensor", current_time)
+    # we can now query (from a separate process given we use querier) the transform tree
+    chain_transform = querier.get("world", "sensor")
 
-    t = querier.lookup("world", "sensor")
+    # broadcaster will agree with us
+    assert broadcaster.get("world", "sensor") == chain_transform
 
-    random_object_in_view.find_transform()
+    # The chain should compose: world->robot (1,2,3) + robot->sensor (0.5,0,0.2)
+    # Expected translation: (1.5, 2.0, 3.2)
+    assert abs(chain_transform.translation.x - 1.5) < 0.001
+    assert abs(chain_transform.translation.y - 2.0) < 0.001
+    assert abs(chain_transform.translation.z - 3.2) < 0.001
 
-    # Stop services
+    # we see something on camera
+    random_object_in_view = PoseStamped(
+        frame_id="random_object",
+        position=Vector3(1, 0, 0),
+    )
+
+    print("Random obj", random_object_in_view)
+
+    # random_object is perceived by the sensor
+    # we create a transform pointing from sensor to object
+    random_t = random_object_in_view.new_transform_from("sensor")
+
+    # we could have also done
+    assert random_t == random_object_in_view.new_transform_to("sensor").inverse()
+
+    print("randm t", random_t)
+
+    # we broadcast our object location
+    broadcaster.publish(random_t)
+
+    ## we could also publish world -> random_object if we wanted to
+    # broadcaster.publish(
+    #    broadcaster.get("world", "sensor") + random_object_in_view.new_transform("sensor").inverse()
+    # )
+    ## (this would mess with the transform system because it expects trees not graphs)
+    ## and our random_object would get re-connected to world from sensor
+
+    print(broadcaster)
+
+    # Give time for the message to propagate
+    time.sleep(0.05)
+
+    # we know where the object is in the world frame now
+    world_object = broadcaster.get("world", "random_object")
+
+    # both instances agree
+    assert querier.get("world", "random_object") == world_object
+
+    print("world object", world_object)
+
+    # if you have "diagon" https://diagon.arthursonzogni.com/ installed you can draw a graph
+    print(broadcaster.graph())
+
+    assert abs(world_object.translation.x - 1.5) < 0.001
+    assert abs(world_object.translation.y - 3.0) < 0.001
+    assert abs(world_object.translation.z - 3.2) < 0.001
+
+    # this doesn't work atm
+    robot_to_charger = broadcaster.get("robot", "charger")
+
+    # Expected: robot->world->charger
+    print(f"robot_to_charger translation: {robot_to_charger.translation}")
+    print(f"robot_to_charger rotation: {robot_to_charger.rotation}")
+
+    assert abs(robot_to_charger.translation.x - 1.0) < 0.001
+    assert abs(robot_to_charger.translation.y - (-4.0)) < 0.001
+    assert abs(robot_to_charger.translation.z - (-3.0)) < 0.001
+
+    # Stop services (they were autostarted but don't know how to autostop)
     broadcaster.stop()
     querier.stop()
 
@@ -179,6 +244,28 @@ class TestMultiTBuffer:
         assert len(ttbuffer.buffers) == 2
         assert ("world", "robot1") in ttbuffer.buffers
         assert ("world", "robot2") in ttbuffer.buffers
+
+    def test_graph(self):
+        ttbuffer = MultiTBuffer(buffer_size=10.0)
+
+        # Add transforms for different frame pairs
+        transform1 = Transform(
+            translation=Vector3(1.0, 0.0, 0.0),
+            frame_id="world",
+            child_frame_id="robot1",
+            ts=time.time(),
+        )
+
+        transform2 = Transform(
+            translation=Vector3(2.0, 0.0, 0.0),
+            frame_id="world",
+            child_frame_id="robot2",
+            ts=time.time(),
+        )
+
+        ttbuffer.receive_transform(transform1, transform2)
+
+        print(ttbuffer.graph())
 
     def test_get_latest_transform(self):
         ttbuffer = MultiTBuffer()
@@ -452,10 +539,9 @@ class TestMultiTBuffer:
         print(ttbuffer_str)
 
         assert "MultiTBuffer(3 buffers):" in ttbuffer_str
-        assert "TBuffer(1 msgs" in ttbuffer_str
-        assert "world -> robot1" in ttbuffer_str
-        assert "world -> robot2" in ttbuffer_str
-        assert "robot1 -> sensor" in ttbuffer_str
+        assert "TBuffer(world -> robot1, 1 msgs" in ttbuffer_str
+        assert "TBuffer(world -> robot2, 1 msgs" in ttbuffer_str
+        assert "TBuffer(robot1 -> sensor, 1 msgs" in ttbuffer_str
 
     def test_get_with_transform_chain_composition(self):
         ttbuffer = MultiTBuffer()
