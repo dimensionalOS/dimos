@@ -82,7 +82,7 @@ class PoseStamped(Pose, Timestamped):
             f"euler=[{self.roll:.3f}, {self.pitch:.3f}, {self.yaw:.3f}])"
         )
 
-    def new_transform(self, name: str) -> Transform:
+    def new_transform_to(self, name: str) -> Transform:
         return self.find_transform(
             PoseStamped(
                 frame_id=name,
@@ -90,6 +90,9 @@ class PoseStamped(Pose, Timestamped):
                 orientation=Quaternion(0, 0, 0, 1),  # Identity quaternion
             )
         )
+
+    def new_transform_from(self, name: str) -> Transform:
+        return self.new_transform_to(name).inverse()
 
     def find_transform(self, other: PoseStamped) -> Transform:
         inv_orientation = self.orientation.conjugate()

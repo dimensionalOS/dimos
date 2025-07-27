@@ -26,7 +26,7 @@ def test_tf_main():
     If you run foxglove-bridge this will show up in the UI"""
 
     # here we create broadcasting and receiving TF instance.
-    # this is to verify that comms work multiprocess, but normally
+    # this is to verify that comms work multiprocess, normally
     # you'd use only one instance in your module
     broadcaster = TF()
     querier = TF()
@@ -86,13 +86,24 @@ def test_tf_main():
 
     print("Random obj", random_object_in_view)
 
-    # we calculate a transform from sensor to the object
-    random_t = random_object_in_view.new_transform("sensor").inverse()
+    # random_object is perceived by the sensor
+    # we create a transform pointing from sensor to object
+    random_t = random_object_in_view.new_transform_from("sensor")
+
+    # we could have also done
+    assert random_t == random_object_in_view.new_transform_to("sensor").inverse()
 
     print("randm t", random_t)
 
     # we broadcast our object location
     broadcaster.publish(random_t)
+
+    ## we could also publish world -> random_object if we wanted to
+    # broadcaster.publish(
+    #    broadcaster.get("world", "sensor") + random_object_in_view.new_transform("sensor").inverse()
+    # )
+    ## (this would mess with the transform system because it expects trees not graphs)
+    ## and our random_object would get re-connected to world from sensor
 
     print(broadcaster)
 
