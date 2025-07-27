@@ -162,6 +162,16 @@ class MultiTBuffer:
             frames.add(child)
         return frames
 
+    def get_connections(self, frame_id: str) -> set[str]:
+        """Get all frames connected to the given frame (both as parent and child)."""
+        connections = set()
+        for parent, child in self.buffers:
+            if parent == frame_id:
+                connections.add(child)
+            if child == frame_id:
+                connections.add(parent)
+        return connections
+
     def get_transform(
         self,
         parent_frame: str,
@@ -169,11 +179,18 @@ class MultiTBuffer:
         time_point: Optional[float] = None,
         time_tolerance: Optional[float] = None,
     ) -> Optional[Transform]:
+        # Check forward direction
         key = (parent_frame, child_frame)
-        if key not in self.buffers:
-            return None
+        if key in self.buffers:
+            return self.buffers[key].get(time_point, time_tolerance)
 
-        return self.buffers[key].get(time_point, time_tolerance)
+        # Check reverse direction and return inverse
+        reverse_key = (child_frame, parent_frame)
+        if reverse_key in self.buffers:
+            transform = self.buffers[reverse_key].get(time_point, time_tolerance)
+            return transform.inverse() if transform else None
+
+        return None
 
     def get(self, *args, **kwargs) -> Optional[Transform]:
         simple = self.get_transform(*args, **kwargs)
@@ -187,21 +204,6 @@ class MultiTBuffer:
 
         return reduce(lambda t1, t2: t1 + t2, complex)
 
-    def _graph(
-        self,
-        time_point: Optional[float] = None,
-        time_tolerance: Optional[float] = None,
-    ) -> dict[str, list[tuple[str, Transform]]]:
-        # Build a graph of available transforms at the given time
-        graph = {}
-        for (from_frame, to_frame), buffer in self.buffers.items():
-            transform = buffer.get(time_point, time_tolerance)
-            if transform:
-                if from_frame not in graph:
-                    graph[from_frame] = []
-                graph[from_frame].append((to_frame, transform))
-        return graph
-
     def get_transform_search(
         self,
         parent_frame: str,
@@ -210,19 +212,14 @@ class MultiTBuffer:
         time_tolerance: Optional[float] = None,
     ) -> Optional[list[Transform]]:
         """Search for shortest transform chain between parent and child frames using BFS."""
-        # Check if direct transform exists
-        if (parent_frame, child_frame) in self.buffers:
-            transform = self.buffers[(parent_frame, child_frame)].get(time_point, time_tolerance)
-            return [transform] if transform else None
+        # Check if direct transform exists (already checked in get_transform, but for clarity)
+        direct = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
+        if direct is not None:
+            return [direct]
 
         # BFS to find shortest path
         queue = deque([(parent_frame, [])])
         visited = {parent_frame}
-
-        # build a graph of available transforms at the given time for the search
-        # not a fan of this, perhaps MultiTBuffer should already store the data
-        # in a traversible format
-        graph = self._graph(time_point, time_tolerance)
 
         while queue:
             current_frame, path = queue.popleft()
@@ -230,10 +227,18 @@ class MultiTBuffer:
             if current_frame == child_frame:
                 return path
 
-            if current_frame in graph:
-                for next_frame, transform in graph[current_frame]:
-                    if next_frame not in visited:
-                        visited.add(next_frame)
+            # Get all connections for current frame
+            connections = self.get_connections(current_frame)
+
+            for next_frame in connections:
+                if next_frame not in visited:
+                    visited.add(next_frame)
+
+                    # Get the transform between current and next frame
+                    transform = self.get_transform(
+                        current_frame, next_frame, time_point, time_tolerance
+                    )
+                    if transform:
                         queue.append((next_frame, path + [transform]))
 
         return None
