@@ -1,5 +1,10 @@
 name: docker
-on: push
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
 
 permissions:
   contents: read
