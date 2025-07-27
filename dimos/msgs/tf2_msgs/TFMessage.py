@@ -36,6 +36,8 @@ from dimos_lcm.std_msgs import Time as LCMTime
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
 
 class TFMessage:
@@ -82,20 +84,15 @@ class TFMessage:
                 lcm_transform_stamped.header.stamp.nsec / 1_000_000_000
             )
 
-            print(
-                lcm_transform_stamped.transform.translation,
-                lcm_transform_stamped.transform.rotation,
-                lcm_transform_stamped.header.frame_id,
-                ts,
-            )
+            # Create Transform with our custom types
+            lcm_trans = lcm_transform_stamped.transform.translation
+            lcm_rot = lcm_transform_stamped.transform.rotation
 
-            print(Transform)
-
-            # Create Transform
             transform = Transform(
-                translation=lcm_transform_stamped.transform.translation,
-                rotation=lcm_transform_stamped.transform.rotation,
+                translation=Vector3(lcm_trans.x, lcm_trans.y, lcm_trans.z),
+                rotation=Quaternion(lcm_rot.x, lcm_rot.y, lcm_rot.z, lcm_rot.w),
                 frame_id=lcm_transform_stamped.header.frame_id,
+                child_frame_id=lcm_transform_stamped.child_frame_id,
                 ts=ts,
             )
             transforms.append(transform)

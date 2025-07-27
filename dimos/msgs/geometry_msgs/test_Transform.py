@@ -138,7 +138,14 @@ def test_pose_add_transform():
     assert np.isclose(transformed_pose.orientation.z, np.sin(angle / 2), atol=1e-10)
     assert np.isclose(transformed_pose.orientation.w, np.cos(angle / 2), atol=1e-10)
 
-    found_tf = initial_pose.find_transform(transformed_pose)
+    initial_pose_stamped = PoseStamped(
+        position=initial_pose.position, orientation=initial_pose.orientation
+    )
+    transformed_pose_stamped = PoseStamped(
+        position=transformed_pose.position, orientation=transformed_pose.orientation
+    )
+
+    found_tf = initial_pose_stamped.find_transform(transformed_pose_stamped)
 
     assert found_tf.translation == transform.translation
     assert found_tf.rotation == transform.rotation

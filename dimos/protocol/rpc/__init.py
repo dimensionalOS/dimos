@@ -12,5 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.protocol.rpc.pubsubrpc import Lcm
+from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPC, RPCClient, RPCServer

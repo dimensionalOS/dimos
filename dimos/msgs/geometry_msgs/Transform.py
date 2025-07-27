@@ -39,7 +39,7 @@ class Transform(Timestamped):
         translation: Vector3 | None = None,
         rotation: Quaternion | None = None,
         frame_id: str = "world",
-        child_frame_id: str = "base_link",
+        child_frame_id: str = "unset",
         ts: float = 0.0,
         **kwargs,
     ) -> None:
@@ -113,6 +113,34 @@ class Transform(Timestamped):
             ts=self.ts,
         )
 
+    def inverse(self) -> "Transform":
+        """Compute the inverse transform.
+
+        The inverse transform reverses the direction of the transformation.
+        If this transform goes from frame A to frame B, the inverse goes from B to A.
+
+        Returns:
+            A new Transform representing the inverse transformation
+        """
+        # Inverse rotation
+        inv_rotation = self.rotation.inverse()
+
+        # Inverse translation: -R^(-1) * t
+        inv_translation = inv_rotation.rotate_vector(self.translation)
+        inv_translation = Vector3(-inv_translation.x, -inv_translation.y, -inv_translation.z)
+
+        return Transform(
+            translation=inv_translation,
+            rotation=inv_rotation,
+            frame_id=self.child_frame_id,  # Swap frame references
+            child_frame_id=self.frame_id,
+            ts=self.ts,
+        )
+
+    def __neg__(self) -> "Transform":
+        """Unary minus operator returns the inverse transform."""
+        return self.inverse()
+
     @classmethod
     def from_pose(cls, frame_id: str, pose: "Pose | PoseStamped") -> "Transform":
         """Create a Transform from a Pose or PoseStamped.
@@ -140,9 +168,29 @@ class Transform(Timestamped):
             return cls(
                 translation=pose.position,
                 rotation=pose.orientation,
+                child_frame_id=frame_id,
             )
         else:
             raise TypeError(f"Expected Pose or PoseStamped, got {type(pose).__name__}")
+
+    def to_pose(self) -> "PoseStamped":
+        """Create a Transform from a Pose or PoseStamped.
+
+        Args:
+            pose: A Pose or PoseStamped object to convert
+
+        Returns:
+            A Transform with the same translation and rotation as the pose
+        """
+        # Import locally to avoid circular imports
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
+        # Handle both Pose and PoseStamped
+        return PoseStamped(
+            position=self.translation,
+            orientation=self.rotation,
+            frame_id=self.frame_id,
+        )
 
     def lcm_encode(self) -> bytes:
         # we get a circular import otherwise

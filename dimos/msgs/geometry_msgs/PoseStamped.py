@@ -26,6 +26,7 @@ from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
 from dimos.types.timestamped import Timestamped
 
@@ -79,4 +80,32 @@ class PoseStamped(Pose, Timestamped):
         return (
             f"PoseStamped(pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}], "
             f"euler=[{self.roll:.3f}, {self.pitch:.3f}, {self.yaw:.3f}])"
+        )
+
+    def new_transform_to(self, name: str) -> Transform:
+        return self.find_transform(
+            PoseStamped(
+                frame_id=name,
+                position=Vector3(0, 0, 0),
+                orientation=Quaternion(0, 0, 0, 1),  # Identity quaternion
+            )
+        )
+
+    def new_transform_from(self, name: str) -> Transform:
+        return self.new_transform_to(name).inverse()
+
+    def find_transform(self, other: PoseStamped) -> Transform:
+        inv_orientation = self.orientation.conjugate()
+
+        pos_diff = other.position - self.position
+
+        local_translation = inv_orientation.rotate_vector(pos_diff)
+
+        relative_rotation = inv_orientation * other.orientation
+
+        return Transform(
+            child_frame_id=other.frame_id,
+            frame_id=self.frame_id,
+            translation=local_translation,
+            rotation=relative_rotation,
         )

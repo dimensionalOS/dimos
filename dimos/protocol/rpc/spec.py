@@ -25,9 +25,8 @@ Args = Tuple[List, Dict[str, Any]]
 
 # module that we can inspect for RPCs
 class RPCInspectable(Protocol):
-    @classmethod
     @property
-    def rpcs() -> dict[str, Callable]: ...
+    def rpcs(self) -> dict[str, Callable]: ...
 
 
 class RPCClient(Protocol):
