@@ -4,44 +4,141 @@ on:
   workflow_run:
     workflows: ["docker"]
     types: [completed]
-  workflow_dispatch: 
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
 
 jobs:
   cleanup:
     runs-on: [self-hosted, Linux]
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
       - name: Check disk usage
         id: disk-check
         run: |
+          echo "=== Initial disk usage ==="
+          df -h /
+          docker system df
+          
           USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
           echo "Disk usage: ${USAGE}%"
           echo "usage=${USAGE}" >> $GITHUB_OUTPUT
           
-      - name: Clean Docker images
+      - name: Clean deleted branches
+        if: always()
+        run: |
+          echo "=== Cleaning images from deleted branches ==="
+          
+          # Get list of all remote branches
+          git ls-remote --heads origin | awk '{print $2}' | sed 's|refs/heads/||' > /tmp/active_branches.txt
+          
+          # Check each docker image tag against branch list
+          docker images --format "{{.Repository}}:{{.Tag}}|{{.ID}}" | \
+          grep "ghcr.io/dimensionalos" | \
+          grep -v ":<none>" | \
+          while IFS='|' read image_ref id; do
+            tag=$(echo "$image_ref" | cut -d: -f2)
+            
+            # Skip if tag matches an active branch
+            if grep -qx "$tag" /tmp/active_branches.txt; then
+              echo "Branch exists: $tag - keeping $image_ref"
+            else
+              echo "Branch deleted: $tag - removing $image_ref"
+              docker rmi "$id" 2>/dev/null || true
+            fi
+          done
+          
+          rm -f /tmp/active_branches.txt
+          
+      - name: Clean Docker images - Keep newest per tag
         if: steps.disk-check.outputs.usage > 50
         run: |
-          echo "=== Docker usage before cleanup ==="
-          docker system df
+          echo "=== Smart cleanup - keeping newest image per tag ==="
           
-          echo -e "\n=== Removing dangling images ==="
-          docker images -f "dangling=true" -q | xargs -r docker rmi || true
+          # Group by repository AND tag, keep newest of each
+          docker images --format "{{.Repository}}|{{.Tag}}|{{.ID}}" | \
+          grep "ghcr.io/dimensionalos" | \
+          grep -v "<none>" | \
+          while IFS='|' read repo tag id; do
+            created_ts=$(docker inspect -f '{{.Created}}' "$id" 2>/dev/null)
+            created_unix=$(date -d "$created_ts" +%s 2>/dev/null || echo "0")
+            echo "${repo}|${tag}|${id}|${created_unix}"
+          done | sort -t'|' -k1,1 -k2,2 -k4,4nr | \
+          awk -F'|' '
+          {
+            repo=$1
+            tag=$2
+            id=$3
+            repo_tag = repo ":" tag
+            
+            # Always keep protected tags
+            if (tag ~ /^(main|dev|latest)$/) {
+              print "Keeping protected: " repo_tag
+              next
+            }
+            
+            # For each unique repo:tag combination, keep the newest
+            if (!(repo_tag in seen_combos)) {
+              seen_combos[repo_tag] = 1
+              print "Keeping newest: " repo_tag
+            } else {
+              print "Removing older: " repo_tag " (" id ")"
+              system("docker rmi " id " 2>/dev/null || true")
+            }
+          }'
           
-          echo -e "\n=== Docker usage after cleanup ==="
-          docker system df
+          # Clean dangling images
+          docker image prune -f
           
-          echo -e "\n=== Disk usage after cleanup ==="
-          df -h /
+          # Clean unused volumes
+          docker volume prune -f
           
-      - name: Aggressive cleanup if disk critically full
-        if: steps.disk-check.outputs.usage > 90
+      - name: Moderate cleanup
+        if: steps.disk-check.outputs.usage > 70
         run: |
-          echo "=== CRITICAL: Disk usage above 90% - Aggressive cleanup ==="
+          echo "=== Moderate cleanup - removing all but main/dev/latest ==="
           
-          echo -e "\n=== Removing images older than 3 days ==="
-          docker image prune -a --filter "until=72h" -f
+          # Remove all except main, dev, latest tags
+          docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | \
+          grep -E "ghcr.io/dimensionalos" | \
+          grep -vE ":(main|dev|latest)$" | \
+          awk '{print $2}' | xargs -r docker rmi -f || true
           
-          echo -e "\n=== Final docker usage ==="
+          # Clean all unused volumes
+          docker volume prune -a -f
+          
+          # Clean build cache older than 3 days
+          docker builder prune -a -f --filter "until=72h"
+          
+      - name: Aggressive cleanup
+        if: steps.disk-check.outputs.usage > 85
+        run: |
+          echo "=== AGGRESSIVE cleanup - removing everything except main/dev ==="
+          
+          # Remove ALL images except main and dev tags
+          docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | \
+          grep -E "ghcr.io/dimensionalos" | \
+          grep -vE ":(main|dev)$" | \
+          awk '{print $2}' | xargs -r docker rmi -f || true
+          
+          # Clean everything else
+          docker system prune -a -f --volumes
+          
+      - name: Final disk check
+        if: always()
+        run: |
+          echo "=== Final disk usage ==="
+          df -h /
           docker system df
           
-          echo -e "\n=== Final disk usage ==="
-          df -h /
+          FINAL_USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
+          echo "Final disk usage: ${FINAL_USAGE}%"
+          
+          if [ $FINAL_USAGE -gt 90 ]; then
+            echo "::error::Disk still critically full after cleanup!"
+            exit 1
+          fi
