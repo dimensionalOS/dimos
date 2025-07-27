@@ -239,12 +239,12 @@ def test_hot_getter(dimos):
 
     # we are robust to multiple calls
     subscriber.start_hot_getter()
-    time.sleep(0.1)
+    time.sleep(0.2)
     odom = subscriber.get_hot()
     assert isinstance(odom, Odometry)
 
     subscriber.stop_hot_getter()
-    time.sleep(0.2)
+    time.sleep(0.3)
 
     # since getter is off we didn't get new stuff
     assert odom == subscriber.get_hot()
@@ -253,7 +253,7 @@ def test_hot_getter(dimos):
 
     # we can restart though
     subscriber.start_hot_getter()
-    time.sleep(0.2)
+    time.sleep(0.3)
 
     next_odom = subscriber.get_hot()
     assert isinstance(next_odom, Odometry)

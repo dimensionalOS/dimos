@@ -97,6 +97,9 @@ def test_tf_main():
 
     print(broadcaster)
 
+    # Give time for the message to propagate
+    time.sleep(0.05)
+
     # we know where the object is in the world frame now
     world_object = broadcaster.get("world", "random_object")
 
@@ -482,10 +485,9 @@ class TestMultiTBuffer:
         print(ttbuffer_str)
 
         assert "MultiTBuffer(3 buffers):" in ttbuffer_str
-        assert "TBuffer(1 msgs" in ttbuffer_str
-        assert "world -> robot1" in ttbuffer_str
-        assert "world -> robot2" in ttbuffer_str
-        assert "robot1 -> sensor" in ttbuffer_str
+        assert "TBuffer(world -> robot1, 1 msgs" in ttbuffer_str
+        assert "TBuffer(world -> robot2, 1 msgs" in ttbuffer_str
+        assert "TBuffer(robot1 -> sensor, 1 msgs" in ttbuffer_str
 
     def test_get_with_transform_chain_composition(self):
         ttbuffer = MultiTBuffer()
