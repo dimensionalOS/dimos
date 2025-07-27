@@ -14,6 +14,9 @@ from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.core.transport import LCMTransport, ZenohTransport, pLCMTransport
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPC
+from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
+
+__all__ = ["TF", "LCMTF", "PubSubTF", "TFSpec", "TFConfig"]
 
 
 def patch_actor(actor, cls): ...
