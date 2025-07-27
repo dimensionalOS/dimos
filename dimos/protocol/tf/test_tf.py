@@ -34,6 +34,14 @@ def test_tf_main():
     # Create a transform from world to robot
     current_time = time.time()
 
+    world_to_charger = Transform(
+        translation=Vector3(2.0, -2.0, 0.0),
+        rotation=Quaternion.from_euler(Vector3(0, 0, 2)),
+        frame_id="world",
+        child_frame_id="charger",
+        ts=current_time,
+    )
+
     world_to_robot = Transform(
         translation=Vector3(1.0, 2.0, 3.0),
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity rotation
@@ -44,7 +52,7 @@ def test_tf_main():
 
     # Broadcast the transform
     broadcaster.publish(world_to_robot)
-
+    broadcaster.publish(world_to_charger)
     # Give time for the message to propagate
     time.sleep(0.05)
 
@@ -124,6 +132,11 @@ def test_tf_main():
     assert abs(world_object.translation.x - 1.5) < 0.001
     assert abs(world_object.translation.y - 3.0) < 0.001
     assert abs(world_object.translation.z - 3.2) < 0.001
+
+    # this doesn't work atm
+    robot_to_charger = broadcaster.get("robot", "charger")
+
+    assert robot_to_charger != None
 
     # Stop services (they were autostarted but don't know how to autostop)
     broadcaster.stop()
