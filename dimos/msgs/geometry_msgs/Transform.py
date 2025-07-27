@@ -168,6 +168,7 @@ class Transform(Timestamped):
             return cls(
                 translation=pose.position,
                 rotation=pose.orientation,
+                child_frame_id=frame_id,
             )
         else:
             raise TypeError(f"Expected Pose or PoseStamped, got {type(pose).__name__}")
