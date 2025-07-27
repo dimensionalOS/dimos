@@ -19,7 +19,7 @@ from abc import abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from functools import reduce
-from typing import Optional, TypeVar
+from typing import Optional, TypeVar, Union
 
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.tf2_msgs import TFMessage
@@ -49,7 +49,8 @@ class TFSpec(Service[TFConfig]):
     @abstractmethod
     def publish_static(self, *args: Transform) -> None: ...
 
-    def get_frames(self) -> set[str]: ...
+    def get_frames(self) -> set[str]:
+        return set()
 
     @abstractmethod
     def get(
@@ -197,7 +198,7 @@ class MultiTBuffer:
         if simple is not None:
             return simple
 
-        complex: list[Transform] = self.get_transform_search(*args, **kwargs)
+        complex = self.get_transform_search(*args, **kwargs)
 
         if complex is None:
             return None
@@ -218,7 +219,7 @@ class MultiTBuffer:
             return [direct]
 
         # BFS to find shortest path
-        queue = deque([(parent_frame, [])])
+        queue: deque[tuple[str, list[Transform]]] = deque([(parent_frame, [])])
         visited = {parent_frame}
 
         while queue:
@@ -276,34 +277,37 @@ class MultiTBuffer:
 
 @dataclass
 class PubSubTFConfig(TFConfig):
-    topic: TopicT = None  # Required field but needs default for dataclass inheritance
-    pubsub: Optional[PubSub[TopicT, MsgT]] = None
+    topic: Optional[Topic] = None  # Required field but needs default for dataclass inheritance
+    pubsub: Union[type[PubSub], PubSub, None] = None
     autostart: bool = True
 
 
 class PubSubTF(MultiTBuffer, TFSpec):
-    default_config = PubSubTFConfig
+    default_config: type[PubSubTFConfig] = PubSubTFConfig
 
     def __init__(self, **kwargs) -> None:
         TFSpec.__init__(self, **kwargs)
         MultiTBuffer.__init__(self, self.config.buffer_size)
 
         # Check if pubsub is a class (callable) or an instance
-        if self.config.pubsub is not None:
-            if callable(self.config.pubsub):
-                self.pubsub = self.config.pubsub()
+        pubsub_config = getattr(self.config, "pubsub", None)
+        if pubsub_config is not None:
+            if callable(pubsub_config):
+                self.pubsub = pubsub_config()
             else:
-                self.pubsub = self.config.pubsub
+                self.pubsub = pubsub_config
         else:
             raise ValueError("PubSub configuration is missing")
 
-        if self.config.autostart:
+        if getattr(self.config, "autostart", True):
             self.start()
 
     def start(self, sub=True) -> None:
         self.pubsub.start()
         if sub:
-            self.pubsub.subscribe(self.config.topic, self.receive_msg)
+            topic = getattr(self.config, "topic", None)
+            if topic:
+                self.pubsub.subscribe(topic, self.receive_msg)
 
     def stop(self):
         self.pubsub.stop()
@@ -314,7 +318,9 @@ class PubSubTF(MultiTBuffer, TFSpec):
             raise ValueError("PubSub is not configured.")
 
         self.receive_transform(*args)
-        self.pubsub.publish(self.config.topic, TFMessage(*args))
+        topic = getattr(self.config, "topic", None)
+        if topic:
+            self.pubsub.publish(topic, TFMessage(*args))
 
     def publish_static(self, *args: Transform) -> None:
         raise NotImplementedError("Static transforms not implemented in PubSubTF.")
@@ -328,19 +334,19 @@ class PubSubTF(MultiTBuffer, TFSpec):
     ) -> Optional[Transform]:
         return super().get(parent_frame, child_frame, time_point, time_tolerance)
 
-    def receive_msg(self, msg: TFMessage, topic: TopicT) -> None:
+    def receive_msg(self, msg: TFMessage, topic: Topic) -> None:
         self.receive_tfmessage(msg)
 
 
 @dataclass
 class LCMPubsubConfig(PubSubTFConfig):
-    topic: TopicT = field(default_factory=lambda: Topic("/tf", TFMessage))
-    pubsub: type[PubSub[TopicT, MsgT]] = LCM
+    topic: Topic = field(default_factory=lambda: Topic("/tf", TFMessage))
+    pubsub: Union[type[PubSub], PubSub, None] = LCM
     autostart: bool = True
 
 
 class LCMTF(PubSubTF):
-    default_config = LCMPubsubConfig
+    default_config: type[LCMPubsubConfig] = LCMPubsubConfig
 
 
 TF = LCMTF

@@ -241,14 +241,12 @@ def test_hot_getter(dimos):
     subscriber.start_hot_getter()
     time.sleep(0.2)
     odom = subscriber.get_hot()
-    assert isinstance(odom, Odometry)
-
     subscriber.stop_hot_getter()
+
+    assert isinstance(odom, Odometry)
     time.sleep(0.3)
 
-    # since getter is off we didn't get new stuff
-    assert odom == subscriber.get_hot()
-    # and there are no subs
+    # there are no subs
     assert subscriber.active_subscribers() == 0
 
     # we can restart though

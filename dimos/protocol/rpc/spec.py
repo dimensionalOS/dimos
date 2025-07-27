@@ -83,7 +83,6 @@ class RPCServer(Protocol):
                 return getattr(module, fname)(*args, **kwargs)
 
             topic = name + "/" + fname
-            print(topic)
             self.serve_rpc(override_f, topic)
 
 
