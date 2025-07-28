@@ -239,7 +239,7 @@ class UnitreeWebRTCConnection(ConnectionInterface):
                 if stop_event.is_set():
                     return
                 frame = await track.recv()
-                subject.on_next(Image.from_numpy(frame.to_ndarray(format="bgr24")))
+                subject.on_next(Image.from_numpy(frame.to_ndarray(format="rgb24")))
 
         self.conn.video.add_track_callback(accept_track)
 

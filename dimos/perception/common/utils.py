@@ -14,13 +14,111 @@
 
 import cv2
 import numpy as np
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Any, Union
 from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
+from dimos_lcm.vision_msgs import Detection3D, Detection2D, BoundingBox2D
 import torch
 
 logger = setup_logger("dimos.perception.common.utils")
+
+
+def project_3d_points_to_2d(
+    points_3d: np.ndarray, camera_intrinsics: Union[List[float], np.ndarray]
+) -> np.ndarray:
+    """
+    Project 3D points to 2D image coordinates using camera intrinsics.
+
+    Args:
+        points_3d: Nx3 array of 3D points (X, Y, Z)
+        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] list or 3x3 matrix
+
+    Returns:
+        Nx2 array of 2D image coordinates (u, v)
+    """
+    if len(points_3d) == 0:
+        return np.zeros((0, 2), dtype=np.int32)
+
+    # Filter out points with zero or negative depth
+    valid_mask = points_3d[:, 2] > 0
+    if not np.any(valid_mask):
+        return np.zeros((0, 2), dtype=np.int32)
+
+    valid_points = points_3d[valid_mask]
+
+    # Extract camera parameters
+    if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
+        fx, fy, cx, cy = camera_intrinsics
+    else:
+        camera_matrix = np.array(camera_intrinsics)
+        fx = camera_matrix[0, 0]
+        fy = camera_matrix[1, 1]
+        cx = camera_matrix[0, 2]
+        cy = camera_matrix[1, 2]
+
+    # Project to image coordinates
+    u = (valid_points[:, 0] * fx / valid_points[:, 2]) + cx
+    v = (valid_points[:, 1] * fy / valid_points[:, 2]) + cy
+
+    # Round to integer pixel coordinates
+    points_2d = np.column_stack([u, v]).astype(np.int32)
+
+    return points_2d
+
+
+def project_2d_points_to_3d(
+    points_2d: np.ndarray,
+    depth_values: np.ndarray,
+    camera_intrinsics: Union[List[float], np.ndarray],
+) -> np.ndarray:
+    """
+    Project 2D image points to 3D coordinates using depth values and camera intrinsics.
+
+    Args:
+        points_2d: Nx2 array of 2D image coordinates (u, v)
+        depth_values: N-length array of depth values (Z coordinates) for each point
+        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] list or 3x3 matrix
+
+    Returns:
+        Nx3 array of 3D points (X, Y, Z)
+    """
+    if len(points_2d) == 0:
+        return np.zeros((0, 3), dtype=np.float32)
+
+    # Ensure depth_values is a numpy array
+    depth_values = np.asarray(depth_values)
+
+    # Filter out points with zero or negative depth
+    valid_mask = depth_values > 0
+    if not np.any(valid_mask):
+        return np.zeros((0, 3), dtype=np.float32)
+
+    valid_points_2d = points_2d[valid_mask]
+    valid_depths = depth_values[valid_mask]
+
+    # Extract camera parameters
+    if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
+        fx, fy, cx, cy = camera_intrinsics
+    else:
+        camera_matrix = np.array(camera_intrinsics)
+        fx = camera_matrix[0, 0]
+        fy = camera_matrix[1, 1]
+        cx = camera_matrix[0, 2]
+        cy = camera_matrix[1, 2]
+
+    # Back-project to 3D coordinates
+    # X = (u - cx) * Z / fx
+    # Y = (v - cy) * Z / fy
+    # Z = depth
+    X = (valid_points_2d[:, 0] - cx) * valid_depths / fx
+    Y = (valid_points_2d[:, 1] - cy) * valid_depths / fy
+    Z = valid_depths
+
+    # Stack into 3D points
+    points_3d = np.column_stack([X, Y, Z]).astype(np.float32)
+
+    return points_3d
 
 
 def colorize_depth(depth_img: np.ndarray, max_depth: float = 5.0) -> Optional[np.ndarray]:
@@ -329,3 +427,68 @@ def combine_object_data(
             combined.append(obj_copy)
 
     return combined
+
+
+def point_in_bbox(point: Tuple[int, int], bbox: List[float]) -> bool:
+    """
+    Check if a point is inside a bounding box.
+
+    Args:
+        point: (x, y) coordinates
+        bbox: Bounding box [x1, y1, x2, y2]
+
+    Returns:
+        True if point is inside bbox
+    """
+    x, y = point
+    x1, y1, x2, y2 = bbox
+    return x1 <= x <= x2 and y1 <= y <= y2
+
+
+def bbox2d_to_corners(bbox_2d: BoundingBox2D) -> Tuple[float, float, float, float]:
+    """
+    Convert BoundingBox2D from center format to corner format.
+
+    Args:
+        bbox_2d: BoundingBox2D with center and size
+
+    Returns:
+        Tuple of (x1, y1, x2, y2) corner coordinates
+    """
+    center_x = bbox_2d.center.position.x
+    center_y = bbox_2d.center.position.y
+    half_width = bbox_2d.size_x / 2.0
+    half_height = bbox_2d.size_y / 2.0
+
+    x1 = center_x - half_width
+    y1 = center_y - half_height
+    x2 = center_x + half_width
+    y2 = center_y + half_height
+
+    return x1, y1, x2, y2
+
+
+def find_clicked_detection(
+    click_pos: Tuple[int, int], detections_2d: List[Detection2D], detections_3d: List[Detection3D]
+) -> Optional[Detection3D]:
+    """
+    Find which detection was clicked based on 2D bounding boxes.
+
+    Args:
+        click_pos: (x, y) click position
+        detections_2d: List of Detection2D objects
+        detections_3d: List of Detection3D objects (must be 1:1 correspondence)
+
+    Returns:
+        Corresponding Detection3D object if found, None otherwise
+    """
+    click_x, click_y = click_pos
+
+    for i, det_2d in enumerate(detections_2d):
+        if det_2d.bbox and i < len(detections_3d):
+            x1, y1, x2, y2 = bbox2d_to_corners(det_2d.bbox)
+
+            if x1 <= click_x <= x2 and y1 <= click_y <= y2:
+                return detections_3d[i]
+
+    return None

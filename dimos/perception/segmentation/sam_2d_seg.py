@@ -42,13 +42,12 @@ class Sam2DSegmenter:
         self,
         model_path="models_fastsam",
         model_name="FastSAM-s.onnx",
-        device="cpu",
         min_analysis_interval=5.0,
         use_tracker=True,
         use_analyzer=True,
         use_rich_labeling=False,
+        use_filtering=True,
     ):
-        self.device = device
         if is_cuda_available():
             logger.info("Using CUDA for SAM 2d segmenter")
             if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
@@ -62,6 +61,7 @@ class Sam2DSegmenter:
         self.use_tracker = use_tracker
         self.use_analyzer = use_analyzer
         self.use_rich_labeling = use_rich_labeling
+        self.use_filtering = use_filtering
 
         module_dir = os.path.dirname(__file__)
         self.tracker_config = os.path.join(module_dir, "config", "custom_tracker.yaml")
@@ -98,11 +98,10 @@ class Sam2DSegmenter:
             source=image,
             device=self.device,
             retina_masks=True,
-            conf=0.6,
-            iou=0.9,
+            conf=0.3,
+            iou=0.5,
             persist=True,
             verbose=False,
-            tracker=self.tracker_config,
         )
 
         if len(results) > 0:
@@ -112,14 +111,25 @@ class Sam2DSegmenter:
             )
 
             # Filter results
-            (
-                filtered_masks,
-                filtered_bboxes,
-                filtered_track_ids,
-                filtered_probs,
-                filtered_names,
-                filtered_texture_values,
-            ) = filter_segmentation_results(image, masks, bboxes, track_ids, probs, names, areas)
+            if self.use_filtering:
+                (
+                    filtered_masks,
+                    filtered_bboxes,
+                    filtered_track_ids,
+                    filtered_probs,
+                    filtered_names,
+                    filtered_texture_values,
+                ) = filter_segmentation_results(
+                    image, masks, bboxes, track_ids, probs, names, areas
+                )
+            else:
+                # Use original results without filtering
+                filtered_masks = masks
+                filtered_bboxes = bboxes
+                filtered_track_ids = track_ids
+                filtered_probs = probs
+                filtered_names = names
+                filtered_texture_values = []
 
             if self.use_tracker:
                 # Update tracker with filtered results
