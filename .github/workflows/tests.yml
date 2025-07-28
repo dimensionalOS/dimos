@@ -59,7 +59,7 @@ jobs:
         
       - name: Run tests
         run: |
-          /entrypoint.sh bash -c "${{ inputs.cmd }}"
+          /entrypoint.sh bash -c "git config --global --add safe.directory ${pwd}; ${{ inputs.cmd }}"
           
       - name: check disk space
         if: failure()
