@@ -82,11 +82,9 @@ class WavefrontFrontierExplorer:
 
     def __init__(
         self,
-        min_frontier_size: int = 10,
+        min_frontier_size: int = 8,
         occupancy_threshold: int = 65,
-        subsample_resolution: int = 2,
-        min_distance_from_robot: float = 0.5,
-        explored_area_buffer: float = 0.5,
+        subsample_resolution: int = 3,
         min_distance_from_obstacles: float = 0.6,
         info_gain_threshold: float = 0.03,
         num_no_gain_attempts: int = 4,
@@ -101,8 +99,6 @@ class WavefrontFrontierExplorer:
             min_frontier_size: Minimum number of points to consider a valid frontier
             occupancy_threshold: Cost threshold above which a cell is considered occupied (0-255)
             subsample_resolution: Factor by which to subsample the costmap for faster processing (1=no subsampling, 2=half resolution, 4=quarter resolution)
-            min_distance_from_robot: Minimum distance frontier must be from robot (meters)
-            explored_area_buffer: Buffer distance around free areas to consider as explored (meters)
             min_distance_from_obstacles: Minimum distance frontier must be from obstacles (meters)
             info_gain_threshold: Minimum percentage increase in costmap information required to continue exploration (0.05 = 5%)
             num_no_gain_attempts: Maximum number of consecutive attempts with no information gain
@@ -113,8 +109,6 @@ class WavefrontFrontierExplorer:
         self.min_frontier_size = min_frontier_size
         self.occupancy_threshold = occupancy_threshold
         self.subsample_resolution = subsample_resolution
-        self.min_distance_from_robot = min_distance_from_robot
-        self.explored_area_buffer = explored_area_buffer
         self.min_distance_from_obstacles = min_distance_from_obstacles
         self.info_gain_threshold = info_gain_threshold
         self.num_no_gain_attempts = num_no_gain_attempts
@@ -513,15 +507,6 @@ class WavefrontFrontierExplorer:
         valid_frontiers = []
 
         for i, frontier in enumerate(frontier_centroids):
-            robot_distance = np.sqrt(
-                (frontier.x - robot_pose.x) ** 2 + (frontier.y - robot_pose.y) ** 2
-            )
-
-            # Filter 1: Skip frontiers too close to robot
-            if robot_distance < self.min_distance_from_robot:
-                continue
-
-            # Filter 2: Skip frontiers too close to obstacles
             obstacle_distance = self._compute_distance_to_obstacles(frontier, costmap)
             if obstacle_distance < self.min_distance_from_obstacles:
                 continue

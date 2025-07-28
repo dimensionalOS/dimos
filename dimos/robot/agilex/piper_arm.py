@@ -1,0 +1,201 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import asyncio
+import logging
+from typing import Optional, List
+
+from dimos import core
+from dimos.hardware.zed_camera import ZEDModule
+from dimos.manipulation.visual_servoing.manipulation_module import ManipulationModule
+from dimos_lcm.sensor_msgs import Image
+from dimos.protocol import pubsub
+from dimos.skills.skills import SkillLibrary
+from dimos.types.robot_capabilities import RobotCapability
+from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.utils.logging_config import setup_logger
+
+# Import LCM message types
+from dimos_lcm.sensor_msgs import CameraInfo
+
+logger = setup_logger("dimos.robot.agilex.piper_arm")
+
+
+class PiperArmRobot:
+    """Piper Arm robot with ZED camera and manipulation capabilities."""
+
+    def __init__(self, robot_capabilities: Optional[List[RobotCapability]] = None):
+        self.dimos = None
+        self.stereo_camera = None
+        self.manipulation_interface = None
+        self.skill_library = SkillLibrary()
+
+        # Initialize capabilities
+        self.capabilities = robot_capabilities or [
+            RobotCapability.VISION,
+            RobotCapability.MANIPULATION,
+        ]
+
+    async def start(self):
+        """Start the robot modules."""
+        # Start Dimos
+        self.dimos = core.start(2)  # Need 2 workers for ZED and manipulation modules
+        self.foxglove_bridge = FoxgloveBridge()
+
+        # Enable LCM auto-configuration
+        pubsub.lcm.autoconf()
+
+        # Deploy ZED module
+        logger.info("Deploying ZED module...")
+        self.stereo_camera = self.dimos.deploy(
+            ZEDModule,
+            camera_id=0,
+            resolution="HD720",
+            depth_mode="NEURAL",
+            fps=30,
+            enable_tracking=False,  # We don't need tracking for manipulation
+            publish_rate=30.0,
+            frame_id="zed_camera",
+        )
+
+        # Configure ZED LCM transports
+        self.stereo_camera.color_image.transport = core.LCMTransport("/zed/color_image", Image)
+        self.stereo_camera.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
+        self.stereo_camera.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
+
+        # Deploy manipulation module
+        logger.info("Deploying manipulation module...")
+        self.manipulation_interface = self.dimos.deploy(ManipulationModule)
+
+        # Connect manipulation inputs to ZED outputs
+        self.manipulation_interface.rgb_image.connect(self.stereo_camera.color_image)
+        self.manipulation_interface.depth_image.connect(self.stereo_camera.depth_image)
+        self.manipulation_interface.camera_info.connect(self.stereo_camera.camera_info)
+
+        # Configure manipulation output
+        self.manipulation_interface.viz_image.transport = core.LCMTransport(
+            "/manipulation/viz", Image
+        )
+
+        # Print module info
+        logger.info("Modules configured:")
+        print("\nZED Module:")
+        print(self.stereo_camera.io().result())
+        print("\nManipulation Module:")
+        print(self.manipulation_interface.io().result())
+
+        # Start modules
+        logger.info("Starting modules...")
+        self.foxglove_bridge.start()
+        self.stereo_camera.start()
+        self.manipulation_interface.start()
+
+        # Give modules time to initialize
+        await asyncio.sleep(2)
+
+        logger.info("PiperArmRobot initialized and started")
+
+    def get_skills(self):
+        """Get the robot's skill library.
+
+        Returns:
+            The robot's skill library for adding/managing skills
+        """
+        return self.skill_library
+
+    def pick_and_place(
+        self, pick_x: int, pick_y: int, place_x: Optional[int] = None, place_y: Optional[int] = None
+    ):
+        """Execute pick and place task.
+
+        Args:
+            pick_x: X coordinate for pick location
+            pick_y: Y coordinate for pick location
+            place_x: X coordinate for place location (optional)
+            place_y: Y coordinate for place location (optional)
+
+        Returns:
+            Result of the pick and place operation
+        """
+        if self.manipulation_interface:
+            return self.manipulation_interface.pick_and_place(pick_x, pick_y, place_x, place_y)
+        else:
+            logger.error("Manipulation module not initialized")
+            return False
+
+    def handle_keyboard_command(self, key: str):
+        """Pass keyboard commands to manipulation module.
+
+        Args:
+            key: Keyboard key pressed
+
+        Returns:
+            Action taken or None
+        """
+        if self.manipulation_interface:
+            return self.manipulation_interface.handle_keyboard_command(key)
+        else:
+            logger.error("Manipulation module not initialized")
+            return None
+
+    def has_capability(self, capability: RobotCapability) -> bool:
+        """Check if the robot has a specific capability.
+
+        Args:
+            capability: The capability to check for
+
+        Returns:
+            bool: True if the robot has the capability
+        """
+        return capability in self.capabilities
+
+    def stop(self):
+        """Stop all modules and clean up."""
+        logger.info("Stopping PiperArmRobot...")
+
+        try:
+            if self.manipulation_interface:
+                self.manipulation_interface.stop()
+                self.manipulation_interface.cleanup()
+
+            if self.stereo_camera:
+                self.stereo_camera.stop()
+        except Exception as e:
+            logger.warning(f"Error stopping modules: {e}")
+
+        # Close dimos last to ensure workers are available for cleanup
+        if self.dimos:
+            self.dimos.close()
+
+        logger.info("PiperArmRobot stopped")
+
+
+async def run_piper_arm():
+    """Run the Piper Arm robot."""
+    robot = PiperArmRobot()
+
+    await robot.start()
+
+    # Keep the robot running
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt received")
+    finally:
+        await robot.stop()
+
+
+if __name__ == "__main__":
+    asyncio.run(run_piper_arm())
