@@ -94,7 +94,9 @@ class FakeRTC(UnitreeWebRTCConnection):
     @functools.cache
     def video_stream(self):
         print("video stream start")
-        video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
+        video_store = TimedSensorReplay(
+            "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
+        )
         return video_store.stream()
 
     def move(self, vector: Vector):
