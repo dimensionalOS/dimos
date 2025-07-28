@@ -115,6 +115,9 @@ manipulation = [
     "pyyaml>=6.0",
     "contact-graspnet-pytorch @ git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git",
     
+    # piper arm
+    "piper-sdk",
+    
     # Visualization (Optional)
     "kaleido>=0.2.1",
     "plotly>=5.9.0",
