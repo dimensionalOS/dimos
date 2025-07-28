@@ -18,15 +18,81 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import Pose, PoseLike, PoseStamped, Vector3, to_pose
+from dimos.msgs.geometry_msgs import Pose, PoseLike, PoseStamped, Vector3, VectorLike, to_pose
+from dimos.msgs.nav_msgs import Path
 from dimos.robot.global_planner.algo import astar
 from dimos.types.costmap import Costmap
-from dimos.types.path import Path
-from dimos.types.vector import Vector, VectorLike, to_vector
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.helpers import Visualizable
 
 logger = setup_logger("dimos.robot.unitree.global_planner")
+
+
+def resample_path(path: Path, spacing: float) -> Path:
+    """Resample a path to have approximately uniform spacing between poses.
+
+    Args:
+        path: The original Path
+        spacing: Desired distance between consecutive poses
+
+    Returns:
+        A new Path with resampled poses
+    """
+    if len(path) < 2 or spacing <= 0:
+        return path
+
+    resampled = []
+    resampled.append(path.poses[0])
+
+    accumulated_distance = 0.0
+
+    for i in range(1, len(path.poses)):
+        current = path.poses[i]
+        prev = path.poses[i - 1]
+
+        # Calculate segment distance
+        dx = current.x - prev.x
+        dy = current.y - prev.y
+        segment_length = (dx**2 + dy**2) ** 0.5
+
+        if segment_length < 1e-10:
+            continue
+
+        # Direction vector
+        dir_x = dx / segment_length
+        dir_y = dy / segment_length
+
+        # Add points along this segment
+        while accumulated_distance + segment_length >= spacing:
+            # Distance along segment for next point
+            dist_along = spacing - accumulated_distance
+            if dist_along < 0:
+                break
+
+            # Create new pose
+            new_x = prev.x + dir_x * dist_along
+            new_y = prev.y + dir_y * dist_along
+            new_pose = PoseStamped(
+                frame_id=path.frame_id,
+                position=[new_x, new_y, 0.0],
+                orientation=prev.orientation,  # Keep same orientation
+            )
+            resampled.append(new_pose)
+
+            # Update for next iteration
+            accumulated_distance = 0
+            segment_length -= dist_along
+            prev = new_pose
+
+        accumulated_distance += segment_length
+
+    # Add last pose if not already there
+    if len(path.poses) > 1:
+        last = path.poses[-1]
+        if not resampled or (resampled[-1].x != last.x or resampled[-1].y != last.y):
+            resampled.append(last)
+
+    return Path(frame_id=path.frame_id, poses=resampled)
 
 
 @dataclass
@@ -79,6 +145,7 @@ class AstarPlanner(Planner):
         self.target.subscribe(self.plan)
 
     def plan(self, goallike: PoseLike) -> Path:
+        print("PLAN CALLED WITH", goallike)
         goal = to_pose(goallike)
         logger.info(f"planning path to goal {goal}")
         pos = self.get_robot_pos()
@@ -92,9 +159,10 @@ class AstarPlanner(Planner):
         path = astar(costmap, goal.position, pos)
 
         if path:
-            path = path.resample(0.1)
-            self.vis("a*", path)
+            path = resample_path(path, 0.1)
+            # self.vis("a*", path)
             self.path.publish(path)
+            print("showing path", path)
             if hasattr(self, "set_local_nav") and self.set_local_nav:
                 self.set_local_nav(path)
             return path

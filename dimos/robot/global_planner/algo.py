@@ -17,10 +17,10 @@ import math
 from collections import deque
 from typing import Optional, Tuple
 
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, VectorLike
 from dimos.msgs.geometry_msgs import Vector3 as Vector
-from dimos.msgs.geometry_msgs import VectorLike
+from dimos.msgs.nav_msgs import Path
 from dimos.types.costmap import Costmap
-from dimos.types.path import Path
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree.global_planner.astar")
@@ -210,12 +210,23 @@ def astar(
             waypoints = []
             while current in parents:
                 world_point = costmap.grid_to_world(current)
-                waypoints.append(world_point)
+                # Create PoseStamped with identity quaternion (no orientation)
+                pose = PoseStamped(
+                    frame_id="world",
+                    position=[world_point.x, world_point.y, 0.0],
+                    orientation=Quaternion(0, 0, 0, 1),  # Identity quaternion
+                )
+                waypoints.append(pose)
                 current = parents[current]
 
             # Add the start position
             start_world_point = costmap.grid_to_world(start_tuple)
-            waypoints.append(start_world_point)
+            start_pose = PoseStamped(
+                frame_id="world",
+                position=[start_world_point.x, start_world_point.y, 0.0],
+                orientation=Quaternion(0, 0, 0, 1),
+            )
+            waypoints.append(start_pose)
 
             # Reverse the path (start to goal)
             waypoints.reverse()
@@ -223,15 +234,29 @@ def astar(
             # Add the goal position if it's not already included
             goal_point = costmap.grid_to_world(goal_tuple)
 
-            if not waypoints or waypoints[-1].distance(goal_point) > 1e-5:
-                waypoints.append(goal_point)
+            if (
+                not waypoints
+                or (waypoints[-1].x - goal_point.x) ** 2 + (waypoints[-1].y - goal_point.y) ** 2
+                > 1e-10
+            ):
+                goal_pose = PoseStamped(
+                    frame_id="world",
+                    position=[goal_point.x, goal_point.y, 0.0],
+                    orientation=Quaternion(0, 0, 0, 1),
+                )
+                waypoints.append(goal_pose)
 
             # If we adjusted the goal, add the original goal as the final point
             if adjusted_goal != original_goal and goal_valid:
                 original_goal_point = costmap.grid_to_world(original_goal)
-                waypoints.append(original_goal_point)
+                original_goal_pose = PoseStamped(
+                    frame_id="world",
+                    position=[original_goal_point.x, original_goal_point.y, 0.0],
+                    orientation=Quaternion(0, 0, 0, 1),
+                )
+                waypoints.append(original_goal_pose)
 
-            return Path(waypoints)
+            return Path(frame_id="world", poses=waypoints)
 
         # Add current node to closed set
         closed_set.add(current)
