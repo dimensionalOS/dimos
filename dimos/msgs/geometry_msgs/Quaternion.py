@@ -22,6 +22,7 @@ from typing import BinaryIO, TypeAlias
 import numpy as np
 from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
 from plum import dispatch
+from scipy.spatial.transform import Rotation as R
 
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
@@ -117,27 +118,12 @@ class Quaternion(LCMQuaternion):
         Returns:
             Vector3: Euler angles as (roll, pitch, yaw) in radians
         """
-        # Convert quaternion to Euler angles using ZYX convention (yaw, pitch, roll)
-        # Source: https://en.wikipedia.org/wiki/Conversion_between_quaternions_and_Euler_angles
+        # Use scipy for accurate quaternion to euler conversion
+        quat = [self.x, self.y, self.z, self.w]
+        rotation = R.from_quat(quat)
+        euler_angles = rotation.as_euler("xyz")  # roll, pitch, yaw
 
-        # Roll (x-axis rotation)
-        sinr_cosp = 2 * (self.w * self.x + self.y * self.z)
-        cosr_cosp = 1 - 2 * (self.x * self.x + self.y * self.y)
-        roll = np.arctan2(sinr_cosp, cosr_cosp)
-
-        # Pitch (y-axis rotation)
-        sinp = 2 * (self.w * self.y - self.z * self.x)
-        if abs(sinp) >= 1:
-            pitch = np.copysign(np.pi / 2, sinp)  # Use 90 degrees if out of range
-        else:
-            pitch = np.arcsin(sinp)
-
-        # Yaw (z-axis rotation)
-        siny_cosp = 2 * (self.w * self.z + self.x * self.y)
-        cosy_cosp = 1 - 2 * (self.y * self.y + self.z * self.z)
-        yaw = np.arctan2(siny_cosp, cosy_cosp)
-
-        return Vector3(roll, pitch, yaw)
+        return Vector3(euler_angles[0], euler_angles[1], euler_angles[2])
 
     def __getitem__(self, idx: int) -> float:
         """Allow indexing into quaternion components: 0=x, 1=y, 2=z, 3=w."""

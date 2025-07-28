@@ -15,6 +15,7 @@
 import numpy as np
 import os
 import sys
+from dimos.perception.detection2d.utils import plot_results
 
 # Add Detic to Python path
 detic_path = os.path.join(os.path.dirname(__file__), "..", "..", "models", "Detic")
@@ -404,7 +405,6 @@ class Detic2DDetector:
         Returns:
             Image with visualized detections
         """
-        from dimos.perception.detection2d.utils import plot_results
 
         return plot_results(image, bboxes, track_ids, class_ids, confidences, names)
 
