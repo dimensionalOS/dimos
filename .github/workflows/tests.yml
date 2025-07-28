@@ -47,15 +47,15 @@ jobs:
           sudo chown -R $USER:$USER ${{ github.workspace }} || true
           
       - uses: actions/checkout@v4
-        with:
-          lfs: true
+#        with:
+#          lfs: true
           
-      - name: Configure Git LFS
-        run: |
-          git config --global --add safe.directory '*'
-          git lfs install
-          git lfs fetch
-          git lfs checkout
+      # - name: Configure Git LFS
+      #   run: |
+      #     git config --global --add safe.directory '*'
+      #     git lfs install
+      #     git lfs fetch
+      #     git lfs checkout
         
       - name: Run tests
         run: |
