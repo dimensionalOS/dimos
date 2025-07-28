@@ -25,7 +25,6 @@ import cv2
 class SemanticSegmentationStream:
     def __init__(
         self,
-        device: str = "cuda",
         enable_mono_depth: bool = True,
         enable_rich_labeling: bool = True,
         camera_params: dict = None,
@@ -35,7 +34,6 @@ class SemanticSegmentationStream:
         Initialize a semantic segmentation stream using Sam2DSegmenter.
 
         Args:
-            device: Computation device ("cuda" or "cpu")
             enable_mono_depth: Whether to enable monocular depth processing
             enable_rich_labeling: Whether to enable rich labeling
             camera_params: Dictionary containing either:
@@ -43,7 +41,6 @@ class SemanticSegmentationStream:
                 - Physical parameters: resolution, focal_length, sensor_size
         """
         self.segmenter = Sam2DSegmenter(
-            device=device,
             min_analysis_interval=5.0,
             use_tracker=True,
             use_analyzer=True,
