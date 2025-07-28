@@ -97,6 +97,23 @@ jobs:
             docker volume prune -f
           fi
           
+          # Aggressive cleanup if still above 85%
+          USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
+          if [ $USAGE -gt 85 ]; then
+            echo "=== AGGRESSIVE cleanup (usage > 85%) - removing all except main/dev ==="
+            
+            # Remove ALL images except main and dev tags
+            docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | \
+            grep -E "ghcr.io/dimensionalos" | \
+            grep -vE ":(main|dev)$" | \
+            awk '{print $2}' | xargs -r docker rmi -f || true
+            
+            docker container prune -f
+            docker volume prune -a -f
+            docker network prune -f
+            docker image prune -f 
+          fi
+          
           echo -e "post cleanup space:\n $(df -h)"
 
       - uses: docker/login-action@v3
