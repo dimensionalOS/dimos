@@ -72,6 +72,10 @@ jobs:
     runs-on: [self-hosted, Linux]
     if: always()
     steps:
+      - name: Fix permissions
+        run: |
+          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+          
       - name: Checkout code
         uses: actions/checkout@v4
         with:
