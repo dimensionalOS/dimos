@@ -47,7 +47,8 @@ jobs:
           
       - name: Fix permissions
         run: |
-          sudo bash -c "chown -R $USER:$USER $(pwd)"
+          git config --global --add safe.directory '*'
+          #sudo bash -c "chown -R $USER:$USER $(pwd)"
           
           
       - name: Run tests
