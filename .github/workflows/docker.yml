@@ -67,84 +67,6 @@ jobs:
           echo "branch tag determined: ${branch_tag}"
           echo branch_tag="${branch_tag}" >> "$GITHUB_OUTPUT"
 
-  pre-build-cleanup:
-    needs: [check-changes]
-    runs-on: [self-hosted, Linux]
-    if: always()
-    steps:
-      - name: Fix permissions
-        run: |
-          sudo chown -R $USER:$USER ${{ github.workspace }} || true
-          
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          
-      - name: Clean deleted branches
-        run: |
-          echo "=== Cleaning images from deleted branches ==="
-          
-          # Get list of all remote branches
-          git ls-remote --heads origin | awk '{print $2}' | sed 's|refs/heads/||' > /tmp/active_branches.txt
-          
-          # Check each docker image tag against branch list
-          docker images --format "{{.Repository}}:{{.Tag}}|{{.ID}}" | \
-          grep "ghcr.io/dimensionalos" | \
-          grep -v ":<none>" | \
-          while IFS='|' read image_ref id; do
-            tag=$(echo "$image_ref" | cut -d: -f2)
-            
-            # Skip if tag matches an active branch
-            if grep -qx "$tag" /tmp/active_branches.txt; then
-              echo "Branch exists: $tag - keeping $image_ref"
-            else
-              echo "Branch deleted: $tag - removing $image_ref"
-              docker rmi "$id" 2>/dev/null || true
-            fi
-          done
-          
-          rm -f /tmp/active_branches.txt
-          
-      - name: Quick cleanup if needed
-        run: |
-          USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
-          echo "Pre-build disk usage: ${USAGE}%"
-          
-          if [ $USAGE -gt 80 ]; then
-            echo "=== Running quick cleanup (usage > 80%) ==="
-            
-            # Keep newest image per tag
-            docker images --format "{{.Repository}}|{{.Tag}}|{{.ID}}" | \
-            grep "ghcr.io/dimensionalos" | \
-            grep -v "<none>" | \
-            while IFS='|' read repo tag id; do
-              created_ts=$(docker inspect -f '{{.Created}}' "$id" 2>/dev/null)
-              created_unix=$(date -d "$created_ts" +%s 2>/dev/null || echo "0")
-              echo "${repo}|${tag}|${id}|${created_unix}"
-            done | sort -t'|' -k1,1 -k2,2 -k4,4nr | \
-            awk -F'|' '
-            {
-              repo=$1; tag=$2; id=$3
-              repo_tag = repo ":" tag
-              
-              # Skip protected tags
-              if (tag ~ /^(main|dev|latest)$/) next
-              
-              # Keep newest per tag, remove older duplicates
-              if (!(repo_tag in seen_combos)) {
-                seen_combos[repo_tag] = 1
-              } else {
-                system("docker rmi " id " 2>/dev/null || true")
-              }
-            }'
-            
-            docker image prune -f
-            docker volume prune -f
-            
-            echo "Post-cleanup usage: $(df / | awk 'NR==2 {print $5}')"
-          fi
-
   # just a debugger
   inspect-needs:
     needs: [check-changes, ros]
@@ -155,7 +77,7 @@ jobs:
           echo '${{ toJSON(needs) }}'
 
   ros:
-    needs: [check-changes, pre-build-cleanup]
+    needs: [check-changes]
     if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
@@ -165,7 +87,7 @@ jobs:
       dockerfile:  ros
 
   ros-python:
-    needs: [check-changes, ros, pre-build-cleanup]
+    needs: [check-changes, ros]
     if: always()
     uses: ./.github/workflows/_docker-build-template.yml
     with:
@@ -178,21 +100,19 @@ jobs:
       from-image: ghcr.io/dimensionalos/ros:${{ needs.ros.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
       to-image: ghcr.io/dimensionalos/ros-python:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile:  python
-      freespace: true
 
   python:
-    needs: [check-changes, pre-build-cleanup]
+    needs: [check-changes]
     if: needs.check-changes.outputs.python == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       should-run: true
-      freespace: true
       dockerfile:  python
       from-image: ubuntu:22.04
       to-image: ghcr.io/dimensionalos/python:${{ needs.check-changes.outputs.branch-tag }}
 
   dev:
-    needs: [check-changes, python, pre-build-cleanup]
+    needs: [check-changes, python]
     if: always()
 
     uses: ./.github/workflows/_docker-build-template.yml
@@ -207,7 +127,7 @@ jobs:
       dockerfile: dev
 
   ros-dev:
-    needs: [check-changes, ros-python, pre-build-cleanup]
+    needs: [check-changes, ros-python]
     if: always()
     uses: ./.github/workflows/_docker-build-template.yml
     with:
@@ -310,43 +230,3 @@ jobs:
   #       run: |
   #         /entrypoint.sh bash -c "pytest -m module"
       
-  # TODO: Remove when merge to main as workflow_run needed
-  cleanup-runner:
-    needs: [run-tests, run-heavy-tests, run-ros-tests, run-lcm-tests] 
-    runs-on: [self-hosted, Linux]
-    steps:
-      - name: Check disk usage
-        id: disk-check
-        run: |
-          USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
-          echo "Disk usage: ${USAGE}%"
-          echo "usage=${USAGE}" >> $GITHUB_OUTPUT
-          
-      - name: Clean Docker images
-        if: steps.disk-check.outputs.usage > 50
-        run: |
-          echo "=== Docker usage before cleanup ==="
-          docker system df
-          
-          echo -e "\n=== Removing dangling images ==="
-          docker images -f "dangling=true" -q | xargs -r docker rmi || true
-          
-          echo -e "\n=== Docker usage after cleanup ==="
-          docker system df
-          
-          echo -e "\n=== Disk usage after cleanup ==="
-          df -h /
-          
-      - name: Aggressive cleanup if disk critically full
-        if: steps.disk-check.outputs.usage > 90
-        run: |
-          echo "=== CRITICAL: Disk usage above 90% - Aggressive cleanup ==="
-          
-          echo -e "\n=== Removing images older than 3 days ==="
-          docker image prune -a --filter "until=72h" -f
-          
-          echo -e "\n=== Final docker usage ==="
-          docker system df
-          
-          echo -e "\n=== Final disk usage ==="
-          df -h /
