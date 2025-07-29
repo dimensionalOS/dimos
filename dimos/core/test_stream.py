@@ -162,6 +162,7 @@ class SpyLCMTransport(LCMTransport):
 
 
 @pytest.mark.parametrize("subscriber_class", [ClassicSubscriber, RXPYSubscriber])
+@pytest.mark.module
 def test_subscription(dimos, subscriber_class):
     robot = dimos.deploy(MockRobotClient)
 
