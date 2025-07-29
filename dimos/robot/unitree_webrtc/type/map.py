@@ -54,13 +54,16 @@ class Map(Module):
         def publish(_):
             self.global_map.publish(self.to_lidar_message())
 
-            occupancygrid = OccupancyGrid.from_pointcloud(
-                self.to_lidar_message(),
-                resolution=0.05,
-                min_height=0.1,
-                max_height=2.0,
-                inflate_radius=0.1,
-            ).gradient(obstacle_threshold=70, max_distance=2.0)
+            occupancygrid = (
+                OccupancyGrid.from_pointcloud(
+                    self.to_lidar_message(),
+                    resolution=0.05,
+                    min_height=0.1,
+                    max_height=2.0,
+                )
+                .inflate(0.1)
+                .gradient(obstacle_threshold=70, max_distance=2.0)
+            )
 
             self.global_costmap.publish(occupancygrid)
 

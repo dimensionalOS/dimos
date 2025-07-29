@@ -15,12 +15,14 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, BinaryIO, Optional, Union
+from enum import IntEnum
+from typing import TYPE_CHECKING, BinaryIO, Optional
 
 import numpy as np
-from dimos_lcm.nav_msgs import MapMetaData as LCMMapMetaData
+from dimos_lcm.nav_msgs import MapMetaData
 from dimos_lcm.nav_msgs import OccupancyGrid as LCMOccupancyGrid
 from plum import dispatch
+from scipy import ndimage
 
 from dimos.msgs.geometry_msgs import Pose
 from dimos.msgs.std_msgs import Header
@@ -29,39 +31,24 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs import PointCloud2
 
 
-class MapMetaData(LCMMapMetaData):
-    """Convenience wrapper for MapMetaData with sensible defaults."""
+class CostValues(IntEnum):
+    """Standard cost values for occupancy grid cells.
 
-    @dispatch
-    def __init__(self) -> None:
-        """Initialize with default values."""
-        super().__init__()
-        self.map_load_time = Header().stamp
-        self.resolution = 0.05
-        self.width = 0
-        self.height = 0
-        self.origin = Pose()
+    These values follow the ROS nav_msgs/OccupancyGrid convention:
+    - 0: Free space
+    - 1-99: Occupied space with varying cost levels
+    - 100: Lethal obstacle (definitely occupied)
+    - -1: Unknown space
+    """
 
-    @dispatch
-    def __init__(self, resolution: float, width: int, height: int, origin: Pose) -> None:
-        """Initialize with specified values."""
-        super().__init__()
-        self.map_load_time = Header().stamp
-        self.resolution = resolution
-        self.width = width
-        self.height = height
-        self.origin = origin
+    UNKNOWN = -1  # Unknown space
+    FREE = 0  # Free space
+    OCCUPIED = 100  # Occupied/lethal space
 
 
 class OccupancyGrid(LCMOccupancyGrid):
     """
     Convenience wrapper for nav_msgs/OccupancyGrid with numpy array support.
-
-    Cell values:
-      - 0: Free space
-      - 1-99: Occupied space (higher values = higher cost)
-      - 100: Lethal obstacle
-      - -1: Unknown
     """
 
     msg_name = "nav_msgs.OccupancyGrid"
@@ -74,7 +61,7 @@ class OccupancyGrid(LCMOccupancyGrid):
         """Initialize an empty OccupancyGrid."""
         super().__init__()
         self.header = Header("world")  # Header takes frame_id as positional arg
-        self.info = MapMetaData()
+        self.info = MapMetaData(map_load_time=Header().stamp)
         self.data_length = 0
         self.data = []
         self._grid_array = np.array([], dtype=np.int8)
@@ -86,7 +73,13 @@ class OccupancyGrid(LCMOccupancyGrid):
         """Initialize with specified dimensions, all cells unknown (-1)."""
         super().__init__()
         self.header = Header(frame_id)  # Header takes frame_id as positional arg
-        self.info = MapMetaData(resolution, width, height, Pose())
+        self.info = MapMetaData(
+            map_load_time=Header().stamp,
+            resolution=resolution,
+            width=width,
+            height=height,
+            origin=Pose(),
+        )
         self._grid_array = np.full((height, width), -1, dtype=np.int8)
         self._sync_data_from_array()
 
@@ -112,7 +105,13 @@ class OccupancyGrid(LCMOccupancyGrid):
 
         height, width = grid.shape
         self.header = Header(frame_id)  # Header takes frame_id as positional arg
-        self.info = MapMetaData(resolution, width, height, origin or Pose())
+        self.info = MapMetaData(
+            map_load_time=Header().stamp,
+            resolution=resolution,
+            width=width,
+            height=height,
+            origin=origin or Pose(),
+        )
         self._grid_array = grid.astype(np.int8)
         self._sync_data_from_array()
 
@@ -215,84 +214,48 @@ class OccupancyGrid(LCMOccupancyGrid):
         """Percentage of cells that are unknown."""
         return (self.unknown_cells / self.total_cells * 100) if self.total_cells > 0 else 0.0
 
-    def world_to_grid(self, x: float, y: float) -> tuple[int, int]:
-        """Convert world coordinates to grid indices.
-
+    def inflate(self, radius: float, cost_scaling_factor: float = 0.0) -> "OccupancyGrid":
+        """Inflate obstacles by a given radius (vectorized).
         Args:
-            x: World X coordinate
-            y: World Y coordinate
-
+            radius: Inflation radius in meters
+            cost_scaling_factor: Factor for decay (0.0 = no decay, binary inflation)
         Returns:
-            (grid_x, grid_y) indices
+            New OccupancyGrid with inflated obstacles
         """
-        # Get origin position and orientation
-        ox = self.origin.position.x
-        oy = self.origin.position.y
+        # Convert radius to grid cells
+        cell_radius = int(np.ceil(radius / self.resolution))
 
-        # For now, assume no rotation (simplified)
-        # TODO: Handle rotation from quaternion
-        dx = x - ox
-        dy = y - oy
+        # Get grid as numpy array
+        grid_array = self.grid
 
-        grid_x = int(dx / self.resolution)
-        grid_y = int(dy / self.resolution)
+        # Create square kernel for binary inflation
+        kernel_size = 2 * cell_radius + 1
+        kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
 
-        return grid_x, grid_y
+        # Find occupied cells
+        occupied_mask = grid_array >= CostValues.OCCUPIED
 
-    def grid_to_world(self, grid_x: int, grid_y: int) -> tuple[float, float]:
-        """Convert grid indices to world coordinates.
+        if cost_scaling_factor == 0.0:
+            # Binary inflation
+            inflated = ndimage.binary_dilation(occupied_mask, structure=kernel)
+            result_grid = grid_array.copy()
+            result_grid[inflated] = CostValues.OCCUPIED
+        else:
+            # Distance-based inflation with decay
+            # Create distance transform from occupied cells
+            distance_field = ndimage.distance_transform_edt(~occupied_mask)
 
-        Args:
-            grid_x: Grid X index
-            grid_y: Grid Y index
+            # Apply exponential decay based on distance
+            cost_field = CostValues.OCCUPIED * np.exp(-cost_scaling_factor * distance_field)
 
-        Returns:
-            (x, y) world coordinates
-        """
-        # Get origin position
-        ox = self.origin.position.x
-        oy = self.origin.position.y
+            # Combine with original grid, keeping higher values
+            result_grid = np.maximum(grid_array, cost_field).astype(np.int8)
 
-        # Convert to world (simplified, no rotation)
-        x = ox + grid_x * self.resolution
-        y = oy + grid_y * self.resolution
+            # Ensure occupied cells remain at max value
+            result_grid[occupied_mask] = CostValues.OCCUPIED
 
-        return x, y
-
-    def get_value(self, x: float, y: float) -> Optional[int]:
-        """Get the value at world coordinates.
-
-        Args:
-            x: World X coordinate
-            y: World Y coordinate
-
-        Returns:
-            Cell value or None if out of bounds
-        """
-        grid_x, grid_y = self.world_to_grid(x, y)
-
-        if 0 <= grid_x < self.width and 0 <= grid_y < self.height:
-            return int(self.grid[grid_y, grid_x])
-        return None
-
-    def set_value(self, x: float, y: float, value: int) -> bool:
-        """Set the value at world coordinates.
-
-        Args:
-            x: World X coordinate
-            y: World Y coordinate
-            value: Cell value to set
-
-        Returns:
-            True if successful, False if out of bounds
-        """
-        grid_x, grid_y = self.world_to_grid(x, y)
-
-        if 0 <= grid_x < self.width and 0 <= grid_y < self.height:
-            self.grid[grid_y, grid_x] = value
-            self._sync_data_from_array()
-            return True
-        return False
+        # Create new OccupancyGrid with inflated data using numpy constructor
+        return OccupancyGrid(result_grid, self.resolution, self.origin, self.header.frame_id)
 
     def __str__(self) -> str:
         """Create a concise string representation."""
@@ -355,7 +318,6 @@ class OccupancyGrid(LCMOccupancyGrid):
         resolution: float = 0.05,
         min_height: float = 0.1,
         max_height: float = 2.0,
-        inflate_radius: float = 0.0,
         frame_id: Optional[str] = None,
         mark_free_radius: float = 0.0,
     ) -> "OccupancyGrid":
@@ -366,7 +328,6 @@ class OccupancyGrid(LCMOccupancyGrid):
             resolution: Grid resolution in meters/cell (default: 0.05)
             min_height: Minimum height threshold for including points (default: 0.1)
             max_height: Maximum height threshold for including points (default: 2.0)
-            inflate_radius: Radius in meters to inflate obstacles (default: 0.0)
             frame_id: Reference frame for the grid (default: uses cloud's frame_id)
             mark_free_radius: Radius in meters around obstacles to mark as free space (default: 0.0)
                              If 0, only immediate neighbors are marked free.
@@ -402,7 +363,7 @@ class OccupancyGrid(LCMOccupancyGrid):
         max_y = np.max(filtered_points[:, 1])
 
         # Add some padding around the bounds
-        padding = max(1.0, inflate_radius * 2)  # At least 1 meter padding
+        padding = 1.0  # 1 meter padding
         min_x -= padding
         max_x += padding
         min_y -= padding
@@ -463,40 +424,6 @@ class OccupancyGrid(LCMOccupancyGrid):
             # Mark only immediate neighbors as free (not the occupied cells themselves)
             grid[immediate_neighbors & (grid != 100)] = 0
 
-        # Apply inflation if requested
-        if inflate_radius > 0:
-            # Calculate inflation radius in cells
-            inflate_cells = int(np.ceil(inflate_radius / resolution))
-
-            # Create a circular kernel for inflation
-            y, x = np.ogrid[-inflate_cells : inflate_cells + 1, -inflate_cells : inflate_cells + 1]
-            kernel = x**2 + y**2 <= inflate_cells**2
-
-            # Find all occupied cells
-            occupied_y, occupied_x = np.where(grid == 100)
-
-            # Inflate around each occupied cell
-            for oy, ox in zip(occupied_y, occupied_x):
-                # Calculate kernel bounds
-                y_min = max(0, oy - inflate_cells)
-                y_max = min(height, oy + inflate_cells + 1)
-                x_min = max(0, ox - inflate_cells)
-                x_max = min(width, ox + inflate_cells + 1)
-
-                # Calculate kernel slice
-                kernel_y_min = max(0, inflate_cells - oy)
-                kernel_y_max = kernel_y_min + (y_max - y_min)
-                kernel_x_min = max(0, inflate_cells - ox)
-                kernel_x_max = kernel_x_min + (x_max - x_min)
-
-                # Apply inflation (only to free cells, not obstacles)
-                mask = kernel[kernel_y_min:kernel_y_max, kernel_x_min:kernel_x_max]
-                region = grid[y_min:y_max, x_min:x_max]
-
-                # Set inflation cost (99) for free cells within radius
-                inflated = (region == 0) & mask
-                region[inflated] = 99
-
         # Create and return OccupancyGrid
         occupancy_grid = cls(grid, resolution, origin, frame_id or cloud.frame_id)
 
@@ -527,7 +454,6 @@ class OccupancyGrid(LCMOccupancyGrid):
         Note: Unknown cells within max_distance of obstacles will have gradient
         values assigned, allowing path planning through unknown areas.
         """
-        from scipy.ndimage import distance_transform_edt
 
         # Remember which cells are unknown
         unknown_mask = self.grid == -1
@@ -541,7 +467,7 @@ class OccupancyGrid(LCMOccupancyGrid):
         obstacle_map = (working_grid >= obstacle_threshold).astype(np.float32)
 
         # Compute distance transform (distance to nearest obstacle in cells)
-        distance_cells = distance_transform_edt(1 - obstacle_map)
+        distance_cells = ndimage.distance_transform_edt(1 - obstacle_map)
 
         # Convert to meters and clip to max distance
         distance_meters = np.clip(distance_cells * self.resolution, 0, max_distance)
@@ -640,13 +566,13 @@ class OccupancyGrid(LCMOccupancyGrid):
 
         Returns:
             New OccupancyGrid where:
-            - All non-unknown cells: set to 100 (lethal obstacle)
-            - Unknown cells (-1): preserved
+            - All non-unknown cells: set to CostValues.OCCUPIED (100)
+            - Unknown cells: preserved as CostValues.UNKNOWN (-1)
         """
         new_grid = self.grid.copy()
 
         # Set all non-unknown cells to max
-        new_grid[new_grid != -1] = 100
+        new_grid[new_grid != CostValues.UNKNOWN] = CostValues.OCCUPIED
 
         # Create new OccupancyGrid
         maxed = OccupancyGrid(

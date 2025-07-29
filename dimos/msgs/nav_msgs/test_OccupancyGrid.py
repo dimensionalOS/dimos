@@ -208,8 +208,10 @@ def test_from_pointcloud():
 
     # Convert pointcloud to occupancy grid
     occupancygrid = OccupancyGrid.from_pointcloud(
-        pointcloud, resolution=0.05, min_height=0.1, max_height=2.0, inflate_radius=0.1
+        pointcloud, resolution=0.05, min_height=0.1, max_height=2.0
     )
+    # Apply inflation separately if needed
+    occupancygrid = occupancygrid.inflate(0.1)
 
     # Check that grid was created with reasonable properties
     assert occupancygrid.width > 0
@@ -404,8 +406,10 @@ def test_lcm_broadcast():
 
     # Create occupancy grid from pointcloud
     occupancygrid = OccupancyGrid.from_pointcloud(
-        pointcloud, resolution=0.05, min_height=0.1, max_height=2.0, inflate_radius=0.1
+        pointcloud, resolution=0.05, min_height=0.1, max_height=2.0
     )
+    # Apply inflation separately if needed
+    occupancygrid = occupancygrid.inflate(0.1)
 
     # Create gradient field with larger max_distance for better visualization
     gradient_grid = occupancygrid.gradient(obstacle_threshold=70, max_distance=2.0)
