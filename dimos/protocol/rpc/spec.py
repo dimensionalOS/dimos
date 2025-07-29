@@ -14,10 +14,13 @@
 
 import asyncio
 import time
-from typing import Any, Callable, Optional, Protocol, overload
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, overload
 
 
 class Empty: ...
+
+
+Args = Tuple[List, Dict[str, Any]]
 
 
 # module that we can inspect for RPCs
@@ -30,18 +33,18 @@ class RPCInspectable(Protocol):
 class RPCClient(Protocol):
     # if we don't provide callback, we don't get a return unsub f
     @overload
-    def call(self, name: str, arguments: list, cb: None) -> None: ...
+    def call(self, name: str, arguments: Args, cb: None) -> None: ...
 
     # if we provide callback, we do get return unsub f
     @overload
-    def call(self, name: str, arguments: list, cb: Callable[[Any], None]) -> Callable[[], Any]: ...
+    def call(self, name: str, arguments: Args, cb: Callable[[Any], None]) -> Callable[[], Any]: ...
 
     def call(
-        self, name: str, arguments: list, cb: Optional[Callable]
+        self, name: str, arguments: Args, cb: Optional[Callable]
     ) -> Optional[Callable[[], Any]]: ...
 
     # we bootstrap these from the call() implementation above
-    def call_sync(self, name: str, arguments: list) -> Any:
+    def call_sync(self, name: str, arguments: Args) -> Any:
         res = Empty
 
         def receive_value(val):
@@ -54,7 +57,7 @@ class RPCClient(Protocol):
             time.sleep(0.05)
         return res
 
-    async def call_async(self, name: str, arguments: list) -> Any:
+    async def call_async(self, name: str, arguments: Args) -> Any:
         loop = asyncio.get_event_loop()
         future = loop.create_future()
 
@@ -68,20 +71,21 @@ class RPCClient(Protocol):
 
         return await future
 
-    def serve_module_rpc(self, module: RPCInspectable, name: str = None):
+
+class RPCServer(Protocol):
+    def serve_rpc(self, f: Callable, name: str) -> None: ...
+
+    def serve_module_rpc(self, module: RPCInspectable, name: Optional[str] = None):
         for fname in module.rpcs.keys():
             if not name:
                 name = module.__class__.__name__
 
-            def call(*args, fname=fname):
-                return getattr(module, fname)(*args)
+            def override_f(*args, fname=fname, **kwargs):
+                return getattr(module, fname)(*args, **kwargs)
 
             topic = name + "/" + fname
-            self.serve_rpc(call, topic)
-
-
-class RPCServer(Protocol):
-    def serve_rpc(self, f: Callable, name: str) -> None: ...
+            print(topic)
+            self.serve_rpc(override_f, topic)
 
 
 class RPC(RPCServer, RPCClient): ...

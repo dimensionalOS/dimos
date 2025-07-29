@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-import time
 from typing import Optional
 
 from dask.distributed import Client, LocalCluster
@@ -50,7 +49,9 @@ class RPCClient:
             raise AttributeError(f"{name} is not found.")
 
         if name in self.rpcs:
-            return lambda *args: self.rpc.call_sync(f"{self.remote_name}/{name}", args)
+            return lambda *args, **kwargs: self.rpc.call_sync(
+                f"{self.remote_name}/{name}", (args, kwargs)
+            )
 
         # return super().__getattr__(name)
         # Try to avoid recursion by directly accessing attributes that are known
@@ -98,6 +99,8 @@ def start(n: Optional[int] = None) -> Client:
     return patchdask(client)
 
 
+# this needs to go away
+# client.shutdown() is the correct shutdown method
 def stop(client: Client):
     client.close()
     client.cluster.close()

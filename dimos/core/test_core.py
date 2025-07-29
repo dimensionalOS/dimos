@@ -60,11 +60,13 @@ class RobotClient(Module):
         self._stop_event = Event()
         self._thread = None
 
+    @rpc
     def start(self):
         self._thread = Thread(target=self.odomloop)
         self._thread.start()
         self.mov.subscribe(self.mov_callback)
 
+    @rpc
     def odomloop(self):
         odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
         lidardata = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
@@ -84,6 +86,7 @@ class RobotClient(Module):
                 self.lidar.publish(lidarmsg)
                 time.sleep(0.1)
 
+    @rpc
     def stop(self):
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
@@ -155,7 +158,7 @@ def test_classmethods():
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
 
 
-@pytest.mark.tool
+@pytest.mark.module
 def test_deployment(dimos):
     robot = dimos.deploy(RobotClient)
     target_stream = RemoteOut[Vector](Vector, "target")
@@ -177,13 +180,11 @@ def test_deployment(dimos):
     nav.odometry.connect(robot.odometry)
     robot.mov.connect(nav.mov)
 
-    print("\n" + robot.io().result() + "\n")
-    print("\n" + nav.io().result() + "\n")
-    robot.start().result()
-    nav.start().result()
+    robot.start()
+    nav.start()
 
     time.sleep(1)
-    robot.stop().result()
+    robot.stop()
 
     print("robot.mov_msg_count", robot.mov_msg_count)
     print("nav.odom_msg_count", nav.odom_msg_count)
@@ -192,6 +193,8 @@ def test_deployment(dimos):
     assert robot.mov_msg_count >= 8
     assert nav.odom_msg_count >= 8
     assert nav.lidar_msg_count >= 8
+
+    dimos.shutdown()
 
 
 if __name__ == "__main__":

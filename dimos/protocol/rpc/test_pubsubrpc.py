@@ -19,9 +19,10 @@ from typing import Any, Callable, List, Tuple
 
 import pytest
 
-from dimos.core import Module, rpc
+from dimos.core import Module, rpc, start, stop
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCClient, RPCServer
+from dimos.protocol.service.lcmservice import autoconf
 
 testgrid: List[Callable] = []
 
@@ -29,7 +30,7 @@ testgrid: List[Callable] = []
 # test module we'll use for binding RPC methods
 class MyModule(Module):
     @rpc
-    def add(self, a: int, b: int) -> int:
+    def add(self, a: int, b: int = 30) -> int:
         print(f"A + B = {a + b}")
         return a + b
 
@@ -102,7 +103,7 @@ def test_basics(rpc_context):
             msgs.append(response)
             print(f"Received response: {response}")
 
-        client.call("add", [1, 2], receive_msg)
+        client.call("add", ([1, 2], {}), receive_msg)
 
         time.sleep(0.1)
         assert len(msgs) > 0
@@ -134,8 +135,8 @@ def test_module_autobind(rpc_context):
         def receive_msg(msg):
             msgs.append(msg)
 
-        client.call("MyModule/add", [1, 2], receive_msg)
-        client.call("testmodule/subtract", [3, 1], receive_msg)
+        client.call("MyModule/add", ([1, 2], {}), receive_msg)
+        client.call("testmodule/subtract", ([3, 1], {}), receive_msg)
 
         time.sleep(0.1)
         assert len(msgs) == 2
@@ -153,7 +154,22 @@ def test_sync(rpc_context):
         print("\n")
 
         server.serve_module_rpc(module)
-        assert 3 == client.call_sync("MyModule/add", [1, 2])
+        assert 3 == client.call_sync("MyModule/add", ([1, 2], {}))
+
+
+# Default rpc.call() either doesn't wait for response or accepts a callback
+# but also we support different calling strategies,
+#
+# can do blocking calls
+@pytest.mark.parametrize("rpc_context", testgrid)
+def test_kwargs(rpc_context):
+    with rpc_context() as (server, client):
+        module = MyModule()
+        print("\n")
+
+        server.serve_module_rpc(module)
+
+        assert 3 == client.call_sync("MyModule/add", ([1, 2], {}))
 
 
 # or async calls as well
@@ -164,4 +180,38 @@ async def test_async(rpc_context):
         module = MyModule()
         print("\n")
         server.serve_module_rpc(module)
-        assert 3 == await client.call_async("MyModule/add", [1, 2])
+        assert 3 == await client.call_async("MyModule/add", ([1, 2], {}))
+
+
+# or async calls as well
+@pytest.mark.module
+def test_rpc_full_deploy():
+    autoconf()
+
+    # test module we'll use for binding RPC methods
+    class CallerModule(Module):
+        remote: Callable[[int, int], int]
+
+        def __init__(self, remote: Callable[[int, int], int]):
+            self.remote = remote
+            super().__init__()
+
+        @rpc
+        def add(self, a: int, b: int = 30) -> int:
+            return self.remote(a, b)
+
+    dimos = start(2)
+
+    module = dimos.deploy(MyModule)
+    caller = dimos.deploy(CallerModule, module.add)
+    print("deployed", module)
+    print("deployed", caller)
+
+    # standard list args
+    assert caller.add(1, 2) == 3
+    # default args
+    assert caller.add(1) == 31
+    # kwargs
+    assert caller.add(1, b=1) == 2
+
+    dimos.shutdown()

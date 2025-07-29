@@ -21,8 +21,7 @@ import threading
 import traceback
 from dataclasses import dataclass
 from functools import cache
-from typing import Optional, Protocol, runtime_checkable, Any, Callable
-
+from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 import lcm
 
@@ -191,7 +190,7 @@ def autoconf() -> None:
 class LCMConfig:
     ttl: int = 0
     url: str | None = None
-    autoconf: bool = False
+    autoconf: bool = True
     lcm: Optional[lcm.LCM] = None
 
 
