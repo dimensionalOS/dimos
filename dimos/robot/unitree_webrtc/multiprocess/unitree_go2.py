@@ -34,16 +34,18 @@ from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
-    WavefrontFrontierExplorer,
-)
+
+# from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
+#     WavefrontFrontierExplorer,
+# )  # Commented out - uses old Costmap type
 from dimos.robot.global_planner import AstarPlanner
-from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
+
+# from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner  # Commented out with local planner
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection, VideoMessage
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from dimos.types.costmap import Costmap
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.types.vector import Vector
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -134,15 +136,11 @@ class ConnectionModule(FakeRTC, Module):
         self.tf_stream().subscribe(self.tf.publish)
 
         # Connect LCM input to robot movement commands
-        self.movecmd.subscribe(self.move)
+        # self.movecmd.subscribe(self.move)  # Commented out - local planner disabled
 
         # Set up streaming getters for latest sensor data
         self._odom = getter_streaming(self.odom_stream())
         self._lidar = getter_streaming(self.lidar_stream())
-
-    @rpc
-    def get_local_costmap(self) -> Costmap:
-        return self._lidar().costmap()
 
     @rpc
     def get_odom(self) -> Odometry:
@@ -229,35 +227,41 @@ class UnitreeGo2Light:
         self.mapper = self.dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
 
         # OUTPUT: Accumulated point cloud map to /global_map topic
-        self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
+        self.mapper.global_map.transport = core.LCMTransport("/global_map", OccupancyGrid)
+
+        # OUTPUT: Local costmap from latest lidar to /local_costmap topic
+        self.mapper.local_costmap.transport = core.LCMTransport("/local_costmap", OccupancyGrid)
 
         # Connect ConnectionModule OUTPUT lidar to Map INPUT lidar for point cloud accumulation
         self.mapper.lidar.connect(self.connection.lidar)
         # ====================================================================
 
         # Local planner Module, LCM transport & connection ================
-        self.local_planner = self.dimos.deploy(
-            VFHPurePursuitPlanner,
-            get_costmap=self.connection.get_local_costmap,
-        )
+        # TODO: Refactor local planner to subscribe to local costmap topic
+        # self.local_planner = self.dimos.deploy(
+        #     VFHPurePursuitPlanner,
+        #     get_costmap=self.connection.get_local_costmap,
+        # )
 
-        # Connects odometry LCM stream to BaseLocalPlanner odometry input
-        self.local_planner.odom.connect(self.connection.odom)
+        # # Connects odometry LCM stream to BaseLocalPlanner odometry input
+        # self.local_planner.odom.connect(self.connection.odom)
 
-        # Configures BaseLocalPlanner movecmd output to /move LCM topic
-        self.local_planner.movecmd.transport = core.LCMTransport("/move", Vector3)
+        # # Configures BaseLocalPlanner movecmd output to /move LCM topic
+        # self.local_planner.movecmd.transport = core.LCMTransport("/move", Vector3)
 
-        # Connects connection.movecmd input to local_planner.movecmd output
-        self.connection.movecmd.connect(self.local_planner.movecmd)
+        # # Connects connection.movecmd input to local_planner.movecmd output
+        # self.connection.movecmd.connect(self.local_planner.movecmd)
         # ===================================================================
 
         # Global Planner Module ===============
         self.global_planner = self.dimos.deploy(
             AstarPlanner,
-            get_costmap=self.mapper.costmap,
             get_robot_pos=self.connection.get_pos,
-            set_local_nav=self.local_planner.navigate_path_local,
+            # set_local_nav=self.local_planner.navigate_path_local,  # Commented out with local planner
         )
+
+        # Connect global_map output from mapper to global planner input
+        self.global_planner.global_map.connect(self.mapper.global_map)
 
         # Spatial Memory Module ======================================
         self.spatial_memory_module = self.dimos.deploy(
@@ -297,18 +301,20 @@ class UnitreeGo2Light:
         self.foxglove_bridge = FoxgloveBridge()
         # ==========================================
 
-        self.frontier_explorer = WavefrontFrontierExplorer(
-            set_goal=self.global_planner.set_goal,
-            get_costmap=self.mapper.costmap,
-            get_robot_pos=self.connection.get_pos,
-        )
+        # Frontier explorer commented out - uses old Costmap type
+        # TODO: Update frontier explorer to use OccupancyGrid
+        # self.frontier_explorer = WavefrontFrontierExplorer(
+        #     set_goal=self.global_planner.set_goal,
+        #     get_costmap=self.mapper.costmap,
+        #     get_robot_pos=self.connection.get_pos,
+        # )
 
         # Prints full module IO
         print("\n")
         for module in [
             self.connection,
             self.mapper,
-            self.local_planner,
+            # self.local_planner,  # Commented out
             self.global_planner,
             self.ctrl,
         ]:
@@ -317,14 +323,14 @@ class UnitreeGo2Light:
         # Start modules =============================
         self.mapper.start()
         self.connection.start()
-        self.local_planner.start()
+        # self.local_planner.start()  # Commented out
         self.global_planner.start()
         self.foxglove_bridge.start()
         # self.ctrl.start() # DEBUG
 
         await asyncio.sleep(2)
         print("querying system")
-        print(self.mapper.costmap())
+        # print(self.mapper.costmap())  # Removed - costmap() method no longer exists
         logger.info("UnitreeGo2Light initialized and started")
 
     def get_pose(self) -> dict:
@@ -369,9 +375,13 @@ class UnitreeGo2Light:
         Returns:
             bool: True if exploration completed successfully
         """
-        if not self.frontier_explorer:
-            raise RuntimeError("Frontier explorer not initialized. Call start() first.")
-        return self.frontier_explorer.explore(stop_event=stop_event)
+        # Frontier explorer commented out - uses old Costmap type
+        raise NotImplementedError(
+            "Frontier explorer is disabled - needs update to use OccupancyGrid"
+        )
+        # if not self.frontier_explorer:
+        #     raise RuntimeError("Frontier explorer not initialized. Call start() first.")
+        # return self.frontier_explorer.explore(stop_event=stop_event)
 
     def standup(self):
         """Make the robot stand up."""
@@ -383,12 +393,13 @@ class UnitreeGo2Light:
         if self.connection and hasattr(self.connection, "liedown"):
             return self.connection.liedown()
 
-    @property
-    def costmap(self):
-        """Access to the costmap for navigation."""
-        if not self.mapper:
-            raise RuntimeError("Mapper not initialized. Call start() first.")
-        return self.mapper.costmap
+    # Costmap property removed - no longer supported
+    # @property
+    # def costmap(self):
+    #     """Access to the costmap for navigation."""
+    #     if not self.mapper:
+    #         raise RuntimeError("Mapper not initialized. Call start() first.")
+    #     return self.mapper.costmap
 
     @property
     def spatial_memory(self) -> Optional[SpatialMemory]:
@@ -445,7 +456,7 @@ async def run_light_robot():
     pose = robot.get_pose()
     print(f"Robot position: {pose['position']}")
     print(f"Robot rotation: {pose['rotation']}")
-    robot.explore()
+    # robot.explore()  # Commented out - frontier explorer disabled
     # Keep the program running
     while True:
         await asyncio.sleep(1)

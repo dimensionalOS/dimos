@@ -21,7 +21,6 @@ import open3d as o3d
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.timeseries import to_human_readable
-from dimos.types.costmap import Costmap, pointcloud_to_costmap
 from dimos.types.vector import Vector
 
 
@@ -53,13 +52,12 @@ class LidarMessage(PointCloud2):
     resolution: float  # we lose resolution when encoding PointCloud2
     origin: Vector3
     raw_msg: Optional[RawLidarMsg]
-    _costmap: Optional[Costmap] = None
 
     def __init__(self, **kwargs):
         super().__init__(
             pointcloud=kwargs.get("pointcloud"),
             ts=kwargs.get("ts"),
-            frame_id="world",
+            frame_id=kwargs.get("frame_id", "world"),
         )
 
         self.origin = kwargs.get("origin")
@@ -83,6 +81,7 @@ class LidarMessage(PointCloud2):
             resolution=data["resolution"],
             pointcloud=pointcloud,
             ts=data["stamp"],
+            frame_id=data.get("frame_id", "world"),
             raw_msg=raw_message,
         )
 
@@ -115,16 +114,3 @@ class LidarMessage(PointCloud2):
     @property
     def o3d_geometry(self):
         return self.pointcloud
-
-    def costmap(self, voxel_size: float = 0.2) -> Costmap:
-        if not self._costmap:
-            down_sampled_pointcloud = self.pointcloud.voxel_down_sample(voxel_size=voxel_size)
-            inflate_radius_m = 1.0 * voxel_size if voxel_size > self.resolution else 0.0
-            grid, origin_xy = pointcloud_to_costmap(
-                down_sampled_pointcloud,
-                resolution=self.resolution,
-                inflate_radius_m=inflate_radius_m,
-            )
-            self._costmap = Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.resolution)
-
-        return self._costmap

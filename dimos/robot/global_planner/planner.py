@@ -19,10 +19,10 @@ from typing import Callable, Optional
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Pose, PoseLike, PoseStamped, Vector3, to_pose
+from dimos.types.vector import VectorLike
 from dimos.robot.global_planner.algo import astar
-from dimos.types.costmap import Costmap
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.types.path import Path
-from dimos.types.vector import Vector, VectorLike, to_vector
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.helpers import Visualizable
 
@@ -55,37 +55,45 @@ class Planner(Visualizable, Module):
 
 class AstarPlanner(Planner):
     target: In[Vector3] = None
+    global_map: In[OccupancyGrid] = None
     path: Out[Path] = None
 
-    get_costmap: Callable[[], Costmap]
     get_robot_pos: Callable[[], Vector3]
     set_local_nav: Callable[[Path, Optional[threading.Event], Optional[float]], bool] = None
 
     conservativism: int = 8
+    _latest_costmap: Optional[OccupancyGrid] = None
 
     def __init__(
         self,
-        get_costmap: Callable[[], Costmap],
         get_robot_pos: Callable[[], Vector3],
         set_local_nav: Callable[[Path, Optional[threading.Event], Optional[float]], bool] = None,
     ):
         super().__init__()
-        self.get_costmap = get_costmap
         self.get_robot_pos = get_robot_pos
         self.set_local_nav = set_local_nav
 
     @rpc
     def start(self):
         self.target.subscribe(self.plan)
+        self.global_map.subscribe(self._on_costmap)
+
+    def _on_costmap(self, costmap: OccupancyGrid):
+        """Update the latest costmap from subscription."""
+        self._latest_costmap = costmap
 
     def plan(self, goallike: PoseLike) -> Path:
         goal = to_pose(goallike)
         logger.info(f"planning path to goal {goal}")
         pos = self.get_robot_pos()
         print("current pos", pos)
-        costmap = self.get_costmap()
 
-        print("current costmap", costmap)
+        # Use subscribed costmap
+        if not self._latest_costmap:
+            logger.error("No costmap available from subscription")
+            return None
+
+        costmap = self._latest_costmap
 
         self.vis("target", goal)
 

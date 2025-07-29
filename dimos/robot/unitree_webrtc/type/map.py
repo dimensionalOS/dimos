@@ -23,24 +23,33 @@ from reactivex.observable import Observable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.types.costmap import Costmap, pointcloud_to_costmap
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 class Map(Module):
     lidar: In[LidarMessage] = None
-    global_map: Out[LidarMessage] = None
+    global_map: Out[OccupancyGrid] = None
+    local_costmap: Out[OccupancyGrid] = None
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
+    _latest_lidar: Optional[LidarMessage] = None
 
     def __init__(
         self,
         voxel_size: float = 0.05,
         cost_resolution: float = 0.05,
         global_publish_interval: Optional[float] = None,
+        inflation_radius: float = 0.5,
+        z_min: float = 0.1,
+        z_max: float = 2.0,
         **kwargs,
     ):
         self.voxel_size = voxel_size
         self.cost_resolution = cost_resolution
         self.global_publish_interval = global_publish_interval
+        self.inflation_radius = inflation_radius
+        self.z_min = z_min
+        self.z_max = z_max
         super().__init__(**kwargs)
 
     @rpc
@@ -48,23 +57,51 @@ class Map(Module):
         self.lidar.subscribe(self.add_frame)
 
         if self.global_publish_interval is not None:
-            interval(self.global_publish_interval).subscribe(
-                lambda _: self.global_map.publish(self.to_lidar_message())
+            interval(self.global_publish_interval).subscribe(lambda _: self.publish_global_map())
+
+    def publish_global_map(self):
+        """Convert accumulated pointcloud to OccupancyGrid and publish."""
+        if self.pointcloud and len(self.pointcloud.points) > 0:
+            # Create a PointCloud2 from the accumulated pointcloud
+            # Use the frame_id from the latest lidar if available
+            frame_id = self._latest_lidar.frame_id if self._latest_lidar else "world"
+            pc2 = PointCloud2(pointcloud=self.pointcloud, frame_id=frame_id, ts=time.time())
+
+            # Convert to OccupancyGrid
+            occupancy_grid = OccupancyGrid.from_pointcloud(
+                pc2,
+                resolution=self.cost_resolution,
+                min_height=self.z_min,
+                max_height=self.z_max,
+                inflate_radius=self.inflation_radius,
+                frame_id=frame_id,
             )
 
-    def to_lidar_message(self) -> LidarMessage:
-        return LidarMessage(
-            pointcloud=self.pointcloud,
-            origin=[0.0, 0.0, 0.0],
-            resolution=self.voxel_size,
-            ts=time.time(),
-        )
+            self.global_map.publish(occupancy_grid)
 
     @rpc
     def add_frame(self, frame: LidarMessage) -> "Map":
         """Voxelise *frame* and splice it into the running map."""
+        # Store latest lidar for local costmap
+        self._latest_lidar = frame
+
+        # Publish local costmap from latest lidar frame
+        if self.local_costmap:
+            local_grid = OccupancyGrid.from_pointcloud(
+                frame,  # LidarMessage is a PointCloud2
+                resolution=self.cost_resolution,
+                min_height=self.z_min,
+                max_height=self.z_max,
+                inflate_radius=self.inflation_radius,
+                frame_id=frame.frame_id,
+            )
+            self.local_costmap.publish(local_grid)
+
+        # Add to accumulated map
         new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
+
+        return self
 
     def consume(self, observable: Observable[LidarMessage]) -> Observable["Map"]:
         """Reactive operator that folds a stream of `LidarMessage` into the map."""
@@ -73,18 +110,6 @@ class Map(Module):
     @property
     def o3d_geometry(self) -> o3d.geometry.PointCloud:
         return self.pointcloud
-
-    @rpc
-    def costmap(self) -> Costmap:
-        """Return a fully inflated cost-map in a `Costmap` wrapper."""
-        inflate_radius_m = 0.5 * self.voxel_size if self.voxel_size > self.cost_resolution else 0.0
-        grid, origin_xy = pointcloud_to_costmap(
-            self.pointcloud,
-            resolution=self.cost_resolution,
-            inflate_radius_m=inflate_radius_m,
-        )
-
-        return Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution)
 
 
 def splice_sphere(
@@ -130,21 +155,3 @@ def splice_cylinder(
 
     survivors = map_pcd.select_by_index(victims, invert=True)
     return survivors + patch_pcd
-
-
-def _inflate_lethal(costmap: np.ndarray, radius: int, lethal_val: int = 100) -> np.ndarray:
-    """Return *costmap* with lethal cells dilated by *radius* grid steps (circular)."""
-    if radius <= 0 or not np.any(costmap == lethal_val):
-        return costmap
-
-    mask = costmap == lethal_val
-    dilated = mask.copy()
-    for dy in range(-radius, radius + 1):
-        for dx in range(-radius, radius + 1):
-            if dx * dx + dy * dy > radius * radius or (dx == 0 and dy == 0):
-                continue
-            dilated |= np.roll(mask, shift=(dy, dx), axis=(0, 1))
-
-    out = costmap.copy()
-    out[dilated] = lethal_val
-    return out

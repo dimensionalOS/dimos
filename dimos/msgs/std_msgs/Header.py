@@ -64,6 +64,15 @@ class Header(LCMHeader):
         """Initialize from another Header (copy constructor)."""
         super().__init__(seq=header.seq, stamp=header.stamp, frame_id=header.frame_id)
 
+    @dispatch
+    def __init__(self, header: object) -> None:
+        """Initialize from a decoded LCM header object."""
+        # Handle the case where we get an lcm_msgs.std_msgs.Header.Header object
+        if hasattr(header, "seq") and hasattr(header, "stamp") and hasattr(header, "frame_id"):
+            super().__init__(seq=header.seq, stamp=header.stamp, frame_id=header.frame_id)
+        else:
+            raise ValueError(f"Cannot create Header from {type(header)}")
+
     @classmethod
     def now(cls, frame_id: str = "", seq: int = 1) -> Header:
         """Create a Header with current timestamp."""

@@ -17,9 +17,8 @@ import math
 from collections import deque
 from typing import Optional, Tuple
 
-from dimos.msgs.geometry_msgs import Vector3 as Vector
 from dimos.msgs.geometry_msgs import VectorLike
-from dimos.types.costmap import Costmap
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, CostValues
 from dimos.types.path import Path
 from dimos.utils.logging_config import setup_logger
 
@@ -27,13 +26,16 @@ logger = setup_logger("dimos.robot.unitree.global_planner.astar")
 
 
 def find_nearest_free_cell(
-    costmap: Costmap, position: VectorLike, cost_threshold: int = 90, max_search_radius: int = 20
+    costmap: OccupancyGrid,
+    position: VectorLike,
+    cost_threshold: int = 90,
+    max_search_radius: int = 20,
 ) -> Tuple[int, int]:
     """
     Find the nearest unoccupied cell in the costmap using BFS.
 
     Args:
-        costmap: Costmap object containing the environment
+        costmap: OccupancyGrid object containing the environment
         position: Position to find nearest free cell from
         cost_threshold: Cost threshold above which a cell is considered an obstacle
         max_search_radius: Maximum search radius in cells
@@ -43,12 +45,13 @@ def find_nearest_free_cell(
         or the original position if no free cell is found within max_search_radius
     """
     # Convert world coordinates to grid coordinates
-    grid_pos = costmap.world_to_grid(position)
-    start_x, start_y = int(grid_pos.x), int(grid_pos.y)
+    grid_x, grid_y = costmap.world_to_grid(position)
+    start_x, start_y = grid_x, grid_y
 
     # If the cell is already free, return it
     if 0 <= start_x < costmap.width and 0 <= start_y < costmap.height:
-        if costmap.grid[start_y, start_x] < cost_threshold:
+        grid_array = costmap.grid
+        if grid_array[start_y, start_x] < cost_threshold:
             return (start_x, start_y)
 
     # BFS to find nearest free cell
@@ -79,7 +82,7 @@ def find_nearest_free_cell(
 
         # Check if this cell is valid and free
         if 0 <= x < costmap.width and 0 <= y < costmap.height:
-            if costmap.grid[y, x] < cost_threshold:
+            if grid_array[y, x] < cost_threshold:
                 logger.info(
                     f"Found free cell at ({x}, {y}), {dist} cells away from ({start_x}, {start_y})"
                 )
@@ -97,7 +100,7 @@ def find_nearest_free_cell(
 
 
 def astar(
-    costmap: Costmap,
+    costmap: OccupancyGrid,
     goal: VectorLike,
     start: VectorLike = (0.0, 0.0),
     cost_threshold: int = 90,
@@ -107,7 +110,7 @@ def astar(
     A* path planning algorithm from start to goal position.
 
     Args:
-        costmap: Costmap object containing the environment
+        costmap: OccupancyGrid object containing the environment
         goal: Goal position as any vector-like object
         start: Start position as any vector-like object (default: origin [0,0])
         cost_threshold: Cost threshold above which a cell is considered an obstacle
@@ -118,42 +121,39 @@ def astar(
     """
 
     # Convert world coordinates to grid coordinates directly using vector-like inputs
-    start_vector = costmap.world_to_grid(start)
-    goal_vector = costmap.world_to_grid(goal)
-    logger.info(f"ASTAR {costmap} {start_vector} -> {goal_vector}")
+    start_grid = costmap.world_to_grid(start)
+    goal_grid = costmap.world_to_grid(goal)
+    logger.info(f"ASTAR {costmap} {start_grid} -> {goal_grid}")
 
     # Store original positions for reference
-    original_start = (int(start_vector.x), int(start_vector.y))
-    original_goal = (int(goal_vector.x), int(goal_vector.y))
+    original_start = start_grid
+    original_goal = goal_grid
 
     adjusted_start = original_start
     adjusted_goal = original_goal
 
     # Check if start is out of bounds or in an obstacle
-    start_valid = 0 <= start_vector.x < costmap.width and 0 <= start_vector.y < costmap.height
+    start_valid = 0 <= start_grid[0] < costmap.width and 0 <= start_grid[1] < costmap.height
 
+    grid_array = costmap.grid
     start_in_obstacle = False
     if start_valid:
-        start_in_obstacle = costmap.grid[int(start_vector.y), int(start_vector.x)] >= cost_threshold
+        start_in_obstacle = grid_array[start_grid[1], start_grid[0]] >= cost_threshold
 
     if not start_valid or start_in_obstacle:
         logger.info("Start position is out of bounds or in an obstacle, finding nearest free cell")
         adjusted_start = find_nearest_free_cell(costmap, start, cost_threshold)
-        # Update start_vector for later use
-        start_vector = Vector(adjusted_start[0], adjusted_start[1])
 
     # Check if goal is out of bounds or in an obstacle
-    goal_valid = 0 <= goal_vector.x < costmap.width and 0 <= goal_vector.y < costmap.height
+    goal_valid = 0 <= goal_grid[0] < costmap.width and 0 <= goal_grid[1] < costmap.height
 
     goal_in_obstacle = False
     if goal_valid:
-        goal_in_obstacle = costmap.grid[int(goal_vector.y), int(goal_vector.x)] >= cost_threshold
+        goal_in_obstacle = grid_array[goal_grid[1], goal_grid[0]] >= cost_threshold
 
     if not goal_valid or goal_in_obstacle:
         logger.info("Goal position is out of bounds or in an obstacle, finding nearest free cell")
         adjusted_goal = find_nearest_free_cell(costmap, goal, cost_threshold)
-        # Update goal_vector for later use
-        goal_vector = Vector(adjusted_goal[0], adjusted_goal[1])
 
     # Define possible movements (8-connected grid)
     if allow_diagonal:
@@ -209,26 +209,26 @@ def astar(
             # Reconstruct the path
             waypoints = []
             while current in parents:
-                world_point = costmap.grid_to_world(current)
+                world_point = costmap.grid_to_world(current[0], current[1])
                 waypoints.append(world_point)
                 current = parents[current]
 
             # Add the start position
-            start_world_point = costmap.grid_to_world(start_tuple)
+            start_world_point = costmap.grid_to_world(start_tuple[0], start_tuple[1])
             waypoints.append(start_world_point)
 
             # Reverse the path (start to goal)
             waypoints.reverse()
 
             # Add the goal position if it's not already included
-            goal_point = costmap.grid_to_world(goal_tuple)
+            goal_point = costmap.grid_to_world(goal_tuple[0], goal_tuple[1])
 
             if not waypoints or waypoints[-1].distance(goal_point) > 1e-5:
                 waypoints.append(goal_point)
 
             # If we adjusted the goal, add the original goal as the final point
             if adjusted_goal != original_goal and goal_valid:
-                original_goal_point = costmap.grid_to_world(original_goal)
+                original_goal_point = costmap.grid_to_world(original_goal[0], original_goal[1])
                 waypoints.append(original_goal_point)
 
             return Path(waypoints)
@@ -250,11 +250,11 @@ def astar(
                 continue
 
             # Check if the neighbor is an obstacle
-            neighbor_val = costmap.grid[neighbor_y, neighbor_x]
+            neighbor_val = grid_array[neighbor_y, neighbor_x]
             if neighbor_val >= cost_threshold:  # or neighbor_val < 0:
                 continue
 
-            obstacle_proximity_penalty = costmap.grid[neighbor_y, neighbor_x] / 25
+            obstacle_proximity_penalty = grid_array[neighbor_y, neighbor_x] / 25
             tentative_g_score = (
                 g_score[current]
                 + movement_costs[i]

@@ -105,7 +105,8 @@ class Odometry(PoseStamped, Timestamped):
         )
 
         ts = to_timestamp(msg["data"]["header"]["stamp"])
-        return Odometry(position=pos, orientation=rot, ts=ts, frame_id="world")
+        frame_id = msg["data"]["header"].get("frame_id", "world")
+        return Odometry(position=pos, orientation=rot, ts=ts, frame_id=frame_id)
 
     def __repr__(self) -> str:
         return f"Odom pos({self.position}), rot({self.orientation})"
