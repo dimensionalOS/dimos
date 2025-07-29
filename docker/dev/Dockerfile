@@ -34,8 +34,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.cargo/bin:$PATH"
 
 # Install dependencies with UV (10-100x faster than pip)
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install .[dev]
+RUN uv pip install .[dev]
 
 COPY . /app/
 

@@ -49,8 +49,7 @@ RUN mkdir -p /app/dimos
 RUN touch /app/dimos/__init__.py
 
 # Install dependencies with UV (10-100x faster than pip)
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --upgrade pip setuptools wheel packaging && \
+RUN uv pip install --upgrade 'pip>=24' 'setuptools>=70' 'wheel' 'packaging>=24' && \
     uv pip install '.[cpu]'
 
 COPY . /app/
