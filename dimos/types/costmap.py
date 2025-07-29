@@ -24,13 +24,6 @@ import open3d as o3d
 from matplotlib.path import Path
 from PIL import Image
 import cv2
-from dimos_lcm.nav_msgs import OccupancyGrid as LCMOccupancyGrid
-from dimos_lcm.nav_msgs import MapMetaData
-from dimos_lcm.std_msgs import Header as LCMHeader
-from dimos_lcm.std_msgs import Time as LCMTime
-from dimos_lcm.geometry_msgs import Pose as LCMPose
-from dimos_lcm.geometry_msgs import Point as LCMPoint
-from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
 
 DTYPE2STR = {
     np.float32: "f32",
@@ -90,90 +83,6 @@ class Costmap:
             "resolution": self.resolution,
             "origin_theta": self.origin_theta,
         }
-
-    def lcm_encode(self, frame_id: str = "map") -> bytes:
-        """Convert Costmap to LCM OccupancyGrid message and encode to bytes.
-
-        Args:
-            frame_id: The coordinate frame ID for the costmap (default: "map")
-
-        Returns:
-            Encoded LCM OccupancyGrid message as bytes
-        """
-        # Create LCM OccupancyGrid message
-        occupancy_grid = LCMOccupancyGrid()
-
-        # Set header with provided frame_id
-        occupancy_grid.header = LCMHeader(seq=0, stamp=LCMTime(), frame_id=frame_id)
-
-        # Create MapMetaData
-        map_meta = MapMetaData()
-        map_meta.map_load_time = LCMTime()  # Default time
-        map_meta.resolution = self.resolution
-        map_meta.width = self.width
-        map_meta.height = self.height
-
-        # Set origin pose
-        origin_pose = LCMPose()
-        origin_pose.position = LCMPoint(x=self.origin.x, y=self.origin.y, z=0.0)
-
-        # Convert origin_theta to quaternion (rotation around Z axis)
-        qz = math.sin(self.origin_theta / 2.0)
-        qw = math.cos(self.origin_theta / 2.0)
-        origin_pose.orientation = LCMQuaternion(x=0.0, y=0.0, z=qz, w=qw)
-
-        map_meta.origin = origin_pose
-        occupancy_grid.info = map_meta
-
-        # Flatten grid data in row-major order (as ROS expects)
-        # Note: grid is already in the correct format (height x width)
-        flat_data = self.grid.flatten().astype(np.int8)
-        occupancy_grid.data_length = len(flat_data)
-        occupancy_grid.data = flat_data.tolist()
-
-        # Encode to bytes
-        return occupancy_grid.lcm_encode()
-
-    @classmethod
-    def lcm_decode(cls, data: bytes) -> "Costmap":
-        """Decode LCM OccupancyGrid message bytes to Costmap."""
-        # Decode the LCM message
-        occupancy_grid = LCMOccupancyGrid.lcm_decode(data)
-        return cls.from_lcm_msg(occupancy_grid)
-
-    @classmethod
-    def from_lcm_msg(cls, occupancy_grid: LCMOccupancyGrid) -> "Costmap":
-        """Create a Costmap from an LCM OccupancyGrid message object.
-
-        Args:
-            occupancy_grid: LCM OccupancyGrid message
-
-        Returns:
-            Costmap instance
-        """
-        # Extract grid dimensions and data
-        width = occupancy_grid.info.width
-        height = occupancy_grid.info.height
-        resolution = occupancy_grid.info.resolution
-
-        # Convert data to numpy array and reshape
-        grid_data = np.array(occupancy_grid.data, dtype=np.int8)
-        grid = grid_data.reshape((height, width))
-
-        # Extract origin position
-        origin = Vector(
-            occupancy_grid.info.origin.position.x, occupancy_grid.info.origin.position.y
-        )
-
-        # Convert quaternion to theta (extract yaw from quaternion)
-        qx = occupancy_grid.info.origin.orientation.x
-        qy = occupancy_grid.info.origin.orientation.y
-        qz = occupancy_grid.info.origin.orientation.z
-        qw = occupancy_grid.info.origin.orientation.w
-        origin_theta = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
-
-        # Create and return Costmap instance
-        return cls(grid=grid, origin=origin, origin_theta=origin_theta, resolution=resolution)
 
     @classmethod
     def from_msg(cls, costmap_msg: OccupancyGrid) -> "Costmap":
