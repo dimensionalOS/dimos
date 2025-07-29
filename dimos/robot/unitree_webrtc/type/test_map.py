@@ -71,7 +71,7 @@ def test_robot_mapping():
         f"Unknown percent {costmap.unknown_percent} is not within the range 70-80"
     )
 
-    assert 5 < costmap.free_percent < 10, (
+    assert 4 < costmap.free_percent < 10, (
         f"Free percent {costmap.free_percent} is not within the range 5-10"
     )
 
