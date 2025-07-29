@@ -54,6 +54,8 @@ class Map(Module):
         def publish(_):
             self.global_map.publish(self.to_lidar_message())
 
+            # temporary, not sure if it belogs in mapper
+            # used only for visualizations, not for any algo
             occupancygrid = (
                 OccupancyGrid.from_pointcloud(
                     self.to_lidar_message(),
