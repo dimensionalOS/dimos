@@ -42,14 +42,11 @@ jobs:
       image: ghcr.io/dimensionalos/${{ inputs.dev-image }}
 
     steps:
-          
       - uses: actions/checkout@v4
           
       - name: Fix permissions
         run: |
           git config --global --add safe.directory '*'
-          #sudo bash -c "chown -R $USER:$USER $(pwd)"
-          
           
       - name: Run tests
         run: |
