@@ -30,7 +30,7 @@ import dimos.core.colors as colors
 from dimos import core
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Transform, Vector3
-from dimos.msgs.nav_msgs import Path
+from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
@@ -190,7 +190,10 @@ class UnitreeGo2Light:
         connection.movecmd.transport = core.LCMTransport("/mov", Vector3)
 
         mapper = dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
+
         mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
+        mapper.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)
+
         mapper.lidar.connect(connection.lidar)
 
         global_planner = dimos.deploy(

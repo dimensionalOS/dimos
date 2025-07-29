@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
-import time
+
 import numpy as np
 import open3d as o3d
 import reactivex.operators as ops
@@ -22,6 +23,7 @@ from reactivex import interval
 from reactivex.observable import Observable
 
 from dimos.core import In, Module, Out, rpc
+from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.types.costmap import Costmap, pointcloud_to_costmap
 
@@ -29,6 +31,8 @@ from dimos.types.costmap import Costmap, pointcloud_to_costmap
 class Map(Module):
     lidar: In[LidarMessage] = None
     global_map: Out[LidarMessage] = None
+    global_costmap: Out[OccupancyGrid] = None
+
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
 
     def __init__(
@@ -47,10 +51,21 @@ class Map(Module):
     def start(self):
         self.lidar.subscribe(self.add_frame)
 
+        def publish(_):
+            self.global_map.publish(self.to_lidar_message())
+
+            occupancygrid = OccupancyGrid.from_pointcloud(
+                self.to_lidar_message(),
+                resolution=0.05,
+                min_height=0.1,
+                max_height=2.0,
+                inflate_radius=0.1,
+            ).gradient(obstacle_threshold=70, max_distance=2.0)
+
+            self.global_costmap.publish(occupancygrid)
+
         if self.global_publish_interval is not None:
-            interval(self.global_publish_interval).subscribe(
-                lambda _: self.global_map.publish(self.to_lidar_message())
-            )
+            interval(self.global_publish_interval).subscribe(publish)
 
     def to_lidar_message(self) -> LidarMessage:
         return LidarMessage(

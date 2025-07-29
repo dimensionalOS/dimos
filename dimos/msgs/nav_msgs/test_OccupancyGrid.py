@@ -219,20 +219,279 @@ def test_from_pointcloud():
     assert occupancygrid.occupied_cells > 0  # Should have some occupied cells
 
 
+def test_gradient():
+    """Test converting occupancy grid to gradient field."""
+    # Create a small test grid with an obstacle in the middle
+    data = np.zeros((10, 10), dtype=np.int8)
+    data[4:6, 4:6] = 100  # 2x2 obstacle in center
+
+    grid = OccupancyGrid(data, resolution=0.1)  # 0.1m per cell
+
+    # Convert to gradient
+    gradient_grid = grid.gradient(obstacle_threshold=50, max_distance=1.0)
+
+    # Check that we get an OccupancyGrid back
+    assert isinstance(gradient_grid, OccupancyGrid)
+    assert gradient_grid.grid.shape == (10, 10)
+    assert gradient_grid.resolution == grid.resolution
+    assert gradient_grid.header.frame_id == grid.header.frame_id
+
+    # Obstacle cells should have value 100
+    assert gradient_grid.grid[4, 4] == 100
+    assert gradient_grid.grid[5, 5] == 100
+
+    # Adjacent cells should have high values (near obstacles)
+    assert gradient_grid.grid[3, 4] > 85  # Very close to obstacle
+    assert gradient_grid.grid[4, 3] > 85  # Very close to obstacle
+
+    # Cells at moderate distance should have moderate values
+    assert 30 < gradient_grid.grid[0, 0] < 60  # Corner is ~0.57m away
+
+    # Check that gradient decreases with distance
+    assert gradient_grid.grid[3, 4] > gradient_grid.grid[2, 4]  # Closer is higher
+    assert gradient_grid.grid[2, 4] > gradient_grid.grid[0, 4]  # Further is lower
+
+    # Test with unknown cells
+    data_with_unknown = data.copy()
+    data_with_unknown[0:2, 0:2] = -1  # Add unknown area (close to obstacle)
+    data_with_unknown[8:10, 8:10] = -1  # Add unknown area (far from obstacle)
+
+    grid_with_unknown = OccupancyGrid(data_with_unknown, resolution=0.1)
+    gradient_with_unknown = grid_with_unknown.gradient(max_distance=1.0)  # 1m max distance
+
+    # Unknown cells close to obstacles should get gradient values
+    assert gradient_with_unknown.grid[0, 0] != -1  # Should have gradient
+    assert gradient_with_unknown.grid[1, 1] != -1  # Should have gradient
+
+    # Unknown cells far from obstacles (beyond max_distance) should remain unknown
+    # The far corner (8,8) is ~0.57m from nearest obstacle, within 1m threshold
+    # So it will get a gradient value, not remain unknown
+    assert gradient_with_unknown.unknown_cells < 8  # Some unknowns converted to gradient
+
+
+def test_filter_above():
+    """Test filtering cells above threshold."""
+    # Create test grid with various values
+    data = np.array(
+        [[-1, 0, 20, 50], [10, 30, 60, 80], [40, 70, 90, 100], [-1, 15, 25, -1]], dtype=np.int8
+    )
+
+    grid = OccupancyGrid(data, resolution=0.1)
+
+    # Filter to keep only values > 50
+    filtered = grid.filter_above(50)
+
+    # Check that values > 50 are preserved
+    assert filtered.grid[1, 2] == 60
+    assert filtered.grid[1, 3] == 80
+    assert filtered.grid[2, 1] == 70
+    assert filtered.grid[2, 2] == 90
+    assert filtered.grid[2, 3] == 100
+
+    # Check that values <= 50 are set to -1 (unknown)
+    assert filtered.grid[0, 1] == -1  # was 0
+    assert filtered.grid[0, 2] == -1  # was 20
+    assert filtered.grid[0, 3] == -1  # was 50
+    assert filtered.grid[1, 0] == -1  # was 10
+    assert filtered.grid[1, 1] == -1  # was 30
+    assert filtered.grid[2, 0] == -1  # was 40
+
+    # Check that unknown cells are preserved
+    assert filtered.grid[0, 0] == -1
+    assert filtered.grid[3, 0] == -1
+    assert filtered.grid[3, 3] == -1
+
+    # Check dimensions and metadata preserved
+    assert filtered.width == grid.width
+    assert filtered.height == grid.height
+    assert filtered.resolution == grid.resolution
+    assert filtered.header.frame_id == grid.header.frame_id
+
+
+def test_filter_below():
+    """Test filtering cells below threshold."""
+    # Create test grid with various values
+    data = np.array(
+        [[-1, 0, 20, 50], [10, 30, 60, 80], [40, 70, 90, 100], [-1, 15, 25, -1]], dtype=np.int8
+    )
+
+    grid = OccupancyGrid(data, resolution=0.1)
+
+    # Filter to keep only values < 50
+    filtered = grid.filter_below(50)
+
+    # Check that values < 50 are preserved
+    assert filtered.grid[0, 1] == 0
+    assert filtered.grid[0, 2] == 20
+    assert filtered.grid[1, 0] == 10
+    assert filtered.grid[1, 1] == 30
+    assert filtered.grid[2, 0] == 40
+    assert filtered.grid[3, 1] == 15
+    assert filtered.grid[3, 2] == 25
+
+    # Check that values >= 50 are set to -1 (unknown)
+    assert filtered.grid[0, 3] == -1  # was 50
+    assert filtered.grid[1, 2] == -1  # was 60
+    assert filtered.grid[1, 3] == -1  # was 80
+    assert filtered.grid[2, 1] == -1  # was 70
+    assert filtered.grid[2, 2] == -1  # was 90
+    assert filtered.grid[2, 3] == -1  # was 100
+
+    # Check that unknown cells are preserved
+    assert filtered.grid[0, 0] == -1
+    assert filtered.grid[3, 0] == -1
+    assert filtered.grid[3, 3] == -1
+
+    # Check dimensions and metadata preserved
+    assert filtered.width == grid.width
+    assert filtered.height == grid.height
+    assert filtered.resolution == grid.resolution
+    assert filtered.header.frame_id == grid.header.frame_id
+
+
+def test_max():
+    """Test setting all non-unknown cells to maximum."""
+    # Create test grid with various values
+    data = np.array(
+        [[-1, 0, 20, 50], [10, 30, 60, 80], [40, 70, 90, 100], [-1, 15, 25, -1]], dtype=np.int8
+    )
+
+    grid = OccupancyGrid(data, resolution=0.1)
+
+    # Apply max
+    maxed = grid.max()
+
+    # Check that all non-unknown cells are set to 100
+    assert maxed.grid[0, 1] == 100  # was 0
+    assert maxed.grid[0, 2] == 100  # was 20
+    assert maxed.grid[0, 3] == 100  # was 50
+    assert maxed.grid[1, 0] == 100  # was 10
+    assert maxed.grid[1, 1] == 100  # was 30
+    assert maxed.grid[1, 2] == 100  # was 60
+    assert maxed.grid[1, 3] == 100  # was 80
+    assert maxed.grid[2, 0] == 100  # was 40
+    assert maxed.grid[2, 1] == 100  # was 70
+    assert maxed.grid[2, 2] == 100  # was 90
+    assert maxed.grid[2, 3] == 100  # was 100 (already max)
+    assert maxed.grid[3, 1] == 100  # was 15
+    assert maxed.grid[3, 2] == 100  # was 25
+
+    # Check that unknown cells are preserved
+    assert maxed.grid[0, 0] == -1
+    assert maxed.grid[3, 0] == -1
+    assert maxed.grid[3, 3] == -1
+
+    # Check dimensions and metadata preserved
+    assert maxed.width == grid.width
+    assert maxed.height == grid.height
+    assert maxed.resolution == grid.resolution
+    assert maxed.header.frame_id == grid.header.frame_id
+
+    # Verify statistics
+    assert maxed.unknown_cells == 3  # Same as original
+    assert maxed.occupied_cells == 13  # All non-unknown cells
+    assert maxed.free_cells == 0  # No free cells
+
+
 @pytest.mark.lcm
 def test_lcm_broadcast():
-    """Test creating OccupancyGrid from PointCloud2."""
+    """Test broadcasting OccupancyGrid and gradient over LCM."""
     file_path = get_data("lcm_msgs") / "sensor_msgs/PointCloud2.pickle"
     with open(file_path, "rb") as f:
         lcm_msg = pickle.loads(f.read())
 
     pointcloud = PointCloud2.lcm_decode(lcm_msg)
 
+    # Create occupancy grid from pointcloud
     occupancygrid = OccupancyGrid.from_pointcloud(
         pointcloud, resolution=0.05, min_height=0.1, max_height=2.0, inflate_radius=0.1
     )
 
+    # Create gradient field with larger max_distance for better visualization
+    gradient_grid = occupancygrid.gradient(obstacle_threshold=70, max_distance=2.0)
+
+    # Debug: Print actual values to see the difference
+    print("\n=== DEBUG: Comparing grids ===")
+    print(f"Original grid unique values: {np.unique(occupancygrid.grid)}")
+    print(f"Gradient grid unique values: {np.unique(gradient_grid.grid)}")
+
+    # Find an area with occupied cells to show the difference
+    occupied_indices = np.argwhere(occupancygrid.grid == 100)
+    if len(occupied_indices) > 0:
+        # Pick a point near an occupied cell
+        idx = len(occupied_indices) // 2  # Middle occupied cell
+        sample_y, sample_x = occupied_indices[idx]
+        sample_size = 15
+
+        # Ensure we don't go out of bounds
+        y_start = max(0, sample_y - sample_size // 2)
+        y_end = min(occupancygrid.height, y_start + sample_size)
+        x_start = max(0, sample_x - sample_size // 2)
+        x_end = min(occupancygrid.width, x_start + sample_size)
+
+        print(f"\nSample area around occupied cell ({sample_x}, {sample_y}):")
+        print("Original occupancy grid:")
+        print(occupancygrid.grid[y_start:y_end, x_start:x_end])
+        print("\nGradient grid (same area):")
+        print(gradient_grid.grid[y_start:y_end, x_start:x_end])
+    else:
+        print("\nNo occupied cells found for sampling")
+
+    # Check statistics
+    print(f"\nOriginal grid stats:")
+    print(f"  Occupied (100): {np.sum(occupancygrid.grid == 100)} cells")
+    print(f"  Inflated (99): {np.sum(occupancygrid.grid == 99)} cells")
+    print(f"  Free (0): {np.sum(occupancygrid.grid == 0)} cells")
+    print(f"  Unknown (-1): {np.sum(occupancygrid.grid == -1)} cells")
+
+    print(f"\nGradient grid stats:")
+    print(f"  Max gradient (100): {np.sum(gradient_grid.grid == 100)} cells")
+    print(
+        f"  High gradient (80-99): {np.sum((gradient_grid.grid >= 80) & (gradient_grid.grid < 100))} cells"
+    )
+    print(
+        f"  Medium gradient (40-79): {np.sum((gradient_grid.grid >= 40) & (gradient_grid.grid < 80))} cells"
+    )
+    print(
+        f"  Low gradient (1-39): {np.sum((gradient_grid.grid >= 1) & (gradient_grid.grid < 40))} cells"
+    )
+    print(f"  Zero gradient (0): {np.sum(gradient_grid.grid == 0)} cells")
+    print(f"  Unknown (-1): {np.sum(gradient_grid.grid == -1)} cells")
+
+    # # Save debug images
+    # import matplotlib.pyplot as plt
+
+    # fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    # # Original
+    # ax = axes[0]
+    # im1 = ax.imshow(occupancygrid.grid, origin="lower", cmap="gray_r", vmin=-1, vmax=100)
+    # ax.set_title(f"Original Occupancy Grid\n{occupancygrid}")
+    # plt.colorbar(im1, ax=ax)
+
+    # # Gradient
+    # ax = axes[1]
+    # im2 = ax.imshow(gradient_grid.grid, origin="lower", cmap="hot", vmin=-1, vmax=100)
+    # ax.set_title(f"Gradient Grid\n{gradient_grid}")
+    # plt.colorbar(im2, ax=ax)
+
+    # plt.tight_layout()
+    # plt.savefig("lcm_debug_grids.png", dpi=150)
+    # print("\nSaved debug visualization to lcm_debug_grids.png")
+    # plt.close()
+
+    # Broadcast all the data
     lcm = LCM()
     lcm.start()
     lcm.publish(Topic("/global_map", PointCloud2), pointcloud)
     lcm.publish(Topic("/global_costmap", OccupancyGrid), occupancygrid)
+    lcm.publish(Topic("/global_gradient", OccupancyGrid), gradient_grid)
+
+    print(f"\nPublished to LCM:")
+    print(f"  /global_map: PointCloud2 with {len(pointcloud)} points")
+    print(f"  /global_costmap: {occupancygrid}")
+    print(f"  /global_gradient: {gradient_grid}")
+    print(f"\nGradient info:")
+    print(f"  Values: 0 (free far from obstacles) -> 100 (at obstacles)")
+    print(f"  Unknown cells: {gradient_grid.unknown_cells} (preserved as -1)")
+    print(f"  Max distance for gradient: 5.0 meters")
