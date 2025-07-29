@@ -227,7 +227,8 @@ class UnitreeGo2Light:
         self.mapper = self.dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
 
         # OUTPUT: Accumulated point cloud map to /global_map topic
-        self.mapper.global_map.transport = core.LCMTransport("/global_map", OccupancyGrid)
+        self.mapper.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)
+        self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
 
         # OUTPUT: Local costmap from latest lidar to /local_costmap topic
         self.mapper.local_costmap.transport = core.LCMTransport("/local_costmap", OccupancyGrid)

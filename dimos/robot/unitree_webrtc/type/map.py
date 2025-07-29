@@ -29,7 +29,8 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 class Map(Module):
     lidar: In[LidarMessage] = None
-    global_map: Out[OccupancyGrid] = None
+    global_map: Out[PointCloud2] = None
+    global_costmap: Out[OccupancyGrid] = None
     local_costmap: Out[OccupancyGrid] = None
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
     _latest_lidar: Optional[LidarMessage] = None
@@ -57,15 +58,23 @@ class Map(Module):
         self.lidar.subscribe(self.add_frame)
 
         if self.global_publish_interval is not None:
-            interval(self.global_publish_interval).subscribe(lambda _: self.publish_global_map())
+            interval(self.global_publish_interval).subscribe(
+                lambda _: self.publish_global_costmap()
+            )
 
-    def publish_global_map(self):
+    def publish_global_costmap(self):
         """Convert accumulated pointcloud to OccupancyGrid and publish."""
         if self.pointcloud and len(self.pointcloud.points) > 0:
             # Create a PointCloud2 from the accumulated pointcloud
             # Use the frame_id from the latest lidar if available
             frame_id = self._latest_lidar.frame_id if self._latest_lidar else "world"
-            pc2 = PointCloud2(pointcloud=self.pointcloud, frame_id=frame_id, ts=time.time())
+            pc2 = LidarMessage(
+                pointcloud=self.pointcloud,
+                origin=[0.0, 0.0, 0.0],
+                resolution=self.voxel_size,
+                ts=time.time(),
+                frame_id=frame_id,
+            )
 
             # Convert to OccupancyGrid
             occupancy_grid = OccupancyGrid.from_pointcloud(
@@ -77,7 +86,8 @@ class Map(Module):
                 frame_id=frame_id,
             )
 
-            self.global_map.publish(occupancy_grid)
+            self.global_costmap.publish(occupancy_grid)
+            self.global_map.publish(pc2)
 
     @rpc
     def add_frame(self, frame: LidarMessage) -> "Map":
