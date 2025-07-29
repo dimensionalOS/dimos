@@ -46,7 +46,7 @@ class CostValues(IntEnum):
     OCCUPIED = 100  # Occupied/lethal space
 
 
-class OccupancyGrid(LCMOccupancyGrid):
+class OccupancyGrid:
     """
     Convenience wrapper for nav_msgs/OccupancyGrid with numpy array support.
     """
