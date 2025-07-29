@@ -24,7 +24,7 @@ from dimos_lcm.nav_msgs import OccupancyGrid as LCMOccupancyGrid
 from plum import dispatch
 from scipy import ndimage
 
-from dimos.msgs.geometry_msgs import Pose
+from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
 from dimos.msgs.std_msgs import Header
 
 if TYPE_CHECKING:
@@ -257,6 +257,46 @@ class OccupancyGrid(LCMOccupancyGrid):
         # Create new OccupancyGrid with inflated data using numpy constructor
         return OccupancyGrid(result_grid, self.resolution, self.origin, self.header.frame_id)
 
+    def world_to_grid(self, point: VectorLike) -> Vector3:
+        """Convert world coordinates to grid coordinates.
+
+        Args:
+            point: A vector-like object containing X,Y coordinates
+
+        Returns:
+            Vector3 with grid coordinates
+        """
+        positionVector = Vector3(point)
+        # Get origin position
+        ox = self.origin.position.x
+        oy = self.origin.position.y
+
+        # Convert to grid coordinates (simplified, assuming no rotation)
+        grid_x = (positionVector.x - ox) / self.resolution
+        grid_y = (positionVector.y - oy) / self.resolution
+
+        return Vector3(grid_x, grid_y, 0.0)
+
+    def grid_to_world(self, grid_point: VectorLike) -> Vector3:
+        """Convert grid coordinates to world coordinates.
+
+        Args:
+            grid_point: Vector-like object containing grid coordinates
+
+        Returns:
+            World position as Vector3
+        """
+        gridVector = Vector3(grid_point)
+        # Get origin position
+        ox = self.origin.position.x
+        oy = self.origin.position.y
+
+        # Convert to world (simplified, no rotation)
+        x = ox + gridVector.x * self.resolution
+        y = oy + gridVector.y * self.resolution
+
+        return Vector3(x, y, 0.0)
+
     def __str__(self) -> str:
         """Create a concise string representation."""
         origin_pos = self.origin.position
@@ -434,7 +474,7 @@ class OccupancyGrid(LCMOccupancyGrid):
 
         return occupancy_grid
 
-    def gradient(self, obstacle_threshold: int = 50, max_distance: float = 5.0) -> "OccupancyGrid":
+    def gradient(self, obstacle_threshold: int = 50, max_distance: float = 2.0) -> "OccupancyGrid":
         """Create a gradient OccupancyGrid for path planning.
 
         Creates a gradient where free space has value 0 and values increase near obstacles.

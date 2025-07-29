@@ -147,7 +147,7 @@ class AstarPlanner(Planner):
         goal = to_pose(goallike)
         logger.info(f"planning path to goal {goal}")
         pos = self.get_robot_pos()
-        costmap = self.get_costmap()
+        costmap = self.get_costmap().gradient()
 
         self.vis("target", goal)
 
