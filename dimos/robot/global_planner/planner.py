@@ -19,9 +19,8 @@ from typing import Callable, Optional
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Pose, PoseLike, PoseStamped, Vector3, VectorLike, to_pose
-from dimos.msgs.nav_msgs import Path
+from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.robot.global_planner.algo import astar
-from dimos.types.costmap import Costmap
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.helpers import Visualizable
 
@@ -123,7 +122,7 @@ class AstarPlanner(Planner):
     target: In[Vector3] = None
     path: Out[Path] = None
 
-    get_costmap: Callable[[], Costmap]
+    get_costmap: Callable[[], OccupancyGrid]
     get_robot_pos: Callable[[], Vector3]
     set_local_nav: Callable[[Path, Optional[threading.Event], Optional[float]], bool] = None
 
@@ -131,7 +130,7 @@ class AstarPlanner(Planner):
 
     def __init__(
         self,
-        get_costmap: Callable[[], Costmap],
+        get_costmap: Callable[[], OccupancyGrid],
         get_robot_pos: Callable[[], Vector3],
         set_local_nav: Callable[[Path, Optional[threading.Event], Optional[float]], bool] = None,
     ):
@@ -145,14 +144,10 @@ class AstarPlanner(Planner):
         self.target.subscribe(self.plan)
 
     def plan(self, goallike: PoseLike) -> Path:
-        print("PLAN CALLED WITH", goallike)
         goal = to_pose(goallike)
         logger.info(f"planning path to goal {goal}")
         pos = self.get_robot_pos()
-        print("current pos", pos)
         costmap = self.get_costmap()
-
-        print("current costmap", costmap)
 
         self.vis("target", goal)
 
@@ -160,10 +155,9 @@ class AstarPlanner(Planner):
 
         if path:
             path = resample_path(path, 0.1)
-            # self.vis("a*", path)
             self.path.publish(path)
-            print("showing path", path)
             if hasattr(self, "set_local_nav") and self.set_local_nav:
                 self.set_local_nav(path)
+                logger.warning(f"Path found: {path}")
             return path
         logger.warning("No path found to the goal.")

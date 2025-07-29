@@ -19,15 +19,17 @@ from typing import Optional, Tuple
 
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, VectorLike
 from dimos.msgs.geometry_msgs import Vector3 as Vector
-from dimos.msgs.nav_msgs import Path
-from dimos.types.costmap import Costmap
+from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree.global_planner.astar")
 
 
 def find_nearest_free_cell(
-    costmap: Costmap, position: VectorLike, cost_threshold: int = 90, max_search_radius: int = 20
+    costmap: OccupancyGrid,
+    position: VectorLike,
+    cost_threshold: int = 90,
+    max_search_radius: int = 20,
 ) -> Tuple[int, int]:
     """
     Find the nearest unoccupied cell in the costmap using BFS.
@@ -97,7 +99,7 @@ def find_nearest_free_cell(
 
 
 def astar(
-    costmap: Costmap,
+    costmap: OccupancyGrid,
     goal: VectorLike,
     start: VectorLike = (0.0, 0.0),
     cost_threshold: int = 90,
