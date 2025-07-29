@@ -24,8 +24,9 @@ import yaml
 import os
 import cv2
 import open3d as o3d
-from typing import List, Optional, Tuple, Union, Dict
+from typing import List, Optional, Tuple, Union, Dict, Any
 from scipy.spatial import cKDTree
+from dimos.perception.common.utils import project_3d_points_to_2d
 
 
 def load_camera_matrix_from_yaml(
@@ -302,48 +303,6 @@ def filter_point_cloud_radius(
         return pcd, np.array([])
 
     return pcd.remove_radius_outlier(nb_points=nb_points, radius=radius)
-
-
-def project_3d_points_to_2d(
-    points_3d: np.ndarray, camera_intrinsics: Union[List[float], np.ndarray]
-) -> np.ndarray:
-    """
-    Project 3D points to 2D image coordinates using camera intrinsics.
-
-    Args:
-        points_3d: Nx3 array of 3D points (X, Y, Z)
-        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] list or 3x3 matrix
-
-    Returns:
-        Nx2 array of 2D image coordinates (u, v)
-    """
-    if len(points_3d) == 0:
-        return np.zeros((0, 2), dtype=np.int32)
-
-    # Filter out points with zero or negative depth
-    valid_mask = points_3d[:, 2] > 0
-    if not np.any(valid_mask):
-        return np.zeros((0, 2), dtype=np.int32)
-
-    valid_points = points_3d[valid_mask]
-
-    # Extract camera parameters
-    if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
-        fx, fy, cx, cy = camera_intrinsics
-    else:
-        fx = camera_intrinsics[0, 0]
-        fy = camera_intrinsics[1, 1]
-        cx = camera_intrinsics[0, 2]
-        cy = camera_intrinsics[1, 2]
-
-    # Project to image coordinates
-    u = (valid_points[:, 0] * fx / valid_points[:, 2]) + cx
-    v = (valid_points[:, 1] * fy / valid_points[:, 2]) + cy
-
-    # Round to integer pixel coordinates
-    points_2d = np.column_stack([u, v]).astype(np.int32)
-
-    return points_2d
 
 
 def overlay_point_clouds_on_image(
@@ -1080,3 +1039,73 @@ def combine_object_pointclouds(
         combined_pcd.colors = o3d.utility.Vector3dVector(np.vstack(all_colors))
 
     return combined_pcd
+
+
+def extract_centroids_from_masks(
+    rgb_image: np.ndarray,
+    depth_image: np.ndarray,
+    masks: List[np.ndarray],
+    camera_intrinsics: Union[List[float], np.ndarray],
+) -> List[Dict[str, Any]]:
+    """
+    Extract 3D centroids and orientations from segmentation masks.
+
+    Args:
+        rgb_image: RGB image (H, W, 3)
+        depth_image: Depth image (H, W) in meters
+        masks: List of boolean masks (H, W)
+        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] or 3x3 matrix
+
+    Returns:
+        List of dictionaries containing:
+            - centroid: 3D centroid position [x, y, z] in camera frame
+            - orientation: Normalized direction vector from camera to centroid
+            - num_points: Number of valid 3D points
+            - mask_idx: Index of the mask in the input list
+    """
+    # Extract camera parameters
+    if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
+        fx, fy, cx, cy = camera_intrinsics
+    else:
+        fx = camera_intrinsics[0, 0]
+        fy = camera_intrinsics[1, 1]
+        cx = camera_intrinsics[0, 2]
+        cy = camera_intrinsics[1, 2]
+
+    results = []
+
+    for mask_idx, mask in enumerate(masks):
+        if mask is None or mask.sum() == 0:
+            continue
+
+        # Get pixel coordinates where mask is True
+        y_coords, x_coords = np.where(mask)
+
+        # Get depth values at mask locations
+        depths = depth_image[y_coords, x_coords]
+
+        # Convert to 3D points in camera frame
+        X = (x_coords - cx) * depths / fx
+        Y = (y_coords - cy) * depths / fy
+        Z = depths
+
+        # Calculate centroid
+        centroid_x = np.mean(X)
+        centroid_y = np.mean(Y)
+        centroid_z = np.mean(Z)
+        centroid = np.array([centroid_x, centroid_y, centroid_z])
+
+        # Calculate orientation as normalized direction from camera origin to centroid
+        # Camera origin is at (0, 0, 0)
+        orientation = centroid / np.linalg.norm(centroid)
+
+        results.append(
+            {
+                "centroid": centroid,
+                "orientation": orientation,
+                "num_points": int(mask.sum()),
+                "mask_idx": mask_idx,
+            }
+        )
+
+    return results

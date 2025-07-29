@@ -5,7 +5,7 @@ on:
       from-image:  { type: string, required: true }
       to-image:    { type: string, required: true }
       dockerfile:  { type: string, required: true }
-      freespace:   { type: boolean, default: false }
+      freespace:   { type: boolean, default: true }
       should-run:  { type: boolean, default: false }
       context:     { type: string, default: '.' }
 
@@ -19,8 +19,17 @@ jobs:
       packages: write
 
     steps:
+      - name: Fix permissions
+        if: ${{ inputs.should-run }}
+        run: |
+          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+
+      - uses: actions/checkout@v4
+        if: ${{ inputs.should-run }}
+        with:
+          fetch-depth: 0
+
       - name: free up disk space
-        # takes a bit of time, so disabled by default
         # explicitly enable this for large builds
         if: ${{ inputs.should-run && inputs.freespace }}
         run: |
@@ -29,15 +38,83 @@ jobs:
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/share/boost
           sudo rm -rf /usr/local/lib/android
+          
+          echo "=== Cleaning images from deleted branches ==="
+          
+          # Get list of all remote branches
+          git ls-remote --heads origin | awk '{print $2}' | sed 's|refs/heads/||' > /tmp/active_branches.txt
+          
+          # Check each docker image tag against branch list
+          docker images --format "{{.Repository}}:{{.Tag}}|{{.ID}}" | \
+          grep "ghcr.io/dimensionalos" | \
+          grep -v ":<none>" | \
+          while IFS='|' read image_ref id; do
+            tag=$(echo "$image_ref" | cut -d: -f2)
+            
+            # Skip if tag matches an active branch
+            if grep -qx "$tag" /tmp/active_branches.txt; then
+              echo "Branch exists: $tag - keeping $image_ref"
+            else
+              echo "Branch deleted: $tag - removing $image_ref"
+              docker rmi "$id" 2>/dev/null || true
+            fi
+          done
+          
+          rm -f /tmp/active_branches.txt
+          
+          USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
+          echo "Pre-docker-cleanup disk usage: ${USAGE}%"
+          
+          if [ $USAGE -gt 60 ]; then
+            echo "=== Running quick cleanup (usage > 60%) ==="
+            
+            # Keep newest image per tag
+            docker images --format "{{.Repository}}|{{.Tag}}|{{.ID}}" | \
+            grep "ghcr.io/dimensionalos" | \
+            grep -v "<none>" | \
+            while IFS='|' read repo tag id; do
+              created_ts=$(docker inspect -f '{{.Created}}' "$id" 2>/dev/null)
+              created_unix=$(date -d "$created_ts" +%s 2>/dev/null || echo "0")
+              echo "${repo}|${tag}|${id}|${created_unix}"
+            done | sort -t'|' -k1,1 -k2,2 -k4,4nr | \
+            awk -F'|' '
+            {
+              repo=$1; tag=$2; id=$3
+              repo_tag = repo ":" tag
+              
+              # Skip protected tags
+              if (tag ~ /^(main|dev|latest)$/) next
+              
+              # Keep newest per tag, remove older duplicates
+              if (!(repo_tag in seen_combos)) {
+                seen_combos[repo_tag] = 1
+              } else {
+                system("docker rmi " id " 2>/dev/null || true")
+              }
+            }'
+            
+            docker image prune -f
+            docker volume prune -f
+          fi
+          
+          # Aggressive cleanup if still above 85%
+          USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
+          if [ $USAGE -gt 85 ]; then
+            echo "=== AGGRESSIVE cleanup (usage > 85%) - removing all except main/dev ==="
+            
+            # Remove ALL images except main and dev tags
+            docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | \
+            grep -E "ghcr.io/dimensionalos" | \
+            grep -vE ":(main|dev)$" | \
+            awk '{print $2}' | xargs -r docker rmi -f || true
+            
+            docker container prune -f
+            docker volume prune -a -f
+            docker network prune -f
+            docker image prune -f 
+          fi
+          
           echo -e "post cleanup space:\n $(df -h)"
-
-      - name: Fix permissions
-        if: ${{ inputs.should-run }}
-        run: |
-          sudo chown -R $USER:$USER ${{ github.workspace }} || true
-
-      - uses: actions/checkout@v4
-        if: ${{ inputs.should-run }}
 
       - uses: docker/login-action@v3
         if: ${{ inputs.should-run }}

@@ -94,8 +94,7 @@ dependencies = [
     "dask[complete]==2025.5.1",
 
     # LCM / DimOS utilities
-    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@ba3445d16be75a7ade6fb2a516b39a3e44319d5c"    
-    # "tf-lcm-py @ git+https://github.com/dimensionalOS/dimos-lcm.git@9befcc1a75f43fb1110d468c182dd19a549eaa36#subdirectory=tf_lcm/python"
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@ba3445d16be75a7ade6fb2a516b39a3e44319d5c"
 ]
 
 
@@ -114,6 +113,9 @@ manipulation = [
     "tqdm>=4.65.0",
     "pyyaml>=6.0",
     "contact-graspnet-pytorch @ git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git",
+    
+    # piper arm
+    "piper-sdk",
     
     # Visualization (Optional)
     "kaleido>=0.2.1",
