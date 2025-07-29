@@ -56,6 +56,12 @@ class OccupancyGrid(LCMOccupancyGrid):
     # Store the numpy array as a property
     _grid_array: Optional[np.ndarray] = None
 
+    # Type annotations for inherited attributes from LCMOccupancyGrid
+    header: Header
+    info: MapMetaData
+    data: list[int]
+    data_length: int
+
     @dispatch
     def __init__(self) -> None:
         """Initialize an empty OccupancyGrid."""
@@ -148,6 +154,7 @@ class OccupancyGrid(LCMOccupancyGrid):
         """Get the grid as a 2D numpy array (height x width)."""
         if self._grid_array is None:
             self._sync_array_from_data()
+        assert self._grid_array is not None
         return self._grid_array
 
     @grid.setter

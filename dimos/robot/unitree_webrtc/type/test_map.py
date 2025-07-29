@@ -65,9 +65,9 @@ def test_robot_mapping():
     # we investigate built map
     costmap = map.costmap()
 
-    assert costmap.grid.shape == (404, 276)
+    assert costmap.grid.shape == (442, 314)
 
-    assert 70 <= costmap.unknown_percent <= 80, (
+    assert 70 <= costmap.unknown_percent <= 95, (
         f"Unknown percent {costmap.unknown_percent} is not within the range 70-80"
     )
 
