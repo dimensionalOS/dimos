@@ -34,16 +34,16 @@ def test_empty_grid():
     assert grid.height == 0
     assert grid.grid.shape == (0,)
     assert grid.total_cells == 0
-    assert grid.header.frame_id == "world"
+    assert grid.frame_id == "world"
 
 
 def test_grid_with_dimensions():
     """Test creating a grid with specified dimensions."""
-    grid = OccupancyGrid(10, 10, 0.1, "map")
+    grid = OccupancyGrid(width=10, height=10, resolution=0.1, frame_id="map")
     assert grid.width == 10
     assert grid.height == 10
     assert grid.resolution == 0.1
-    assert grid.header.frame_id == "map"
+    assert grid.frame_id == "map"
     assert grid.grid.shape == (10, 10)
     assert np.all(grid.grid == -1)  # All unknown
     assert grid.unknown_cells == 100
@@ -57,12 +57,12 @@ def test_grid_from_numpy_array():
     data[15:18, 5:8] = -1  # Add unknown area
 
     origin = Pose(1.0, 2.0, 0.0)
-    grid = OccupancyGrid(data, 0.05, origin, "odom")
+    grid = OccupancyGrid(grid=data, resolution=0.05, origin=origin, frame_id="odom")
 
     assert grid.width == 30
     assert grid.height == 20
     assert grid.resolution == 0.05
-    assert grid.header.frame_id == "odom"
+    assert grid.frame_id == "odom"
     assert grid.origin.position.x == 1.0
     assert grid.origin.position.y == 2.0
     assert grid.grid.shape == (20, 30)
@@ -82,7 +82,7 @@ def test_world_grid_coordinate_conversion():
     """Test converting between world and grid coordinates."""
     data = np.zeros((20, 30), dtype=np.int8)
     origin = Pose(1.0, 2.0, 0.0)
-    grid = OccupancyGrid(data, 0.05, origin, "odom")
+    grid = OccupancyGrid(grid=data, resolution=0.05, origin=origin, frame_id="odom")
 
     # Test world to grid
     grid_pos = grid.world_to_grid((2.5, 3.0))
@@ -101,7 +101,7 @@ def test_lcm_encode_decode():
     data[5:10, 10:20] = 100  # Add some obstacles
     data[15:18, 5:8] = -1  # Add unknown area
     origin = Pose(1.0, 2.0, 0.0)
-    grid = OccupancyGrid(data, 0.05, origin, "odom")
+    grid = OccupancyGrid(grid=data, resolution=0.05, origin=origin, frame_id="odom")
 
     # Set a specific value for testing
     # Convert world coordinates to grid indices
@@ -123,7 +123,7 @@ def test_lcm_encode_decode():
     assert abs(grid.resolution - decoded.resolution) < 1e-6  # Use approximate equality for floats
     assert abs(grid.origin.position.x - decoded.origin.position.x) < 1e-6
     assert abs(grid.origin.position.y - decoded.origin.position.y) < 1e-6
-    assert grid.header.frame_id == decoded.header.frame_id
+    assert grid.frame_id == decoded.frame_id
 
     # Check that the actual grid data was preserved (don't rely on float conversions)
     assert decoded.grid[5, 10] == 50  # Value we set should be preserved in grid
@@ -131,7 +131,7 @@ def test_lcm_encode_decode():
 
 def test_string_representation():
     """Test string representations."""
-    grid = OccupancyGrid(10, 10, 0.1, "map")
+    grid = OccupancyGrid(width=10, height=10, resolution=0.1, frame_id="map")
 
     # Test __str__
     str_repr = str(grid)
@@ -149,21 +149,15 @@ def test_string_representation():
 
 
 def test_grid_property_sync():
-    """Test that the grid property properly syncs with the flat data."""
-    grid = OccupancyGrid(5, 5, 0.1, "map")
+    """Test that the grid property works correctly."""
+    grid = OccupancyGrid(width=5, height=5, resolution=0.1, frame_id="map")
 
     # Modify via numpy array
     grid.grid[2, 3] = 100
-    grid._sync_data_from_array()
+    assert grid.grid[2, 3] == 100
 
-    # Check that flat data was updated
-    assert grid.data[2 * 5 + 3] == 100
-
-    # Modify via flat data
-    grid.data[0] = 50
-    grid._sync_array_from_data()
-
-    # Check that numpy array was updated
+    # Check that we can access grid values
+    grid.grid[0, 0] = 50
     assert grid.grid[0, 0] == 50
 
 
@@ -171,12 +165,7 @@ def test_invalid_grid_dimensions():
     """Test handling of invalid grid dimensions."""
     # Test with non-2D array
     with pytest.raises(ValueError, match="Grid must be a 2D array"):
-        OccupancyGrid(np.zeros(10), 0.1)
-
-    # Test setting non-2D grid
-    grid = OccupancyGrid(5, 5, 0.1)
-    with pytest.raises(ValueError, match="Grid must be a 2D array"):
-        grid.grid = np.zeros(25)
+        OccupancyGrid(grid=np.zeros(10), resolution=0.1)
 
 
 def test_from_pointcloud():
@@ -198,7 +187,7 @@ def test_from_pointcloud():
     assert occupancygrid.width > 0
     assert occupancygrid.height > 0
     assert occupancygrid.resolution == 0.05
-    assert occupancygrid.header.frame_id == pointcloud.frame_id
+    assert occupancygrid.frame_id == pointcloud.frame_id
     assert occupancygrid.occupied_cells > 0  # Should have some occupied cells
 
 
@@ -208,7 +197,7 @@ def test_gradient():
     data = np.zeros((10, 10), dtype=np.int8)
     data[4:6, 4:6] = 100  # 2x2 obstacle in center
 
-    grid = OccupancyGrid(data, resolution=0.1)  # 0.1m per cell
+    grid = OccupancyGrid(grid=data, resolution=0.1)  # 0.1m per cell
 
     # Convert to gradient
     gradient_grid = grid.gradient(obstacle_threshold=50, max_distance=1.0)
@@ -217,7 +206,7 @@ def test_gradient():
     assert isinstance(gradient_grid, OccupancyGrid)
     assert gradient_grid.grid.shape == (10, 10)
     assert gradient_grid.resolution == grid.resolution
-    assert gradient_grid.header.frame_id == grid.header.frame_id
+    assert gradient_grid.frame_id == grid.frame_id
 
     # Obstacle cells should have value 100
     assert gradient_grid.grid[4, 4] == 100
@@ -259,7 +248,7 @@ def test_filter_above():
         [[-1, 0, 20, 50], [10, 30, 60, 80], [40, 70, 90, 100], [-1, 15, 25, -1]], dtype=np.int8
     )
 
-    grid = OccupancyGrid(data, resolution=0.1)
+    grid = OccupancyGrid(grid=data, resolution=0.1)
 
     # Filter to keep only values > 50
     filtered = grid.filter_above(50)
@@ -288,7 +277,7 @@ def test_filter_above():
     assert filtered.width == grid.width
     assert filtered.height == grid.height
     assert filtered.resolution == grid.resolution
-    assert filtered.header.frame_id == grid.header.frame_id
+    assert filtered.frame_id == grid.frame_id
 
 
 def test_filter_below():
@@ -298,7 +287,7 @@ def test_filter_below():
         [[-1, 0, 20, 50], [10, 30, 60, 80], [40, 70, 90, 100], [-1, 15, 25, -1]], dtype=np.int8
     )
 
-    grid = OccupancyGrid(data, resolution=0.1)
+    grid = OccupancyGrid(grid=data, resolution=0.1)
 
     # Filter to keep only values < 50
     filtered = grid.filter_below(50)
@@ -329,7 +318,7 @@ def test_filter_below():
     assert filtered.width == grid.width
     assert filtered.height == grid.height
     assert filtered.resolution == grid.resolution
-    assert filtered.header.frame_id == grid.header.frame_id
+    assert filtered.frame_id == grid.frame_id
 
 
 def test_max():
@@ -339,7 +328,7 @@ def test_max():
         [[-1, 0, 20, 50], [10, 30, 60, 80], [40, 70, 90, 100], [-1, 15, 25, -1]], dtype=np.int8
     )
 
-    grid = OccupancyGrid(data, resolution=0.1)
+    grid = OccupancyGrid(grid=data, resolution=0.1)
 
     # Apply max
     maxed = grid.max()
@@ -368,7 +357,7 @@ def test_max():
     assert maxed.width == grid.width
     assert maxed.height == grid.height
     assert maxed.resolution == grid.resolution
-    assert maxed.header.frame_id == grid.header.frame_id
+    assert maxed.frame_id == grid.frame_id
 
     # Verify statistics
     assert maxed.unknown_cells == 3  # Same as original

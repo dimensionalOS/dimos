@@ -21,11 +21,10 @@ from typing import TYPE_CHECKING, BinaryIO, Optional
 import numpy as np
 from dimos_lcm.nav_msgs import MapMetaData
 from dimos_lcm.nav_msgs import OccupancyGrid as LCMOccupancyGrid
-from plum import dispatch
 from scipy import ndimage
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
-from dimos.msgs.std_msgs import Header
+from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs import PointCloud2
@@ -46,125 +45,79 @@ class CostValues(IntEnum):
     OCCUPIED = 100  # Occupied/lethal space
 
 
-class OccupancyGrid:
+class OccupancyGrid(Timestamped):
     """
     Convenience wrapper for nav_msgs/OccupancyGrid with numpy array support.
     """
 
     msg_name = "nav_msgs.OccupancyGrid"
 
-    # Store the numpy array as a property
-    _grid_array: Optional[np.ndarray] = None
-
-    # Type annotations for inherited attributes from LCMOccupancyGrid
-    header: Header
+    # Attributes
+    ts: float
+    frame_id: str
     info: MapMetaData
-    data: list[int]
-    data_length: int
+    grid: np.ndarray
 
-    @dispatch
-    def __init__(self) -> None:
-        """Initialize an empty OccupancyGrid."""
-        super().__init__()
-        self.header = Header("world")  # Header takes frame_id as positional arg
-        self.info = MapMetaData(map_load_time=Header().stamp)
-        self.data_length = 0
-        self.data = []
-        self._grid_array = np.array([], dtype=np.int8)
-
-    @dispatch
-    def __init__(
-        self, width: int, height: int, resolution: float = 0.05, frame_id: str = "world"
-    ) -> None:
-        """Initialize with specified dimensions, all cells unknown (-1)."""
-        super().__init__()
-        self.header = Header(frame_id)  # Header takes frame_id as positional arg
-        self.info = MapMetaData(
-            map_load_time=Header().stamp,
-            resolution=resolution,
-            width=width,
-            height=height,
-            origin=Pose(),
-        )
-        self._grid_array = np.full((height, width), -1, dtype=np.int8)
-        self._sync_data_from_array()
-
-    @dispatch
     def __init__(
         self,
-        grid: np.ndarray,
+        grid: Optional[np.ndarray] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
         resolution: float = 0.05,
         origin: Optional[Pose] = None,
         frame_id: str = "world",
+        ts: float = 0.0,
     ) -> None:
-        """Initialize from a numpy array.
+        """Initialize OccupancyGrid.
 
         Args:
             grid: 2D numpy array of int8 values (height x width)
+            width: Width in cells (used if grid is None)
+            height: Height in cells (used if grid is None)
             resolution: Grid resolution in meters/cell
-            origin: Origin pose of the grid (default: Pose at 0,0,0)
-            frame_id: Reference frame (default: "world")
+            origin: Origin pose of the grid
+            frame_id: Reference frame
+            ts: Timestamp (defaults to current time if 0)
         """
-        super().__init__()
-        if grid.ndim != 2:
-            raise ValueError("Grid must be a 2D array")
+        import time
 
-        height, width = grid.shape
-        self.header = Header(frame_id)  # Header takes frame_id as positional arg
-        self.info = MapMetaData(
-            map_load_time=Header().stamp,
-            resolution=resolution,
-            width=width,
-            height=height,
-            origin=origin or Pose(),
-        )
-        self._grid_array = grid.astype(np.int8)
-        self._sync_data_from_array()
+        self.frame_id = frame_id
+        self.ts = ts if ts != 0 else time.time()
 
-    @dispatch
-    def __init__(self, lcm_msg: LCMOccupancyGrid) -> None:
-        """Initialize from an LCM OccupancyGrid message."""
-        super().__init__()
-        # Create Header from LCM header
-        self.header = Header(lcm_msg.header)
-        # Use the LCM info directly - it will have the right types
-        self.info = lcm_msg.info
-        self.data_length = lcm_msg.data_length
-        self.data = lcm_msg.data
-        self._sync_array_from_data()
-
-    def _sync_data_from_array(self) -> None:
-        """Sync the flat data list from the numpy array."""
-        if self._grid_array is not None:
-            flat_data = self._grid_array.flatten()
-            self.data_length = len(flat_data)
-            self.data = flat_data.tolist()
-
-    def _sync_array_from_data(self) -> None:
-        """Sync the numpy array from the flat data list."""
-        if self.data and self.info.width > 0 and self.info.height > 0:
-            self._grid_array = np.array(self.data, dtype=np.int8).reshape(
-                (self.info.height, self.info.width)
+        if grid is not None:
+            # Initialize from numpy array
+            if grid.ndim != 2:
+                raise ValueError("Grid must be a 2D array")
+            height, width = grid.shape
+            self.info = MapMetaData(
+                map_load_time=self._to_lcm_time(),
+                resolution=resolution,
+                width=width,
+                height=height,
+                origin=origin or Pose(),
             )
+            self.grid = grid.astype(np.int8)
+        elif width is not None and height is not None:
+            # Initialize with dimensions
+            self.info = MapMetaData(
+                map_load_time=self._to_lcm_time(),
+                resolution=resolution,
+                width=width,
+                height=height,
+                origin=origin or Pose(),
+            )
+            self.grid = np.full((height, width), -1, dtype=np.int8)
         else:
-            self._grid_array = np.array([], dtype=np.int8)
+            # Initialize empty
+            self.info = MapMetaData(map_load_time=self._to_lcm_time())
+            self.grid = np.array([], dtype=np.int8)
 
-    @property
-    def grid(self) -> np.ndarray:
-        """Get the grid as a 2D numpy array (height x width)."""
-        if self._grid_array is None:
-            self._sync_array_from_data()
-        assert self._grid_array is not None
-        return self._grid_array
+    def _to_lcm_time(self):
+        """Convert timestamp to LCM Time."""
+        from dimos_lcm.std_msgs import Time as LCMTime
 
-    @grid.setter
-    def grid(self, value: np.ndarray) -> None:
-        """Set the grid from a 2D numpy array."""
-        if value.ndim != 2:
-            raise ValueError("Grid must be a 2D array")
-        self._grid_array = value.astype(np.int8)
-        self.info.height, self.info.width = value.shape
-        self._sync_data_from_array()
+        s = int(self.ts)
+        return LCMTime(sec=s, nsec=int((self.ts - s) * 1_000_000_000))
 
     @property
     def width(self) -> int:
@@ -262,7 +215,13 @@ class OccupancyGrid:
             result_grid[occupied_mask] = CostValues.OCCUPIED
 
         # Create new OccupancyGrid with inflated data using numpy constructor
-        return OccupancyGrid(result_grid, self.resolution, self.origin, self.header.frame_id)
+        return OccupancyGrid(
+            grid=result_grid,
+            resolution=self.resolution,
+            origin=self.origin,
+            frame_id=self.frame_id,
+            ts=self.ts,
+        )
 
     def world_to_grid(self, point: VectorLike) -> Vector3:
         """Convert world coordinates to grid coordinates.
@@ -309,7 +268,7 @@ class OccupancyGrid:
         origin_pos = self.origin.position
 
         parts = [
-            f"▦ OccupancyGrid[{self.header.frame_id}]",
+            f"▦ OccupancyGrid[{self.frame_id}]",
             f"{self.width}x{self.height}",
             f"({self.width * self.resolution:.1f}x{self.height * self.resolution:.1f}m @",
             f"{1 / self.resolution:.0f}cm res)",
@@ -325,30 +284,33 @@ class OccupancyGrid:
         """Create a detailed representation."""
         return (
             f"OccupancyGrid(width={self.width}, height={self.height}, "
-            f"resolution={self.resolution}, frame_id='{self.header.frame_id}', "
+            f"resolution={self.resolution}, frame_id='{self.frame_id}', "
             f"occupied={self.occupied_cells}, free={self.free_cells}, "
             f"unknown={self.unknown_cells})"
         )
 
     def lcm_encode(self) -> bytes:
         """Encode OccupancyGrid to LCM bytes."""
-        # Ensure data is synced from numpy array
-        self._sync_data_from_array()
-
         # Create LCM message
         lcm_msg = LCMOccupancyGrid()
 
-        # Copy header
-        lcm_msg.header.stamp.sec = self.header.stamp.sec
-        lcm_msg.header.stamp.nsec = self.header.stamp.nsec
-        lcm_msg.header.frame_id = self.header.frame_id
+        # Build header on demand
+        s = int(self.ts)
+        lcm_msg.header.stamp.sec = s
+        lcm_msg.header.stamp.nsec = int((self.ts - s) * 1_000_000_000)
+        lcm_msg.header.frame_id = self.frame_id
 
         # Copy map metadata
         lcm_msg.info = self.info
 
-        # Copy data
-        lcm_msg.data_length = self.data_length
-        lcm_msg.data = self.data
+        # Convert numpy array to flat data list
+        if self.grid.size > 0:
+            flat_data = self.grid.flatten()
+            lcm_msg.data_length = len(flat_data)
+            lcm_msg.data = flat_data.tolist()
+        else:
+            lcm_msg.data_length = 0
+            lcm_msg.data = []
 
         return lcm_msg.lcm_encode()
 
@@ -356,7 +318,29 @@ class OccupancyGrid:
     def lcm_decode(cls, data: bytes | BinaryIO) -> "OccupancyGrid":
         """Decode LCM bytes to OccupancyGrid."""
         lcm_msg = LCMOccupancyGrid.lcm_decode(data)
-        return cls(lcm_msg)
+
+        # Extract timestamp and frame_id from header
+        ts = lcm_msg.header.stamp.sec + (lcm_msg.header.stamp.nsec / 1_000_000_000)
+        frame_id = lcm_msg.header.frame_id
+
+        # Extract grid data
+        if lcm_msg.data and lcm_msg.info.width > 0 and lcm_msg.info.height > 0:
+            grid = np.array(lcm_msg.data, dtype=np.int8).reshape(
+                (lcm_msg.info.height, lcm_msg.info.width)
+            )
+        else:
+            grid = np.array([], dtype=np.int8)
+
+        # Create new instance
+        instance = cls(
+            grid=grid,
+            resolution=lcm_msg.info.resolution,
+            origin=lcm_msg.info.origin,
+            frame_id=frame_id,
+            ts=ts,
+        )
+        instance.info = lcm_msg.info
+        return instance
 
     @classmethod
     def from_pointcloud(
@@ -391,7 +375,9 @@ class OccupancyGrid:
 
         if len(points) == 0:
             # Return empty grid
-            return cls(1, 1, resolution, frame_id or cloud.frame_id)
+            return cls(
+                width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
+            )
 
         # Filter points by height
         height_mask = (points[:, 2] >= min_height) & (points[:, 2] <= max_height)
@@ -472,12 +458,16 @@ class OccupancyGrid:
             grid[immediate_neighbors & (grid != 100)] = 0
 
         # Create and return OccupancyGrid
-        occupancy_grid = cls(grid, resolution, origin, frame_id or cloud.frame_id)
+        # Get timestamp from cloud if available
+        ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
 
-        # Update timestamp to match the cloud
-        if hasattr(cloud, "ts") and cloud.ts is not None:
-            occupancy_grid.header.stamp.sec = int(cloud.ts)
-            occupancy_grid.header.stamp.nsec = int((cloud.ts - int(cloud.ts)) * 1e9)
+        occupancy_grid = cls(
+            grid=grid,
+            resolution=resolution,
+            origin=origin,
+            frame_id=frame_id or cloud.frame_id,
+            ts=ts,
+        )
 
         return occupancy_grid
 
@@ -537,14 +527,12 @@ class OccupancyGrid:
 
         # Create new OccupancyGrid with gradient
         gradient_grid = OccupancyGrid(
-            gradient_data,
+            grid=gradient_data,
             resolution=self.resolution,
             origin=self.origin,
-            frame_id=self.header.frame_id,
+            frame_id=self.frame_id,
+            ts=self.ts,
         )
-
-        # Copy timestamp
-        gradient_grid.header.stamp = self.header.stamp
 
         return gradient_grid
 
@@ -570,11 +558,12 @@ class OccupancyGrid:
 
         # Create new OccupancyGrid
         filtered = OccupancyGrid(
-            new_grid, resolution=self.resolution, origin=self.origin, frame_id=self.header.frame_id
+            new_grid,
+            resolution=self.resolution,
+            origin=self.origin,
+            frame_id=self.frame_id,
+            ts=self.ts,
         )
-
-        # Copy timestamp
-        filtered.header.stamp = self.header.stamp
 
         return filtered
 
@@ -600,11 +589,12 @@ class OccupancyGrid:
 
         # Create new OccupancyGrid
         filtered = OccupancyGrid(
-            new_grid, resolution=self.resolution, origin=self.origin, frame_id=self.header.frame_id
+            new_grid,
+            resolution=self.resolution,
+            origin=self.origin,
+            frame_id=self.frame_id,
+            ts=self.ts,
         )
-
-        # Copy timestamp
-        filtered.header.stamp = self.header.stamp
 
         return filtered
 
@@ -623,10 +613,11 @@ class OccupancyGrid:
 
         # Create new OccupancyGrid
         maxed = OccupancyGrid(
-            new_grid, resolution=self.resolution, origin=self.origin, frame_id=self.header.frame_id
+            new_grid,
+            resolution=self.resolution,
+            origin=self.origin,
+            frame_id=self.frame_id,
+            ts=self.ts,
         )
-
-        # Copy timestamp
-        maxed.header.stamp = self.header.stamp
 
         return maxed
