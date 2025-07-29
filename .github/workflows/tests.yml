@@ -20,45 +20,18 @@ permissions:
   packages: read
 
 jobs:
-
-  # cleanup:
-  #   runs-on: dimos-runner-ubuntu-2204
-  #   steps:
-  #     - name: exit early
-  #       if: ${{ !inputs.should-run }}
-  #       run: |
-  #         exit 0
-          
-  #     - name: Free disk space
-  #       run: |
-  #         sudo rm -rf /opt/ghc
-  #         sudo rm -rf /usr/share/dotnet
-  #         sudo rm -rf /usr/local/share/boost
-  #         sudo rm -rf /usr/local/lib/android
-          
   run-tests:
-    runs-on: [self-hosted, Linux]
+    runs-on: dimos-runner-ubuntu-2204
     container:
       image: ghcr.io/dimensionalos/${{ inputs.dev-image }}
 
     steps:
+
       - uses: actions/checkout@v4
-#        with:
-#          lfs: true
-          
-      # - name: Configure Git LFS
-      #   run: |
-      #     git config --global --add safe.directory '*'
-      #     git lfs install
-      #     git lfs fetch
-      #     git lfs checkout
-
-      - name: Fix permissions
-        run: |
-          sudo chown -R $USER:$USER ${{ github.workspace }} || true
-
+        
       - name: Run tests
         run: |
+          git config --global --add safe.directory '*'
           /entrypoint.sh bash -c "${{ inputs.cmd }}"
           
       - name: check disk space
