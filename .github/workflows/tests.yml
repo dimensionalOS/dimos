@@ -45,21 +45,11 @@ jobs:
           
       - uses: actions/checkout@v4
           
-      - name: Fix permissions 1
+      - name: Fix permissions
         run: |
           sudo bash -c "chown -R $USER:$USER $(pwd)"
           
-      - name: Fix permissions 2
-        run: |
-          sudo chown -R $USER:$USER ${{ github.workspace }} || true
           
-      - name: Configure Git LFS
-        run: |
-          git config --global --add safe.directory '*'
-          git lfs install
-          git lfs fetch
-          git lfs checkout
-        
       - name: Run tests
         run: |
           /entrypoint.sh bash -c "${{ inputs.cmd }}"
