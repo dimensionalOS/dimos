@@ -204,6 +204,7 @@ def test_rpc_full_deploy():
 
     module = dimos.deploy(MyModule)
     caller = dimos.deploy(CallerModule, module.add)
+
     print("deployed", module)
     print("deployed", caller)
 

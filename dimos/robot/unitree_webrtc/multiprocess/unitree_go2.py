@@ -312,7 +312,7 @@ class UnitreeGo2Light:
             self.global_planner,
             self.ctrl,
         ]:
-            print(module.io().result(), "\n")
+            print(module.io(), "\n")
 
         # Start modules =============================
         self.mapper.start()

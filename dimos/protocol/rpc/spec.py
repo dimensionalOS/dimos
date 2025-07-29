@@ -25,9 +25,8 @@ Args = Tuple[List, Dict[str, Any]]
 
 # module that we can inspect for RPCs
 class RPCInspectable(Protocol):
-    @classmethod
     @property
-    def rpcs() -> dict[str, Callable]: ...
+    def rpcs(self) -> dict[str, Callable]: ...
 
 
 class RPCClient(Protocol):
@@ -84,7 +83,6 @@ class RPCServer(Protocol):
                 return getattr(module, fname)(*args, **kwargs)
 
             topic = name + "/" + fname
-            print(topic)
             self.serve_rpc(override_f, topic)
 
 

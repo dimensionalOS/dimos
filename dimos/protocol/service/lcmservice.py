@@ -196,7 +196,7 @@ class LCMConfig:
 
 @runtime_checkable
 class LCMMsg(Protocol):
-    name: str
+    msg_name: str
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> "LCMMsg":

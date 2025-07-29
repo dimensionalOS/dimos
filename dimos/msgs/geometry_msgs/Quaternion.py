@@ -112,6 +112,32 @@ class Quaternion(LCMQuaternion):
         """Radians representation of the quaternion (x, y, z, w)."""
         return self.to_euler()
 
+    @classmethod
+    def from_euler(cls, vector: Vector3) -> "Quaternion":
+        """Convert Euler angles (roll, pitch, yaw) in radians to quaternion.
+
+        Args:
+            vector: Vector3 containing (roll, pitch, yaw) in radians
+
+        Returns:
+            Quaternion representation
+        """
+
+        # Calculate quaternion components
+        cy = np.cos(vector.yaw * 0.5)
+        sy = np.sin(vector.yaw * 0.5)
+        cp = np.cos(vector.pitch * 0.5)
+        sp = np.sin(vector.pitch * 0.5)
+        cr = np.cos(vector.roll * 0.5)
+        sr = np.sin(vector.roll * 0.5)
+
+        w = cr * cp * cy + sr * sp * sy
+        x = sr * cp * cy - cr * sp * sy
+        y = cr * sp * cy + sr * cp * sy
+        z = cr * cp * sy - sr * sp * cy
+
+        return cls(x, y, z, w)
+
     def to_euler(self) -> Vector3:
         """Convert quaternion to Euler angles (roll, pitch, yaw) in radians.
 

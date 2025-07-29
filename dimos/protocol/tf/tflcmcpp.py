@@ -83,8 +83,8 @@ class TFLCM(TFSpec, LCMService):
 
         return self.buffer.can_transform(parent_frame, child_frame, time_point)
 
-    def get_frames(self) -> list[str]:
-        return self.buffer.get_all_frame_names()
+    def get_frames(self) -> set[str]:
+        return set(self.buffer.get_all_frame_names())
 
     def start(self):
         super().start()
