@@ -14,9 +14,9 @@
 
 from typing import Union, Iterable, Tuple, TypedDict
 
-from dimos.types.vector import Vector
-from dimos.types.path import Path
-from dimos.types.costmap import Costmap
+from dimos.msgs.geometry_msgs import Vector3
+from dimos.web.websocket_vis.path_history import PathHistory
+from dimos.web.websocket_vis.costmap_viz import CostmapViz
 
 
 class VectorDrawConfig(TypedDict, total=False):
@@ -39,12 +39,12 @@ class CostmapDrawConfig(TypedDict, total=False):
 
 
 Drawable = Union[
-    Vector,
-    Path,
-    Costmap,
-    Tuple[Vector, VectorDrawConfig],
-    Tuple[Path, PathDrawConfig],
-    Tuple[Costmap, CostmapDrawConfig],
+    Vector3,
+    PathHistory,
+    CostmapViz,
+    Tuple[Vector3, VectorDrawConfig],
+    Tuple[PathHistory, PathDrawConfig],
+    Tuple[CostmapViz, CostmapDrawConfig],
 ]
 
 Drawables = Iterable[Drawable]

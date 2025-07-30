@@ -14,13 +14,14 @@
 
 from __future__ import annotations
 
-import math
+import time
 from enum import IntEnum
 from typing import TYPE_CHECKING, BinaryIO, Optional
 
 import numpy as np
 from dimos_lcm.nav_msgs import MapMetaData
 from dimos_lcm.nav_msgs import OccupancyGrid as LCMOccupancyGrid
+from dimos_lcm.std_msgs import Time as LCMTime
 from scipy import ndimage
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
@@ -79,7 +80,6 @@ class OccupancyGrid(Timestamped):
             frame_id: Reference frame
             ts: Timestamp (defaults to current time if 0)
         """
-        import time
 
         self.frame_id = frame_id
         self.ts = ts if ts != 0 else time.time()
@@ -114,7 +114,6 @@ class OccupancyGrid(Timestamped):
 
     def _to_lcm_time(self):
         """Convert timestamp to LCM Time."""
-        from dimos_lcm.std_msgs import Time as LCMTime
 
         s = int(self.ts)
         return LCMTime(sec=s, nsec=int((self.ts - s) * 1_000_000_000))
@@ -367,8 +366,6 @@ class OccupancyGrid(Timestamped):
         Returns:
             OccupancyGrid with occupied cells where points were projected
         """
-        # Import here to avoid circular dependency
-        from dimos.msgs.sensor_msgs import PointCloud2
 
         # Get points as numpy array
         points = cloud.as_numpy()
@@ -430,7 +427,6 @@ class OccupancyGrid(Timestamped):
         # Mark free space around obstacles based on mark_free_radius
         if mark_free_radius > 0:
             # Mark a specified radius around occupied cells as free
-            from scipy.ndimage import binary_dilation
 
             occupied_mask = grid == 100
             free_radius_cells = int(np.ceil(mark_free_radius / resolution))
@@ -442,17 +438,18 @@ class OccupancyGrid(Timestamped):
             ]
             kernel = x**2 + y**2 <= free_radius_cells**2
 
-            known_area = binary_dilation(occupied_mask, structure=kernel, iterations=1)
+            known_area = ndimage.binary_dilation(occupied_mask, structure=kernel, iterations=1)
             # Mark non-occupied cells in the known area as free
             grid[known_area & (grid != 100)] = 0
         else:
             # Default: only mark immediate neighbors as free to preserve unknown
-            from scipy.ndimage import binary_dilation
 
             occupied_mask = grid == 100
             # Use a small 3x3 kernel to only mark immediate neighbors
             structure = np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]])
-            immediate_neighbors = binary_dilation(occupied_mask, structure=structure, iterations=1)
+            immediate_neighbors = ndimage.binary_dilation(
+                occupied_mask, structure=structure, iterations=1
+            )
 
             # Mark only immediate neighbors as free (not the occupied cells themselves)
             grid[immediate_neighbors & (grid != 100)] = 0
@@ -471,7 +468,7 @@ class OccupancyGrid(Timestamped):
 
         return occupancy_grid
 
-    def gradient(self, obstacle_threshold: int = 50, max_distance: float = 2.0) -> "OccupancyGrid":
+    def gradient(self, obstacle_threshold: int = 50, max_distance: float = 0.5) -> "OccupancyGrid":
         """Create a gradient OccupancyGrid for path planning.
 
         Creates a gradient where free space has value 0 and values increase near obstacles.

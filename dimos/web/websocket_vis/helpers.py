@@ -14,8 +14,8 @@
 
 from abc import ABC
 from typing import Tuple, Callable
-from dimos.types.path import Path
-from dimos.types.vector import Vector
+from dimos.msgs.geometry_msgs import Vector3
+from dimos.web.websocket_vis.path_history import PathHistory
 
 import reactivex as rx
 from reactivex import operators as ops
@@ -41,16 +41,17 @@ class Visualizable(ABC):
 
 
 def vector_stream(
-    name: str, pos: Callable[[], Vector], update_interval=0.1, precision=0.25, history=10
+    name: str, pos: Callable[[], Vector3], update_interval=0.1, precision=0.25, history=10
 ) -> Observable[Tuple[str, Drawable]]:
     return rx.interval(update_interval).pipe(
         ops.map(lambda _: pos()),
         ops.distinct_until_changed(
-            comparer=lambda a, b: (a - b).length() < precision,
+            comparer=lambda a, b: ((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2) ** 0.5
+            < precision,
         ),
         ops.scan(
             lambda hist, cur: hist.ipush(cur).iclip_tail(history),
-            seed=Path(),
+            seed=PathHistory(),
         ),
         ops.flat_map(lambda path: rx.from_([(f"{name}_hst", path), (name, path.last())])),
     )
