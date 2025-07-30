@@ -94,9 +94,10 @@ dependencies = [
     "dask[complete]==2025.5.1",
 
     # LCM / DimOS utilities
-    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@b15f8c65db6ed04173f9b35fd70287453c3625f7"    
-    # "tf-lcm-py @ git+https://github.com/dimensionalOS/dimos-lcm.git@9befcc1a75f43fb1110d468c182dd19a549eaa36#subdirectory=tf_lcm/python"
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@b15f8c65db6ed04173f9b35fd70287453c3625f7",    
+    "MineDojo @ git+https://github.com/dimensionalOS/MineDojo.git@ecfb0e3ed7a2a193a2f4d635cfb0959fa6fa6b80"
 ]
+
 
 
 [project.optional-dependencies]
