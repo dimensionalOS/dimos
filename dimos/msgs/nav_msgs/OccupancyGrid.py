@@ -462,7 +462,7 @@ class OccupancyGrid(Timestamped):
 
         return occupancy_grid
 
-    def gradient(self, obstacle_threshold: int = 50, max_distance: float = 2.0) -> "OccupancyGrid":
+    def gradient(self, obstacle_threshold: int = 50, max_distance: float = 0.5) -> "OccupancyGrid":
         """Create a gradient OccupancyGrid for path planning.
 
         Creates a gradient where free space has value 0 and values increase near obstacles.
