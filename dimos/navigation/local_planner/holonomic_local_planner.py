@@ -23,11 +23,11 @@ from typing import Optional, Tuple
 import numpy as np
 
 from dimos.msgs.geometry_msgs import Vector3
-from dimos.navigation.local_planner.local_planner import LocalPlanner
+from dimos.navigation.local_planner import BaseLocalPlanner
 from dimos.utils.transform_utils import quaternion_to_euler, normalize_angle
 
 
-class HolonomicLocalPlanner(LocalPlanner):
+class HolonomicLocalPlanner(BaseLocalPlanner):
     """
     Gradient-Augmented Look-Ahead Pursuit (GLAP) holonomic local planner.
 
@@ -46,7 +46,7 @@ class HolonomicLocalPlanner(LocalPlanner):
     def __init__(
         self,
         lookahead_dist: float = 1.0,
-        k_rep: float = 1.0,
+        k_rep: float = 0.5,
         alpha: float = 0.5,
         v_max: float = 0.8,
         goal_tolerance: float = 0.5,

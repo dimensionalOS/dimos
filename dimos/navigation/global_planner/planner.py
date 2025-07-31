@@ -21,7 +21,6 @@ from dimos.msgs.geometry_msgs import Pose, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.global_planner.algo import astar
 from dimos.utils.logging_config import setup_logger
-from dimos.web.websocket_vis.helpers import Visualizable
 
 logger = setup_logger("dimos.robot.unitree.global_planner")
 
@@ -94,13 +93,12 @@ def resample_path(path: Path, spacing: float) -> Path:
 
 
 @dataclass
-class Planner(Visualizable, Module):
+class Planner(Module):
     target: In[PoseStamped] = None
     path: Out[Path] = None
 
     def __init__(self):
         Module.__init__(self)
-        Visualizable.__init__(self)
 
 
 class AstarPlanner(Planner):
@@ -160,14 +158,11 @@ class AstarPlanner(Planner):
         # Get gradient costmap
         costmap = self.latest_costmap.gradient()
 
-        self.vis("target", goal)
-
         # Run A* planning
         path = astar(costmap, goal.position, robot_pos)
 
         if path:
             path = resample_path(path, 0.1)
-            self.vis("path", path)
             logger.info(f"Path found with {len(path.poses)} waypoints")
             return path
 
