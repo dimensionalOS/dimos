@@ -19,7 +19,6 @@ import threading
 import time
 from typing import Optional
 
-import minedojo
 import numpy as np
 import open3d as o3d
 import reactivex as rx
@@ -41,6 +40,69 @@ from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.utils.testing import TimedSensorReplay
 
 
+class Engine:
+    _act = None
+    frequency: float
+
+    def __init__(self, frequency=20.0):
+        self.frequency = frequency
+        self._stop_event = threading.Event()
+        self.loop_thread = None
+        import minedojo
+
+        self.env = minedojo.make(
+            task_id="creative:1",
+            image_size=(800, 1280),
+            world_seed="dimensionalxx",
+            use_voxel=True,
+            voxel_size=dict(xmin=-10, ymin=-2, zmin=-10, xmax=10, ymax=2, zmax=10),
+        )
+
+    def noop(self):
+        return self.env.action_space.no_op()
+
+    def act(self, act):
+        self._act = act
+
+    def start(self):
+        self._act = self.noop()
+        self.env.reset()
+        self._stop_event.clear()
+
+    def get_stream(self):
+        self.start()
+        self._done = False
+
+        def step_environment(_):
+            if self._stop_event.is_set() or self._done:
+                return None
+
+            try:
+                obs, reward, terminated, truncated, info = self.env.step(self._act)
+                if terminated or truncated:
+                    self._done = True
+                return (obs, reward, terminated, truncated, info)
+            except RuntimeError as e:
+                if "done=True" in str(e):
+                    self._done = True
+                    return None
+                raise
+
+        def on_dispose():
+            self.stop()
+
+        return rx.interval(1.0 / self.frequency).pipe(
+            ops.map(step_environment),
+            ops.take_while(lambda x: x is not None),
+            ops.finally_action(on_dispose),
+        )
+
+    def stop(self):
+        self._stop_event.set()
+        if hasattr(self, "env") and self.env:
+            self.env.close()
+
+
 class MinecraftConnection:
     def __init__(self, *args, **kwargs):
         # Minecraft block size in meters (1 block = 0.5m)
@@ -60,18 +122,12 @@ class MinecraftConnection:
         # Current velocity command
         self.current_velocity = Vector3(0, 0, 0)
 
-        # MineDojo environment setup (disabled while using pickle)
-        self.env = None
+        # Use Engine instead of direct MineDojo
+        self.engine = Engine(frequency=20.0)
+        self.obs = None
+        self.obs_subscription = None
 
-        # Load observation from pickle for testing
-        try:
-            pickle_path = os.path.join(os.path.dirname(__file__), "observation.pkl")
-            with open(pickle_path, "rb") as f:
-                self.obs = pickle.load(f)
-                print(f"Loaded observation from {pickle_path}")
-        except Exception as e:
-            print(f"Could not load observation.pkl: {e}")
-            self.obs = None
+        self.start()
 
     def _voxel_to_pointcloud(self, voxel_data, in_world_frame=True) -> PointCloud2:
         """Convert Minecraft voxel data to PointCloud2 message."""
@@ -84,15 +140,31 @@ class MinecraftConnection:
             # No occupied voxels
             points_array = np.empty((0, 3), dtype=np.float32)
         else:
-            # Get player's fractional position within current block
+            # Get player's continuous position and calculate offset from voxel grid center
             if self.obs and "location_stats" in self.obs:
                 player_pos = self.obs["location_stats"]["pos"]
-                # Fractional part of player position (offset within the block)
-                frac_x = (player_pos[0] % 1.0) - 0.5
-                frac_y = (player_pos[1] % 1.0) - 0.5
-                frac_z = (player_pos[2] % 1.0) - 0.5
+
+                # The voxel grid is centered on the player's current block (floor of position)
+                # When player crosses into a new block, the whole grid shifts
+                grid_block_x = np.floor(player_pos[0])
+                grid_block_y = np.floor(player_pos[1])
+                grid_block_z = np.floor(player_pos[2])
+
+                # The voxel grid represents blocks in world space
+                # We don't need offsets - the grid is absolute, not relative
+                offset_x = 0
+                offset_y = 0
+                offset_z = 0
+
+                # Debug logging to file with voxel grid info
+                with open("/tmp/minecraft_lidar_debug.log", "a") as f:
+                    f.write(
+                        f"Player pos: {player_pos}, Grid shape: {blocks_movement.shape}, "
+                        f"Player block: ({grid_block_x}, {grid_block_y}, {grid_block_z}), "
+                        f"Occupied count: {len(occupied_indices[0])}\n"
+                    )
             else:
-                frac_x = frac_y = frac_z = 0.0
+                offset_x = offset_y = offset_z = 0.0
 
             # Convert occupied voxel indices to coordinates
             x_indices, y_indices, z_indices = occupied_indices
@@ -102,10 +174,29 @@ class MinecraftConnection:
             y_center = (blocks_movement.shape[1] - 1) / 2.0  # For 21x5x21 this is 2
             z_center = (blocks_movement.shape[2] - 1) / 2.0  # For 21x5x21 this is 10
 
-            # Convert to Minecraft coordinates relative to player
-            mc_x = (x_indices - x_center - frac_x) * self.block_size
-            mc_y = (y_indices - y_center - frac_y) * self.block_size
-            mc_z = (z_indices - z_center - frac_z) * self.block_size
+            # Convert voxel indices to world block positions
+            # The voxel grid shows blocks from (player_block - 10) to (player_block + 10)
+            # Index 0 = player_block - 10, Index 10 = player_block, Index 20 = player_block + 10
+            player_pos = self.obs["location_stats"]["pos"]
+            player_block_x = np.floor(player_pos[0])
+            player_block_y = np.floor(player_pos[1])
+            player_block_z = np.floor(player_pos[2])
+
+            # Convert indices to world block positions
+            world_block_x = player_block_x + (x_indices - x_center)
+            world_block_y = player_block_y + (y_indices - y_center)
+            world_block_z = player_block_z + (z_indices - z_center)
+
+            # Convert to continuous world coordinates
+            # For Y, use block bottom instead of center to avoid player being inside blocks
+            world_x = (world_block_x + 0.5) * self.block_size
+            world_y = world_block_y * self.block_size  # Block bottom, not center
+            world_z = (world_block_z + 0.5) * self.block_size
+
+            # Convert to coordinates relative to player's actual position
+            mc_x = world_x - player_pos[0] * self.block_size
+            mc_y = world_y - player_pos[1] * self.block_size
+            mc_z = world_z - player_pos[2] * self.block_size
 
             # Convert to robot frame (Minecraft X->Robot X, Z->Y, Y->Z)
             base_x = mc_x
@@ -134,20 +225,11 @@ class MinecraftConnection:
             # Get current transform from world to base_link
             transform = self._create_transform_from_location()
 
-            # Convert quaternion to rotation matrix for efficient batch transformation
-            from scipy.spatial.transform import Rotation
-
-            q = transform.rotation
-            rot = Rotation.from_quat([q.x, q.y, q.z, q.w])
-
-            # Apply rotation to all points at once
-            rotated_points = rot.apply(points_array)
-
-            # Add translation
+            # Only apply translation, ignore rotation
             translation = np.array(
                 [transform.translation.x, transform.translation.y, transform.translation.z]
             )
-            points_array = rotated_points + translation
+            points_array = points_array + translation
 
             frame_id = "world"
         else:
@@ -183,7 +265,7 @@ class MinecraftConnection:
             # Scale by block_size to convert to meters
             x = rel_pos[0] * self.block_size
             y = rel_pos[2] * self.block_size  # Minecraft Z -> Robot Y
-            z = rel_pos[1] * self.block_size  # Minecraft Y -> Robot Z
+            z = rel_pos[1] * self.block_size + 0.3  # Minecraft Y -> Robot Z
 
             # Convert yaw and pitch from degrees to radians
             yaw_rad = np.radians(yaw)
@@ -275,69 +357,56 @@ class MinecraftConnection:
     def move(self, vector: Vector3):
         """Handle movement commands."""
         self.current_velocity = vector
-        # print(f"Move command: x={vector.x:.2f}, y={vector.y:.2f}, z={vector.z:.2f}")
+
+        # Convert velocity to MineDojo actions
+        act = self.engine.noop()
+
+        # Forward/backward movement
+        if vector.y > 0.5:
+            act[0] = 1  # forward
+        elif vector.y < -0.5:
+            act[0] = 2  # back
+        else:
+            act[0] = 0  # no movement
+
+        # Strafe left/right
+        if vector.x > 0.5:
+            act[1] = 1  # left
+        elif vector.x < -0.5:
+            act[1] = 2  # right
+        else:
+            act[1] = 0  # no strafe
+
+        # Jump if z velocity is positive
+        if vector.z > 0.1:
+            act[2] = 1  # jump
+        else:
+            act[2] = 0  # no jump
+
+        self.engine.act(act)
 
     def close(self):
         """Close the MineDojo environment."""
-        if self.env:
-            self.env.close()
+        if self.obs_subscription:
+            self.obs_subscription.dispose()
+            self.obs_subscription = None
+        self.engine.stop()
 
-    def _run_loop(self):
-        """Run the main game loop."""
-        i = 0
-        while True:
-            i += 1
-            act = self.env.action_space.no_op()
-            # print("MINECRFAT MOV", self.current_velocity)
-            # Use current velocity command
-            # Map robot frame to Minecraft discrete actions
-            # Action space expects integers: 0=noop, 1=forward/left/jump, 2=back/right
+    def dispose(self):
+        """Dispose of resources, including stopping the engine."""
+        self.close()
 
-            # Forward/backward movement
-            if self.current_velocity.y > 0.5:
-                act[0] = 1  # forward
-            elif self.current_velocity.y < -0.5:
-                act[0] = 2  # back
-            else:
-                act[0] = 0  # no movement
-
-            # Strafe left/right (robot Y is left, but Minecraft uses different convention)
-            if self.current_velocity.x > 0.5:
-                act[1] = 1  # left
-            elif self.current_velocity.x < -0.5:
-                act[1] = 2  # right
-            else:
-                act[1] = 0  # no strafe
-
-            # Jump if z velocity is positive
-            if self.current_velocity.z > 0.1:
-                act[2] = 1  # jump
-            else:
-                act[2] = 0  # no jump
-
-            if i % 20 == 0:  # Print status every second
-                print(
-                    f"Step {i}: vel=({self.current_velocity.x:.2f}, {self.current_velocity.y:.2f}, {self.current_velocity.z:.2f})"
-                )
-
-            obs, reward, terminated, truncated, info = self.env.step(act)
-            self.obs = obs
-            time.sleep(0.03)  # 20Hz game loop
-
-    @rpc
     def start(self):
-        self.env = minedojo.make(
-            task_id="creative:1",
-            image_size=(800, 1280),
-            world_seed="dimensionalxx",
-            use_voxel=True,
-            voxel_size=dict(xmin=-10, ymin=-2, zmin=-10, xmax=10, ymax=2, zmax=10),
-        )
-        self.env.reset()
+        # Subscribe to observation stream
+        def on_observation(data):
+            obs, reward, terminated, truncated, info = data
+            self.obs = obs
 
-        # Start the game loop in a separate thread
-        self.loop_thread = threading.Thread(target=self._run_loop, daemon=True)
-        self.loop_thread.start()
+        self.obs_subscription = self.engine.get_stream().subscribe(
+            on_next=on_observation,
+            on_error=lambda e: print(f"Engine error: {e}"),
+            on_completed=lambda: print("Engine stream completed"),
+        )
 
 
 class MinecraftModule(Module, MinecraftConnection):
@@ -360,6 +429,10 @@ class MinecraftModule(Module, MinecraftConnection):
         self.lidar_stream().subscribe(self.lidar.publish)
         self.video_stream().subscribe(self.video.publish)
         self.tf_stream().subscribe(self.tf.publish)
+
+    def dispose(self):
+        """Override dispose to ensure engine stops."""
+        super().dispose()  # Call parent class dispose methods
 
 
 if __name__ == "__main__":

@@ -62,6 +62,7 @@ class SimplePlanner(Module):
             if self.current_path and len(self.current_path) > 1:
                 self.current_path = self.current_path.tail()
             return
+        print(direction.position)
         return direction.position
 
     def move_stream(self, frequency: float = 10.0) -> rx.Observable:
@@ -88,4 +89,4 @@ class SimplePlanner(Module):
             print(v)
             self.movecmd.publish(v)
 
-        self.move_stream(frequency=30.0).subscribe(pub)
+        self.move_stream(frequency=50).subscribe(pub)
