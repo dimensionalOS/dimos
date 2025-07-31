@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
-import time
+
 import numpy as np
 import open3d as o3d
 import reactivex.operators as ops
@@ -22,13 +23,16 @@ from reactivex import interval
 from reactivex.observable import Observable
 
 from dimos.core import In, Module, Out, rpc
+from dimos.msgs.nav_msgs import OccupancyGrid
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.types.costmap import Costmap, pointcloud_to_costmap
 
 
 class Map(Module):
     lidar: In[LidarMessage] = None
     global_map: Out[LidarMessage] = None
+    global_costmap: Out[OccupancyGrid] = None
+
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
 
     def __init__(
@@ -47,10 +51,32 @@ class Map(Module):
     def start(self):
         self.lidar.subscribe(self.add_frame)
 
-        if self.global_publish_interval is not None:
-            interval(self.global_publish_interval).subscribe(
-                lambda _: self.global_map.publish(self.to_lidar_message())
+        def publish(_):
+            self.global_map.publish(self.to_lidar_message())
+
+            # temporary, not sure if it belogs in mapper
+            # used only for visualizations, not for any algo
+            occupancygrid = (
+                OccupancyGrid.from_pointcloud(
+                    self.to_lidar_message(),
+                    resolution=0.05,
+                    min_height=0.1,
+                    max_height=2.0,
+                )
+                .inflate(0.1)
+                .gradient()
             )
+
+            self.global_costmap.publish(occupancygrid)
+
+        if self.global_publish_interval is not None:
+            interval(self.global_publish_interval).subscribe(publish)
+
+    def to_PointCloud2(self) -> PointCloud2:
+        return PointCloud2(
+            pointcloud=self.pointcloud,
+            ts=time.time(),
+        )
 
     def to_lidar_message(self) -> LidarMessage:
         return LidarMessage(
@@ -75,16 +101,8 @@ class Map(Module):
         return self.pointcloud
 
     @rpc
-    def costmap(self) -> Costmap:
-        """Return a fully inflated cost-map in a `Costmap` wrapper."""
-        inflate_radius_m = 0.5 * self.voxel_size if self.voxel_size > self.cost_resolution else 0.0
-        grid, origin_xy = pointcloud_to_costmap(
-            self.pointcloud,
-            resolution=self.cost_resolution,
-            inflate_radius_m=inflate_radius_m,
-        )
-
-        return Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution)
+    def costmap(self) -> OccupancyGrid:
+        return OccupancyGrid.from_pointcloud(self.to_PointCloud2())
 
 
 def splice_sphere(

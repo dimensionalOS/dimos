@@ -58,6 +58,9 @@ class Minecraft(Module):
 
         self.tf = core.TF()
 
+        # Origin offset - will be set to first position we see
+        self.origin_offset = None
+
         # MineDojo environment setup (disabled while using pickle)
         self.env = None
         # self.env = minedojo.make(
@@ -142,12 +145,20 @@ class Minecraft(Module):
             yaw = loc["yaw"][0]  # Yaw in degrees
             pitch = loc["pitch"][0]  # Pitch in degrees
 
+            # Set origin on first position
+            if self.origin_offset is None:
+                self.origin_offset = pos.copy()
+                print(f"Setting world origin at Minecraft position: {self.origin_offset}")
+
+            # Calculate position relative to origin
+            rel_pos = pos - self.origin_offset
+
             # Convert Minecraft coordinates to robot coordinates
             # Minecraft Y is up, robot Z is up
             # Scale by block_size to convert to meters
-            x = pos[0] * self.block_size
-            y = pos[2] * self.block_size  # Minecraft Z -> Robot Y
-            z = pos[1] * self.block_size  # Minecraft Y -> Robot Z
+            x = rel_pos[0] * self.block_size
+            y = rel_pos[2] * self.block_size  # Minecraft Z -> Robot Y
+            z = rel_pos[1] * self.block_size  # Minecraft Y -> Robot Z
 
             # Convert yaw and pitch from degrees to radians
             yaw_rad = np.radians(yaw)
@@ -248,7 +259,9 @@ class Minecraft(Module):
         self.video_stream().subscribe(self.video.publish)
         self.tf_stream().subscribe(self.tf.publish)
 
-        for i in range(10_000):
+        i = 0
+        while True:
+            i += 1
             act = self.env.action_space.no_op()
             act[0] = 1  # forward/backward
             print(i)
