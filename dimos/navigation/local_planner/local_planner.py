@@ -33,7 +33,7 @@ from dimos.utils.transform_utils import get_distance
 logger = setup_logger("dimos.robot.local_planner")
 
 
-class LocalPlanner(Module):
+class BaseLocalPlanner(Module):
     """
     local planner module for obstacle avoidance and path following.
 
@@ -167,11 +167,22 @@ class LocalPlanner(Module):
         return goal_reached
 
     @rpc
+    def reset(self):
+        """Reset the local planner state, clearing the current path."""
+        # Clear the latest path
+        self.latest_path = None
+        self.latest_odom = None
+        self.latest_costmap = None
+        self.stop()
+        logger.info("Local planner reset")
+
+    @rpc
     def stop(self):
         """Stop the local planner and any running threads."""
         if self.planning_thread and self.planning_thread.is_alive():
             self.stop_planning.set()
             self.planning_thread.join(timeout=1.0)
+            self.planning_thread = None
         stop_cmd = Vector3(0, 0, 0)
         self.cmd_vel.publish(stop_cmd)
 

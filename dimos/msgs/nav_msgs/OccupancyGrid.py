@@ -349,7 +349,7 @@ class OccupancyGrid(Timestamped):
         min_height: float = 0.1,
         max_height: float = 2.0,
         frame_id: Optional[str] = None,
-        mark_free_radius: float = 0.0,
+        mark_free_radius: float = 0.25,
     ) -> "OccupancyGrid":
         """Create an OccupancyGrid from a PointCloud2 message.
 
@@ -376,21 +376,25 @@ class OccupancyGrid(Timestamped):
                 width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
             )
 
-        # Filter points by height
-        height_mask = (points[:, 2] >= min_height) & (points[:, 2] <= max_height)
-        filtered_points = points[height_mask]
+        # Filter points by height for obstacles
+        obstacle_mask = (points[:, 2] >= min_height) & (points[:, 2] <= max_height)
+        obstacle_points = points[obstacle_mask]
 
-        if len(filtered_points) == 0:
-            # No points in height range
+        # Get points below min_height for marking as free space
+        ground_mask = points[:, 2] < min_height
+        ground_points = points[ground_mask]
+
+        # Find bounds of the point cloud in X-Y plane (use all points)
+        if len(points) > 0:
+            min_x = np.min(points[:, 0])
+            max_x = np.max(points[:, 0])
+            min_y = np.min(points[:, 1])
+            max_y = np.max(points[:, 1])
+        else:
+            # Return empty grid if no points at all
             return cls(
                 width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
             )
-
-        # Find bounds of the point cloud in X-Y plane
-        min_x = np.min(filtered_points[:, 0])
-        max_x = np.max(filtered_points[:, 0])
-        min_y = np.min(filtered_points[:, 1])
-        max_y = np.max(filtered_points[:, 1])
 
         # Add some padding around the bounds
         padding = 1.0  # 1 meter padding
@@ -413,22 +417,36 @@ class OccupancyGrid(Timestamped):
         # Initialize grid (all unknown)
         grid = np.full((height, width), -1, dtype=np.int8)
 
-        # Convert points to grid indices
-        grid_x = ((filtered_points[:, 0] - min_x) / resolution).astype(np.int32)
-        grid_y = ((filtered_points[:, 1] - min_y) / resolution).astype(np.int32)
+        # First, mark ground points as free space
+        if len(ground_points) > 0:
+            ground_x = ((ground_points[:, 0] - min_x) / resolution).astype(np.int32)
+            ground_y = ((ground_points[:, 1] - min_y) / resolution).astype(np.int32)
 
-        # Clip indices to grid bounds
-        grid_x = np.clip(grid_x, 0, width - 1)
-        grid_y = np.clip(grid_y, 0, height - 1)
+            # Clip indices to grid bounds
+            ground_x = np.clip(ground_x, 0, width - 1)
+            ground_y = np.clip(ground_y, 0, height - 1)
 
-        # Mark cells as occupied
-        grid[grid_y, grid_x] = 100  # Lethal obstacle
+            # Mark ground cells as free
+            grid[ground_y, ground_x] = 0  # Free space
 
-        # Mark free space around obstacles based on mark_free_radius
+        # Then mark obstacle points (will override ground if at same location)
+        if len(obstacle_points) > 0:
+            obs_x = ((obstacle_points[:, 0] - min_x) / resolution).astype(np.int32)
+            obs_y = ((obstacle_points[:, 1] - min_y) / resolution).astype(np.int32)
+
+            # Clip indices to grid bounds
+            obs_x = np.clip(obs_x, 0, width - 1)
+            obs_y = np.clip(obs_y, 0, height - 1)
+
+            # Mark cells as occupied
+            grid[obs_y, obs_x] = 100  # Lethal obstacle
+
+        # Apply mark_free_radius to expand free space areas
         if mark_free_radius > 0:
-            # Mark a specified radius around occupied cells as free
+            # Expand existing free space areas by the specified radius
+            # This will NOT expand from obstacles, only from free space
 
-            occupied_mask = grid == 100
+            free_mask = grid == 0  # Current free space
             free_radius_cells = int(np.ceil(mark_free_radius / resolution))
 
             # Create circular kernel
@@ -438,21 +456,11 @@ class OccupancyGrid(Timestamped):
             ]
             kernel = x**2 + y**2 <= free_radius_cells**2
 
-            known_area = ndimage.binary_dilation(occupied_mask, structure=kernel, iterations=1)
-            # Mark non-occupied cells in the known area as free
-            grid[known_area & (grid != 100)] = 0
-        else:
-            # Default: only mark immediate neighbors as free to preserve unknown
+            # Dilate free space areas
+            expanded_free = ndimage.binary_dilation(free_mask, structure=kernel, iterations=1)
 
-            occupied_mask = grid == 100
-            # Use a small 3x3 kernel to only mark immediate neighbors
-            structure = np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]])
-            immediate_neighbors = ndimage.binary_dilation(
-                occupied_mask, structure=structure, iterations=1
-            )
-
-            # Mark only immediate neighbors as free (not the occupied cells themselves)
-            grid[immediate_neighbors & (grid != 100)] = 0
+            # Mark expanded areas as free, but don't override obstacles
+            grid[expanded_free & (grid != 100)] = 0
 
         # Create and return OccupancyGrid
         # Get timestamp from cloud if available

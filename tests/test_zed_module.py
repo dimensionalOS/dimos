@@ -229,7 +229,6 @@ async def test_zed_module():
 
         # Print module info
         logger.info("ZED Module configured:")
-        print(zed.io().result())
 
         # Start ZED module
         logger.info("Starting ZED module...")

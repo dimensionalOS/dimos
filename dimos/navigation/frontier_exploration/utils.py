@@ -19,14 +19,14 @@ Utility functions for frontier exploration visualization and testing.
 import numpy as np
 from PIL import Image, ImageDraw
 from typing import List, Tuple
-from dimos.types.costmap import Costmap, CostValues
-from dimos.types.vector import Vector
+from dimos.msgs.nav_msgs import OccupancyGrid, CostValues
+from dimos.msgs.geometry_msgs import Vector3
 import os
 import pickle
 import cv2
 
 
-def costmap_to_pil_image(costmap: Costmap, scale_factor: int = 2) -> Image.Image:
+def costmap_to_pil_image(costmap: OccupancyGrid, scale_factor: int = 2) -> Image.Image:
     """
     Convert costmap to PIL Image with ROS-style coloring and optional scaling.
 
@@ -69,10 +69,10 @@ def costmap_to_pil_image(costmap: Costmap, scale_factor: int = 2) -> Image.Image
 
 def draw_frontiers_on_image(
     image: Image.Image,
-    costmap: Costmap,
-    frontiers: List[Vector],
+    costmap: OccupancyGrid,
+    frontiers: List[Vector3],
     scale_factor: int = 2,
-    unfiltered_frontiers: List[Vector] = None,
+    unfiltered_frontiers: List[Vector3] = None,
 ) -> Image.Image:
     """
     Draw frontier points on the costmap image.
@@ -90,7 +90,7 @@ def draw_frontiers_on_image(
     img_copy = image.copy()
     draw = ImageDraw.Draw(img_copy)
 
-    def world_to_image_coords(world_pos: Vector) -> Tuple[int, int]:
+    def world_to_image_coords(world_pos: Vector3) -> Tuple[int, int]:
         """Convert world coordinates to image pixel coordinates."""
         grid_pos = costmap.world_to_grid(world_pos)
         # Flip Y coordinate and apply scaling
@@ -139,50 +139,3 @@ def draw_frontiers_on_image(
         draw.text((x + radius + 2, y - radius), "BEST", fill=(255, 0, 0))
 
     return img_copy
-
-
-def smooth_costmap_for_frontiers(
-    costmap: Costmap,
-) -> Costmap:
-    """
-    Smooth a costmap using morphological operations for frontier exploration.
-
-    This function applies OpenCV morphological operations to smooth free space
-    areas and improve connectivity for better frontier detection. It's designed
-    specifically for frontier exploration.
-
-    Args:
-        costmap: Input Costmap object
-
-    Returns:
-        Smoothed Costmap object with enhanced free space connectivity
-    """
-    # Extract grid data and metadata from costmap
-    grid = costmap.grid
-    resolution = costmap.resolution
-
-    # Work with a copy to avoid modifying input
-    filtered_grid = grid.copy()
-
-    # 1. Create binary mask for free space
-    free_mask = (grid == CostValues.FREE).astype(np.uint8) * 255
-
-    # 2. Apply morphological operations for smoothing
-    kernel_size = 7
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-
-    # Dilate free space to connect nearby areas
-    dilated = cv2.dilate(free_mask, kernel, iterations=1)
-
-    # Morphological closing to fill small gaps
-    closed = cv2.morphologyEx(dilated, cv2.MORPH_CLOSE, kernel, iterations=1)
-
-    eroded = cv2.erode(closed, kernel, iterations=1)
-
-    # Apply the smoothed free space back to costmap
-    # Only change unknown areas to free, don't override obstacles
-    smoothed_free = eroded == 255
-    unknown_mask = grid == CostValues.UNKNOWN
-    filtered_grid[smoothed_free & unknown_mask] = CostValues.FREE
-
-    return Costmap(grid=filtered_grid, origin=costmap.origin, resolution=resolution)
