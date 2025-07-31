@@ -104,7 +104,7 @@ def loop():
 
 if __name__ == "__main__":
     # Run capture_obs to save a new observation
-    # capture_obs()
+    capture_obs()
 
     # Then read and validate it
     read_obs()

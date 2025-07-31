@@ -95,7 +95,7 @@ dependencies = [
 
     # LCM / DimOS utilities
     "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@b15f8c65db6ed04173f9b35fd70287453c3625f7",    
-    "MineDojo @ git+https://github.com/dimensionalOS/MineDojo.git@ecfb0e3ed7a2a193a2f4d635cfb0959fa6fa6b80"
+    "MineDojo @ git+https://github.com/dimensionalOS/MineDojo.git@06c96b92e0f769800fbc479808e68eeaa36c2ae9"
 ]
 
 
