@@ -88,4 +88,4 @@ class SimplePlanner(Module):
             print(v)
             self.movecmd.publish(v)
 
-        self.move_stream(frequency=80.0).subscribe(pub)
+        self.move_stream(frequency=30.0).subscribe(pub)

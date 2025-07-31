@@ -275,7 +275,7 @@ class MinecraftConnection:
     def move(self, vector: Vector3):
         """Handle movement commands."""
         self.current_velocity = vector
-        print(f"Move command: x={vector.x:.2f}, y={vector.y:.2f}, z={vector.z:.2f}")
+        # print(f"Move command: x={vector.x:.2f}, y={vector.y:.2f}, z={vector.z:.2f}")
 
     def close(self):
         """Close the MineDojo environment."""
@@ -322,7 +322,7 @@ class MinecraftConnection:
 
             obs, reward, terminated, truncated, info = self.env.step(act)
             self.obs = obs
-            time.sleep(0.025)  # 20Hz game loop
+            time.sleep(0.03)  # 20Hz game loop
 
     @rpc
     def start(self):

@@ -18,6 +18,7 @@
 import functools
 import logging
 import os
+import random
 import threading
 import time
 import warnings
@@ -160,20 +161,36 @@ class ControlModule(Module):
 
     @rpc
     def start(self):
+        target = PoseStamped(
+            ts=time.time(),
+            #                        position=(8, -5, 0),
+            position=(-5, 3, 0),
+            # position=(5, -3, 0),
+            orientation=(0, 0, 0, 1),
+        )
+
+        def newtarget():
+            return PoseStamped(
+                ts=time.time(),
+                position=((random.random() * 10) - 5, (random.random() * 10) - 5, 0),
+                orientation=(0, 0, 0, 1),
+                frame_id="world",
+            )
+
+        def replancmd():
+            while True:
+                nonlocal target
+                target = newtarget()
+                time.sleep(5)
+
         def plancmd():
             while True:
-                time.sleep(0.5)
+                time.sleep(1)
                 print(colors.red("requesting global plan"))
-                self.plancmd.publish(
-                    PoseStamped(
-                        ts=time.time(),
-                        #                        position=(8, -5, 0),
-                        position=(-5, 3, 0),
-                        # position=(5, -3, 0),
-                        orientation=(0, 0, 0, 1),
-                    )
-                )
+                self.plancmd.publish(target)
 
+        thread2 = threading.Thread(target=replancmd, daemon=True)
+        thread2.start()
         thread = threading.Thread(target=plancmd, daemon=True)
         thread.start()
 
