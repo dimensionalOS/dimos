@@ -70,57 +70,87 @@ class MinecraftConnection:
             print(f"Could not load observation.pkl: {e}")
             self.obs = None
 
-    def _voxel_to_pointcloud(self, voxel_data) -> PointCloud2:
+    def _voxel_to_pointcloud(self, voxel_data, in_world_frame=True) -> PointCloud2:
         """Convert Minecraft voxel data to PointCloud2 message."""
         blocks_movement = voxel_data["blocks_movement"]
 
-        # Get voxel grid dimensions
-        x_dim, y_dim, z_dim = blocks_movement.shape
+        # Get occupied voxel indices
+        occupied_indices = np.where(blocks_movement)
 
-        # Create point cloud
-        points = []
+        if len(occupied_indices[0]) == 0:
+            # No occupied voxels
+            points_array = np.empty((0, 3), dtype=np.float32)
+        else:
+            # Get player's fractional position within current block
+            if self.obs and "location_stats" in self.obs:
+                player_pos = self.obs["location_stats"]["pos"]
+                # Fractional part of player position (offset within the block)
+                frac_x = (player_pos[0] % 1.0) - 0.5
+                frac_y = (player_pos[1] % 1.0) - 0.5
+                frac_z = (player_pos[2] % 1.0) - 0.5
+            else:
+                frac_x = frac_y = frac_z = 0.0
 
-        # Iterate through voxel grid
-        for x in range(x_dim):
-            for y in range(y_dim):
-                for z in range(z_dim):
-                    # Skip if block doesn't block movement (is passable)
-                    if not blocks_movement[x, y, z]:
-                        continue
+            # Convert occupied voxel indices to coordinates
+            x_indices, y_indices, z_indices = occupied_indices
 
-                    # Convert voxel indices to coordinates relative to player
-                    # Voxel grid: x:[0,10] maps to [-5,5], y:[0,4] maps to [-2,2], z:[0,10] maps to [-5,5]
-                    # These are Minecraft coordinates relative to player
-                    mc_x = (x - 5) * self.block_size  # Minecraft X (forward/back)
-                    mc_y = (y - 2) * self.block_size  # Minecraft Y (up/down)
-                    mc_z = (z - 5) * self.block_size  # Minecraft Z (left/right)
+            # Convert to Minecraft coordinates relative to player
+            mc_x = (x_indices - 5 - frac_x) * self.block_size
+            mc_y = (y_indices - 2 - frac_y) * self.block_size
+            mc_z = (z_indices - 5 - frac_z) * self.block_size
 
-                    # Convert to robot frame (relative to base_link)
-                    # Minecraft X -> Robot X (forward)
-                    # Minecraft Z -> Robot Y (left)
-                    # Minecraft Y -> Robot Z (up)
-                    world_x = mc_x
-                    world_y = mc_z
-                    world_z = mc_y
+            # Convert to robot frame (Minecraft X->Robot X, Z->Y, Y->Z)
+            base_x = mc_x
+            base_y = mc_z
+            base_z = mc_y
 
-                    # Generate points within this block
-                    for dx in range(self.points_per_block):
-                        for dy in range(self.points_per_block):
-                            for dz in range(self.points_per_block):
-                                px = world_x + dx * self.resolution
-                                pz = world_y + dy * self.resolution
-                                py = world_z + dz * self.resolution
-                                points.append([px, pz, py])
+            # Generate sub-voxel points using meshgrid
+            sub_offsets = np.arange(self.points_per_block) * self.resolution
+            dx, dy, dz = np.meshgrid(sub_offsets, sub_offsets, sub_offsets, indexing="ij")
+            dx, dy, dz = dx.flatten(), dy.flatten(), dz.flatten()
 
-        # Convert to numpy array
-        points_array = np.array(points, dtype=np.float32)
+            # Broadcast occupied voxel positions with sub-voxel offsets
+            num_voxels = len(base_x)
+            num_subpoints = len(dx)
+
+            # Repeat base positions for each sub-point
+            all_x = np.repeat(base_x, num_subpoints) + np.tile(dx, num_voxels)
+            all_y = np.repeat(base_y, num_subpoints) + np.tile(dy, num_voxels)
+            all_z = np.repeat(base_z, num_subpoints) + np.tile(dz, num_voxels)
+
+            # Stack into points array
+            points_array = np.column_stack([all_x, all_y, all_z]).astype(np.float32)
+
+        # Transform to world frame if requested
+        if in_world_frame and len(points_array) > 0:
+            # Get current transform from world to base_link
+            transform = self._create_transform_from_location()
+
+            # Convert quaternion to rotation matrix for efficient batch transformation
+            from scipy.spatial.transform import Rotation
+
+            q = transform.rotation
+            rot = Rotation.from_quat([q.x, q.y, q.z, q.w])
+
+            # Apply rotation to all points at once
+            rotated_points = rot.apply(points_array)
+
+            # Add translation
+            translation = np.array(
+                [transform.translation.x, transform.translation.y, transform.translation.z]
+            )
+            points_array = rotated_points + translation
+
+            frame_id = "world"
+        else:
+            frame_id = "base_link" if not in_world_frame else "world"
 
         # Create Open3D point cloud
         o3d_pc = o3d.geometry.PointCloud()
         o3d_pc.points = o3d.utility.Vector3dVector(points_array)
 
         # Create PointCloud2 wrapper
-        pc2 = PointCloud2(pointcloud=o3d_pc, frame_id="base_link")
+        pc2 = PointCloud2(pointcloud=o3d_pc, frame_id=frame_id)
 
         return pc2
 
@@ -179,8 +209,8 @@ class MinecraftConnection:
             return Transform(
                 parent_frame_id="world",
                 child_frame_id="base_link",
-                translation=Vector3(x=0, y=0, z=0),
-                rotation=Quaternion(x=0, y=0, z=0, w=1),
+                translation=Vector3(0, 0, 0),
+                rotation=Quaternion(0, 0, 0, 1),
             )
 
     @functools.cache
@@ -210,7 +240,7 @@ class MinecraftConnection:
             else:
                 # Return empty point cloud if no voxel data
                 empty_pc = o3d.geometry.PointCloud()
-                return PointCloud2(pointcloud=empty_pc, frame_id="base_link")
+                return PointCloud2(pointcloud=empty_pc, frame_id="world")
 
         return rx.interval(period).pipe(ops.map(create_pointcloud))
 
