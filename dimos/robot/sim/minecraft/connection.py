@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import functools
+import os
 import pickle
 import random
+import threading
+import time
 from typing import Optional
 
 import minedojo
@@ -38,15 +41,8 @@ from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.utils.testing import TimedSensorReplay
 
 
-class Minecraft(Module):
-    movecmd: In[Vector3] = None
-    odom: Out[Vector3] = None
-    lidar: Out[PointCloud2] = None
-    video: Out[Image] = None
-    ip: str
-
+class MinecraftConnection:
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
         # Minecraft block size in meters (1 block = 0.5m)
         self.block_size = 0.5
         # Point cloud resolution in meters
@@ -63,18 +59,9 @@ class Minecraft(Module):
 
         # MineDojo environment setup (disabled while using pickle)
         self.env = None
-        # self.env = minedojo.make(
-        #     task_id="creative:1",
-        #     image_size=(800, 1280),
-        #     world_seed="dimensional",
-        #     use_voxel=True,
-        #     voxel_size=dict(xmin=-5, ymin=-2, zmin=-5, xmax=5, ymax=2, zmax=5),
-        # )
 
         # Load observation from pickle for testing
         try:
-            import os
-
             pickle_path = os.path.join(os.path.dirname(__file__), "observation.pkl")
             with open(pickle_path, "rb") as f:
                 self.obs = pickle.load(f)
@@ -137,7 +124,7 @@ class Minecraft(Module):
 
         return pc2
 
-    def _create_transform_from_location(self, _):
+    def _create_transform_from_location(self):
         """Create a Transform from world to base_link using player location."""
         if self.obs and "location_stats" in self.obs:
             loc = self.obs["location_stats"]
@@ -197,12 +184,20 @@ class Minecraft(Module):
             )
 
     @functools.cache
+    def odom_stream(self):
+        """Stream transforms at 10Hz."""
+        period = 0.1  # 10Hz
+        return rx.interval(period).pipe(
+            ops.map(lambda _: self._create_transform_from_location().to_pose())
+        )
+
+    @functools.cache
     def tf_stream(self):
         """Stream transforms at 10Hz."""
         print("tf stream start")
         period = 0.1  # 10Hz
 
-        return rx.interval(period).pipe(ops.map(self._create_transform_from_location))
+        return rx.interval(period).pipe(ops.map(lambda _: self._create_transform_from_location()))
 
     @functools.cache
     def lidar_stream(self):
@@ -244,21 +239,8 @@ class Minecraft(Module):
         if self.env:
             self.env.close()
 
-    @rpc
-    def start(self):
-        self.env = minedojo.make(
-            task_id="creative:1",
-            image_size=(800, 1280),
-            world_seed="dimensional",
-            use_voxel=True,
-            voxel_size=dict(xmin=-5, ymin=-2, zmin=-5, xmax=5, ymax=2, zmax=5),
-        )
-        self.env.reset()
-
-        self.lidar_stream().subscribe(self.lidar.publish)
-        self.video_stream().subscribe(self.video.publish)
-        self.tf_stream().subscribe(self.tf.publish)
-
+    def _run_loop(self):
+        """Run the main game loop."""
         i = 0
         while True:
             i += 1
@@ -271,15 +253,42 @@ class Minecraft(Module):
             self.obs = obs
             time.sleep(0.05)
 
+    @rpc
+    def start(self):
+        self.env = minedojo.make(
+            task_id="creative:1",
+            image_size=(800, 1280),
+            world_seed="dimensional",
+            use_voxel=True,
+            voxel_size=dict(xmin=-5, ymin=-2, zmin=-5, xmax=5, ymax=2, zmax=5),
+        )
+        self.env.reset()
+
+        # Start the game loop in a separate thread
+        self.loop_thread = threading.Thread(target=self._run_loop, daemon=True)
+        self.loop_thread.start()
+
+
+class MinecraftModule(Module, MinecraftConnection):
+    movecmd: In[Vector3] = None
+    odom: Out[Vector3] = None
+    lidar: Out[PointCloud2] = None
+    video: Out[Image] = None
+
+    @rpc
+    def start(self):
+        self.lidar_stream().subscribe(self.lidar.publish)
+        self.video_stream().subscribe(self.video.publish)
+        self.tf_stream().subscribe(self.tf.publish)
+
 
 if __name__ == "__main__":
     import logging
-    import time
 
     pubsub.lcm.autoconf()
 
     dimos = core.start(2)
-    robot = dimos.deploy(Minecraft)
+    robot = dimos.deploy(MinecraftModule)
     bridge = dimos.deploy(FoxgloveBridge)
     robot.lidar.transport = core.LCMTransport("/lidar", PointCloud2)
     robot.video.transport = core.LCMTransport("/video", Image)

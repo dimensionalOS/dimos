@@ -31,7 +31,7 @@ from dimos import core
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Transform, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.tf import TF
@@ -40,7 +40,8 @@ from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
 from dimos.robot.global_planner import AstarPlanner
-from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
+from dimos.robot.local_planner.simple import SimplePlanner
+from dimos.robot.sim.minecraft.connection import MinecraftConnection
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection, VideoMessage
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
@@ -104,19 +105,15 @@ class FakeRTC(UnitreeWebRTCConnection):
         # print("move supressed", vector)
 
 
-class ConnectionModule(FakeRTC, Module):
+class ConnectionModule(MinecraftConnection, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
-    lidar: Out[LidarMessage] = None
+    lidar: Out[PointCloud2] = None
     video: Out[VideoMessage] = None
     ip: str
 
     _odom: Callable[[], Odometry]
     _lidar: Callable[[], LidarMessage]
-
-    @rpc
-    def move(self, vector: Vector3):
-        super().move(vector)
 
     def __init__(self, ip: str, *args, **kwargs):
         self.ip = ip
@@ -124,17 +121,22 @@ class ConnectionModule(FakeRTC, Module):
         Module.__init__(self, *args, **kwargs)
 
     @rpc
+    def move(self, vector: Vector3):
+        super().move(vector)
+
+    @rpc
     def start(self):
         # Initialize the parent WebRTC connection
         super().__init__(self.ip)
+        super().start()
         # Connect sensor streams to LCM outputs
         self.lidar_stream().subscribe(self.lidar.publish)
         self.odom_stream().subscribe(self.odom.publish)
-        # self.video_stream().subscribe(self.video.publish)
+        self.video_stream().subscribe(self.video.publish)
         self.tf_stream().subscribe(self.tf.publish)
 
         # Connect LCM input to robot movement commands
-        self.movecmd.subscribe(self.move)
+        # self.movecmd.subscribe(self.move)
 
         # Set up streaming getters for latest sensor data
         self._odom = getter_streaming(self.odom_stream())
@@ -165,7 +167,7 @@ class ControlModule(Module):
                 self.plancmd.publish(
                     PoseStamped(
                         ts=time.time(),
-                        position=(0, 0, 0),
+                        position=(0, 3, 0),
                         orientation=(0, 0, 0, 1),
                     )
                 )
@@ -183,13 +185,13 @@ class UnitreeGo2Light:
     def start(self):
         dimos = core.start(4)
 
-        connection = dimos.deploy(ConnectionModule, self.ip)
-        connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
+        connection = dimos.deploy(ConnectionModule, ip)
+        connection.lidar.transport = core.LCMTransport("/lidar", PointCloud2)
         connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
         connection.video.transport = core.LCMTransport("/video", Image)
-        connection.movecmd.transport = core.LCMTransport("/mov", Vector3)
+        # connection.movecmd.transport = core.LCMTransport("/mov", Vector3)
 
-        mapper = dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
+        mapper = dimos.deploy(Map, voxel_size=0.1, global_publish_interval=2.5)
 
         mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
         mapper.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)
@@ -204,16 +206,22 @@ class UnitreeGo2Light:
         )
 
         ctrl = dimos.deploy(ControlModule)
-
         ctrl.plancmd.transport = core.LCMTransport("/global_target", PoseStamped)
         global_planner.path.transport = core.LCMTransport("/global_path", Path)
         global_planner.target.connect(ctrl.plancmd)
+
+        simple = dimos.deploy(SimplePlanner)
+        simple.movecmd.transport = core.LCMTransport("/mov", Vector3)
+        connection.movecmd.connect(simple.movecmd)
+        simple.path.connect(global_planner.path)
+
         foxglove_bridge = FoxgloveBridge()
 
         connection.start()
         mapper.start()
         global_planner.start()
         foxglove_bridge.start()
+        simple.start()
         ctrl.start()
 
 
