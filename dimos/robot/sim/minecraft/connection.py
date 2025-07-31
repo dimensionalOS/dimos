@@ -57,6 +57,9 @@ class MinecraftConnection:
         # Origin offset - will be set to first position we see
         self.origin_offset = None
 
+        # Current velocity command
+        self.current_velocity = Vector3(0, 0, 0)
+
         # MineDojo environment setup (disabled while using pickle)
         self.env = None
 
@@ -94,10 +97,15 @@ class MinecraftConnection:
             # Convert occupied voxel indices to coordinates
             x_indices, y_indices, z_indices = occupied_indices
 
+            # Get voxel grid center based on actual dimensions
+            x_center = (blocks_movement.shape[0] - 1) / 2.0  # For 21x5x21 this is 10
+            y_center = (blocks_movement.shape[1] - 1) / 2.0  # For 21x5x21 this is 2
+            z_center = (blocks_movement.shape[2] - 1) / 2.0  # For 21x5x21 this is 10
+
             # Convert to Minecraft coordinates relative to player
-            mc_x = (x_indices - 5 - frac_x) * self.block_size
-            mc_y = (y_indices - 2 - frac_y) * self.block_size
-            mc_z = (z_indices - 5 - frac_z) * self.block_size
+            mc_x = (x_indices - x_center - frac_x) * self.block_size
+            mc_y = (y_indices - y_center - frac_y) * self.block_size
+            mc_z = (z_indices - z_center - frac_z) * self.block_size
 
             # Convert to robot frame (Minecraft X->Robot X, Z->Y, Y->Z)
             base_x = mc_x
@@ -264,6 +272,11 @@ class MinecraftConnection:
 
         return rx.interval(period).pipe(ops.map(create_image))
 
+    def move(self, vector: Vector3):
+        """Handle movement commands."""
+        self.current_velocity = vector
+        print(f"Move command: x={vector.x:.2f}, y={vector.y:.2f}, z={vector.z:.2f}")
+
     def close(self):
         """Close the MineDojo environment."""
         if self.env:
@@ -275,22 +288,50 @@ class MinecraftConnection:
         while True:
             i += 1
             act = self.env.action_space.no_op()
-            act[0] = 1  # forward/backward
-            print(i)
-            if i % 100 == 0:
+            # print("MINECRFAT MOV", self.current_velocity)
+            # Use current velocity command
+            # Map robot frame to Minecraft discrete actions
+            # Action space expects integers: 0=noop, 1=forward/left/jump, 2=back/right
+
+            # Forward/backward movement
+            if self.current_velocity.y > 0.5:
+                act[0] = 1  # forward
+            elif self.current_velocity.y < -0.5:
+                act[0] = 2  # back
+            else:
+                act[0] = 0  # no movement
+
+            # Strafe left/right (robot Y is left, but Minecraft uses different convention)
+            if self.current_velocity.x > 0.5:
+                act[1] = 1  # left
+            elif self.current_velocity.x < -0.5:
+                act[1] = 2  # right
+            else:
+                act[1] = 0  # no strafe
+
+            # Jump if z velocity is positive
+            if self.current_velocity.z > 0.1:
                 act[2] = 1  # jump
+            else:
+                act[2] = 0  # no jump
+
+            if i % 20 == 0:  # Print status every second
+                print(
+                    f"Step {i}: vel=({self.current_velocity.x:.2f}, {self.current_velocity.y:.2f}, {self.current_velocity.z:.2f})"
+                )
+
             obs, reward, terminated, truncated, info = self.env.step(act)
             self.obs = obs
-            time.sleep(0.05)
+            time.sleep(0.025)  # 20Hz game loop
 
     @rpc
     def start(self):
         self.env = minedojo.make(
             task_id="creative:1",
             image_size=(800, 1280),
-            world_seed="dimensional",
+            world_seed="dimensionalxx",
             use_voxel=True,
-            voxel_size=dict(xmin=-5, ymin=-2, zmin=-5, xmax=5, ymax=2, zmax=5),
+            voxel_size=dict(xmin=-10, ymin=-2, zmin=-10, xmax=10, ymax=2, zmax=10),
         )
         self.env.reset()
 
@@ -306,7 +347,16 @@ class MinecraftModule(Module, MinecraftConnection):
     video: Out[Image] = None
 
     @rpc
+    def move(self, vector: Vector3):
+        """RPC method to handle move commands."""
+        super().move(vector)
+
+    @rpc
     def start(self):
+        # Subscribe to movement commands
+        self.movecmd.subscribe(self.move)
+
+        # Start publishing sensor streams
         self.lidar_stream().subscribe(self.lidar.publish)
         self.video_stream().subscribe(self.video.publish)
         self.tf_stream().subscribe(self.tf.publish)
@@ -320,6 +370,9 @@ if __name__ == "__main__":
     dimos = core.start(2)
     robot = dimos.deploy(MinecraftModule)
     bridge = dimos.deploy(FoxgloveBridge)
+
+    # Configure transports
+    robot.movecmd.transport = core.LCMTransport("/movecmd", Vector3)
     robot.lidar.transport = core.LCMTransport("/lidar", PointCloud2)
     robot.video.transport = core.LCMTransport("/video", Image)
 

@@ -136,7 +136,7 @@ class ConnectionModule(MinecraftConnection, Module):
         self.tf_stream().subscribe(self.tf.publish)
 
         # Connect LCM input to robot movement commands
-        # self.movecmd.subscribe(self.move)
+        self.movecmd.subscribe(self.move)
 
         # Set up streaming getters for latest sensor data
         self._odom = getter_streaming(self.odom_stream())
@@ -167,7 +167,9 @@ class ControlModule(Module):
                 self.plancmd.publish(
                     PoseStamped(
                         ts=time.time(),
-                        position=(0, 3, 0),
+                        #                        position=(8, -5, 0),
+                        position=(-5, 3, 0),
+                        # position=(5, -3, 0),
                         orientation=(0, 0, 0, 1),
                     )
                 )
@@ -183,7 +185,7 @@ class UnitreeGo2Light:
         self.ip = ip
 
     def start(self):
-        dimos = core.start(4)
+        dimos = core.start(6)
 
         connection = dimos.deploy(ConnectionModule, ip)
         connection.lidar.transport = core.LCMTransport("/lidar", PointCloud2)
