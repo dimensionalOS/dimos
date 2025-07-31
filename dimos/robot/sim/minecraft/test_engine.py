@@ -14,9 +14,12 @@
 
 import time
 
+import pytest
+
 from dimos.robot.sim import minecraft
 
 
+@pytest.mark.heavy
 def test_full_engine():
     """Test the full Minecraft engine functionality."""
     engine = minecraft.Engine(frequency=1)  # 1 hz

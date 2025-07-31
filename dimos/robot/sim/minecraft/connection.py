@@ -35,75 +35,13 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol import pubsub
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.robot.sim.minecraft.engine import Engine
 from dimos.utils.data import get_data
 from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.utils.testing import TimedSensorReplay
 
 
-class Engine:
-    _act = None
-    frequency: float
-
-    def __init__(self, frequency=20.0):
-        self.frequency = frequency
-        self._stop_event = threading.Event()
-        self.loop_thread = None
-        import minedojo
-
-        self.env = minedojo.make(
-            task_id="creative:1",
-            image_size=(800, 1280),
-            world_seed="dimensionalxx",
-            use_voxel=True,
-            voxel_size=dict(xmin=-10, ymin=-2, zmin=-10, xmax=10, ymax=2, zmax=10),
-        )
-
-    def noop(self):
-        return self.env.action_space.no_op()
-
-    def act(self, act):
-        self._act = act
-
-    def start(self):
-        self._act = self.noop()
-        self.env.reset()
-        self._stop_event.clear()
-
-    def get_stream(self):
-        self.start()
-        self._done = False
-
-        def step_environment(_):
-            if self._stop_event.is_set() or self._done:
-                return None
-
-            try:
-                obs, reward, terminated, truncated, info = self.env.step(self._act)
-                if terminated or truncated:
-                    self._done = True
-                return (obs, reward, terminated, truncated, info)
-            except RuntimeError as e:
-                if "done=True" in str(e):
-                    self._done = True
-                    return None
-                raise
-
-        def on_dispose():
-            self.stop()
-
-        return rx.interval(1.0 / self.frequency).pipe(
-            ops.map(step_environment),
-            ops.take_while(lambda x: x is not None),
-            ops.finally_action(on_dispose),
-        )
-
-    def stop(self):
-        self._stop_event.set()
-        if hasattr(self, "env") and self.env:
-            self.env.close()
-
-
-class MinecraftConnection:
+class Connection:
     def __init__(self, *args, **kwargs):
         # Minecraft block size in meters (1 block = 0.5m)
         self.block_size = 0.5
@@ -409,7 +347,7 @@ class MinecraftConnection:
         )
 
 
-class MinecraftModule(Module, MinecraftConnection):
+class MinecraftModule(Module, Connection):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[PointCloud2] = None

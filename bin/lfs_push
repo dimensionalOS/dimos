@@ -93,6 +93,8 @@ if [ ${#compressed_dirs[@]} -gt 0 ]; then
     git lfs push origin $(git branch --show-current)
     echo -e "${GREEN}✓${NC} Uploaded to LFS"
 else
-    echo -e "${GREEN}✓${NC} No test data to compress"
+    echo -e "${GREEN}✓${NC} No test data to compress, pushing..."
+    git lfs push origin $(git branch --show-current)
+    echo -e "${GREEN}✓${NC} Uploaded to LFS"
 fi
 
