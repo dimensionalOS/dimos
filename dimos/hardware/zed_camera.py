@@ -31,6 +31,8 @@ except ImportError:
 from dimos.hardware.stereo_camera import StereoCamera
 from dimos.core import Module, Out, rpc
 from dimos.utils.logging_config import setup_logger
+from dimos.protocol.tf import TF
+from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion as MsgsQuaternion
 
 # Import LCM message types
 from dimos_lcm.sensor_msgs import Image
@@ -591,6 +593,9 @@ class ZEDModule(Module):
         self._subscription = None
         self._sequence = 0
 
+        # Initialize TF publisher
+        self.tf = TF()
+
         logger.info(f"ZEDModule initialized for camera {camera_id}")
 
     @rpc
@@ -830,7 +835,7 @@ class ZEDModule(Module):
             logger.error(f"Error publishing camera info: {e}")
 
     def _publish_pose(self, pose_data: Dict[str, Any], header: Header):
-        """Publish camera pose as PoseStamped message."""
+        """Publish camera pose as PoseStamped message and TF transform."""
         try:
             position = pose_data.get("position", [0, 0, 0])
             rotation = pose_data.get("rotation", [0, 0, 0, 1])  # quaternion [x,y,z,w]
@@ -843,8 +848,17 @@ class ZEDModule(Module):
 
             # Create PoseStamped message
             msg = PoseStamped(header=header, pose=pose)
-
             self.pose.publish(msg)
+
+            # Publish TF transform
+            camera_tf = Transform(
+                translation=Vector3(position[0], position[1], position[2]),
+                rotation=MsgsQuaternion(rotation[0], rotation[1], rotation[2], rotation[3]),
+                frame_id="zed_world",
+                child_frame_id="zed_camera_link",
+                ts=header.stamp.sec + header.stamp.nsec / 1e9,  # Convert to seconds
+            )
+            self.tf.publish(camera_tf)
 
         except Exception as e:
             logger.error(f"Error publishing pose: {e}")

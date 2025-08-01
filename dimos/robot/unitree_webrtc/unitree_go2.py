@@ -161,6 +161,17 @@ class ConnectionModule(Module):
         """
         return self._odom
 
+    def _publish_tf(self, msg):
+        self.odom.publish(msg)
+        self.tf.publish(Transform.from_pose("base_link", msg))
+        camera_link = Transform(
+            translation=Vector3(0.3, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="base_link",
+            child_frame_id="camera_link",
+        )
+        self.tf.publish(camera_link)
+
     @rpc
     def move(self, vector: Vector3, duration: float = 0.0):
         """Send movement command to robot."""
