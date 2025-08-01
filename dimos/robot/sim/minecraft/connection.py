@@ -35,7 +35,9 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol import pubsub
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.robot.sim.minecraft.action import Action
 from dimos.robot.sim.minecraft.engine import Engine
+from dimos.robot.sim.minecraft.observation import Output
 from dimos.utils.data import get_data
 from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.utils.testing import TimedSensorReplay
@@ -62,10 +64,8 @@ class Connection:
 
         # Use Engine instead of direct MineDojo
         self.engine = Engine(frequency=20.0)
-        self.obs = None
+        self.obs: Optional[Output] = None
         self.obs_subscription = None
-
-        self.start()
 
     def _voxel_to_pointcloud(self, voxel_data, in_world_frame=True) -> PointCloud2:
         """Convert Minecraft voxel data to PointCloud2 message."""
@@ -79,8 +79,8 @@ class Connection:
             points_array = np.empty((0, 3), dtype=np.float32)
         else:
             # Get player's continuous position and calculate offset from voxel grid center
-            if self.obs and "location_stats" in self.obs:
-                player_pos = self.obs["location_stats"]["pos"]
+            if self.obs:
+                player_pos = self.obs.position
 
                 # The voxel grid is centered on the player's current block (floor of position)
                 # When player crosses into a new block, the whole grid shifts
@@ -94,13 +94,6 @@ class Connection:
                 offset_y = 0
                 offset_z = 0
 
-                # Debug logging to file with voxel grid info
-                with open("/tmp/minecraft_lidar_debug.log", "a") as f:
-                    f.write(
-                        f"Player pos: {player_pos}, Grid shape: {blocks_movement.shape}, "
-                        f"Player block: ({grid_block_x}, {grid_block_y}, {grid_block_z}), "
-                        f"Occupied count: {len(occupied_indices[0])}\n"
-                    )
             else:
                 offset_x = offset_y = offset_z = 0.0
 
@@ -115,7 +108,7 @@ class Connection:
             # Convert voxel indices to world block positions
             # The voxel grid shows blocks from (player_block - 10) to (player_block + 10)
             # Index 0 = player_block - 10, Index 10 = player_block, Index 20 = player_block + 10
-            player_pos = self.obs["location_stats"]["pos"]
+            player_pos = self.obs.position
             player_block_x = np.floor(player_pos[0])
             player_block_y = np.floor(player_pos[1])
             player_block_z = np.floor(player_pos[2])
@@ -184,11 +177,10 @@ class Connection:
 
     def _create_transform_from_location(self):
         """Create a Transform from world to base_link using player location."""
-        if self.obs and "location_stats" in self.obs:
-            loc = self.obs["location_stats"]
-            pos = loc["pos"]  # [x, y, z] in Minecraft coordinates
-            yaw = loc["yaw"][0]  # Yaw in degrees
-            pitch = loc["pitch"][0]  # Pitch in degrees
+        if self.obs:
+            pos = self.obs.position  # [x, y, z] in Minecraft coordinates
+            yaw = self.obs.yaw  # Yaw in degrees
+            pitch = self.obs.pitch  # Pitch in degrees
 
             # Set origin on first position
             if self.origin_offset is None:
@@ -263,8 +255,8 @@ class Connection:
         period = 1.0 / self.lidar_frequency  # 10Hz = 0.1s
 
         def create_pointcloud(_):
-            if self.obs and "voxels" in self.obs:
-                return self._voxel_to_pointcloud(self.obs["voxels"])
+            if self.obs:
+                return self._voxel_to_pointcloud(self.obs.voxels)
             else:
                 # Return empty point cloud if no voxel data
                 empty_pc = o3d.geometry.PointCloud()
@@ -278,9 +270,9 @@ class Connection:
         period = 1.0 / 10.0  # 10 FPS video stream
 
         def create_image(_):
-            if self.obs and "rgb" in self.obs:
+            if self.obs:
                 # Convert from CHW to HWC format
-                rgb_chw = self.obs["rgb"]  # (3, 800, 1280)
+                rgb_chw = self.obs.rgb  # (3, 800, 1280)
                 rgb_hwc = np.transpose(rgb_chw, (1, 2, 0))  # (800, 1280, 3)
 
                 # Create Image message
@@ -296,32 +288,26 @@ class Connection:
         """Handle movement commands."""
         self.current_velocity = vector
 
-        # Convert velocity to MineDojo actions
-        act = self.engine.noop()
+        # Convert velocity to MineDojo actions using Action class
+        act = Action()
 
         # Forward/backward movement
         if vector.y > 0.5:
-            act[0] = 1  # forward
+            act.forward = True
         elif vector.y < -0.5:
-            act[0] = 2  # back
-        else:
-            act[0] = 0  # no movement
+            act.backward = True
 
         # Strafe left/right
         if vector.x > 0.5:
-            act[1] = 1  # left
+            act.left = True
         elif vector.x < -0.5:
-            act[1] = 2  # right
-        else:
-            act[1] = 0  # no strafe
+            act.right = True
 
         # Jump if z velocity is positive
         if vector.z > 0.1:
-            act[2] = 1  # jump
-        else:
-            act[2] = 0  # no jump
+            act.jump = True
 
-        self.engine.act(act)
+        self.engine.act(act.array)
 
     def close(self):
         """Close the MineDojo environment."""
@@ -337,8 +323,7 @@ class Connection:
     def start(self):
         # Subscribe to observation stream
         def on_observation(data):
-            obs, reward, terminated, truncated, info = data
-            self.obs = obs
+            self.obs = Output(data)
 
         self.obs_subscription = self.engine.get_stream().subscribe(
             on_next=on_observation,

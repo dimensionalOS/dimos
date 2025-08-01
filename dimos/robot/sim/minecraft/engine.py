@@ -17,6 +17,8 @@ import threading
 import reactivex as rx
 import reactivex.operators as ops
 
+from dimos.robot.sim.minecraft.action import Action
+
 
 class Engine:
     _act = None
@@ -37,13 +39,14 @@ class Engine:
         )
 
     def noop(self):
-        return self.env.action_space.no_op()
+        """Return a no-op Action instance."""
+        return Action()
 
     def act(self, act):
         self._act = act
 
     def start(self):
-        self._act = self.noop()
+        self._act = self.noop().array
         self.env.reset()
         self._stop_event.clear()
 

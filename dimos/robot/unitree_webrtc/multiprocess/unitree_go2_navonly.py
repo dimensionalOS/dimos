@@ -42,7 +42,7 @@ from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
 )
 from dimos.robot.global_planner import AstarPlanner
 from dimos.robot.local_planner.simple import SimplePlanner
-from dimos.robot.sim.minecraft.connection import MinecraftConnection
+from dimos.robot.sim import minecraft
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection, VideoMessage
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
@@ -106,7 +106,7 @@ class FakeRTC(UnitreeWebRTCConnection):
         # print("move supressed", vector)
 
 
-class ConnectionModule(MinecraftConnection, Module):
+class ConnectionModule(minecraft.Connection, Module):
     movecmd: In[Vector3] = None
     odom: Out[Vector3] = None
     lidar: Out[PointCloud2] = None
@@ -130,6 +130,7 @@ class ConnectionModule(MinecraftConnection, Module):
         # Initialize the parent WebRTC connection
         super().__init__(self.ip)
         super().start()
+
         # Connect sensor streams to LCM outputs
         self.lidar_stream().subscribe(self.lidar.publish)
         self.odom_stream().subscribe(self.odom.publish)
