@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
 
 from reactivex import (
+    concat,
     concat_with_iterable,
     empty,
     from_iterable,
@@ -27,7 +28,6 @@ from reactivex import (
     just,
     merge,
     timer,
-    concat,
 )
 from reactivex import operators as ops
 from reactivex import timer as rx_timer
@@ -177,7 +177,7 @@ class TimedSensorReplay(SensorReplay[T]):
     def iterate_ts(self) -> Iterator[Union[Tuple[float, T], Any]]:
         return super().iterate()
 
-    def stream(self) -> Observable[Union[T, Any]]:
+    def stream(self, speed=1.0) -> Observable[Union[T, Any]]:
         def _subscribe(observer, scheduler=None):
             from reactivex.disposable import CompositeDisposable, Disposable
 
@@ -203,7 +203,7 @@ class TimedSensorReplay(SensorReplay[T]):
                     observer.on_completed()
                     return
 
-                delay = max(0.0, ts - prev_timestamp)
+                delay = max(0.0, ts - prev_timestamp) / speed
 
                 def _action(sc, _state=None):
                     observer.on_next(data)
