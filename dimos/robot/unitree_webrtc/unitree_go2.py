@@ -98,7 +98,7 @@ class FakeRTC(UnitreeWebRTCConnection):
         )
         return video_store.stream()
 
-    def move(self, vector: Vector3):
+    def move(self, vector: Vector3, duration: float = 0.0):
         pass
 
 

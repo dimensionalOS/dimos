@@ -21,8 +21,6 @@ import open3d as o3d
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.timeseries import to_human_readable
-# from dimos.types.costmap import Costmap, pointcloud_to_costmap  # TODO: Fix after costmap migration
-# from dimos.types.vector import Vector  # TODO: Replace with Vector3
 
 
 class RawLidarPoints(TypedDict):

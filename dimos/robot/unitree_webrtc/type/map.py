@@ -62,10 +62,10 @@ class Map(Module):
                     self.to_lidar_message(),
                     resolution=self.cost_resolution,
                     min_height=0.15,
-                    max_height=1.5,
+                    max_height=0.6,
                 )
                 .inflate(0.1)
-                .gradient()
+                .gradient(max_distance=1.5)
             )
 
             self.global_costmap.publish(occupancygrid)
@@ -97,7 +97,7 @@ class Map(Module):
             resolution=self.cost_resolution,
             min_height=0.15,
             max_height=0.6,
-        ).gradient()
+        ).gradient(max_distance=0.25)
         self.local_costmap.publish(local_costmap)
 
     @property

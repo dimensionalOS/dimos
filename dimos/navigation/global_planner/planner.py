@@ -155,11 +155,8 @@ class AstarPlanner(Planner):
         # Get current position from odometry
         robot_pos = self.latest_odom.position
 
-        # Get gradient costmap
-        costmap = self.latest_costmap.gradient()
-
         # Run A* planning
-        path = astar(costmap, goal.position, robot_pos)
+        path = astar(self.latest_costmap, goal.position, robot_pos)
 
         if path:
             path = resample_path(path, 0.1)
