@@ -28,7 +28,7 @@ from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
 )
 from dimos.robot.global_planner import AstarPlanner
 from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
-from dimos.robot.unitree_webrtc.multiprocess.unitree_go2 import ConnectionModule, ControlModule
+from dimos.robot.unitree_webrtc.unitree_go2 import ConnectionModule, ControlModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.utils.logging_config import setup_logger

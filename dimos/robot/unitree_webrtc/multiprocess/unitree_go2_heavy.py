@@ -26,7 +26,7 @@ from reactivex.scheduler import ThreadPoolScheduler
 from dimos import core
 from dimos.perception.object_tracker import ObjectTrackingStream
 from dimos.perception.person_tracker import PersonTrackingStream
-from dimos.robot.unitree_webrtc.multiprocess.unitree_go2 import UnitreeGo2Light
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
@@ -36,10 +36,10 @@ from dimos.utils.threadpool import get_scheduler
 logger = setup_logger("dimos.robot.unitree_webrtc.multiprocess.unitree_go2_heavy")
 
 
-class UnitreeGo2Heavy(UnitreeGo2Light):
+class UnitreeGo2Heavy(UnitreeGo2):
     """Heavy version of Unitree Go2 with additional GPU-required modules.
 
-    This class extends UnitreeGo2Light with:
+    This class extends UnitreeGo2 with:
     - Spatial memory with ChromaDB
     - Person tracking stream
     - Object tracking stream

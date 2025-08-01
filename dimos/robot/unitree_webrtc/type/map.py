@@ -96,7 +96,7 @@ class Map(Module):
             frame,
             resolution=self.cost_resolution,
             min_height=0.15,
-            max_height=1.5,
+            max_height=0.6,
         ).gradient()
         self.local_costmap.publish(local_costmap)
 

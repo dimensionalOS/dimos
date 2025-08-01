@@ -150,7 +150,7 @@ class AstarPlanner(Planner):
             logger.warning("Cannot plan: missing costmap or odometry data")
             return None
 
-        logger.info(f"Planning path to goal {goal}")
+        logger.debug(f"Planning path to goal {goal}")
 
         # Get current position from odometry
         robot_pos = self.latest_odom.position
@@ -163,7 +163,7 @@ class AstarPlanner(Planner):
 
         if path:
             path = resample_path(path, 0.1)
-            logger.info(f"Path found with {len(path.poses)} waypoints")
+            logger.debug(f"Path found with {len(path.poses)} waypoints")
             return path
 
         logger.warning("No path found to the goal.")

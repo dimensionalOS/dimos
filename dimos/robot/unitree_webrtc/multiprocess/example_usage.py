@@ -26,7 +26,7 @@ import reactivex.operators as ops
 
 from dimos.agents.claude_agent import ClaudeAgent
 from dimos.perception.object_detection_stream import ObjectDetectionStream
-from dimos.robot.unitree_webrtc.multiprocess.unitree_go2 import UnitreeGo2Light
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2Light
 from dimos.robot.unitree_webrtc.multiprocess.unitree_go2_heavy import UnitreeGo2Heavy
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary

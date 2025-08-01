@@ -40,7 +40,6 @@ from dimos.manipulation.visual_servoing.utils import (
     select_points_from_depth,
     transform_points_3d,
     update_target_grasp_pose,
-    apply_grasp_distance,
     is_target_reached,
 )
 from dimos.utils.transform_utils import (
