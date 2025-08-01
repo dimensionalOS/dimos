@@ -359,8 +359,6 @@ class MinecraftModule(Module, Connection):
 
 
 if __name__ == "__main__":
-    import logging
-
     pubsub.lcm.autoconf()
 
     dimos = core.start(2)

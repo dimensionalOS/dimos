@@ -95,7 +95,6 @@ dependencies = [
 
     # LCM / DimOS utilities
     "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@ba3445d16be75a7ade6fb2a516b39a3e44319d5c",
-    "MineDojo @ git+https://github.com/dimensionalOS/MineDojo.git@06c96b92e0f769800fbc479808e68eeaa36c2ae9"
 ]
 
 
@@ -157,6 +156,10 @@ dev = [
     "pytest==8.3.5",
     "pytest-asyncio==0.26.0",
     "textual==3.7.1"
+]
+
+minecraft = [
+    "MineDojo @ git+https://github.com/dimensionalOS/MineDojo.git@06c96b92e0f769800fbc479808e68eeaa36c2ae9"
 ]
 
 [tool.ruff]
