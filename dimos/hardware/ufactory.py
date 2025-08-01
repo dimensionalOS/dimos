@@ -20,7 +20,7 @@ import numpy as np
 
 from xarm.wrapper import XArmAPI
 
-from dimos.hardware.end_effector import EndEffector  
+from dimos.hardware.end_effector import EndEffector
 
 import dimos.core as core
 from dimos.core import Module, In, Out, rpc
@@ -50,7 +50,7 @@ class UFactory7DOFArm:
             self.xarm_type = input("Enter the type of xArm: ")
         else:
             self.xarm_type = xarm_type
-        
+
         # from configparser import ConfigParser
         # parser = ConfigParser()
         # parser.read('../robot.conf')
@@ -74,7 +74,7 @@ class UFactory7DOFArm:
     def disable(self):
         self.arm.motion_enable(enable=False)
         self.arm.set_state(state=0)
-    
+
     def disconnect(self):
         self.arm.disconnect()
 
@@ -83,59 +83,54 @@ class UFactory7DOFArm:
         self.arm.move_gohome(wait=True)
 
     def cmd_joint_angles(self, angles, speed, is_radian=False):
-        
         step_size = 0.017453292519943295  # rad per step
         current = np.array(self.arm.get_servo_angle(is_radian=True)[1])
         target = np.array(angles)
         error = target - current
         print(f"Initial error: {error}")
-        
+
         steps_needed = np.abs(error) / step_size
         max_steps = int(np.ceil(np.max(steps_needed)))
         print(f"Steps needed: {max_steps}, Step size: {step_size}")
 
         self.enable_joint_mode()
-        
+
         # Perform incremental movement
         for step in range(max_steps):
             # Calculate current step progress
             progress = (step + 1) / max_steps
-            
+
             # Calculate intermediate target for this step
             intermediate_target = current + (error * progress)
             # print(f"Intermediate target at step {step}: {intermediate_target}")
             # Move to intermediate position
-            self.arm.set_servo_angle_j(angles=intermediate_target.tolist(), speed=speed, wait=True, is_radian=is_radian)
-            
+            self.arm.set_servo_angle_j(
+                angles=intermediate_target.tolist(), speed=speed, wait=True, is_radian=is_radian
+            )
+
             # Small delay for smooth motion
             time.sleep(0.01)
-    
+
     def enable_joint_mode(self):
         self.arm.set_mode(1)
         self.arm.set_state(0)
         time.sleep(0.1)
-    
+
     def enable_position_mode(self):
         self.arm.set_mode(0)
         self.arm.set_state(0)
         time.sleep(0.1)
 
+
 class xArmBridge(Module):
     joint_state: In[JointState] = None
     pose_state: Out[JointState] = None
 
-    def __init__ (
-            self,
-            arm_ip: str = None,
-            arm_type: str = "xarm7",
-            *args, 
-            **kwargs
-    ):
+    def __init__(self, arm_ip: str = None, arm_type: str = "xarm7", *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.arm_ip = arm_ip
         self.arm_type = arm_type
         self.arm = None
-        
 
     @rpc
     def start(self):
@@ -151,7 +146,7 @@ class xArmBridge(Module):
         if not msg:
             print("[xArmBridge] No joint names found in message.")
             return
-        
+
         # Extract joint1-joint7 values from indices 3-9
         if len(msg.position) >= 10:
             joint1 = msg.position[3]
@@ -161,10 +156,12 @@ class xArmBridge(Module):
             joint5 = msg.position[7]
             joint6 = msg.position[8]
             joint7 = msg.position[9]
-            
+
             # print(f"[xArmBridge] Joint values - joint1: {joint1}, joint2: {joint2}, joint3: {joint3}, joint4: {joint4}, joint5: {joint5}, joint6: {joint6}, joint7: {joint7}")
         else:
-            print(f"[xArmBridge] Insufficient joint data: expected at least 10 joints, got {len(msg.position)}")
+            print(
+                f"[xArmBridge] Insufficient joint data: expected at least 10 joints, got {len(msg.position)}"
+            )
 
         # Set servo angles for the xArm
         angles = [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
@@ -179,8 +176,8 @@ class xArmBridge(Module):
             if not angles:
                 continue
 
+
 def TestXarmBridge(arm_ip: str = None, arm_type: str = "xArm7"):
-    
     lcmservice.autoconf()
     dimos = core.start(2)
 
@@ -196,19 +193,18 @@ def TestXarmBridge(arm_ip: str = None, arm_type: str = "xArm7"):
         time.sleep(1)
 
 
-
 if __name__ == "__main__":
     # arm = UFactory7DOFArm(ip="192.168.1.197", xarm_type="xarm7")
     # arm.enable()
     # print("enabled")
     # time.sleep(1)
     # speed = 10
-    
+
     TestXarmBridge(arm_ip="192.168.1.197", arm_type="xarm7")
 
     # # arm.cmd_joint_angles([0, 0, 0, 120, 0, 0, 0], speed=speed)
-    
+
     # arm.gotoZero()
-    
+
     # arm.disconnect()
     # print("disconnected")
