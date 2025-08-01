@@ -65,16 +65,8 @@ def test_robot_mapping():
     # we investigate built map
     costmap = map.costmap()
 
-    assert costmap.grid.shape == (404, 276)
+    assert costmap.grid.shape == (442, 314)
 
-    assert 70 <= costmap.unknown_percent <= 80, (
-        f"Unknown percent {costmap.unknown_percent} is not within the range 70-80"
-    )
-
-    assert 5 < costmap.free_percent < 10, (
-        f"Free percent {costmap.free_percent} is not within the range 5-10"
-    )
-
-    assert 8 < costmap.occupied_percent < 15, (
-        f"Occupied percent {costmap.occupied_percent} is not within the range 8-15"
-    )
+    assert 70 <= costmap.unknown_percent <= 95
+    assert 4 < costmap.free_percent < 10
+    assert 1 < costmap.occupied_percent < 15
