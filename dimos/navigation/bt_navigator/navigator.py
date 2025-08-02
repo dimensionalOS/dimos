@@ -108,6 +108,9 @@ class BehaviorTreeNavigator(Module):
         # TF listener
         self.tf = TF()
 
+        # TF listener
+        self.tf = TF()
+
         logger.info("Navigator initialized")
 
     @rpc
@@ -184,6 +187,11 @@ class BehaviorTreeNavigator(Module):
                 time.sleep(self.publishing_period)
 
         return True
+
+    @rpc
+    def get_state(self) -> NavigatorState:
+        """Get the current state of the navigator."""
+        return self.state
 
     @rpc
     def get_state(self) -> NavigatorState:
