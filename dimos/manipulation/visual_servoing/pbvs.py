@@ -21,7 +21,7 @@ import numpy as np
 from typing import Optional, Tuple, List
 from collections import deque
 from scipy.spatial.transform import Rotation as R
-from dimos_lcm.geometry_msgs import Pose, Vector3, Quaternion, Point
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
 from dimos_lcm.vision_msgs import Detection3D, Detection3DArray
 from dimos.utils.logging_config import setup_logger
 from dimos.manipulation.visual_servoing.utils import (

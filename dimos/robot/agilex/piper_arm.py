@@ -19,7 +19,7 @@ from typing import Optional, List
 from dimos import core
 from dimos.hardware.zed_camera import ZEDModule
 from dimos.manipulation.visual_servoing.manipulation_module import ManipulationModule
-from dimos_lcm.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
 from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
@@ -91,9 +91,9 @@ class PiperArmRobot:
         # Print module info
         logger.info("Modules configured:")
         print("\nZED Module:")
-        print(self.stereo_camera.io().result())
+        print(self.stereo_camera.io())
         print("\nManipulation Module:")
-        print(self.manipulation_interface.io().result())
+        print(self.manipulation_interface.io())
 
         # Start modules
         logger.info("Starting modules...")

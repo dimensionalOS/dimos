@@ -16,7 +16,7 @@ import numpy as np
 from typing import Dict, Any, Optional, List, Tuple, Union
 from dataclasses import dataclass
 
-from dimos_lcm.geometry_msgs import Pose, Vector3, Quaternion, Point
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
 from dimos_lcm.vision_msgs import Detection3D, Detection2D
 import cv2
 from dimos.perception.detection2d.utils import plot_results
@@ -77,7 +77,9 @@ def transform_pose(
     euler_vector = Vector3(obj_orientation[0], obj_orientation[1], obj_orientation[2])
     obj_orientation_quat = euler_to_quaternion(euler_vector)
 
-    input_pose = Pose(Point(obj_pos[0], obj_pos[1], obj_pos[2]), obj_orientation_quat)
+    input_pose = Pose(
+        position=Vector3(obj_pos[0], obj_pos[1], obj_pos[2]), orientation=obj_orientation_quat
+    )
 
     # Apply input frame conversion based on flags
     if to_robot:
@@ -137,8 +139,8 @@ def transform_points_3d(
 
     for point in points_3d:
         input_point_pose = Pose(
-            Point(point[0], point[1], point[2]),
-            Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
+            position=Vector3(point[0], point[1], point[2]),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
         )
 
         # Apply input frame conversion based on flags
@@ -287,13 +289,13 @@ def apply_grasp_distance(target_pose: Pose, distance: float) -> Pose:
     approach_vector_world = rotation_matrix @ approach_vector_local
 
     # Apply offset along the approach direction
-    offset_position = Point(
+    offset_position = Vector3(
         target_pose.position.x + distance * approach_vector_world[0],
         target_pose.position.y + distance * approach_vector_world[1],
         target_pose.position.z + distance * approach_vector_world[2],
     )
 
-    return Pose(offset_position, target_pose.orientation)
+    return Pose(position=offset_position, orientation=target_pose.orientation)
 
 
 def is_target_reached(target_pose: Pose, current_pose: Pose, tolerance: float = 0.01) -> bool:
@@ -461,11 +463,11 @@ def parse_zed_pose(zed_pose_data: Dict[str, Any]) -> Optional[Pose]:
 
     # Extract position
     position = zed_pose_data.get("position", [0, 0, 0])
-    pos_vector = Point(position[0], position[1], position[2])
+    pos_vector = Vector3(position[0], position[1], position[2])
 
     quat = zed_pose_data["rotation"]
     orientation = Quaternion(quat[0], quat[1], quat[2], quat[3])
-    return Pose(pos_vector, orientation)
+    return Pose(position=pos_vector, orientation=orientation)
 
 
 def estimate_object_depth(
