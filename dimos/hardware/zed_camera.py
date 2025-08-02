@@ -32,14 +32,13 @@ from dimos.hardware.stereo_camera import StereoCamera
 from dimos.core import Module, Out, rpc
 from dimos.utils.logging_config import setup_logger
 from dimos.protocol.tf import TF
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion as MsgsQuaternion
+from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
 
 # Import LCM message types
-from dimos_lcm.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.geometry_msgs import PoseStamped
-from dimos_lcm.std_msgs import Header, Time
-from dimos_lcm.geometry_msgs import Pose, Point, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.std_msgs import Header
 
 logger = setup_logger(__name__)
 
@@ -680,12 +679,8 @@ class ZEDModule(Module):
             if left_img is None or depth is None:
                 return
 
-            # Get timestamp
-            timestamp_ns = time.time_ns()
-            timestamp = Time(sec=timestamp_ns // 1_000_000_000, nsec=timestamp_ns % 1_000_000_000)
-
             # Create header
-            header = Header(seq=self._sequence, stamp=timestamp, frame_id=self.frame_id)
+            header = Header(self.frame_id)
             self._sequence += 1
 
             # Publish color image
@@ -714,20 +709,11 @@ class ZEDModule(Module):
                 image_rgb = image
 
             # Create LCM Image message
-            height, width = image_rgb.shape[:2]
-            encoding = "rgb8" if len(image_rgb.shape) == 3 else "mono8"
-            step = width * (3 if len(image_rgb.shape) == 3 else 1)
-            data = image_rgb.tobytes()
-
             msg = Image(
-                data_length=len(data),
-                header=header,
-                height=height,
-                width=width,
-                encoding=encoding,
-                is_bigendian=0,
-                step=step,
-                data=data,
+                data=image_rgb,
+                format=ImageFormat.RGB,
+                frame_id=header.frame_id,
+                ts=header.ts,
             )
 
             self.color_image.publish(msg)
@@ -739,22 +725,12 @@ class ZEDModule(Module):
         """Publish depth image as LCM message."""
         try:
             # Depth is float32 in meters
-            height, width = depth.shape[:2]
-            encoding = "32FC1"  # 32-bit float, single channel
-            step = width * 4  # 4 bytes per float
-            data = depth.astype(np.float32).tobytes()
-
             msg = Image(
-                data_length=len(data),
-                header=header,
-                height=height,
-                width=width,
-                encoding=encoding,
-                is_bigendian=0,
-                step=step,
-                data=data,
+                data=depth,
+                format=ImageFormat.DEPTH,
+                frame_id=header.frame_id,
+                ts=header.ts,
             )
-
             self.depth_image.publish(msg)
 
         except Exception as e:
@@ -772,7 +748,7 @@ class ZEDModule(Module):
             resolution = info.get("resolution", {})
 
             # Create CameraInfo message
-            header = Header(seq=0, stamp=Time(sec=int(time.time()), nsec=0), frame_id=self.frame_id)
+            header = Header(self.frame_id)
 
             # Create camera matrix K (3x3)
             K = [
@@ -840,23 +816,17 @@ class ZEDModule(Module):
             position = pose_data.get("position", [0, 0, 0])
             rotation = pose_data.get("rotation", [0, 0, 0, 1])  # quaternion [x,y,z,w]
 
-            # Create Pose message
-            pose = Pose(
-                position=Point(x=position[0], y=position[1], z=position[2]),
-                orientation=Quaternion(x=rotation[0], y=rotation[1], z=rotation[2], w=rotation[3]),
-            )
-
             # Create PoseStamped message
-            msg = PoseStamped(header=header, pose=pose)
+            msg = PoseStamped(ts=header.ts, position=position, orientation=rotation)
             self.pose.publish(msg)
 
             # Publish TF transform
             camera_tf = Transform(
-                translation=Vector3(position[0], position[1], position[2]),
-                rotation=MsgsQuaternion(rotation[0], rotation[1], rotation[2], rotation[3]),
+                translation=Vector3(position),
+                rotation=Quaternion(rotation),
                 frame_id="zed_world",
                 child_frame_id="zed_camera_link",
-                ts=header.stamp.sec + header.stamp.nsec / 1e9,  # Convert to seconds
+                ts=header.ts,
             )
             self.tf.publish(camera_tf)
 

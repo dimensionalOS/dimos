@@ -19,13 +19,13 @@ import threading
 from typing import Dict, List, Optional
 
 from dimos.core import In, Out, Module, rpc
+from dimos.msgs.std_msgs import Header
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, Pose
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 
 # Import LCM messages
-from dimos_lcm.std_msgs import Header
 from dimos_lcm.vision_msgs import (
     Detection2D,
     Detection2DArray,
@@ -33,7 +33,6 @@ from dimos_lcm.vision_msgs import (
     Detection3DArray,
     ObjectHypothesisWithPose,
 )
-from dimos_lcm.geometry_msgs import Point
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.utils.transform_utils import (
     yaw_towards_point,
@@ -160,14 +159,12 @@ class ObjectTracking(Module):
         """
         if self._latest_rgb_frame is None:
             logger.warning("No RGB frame available for tracking")
-            return {"detection2darray": Detection2DArray(), "detection3darray": Detection3DArray()}
 
         # Initialize tracking
         x1, y1, x2, y2 = map(int, bbox)
         w, h = x2 - x1, y2 - y1
         if w <= 0 or h <= 0:
             logger.warning(f"Invalid initial bbox provided: {bbox}. Tracking not started.")
-            return {"detection2darray": Detection2DArray(), "detection3darray": Detection3DArray()}
 
         # Set tracking parameters
         self.tracking_bbox = (x1, y1, w, h)  # Store in (x, y, w, h) format
@@ -332,8 +329,9 @@ class ObjectTracking(Module):
                 self._reset_tracking_state()
 
         # Create detections if tracking succeeded
-        detection2darray = Detection2DArray(detections_length=0, header=Header(), detections=[])
-        detection3darray = Detection3DArray(detections_length=0, header=Header(), detections=[])
+        header = Header(self.frame_id)
+        detection2darray = Detection2DArray(detections_length=0, header=header, detections=[])
+        detection3darray = Detection3DArray(detections_length=0, header=header, detections=[])
 
         if final_success and current_bbox_x1y1x2y2 is not None:
             x1, y1, x2, y2 = current_bbox_x1y1x2y2
@@ -346,7 +344,7 @@ class ObjectTracking(Module):
             detection_2d = Detection2D()
             detection_2d.id = "0"
             detection_2d.results_length = 1
-            detection_2d.header = Header()
+            detection_2d.header = header
 
             # Create hypothesis
             hypothesis = ObjectHypothesisWithPose()
@@ -363,13 +361,13 @@ class ObjectTracking(Module):
 
             detection2darray = Detection2DArray()
             detection2darray.detections_length = 1
-            detection2darray.header = Header()
+            detection2darray.header = header
             detection2darray.detections = [detection_2d]
 
             # Create Detection3D if depth is available
             if self._latest_depth_frame is not None:
                 # Calculate 3D position using depth and camera intrinsics
-                depth_value = self._calculate_depth_at_center(current_bbox_x1y1x2y2)
+                depth_value = self._get_depth_from_bbox(current_bbox_x1y1x2y2)
                 if (
                     depth_value is not None
                     and depth_value > 0
@@ -384,7 +382,7 @@ class ObjectTracking(Module):
 
                     # Create pose in optical frame
                     optical_pose = Pose()
-                    optical_pose.position = Point(x_optical, y_optical, z_optical)
+                    optical_pose.position = Vector3(x_optical, y_optical, z_optical)
                     optical_pose.orientation = Quaternion(0.0, 0.0, 0.0, 1.0)  # Identity for now
 
                     # Convert to robot frame
@@ -404,7 +402,7 @@ class ObjectTracking(Module):
                     detection_3d = Detection3D()
                     detection_3d.id = "0"
                     detection_3d.results_length = 1
-                    detection_3d.header = Header()
+                    detection_3d.header = header
 
                     # Reuse hypothesis from 2D
                     detection_3d.results = [hypothesis]
@@ -417,7 +415,7 @@ class ObjectTracking(Module):
 
                     detection3darray = Detection3DArray()
                     detection3darray.detections_length = 1
-                    detection3darray.header = Header()
+                    detection3darray.header = header
                     detection3darray.detections = [detection_3d]
 
                     # Publish transform for tracked object
@@ -427,7 +425,7 @@ class ObjectTracking(Module):
                         rotation=robot_pose.orientation,
                         frame_id=self.frame_id,  # Use configured camera frame
                         child_frame_id=f"tracked_object",
-                        ts=time.time(),
+                        ts=header.ts,
                     )
                     self.tf.publish(tracked_object_tf)
 
@@ -465,27 +463,30 @@ class ObjectTracking(Module):
                 viz_msg = Image.from_numpy(viz_image)
                 self.tracked_overlay.publish(viz_msg)
 
-    def _calculate_depth_at_center(self, bbox: List[int]) -> Optional[float]:
-        """Calculate depth at the center of the bounding box using a square region."""
+    def _get_depth_from_bbox(self, bbox: List[int]) -> Optional[float]:
+        """Calculate depth from bbox using the 25th percentile of closest points."""
         if self._latest_depth_frame is None:
             return None
 
         x1, y1, x2, y2 = bbox
-        center_x = int((x1 + x2) / 2)
-        center_y = int((y1 + y2) / 2)
 
-        # Use a square region around the center
-        margin = 5
-        y_start = max(0, center_y - margin)
-        y_end = min(self._latest_depth_frame.shape[0], center_y + margin)
-        x_start = max(0, center_x - margin)
-        x_end = min(self._latest_depth_frame.shape[1], center_x + margin)
+        # Ensure bbox is within frame bounds
+        y1 = max(0, y1)
+        y2 = min(self._latest_depth_frame.shape[0], y2)
+        x1 = max(0, x1)
+        x2 = min(self._latest_depth_frame.shape[1], x2)
 
-        roi_depth = self._latest_depth_frame[y_start:y_end, x_start:x_end]
+        # Extract depth values from the entire bbox
+        roi_depth = self._latest_depth_frame[y1:y2, x1:x2]
+
+        # Get valid (finite and positive) depth values
         valid_depths = roi_depth[np.isfinite(roi_depth) & (roi_depth > 0)]
 
         if len(valid_depths) > 0:
-            return float(np.median(valid_depths))
+            # Take the 25th percentile of the closest (smallest) depth values
+            # This helps get a robust depth estimate for the front surface of the object
+            depth_25th_percentile = float(np.percentile(valid_depths, 25))
+            return depth_25th_percentile
 
         return None
 

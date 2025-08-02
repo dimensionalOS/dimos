@@ -28,7 +28,7 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 # Import message types
 from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 
 logger = setup_logger("test_object_tracking_module")
