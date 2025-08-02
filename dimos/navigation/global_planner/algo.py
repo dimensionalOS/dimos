@@ -122,7 +122,7 @@ def astar(
     # Convert world coordinates to grid coordinates directly using vector-like inputs
     start_vector = costmap.world_to_grid(start)
     goal_vector = costmap.world_to_grid(goal)
-    logger.info(f"ASTAR {costmap} {start_vector} -> {goal_vector}")
+    logger.debug(f"ASTAR {costmap} {start_vector} -> {goal_vector}")
 
     # Store original positions for reference
     original_start = (int(start_vector.x), int(start_vector.y))
@@ -139,7 +139,7 @@ def astar(
         start_in_obstacle = costmap.grid[int(start_vector.y), int(start_vector.x)] >= cost_threshold
 
     if not start_valid or start_in_obstacle:
-        logger.info("Start position is out of bounds or in an obstacle, finding nearest free cell")
+        logger.debug("Start position is out of bounds or in an obstacle, finding nearest free cell")
         adjusted_start = find_nearest_free_cell(costmap, start, cost_threshold)
         # Update start_vector for later use
         start_vector = Vector(adjusted_start[0], adjusted_start[1])
@@ -152,7 +152,7 @@ def astar(
         goal_in_obstacle = costmap.grid[int(goal_vector.y), int(goal_vector.x)] >= cost_threshold
 
     if not goal_valid or goal_in_obstacle:
-        logger.info("Goal position is out of bounds or in an obstacle, finding nearest free cell")
+        logger.debug("Goal position is out of bounds or in an obstacle, finding nearest free cell")
         adjusted_goal = find_nearest_free_cell(costmap, goal, cost_threshold)
         # Update goal_vector for later use
         goal_vector = Vector(adjusted_goal[0], adjusted_goal[1])

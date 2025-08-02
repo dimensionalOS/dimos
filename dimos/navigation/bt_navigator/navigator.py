@@ -26,8 +26,10 @@ from typing import Optional
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.navigation.local_planner.local_planner import BaseLocalPlanner
+from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 from dimos_lcm.std_msgs import Bool
+from dimos.utils.transform_utils import apply_transform
 
 logger = setup_logger("dimos.navigation.bt_navigator")
 
@@ -92,6 +94,9 @@ class BehaviorTreeNavigator(Module):
         # Local planner reference (to be connected externally)
         self.local_planner: Optional[BaseLocalPlanner] = None
 
+        # TF listener
+        self.tf = TF()
+
         logger.info("Navigator initialized")
 
     @rpc
@@ -146,14 +151,19 @@ class BehaviorTreeNavigator(Module):
         Returns:
             True if goal was accepted, False otherwise
         """
+        transformed_goal = self._transform_goal_to_odom_frame(goal)
+        if not transformed_goal:
+            logger.error("Failed to transform goal to odometry frame")
+            return False
+
         with self.goal_lock:
-            self.current_goal = goal
+            self.current_goal = transformed_goal
 
         with self.state_lock:
             self.state = NavigatorState.FOLLOWING_PATH
 
         logger.info(
-            f"New goal set: ({goal.position.x:.2f}, {goal.position.y:.2f}, {goal.position.z:.2f})"
+            f"New goal set: ({transformed_goal.position.x:.2f}, {transformed_goal.position.y:.2f}, {transformed_goal.position.z:.2f})"
         )
         return True
 
@@ -163,6 +173,11 @@ class BehaviorTreeNavigator(Module):
         self.local_planner = local_planner
         logger.info("Local planner connected")
 
+    @rpc
+    def get_state(self) -> NavigatorState:
+        """Get the current state of the navigator."""
+        return self.state
+
     def _on_odom(self, msg: PoseStamped):
         """Handle incoming odometry messages."""
         self.latest_odom = msg
@@ -171,6 +186,44 @@ class BehaviorTreeNavigator(Module):
         """Handle incoming goal requests."""
         self.set_goal(msg)
 
+    def _transform_goal_to_odom_frame(self, goal: PoseStamped) -> Optional[PoseStamped]:
+        """Transform goal pose to the odometry frame."""
+        if not self.latest_odom:
+            logger.warning("No odometry available yet, cannot transform goal")
+            return None
+
+        if not goal.frame_id:
+            return goal
+
+        odom_frame = self.latest_odom.frame_id
+        if goal.frame_id == odom_frame:
+            return goal
+
+        try:
+            transform = self.tf.get(
+                parent_frame=odom_frame,
+                child_frame=goal.frame_id,
+                time_point=goal.ts,
+                time_tolerance=1.0,
+            )
+
+            if not transform:
+                logger.error(f"Could not find transform from '{goal.frame_id}' to '{odom_frame}'")
+                return None
+
+            pose = apply_transform(goal, transform)
+            transformed_goal = PoseStamped(
+                position=pose.position,
+                orientation=pose.orientation,
+                frame_id=odom_frame,
+                ts=goal.ts,
+            )
+            return transformed_goal
+
+        except Exception as e:
+            logger.error(f"Failed to transform goal: {e}")
+            return None
+
     def _control_loop(self):
         """Main control loop running in separate thread."""
         while not self.stop_event.is_set():
@@ -178,20 +231,17 @@ class BehaviorTreeNavigator(Module):
                 current_state = self.state
 
             if current_state == NavigatorState.FOLLOWING_PATH:
-                # Publish goal to global planner
                 with self.goal_lock:
                     goal = self.current_goal
 
                 if goal is not None:
                     self.goal.publish(goal)
 
-                    # Check if goal reached
                     if self.local_planner and self.is_goal_reached():
                         logger.info("Goal reached!")
                         reached_msg = Bool()
                         reached_msg.data = True
                         self.goal_reached.publish(reached_msg)
-                        # Reset local planner to clear the path
                         self.local_planner.reset()
                         with self.goal_lock:
                             self.current_goal = None
@@ -199,26 +249,18 @@ class BehaviorTreeNavigator(Module):
                             self.state = NavigatorState.IDLE
 
             elif current_state == NavigatorState.RECOVERY:
-                # Recovery mode placeholder - transitions back to IDLE
                 with self.state_lock:
                     self.state = NavigatorState.IDLE
 
-            # Sleep for control period
             time.sleep(self.publishing_period)
 
     @rpc
     def is_goal_reached(self) -> bool:
-        """
-        Check if the current goal has been reached.
-
-        Returns:
-            True if goal reached, False otherwise
-        """
+        """Check if the current goal has been reached."""
         if self.local_planner is None:
             return False
 
         try:
-            # Call local planner's is_goal_reached RPC
             return self.local_planner.is_goal_reached()
         except Exception as e:
             logger.error(f"Failed to check goal status: {e}")
@@ -226,15 +268,12 @@ class BehaviorTreeNavigator(Module):
 
     def stop(self):
         """Stop navigation and return to IDLE state."""
-        # Cancel any active goal
         with self.goal_lock:
             self.current_goal = None
 
-        # Set state to IDLE
         with self.state_lock:
             self.state = NavigatorState.IDLE
 
-        # Stop the local planner
         if self.local_planner:
             self.local_planner.reset()
 
