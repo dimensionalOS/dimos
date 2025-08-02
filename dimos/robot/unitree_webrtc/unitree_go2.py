@@ -21,10 +21,11 @@ import os
 import time
 import warnings
 from typing import Callable, Optional
+import threading
 
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.spatial_perception import SpatialMemory
@@ -34,7 +35,7 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -44,11 +45,10 @@ from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.reactive import getter_streaming
 from dimos.utils.testing import TimedSensorReplay
 from dimos_lcm.std_msgs import Bool
 
-logger = setup_logger("dimos.robot.unitree_webrtc.multiprocess.unitree_go2", level=logging.INFO)
+logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
 
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
@@ -111,8 +111,7 @@ class ConnectionModule(UnitreeWebRTCConnection, Module):
     video: Out[Image] = None
     ip: str
 
-    _odom: Callable[[], Odometry]
-    _lidar: Callable[[], LidarMessage]
+    _odom: PoseStamped = None
 
     def __init__(self, ip: str, *args, **kwargs):
         self.ip = ip
@@ -130,8 +129,27 @@ class ConnectionModule(UnitreeWebRTCConnection, Module):
         self.tf_stream().subscribe(self.tf.publish)
         self.movecmd.subscribe(self.move)
 
-        self._odom = getter_streaming(self.odom_stream())
-        self._lidar = getter_streaming(self.lidar_stream())
+    def _publish_tf(self, msg):
+        self._odom = msg
+        self.odom.publish(msg)
+        self.tf.publish(Transform.from_pose("base_link", msg))
+        camera_link = Transform(
+            translation=Vector3(0.3, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="base_link",
+            child_frame_id="camera_link",
+            ts=time.time(),
+        )
+        self.tf.publish(camera_link)
+
+    @rpc
+    def get_odom(self) -> Optional[PoseStamped]:
+        """Get the robot's odometry.
+
+        Returns:
+            The robot's odometry
+        """
+        return self._odom
 
     @rpc
     def move(self, vector: Vector3, duration: float = 0.0):
@@ -216,14 +234,7 @@ class UnitreeGo2:
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
-        if self.ip:
-            self.connection = self.dimos.deploy(ConnectionModule, self.ip)
-        else:
-            logger.info("No robot IP provided, using fake connection with recorded data")
-            self.connection = self.dimos.deploy(ConnectionModule.__class__.__bases__[0], "fake")
-            self.connection.__class__ = type(
-                "FakeConnectionModule", (FakeRTC, Module), dict(ConnectionModule.__dict__)
-            )
+        self.connection = self.dimos.deploy(ConnectionModule, self.ip)
 
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
@@ -338,6 +349,52 @@ class UnitreeGo2:
             raise RuntimeError("Frontier explorer not initialized. Call start() first.")
         return self.frontier_explorer.explore()
 
+    def navigate_to(self, pose: PoseStamped, blocking: bool = True):
+        """Navigate to a target pose.
+
+        Args:
+            pose: Target pose to navigate to
+            blocking: If True, block until goal is reached. If False, return immediately.
+
+        Returns:
+            If blocking=True: True if navigation was successful, False otherwise
+            If blocking=False: None (navigation happens in background)
+        """
+        if not self.navigator:
+            raise RuntimeError("Navigator not initialized. Call start() first.")
+
+        def _navigate():
+            # Set the navigation goal
+            if not self.navigator.set_goal(pose):
+                logger.error("Failed to set navigation goal")
+                return False
+
+            logger.info(
+                f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
+            )
+
+            # Block until goal is reached or navigation is cancelled
+            while True:
+                if self.navigator.is_goal_reached():
+                    logger.info("Navigation goal reached successfully")
+                    return True
+
+                # Check if navigation was cancelled (no current goal)
+                if self.navigator.get_state() == NavigatorState.IDLE:
+                    logger.info("Navigation was cancelled")
+                    return False
+
+                # Sleep briefly to avoid busy waiting
+                time.sleep(0.2)
+
+        if blocking:
+            return _navigate()
+        else:
+            # Run navigation in a separate thread
+            nav_thread = threading.Thread(target=_navigate, daemon=True)
+            nav_thread.start()
+            return None
+
     def stop_exploration(self) -> bool:
         """Stop autonomous exploration.
 
@@ -374,6 +431,14 @@ class UnitreeGo2:
             The robot's skill library for adding/managing skills
         """
         return self.skill_library
+
+    def get_odom(self) -> PoseStamped:
+        """Get the robot's odometry.
+
+        Returns:
+            The robot's odometry
+        """
+        return self.connection.get_odom()
 
 
 def main():

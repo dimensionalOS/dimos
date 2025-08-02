@@ -18,7 +18,7 @@ import time
 
 from dimos.core import TF
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.protocol.tf.tf import MultiTBuffer, TBuffer
+from dimos.protocol.tf import MultiTBuffer, TBuffer
 
 
 def test_tf_main():

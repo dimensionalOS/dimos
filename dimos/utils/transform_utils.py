@@ -17,7 +17,7 @@ from typing import Tuple
 import logging
 from scipy.spatial.transform import Rotation as R
 
-from dimos_lcm.geometry_msgs import Pose, Point, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion, Transform
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ def matrix_to_pose(T: np.ndarray) -> Pose:
         Pose object with position and orientation (quaternion)
     """
     # Extract position
-    pos = Point(T[0, 3], T[1, 3], T[2, 3])
+    pos = Vector3(T[0, 3], T[1, 3], T[2, 3])
 
     # Extract rotation matrix and convert to quaternion
     Rot = T[:3, :3]
@@ -88,7 +88,7 @@ def matrix_to_pose(T: np.ndarray) -> Pose:
     return Pose(pos, orientation)
 
 
-def apply_transform(pose: Pose, transform_matrix: np.ndarray) -> Pose:
+def apply_transform(pose: Pose, transform: np.ndarray | Transform) -> Pose:
     """
     Apply a transformation matrix to a pose.
 
@@ -99,11 +99,18 @@ def apply_transform(pose: Pose, transform_matrix: np.ndarray) -> Pose:
     Returns:
         Transformed pose
     """
+    if isinstance(transform, Transform):
+        if transform.child_frame_id != pose.frame_id:
+            raise ValueError(
+                f"Transform frame_id {transform.frame_id} does not match pose frame_id {pose.frame_id}"
+            )
+        transform = pose_to_matrix(transform.to_pose())
+
     # Convert pose to matrix
     T_pose = pose_to_matrix(pose)
 
     # Apply transform
-    T_result = transform_matrix @ T_pose
+    T_result = transform @ T_pose
 
     # Convert back to pose
     return matrix_to_pose(T_result)
@@ -156,7 +163,7 @@ def optical_to_robot_frame(pose: Pose) -> Pose:
     quat_robot = R.from_matrix(R_robot).as_quat()  # [x, y, z, w]
 
     return Pose(
-        Point(robot_x, robot_y, robot_z),
+        Vector3(robot_x, robot_y, robot_z),
         Quaternion(quat_robot[0], quat_robot[1], quat_robot[2], quat_robot[3]),
     )
 
@@ -203,7 +210,7 @@ def robot_to_optical_frame(pose: Pose) -> Pose:
     )
 
 
-def yaw_towards_point(position: Point, target_point: Point = None) -> float:
+def yaw_towards_point(position: Vector3, target_point: Vector3 = None) -> float:
     """
     Calculate yaw angle from target point to position (away from target).
     This is commonly used for object orientation in grasping applications.
@@ -217,15 +224,15 @@ def yaw_towards_point(position: Point, target_point: Point = None) -> float:
         Yaw angle in radians pointing from target_point to position
     """
     if target_point is None:
-        target_point = Point(0.0, 0.0, 0.0)
+        target_point = Vector3(0.0, 0.0, 0.0)
     direction_x = position.x - target_point.x
     direction_y = position.y - target_point.y
     return np.arctan2(direction_y, direction_x)
 
 
 def transform_robot_to_map(
-    robot_position: Point, robot_rotation: Vector3, position: Point, rotation: Vector3
-) -> Tuple[Point, Vector3]:
+    robot_position: Vector3, robot_rotation: Vector3, position: Vector3, rotation: Vector3
+) -> Tuple[Vector3, Vector3]:
     """Transform position and rotation from robot frame to map frame.
 
     Args:
@@ -271,7 +278,7 @@ def transform_robot_to_map(
     map_pitch = robot_rot.y + rot_pitch  # Add robot's pitch
     map_yaw_rot = normalize_angle(robot_yaw + rot_yaw)  # Add robot's yaw and normalize
 
-    transformed_position = Point(map_x, map_y, map_z)
+    transformed_position = Vector3(map_x, map_y, map_z)
     transformed_rotation = Vector3(map_roll, map_pitch, map_yaw_rot)
 
     return transformed_position, transformed_rotation

@@ -107,7 +107,7 @@ class BaseLocalPlanner(Module):
         self.stop_planning.clear()
         self.planning_thread = threading.Thread(target=self._follow_path_loop, daemon=True)
         self.planning_thread.start()
-        logger.info("Started follow path thread")
+        logger.debug("Started follow path thread")
 
     def _follow_path_loop(self):
         """Main planning loop that runs in a separate thread."""
