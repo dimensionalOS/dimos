@@ -91,6 +91,7 @@ class Map(Module):
         """Voxelise *frame* and splice it into the running map."""
         new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
+        return self
 
     def consume(self, observable: Observable[LidarMessage]) -> Observable["Map"]:
         """Reactive operator that folds a stream of `LidarMessage` into the map."""
