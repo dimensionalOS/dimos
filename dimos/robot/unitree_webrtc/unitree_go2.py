@@ -21,7 +21,6 @@ import os
 import time
 import warnings
 from typing import Callable, Optional
-import threading
 
 from dimos import core
 from dimos.core import In, Module, Out, rpc
@@ -35,7 +34,7 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -102,7 +101,7 @@ class FakeRTC(UnitreeWebRTCConnection):
         pass
 
 
-class ConnectionModule(UnitreeWebRTCConnection, Module):
+class ConnectionModule(FakeRTC, Module):
     """Module that handles robot sensor data and movement commands."""
 
     movecmd: In[Vector3] = None
@@ -255,7 +254,7 @@ class UnitreeGo2:
         """Deploy and configure navigation modules."""
         self.global_planner = self.dimos.deploy(AstarPlanner)
         self.local_planner = self.dimos.deploy(HolonomicLocalPlanner)
-        self.navigator = self.dimos.deploy(BehaviorTreeNavigator)
+        self.navigator = self.dimos.deploy(BehaviorTreeNavigator, local_planner=self.local_planner)
         self.frontier_explorer = self.dimos.deploy(WavefrontFrontierExplorer)
 
         self.navigator.goal.transport = core.LCMTransport("/navigation_goal", PoseStamped)
@@ -280,7 +279,6 @@ class UnitreeGo2:
         self.connection.movecmd.connect(self.local_planner.cmd_vel)
 
         self.navigator.odom.connect(self.connection.odom)
-        self.navigator.connect_local_planner(self.local_planner)
 
         self.frontier_explorer.costmap.connect(self.mapper.global_costmap)
         self.frontier_explorer.odometry.connect(self.connection.odom)
@@ -345,8 +343,6 @@ class UnitreeGo2:
         Returns:
             True if exploration started successfully
         """
-        if not self.frontier_explorer:
-            raise RuntimeError("Frontier explorer not initialized. Call start() first.")
         return self.frontier_explorer.explore()
 
     def navigate_to(self, pose: PoseStamped, blocking: bool = True):
@@ -358,42 +354,13 @@ class UnitreeGo2:
 
         Returns:
             If blocking=True: True if navigation was successful, False otherwise
-            If blocking=False: None (navigation happens in background)
+            If blocking=False: True if goal was accepted, False otherwise
         """
-        if not self.navigator:
-            raise RuntimeError("Navigator not initialized. Call start() first.")
 
-        def _navigate():
-            # Set the navigation goal
-            if not self.navigator.set_goal(pose):
-                logger.error("Failed to set navigation goal")
-                return False
-
-            logger.info(
-                f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
-            )
-
-            # Block until goal is reached or navigation is cancelled
-            while True:
-                if self.navigator.is_goal_reached():
-                    logger.info("Navigation goal reached successfully")
-                    return True
-
-                # Check if navigation was cancelled (no current goal)
-                if self.navigator.get_state() == NavigatorState.IDLE:
-                    logger.info("Navigation was cancelled")
-                    return False
-
-                # Sleep briefly to avoid busy waiting
-                time.sleep(0.2)
-
-        if blocking:
-            return _navigate()
-        else:
-            # Run navigation in a separate thread
-            nav_thread = threading.Thread(target=_navigate, daemon=True)
-            nav_thread.start()
-            return None
+        logger.info(
+            f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
+        )
+        return self.navigator.set_goal(pose, blocking=blocking)
 
     def stop_exploration(self) -> bool:
         """Stop autonomous exploration.
@@ -401,8 +368,6 @@ class UnitreeGo2:
         Returns:
             True if exploration was stopped
         """
-        if not self.frontier_explorer:
-            return False
         return self.frontier_explorer.stop_exploration()
 
     def cancel_navigation(self) -> bool:
@@ -411,8 +376,6 @@ class UnitreeGo2:
         Returns:
             True if goal was cancelled
         """
-        if not self.navigator:
-            return False
         return self.navigator.cancel_goal()
 
     @property

@@ -64,7 +64,12 @@ class BehaviorTreeNavigator(Module):
     goal: Out[PoseStamped] = None
     goal_reached: Out[Bool] = None
 
-    def __init__(self, publishing_frequency: float = 1.0, **kwargs):
+    def __init__(
+        self,
+        local_planner: BaseLocalPlanner,
+        publishing_frequency: float = 1.0,
+        **kwargs,
+    ):
         """Initialize the Navigator.
 
         Args:
@@ -91,9 +96,7 @@ class BehaviorTreeNavigator(Module):
         self.control_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
 
-        # Local planner reference (to be connected externally)
-        self.local_planner: Optional[BaseLocalPlanner] = None
-
+        self.local_planner = local_planner
         # TF listener
         self.tf = TF()
 
@@ -104,10 +107,7 @@ class BehaviorTreeNavigator(Module):
         """Start the navigator module."""
         # Subscribe to inputs
         self.odom.subscribe(self._on_odom)
-
-        # Only subscribe to goal_request if it has a transport
-        if self.goal_request.transport is not None:
-            self.goal_request.subscribe(self._on_goal_request)
+        self.goal_request.subscribe(self._on_goal_request)
 
         # Start control thread
         self.stop_event.clear()
@@ -141,7 +141,7 @@ class BehaviorTreeNavigator(Module):
         logger.info("Navigator cleanup complete")
 
     @rpc
-    def set_goal(self, goal: PoseStamped) -> bool:
+    def set_goal(self, goal: PoseStamped, blocking: bool = False) -> bool:
         """
         Set a new navigation goal.
 
@@ -149,7 +149,8 @@ class BehaviorTreeNavigator(Module):
             goal: Target pose to navigate to
 
         Returns:
-            True if goal was accepted, False otherwise
+            non-blocking: True if goal was accepted, False otherwise
+            blocking: True if goal was reached, False otherwise
         """
         transformed_goal = self._transform_goal_to_odom_frame(goal)
         if not transformed_goal:
@@ -162,16 +163,15 @@ class BehaviorTreeNavigator(Module):
         with self.state_lock:
             self.state = NavigatorState.FOLLOWING_PATH
 
-        logger.info(
-            f"New goal set: ({transformed_goal.position.x:.2f}, {transformed_goal.position.y:.2f}, {transformed_goal.position.z:.2f})"
-        )
-        return True
+        if blocking:
+            while not self.is_goal_reached():
+                if self.state == NavigatorState.IDLE:
+                    logger.info("Navigation was cancelled")
+                    return False
 
-    @rpc
-    def connect_local_planner(self, local_planner):
-        """Connect a local planner instance for goal monitoring."""
-        self.local_planner = local_planner
-        logger.info("Local planner connected")
+                time.sleep(self.publishing_period)
+
+        return True
 
     @rpc
     def get_state(self) -> NavigatorState:
@@ -237,7 +237,7 @@ class BehaviorTreeNavigator(Module):
                 if goal is not None:
                     self.goal.publish(goal)
 
-                    if self.local_planner and self.is_goal_reached():
+                    if self.is_goal_reached():
                         logger.info("Goal reached!")
                         reached_msg = Bool()
                         reached_msg.data = True
@@ -257,9 +257,6 @@ class BehaviorTreeNavigator(Module):
     @rpc
     def is_goal_reached(self) -> bool:
         """Check if the current goal has been reached."""
-        if self.local_planner is None:
-            return False
-
         try:
             return self.local_planner.is_goal_reached()
         except Exception as e:
@@ -274,7 +271,6 @@ class BehaviorTreeNavigator(Module):
         with self.state_lock:
             self.state = NavigatorState.IDLE
 
-        if self.local_planner:
-            self.local_planner.reset()
+        self.local_planner.reset()
 
         logger.info("Navigator stopped")
