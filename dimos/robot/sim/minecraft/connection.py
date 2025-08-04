@@ -45,6 +45,7 @@ from dimos.utils.testing import TimedSensorReplay
 
 class Connection:
     def __init__(self, *args, **kwargs):
+        self.engine_frequency = kwargs.get("engine_frequency", 30.0)
         # Minecraft block size in meters (1 block = 0.5m)
         self.block_size = 0.5
         # Point cloud resolution in meters
@@ -63,7 +64,7 @@ class Connection:
         self.current_velocity = Vector3(0, 0, 0)
 
         # Use Engine instead of direct MineDojo
-        self.engine = Engine(frequency=20.0)
+        self.engine = Engine(frequency=self.engine_frequency)
         self.obs: Optional[Output] = None
         self.obs_subscription = None
 
@@ -78,24 +79,7 @@ class Connection:
             # No occupied voxels
             points_array = np.empty((0, 3), dtype=np.float32)
         else:
-            # Get player's continuous position and calculate offset from voxel grid center
-            if self.obs:
-                player_pos = self.obs.position
-
-                # The voxel grid is centered on the player's current block (floor of position)
-                # When player crosses into a new block, the whole grid shifts
-                grid_block_x = np.floor(player_pos[0])
-                grid_block_y = np.floor(player_pos[1])
-                grid_block_z = np.floor(player_pos[2])
-
-                # The voxel grid represents blocks in world space
-                # We don't need offsets - the grid is absolute, not relative
-                offset_x = 0
-                offset_y = 0
-                offset_z = 0
-
-            else:
-                offset_x = offset_y = offset_z = 0.0
+            player_pos = self.obs.position
 
             # Convert occupied voxel indices to coordinates
             x_indices, y_indices, z_indices = occupied_indices
@@ -330,48 +314,3 @@ class Connection:
             on_error=lambda e: print(f"Engine error: {e}"),
             on_completed=lambda: print("Engine stream completed"),
         )
-
-
-class MinecraftModule(Module, Connection):
-    movecmd: In[Vector3] = None
-    odom: Out[Vector3] = None
-    lidar: Out[PointCloud2] = None
-    video: Out[Image] = None
-
-    @rpc
-    def move(self, vector: Vector3):
-        """RPC method to handle move commands."""
-        super().move(vector)
-
-    @rpc
-    def start(self):
-        # Subscribe to movement commands
-        self.movecmd.subscribe(self.move)
-
-        # Start publishing sensor streams
-        self.lidar_stream().subscribe(self.lidar.publish)
-        self.video_stream().subscribe(self.video.publish)
-        self.tf_stream().subscribe(self.tf.publish)
-
-    def dispose(self):
-        """Override dispose to ensure engine stops."""
-        super().dispose()  # Call parent class dispose methods
-
-
-if __name__ == "__main__":
-    pubsub.lcm.autoconf()
-
-    dimos = core.start(2)
-    robot = dimos.deploy(MinecraftModule)
-    bridge = dimos.deploy(FoxgloveBridge)
-
-    # Configure transports
-    robot.movecmd.transport = core.LCMTransport("/movecmd", Vector3)
-    robot.lidar.transport = core.LCMTransport("/lidar", PointCloud2)
-    robot.video.transport = core.LCMTransport("/video", Image)
-
-    bridge.start()
-    robot.start()
-
-    while True:
-        time.sleep(1)

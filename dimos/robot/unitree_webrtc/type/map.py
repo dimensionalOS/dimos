@@ -89,8 +89,8 @@ class Map(Module):
     @rpc
     def add_frame(self, frame: LidarMessage) -> "Map":
         """Voxelise *frame* and splice it into the running map."""
-        new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
-        self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
+        # new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
+        self.pointcloud = self.splice_cylinder(self.pointcloud, frame.pointcloud, shrink=0.5)
 
     def consume(self, observable: Observable[LidarMessage]) -> Observable["Map"]:
         """Reactive operator that folds a stream of `LidarMessage` into the map."""
@@ -104,65 +104,34 @@ class Map(Module):
     def costmap(self) -> OccupancyGrid:
         return OccupancyGrid.from_pointcloud(self.to_PointCloud2())
 
+    def splice_cylinder(
+        self,
+        map_pcd: o3d.geometry.PointCloud,
+        patch_pcd: o3d.geometry.PointCloud,
+        axis: int = 2,
+        shrink: float = 0.95,
+    ) -> o3d.geometry.PointCloud:
+        center = patch_pcd.get_center()
+        patch_pts = np.asarray(patch_pcd.points)
 
-def splice_sphere(
-    map_pcd: o3d.geometry.PointCloud,
-    patch_pcd: o3d.geometry.PointCloud,
-    shrink: float = 0.95,
-) -> o3d.geometry.PointCloud:
-    center = patch_pcd.get_center()
-    radius = np.linalg.norm(np.asarray(patch_pcd.points) - center, axis=1).max() * shrink
-    dists = np.linalg.norm(np.asarray(map_pcd.points) - center, axis=1)
-    victims = np.nonzero(dists < radius)[0]
-    survivors = map_pcd.select_by_index(victims, invert=True)
-    return survivors + patch_pcd
+        # Axes perpendicular to cylinder
+        axes = [0, 1, 2]
+        axes.remove(axis)
 
+        planar_dists = np.linalg.norm(patch_pts[:, axes] - center[axes], axis=1)
+        radius = planar_dists.max() * shrink
 
-def splice_cylinder(
-    map_pcd: o3d.geometry.PointCloud,
-    patch_pcd: o3d.geometry.PointCloud,
-    axis: int = 2,
-    shrink: float = 0.95,
-) -> o3d.geometry.PointCloud:
-    center = patch_pcd.get_center()
-    patch_pts = np.asarray(patch_pcd.points)
+        axis_min = (patch_pts[:, axis].min() - center[axis]) * shrink + center[axis]
+        axis_max = (patch_pts[:, axis].max() - center[axis]) * shrink + center[axis]
 
-    # Axes perpendicular to cylinder
-    axes = [0, 1, 2]
-    axes.remove(axis)
+        map_pts = np.asarray(map_pcd.points)
+        planar_dists_map = np.linalg.norm(map_pts[:, axes] - center[axes], axis=1)
 
-    planar_dists = np.linalg.norm(patch_pts[:, axes] - center[axes], axis=1)
-    radius = planar_dists.max() * shrink
+        victims = np.nonzero(
+            (planar_dists_map < radius)
+            & (map_pts[:, axis] >= axis_min)
+            & (map_pts[:, axis] <= axis_max)
+        )[0]
 
-    axis_min = (patch_pts[:, axis].min() - center[axis]) * shrink + center[axis]
-    axis_max = (patch_pts[:, axis].max() - center[axis]) * shrink + center[axis]
-
-    map_pts = np.asarray(map_pcd.points)
-    planar_dists_map = np.linalg.norm(map_pts[:, axes] - center[axes], axis=1)
-
-    victims = np.nonzero(
-        (planar_dists_map < radius)
-        & (map_pts[:, axis] >= axis_min)
-        & (map_pts[:, axis] <= axis_max)
-    )[0]
-
-    survivors = map_pcd.select_by_index(victims, invert=True)
-    return survivors + patch_pcd
-
-
-def _inflate_lethal(costmap: np.ndarray, radius: int, lethal_val: int = 100) -> np.ndarray:
-    """Return *costmap* with lethal cells dilated by *radius* grid steps (circular)."""
-    if radius <= 0 or not np.any(costmap == lethal_val):
-        return costmap
-
-    mask = costmap == lethal_val
-    dilated = mask.copy()
-    for dy in range(-radius, radius + 1):
-        for dx in range(-radius, radius + 1):
-            if dx * dx + dy * dy > radius * radius or (dx == 0 and dy == 0):
-                continue
-            dilated |= np.roll(mask, shift=(dy, dx), axis=(0, 1))
-
-    out = costmap.copy()
-    out[dilated] = lethal_val
-    return out
+        survivors = map_pcd.select_by_index(victims, invert=True)
+        return (survivors + patch_pcd).voxel_down_sample(voxel_size=self.voxel_size)
