@@ -69,8 +69,6 @@ class SpatialMemory(Module):
         visual_memory: Optional[
             "VisualMemory"
         ] = None,  # Optional VisualMemory instance for storing images
-        video_stream: Optional[Observable] = None,  # Video stream to process
-        get_pose: Optional[callable] = None,  # Function that returns position and rotation
     ):
         """
         Initialize the spatial perception system.

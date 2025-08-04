@@ -106,6 +106,11 @@ class ObjectTracking(Module):
         # Initialize TF publisher
         self.tf = TF()
 
+        # Store latest detections for RPC access
+        self._latest_detection2d: Optional[Detection2DArray] = None
+        self._latest_detection3d: Optional[Detection3DArray] = None
+        self._detection_event = threading.Event()
+
     @rpc
     def start(self):
         """Start the object tracking module and subscribe to LCM streams."""
@@ -259,6 +264,9 @@ class ObjectTracking(Module):
         # Publish empty detections to clear any visualizations
         empty_2d = Detection2DArray(detections_length=0, header=Header(), detections=[])
         empty_3d = Detection3DArray(detections_length=0, header=Header(), detections=[])
+        self._latest_detection2d = empty_2d
+        self._latest_detection3d = empty_3d
+        self._detection_event.clear()
         self.detection2darray.publish(empty_2d)
         self.detection3darray.publish(empty_3d)
 
@@ -429,6 +437,14 @@ class ObjectTracking(Module):
                     )
                     self.tf.publish(tracked_object_tf)
 
+        # Store latest detections for RPC access
+        self._latest_detection2d = detection2darray
+        self._latest_detection3d = detection3darray
+
+        # Signal that new detections are available
+        if detection2darray.detections_length > 0 or detection3darray.detections_length > 0:
+            self._detection_event.set()
+
         # Publish detections
         self.detection2darray.publish(detection2darray)
         self.detection3darray.publish(detection3darray)
@@ -489,6 +505,58 @@ class ObjectTracking(Module):
             return depth_25th_percentile
 
         return None
+
+    @rpc
+    def get_latest_detections(self, timeout: float = 5.0) -> Dict:
+        """
+        Get the latest detection messages. Blocks until a detection is available or timeout.
+
+        Args:
+            timeout: Maximum time to wait for detections in seconds (default: 5.0)
+
+        Returns:
+            Dict containing:
+                - detection2d: Latest Detection2DArray message (may be empty)
+                - detection3d: Latest Detection3DArray message (may be empty)
+                - success: True if valid detections were found, False if timeout
+        """
+        # Clear the event to wait for new detections
+        self._detection_event.clear()
+
+        # If we already have detections with valid data, return immediately
+        if (
+            self._latest_detection2d is not None and self._latest_detection2d.detections_length > 0
+        ) or (
+            self._latest_detection3d is not None and self._latest_detection3d.detections_length > 0
+        ):
+            return {
+                "detection2d": self._latest_detection2d,
+                "detection3d": self._latest_detection3d,
+                "success": True,
+            }
+
+        # Wait for new detections with timeout
+        if self._detection_event.wait(timeout):
+            # New detections available
+            return {
+                "detection2d": self._latest_detection2d
+                or Detection2DArray(detections_length=0, header=Header(), detections=[]),
+                "detection3d": self._latest_detection3d
+                or Detection3DArray(detections_length=0, header=Header(), detections=[]),
+                "success": True,
+            }
+        else:
+            # Timeout - return empty detections
+            logger.warning(f"Timeout waiting for detections after {timeout} seconds")
+            return {
+                "detection2d": Detection2DArray(
+                    detections_length=0, header=Header(), detections=[]
+                ),
+                "detection3d": Detection3DArray(
+                    detections_length=0, header=Header(), detections=[]
+                ),
+                "success": False,
+            }
 
     @rpc
     def cleanup(self):

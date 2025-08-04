@@ -20,7 +20,7 @@ import logging
 import os
 import time
 import warnings
-from typing import Callable, Optional
+from typing import List, Optional
 import threading
 
 from dimos import core
@@ -28,6 +28,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
+from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.tf import TF
@@ -42,6 +43,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
+from dimos.robot.unitree_webrtc.camera_module import UnitreeCameraModule
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -227,7 +229,6 @@ class UnitreeGo2:
         Args:
             ip: Robot IP address (or None for fake connection)
             output_dir: Directory for saving outputs (default: assets/output)
-            enable_perception: Whether to enable spatial memory/perception
             websocket_port: Port for web visualization
             skill_library: Skill library instance
             playback: If True, use recorded data instead of real robot connection
@@ -236,6 +237,9 @@ class UnitreeGo2:
         self.playback = playback or (ip is None)  # Auto-enable playback if no IP provided
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.websocket_port = websocket_port
+
+        # Default camera intrinsics
+        self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
 
         # Initialize skill library
         if skill_library is None:
@@ -252,6 +256,7 @@ class UnitreeGo2:
         self.websocket_vis = None
         self.foxglove_bridge = None
         self.spatial_memory_module = None
+        self.camera_module = None
 
         self._setup_directories()
 
@@ -283,6 +288,7 @@ class UnitreeGo2:
         self._deploy_navigation()
         self._deploy_visualization()
         self._deploy_perception()
+        self._deploy_camera()
 
         self._start_modules()
 
@@ -370,6 +376,31 @@ class UnitreeGo2:
 
         logger.info("Spatial memory module deployed and connected")
 
+    def _deploy_camera(self):
+        """Deploy and configure the camera module."""
+        self.camera_module = self.dimos.deploy(
+            UnitreeCameraModule,
+            camera_intrinsics=self.camera_intrinsics,
+            camera_frame_id="camera_link",
+            base_frame_id="base_link",
+        )
+
+        # Set up transports
+        self.camera_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
+        self.camera_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
+        self.camera_module.depth_colorized.transport = core.LCMTransport(
+            "/go2/depth_colorized", Image
+        )
+        self.camera_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
+        self.camera_module.camera_pose.transport = core.LCMTransport(
+            "/go2/camera_pose", PoseStamped
+        )
+
+        # Connect video input from connection module
+        self.camera_module.video.connect(self.connection.video)
+
+        logger.info("Camera module deployed and connected")
+
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
         self.connection.start()
@@ -383,6 +414,9 @@ class UnitreeGo2:
 
         if self.spatial_memory_module:
             self.spatial_memory_module.start()
+
+        if self.camera_module:
+            self.camera_module.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
