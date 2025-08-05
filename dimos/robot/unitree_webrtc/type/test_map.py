@@ -17,7 +17,7 @@ import pytest
 from dimos.robot.unitree_webrtc.testing.helpers import show3d, show3d_stream
 from dimos.robot.unitree_webrtc.testing.mock import Mock
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.map import Map, splice_sphere
+from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.utils.reactive import backpressure
 from dimos.utils.testing import SensorReplay
 
@@ -36,14 +36,6 @@ def test_costmap_vis():
 @pytest.mark.vis
 def test_reconstruction_with_realtime_vis():
     show3d_stream(Map().consume(Mock("office").stream(rate_hz=60.0)), clearframe=True).run()
-
-
-@pytest.mark.vis
-def test_splice_vis():
-    mock = Mock("test")
-    target = mock.load("a")
-    insert = mock.load("b")
-    show3d(splice_sphere(target.pointcloud, insert.pointcloud, shrink=0.7)).run()
 
 
 @pytest.mark.vis
