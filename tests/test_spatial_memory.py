@@ -28,18 +28,29 @@ from dimos.agents.memory.visual_memory import VisualMemory
 
 import tests.test_header
 
-from dimos.robot.unitree.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
+# from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2  # Uncomment when properly configured
 from dimos.perception.spatial_perception import SpatialMemory
+from dimos.types.vector import Vector
+from dimos.msgs.geometry_msgs import Vector3, Quaternion
 
 
-def extract_position(transform):
-    """Extract position coordinates from a transform message"""
+def extract_pose_data(transform):
+    """Extract position and rotation from a transform message"""
     if transform is None:
-        return (0, 0, 0)
+        return None, None
 
     pos = transform.transform.translation
-    return (pos.x, pos.y, pos.z)
+    rot = transform.transform.rotation
+
+    # Convert to Vector3 objects expected by SpatialMemory
+    position = Vector3(x=pos.x, y=pos.y, z=pos.z)
+
+    # Convert quaternion to euler angles for rotation vector
+    quat = Quaternion(x=rot.x, y=rot.y, z=rot.z, w=rot.w)
+    euler = quat.to_euler()
+    rotation = Vector3(x=euler.x, y=euler.y, z=euler.z)
+
+    return position, rotation
 
 
 def setup_persistent_chroma_db(db_path="chromadb_data"):
@@ -65,26 +76,22 @@ def setup_persistent_chroma_db(db_path="chromadb_data"):
 def main():
     print("Starting spatial memory test...")
 
-    # Initialize ROS control and robot
-    ros_control = UnitreeROSControl(node_name="spatial_memory_test", mock_connection=False)
-
-    robot = UnitreeGo2(ros_control=ros_control, ip=os.getenv("ROBOT_IP"))
-
     # Create counters for tracking
     frame_count = 0
     transform_count = 0
     stored_count = 0
 
-    print("Setting up video stream...")
-    video_stream = robot.get_ros_video_stream()
+    print("Note: This test requires proper robot connection setup.")
+    print("Please ensure video_stream and transform_stream are properly configured.")
 
-    # Create transform stream at 1 Hz
-    print("Setting up transform stream...")
-    transform_stream = ros_control.get_transform_stream(
-        child_frame="map",
-        parent_frame="base_link",
-        rate_hz=1.0,  # 1 transform per second
-    )
+    # These need to be set up based on your specific robot configuration
+    video_stream = None  # TODO: Set up video stream from robot
+    transform_stream = None  # TODO: Set up transform stream from robot
+
+    if video_stream is None or transform_stream is None:
+        print("\nWARNING: Video or transform streams not configured.")
+        print("Exiting test. Please configure streams properly.")
+        return
 
     # Setup output directory for visual memory
     visual_memory_dir = "/home/stash/dimensional/dimos/assets/test_spatial_memory"
@@ -125,9 +132,11 @@ def main():
         ops.map(
             lambda pair: {
                 "frame": pair[0],  # First element is the frame
-                "position": extract_position(pair[1]),  # Second element is the transform
+                "position": extract_pose_data(pair[1])[0],  # Position as Vector3
+                "rotation": extract_pose_data(pair[1])[1],  # Rotation as Vector3
             }
-        )
+        ),
+        ops.filter(lambda data: data["position"] is not None and data["rotation"] is not None),
     )
 
     # Process with spatial memory
@@ -140,7 +149,12 @@ def main():
         if not result.get("stored", True) == False:
             stored_count += 1
             pos = result["position"]
-            print(f"\nStored frame #{stored_count} at ({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f})")
+            if isinstance(pos, tuple):
+                print(
+                    f"\nStored frame #{stored_count} at ({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f})"
+                )
+            else:
+                print(f"\nStored frame #{stored_count} at position {pos}")
 
             # Save the frame to the assets directory
             if "frame" in result:
@@ -184,6 +198,12 @@ def main():
     saved_path = spatial_memory.vector_db.visual_memory.save("visual_memory.pkl")
     print(f"Saved {spatial_memory.vector_db.visual_memory.count()} images to disk at {saved_path}")
 
+    # Final cleanup
+    print("Performing final cleanup...")
+    spatial_memory.cleanup()
+
+    print("Test completed successfully")
+
 
 def visualize_spatial_memory_with_objects(
     spatial_memory, objects, output_filename="spatial_memory_map.png"
@@ -206,11 +226,17 @@ def visualize_spatial_memory_with_objects(
         return
 
     # Extract coordinates from all stored locations
-    if len(locations[0]) >= 3:
-        x_coords = [loc[0] for loc in locations]
-        y_coords = [loc[1] for loc in locations]
-    else:
-        x_coords, y_coords = zip(*locations)
+    x_coords = []
+    y_coords = []
+    for loc in locations:
+        if isinstance(loc, dict):
+            x_coords.append(loc.get("pos_x", 0))
+            y_coords.append(loc.get("pos_y", 0))
+        elif isinstance(loc, (tuple, list)) and len(loc) >= 2:
+            x_coords.append(loc[0])
+            y_coords.append(loc[1])
+        else:
+            print(f"Unknown location format: {loc}")
 
     # Create figure
     plt.figure(figsize=(12, 10))
@@ -240,9 +266,10 @@ def visualize_spatial_memory_with_objects(
         if isinstance(metadata, list) and metadata:
             metadata = metadata[0]
 
-        if isinstance(metadata, dict) and "x" in metadata and "y" in metadata:
-            x = metadata.get("x", 0)
-            y = metadata.get("y", 0)
+        if isinstance(metadata, dict):
+            # New metadata format uses pos_x, pos_y
+            x = metadata.get("pos_x", metadata.get("x", 0))
+            y = metadata.get("pos_y", metadata.get("y", 0))
 
             # Store coordinates for this object
             object_coords[obj] = (x, y)
@@ -280,17 +307,6 @@ def visualize_spatial_memory_with_objects(
     print(f"Saved enhanced map visualization to {output_filename}")
 
     return object_coords
-
-    # Final cleanup
-    print("Performing final cleanup...")
-    spatial_memory.cleanup()
-
-    try:
-        robot.cleanup()
-    except Exception as e:
-        print(f"Error during robot cleanup: {e}")
-
-    print("Test completed successfully")
 
 
 if __name__ == "__main__":
