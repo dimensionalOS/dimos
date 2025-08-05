@@ -194,7 +194,7 @@ async def test_object_tracking_module():
         )
 
         # Configure tracking LCM transports
-        tracker.rgb_image.transport = core.LCMTransport("/zed/color_image", Image)
+        tracker.color_image.transport = core.LCMTransport("/zed/color_image", Image)
         tracker.depth.transport = core.LCMTransport("/zed/depth_image", Image)
         tracker.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
 
@@ -210,7 +210,7 @@ async def test_object_tracking_module():
         tracker.tracked_overlay.transport = core.LCMTransport("/tracked_overlay", Image)
 
         # Connect inputs
-        tracker.rgb_image.connect(zed.color_image)
+        tracker.color_image.connect(zed.color_image)
         tracker.depth.connect(zed.depth_image)
         tracker.camera_info.connect(zed.camera_info)
 

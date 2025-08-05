@@ -63,6 +63,7 @@ class UnitreeCameraModule(Module):
         camera_intrinsics: List[float],
         camera_frame_id: str = "camera_link",
         base_frame_id: str = "base_link",
+        gt_depth_scale: float = 2.0,
         **kwargs,
     ):
         """
@@ -86,6 +87,7 @@ class UnitreeCameraModule(Module):
         from dimos.models.depth.metric3d import Metric3D
 
         self.metric3d = Metric3D(camera_intrinsics=self.camera_intrinsics)
+        self.gt_depth_scale = gt_depth_scale
         self.tf = TF()
 
         # Processing state
@@ -162,32 +164,11 @@ class UnitreeCameraModule(Module):
                 try:
                     msg = self._latest_frame
                     self._latest_frame = None  # Clear to avoid reprocessing
-
-                    # Convert image to numpy array if needed
-                    if isinstance(msg.data, np.ndarray):
-                        img_array = msg.data
-                    else:
-                        img_array = np.array(msg.data)
-
-                    # Ensure RGB format
-                    if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-                        if msg.format == ImageFormat.BGR:
-                            img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
-                        # Image is already RGB or we've converted it
-                    elif len(img_array.shape) == 2:
-                        # Grayscale image - skip for now
-                        logger.debug("Skipping grayscale image")
-                        continue
-                    else:
-                        logger.warning(f"Unexpected image shape: {img_array.shape}")
-                        continue
-
                     # Store for publishing
-                    self._last_image = img_array
+                    self._last_image = msg.data
                     self._last_timestamp = msg.ts if msg.ts else time.time()
-
                     # Process depth
-                    self._process_depth(img_array)
+                    self._process_depth(self._last_image)
 
                 except Exception as e:
                     logger.error(f"Error in main processing loop: {e}", exc_info=True)
@@ -203,7 +184,7 @@ class UnitreeCameraModule(Module):
             logger.debug(f"Processing depth for image shape: {img_array.shape}")
 
             # Generate depth map
-            depth_array = self.metric3d.infer_depth(img_array)
+            depth_array = self.metric3d.infer_depth(img_array) / self.gt_depth_scale
 
             self._last_depth = depth_array
             logger.debug(f"Generated depth map shape: {depth_array.shape}")
@@ -346,7 +327,4 @@ class UnitreeCameraModule(Module):
     def cleanup(self):
         """Clean up resources on module destruction."""
         self.stop()
-
-        # Clean up Metric3D resources
-        if hasattr(self, "metric3d") and self.metric3d:
-            self.metric3d.cleanup()
+        self.metric3d.cleanup()

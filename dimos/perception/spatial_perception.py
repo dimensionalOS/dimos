@@ -63,7 +63,7 @@ class SpatialMemory(Module):
         min_time_threshold: float = 1.0,  # Min time in seconds to record a new frame
         db_path: Optional[str] = None,  # Path for ChromaDB persistence
         visual_memory_path: Optional[str] = None,  # Path for saving/loading visual memory
-        new_memory: bool = False,  # Whether to create a new memory from scratch
+        new_memory: bool = True,  # Whether to create a new memory from scratch
         output_dir: Optional[str] = None,  # Directory for storing visual memory data
         chroma_client: Any = None,  # Optional ChromaDB client for persistence
         visual_memory: Optional[

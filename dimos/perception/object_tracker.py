@@ -21,7 +21,7 @@ from typing import Dict, List, Optional
 from dimos.core import In, Out, Module, rpc
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, Pose
+from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, Pose, PoseStamped
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 
@@ -48,7 +48,7 @@ class ObjectTracking(Module):
     """Module for object tracking with LCM input/output."""
 
     # LCM inputs
-    rgb_image: In[Image] = None
+    color_image: In[Image] = None
     depth: In[Image] = None
     camera_info: In[CameraInfo] = None
 
@@ -61,7 +61,7 @@ class ObjectTracking(Module):
         self,
         camera_intrinsics: Optional[List[float]] = None,  # [fx, fy, cx, cy]
         reid_threshold: int = 5,
-        reid_fail_tolerance: int = 10,
+        reid_fail_tolerance: int = 2,
         frame_id: str = "camera_link",
     ):
         """
@@ -119,7 +119,7 @@ class ObjectTracking(Module):
         def on_rgb(image_msg: Image):
             self._latest_rgb_frame = image_msg.data
 
-        self.rgb_image.subscribe(on_rgb)
+        self.color_image.subscribe(on_rgb)
 
         # Subscribe to depth stream
         def on_depth(image_msg: Image):
@@ -506,8 +506,22 @@ class ObjectTracking(Module):
 
         return None
 
+    def extract_pose_from_detection3d(self, detection3d_array):
+        if detection3d_array and detection3d_array.detections_length > 0:
+            detection = detection3d_array.detections[0]
+            if detection.bbox and detection.bbox.center:
+                # Create PoseStamped from the detection's pose
+                pose_stamped = PoseStamped(
+                    ts=detection3d_array.header.ts,
+                    frame_id=detection3d_array.header.frame_id,
+                    position=detection.bbox.center.position,
+                    orientation=detection.bbox.center.orientation,
+                )
+                return pose_stamped
+        return None
+
     @rpc
-    def get_latest_detections(self, timeout: float = 5.0) -> Dict:
+    def get_latest_detections(self, timeout: float = 1.0) -> Dict:
         """
         Get the latest detection messages. Blocks until a detection is available or timeout.
 
@@ -518,6 +532,7 @@ class ObjectTracking(Module):
             Dict containing:
                 - detection2d: Latest Detection2DArray message (may be empty)
                 - detection3d: Latest Detection3DArray message (may be empty)
+                - pose: PoseStamped message with the first detection3d's pose (None if no 3D detection)
                 - success: True if valid detections were found, False if timeout
         """
         # Clear the event to wait for new detections
@@ -529,32 +544,29 @@ class ObjectTracking(Module):
         ) or (
             self._latest_detection3d is not None and self._latest_detection3d.detections_length > 0
         ):
+            pose = self.extract_pose_from_detection3d(self._latest_detection3d)
             return {
                 "detection2d": self._latest_detection2d,
                 "detection3d": self._latest_detection3d,
+                "pose": pose,
                 "success": True,
             }
 
         # Wait for new detections with timeout
         if self._detection_event.wait(timeout):
             # New detections available
+            pose = self.extract_pose_from_detection3d(self._latest_detection3d)
             return {
-                "detection2d": self._latest_detection2d
-                or Detection2DArray(detections_length=0, header=Header(), detections=[]),
-                "detection3d": self._latest_detection3d
-                or Detection3DArray(detections_length=0, header=Header(), detections=[]),
+                "detection2d": self._latest_detection2d,
+                "detection3d": self._latest_detection3d,
+                "pose": pose,
                 "success": True,
             }
         else:
-            # Timeout - return empty detections
-            logger.warning(f"Timeout waiting for detections after {timeout} seconds")
             return {
-                "detection2d": Detection2DArray(
-                    detections_length=0, header=Header(), detections=[]
-                ),
-                "detection3d": Detection3DArray(
-                    detections_length=0, header=Header(), detections=[]
-                ),
+                "detection2d": None,
+                "detection3d": None,
+                "pose": None,
                 "success": False,
             }
 

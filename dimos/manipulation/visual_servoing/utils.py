@@ -30,6 +30,7 @@ from dimos.utils.transform_utils import (
     compose_transforms,
     yaw_towards_point,
     get_distance,
+    retract_distance,
 )
 
 
@@ -260,42 +261,9 @@ def update_target_grasp_pose(
     updated_pose = Pose(target_pos, target_orientation)
 
     if grasp_distance > 0.0:
-        return apply_grasp_distance(updated_pose, grasp_distance)
+        return retract_distance(updated_pose, grasp_distance)
     else:
         return updated_pose
-
-
-def apply_grasp_distance(target_pose: Pose, distance: float) -> Pose:
-    """
-    Apply grasp distance offset to target pose along its approach direction.
-
-    Args:
-        target_pose: Target grasp pose
-        distance: Distance to offset along the approach direction (meters)
-
-    Returns:
-        Target pose offset by the specified distance along its approach direction
-    """
-    # Convert pose to transformation matrix to extract rotation
-    T_target = pose_to_matrix(target_pose)
-    rotation_matrix = T_target[:3, :3]
-
-    # Define the approach vector based on the target pose orientation
-    # Assuming the gripper approaches along its local -z axis (common for downward grasps)
-    # You can change this to [1, 0, 0] for x-axis or [0, 1, 0] for y-axis based on your gripper
-    approach_vector_local = np.array([0, 0, -1])
-
-    # Transform approach vector to world coordinates
-    approach_vector_world = rotation_matrix @ approach_vector_local
-
-    # Apply offset along the approach direction
-    offset_position = Vector3(
-        target_pose.position.x + distance * approach_vector_world[0],
-        target_pose.position.y + distance * approach_vector_world[1],
-        target_pose.position.z + distance * approach_vector_world[2],
-    )
-
-    return Pose(position=offset_position, orientation=target_pose.orientation)
 
 
 def is_target_reached(target_pose: Pose, current_pose: Pose, tolerance: float = 0.01) -> bool:
