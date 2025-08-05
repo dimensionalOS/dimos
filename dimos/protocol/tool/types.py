@@ -26,6 +26,7 @@ class Call(Enum):
 
 
 class Reducer(Enum):
+    none = 0
     all = lambda data: data
     latest = lambda data: data[-1] if data else None
     average = lambda data: sum(data) / len(data) if data else None
@@ -66,7 +67,8 @@ class ToolConfig:
             raise ValueError(
                 "Function is not bound to the ToolConfig. This shiould be called only within AgentListener."
             )
-        return self.f(*args, **kwargs)
+
+        return self.f(*args, **kwargs, toolcall=True)
 
     def __str__(self):
         parts = [f"name={self.name}"]

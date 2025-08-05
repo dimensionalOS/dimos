@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
+from copy import copy
 from dataclasses import dataclass
 from enum import Enum
 from pprint import pformat
-from typing import Callable, Optional
+from typing import Optional
 
 from dimos.protocol.tool.comms import AgentMsg, LCMToolComms, MsgType, ToolCommsSpec
 from dimos.protocol.tool.tool import ToolConfig, ToolContainer
-from dimos.protocol.tool.types import Stream
+from dimos.protocol.tool.types import Reducer, Return, Stream
 from dimos.types.timestamped import TimestampedCollection
 from dimos.utils.logging_config import setup_logger
 
@@ -35,20 +35,29 @@ class AgentInputConfig:
 class ToolStateEnum(Enum):
     pending = 0
     running = 1
-    finished = 2
+    ret = 2
     error = 3
 
 
 class ToolState(TimestampedCollection):
     name: str
     state: ToolStateEnum
+    tool_config: ToolConfig
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, tool_config: Optional[ToolConfig] = None) -> None:
         super().__init__()
+        if tool_config is None:
+            self.tool_config = ToolConfig(
+                name=name, stream=Stream.none, ret=Return.none, reducer=Reducer.none
+            )
+        else:
+            self.tool_config = tool_config
+
         self.state = ToolStateEnum.pending
         self.name = name
 
-    def handle_msg(self, msg: AgentMsg) -> None:
+    # returns True if the agent should be called for this message
+    def handle_msg(self, msg: AgentMsg) -> bool:
         self.add(msg)
 
         if msg.type == MsgType.stream:
@@ -58,12 +67,14 @@ class ToolState(TimestampedCollection):
                 return True
 
         if msg.type == MsgType.ret:
-            self.state = ToolStateEnum.finished
+            self.state = ToolStateEnum.ret
+            if self.tool_config.ret == Return.call_agent:
+                return True
             return False
 
         if msg.type == MsgType.error:
             self.state = ToolStateEnum.error
-            return False
+            return True
 
         if msg.type == MsgType.start:
             self.state = ToolStateEnum.running
@@ -72,7 +83,7 @@ class ToolState(TimestampedCollection):
     def __str__(self) -> str:
         head = f"ToolState(state={self.state}"
 
-        if self.state == ToolStateEnum.finished or self.state == ToolStateEnum.error:
+        if self.state == ToolStateEnum.ret or self.state == ToolStateEnum.error:
             head += ", ran for="
         else:
             head += ", running for="
@@ -107,11 +118,11 @@ class AgentInput(ToolContainer):
     # updates local tool state (appends to streamed data if needed etc)
     # checks if agent needs to be called if AgentMsg has Return call_agent or Stream call_agent
     def handle_message(self, msg: AgentMsg) -> None:
-        logger.debug("tool message", msg)
+        logger.info(f"Tool msg {msg}")
 
         if self._tool_state.get(msg.tool_name) is None:
             logger.warn(
-                f"Tool state for {msg.tool_name} not found, (tool not called by our agent?) initializing..."
+                f"Tool state for {msg.tool_name} not found, (tool not called by our agent?) initializing. (message received: {msg})"
             )
             self._tool_state[msg.tool_name] = ToolState(name=msg.tool_name)
 
@@ -128,22 +139,31 @@ class AgentInput(ToolContainer):
             return
 
         # This initializes the tool state if it doesn't exist
-        self._tool_state[tool_name] = ToolState(name=tool_name)
+        self._tool_state[tool_name] = ToolState(name=tool_name, tool_config=tool_config)
         return tool_config.call(*args, **kwargs)
 
     def state_snapshot(self) -> dict[str, list[AgentMsg]]:
         ret = copy(self._tool_state)
 
+        to_delete = []
         # Since state is exported, we can clear the finished tool runs
         for tool_name, tool_run in self._tool_state.items():
-            if tool_run.state == ToolState.finished:
-                logger.log("Tool run finished", tool_name)
-                del self._tool_state[tool_name]
-            if tool_run.state == ToolState.error:
+            if tool_run.state == ToolStateEnum.ret:
+                logger.info(f"Tool {tool_name} finished")
+                to_delete.append(tool_name)
+            if tool_run.state == ToolStateEnum.error:
                 logger.error(f"Tool run error for {tool_name}")
-                del self._tool_state[tool_name]
+                to_delete.append(tool_name)
+
+        for tool_name in to_delete:
+            logger.debug(f"Tool {tool_name} finished, removing from state")
+            del self._tool_state[tool_name]
 
         return ret
+
+    def call_agent(self) -> None:
+        """Call the agent with the current state of tool runs."""
+        logger.info(f"Calling agent with current tool state: {self.state_snapshot()}")
 
     def __str__(self):
         # Convert objects to their string representations
@@ -157,7 +177,7 @@ class AgentInput(ToolContainer):
 
         ret = stringify_value(self._tool_state)
 
-        return f"AgentInput(\n{pformat(ret, indent=2, depth=3, width=120, compact=True)}\n)"
+        return f"AgentInput({pformat(ret, indent=2, depth=3, width=120, compact=True)})"
 
     # Outputs data for the agent call
     # clears the local state (finished tool calls)
@@ -174,7 +194,7 @@ class AgentInput(ToolContainer):
             logger.info(f"Registering static tool container, {container}")
             self._static_containers.append(container)
             for name, tool_config in container.tools().items():
-                self._tools[name] = tool_config
+                self._tools[name] = tool_config.bind(getattr(container, name))
         else:
             logger.info(f"Registering dynamic tool container, {container}")
             self._dynamic_containers.append(container)

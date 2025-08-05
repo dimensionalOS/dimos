@@ -48,10 +48,24 @@ def test_comms():
     #
     # return is passed as AgentMsg to the agent topic
     testContainer.delayadd(2, 4, toolcall=True)
-    testContainer.add(1, 2)
+    testContainer.add(1, 2, toolcall=True)
 
     time.sleep(0.25)
     print(agentInput)
 
     time.sleep(0.75)
+    print(agentInput)
+
+    print(agentInput.state_snapshot())
+
+    print(agentInput.tools())
+
+    print(agentInput)
+
+    agentInput.execute_tool("delayadd", 1, 2)
+
+    time.sleep(0.25)
+    print(agentInput)
+    time.sleep(0.75)
+
     print(agentInput)

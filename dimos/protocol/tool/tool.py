@@ -34,18 +34,19 @@ def tool(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
         def wrapper(self, *args, **kwargs):
             tool = f"{f.__name__}"
 
-            def run_function():
-                self.agent_comms.publish(AgentMsg(tool, None, type=MsgType.start))
-                val = f(self, *args, **kwargs)
-                self.agent_comms.publish(AgentMsg(tool, val, type=MsgType.ret))
-
             if kwargs.get("toolcall"):
                 del kwargs["toolcall"]
+
+                def run_function():
+                    self.agent_comms.publish(AgentMsg(tool, None, type=MsgType.start))
+                    val = f(self, *args, **kwargs)
+                    self.agent_comms.publish(AgentMsg(tool, val, type=MsgType.ret))
+
                 thread = threading.Thread(target=run_function)
                 thread.start()
                 return None
 
-            return run_function()
+            return f(self, *args, **kwargs)
 
         tool_config = ToolConfig(name=f.__name__, reducer=reducer, stream=stream, ret=ret)
 
