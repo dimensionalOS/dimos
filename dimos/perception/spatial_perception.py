@@ -403,16 +403,24 @@ class SpatialMemory(Module):
             position_vec = data.get("position")  # Use .get() for consistency
             rotation_vec = data.get("rotation")  # Get rotation data if available
 
-            if not position_vec or not rotation_vec:
+            if position_vec is None or rotation_vec is None:
                 logger.info("No position or rotation data available, skipping frame")
                 return None
 
-            if (
-                self.last_position is not None
-                and (self.last_position - position_vec).length() < self.min_distance_threshold
-            ):
-                logger.debug("Position has not moved, skipping frame")
-                return None
+            # position_vec is already a Vector3, no need to recreate it
+            position_v3 = position_vec
+
+            if self.last_position is not None:
+                distance_moved = np.linalg.norm(
+                    [
+                        position_v3.x - self.last_position.x,
+                        position_v3.y - self.last_position.y,
+                        position_v3.z - self.last_position.z,
+                    ]
+                )
+                if distance_moved < self.min_distance_threshold:
+                    logger.debug("Position has not moved, skipping frame")
+                    return None
 
             if (
                 self.last_record_time is not None
