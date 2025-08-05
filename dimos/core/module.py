@@ -64,12 +64,6 @@ class ModuleBase:
             return
 
     @property
-    def agent(self):
-        if self._agent is None:
-            self._agent = self.comms.agent()
-        return self._agent
-
-    @property
     def tf(self):
         if self._tf is None:
             self._tf = self.comms.tf()

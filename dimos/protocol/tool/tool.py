@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from enum import Enum
 from typing import Any, Callable, Generic, Optional, TypeVar
+
+from dimos.protocol.tool.comms import AgentMsg, LCMToolComms, ToolCommsSpec
 
 
 class Call(Enum):
@@ -42,7 +45,42 @@ class Return(Enum):
 def tool(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
     def decorator(f: Callable[..., Any]) -> Any:
         def wrapper(self, *args, **kwargs):
-            return f(self, *args, **kwargs)
+            val = f(self, *args, **kwargs)
+            tool = f"{self.__class__.__name__}.{f.__name__}"
+            self.agent.publish(AgentMsg(tool, val))
+            return val
 
         wrapper._tool = {reducer: reducer, stream: stream, ret: ret}
         return wrapper
+
+    return decorator
+
+
+class CommsSpec:
+    agent: ToolCommsSpec
+
+
+class LCMComms(CommsSpec):
+    agent: ToolCommsSpec = LCMToolComms
+
+
+class ToolContainer:
+    comms: CommsSpec = LCMComms()
+    _agent: ToolCommsSpec = None
+
+    @property
+    def tools(self):
+        # Avoid recursion by excluding this property itself
+        return {
+            name: getattr(self, name)
+            for name in dir(self)
+            if not name.startswith("_")
+            and name != "tools"
+            and hasattr(getattr(self, name), "_tool")
+        }
+
+    @property
+    def agent(self):
+        if self._agent is None:
+            self._agent = self.comms.agent()
+        return self._agent

@@ -12,5 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.protocol.rpc.lcmrpc import LCMRPC
-from dimos.protocol.rpc.spec import RPCClient, RPCServer, RPCSpec
+from dimos.core import rpc, start
+from dimos.protocol.tool.agent_listener import AgentInput
+from dimos.protocol.tool.tool import ToolContainer, tool
+
+
+class TestContainer(ToolContainer):
+    @rpc
+    @tool()
+    def add(self, x: int, y: int) -> int:
+        return x + y
+
+
+def test_introspect_tool():
+    testContainer = TestContainer()
+    print(testContainer.tools)
+
+
+def test_deploy():
+    agentInput = AgentInput()
+    agentInput.start()
+    testContainer = TestContainer()
+    print(testContainer.add(1, 2))

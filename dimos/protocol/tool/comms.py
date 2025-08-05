@@ -15,7 +15,7 @@
 import time
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Generic, Optional, TypeVar, Union
+from typing import Callable, Generic, Optional, TypeVar, Union
 
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
@@ -23,20 +23,24 @@ from dimos.protocol.service import Service
 from dimos.types.timestamped import Timestamped
 
 
-class AgentMessage(Timestamped):
+class AgentMsg(Timestamped):
     ts: float
 
-    def __init__(self, content: str):
+    def __init__(self, tool: str, content: str | int | float | dict | list) -> None:
         self.ts = time.time()
+        self.tool = tool
         self.content = content
 
     def __repr__(self):
-        return f"AgentMessage(content={self.content})"
+        return f"AgentMsg(tool={self.tool}, content={self.content})"
 
 
 class ToolCommsSpec:
     @abstractmethod
-    def publish(self, msg: AgentMessage) -> None: ...
+    def publish(self, msg: AgentMsg) -> None: ...
+
+    @abstractmethod
+    def subscribe(self, cb: Callable[[AgentMsg], None]) -> None: ...
 
 
 MsgT = TypeVar("MsgT")
@@ -50,7 +54,7 @@ class PubSubCommsConfig(Generic[TopicT, MsgT]):
     autostart: bool = True
 
 
-class PubSubComms(Service, ToolCommsSpec):
+class PubSubComms(Service[PubSubCommsConfig], ToolCommsSpec):
     default_config: type[PubSubCommsConfig] = PubSubCommsConfig
 
     def __init__(self, **kwargs) -> None:
@@ -73,16 +77,21 @@ class PubSubComms(Service, ToolCommsSpec):
     def stop(self):
         self.pubsub.stop()
 
-    def publish(self, msg: AgentMessage) -> None:
+    def publish(self, msg: AgentMsg) -> None:
         self.pubsub.publish(self.config.topic, msg)
+
+    def subscribe(self, cb: Callable[[AgentMsg], None]) -> None:
+        self.pubsub.subscribe(self.config.topic, lambda msg, topic: cb(msg))
 
 
 @dataclass
-class LCMCommsConfig(PubSubCommsConfig[str, AgentMessage]):
+class LCMCommsConfig(PubSubCommsConfig[str, AgentMsg]):
     topic: str = "/agent"
     pubsub: Union[type[PubSub], PubSub, None] = PickleLCM
-    autostart: bool = True
+    # lcm needs to be started only if receiving
+    # tool comms are broadcast only in modules so we don't autostart
+    autostart: bool = False
 
 
-class LCMToolComms(LCMCommsConfig):
+class LCMToolComms(PubSubComms):
     default_config: type[LCMCommsConfig] = LCMCommsConfig
