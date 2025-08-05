@@ -39,6 +39,35 @@ from dimos.utils.reactive import backpressure
 T = TypeVar("T")
 
 
+class ObservableMixin(Generic[T]):
+    # subscribes and returns the first value it receives
+    # might be nicer to write without rxpy but had this snippet ready
+    def get_next(self, timeout=10.0) -> T:
+        try:
+            return (
+                self.observable()
+                .pipe(ops.first(), *([ops.timeout(timeout)] if timeout is not None else []))
+                .run()
+            )
+        except Exception as e:
+            raise Exception(f"No value received after {timeout} seconds") from e
+
+    def hot_latest(self) -> Callable[[], T]:
+        return reactive.getter_streaming(self.observable())
+
+    def pure_observable(self):
+        def _subscribe(observer, scheduler=None):
+            unsubscribe = self.subscribe(observer.on_next)
+            return Disposable(unsubscribe)
+
+        return rx.create(_subscribe)
+
+    # default return is backpressured because most
+    # use cases will want this by default
+    def observable(self):
+        return backpressure(self.pure_observable())
+
+
 class State(enum.Enum):
     UNBOUND = "unbound"  # descriptor defined but not bound
     READY = "ready"  # bound to owner but not yet connected
@@ -46,7 +75,7 @@ class State(enum.Enum):
     FLOWING = "flowing"  # runtime: data observed
 
 
-class Transport(Protocol[T]):
+class Transport(ObservableMixin[T]):
     # used by local Output
     def broadcast(self, selfstream: Out[T], value: T): ...
 
@@ -153,10 +182,13 @@ class RemoteOut(RemoteStream[T]):
     def connect(self, other: RemoteIn[T]):
         return other.connect(self)
 
+    def subscribe(self, cb) -> Callable[[], None]:
+        return self.transport.subscribe(cb, self)
+
 
 # representation of Input
 # as views from inside of the module
-class In(Stream[T]):
+class In(Stream[T], ObservableMixin[T]):
     connection: Optional[RemoteOut[T]] = None
     _transport: Transport
 
@@ -183,36 +215,9 @@ class In(Stream[T]):
     def state(self) -> State:  # noqa: D401
         return State.UNBOUND if self.owner is None else State.READY
 
-    # subscribes and returns the first value it receives
-    # might be nicer to write without rxpy but had this snippet ready
-    def get_next(self, timeout=10.0) -> T:
-        try:
-            return (
-                self.observable()
-                .pipe(ops.first(), *([ops.timeout(timeout)] if timeout is not None else []))
-                .run()
-            )
-        except Exception as e:
-            raise Exception(f"No value received after {timeout} seconds") from e
-
-    def hot_latest(self) -> Callable[[], T]:
-        return reactive.getter_streaming(self.observable())
-
-    def pure_observable(self):
-        def _subscribe(observer, scheduler=None):
-            unsubscribe = self.subscribe(observer.on_next)
-            return Disposable(unsubscribe)
-
-        return rx.create(_subscribe)
-
-    # default return is backpressured because most
-    # use cases will want this by default
-    def observable(self):
-        return backpressure(self.pure_observable())
-
     # returns unsubscribe function
     def subscribe(self, cb) -> Callable[[], None]:
-        return self.transport.subscribe(self, cb)
+        return self.transport.subscribe(cb, self)
 
 
 # representation of input outside of module

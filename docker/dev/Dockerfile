@@ -28,8 +28,13 @@ COPY pyproject.toml /app/
 RUN mkdir -p /app/dimos
 RUN touch /app/dimos/__init__.py
 
-# Install dependencies
-RUN --mount=type=cache,target=/root/.cache/pip pip install .[dev]
+# Install UV for fast Python package management
+ENV UV_SYSTEM_PYTHON=1
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# Install dependencies with UV (10-100x faster than pip)
+RUN uv pip install .[dev]
 
 COPY . /app/
 

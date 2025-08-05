@@ -37,7 +37,7 @@ from typing import (
 )
 
 import dimos.core.colors as colors
-from dimos.core.stream import In, Transport
+from dimos.core.stream import In, RemoteIn, Transport
 from dimos.protocol.pubsub.lcmpubsub import LCM, PickleLCM
 from dimos.protocol.pubsub.lcmpubsub import Topic as LCMTopic
 
@@ -75,7 +75,7 @@ class pLCMTransport(PubSubTransport[T]):
 
         self.lcm.publish(self.topic, msg)
 
-    def subscribe(self, selfstream: In[T], callback: Callable[[T], None]) -> None:
+    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:
         if not self._started:
             self.lcm.start()
             self._started = True
@@ -99,7 +99,7 @@ class LCMTransport(PubSubTransport[T]):
 
         self.lcm.publish(self.topic, msg)
 
-    def subscribe(self, selfstream: In[T], callback: Callable[[T], None]) -> None:
+    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:
         if not self._started:
             self.lcm.start()
             self._started = True
@@ -144,7 +144,7 @@ class DaskTransport(Transport[T]):
         self.subscribers.append(remoteInput)
 
     # for inputs
-    def subscribe(self, selfstream: In[T], callback: Callable[[T], None]) -> None:
+    def subscribe(self, callback: Callable[[T], None], selfstream: In[T]) -> None:
         if not self._started:
             selfstream.connection.owner.dask_register_subscriber(
                 selfstream.connection.name, selfstream

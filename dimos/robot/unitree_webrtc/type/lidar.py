@@ -63,7 +63,7 @@ class LidarMessage(PointCloud2):
         )
 
         self.origin = kwargs.get("origin")
-        self.resolution = kwargs.get("resolution")
+        self.resolution = kwargs.get("resolution", 0.05)
 
     @classmethod
     def from_msg(cls: "LidarMessage", raw_message: RawLidarMsg) -> "LidarMessage":
