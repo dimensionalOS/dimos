@@ -93,7 +93,6 @@ class Map(Module):
         self.pointcloud = self.splice_cylinder(self.pointcloud, frame.pointcloud, shrink=0.5)
         return self
 
-
     def consume(self, observable: Observable[LidarMessage]) -> Observable["Map"]:
         """Reactive operator that folds a stream of `LidarMessage` into the map."""
         return observable.pipe(ops.map(self.add_frame))
