@@ -50,6 +50,8 @@ def tool(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
 
         tool_config = ToolConfig(name=f.__name__, reducer=reducer, stream=stream, ret=ret)
 
+        # implicit RPC call as well
+        wrapper.__rpc__ = True
         wrapper._tool = tool_config  # type: ignore[attr-defined]
         wrapper.__name__ = f.__name__  # Preserve original function name
         wrapper.__doc__ = f.__doc__  # Preserve original docstring
