@@ -25,7 +25,7 @@ from reactivex import Observable
 from reactivex import operators as ops
 from reactivex.subject import Subject
 
-from dimos.msgs.geometry_msgs import Pose
+from dimos.msgs.geometry_msgs import Pose, Vector3
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.stream.video_provider import VideoProvider
 
@@ -118,7 +118,7 @@ class TestSpatialMemory:
                 return {
                     "frame": frame,
                     "position": transform["position"],
-                    "rotation": transform["position"],  # Using position as rotation for testing
+                    "rotation": Vector3(0, 0, 0),  # Using zero rotation for testing
                 }
 
             # Create a stream that processes each frame
