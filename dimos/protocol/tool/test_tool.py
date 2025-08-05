@@ -26,6 +26,7 @@ class TestContainer(ToolContainer):
 
     @tool()
     def delayadd(self, x: int, y: int) -> int:
+        time.sleep(0.5)
         return x + y
 
 
@@ -49,8 +50,8 @@ def test_comms():
     testContainer.delayadd(2, 4, toolcall=True)
     testContainer.add(1, 2)
 
-    time.sleep(0.5)
+    time.sleep(0.25)
     print(agentInput)
 
-    time.sleep(2)
+    time.sleep(0.75)
     print(agentInput)
