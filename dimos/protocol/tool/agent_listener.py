@@ -16,7 +16,7 @@ from copy import copy
 from dataclasses import dataclass
 from enum import Enum
 from pprint import pformat
-from typing import Optional
+from typing import Callable, Optional
 
 from dimos.protocol.tool.comms import AgentMsg, LCMToolComms, MsgType, ToolCommsSpec
 from dimos.protocol.tool.tool import ToolConfig, ToolContainer
@@ -100,9 +100,13 @@ class AgentInput(ToolContainer):
     _dynamic_containers: list[ToolContainer]
     _tool_state: dict[str, ToolState]
     _tools: dict[str, ToolConfig]
+    _agent_callback: Optional[Callable[[dict[str, ToolState]], any]] = None
 
-    def __init__(self) -> None:
+    # agent callback is called with a state snapshot once system decides that agents needs
+    # to be woken up
+    def __init__(self, agent_callback: Callable[[dict[str, ToolState]], any] = None) -> None:
         super().__init__()
+        self._agent_callback = agent_callback
         self._static_containers = []
         self._dynamic_containers = []
         self._tools = {}
@@ -114,6 +118,19 @@ class AgentInput(ToolContainer):
 
     def stop(self) -> None:
         self.agent_comms.stop()
+
+    # this is used by agent to call tools
+    def execute_tool(self, tool_name: str, *args, **kwargs) -> None:
+        tool_config = self.get_tool_config(tool_name)
+        if not tool_config:
+            logger.error(
+                f"Tool {tool_name} not found in registered tools, but agent tried to call it (did a dynamic tool expire?)"
+            )
+            return
+
+        # This initializes the tool state if it doesn't exist
+        self._tool_state[tool_name] = ToolState(name=tool_name, tool_config=tool_config)
+        return tool_config.call(*args, **kwargs)
 
     # updates local tool state (appends to streamed data if needed etc)
     # checks if agent needs to be called if AgentMsg has Return call_agent or Stream call_agent
@@ -130,19 +147,13 @@ class AgentInput(ToolContainer):
         if should_call_agent:
             self.call_agent()
 
-    def execute_tool(self, tool_name: str, *args, **kwargs) -> None:
-        tool_config = self.get_tool_config(tool_name)
-        if not tool_config:
-            logger.error(
-                f"Tool {tool_name} not found in registered tools, but agent tried to call it (did a dynamic tool expire?)"
-            )
-            return
+    # Returns a snapshot of the current state of tool runs.
+    # If clear is True, it will assume the snapshot is being sent to an agent
+    # and will clear the finished tool runs.
+    def state_snapshot(self, clear: bool = True) -> dict[str, ToolState]:
+        if not clear:
+            return self._tool_state
 
-        # This initializes the tool state if it doesn't exist
-        self._tool_state[tool_name] = ToolState(name=tool_name, tool_config=tool_config)
-        return tool_config.call(*args, **kwargs)
-
-    def state_snapshot(self) -> dict[str, list[AgentMsg]]:
         ret = copy(self._tool_state)
 
         to_delete = []
@@ -163,7 +174,12 @@ class AgentInput(ToolContainer):
 
     def call_agent(self) -> None:
         """Call the agent with the current state of tool runs."""
-        logger.info(f"Calling agent with current tool state: {self.state_snapshot()}")
+        logger.info(f"Calling agent with current tool state: {self.state_snapshot(clear=False)}")
+
+        state = self.state_snapshot(clear=True)
+
+        if self._agent_callback:
+            self._agent_callback(state)
 
     def __str__(self):
         # Convert objects to their string representations

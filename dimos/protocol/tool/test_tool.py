@@ -35,7 +35,7 @@ def test_introspect_tool():
     print(testContainer.tools)
 
 
-def test_comms():
+def test_internals():
     agentInput = AgentInput()
     agentInput.start()
 
@@ -68,4 +68,29 @@ def test_comms():
     print(agentInput)
     time.sleep(0.75)
 
+    print(agentInput)
+
+
+def test_standard_usage():
+    agentInput = AgentInput(agent_callback=print)
+    agentInput.start()
+
+    testContainer = TestContainer()
+
+    agentInput.register_tools(testContainer)
+
+    # we can investigate tools
+    print(agentInput.tools())
+
+    # we can execute a tool
+    agentInput.execute_tool("delayadd", 1, 2)
+
+    # while tool is executing, we can introspect the state
+    # (we see that the tool is running)
+    time.sleep(0.25)
+    print(agentInput)
+    time.sleep(0.75)
+
+    # after the tool has finished, we can see the result
+    # and the tool state
     print(agentInput)
