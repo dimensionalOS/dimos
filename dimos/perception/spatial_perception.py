@@ -28,6 +28,7 @@ from datetime import datetime
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs import Vector3, Quaternion, Pose, PoseStamped
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.logging_config import setup_logger
 from dimos.agents.memory.spatial_vector_db import SpatialVectorDB
@@ -155,7 +156,7 @@ class SpatialMemory(Module):
             model_name=embedding_model, dimensions=embedding_dimensions
         )
 
-        self.last_position: Optional[Vector] = None
+        self.last_position: Optional[Vector3] = None
         self.last_record_time: Optional[float] = None
 
         self.frame_count: int = 0
@@ -206,12 +207,10 @@ class SpatialMemory(Module):
         position = self._latest_odom.position
         orientation = self._latest_odom.orientation
 
-        # Convert to Vector objects
-        position_vec = Vector([position.x, position.y, position.z])
-
-        # Get euler angles from quaternion orientation
-        euler = orientation.to_euler()
-        rotation_vec = Vector([euler.x, euler.y, euler.z])
+        # Create Pose object with position and orientation
+        current_pose = Pose(
+            position=Vector3(position.x, position.y, position.z), orientation=orientation
+        )
 
         # Process the frame directly
         try:
@@ -219,7 +218,13 @@ class SpatialMemory(Module):
 
             # Check distance constraint
             if self.last_position is not None:
-                distance_moved = (self.last_position - position_vec).length()
+                distance_moved = np.linalg.norm(
+                    [
+                        current_pose.position.x - self.last_position.x,
+                        current_pose.position.y - self.last_position.y,
+                        current_pose.position.z - self.last_position.z,
+                    ]
+                )
                 if distance_moved < self.min_distance_threshold:
                     logger.debug(
                         f"Position has not moved enough: {distance_moved:.4f}m < {self.min_distance_threshold}m, skipping frame"
@@ -242,14 +247,17 @@ class SpatialMemory(Module):
 
             frame_id = f"frame_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
+            # Get euler angles from quaternion orientation for metadata
+            euler = orientation.to_euler()
+
             # Create metadata dictionary with primitive types only
             metadata = {
-                "pos_x": float(position_vec.x),
-                "pos_y": float(position_vec.y),
-                "pos_z": float(position_vec.z),
-                "rot_x": float(rotation_vec.x),
-                "rot_y": float(rotation_vec.y),
-                "rot_z": float(rotation_vec.z),
+                "pos_x": float(current_pose.position.x),
+                "pos_y": float(current_pose.position.y),
+                "pos_z": float(current_pose.position.z),
+                "rot_x": float(euler.x),
+                "rot_y": float(euler.y),
+                "rot_z": float(euler.z),
                 "timestamp": current_time,
                 "frame_id": frame_id,
             }
@@ -263,12 +271,13 @@ class SpatialMemory(Module):
             )
 
             # Update tracking variables
-            self.last_position = position_vec
+            self.last_position = current_pose.position
             self.last_record_time = current_time
             self.stored_frame_count += 1
 
             logger.info(
-                f"Stored frame at position {position_vec}, rotation {rotation_vec}) "
+                f"Stored frame at position ({current_pose.position.x:.2f}, {current_pose.position.y:.2f}, {current_pose.position.z:.2f}), "
+                f"rotation ({euler.x:.2f}, {euler.y:.2f}, {euler.z:.2f}) "
                 f"stored {self.stored_frame_count}/{self.frame_count} frames"
             )
 
@@ -407,8 +416,7 @@ class SpatialMemory(Module):
                 logger.info("No position or rotation data available, skipping frame")
                 return None
 
-            # position_vec is already a Vector3, no need to recreate it
-            position_v3 = position_vec
+            position_v3 = Vector3(position_vec.x, position_vec.y, position_vec.z)
 
             if self.last_position is not None:
                 distance_moved = np.linalg.norm(
@@ -437,9 +445,9 @@ class SpatialMemory(Module):
 
             # Create metadata dictionary with primitive types only
             metadata = {
-                "pos_x": float(position_vec.x),
-                "pos_y": float(position_vec.y),
-                "pos_z": float(position_vec.z),
+                "pos_x": float(position_v3.x),
+                "pos_y": float(position_v3.y),
+                "pos_z": float(position_v3.z),
                 "rot_x": float(rotation_vec.x),
                 "rot_y": float(rotation_vec.y),
                 "rot_z": float(rotation_vec.z),
@@ -451,19 +459,20 @@ class SpatialMemory(Module):
                 vector_id=frame_id, image=frame, embedding=frame_embedding, metadata=metadata
             )
 
-            self.last_position = position_vec
+            self.last_position = position_v3
             self.last_record_time = current_time
             self.stored_frame_count += 1
 
             logger.info(
-                f"Stored frame at position {position_vec}, rotation {rotation_vec})"
-                f" stored {self.stored_frame_count}/{self.frame_count} frames"
+                f"Stored frame at position ({position_v3.x:.2f}, {position_v3.y:.2f}, {position_v3.z:.2f}), "
+                f"rotation ({rotation_vec.x:.2f}, {rotation_vec.y:.2f}, {rotation_vec.z:.2f}) "
+                f"stored {self.stored_frame_count}/{self.frame_count} frames"
             )
 
             # Create return dictionary with primitive-compatible values
             return {
                 "frame": frame,
-                "position": (position_vec.x, position_vec.y, position_vec.z),
+                "position": (position_v3.x, position_v3.y, position_v3.z),
                 "rotation": (rotation_vec.x, rotation_vec.y, rotation_vec.z),
                 "frame_id": frame_id,
                 "timestamp": current_time,

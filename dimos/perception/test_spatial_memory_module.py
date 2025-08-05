@@ -26,11 +26,9 @@ from reactivex import operators as ops
 from dimos import core
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
-from dimos.types.vector import Vector
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.logging_config import setup_logger

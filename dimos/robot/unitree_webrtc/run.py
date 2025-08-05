@@ -91,8 +91,8 @@ def main():
 
         # Set up skill library
         skills = robot.get_skills()
-        skills.add(ObserveStream)
-        skills.add(Observe)
+        # skills.add(ObserveStream)
+        # skills.add(Observe)
         skills.add(KillSkill)
         skills.add(NavigateWithText)
         skills.add(GetPose)
