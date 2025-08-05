@@ -17,7 +17,7 @@
         devPackages = with pkgs; [
           ### Core shell & utils
           bashInteractive coreutils gh
-          stdenv.cc.cc.lib
+          stdenv.cc.cc.lib pcre2
 
           ### Python + static analysis
           python312 python312Packages.pip python312Packages.setuptools
@@ -57,7 +57,7 @@
               pkgs.xorg.libXrender pkgs.xorg.libXdamage pkgs.xorg.libXcomposite
               pkgs.xorg.libxcb pkgs.xorg.libXScrnSaver pkgs.xorg.libXxf86vm
               pkgs.udev pkgs.portaudio pkgs.SDL2.dev pkgs.zlib pkgs.glib pkgs.gtk3
-              pkgs.gdk-pixbuf pkgs.gobject-introspection pkgs.lcm]}:$LD_LIBRARY_PATH"
+              pkgs.gdk-pixbuf pkgs.gobject-introspection pkgs.lcm pkgs.pcre2]}:$LD_LIBRARY_PATH"
 
             export DISPLAY=:0
 
