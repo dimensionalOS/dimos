@@ -101,7 +101,7 @@ class FakeRTC(UnitreeWebRTCConnection):
         pass
 
 
-class ConnectionModule(FakeRTC, Module):
+class ConnectionModule(UnitreeWebRTCConnection, Module):
     """Module that handles robot sensor data and movement commands."""
 
     movecmd: In[Vector3] = None
