@@ -13,4 +13,4 @@
 # limitations under the License.
 
 from dimos.protocol.rpc.lcmrpc import LCMRPC
-from dimos.protocol.rpc.spec import RPC, RPCClient, RPCServer
+from dimos.protocol.rpc.spec import RPCClient, RPCServer, RPCSpec

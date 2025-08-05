@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime, timezone
-from typing import Generic, Iterable, List, Optional, Tuple, TypedDict, TypeVar, Union
-from sortedcontainers import SortedList
 import bisect
+from datetime import datetime, timezone
+from typing import Generic, Iterable, Optional, Tuple, TypedDict, TypeVar, Union
+
+from sortedcontainers import SortedList
 
 # any class that carries a timestamp should inherit from this
 # this allows us to work with timeseries in consistent way, allign messages, replay etc
