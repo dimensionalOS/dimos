@@ -60,8 +60,8 @@ class ObjectTracking(Module):
     def __init__(
         self,
         camera_intrinsics: Optional[List[float]] = None,  # [fx, fy, cx, cy]
-        reid_threshold: int = 5,
-        reid_fail_tolerance: int = 2,
+        reid_threshold: int = 8,
+        reid_fail_tolerance: int = 5,
         frame_id: str = "camera_link",
     ):
         """
@@ -338,6 +338,9 @@ class ObjectTracking(Module):
                 logger.info("Tracker update failed. Stopping track.")
                 self._reset_tracking_state()
 
+        if not reid_confirmed_this_frame:
+            return
+
         # Create detections if tracking succeeded
         header = Header(self.frame_id)
         detection2darray = Detection2DArray(detections_length=0, header=header, detections=[])
@@ -507,70 +510,6 @@ class ObjectTracking(Module):
             return depth_25th_percentile
 
         return None
-
-    def extract_pose_from_detection3d(self, detection3d_array):
-        if detection3d_array and detection3d_array.detections_length > 0:
-            detection = detection3d_array.detections[0]
-            if detection.bbox and detection.bbox.center:
-                # Create PoseStamped from the detection's pose
-                pose_stamped = PoseStamped(
-                    ts=detection3d_array.header.ts,
-                    frame_id=detection3d_array.header.frame_id,
-                    position=detection.bbox.center.position,
-                    orientation=detection.bbox.center.orientation,
-                )
-                return pose_stamped
-        return None
-
-    @rpc
-    def get_latest_detections(self, timeout: float = 1.0) -> Dict:
-        """
-        Get the latest detection messages. Blocks until a detection is available or timeout.
-
-        Args:
-            timeout: Maximum time to wait for detections in seconds (default: 5.0)
-
-        Returns:
-            Dict containing:
-                - detection2d: Latest Detection2DArray message (may be empty)
-                - detection3d: Latest Detection3DArray message (may be empty)
-                - pose: PoseStamped message with the first detection3d's pose (None if no 3D detection)
-                - success: True if valid detections were found, False if timeout
-        """
-        # Clear the event to wait for new detections
-        self._detection_event.clear()
-
-        # If we already have detections with valid data, return immediately
-        if (
-            self._latest_detection2d is not None and self._latest_detection2d.detections_length > 0
-        ) or (
-            self._latest_detection3d is not None and self._latest_detection3d.detections_length > 0
-        ):
-            pose = self.extract_pose_from_detection3d(self._latest_detection3d)
-            return {
-                "detection2d": self._latest_detection2d,
-                "detection3d": self._latest_detection3d,
-                "pose": pose,
-                "success": True,
-            }
-
-        # Wait for new detections with timeout
-        if self._detection_event.wait(timeout):
-            # New detections available
-            pose = self.extract_pose_from_detection3d(self._latest_detection3d)
-            return {
-                "detection2d": self._latest_detection2d,
-                "detection3d": self._latest_detection3d,
-                "pose": pose,
-                "success": True,
-            }
-        else:
-            return {
-                "detection2d": None,
-                "detection3d": None,
-                "pose": None,
-                "success": False,
-            }
 
     @rpc
     def cleanup(self):

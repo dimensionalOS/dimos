@@ -63,7 +63,7 @@ class UnitreeCameraModule(Module):
         camera_intrinsics: List[float],
         camera_frame_id: str = "camera_link",
         base_frame_id: str = "base_link",
-        gt_depth_scale: float = 2.0,
+        gt_depth_scale: float = 2.5,
         **kwargs,
     ):
         """

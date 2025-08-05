@@ -39,7 +39,7 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -52,6 +52,7 @@ from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.transform_utils import retract_distance
+from dimos.perception.common.utils import extract_pose_from_detection3d
 from dimos.perception.object_tracker import ObjectTracking
 from dimos_lcm.std_msgs import Bool
 
@@ -558,32 +559,32 @@ class UnitreeGo2:
         start_time = time.time()
 
         while time.time() - start_time < timeout:
-            if self.navigator.is_goal_reached():
-                return True
+            detection_topic = Topic("/go2/detection3d", Detection3DArray)
+            detection_msg = self.lcm.wait_for_message(detection_topic, timeout=1.0)
 
-            detections = self.object_tracker.get_latest_detections(timeout=1.0)
+            if detection_msg and len(detection_msg.detections) > 0:
+                target_pose = extract_pose_from_detection3d(detection_msg.detections[0])
 
-            if detections["success"]:
-                target_pose = detections["pose"]
                 retracted_pose = retract_distance(target_pose, distance)
+
                 goal_pose = PoseStamped(
-                    ts=target_pose.ts,
-                    frame_id=target_pose.frame_id,
+                    frame_id=detection_msg.header.frame_id,
                     position=retracted_pose.position,
                     orientation=retracted_pose.orientation,
                 )
 
-                logger.info(
-                    f"Updating navigation goal to: ({goal_pose.position.x:.2f}, {goal_pose.position.y:.2f})"
-                )
                 self.navigator.set_goal(goal_pose, blocking=False)
 
-            time.sleep(0.1)
+            if self.navigator.is_goal_reached():
+                logger.info("Object tracking goal reached")
+                self.object_tracker.stop_track()
+                return True
+
+            time.sleep(0.2)
 
         self.object_tracker.stop_track()
-        self.navigator.cancel_goal()
-
-        return self.navigator.is_goal_reached()
+        logger.info("Object tracking timed out")
+        return False
 
 
 def main():
@@ -594,8 +595,6 @@ def main():
 
     robot = UnitreeGo2(ip=ip, websocket_port=7779, playback=False)
     robot.start()
-
-    robot.explore()
 
     try:
         while True:

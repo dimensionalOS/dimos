@@ -19,6 +19,7 @@ from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 from dimos_lcm.vision_msgs import Detection3D, Detection2D, BoundingBox2D
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 import torch
 
 logger = setup_logger("dimos.perception.common.utils")
@@ -611,3 +612,27 @@ def find_clicked_detection(
                 return detections_3d[i]
 
     return None
+
+
+def extract_pose_from_detection3d(detection3d: Detection3D):
+    """Extract PoseStamped from Detection3D message.
+
+    Args:
+        detection3d: Detection3D message
+
+    Returns:
+        Pose or None if no valid detection
+    """
+    if not detection3d or not detection3d.bbox or not detection3d.bbox.center:
+        return None
+
+    # Extract position
+    pos = detection3d.bbox.center.position
+    position = Vector3(pos.x, pos.y, pos.z)
+
+    # Extract orientation
+    orient = detection3d.bbox.center.orientation
+    orientation = Quaternion(orient.x, orient.y, orient.z, orient.w)
+
+    pose = Pose(position=position, orientation=orientation)
+    return pose
