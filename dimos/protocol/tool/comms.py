@@ -15,6 +15,7 @@
 import time
 from abc import abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from typing import Callable, Generic, Optional, TypeVar, Union
 
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
@@ -23,16 +24,29 @@ from dimos.protocol.service import Service
 from dimos.types.timestamped import Timestamped
 
 
+class MsgType(Enum):
+    start = 0
+    stream = 1
+    ret = 2
+
+
 class AgentMsg(Timestamped):
     ts: float
+    type: MsgType
 
-    def __init__(self, tool: str, content: str | int | float | dict | list) -> None:
+    def __init__(
+        self,
+        tool: str,
+        content: str | int | float | dict | list,
+        type: Optional[MsgType] = MsgType.ret,
+    ) -> None:
         self.ts = time.time()
         self.tool = tool
         self.content = content
+        self.type = type
 
     def __repr__(self):
-        return f"AgentMsg(tool={self.tool}, content={self.content})"
+        return f"AgentMsg(tool={self.tool}, content={self.content}, type={self.type})"
 
 
 class ToolCommsSpec:
@@ -41,6 +55,12 @@ class ToolCommsSpec:
 
     @abstractmethod
     def subscribe(self, cb: Callable[[AgentMsg], None]) -> None: ...
+
+    @abstractmethod
+    def start(self) -> None: ...
+
+    @abstractmethod
+    def stop(self) -> None: ...
 
 
 MsgT = TypeVar("MsgT")

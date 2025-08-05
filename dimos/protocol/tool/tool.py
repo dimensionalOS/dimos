@@ -13,15 +13,17 @@
 # limitations under the License.
 
 import inspect
+import threading
 from enum import Enum
-from typing import Any, Callable, Generic, Optional, TypeVar
+from typing import Any, Callable, Generic, Optional, TypedDict, TypeVar, cast
 
-from dimos.protocol.tool.comms import AgentMsg, LCMToolComms, ToolCommsSpec
+from dimos.core import colors
+from dimos.protocol.tool.comms import AgentMsg, LCMToolComms, MsgType, ToolCommsSpec
 
 
 class Call(Enum):
-    Implicit = "implicit"
-    Explicit = "explicit"
+    Implicit = 0
+    Explicit = 1
 
 
 class Reducer(Enum):
@@ -31,48 +33,94 @@ class Reducer(Enum):
 
 
 class Stream(Enum):
-    none = "none"
-    passive = "passive"
-    call_agent = "call_agent"
+    # no streaming
+    none = 0
+    # passive stream, doesn't schedule an agent call, but returns the value to the agent
+    passive = 1
+    # calls the agent with every value emitted, schedules an agent call
+    call_agent = 2
 
 
 class Return(Enum):
-    none = "none"
-    passive = "passive"
-    call_agent = "call_agent"
+    # doesn't return anything to an agent
+    none = 0
+    # returns the value to the agent, but doesn't schedule an agent call
+    passive = 1
+    # calls the agent with the value, scheduling an agent call
+    call_agent = 2
+
+
+class ToolConfig:
+    def __init__(self, name: str, reducer: Reducer, stream: Stream, ret: Return):
+        self.name = name
+        self.reducer = reducer
+        self.stream = stream
+        self.ret = ret
+
+    def __str__(self):
+        parts = [f"name={colors.yellow(self.name)}"]
+
+        # Only show reducer if stream is not none (streaming is happening)
+        if self.stream != Stream.none:
+            reducer_name = "unknown"
+            if self.reducer == Reducer.latest:
+                reducer_name = "latest"
+            elif self.reducer == Reducer.all:
+                reducer_name = "all"
+            elif self.reducer == Reducer.average:
+                reducer_name = "average"
+            parts.append(f"reducer={colors.green(reducer_name)}")
+            parts.append(f"stream={colors.red(self.stream.name)}")
+
+        # Always show return mode
+        parts.append(f"ret={colors.blue(self.ret.name)}")
+
+        return f"Tool({', '.join(parts)})"
 
 
 def tool(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
     def decorator(f: Callable[..., Any]) -> Any:
         def wrapper(self, *args, **kwargs):
-            val = f(self, *args, **kwargs)
-            tool = f"{self.__class__.__name__}.{f.__name__}"
-            self.agent.publish(AgentMsg(tool, val))
-            return val
+            tool = f"{f.__name__}"
 
-        wrapper._tool = {reducer: reducer, stream: stream, ret: ret}
+            def run_function():
+                self.agent_comms.publish(AgentMsg(tool, None, type=MsgType.start))
+                val = f(self, *args, **kwargs)
+                self.agent_comms.publish(AgentMsg(tool, val, type=MsgType.ret))
+
+            if kwargs.get("toolcall"):
+                del kwargs["toolcall"]
+                thread = threading.Thread(target=run_function)
+                thread.start()
+                return None
+
+            return run_function()
+
+        wrapper._tool = ToolConfig(name=f.__name__, reducer=reducer, stream=stream, ret=ret)  # type: ignore[attr-defined]
+        wrapper.__name__ = f.__name__  # Preserve original function name
+        wrapper.__doc__ = f.__doc__  # Preserve original docstring
         return wrapper
 
     return decorator
 
 
 class CommsSpec:
-    agent: ToolCommsSpec
+    agent_comms_class: type[ToolCommsSpec]
 
 
 class LCMComms(CommsSpec):
-    agent: ToolCommsSpec = LCMToolComms
+    agent_comms_class: type[ToolCommsSpec] = LCMToolComms
 
 
 class ToolContainer:
     comms: CommsSpec = LCMComms()
-    _agent: ToolCommsSpec = None
+    _agent_comms: Optional[ToolCommsSpec] = None
 
     @property
-    def tools(self):
+    def tools(self) -> dict[str, ToolConfig]:
         # Avoid recursion by excluding this property itself
         return {
-            name: getattr(self, name)
+            name: getattr(self, name)._tool
             for name in dir(self)
             if not name.startswith("_")
             and name != "tools"
@@ -80,7 +128,7 @@ class ToolContainer:
         }
 
     @property
-    def agent(self):
-        if self._agent is None:
-            self._agent = self.comms.agent()
-        return self._agent
+    def agent_comms(self) -> ToolCommsSpec:
+        if self._agent_comms is None:
+            self._agent_comms = self.comms.agent_comms_class()
+        return self._agent_comms
