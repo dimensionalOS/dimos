@@ -414,7 +414,8 @@ class SpatialMemory(Module):
                 logger.info("No position or rotation data available, skipping frame")
                 return None
 
-            position_v3 = Vector3(position_vec.x, position_vec.y, position_vec.z)
+            # position_vec is already a Vector3, no need to recreate it
+            position_v3 = position_vec
 
             if self.last_position is not None:
                 distance_moved = np.linalg.norm(
