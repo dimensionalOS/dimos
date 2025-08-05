@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import time
+from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Any, Callable, Generic, Optional, TypeVar
 
 from dimos.types.timestamped import Timestamped
 
@@ -48,12 +49,24 @@ class Return(Enum):
     call_agent = 2
 
 
+@dataclass
 class ToolConfig:
-    def __init__(self, name: str, reducer: Reducer, stream: Stream, ret: Return):
-        self.name = name
-        self.reducer = reducer
-        self.stream = stream
-        self.ret = ret
+    name: str
+    reducer: Reducer
+    stream: Stream
+    ret: Return
+    f: Callable | None = None
+
+    def bind(self, f: Callable) -> "ToolConfig":
+        self.f = f
+        return self
+
+    def call(self, *args, **kwargs) -> Any:
+        if self.f is None:
+            raise ValueError(
+                "Function is not bound to the ToolConfig. This shiould be called only within AgentListener."
+            )
+        return self.f(*args, **kwargs)
 
     def __str__(self):
         parts = [f"name={self.name}"]
@@ -76,10 +89,11 @@ class ToolConfig:
 
 
 class MsgType(Enum):
-    start = 0
-    stream = 1
-    ret = 2
-    error = 3
+    pending = 0
+    start = 1
+    stream = 2
+    ret = 3
+    error = 4
 
 
 class AgentMsg(Timestamped):
@@ -98,4 +112,26 @@ class AgentMsg(Timestamped):
         self.type = type
 
     def __repr__(self):
-        return f"AgentMsg(tool={self.tool_name}, content={self.content}, type={self.type})"
+        return self.__str__()
+
+    @property
+    def end(self) -> bool:
+        return self.type == MsgType.ret or self.type == MsgType.error
+
+    @property
+    def start(self) -> bool:
+        return self.type == MsgType.start
+
+    def __str__(self):
+        time_ago = time.time() - self.ts
+
+        if self.type == MsgType.start:
+            return f"Start({time_ago:.1f}s ago)"
+        if self.type == MsgType.ret:
+            return f"Ret({time_ago:.1f}s ago, val={self.content})"
+        if self.type == MsgType.error:
+            return f"Error({time_ago:.1f}s ago, val={self.content})"
+        if self.type == MsgType.pending:
+            return f"Pending({time_ago:.1f}s ago)"
+        if self.type == MsgType.stream:
+            return f"Stream({time_ago:.1f}s ago, val={self.content})"

@@ -47,7 +47,9 @@ def tool(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
 
             return run_function()
 
-        wrapper._tool = ToolConfig(name=f.__name__, reducer=reducer, stream=stream, ret=ret)  # type: ignore[attr-defined]
+        tool_config = ToolConfig(name=f.__name__, reducer=reducer, stream=stream, ret=ret)
+
+        wrapper._tool = tool_config  # type: ignore[attr-defined]
         wrapper.__name__ = f.__name__  # Preserve original function name
         wrapper.__doc__ = f.__doc__  # Preserve original docstring
         return wrapper
@@ -68,8 +70,10 @@ class LCMComms(CommsSpec):
 class ToolContainer:
     comms: CommsSpec = LCMComms()
     _agent_comms: Optional[ToolCommsSpec] = None
-
     dynamic_tools = False
+
+    def __str__(self) -> str:
+        return f"ToolContainer({self.__class__.__name__})"
 
     @rpc
     def tools(self) -> dict[str, ToolConfig]:

@@ -82,7 +82,6 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     def call_cb(self, name: str, arguments: Args, cb: Callable) -> Any:
         topic_req = self.topicgen(name, False)
         topic_res = self.topicgen(name, True)
-
         msg_id = float(time.time())
 
         req: RPCReq = {"name": name, "args": arguments, "id": msg_id}
