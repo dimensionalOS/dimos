@@ -185,6 +185,8 @@ class ObjectTracking(Module):
             _, self.original_des = self.orb.detectAndCompute(roi, None)
             if self.original_des is None:
                 logger.warning("No ORB features found in initial ROI.")
+                self.stop_track()
+                return {"status": "tracking_failed", "bbox": self.tracking_bbox}
             else:
                 logger.info(f"Initial ORB features extracted: {len(self.original_des)}")
 
