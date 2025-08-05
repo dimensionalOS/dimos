@@ -89,6 +89,10 @@ class BehaviorTreeNavigator(Module):
         self.current_goal: Optional[PoseStamped] = None
         self.goal_lock = threading.Lock()
 
+        # Goal reached state
+        self._goal_reached = False
+        self._goal_reached_lock = threading.Lock()
+
         # Latest data
         self.latest_odom: Optional[PoseStamped] = None
 
@@ -159,6 +163,9 @@ class BehaviorTreeNavigator(Module):
 
         with self.goal_lock:
             self.current_goal = transformed_goal
+
+        with self._goal_reached_lock:
+            self._goal_reached = False
 
         with self.state_lock:
             self.state = NavigatorState.FOLLOWING_PATH
@@ -237,7 +244,9 @@ class BehaviorTreeNavigator(Module):
                 if goal is not None:
                     self.goal.publish(goal)
 
-                    if self.is_goal_reached():
+                    if self.local_planner.is_goal_reached():
+                        with self._goal_reached_lock:
+                            self._goal_reached = True
                         logger.info("Goal reached!")
                         reached_msg = Bool()
                         reached_msg.data = True
@@ -257,16 +266,16 @@ class BehaviorTreeNavigator(Module):
     @rpc
     def is_goal_reached(self) -> bool:
         """Check if the current goal has been reached."""
-        try:
-            return self.local_planner.is_goal_reached()
-        except Exception as e:
-            logger.error(f"Failed to check goal status: {e}")
-            return False
+        with self._goal_reached_lock:
+            return self._goal_reached
 
     def stop(self):
         """Stop navigation and return to IDLE state."""
         with self.goal_lock:
             self.current_goal = None
+
+        with self._goal_reached_lock:
+            self._goal_reached = False
 
         with self.state_lock:
             self.state = NavigatorState.IDLE
