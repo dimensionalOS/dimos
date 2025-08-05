@@ -41,8 +41,16 @@ def test_comms():
     testContainer = TestContainer()
 
     agentInput.register_tools(testContainer)
-    print("AGENT TOOLS", agentInput.tools())
+
+    # toolcall=True makes the tool function exit early,
+    # it doesn't behave like a blocking function,
+    #
+    # return is passed as AgentMsg to the agent topic
     testContainer.delayadd(2, 4, toolcall=True)
     testContainer.add(1, 2)
 
+    time.sleep(0.5)
+    print(agentInput)
+
     time.sleep(2)
+    print(agentInput)

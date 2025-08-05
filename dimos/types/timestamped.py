@@ -160,6 +160,16 @@ class TimestampedCollection(Generic[T]):
         end_idx = bisect.bisect_right(timestamps, end)
         return TimestampedCollection(self._items[start_idx:end_idx])
 
+    @property
+    def start_ts(self) -> Optional[float]:
+        """Get the start timestamp of the collection."""
+        return self._items[0].ts if self._items else None
+
+    @property
+    def end_ts(self) -> Optional[float]:
+        """Get the end timestamp of the collection."""
+        return self._items[-1].ts if self._items else None
+
     def __len__(self) -> int:
         return len(self._items)
 
