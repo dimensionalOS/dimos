@@ -15,8 +15,12 @@
 from dataclasses import dataclass
 
 from dimos.protocol.service import Service
-from dimos.protocol.tool.comms import AgentMsg, LCMToolComms, ToolCommsSpec
-from dimos.protocol.tool.tool import ToolContainer, ToolConfig
+from dimos.protocol.tool.comms import AgentMsg, LCMToolComms, MsgType, ToolCommsSpec
+from dimos.protocol.tool.tool import ToolConfig, ToolContainer
+from dimos.protocol.tool.types import Stream
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger("dimos.protocol.tool.agent_input")
 
 
 @dataclass
@@ -25,10 +29,17 @@ class AgentInputConfig:
 
 
 class AgentInput(ToolContainer):
-    running_tools: dict[str, ToolContainer] = {}
+    _static_containers: list[ToolContainer]
+    _dynamic_containers: list[ToolContainer]
+    _tool_state: dict[str, list[AgentMsg]]
+    _tools: dict[str, ToolConfig]
 
     def __init__(self) -> None:
         super().__init__()
+        self._static_containers = []
+        self._dynamic_containers = []
+        self._tools = {}
+        self._tool_state = {}
 
     def start(self) -> None:
         self.agent_comms.start()
@@ -40,28 +51,66 @@ class AgentInput(ToolContainer):
     # updates local tool state (appends to streamed data if needed etc)
     # checks if agent needs to be called if AgentMsg has Return call_agent or Stream call_agent
     def handle_message(self, msg: AgentMsg) -> None:
-        print(f"Received message: {msg}")
+        print("AgentInput received message", msg)
+        self.update_state(msg.tool_name, msg)
 
-    def get_state(self): ...
+    def update_state(self, tool_name: str, msg: AgentMsg) -> None:
+        if tool_name not in self._tool_state:
+            self._tool_state[tool_name] = []
+        self._tool_state[tool_name].append(msg)
+
+        # we check if message should trigger an agent call
+        if self.should_call_agent(msg):
+            self.call_agent()
+
+    def should_call_agent(self, msg) -> bool:
+        tool_config = self._tools.get(msg.tool_name)
+        if not tool_config:
+            logger.warning(
+                f"Tool {msg.tool_name} not found in registered tools but tool message received {msg}"
+            )
+            return False
+
+        if msg.type == MsgType.start:
+            return False
+
+        if msg.type == MsgType.stream:
+            if tool_config.stream == Stream.none or tool_config.stream == Stream.passive:
+                return False
+            if tool_config.stream == Stream.call_agent:
+                return True
+
+    def collect_state(self):
+        ...
+        # return {"tool_name": {"state": tool_state, messages: list[AgentMsg]}}
 
     # outputs data for the agent call
     # clears the local state (finished tool calls)
-    def agent_call(self): ...
+    def get_agent_query(self):
+        state = self.collect_state()
+        ...
 
-    # outputs a list of tools that are registered
-    # for the agent to introspect
-    def get_tools(self): ...
-
+    # given toolcontainers can run remotely, we are
+    # caching available tools from static containers
+    #
+    # dynamic containers will be queried at runtime via
+    # .tools() method
     def register_tools(self, container: ToolContainer):
-        for tool_name, tool in container.tools.items():
-            print(f"Registering tool: {tool_name}, {tool}")
+        print("registering tool container", container)
+        if not container.dynamic_tools:
+            self._static_containers.append(container)
+            for name, tool_config in container.tools().items():
+                self._tools[name] = tool_config
+        else:
+            self._dynamic_containers.append(container)
 
-    @property
     def tools(self) -> dict[str, ToolConfig]:
-        """Returns a dictionary of tools registered in this container."""
-        # Aggregate all tools from registered containers
-        all_tools: dict[str, ToolConfig] = {}
-        for container_name, container in self.running_tools.items():
-            for tool_name, tool_config in container.tools.items():
-                all_tools[f"{container_name}.{tool_name}"] = tool_config
+        # static container tooling is already cached
+        all_tools: dict[str, ToolConfig] = {**self._tools}
+
+        # Then aggregate tools from dynamic containers
+        for container in self._dynamic_containers:
+            for tool_name, tool_config in container.tools().items():
+                all_tools[tool_name] = tool_config
+
         return all_tools

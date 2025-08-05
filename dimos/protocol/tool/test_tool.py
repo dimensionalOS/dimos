@@ -16,6 +16,7 @@ import time
 
 from dimos.protocol.tool.agent_listener import AgentInput
 from dimos.protocol.tool.tool import ToolContainer, tool
+from dimos.protocol.tool.types import Return, Stream
 
 
 class TestContainer(ToolContainer):
@@ -25,7 +26,6 @@ class TestContainer(ToolContainer):
 
     @tool()
     def delayadd(self, x: int, y: int) -> int:
-        time.sleep(1)
         return x + y
 
 
@@ -41,8 +41,8 @@ def test_comms():
     testContainer = TestContainer()
 
     agentInput.register_tools(testContainer)
+    print("AGENT TOOLS", agentInput.tools())
+    testContainer.delayadd(2, 4, toolcall=True)
+    testContainer.add(1, 2)
 
-    print(testContainer.delayadd(2, 4, toolcall=True))
-    print(testContainer.add(1, 2))
-
-    time.sleep(1.3)
+    time.sleep(2)

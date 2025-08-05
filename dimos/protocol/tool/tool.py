@@ -17,65 +17,16 @@ import threading
 from enum import Enum
 from typing import Any, Callable, Generic, Optional, TypedDict, TypeVar, cast
 
-from dimos.core import colors
-from dimos.protocol.tool.comms import AgentMsg, LCMToolComms, MsgType, ToolCommsSpec
-
-
-class Call(Enum):
-    Implicit = 0
-    Explicit = 1
-
-
-class Reducer(Enum):
-    latest = lambda data: data[-1] if data else None
-    all = lambda data: data
-    average = lambda data: sum(data) / len(data) if data else None
-
-
-class Stream(Enum):
-    # no streaming
-    none = 0
-    # passive stream, doesn't schedule an agent call, but returns the value to the agent
-    passive = 1
-    # calls the agent with every value emitted, schedules an agent call
-    call_agent = 2
-
-
-class Return(Enum):
-    # doesn't return anything to an agent
-    none = 0
-    # returns the value to the agent, but doesn't schedule an agent call
-    passive = 1
-    # calls the agent with the value, scheduling an agent call
-    call_agent = 2
-
-
-class ToolConfig:
-    def __init__(self, name: str, reducer: Reducer, stream: Stream, ret: Return):
-        self.name = name
-        self.reducer = reducer
-        self.stream = stream
-        self.ret = ret
-
-    def __str__(self):
-        parts = [f"name={colors.yellow(self.name)}"]
-
-        # Only show reducer if stream is not none (streaming is happening)
-        if self.stream != Stream.none:
-            reducer_name = "unknown"
-            if self.reducer == Reducer.latest:
-                reducer_name = "latest"
-            elif self.reducer == Reducer.all:
-                reducer_name = "all"
-            elif self.reducer == Reducer.average:
-                reducer_name = "average"
-            parts.append(f"reducer={colors.green(reducer_name)}")
-            parts.append(f"stream={colors.red(self.stream.name)}")
-
-        # Always show return mode
-        parts.append(f"ret={colors.blue(self.ret.name)}")
-
-        return f"Tool({', '.join(parts)})"
+from dimos.core import colors, rpc
+from dimos.protocol.tool.comms import LCMToolComms, ToolCommsSpec
+from dimos.protocol.tool.types import (
+    AgentMsg,
+    MsgType,
+    Reducer,
+    Return,
+    Stream,
+    ToolConfig,
+)
 
 
 def tool(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
@@ -112,11 +63,15 @@ class LCMComms(CommsSpec):
     agent_comms_class: type[ToolCommsSpec] = LCMToolComms
 
 
+# here we can have also dynamic tools potentially
+# agent can check .tools each time when introspecting
 class ToolContainer:
     comms: CommsSpec = LCMComms()
     _agent_comms: Optional[ToolCommsSpec] = None
 
-    @property
+    dynamic_tools = False
+
+    @rpc
     def tools(self) -> dict[str, ToolConfig]:
         # Avoid recursion by excluding this property itself
         return {
