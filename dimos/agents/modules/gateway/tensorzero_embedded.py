@@ -111,40 +111,36 @@ api_key_location = "env::ALIBABA_API_KEY"
 [object_storage]
 type = "disabled"
 
-# Functions
+# Single chat function with all models
+# TensorZero will automatically skip models that don't support the input type
 [functions.chat]
 type = "chat"
 
 [functions.chat.variants.openai]
 type = "chat_completion"
 model = "gpt_4o_mini"
+weight = 1.0
 
 [functions.chat.variants.claude]
 type = "chat_completion"
 model = "claude_3_haiku"
+weight = 0.5
 
 [functions.chat.variants.cerebras]
 type = "chat_completion"
 model = "llama_3_3_70b"
+weight = 0.0
 
 [functions.chat.variants.qwen]
 type = "chat_completion"
 model = "qwen_plus"
+weight = 0.3
 
-[functions.vision]
-type = "chat"
-
-[functions.vision.variants.openai]
-type = "chat_completion"
-model = "gpt_4o_mini"
-
-[functions.vision.variants.claude]
-type = "chat_completion"
-model = "claude_3_haiku"
-
-[functions.vision.variants.qwen]
+# For vision queries, Qwen VL can be used
+[functions.chat.variants.qwen_vision]
 type = "chat_completion"
 model = "qwen_vl_plus"
+weight = 0.4
 """
 
         with open(self._config_path, "w") as f:
@@ -158,7 +154,6 @@ model = "qwen_vl_plus"
             from openai import OpenAI
             from tensorzero import patch_openai_client
 
-            # Create base OpenAI client
             self._client = OpenAI()
 
             # Patch with TensorZero embedded gateway
@@ -177,45 +172,8 @@ model = "qwen_vl_plus"
 
     def _map_model_to_tensorzero(self, model: str) -> str:
         """Map provider::model format to TensorZero function format."""
-        # Map common models to TensorZero functions
-        model_mapping = {
-            # OpenAI models
-            "openai::gpt-4o-mini": "tensorzero::function_name::chat",
-            "openai::gpt-4o": "tensorzero::function_name::chat",
-            # Claude models
-            "anthropic::claude-3-haiku-20240307": "tensorzero::function_name::chat",
-            "anthropic::claude-3-5-sonnet-20241022": "tensorzero::function_name::chat",
-            "anthropic::claude-3-opus-20240229": "tensorzero::function_name::chat",
-            # Cerebras models
-            "cerebras::llama-3.3-70b": "tensorzero::function_name::chat",
-            "cerebras::llama3.1-8b": "tensorzero::function_name::chat",
-            # Qwen models
-            "qwen::qwen-plus": "tensorzero::function_name::chat",
-            "qwen::qwen-vl-plus": "tensorzero::function_name::vision",
-        }
-
-        # Check if it's already in TensorZero format
-        if model.startswith("tensorzero::"):
-            return model
-
-        # Try to map the model
-        mapped = model_mapping.get(model)
-        if mapped:
-            # Append variant based on provider
-            if "::" in model:
-                provider = model.split("::")[0]
-                if "vision" in mapped:
-                    # For vision models, use provider-specific variant
-                    if provider == "qwen":
-                        return mapped  # Use qwen vision variant
-                    else:
-                        return mapped  # Use openai/claude vision variant
-                else:
-                    # For chat models, always use chat function
-                    return mapped
-
-        # Default to chat function
-        logger.warning(f"Unknown model format: {model}, defaulting to chat")
+        # Always use the chat function - TensorZero will handle model selection
+        # based on input type and model capabilities automatically
         return "tensorzero::function_name::chat"
 
     def inference(
@@ -281,17 +239,27 @@ model = "qwen_vl_plus"
         stream: bool = False,
         **kwargs,
     ) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
-        """Async inference - wraps sync for now."""
-
-        # TensorZero embedded doesn't have async support yet
-        # Run sync version in executor
+        """Async inference with streaming support."""
         import asyncio
 
         loop = asyncio.get_event_loop()
 
         if stream:
-            # Streaming not supported in async wrapper yet
-            raise NotImplementedError("Async streaming not yet supported with TensorZero embedded")
+            # Create async generator from sync streaming
+            async def stream_generator():
+                # Run sync streaming in executor
+                sync_stream = await loop.run_in_executor(
+                    None,
+                    lambda: self.inference(
+                        model, messages, tools, temperature, max_tokens, stream=True, **kwargs
+                    ),
+                )
+
+                # Convert sync iterator to async
+                for chunk in sync_stream:
+                    yield chunk
+
+            return stream_generator()
         else:
             result = await loop.run_in_executor(
                 None,
