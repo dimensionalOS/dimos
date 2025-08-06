@@ -58,5 +58,9 @@ def run_bridge_example():
         print("Shutting down...")
 
 
-if __name__ == "__main__":
+def main():
     run_bridge_example()
+
+
+if __name__ == "__main__":
+    main()

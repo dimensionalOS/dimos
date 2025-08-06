@@ -206,11 +206,6 @@ class AgentInterface(SkillContainer):
 
         return f"AgentInput({pformat(ret, indent=2, depth=3, width=120, compact=True)})"
 
-    # Outputs data for the agent call
-    # Clears the local state (finished skill calls)
-    def get_agent_query(self):
-        return self.state_snapshot()
-
     # Given skillcontainers can run remotely, we are
     # Caching available skills from static containers
     #
