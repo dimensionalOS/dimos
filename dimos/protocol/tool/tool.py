@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
 import threading
-from enum import Enum
-from typing import Any, Callable, Generic, Optional, TypedDict, TypeVar, cast
+from typing import Any, Callable, Optional
 
-from dimos.core import colors, rpc
+from dimos.core import rpc
 from dimos.protocol.tool.comms import LCMToolComms, ToolCommsSpec
 from dimos.protocol.tool.types import (
     AgentMsg,
