@@ -69,6 +69,16 @@ class ModuleBase:
             self._tf = self.comms.tf()
         return self._tf
 
+    @tf.setter
+    def tf(self, value):
+        import warnings
+
+        warnings.warn(
+            "tf is available on all modules. Call self.tf.start() to activate tf functionality. No need to assign it",
+            UserWarning,
+            stacklevel=2,
+        )
+
     @property
     def outputs(self) -> dict[str, Out]:
         return {
