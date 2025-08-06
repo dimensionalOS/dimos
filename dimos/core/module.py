@@ -29,20 +29,20 @@ from dimos.core import colors
 from dimos.core.core import T, rpc
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
-from dimos.protocol.tf import LCMTF, TFSpec
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
+from dimos.protocol.tf import LCMTF, TFSpec
 
 
-class CommsSpec(Enum):
-    rpc: RPCSpec
-    agent: SkillCommsSpec
-    tf: TFSpec
+class CommsSpec:
+    rpc: type[RPCSpec]
+    agent: type[SkillCommsSpec]
+    tf: type[TFSpec]
 
 
 class LCMComms(CommsSpec):
-    rpc: LCMRPC
-    agent: LCMSkillComms
-    tf: LCMTF
+    rpc = LCMRPC
+    agent = LCMSkillComms
+    tf = LCMTF
 
 
 class ModuleBase:

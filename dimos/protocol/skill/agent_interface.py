@@ -39,6 +39,7 @@ class SkillStateEnum(Enum):
     error = 3
 
 
+# TODO pending timeout, running timeout, etc.
 class SkillState(TimestampedCollection):
     name: str
     state: SkillStateEnum
@@ -107,8 +108,8 @@ class AgentInterface(SkillContainer):
     _skills: dict[str, SkillConfig]
     _agent_callback: Optional[Callable[[dict[str, SkillState]], Any]] = None
 
-    # agent callback is called with a state snapshot once system decides that agents needs
-    # to be woken up
+    # Agent callback is called with a state snapshot once system decides
+    # that agents needs to be woken up, according to inputs from active skills
     def __init__(
         self, agent_callback: Optional[Callable[[dict[str, SkillState]], Any]] = None
     ) -> None:
@@ -126,7 +127,7 @@ class AgentInterface(SkillContainer):
     def stop(self) -> None:
         self.agent_comms.stop()
 
-    # this is used by agent to call skills
+    # This is used by agent to call skills
     def execute_skill(self, skill_name: str, *args, **kwargs) -> None:
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
@@ -139,8 +140,10 @@ class AgentInterface(SkillContainer):
         self._skill_state[skill_name] = SkillState(name=skill_name, skill_config=skill_config)
         return skill_config.call(*args, **kwargs)
 
-    # updates local skill state (appends to streamed data if needed etc)
-    # checks if agent needs to be called if AgentMsg has Return call_agent or Stream call_agent
+    # Receives a message from active skill
+    # Updates local skill state (appends to streamed data if needed etc)
+    #
+    # Checks if agent needs to be called (if ToolConfig has Return=call_agent or Stream=call_agent)
     def handle_message(self, msg: AgentMsg) -> None:
         logger.info(f"Skill msg {msg}")
 
@@ -155,8 +158,9 @@ class AgentInterface(SkillContainer):
             self.call_agent()
 
     # Returns a snapshot of the current state of skill runs.
-    # If clear is True, it will assume the snapshot is being sent to an agent
-    # and will clear the finished skill runs.
+    #
+    # If clear=True, it will assume the snapshot is being sent to an agent
+    # and will clear the finished skill runs from the state
     def state_snapshot(self, clear: bool = True) -> dict[str, SkillState]:
         if not clear:
             return self._skill_state
@@ -203,14 +207,14 @@ class AgentInterface(SkillContainer):
         return f"AgentInput({pformat(ret, indent=2, depth=3, width=120, compact=True)})"
 
     # Outputs data for the agent call
-    # clears the local state (finished skill calls)
+    # Clears the local state (finished skill calls)
     def get_agent_query(self):
         return self.state_snapshot()
 
     # Given skillcontainers can run remotely, we are
-    # caching available skills from static containers
+    # Caching available skills from static containers
     #
-    # dynamic containers will be queried at runtime via
+    # Dynamic containers will be queried at runtime via
     # .skills() method
     def register_skills(self, container: SkillContainer):
         if not container.dynamic_skills:
@@ -229,7 +233,7 @@ class AgentInterface(SkillContainer):
         return skill_config
 
     def skills(self) -> dict[str, SkillConfig]:
-        # static container skilling is already cached
+        # Static container skilling is already cached
         all_skills: dict[str, SkillConfig] = {**self._skills}
 
         # Then aggregate skills from dynamic containers

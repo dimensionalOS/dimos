@@ -93,3 +93,38 @@ def test_standard_usage():
     # after the skill has finished, we can see the result
     # and the skill state
     print(agentInterface)
+
+
+def test_module():
+    from dimos.core import Module, start
+
+    class MockModule(Module, SkillContainer):
+        def __init__(self):
+            super().__init__()
+            SkillContainer.__init__(self)
+
+        @skill()
+        def add(self, x: int, y: int) -> int:
+            time.sleep(0.5)
+            return x * y
+
+    agentInterface = AgentInterface(agent_callback=print)
+    agentInterface.start()
+
+    dimos = start(1)
+    mock_module = dimos.deploy(MockModule)
+
+    agentInterface.register_skills(mock_module)
+
+    # we can execute a skill
+    agentInterface.execute_skill("add", 1, 2)
+
+    # while skill is executing, we can introspect the state
+    # (we see that the skill is running)
+    time.sleep(0.25)
+    print(agentInterface)
+    time.sleep(0.75)
+
+    # after the skill has finished, we can see the result
+    # and the skill state
+    print(agentInterface)

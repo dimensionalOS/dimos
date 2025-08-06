@@ -27,9 +27,9 @@ class Call(Enum):
 
 class Reducer(Enum):
     none = 0
-    all = lambda data: data
-    latest = lambda data: data[-1] if data else None
-    average = lambda data: sum(data) / len(data) if data else None
+    all = 1
+    latest = 2
+    average = 3
 
 
 class Stream(Enum):

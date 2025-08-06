@@ -22,8 +22,8 @@ from dimos.protocol.skill.types import (
     MsgType,
     Reducer,
     Return,
-    Stream,
     SkillConfig,
+    Stream,
 )
 
 
@@ -59,17 +59,17 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
 
 
 class CommsSpec:
-    agent_comms_class: type[SkillCommsSpec]
+    agent: type[SkillCommsSpec]
 
 
 class LCMComms(CommsSpec):
-    agent_comms_class: type[SkillCommsSpec] = LCMSkillComms
+    agent: type[SkillCommsSpec] = LCMSkillComms
 
 
 # here we can have also dynamic skills potentially
 # agent can check .skills each time when introspecting
 class SkillContainer:
-    comms: CommsSpec = LCMComms()
+    comms: CommsSpec = LCMComms
     _agent_comms: Optional[SkillCommsSpec] = None
     dynamic_skills = False
 
@@ -90,5 +90,5 @@ class SkillContainer:
     @property
     def agent_comms(self) -> SkillCommsSpec:
         if self._agent_comms is None:
-            self._agent_comms = self.comms.agent_comms_class()
+            self._agent_comms = self.comms.agent()
         return self._agent_comms
