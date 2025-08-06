@@ -95,7 +95,7 @@ class ToolState(TimestampedCollection):
         return head + ", No Messages)"
 
 
-class AgentInput(ToolContainer):
+class AgentInterface(ToolContainer):
     _static_containers: list[ToolContainer]
     _dynamic_containers: list[ToolContainer]
     _tool_state: dict[str, ToolState]
