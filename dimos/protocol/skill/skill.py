@@ -49,7 +49,7 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
         skill_config = SkillConfig(name=f.__name__, reducer=reducer, stream=stream, ret=ret)
 
         # implicit RPC call as well
-        wrapper.__rpc__ = True
+        wrapper.__rpc__ = True  # type: ignore[attr-defined]
         wrapper._skill = skill_config  # type: ignore[attr-defined]
         wrapper.__name__ = f.__name__  # Preserve original function name
         wrapper.__doc__ = f.__doc__  # Preserve original docstring

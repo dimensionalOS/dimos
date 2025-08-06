@@ -57,6 +57,7 @@ class SkillConfig:
     stream: Stream
     ret: Return
     f: Callable | None = None
+    autostart: bool = False
 
     def bind(self, f: Callable) -> "SkillConfig":
         self.f = f
@@ -106,7 +107,7 @@ class AgentMsg(Timestamped):
         self,
         skill_name: str,
         content: str | int | float | dict | list,
-        type: Optional[MsgType] = MsgType.ret,
+        type: MsgType = MsgType.ret,
     ) -> None:
         self.ts = time.time()
         self.skill_name = skill_name
