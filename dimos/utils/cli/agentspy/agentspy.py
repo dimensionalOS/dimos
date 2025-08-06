@@ -51,8 +51,7 @@ class AgentSpy:
 
     def stop(self):
         """Stop spying."""
-        # Nothing to stop since we're using agent_interface's comms
-        pass
+        self.agent_interface.stop()
 
     def _handle_message(self, msg: AgentMsg):
         """Handle incoming agent messages."""
@@ -172,6 +171,7 @@ class AgentSpyApp(App):
         Binding("q", "quit", "Quit"),
         Binding("c", "clear", "Clear History"),
         Binding("l", "toggle_logs", "Toggle Logs"),
+        Binding("ctrl+c", "quit", "Quit", show=False),
     ]
 
     show_logs = reactive(True)
@@ -248,9 +248,13 @@ class AgentSpyApp(App):
         # Also set up periodic refresh to update durations
         self.set_interval(0.5, self.refresh_table)
 
-    async def on_unmount(self):
+    def on_unmount(self):
         """Stop the spy when app unmounts."""
         self.spy.stop()
+        # Remove log handler to prevent errors on shutdown
+        if self.log_handler:
+            root_logger = logging.getLogger()
+            root_logger.removeHandler(self.log_handler)
 
     def update_state(self, state: Dict[str, SkillState]):
         """Update state from spy callback."""
