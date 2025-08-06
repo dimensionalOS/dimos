@@ -118,7 +118,7 @@ class LCMSpyApp(App):
             )
 
 
-if __name__ == "__main__":
+def main():
     import sys
 
     if len(sys.argv) > 1 and sys.argv[1] == "web":
@@ -130,3 +130,7 @@ if __name__ == "__main__":
         server.serve()
     else:
         LCMSpyApp().run()
+
+
+if __name__ == "__main__":
+    main()

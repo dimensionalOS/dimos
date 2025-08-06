@@ -35,7 +35,7 @@ from typing import (
 )
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub
-from dimos.protocol.rpc.spec import RPC, Args, RPCClient, RPCInspectable, RPCServer
+from dimos.protocol.rpc.spec import Args, RPCClient, RPCInspectable, RPCServer, RPCSpec
 from dimos.protocol.service.spec import Service
 
 MsgT = TypeVar("MsgT")
@@ -57,7 +57,7 @@ class RPCRes(TypedDict):
     res: Any
 
 
-class PubSubRPCMixin(RPC, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
+class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     @abstractmethod
     def topicgen(self, name: str, req_or_res: bool) -> TopicT: ...
 
@@ -82,7 +82,6 @@ class PubSubRPCMixin(RPC, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     def call_cb(self, name: str, arguments: Args, cb: Callable) -> Any:
         topic_req = self.topicgen(name, False)
         topic_res = self.topicgen(name, True)
-
         msg_id = float(time.time())
 
         req: RPCReq = {"name": name, "args": arguments, "id": msg_id}
