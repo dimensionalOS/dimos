@@ -16,7 +16,7 @@ from copy import copy
 from dataclasses import dataclass
 from enum import Enum
 from pprint import pformat
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from dimos.protocol.skill.comms import AgentMsg, LCMSkillComms, MsgType, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
@@ -83,6 +83,8 @@ class SkillState(TimestampedCollection):
             self.state = SkillStateEnum.running
             return False
 
+        return False
+
     def __str__(self) -> str:
         head = f"SkillState(state={self.state}"
 
@@ -103,11 +105,13 @@ class AgentInterface(SkillContainer):
     _dynamic_containers: list[SkillContainer]
     _skill_state: dict[str, SkillState]
     _skills: dict[str, SkillConfig]
-    _agent_callback: Optional[Callable[[dict[str, SkillState]], any]] = None
+    _agent_callback: Optional[Callable[[dict[str, SkillState]], Any]] = None
 
     # agent callback is called with a state snapshot once system decides that agents needs
     # to be woken up
-    def __init__(self, agent_callback: Callable[[dict[str, SkillState]], any] = None) -> None:
+    def __init__(
+        self, agent_callback: Optional[Callable[[dict[str, SkillState]], Any]] = None
+    ) -> None:
         super().__init__()
         self._agent_callback = agent_callback
         self._static_containers = []

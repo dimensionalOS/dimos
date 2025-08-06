@@ -16,7 +16,6 @@ import time
 
 from dimos.protocol.skill.agent_interface import AgentInterface
 from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.protocol.skill.types import Return, Stream
 
 
 class TestContainer(SkillContainer):
