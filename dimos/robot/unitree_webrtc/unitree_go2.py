@@ -101,7 +101,7 @@ class FakeRTC(UnitreeWebRTCConnection):
         pass
 
 
-class ConnectionModule(UnitreeWebRTCConnection, Module):
+class ConnectionModule(Module):
     """Module that handles robot sensor data and movement commands."""
 
     movecmd: In[Vector3] = None
@@ -109,23 +109,31 @@ class ConnectionModule(UnitreeWebRTCConnection, Module):
     lidar: Out[LidarMessage] = None
     video: Out[Image] = None
     ip: str
+    playback: bool
 
     _odom: PoseStamped = None
+    _lidar: LidarMessage = None
 
-    def __init__(self, ip: str, *args, **kwargs):
+    def __init__(self, ip: str = None, playback: bool = False, *args, **kwargs):
         self.ip = ip
+        self.playback = playback
         self.tf = TF()
         Module.__init__(self, *args, **kwargs)
 
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
-        super().__init__(self.ip)
+        # Initialize the appropriate connection type
+        if self.playback:
+            self.connection = FakeRTC(self.ip)
+        else:
+            self.connection = UnitreeWebRTCConnection(self.ip)
+            self.connection.connect()
 
-        self.lidar_stream().subscribe(self.lidar.publish)
-        self.odom_stream().subscribe(self.odom.publish)
-        self.video_stream().subscribe(self.video.publish)
-        self.tf_stream().subscribe(self.tf.publish)
+        # Connect sensor streams to outputs
+        self.connection.lidar_stream().subscribe(self.lidar.publish)
+        self.connection.odom_stream().subscribe(self._publish_tf)
+        self.connection.video_stream().subscribe(self.video.publish)
         self.movecmd.subscribe(self.move)
 
     def _publish_tf(self, msg):
@@ -153,7 +161,7 @@ class ConnectionModule(UnitreeWebRTCConnection, Module):
     @rpc
     def move(self, vector: Vector3, duration: float = 0.0):
         """Send movement command to robot."""
-        super().move(vector, duration)
+        self.connection.move(vector, duration)
 
 
 class UnitreeGo2:
@@ -165,6 +173,7 @@ class UnitreeGo2:
         output_dir: str = None,
         websocket_port: int = 7779,
         skill_library: Optional[SkillLibrary] = None,
+        playback: bool = False,
     ):
         """Initialize the robot system.
 
@@ -174,8 +183,10 @@ class UnitreeGo2:
             enable_perception: Whether to enable spatial memory/perception
             websocket_port: Port for web visualization
             skill_library: Skill library instance
+            playback: If True, use recorded data instead of real robot connection
         """
         self.ip = ip
+        self.playback = playback or (ip is None)  # Auto-enable playback if no IP provided
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.websocket_port = websocket_port
 
@@ -233,7 +244,7 @@ class UnitreeGo2:
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
-        self.connection = self.dimos.deploy(ConnectionModule, self.ip)
+        self.connection = self.dimos.deploy(ConnectionModule, self.ip, playback=self.playback)
 
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
@@ -410,7 +421,7 @@ def main():
 
     pubsub.lcm.autoconf()
 
-    robot = UnitreeGo2(ip=ip, websocket_port=7779)
+    robot = UnitreeGo2(ip=ip, websocket_port=7779, playback=True)
     robot.start()
 
     try:
