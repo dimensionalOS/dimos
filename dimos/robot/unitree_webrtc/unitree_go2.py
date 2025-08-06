@@ -62,7 +62,7 @@ warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
 
-class FakeRTC(UnitreeWebRTCConnection):
+class FakeRTC:
     """Fake WebRTC connection for testing with recorded data."""
 
     def __init__(self, *args, **kwargs):
@@ -100,6 +100,10 @@ class FakeRTC(UnitreeWebRTCConnection):
     def move(self, vector: Vector3, duration: float = 0.0):
         pass
 
+    def publish_request(self, topic: str, data: dict):
+        """Fake publish request for testing."""
+        return {"status": "ok", "message": "Fake publish"}
+
 
 class ConnectionModule(Module):
     """Module that handles robot sensor data and movement commands."""
@@ -118,17 +122,16 @@ class ConnectionModule(Module):
         self.ip = ip
         self.playback = playback
         self.tf = TF()
+        self.connection = None
         Module.__init__(self, *args, **kwargs)
 
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
-        # Initialize the appropriate connection type
         if self.playback:
             self.connection = FakeRTC(self.ip)
         else:
             self.connection = UnitreeWebRTCConnection(self.ip)
-            self.connection.connect()
 
         # Connect sensor streams to outputs
         self.connection.lidar_stream().subscribe(self.lidar.publish)
@@ -162,6 +165,27 @@ class ConnectionModule(Module):
     def move(self, vector: Vector3, duration: float = 0.0):
         """Send movement command to robot."""
         self.connection.move(vector, duration)
+
+    @rpc
+    def standup(self):
+        """Make the robot stand up."""
+        return self.connection.standup()
+
+    @rpc
+    def liedown(self):
+        """Make the robot lie down."""
+        return self.connection.liedown()
+
+    @rpc
+    def publish_request(self, topic: str, data: dict):
+        """Publish a request to the WebRTC connection.
+        Args:
+            topic: The RTC topic to publish to
+            data: The data dictionary to publish
+        Returns:
+            The result of the publish request
+        """
+        return self.connection.publish_request(topic, data)
 
 
 class UnitreeGo2:
@@ -421,7 +445,7 @@ def main():
 
     pubsub.lcm.autoconf()
 
-    robot = UnitreeGo2(ip=ip, websocket_port=7779, playback=True)
+    robot = UnitreeGo2(ip=ip, websocket_port=7779, playback=False)
     robot.start()
 
     try:
