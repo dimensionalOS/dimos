@@ -24,7 +24,7 @@ from dimos.protocol.skill.types import Reducer, Return, Stream
 from dimos.types.timestamped import TimestampedCollection
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.protocol.skill.agent_input")
+logger = setup_logger("dimos.protocol.skill.agent_interface")
 
 
 @dataclass
@@ -35,7 +35,7 @@ class AgentInputConfig:
 class SkillStateEnum(Enum):
     pending = 0
     running = 1
-    ret = 2
+    returned = 2
     error = 3
 
 
@@ -71,7 +71,7 @@ class SkillState(TimestampedCollection):
                 return True
 
         if msg.type == MsgType.ret:
-            self.state = SkillStateEnum.ret
+            self.state = SkillStateEnum.returned
             if self.skill_config.ret == Return.call_agent:
                 return True
             return False
@@ -89,7 +89,7 @@ class SkillState(TimestampedCollection):
     def __str__(self) -> str:
         head = f"SkillState(state={self.state}"
 
-        if self.state == SkillStateEnum.ret or self.state == SkillStateEnum.error:
+        if self.state == SkillStateEnum.returned or self.state == SkillStateEnum.error:
             head += ", ran for="
         else:
             head += ", running for="
@@ -145,7 +145,7 @@ class AgentInterface(SkillContainer):
     #
     # Checks if agent needs to be called (if ToolConfig has Return=call_agent or Stream=call_agent)
     def handle_message(self, msg: AgentMsg) -> None:
-        logger.info(f"Skill msg {msg}")
+        logger.info(f"Skill '{msg.skill_name}' - {msg}")
 
         if self._skill_state.get(msg.skill_name) is None:
             logger.warn(
@@ -170,7 +170,7 @@ class AgentInterface(SkillContainer):
         to_delete = []
         # Since state is exported, we can clear the finished skill runs
         for skill_name, skill_run in self._skill_state.items():
-            if skill_run.state == SkillStateEnum.ret:
+            if skill_run.state == SkillStateEnum.returned:
                 logger.info(f"Skill {skill_name} finished")
                 to_delete.append(skill_name)
             if skill_run.state == SkillStateEnum.error:
