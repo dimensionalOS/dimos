@@ -14,22 +14,13 @@
 
 import numpy as np
 from typing import Tuple
-import logging
 from scipy.spatial.transform import Rotation as R
-
 from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion, Transform
-
-logger = logging.getLogger(__name__)
 
 
 def normalize_angle(angle: float) -> float:
     """Normalize angle to [-pi, pi] range"""
     return np.arctan2(np.sin(angle), np.cos(angle))
-
-
-def distance_angle_to_goal_xy(distance: float, angle: float) -> Tuple[float, float]:
-    """Convert distance and angle to goal x, y in robot frame"""
-    return distance * np.cos(angle), distance * np.sin(angle)
 
 
 def pose_to_matrix(pose: Pose) -> np.ndarray:
@@ -205,7 +196,7 @@ def robot_to_optical_frame(pose: Pose) -> Pose:
     quat_optical = R.from_matrix(R_optical).as_quat()  # [x, y, z, w]
 
     return Pose(
-        Point(optical_x, optical_y, optical_z),
+        Vector3(optical_x, optical_y, optical_z),
         Quaternion(quat_optical[0], quat_optical[1], quat_optical[2], quat_optical[3]),
     )
 
@@ -228,60 +219,6 @@ def yaw_towards_point(position: Vector3, target_point: Vector3 = None) -> float:
     direction_x = position.x - target_point.x
     direction_y = position.y - target_point.y
     return np.arctan2(direction_y, direction_x)
-
-
-def transform_robot_to_map(
-    robot_position: Vector3, robot_rotation: Vector3, position: Vector3, rotation: Vector3
-) -> Tuple[Vector3, Vector3]:
-    """Transform position and rotation from robot frame to map frame.
-
-    Args:
-        robot_position: Current robot position in map frame
-        robot_rotation: Current robot rotation in map frame
-        position: Position in robot frame as Point (x, y, z)
-        rotation: Rotation in robot frame as Vector3 (roll, pitch, yaw) in radians
-
-    Returns:
-        Tuple of (transformed_position, transformed_rotation) where:
-            - transformed_position: Point (x, y, z) in map frame
-            - transformed_rotation: Vector3 (roll, pitch, yaw) in map frame
-
-    Example:
-        obj_pos_robot = Point(1.0, 0.5, 0.0)  # 1m forward, 0.5m left of robot
-        obj_rot_robot = Vector3(0.0, 0.0, 0.0)  # No rotation relative to robot
-
-        map_pos, map_rot = transform_robot_to_map(robot_position, robot_rotation, obj_pos_robot, obj_rot_robot)
-    """
-    # Extract robot pose components
-    robot_pos = robot_position
-    robot_rot = robot_rotation
-
-    # Robot position and orientation in map frame
-    robot_x, robot_y, robot_z = robot_pos.x, robot_pos.y, robot_pos.z
-    robot_yaw = robot_rot.z  # yaw is rotation around z-axis
-
-    # Position in robot frame
-    pos_x, pos_y, pos_z = position.x, position.y, position.z
-
-    # Apply 2D transformation (rotation + translation) for x,y coordinates
-    cos_yaw = np.cos(robot_yaw)
-    sin_yaw = np.sin(robot_yaw)
-
-    # Transform position from robot frame to map frame
-    map_x = robot_x + cos_yaw * pos_x - sin_yaw * pos_y
-    map_y = robot_y + sin_yaw * pos_x + cos_yaw * pos_y
-    map_z = robot_z + pos_z  # Z translation (assume flat ground)
-
-    # Transform rotation from robot frame to map frame
-    rot_roll, rot_pitch, rot_yaw = rotation.x, rotation.y, rotation.z
-    map_roll = robot_rot.x + rot_roll  # Add robot's roll
-    map_pitch = robot_rot.y + rot_pitch  # Add robot's pitch
-    map_yaw_rot = normalize_angle(robot_yaw + rot_yaw)  # Add robot's yaw and normalize
-
-    transformed_position = Vector3(map_x, map_y, map_z)
-    transformed_rotation = Vector3(map_roll, map_pitch, map_yaw_rot)
-
-    return transformed_position, transformed_rotation
 
 
 def create_transform_from_6dof(translation: Vector3, euler_angles: Vector3) -> np.ndarray:

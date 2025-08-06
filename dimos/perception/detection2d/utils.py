@@ -15,7 +15,6 @@
 import numpy as np
 import cv2
 from dimos.types.vector import Vector
-from dimos.utils.transform_utils import distance_angle_to_goal_xy
 
 
 def filter_detections(
@@ -305,34 +304,3 @@ def calculate_object_size_from_bbox(bbox, depth, camera_intrinsics):
     height_m = (height_px * depth) / fy
 
     return width_m, height_m
-
-
-def calculate_position_rotation_from_bbox(bbox, depth, camera_intrinsics):
-    """
-    Calculate position (xyz) and rotation (roll, pitch, yaw) for an object
-    based on its bounding box and depth.
-
-    Args:
-        bbox: Bounding box [x1, y1, x2, y2]
-        depth: Depth value in meters
-        camera_intrinsics: List [fx, fy, cx, cy] with camera parameters
-
-    Returns:
-        Vector: position
-        Vector: rotation
-    """
-    # Calculate distance and angle to object
-    distance, angle = calculate_distance_angle_from_bbox(bbox, depth, camera_intrinsics)
-
-    # Convert distance and angle to x,y coordinates (in camera frame)
-    # Note: We negate the angle since positive angle means object is to the right,
-    # but we want positive y to be to the left in the standard coordinate system
-    x, y = distance_angle_to_goal_xy(distance, -angle)
-
-    # For now, rotation is only in yaw (around z-axis)
-    # We can use the negative of the angle as an estimate of the object's yaw
-    # assuming objects tend to face the camera
-    position = Vector([x, y, 0.0])
-    rotation = Vector([0.0, 0.0, -angle])
-
-    return position, rotation
