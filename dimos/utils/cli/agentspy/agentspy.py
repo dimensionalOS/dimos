@@ -82,9 +82,9 @@ def state_color(state: SkillStateEnum) -> str:
     if state == SkillStateEnum.pending:
         return "yellow"
     elif state == SkillStateEnum.running:
-        return "cyan"
-    elif state == SkillStateEnum.returned:
         return "green"
+    elif state == SkillStateEnum.returned:
+        return "cyan"
     elif state == SkillStateEnum.error:
         return "red"
     return "white"

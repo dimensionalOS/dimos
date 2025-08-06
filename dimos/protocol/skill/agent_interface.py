@@ -47,12 +47,9 @@ class SkillState(TimestampedCollection):
 
     def __init__(self, name: str, skill_config: Optional[SkillConfig] = None) -> None:
         super().__init__()
-        if skill_config is None:
-            self.skill_config = SkillConfig(
-                name=name, stream=Stream.none, ret=Return.none, reducer=Reducer.none
-            )
-        else:
-            self.skill_config = skill_config
+        self.skill_config = skill_config or SkillConfig(
+            name=name, stream=Stream.none, ret=Return.none, reducer=Reducer.none
+        )
 
         self.state = SkillStateEnum.pending
         self.name = name
@@ -145,7 +142,7 @@ class AgentInterface(SkillContainer):
     #
     # Checks if agent needs to be called (if ToolConfig has Return=call_agent or Stream=call_agent)
     def handle_message(self, msg: AgentMsg) -> None:
-        logger.info(f"Skill '{msg.skill_name}' - {msg}")
+        logger.info(f"{msg.skill_name} - {msg}")
 
         if self._skill_state.get(msg.skill_name) is None:
             logger.warn(
@@ -178,7 +175,7 @@ class AgentInterface(SkillContainer):
                 to_delete.append(skill_name)
 
         for skill_name in to_delete:
-            logger.debug(f"Skill {skill_name} finished, removing from state")
+            logger.debug(f"{skill_name} finished, removing from state")
             del self._skill_state[skill_name]
 
         return ret
