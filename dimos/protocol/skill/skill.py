@@ -16,29 +16,29 @@ import threading
 from typing import Any, Callable, Optional
 
 from dimos.core import rpc
-from dimos.protocol.tool.comms import LCMToolComms, ToolCommsSpec
-from dimos.protocol.tool.types import (
+from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
+from dimos.protocol.skill.types import (
     AgentMsg,
     MsgType,
     Reducer,
     Return,
     Stream,
-    ToolConfig,
+    SkillConfig,
 )
 
 
-def tool(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
+def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
     def decorator(f: Callable[..., Any]) -> Any:
         def wrapper(self, *args, **kwargs):
-            tool = f"{f.__name__}"
+            skill = f"{f.__name__}"
 
-            if kwargs.get("toolcall"):
-                del kwargs["toolcall"]
+            if kwargs.get("skillcall"):
+                del kwargs["skillcall"]
 
                 def run_function():
-                    self.agent_comms.publish(AgentMsg(tool, None, type=MsgType.start))
+                    self.agent_comms.publish(AgentMsg(skill, None, type=MsgType.start))
                     val = f(self, *args, **kwargs)
-                    self.agent_comms.publish(AgentMsg(tool, val, type=MsgType.ret))
+                    self.agent_comms.publish(AgentMsg(skill, val, type=MsgType.ret))
 
                 thread = threading.Thread(target=run_function)
                 thread.start()
@@ -46,11 +46,11 @@ def tool(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
 
             return f(self, *args, **kwargs)
 
-        tool_config = ToolConfig(name=f.__name__, reducer=reducer, stream=stream, ret=ret)
+        skill_config = SkillConfig(name=f.__name__, reducer=reducer, stream=stream, ret=ret)
 
         # implicit RPC call as well
         wrapper.__rpc__ = True
-        wrapper._tool = tool_config  # type: ignore[attr-defined]
+        wrapper._skill = skill_config  # type: ignore[attr-defined]
         wrapper.__name__ = f.__name__  # Preserve original function name
         wrapper.__doc__ = f.__doc__  # Preserve original docstring
         return wrapper
@@ -59,36 +59,36 @@ def tool(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
 
 
 class CommsSpec:
-    agent_comms_class: type[ToolCommsSpec]
+    agent_comms_class: type[SkillCommsSpec]
 
 
 class LCMComms(CommsSpec):
-    agent_comms_class: type[ToolCommsSpec] = LCMToolComms
+    agent_comms_class: type[SkillCommsSpec] = LCMSkillComms
 
 
-# here we can have also dynamic tools potentially
-# agent can check .tools each time when introspecting
-class ToolContainer:
+# here we can have also dynamic skills potentially
+# agent can check .skills each time when introspecting
+class SkillContainer:
     comms: CommsSpec = LCMComms()
-    _agent_comms: Optional[ToolCommsSpec] = None
-    dynamic_tools = False
+    _agent_comms: Optional[SkillCommsSpec] = None
+    dynamic_skills = False
 
     def __str__(self) -> str:
-        return f"ToolContainer({self.__class__.__name__})"
+        return f"SkillContainer({self.__class__.__name__})"
 
     @rpc
-    def tools(self) -> dict[str, ToolConfig]:
+    def skills(self) -> dict[str, SkillConfig]:
         # Avoid recursion by excluding this property itself
         return {
-            name: getattr(self, name)._tool
+            name: getattr(self, name)._skill
             for name in dir(self)
             if not name.startswith("_")
-            and name != "tools"
-            and hasattr(getattr(self, name), "_tool")
+            and name != "skills"
+            and hasattr(getattr(self, name), "_skill")
         }
 
     @property
-    def agent_comms(self) -> ToolCommsSpec:
+    def agent_comms(self) -> SkillCommsSpec:
         if self._agent_comms is None:
             self._agent_comms = self.comms.agent_comms_class()
         return self._agent_comms

@@ -51,24 +51,24 @@ class Return(Enum):
 
 
 @dataclass
-class ToolConfig:
+class SkillConfig:
     name: str
     reducer: Reducer
     stream: Stream
     ret: Return
     f: Callable | None = None
 
-    def bind(self, f: Callable) -> "ToolConfig":
+    def bind(self, f: Callable) -> "SkillConfig":
         self.f = f
         return self
 
     def call(self, *args, **kwargs) -> Any:
         if self.f is None:
             raise ValueError(
-                "Function is not bound to the ToolConfig. This shiould be called only within AgentListener."
+                "Function is not bound to the SkillConfig. This should be called only within AgentListener."
             )
 
-        return self.f(*args, **kwargs, toolcall=True)
+        return self.f(*args, **kwargs, skillcall=True)
 
     def __str__(self):
         parts = [f"name={self.name}"]
@@ -87,7 +87,7 @@ class ToolConfig:
 
         # Always show return mode
         parts.append(f"ret={self.ret.name}")
-        return f"Tool({', '.join(parts)})"
+        return f"Skill({', '.join(parts)})"
 
 
 class MsgType(Enum):
@@ -104,12 +104,12 @@ class AgentMsg(Timestamped):
 
     def __init__(
         self,
-        tool_name: str,
+        skill_name: str,
         content: str | int | float | dict | list,
         type: Optional[MsgType] = MsgType.ret,
     ) -> None:
         self.ts = time.time()
-        self.tool_name = tool_name
+        self.skill_name = skill_name
         self.content = content
         self.type = type
 

@@ -21,11 +21,12 @@ from typing import Callable, Generic, Optional, TypeVar, Union
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service import Service
-from dimos.protocol.tool.types import AgentMsg, Call, MsgType, Reducer, Stream, ToolConfig
+from dimos.protocol.skill.types import AgentMsg, Call, MsgType, Reducer, SkillConfig, Stream
 from dimos.types.timestamped import Timestamped
 
 
-class ToolCommsSpec:
+# defines a protocol for communication between skills and agents
+class SkillCommsSpec:
     @abstractmethod
     def publish(self, msg: AgentMsg) -> None: ...
 
@@ -50,7 +51,7 @@ class PubSubCommsConfig(Generic[TopicT, MsgT]):
     autostart: bool = True
 
 
-class PubSubComms(Service[PubSubCommsConfig], ToolCommsSpec):
+class PubSubComms(Service[PubSubCommsConfig], SkillCommsSpec):
     default_config: type[PubSubCommsConfig] = PubSubCommsConfig
 
     def __init__(self, **kwargs) -> None:
@@ -85,9 +86,9 @@ class LCMCommsConfig(PubSubCommsConfig[str, AgentMsg]):
     topic: str = "/agent"
     pubsub: Union[type[PubSub], PubSub, None] = PickleLCM
     # lcm needs to be started only if receiving
-    # tool comms are broadcast only in modules so we don't autostart
+    # skill comms are broadcast only in modules so we don't autostart
     autostart: bool = False
 
 
-class LCMToolComms(PubSubComms):
+class LCMSkillComms(PubSubComms):
     default_config: type[LCMCommsConfig] = LCMCommsConfig
