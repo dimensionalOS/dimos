@@ -576,7 +576,6 @@ class UnitreeGo2:
 
             if self.navigator.is_goal_reached():
                 logger.info("Object tracking goal reached")
-                self.object_tracker.stop_track()
                 return True
 
             time.sleep(0.2)
