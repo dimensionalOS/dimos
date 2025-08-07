@@ -295,6 +295,9 @@ class UnitreeGo2:
         self.navigator.goal.transport = core.LCMTransport("/navigation_goal", PoseStamped)
         self.navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
         self.navigator.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+        self.navigator.global_costmap.transport = core.LCMTransport(
+            "/global_costmap", OccupancyGrid
+        )
         self.global_planner.path.transport = core.LCMTransport("/global_path", Path)
         self.local_planner.cmd_vel.transport = core.LCMTransport("/cmd_vel", Vector3)
         self.frontier_explorer.goal_request.transport = core.LCMTransport(

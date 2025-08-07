@@ -98,9 +98,9 @@ class WavefrontFrontierExplorer(Module):
 
     def __init__(
         self,
-        min_frontier_size: int = 8,
-        occupancy_threshold: int = 80,
-        min_distance_from_obstacles: float = 0.6,
+        min_frontier_size: int = 5,
+        occupancy_threshold: int = 99,
+        min_distance_from_obstacles: float = 0.2,
         info_gain_threshold: float = 0.03,
         num_no_gain_attempts: int = 4,
         goal_timeout: float = 30.0,

@@ -173,11 +173,10 @@ class OccupancyGrid(Timestamped):
         """Percentage of cells that are unknown."""
         return (self.unknown_cells / self.total_cells * 100) if self.total_cells > 0 else 0.0
 
-    def inflate(self, radius: float, cost_scaling_factor: float = 0.0) -> "OccupancyGrid":
-        """Inflate obstacles by a given radius (vectorized).
+    def inflate(self, radius: float) -> "OccupancyGrid":
+        """Inflate obstacles by a given radius (binary inflation).
         Args:
             radius: Inflation radius in meters
-            cost_scaling_factor: Factor for decay (0.0 = no decay, binary inflation)
         Returns:
             New OccupancyGrid with inflated obstacles
         """
@@ -187,31 +186,18 @@ class OccupancyGrid(Timestamped):
         # Get grid as numpy array
         grid_array = self.grid
 
-        # Create square kernel for binary inflation
+        # Create circular kernel for binary inflation
         kernel_size = 2 * cell_radius + 1
-        kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+        y, x = np.ogrid[-cell_radius : cell_radius + 1, -cell_radius : cell_radius + 1]
+        kernel = (x**2 + y**2 <= cell_radius**2).astype(np.uint8)
 
         # Find occupied cells
         occupied_mask = grid_array >= CostValues.OCCUPIED
 
-        if cost_scaling_factor == 0.0:
-            # Binary inflation
-            inflated = ndimage.binary_dilation(occupied_mask, structure=kernel)
-            result_grid = grid_array.copy()
-            result_grid[inflated] = CostValues.OCCUPIED
-        else:
-            # Distance-based inflation with decay
-            # Create distance transform from occupied cells
-            distance_field = ndimage.distance_transform_edt(~occupied_mask)
-
-            # Apply exponential decay based on distance
-            cost_field = CostValues.OCCUPIED * np.exp(-cost_scaling_factor * distance_field)
-
-            # Combine with original grid, keeping higher values
-            result_grid = np.maximum(grid_array, cost_field).astype(np.int8)
-
-            # Ensure occupied cells remain at max value
-            result_grid[occupied_mask] = CostValues.OCCUPIED
+        # Binary inflation
+        inflated = ndimage.binary_dilation(occupied_mask, structure=kernel)
+        result_grid = grid_array.copy()
+        result_grid[inflated] = CostValues.OCCUPIED
 
         # Create new OccupancyGrid with inflated data using numpy constructor
         return OccupancyGrid(
@@ -349,7 +335,7 @@ class OccupancyGrid(Timestamped):
         min_height: float = 0.1,
         max_height: float = 2.0,
         frame_id: Optional[str] = None,
-        mark_free_radius: float = 0.25,
+        mark_free_radius: float = 0.4,
     ) -> "OccupancyGrid":
         """Create an OccupancyGrid from a PointCloud2 message.
 
@@ -484,31 +470,28 @@ class OccupancyGrid(Timestamped):
 
         Args:
             obstacle_threshold: Cell values >= this are considered obstacles (default: 50)
-            max_distance: Maximum distance to compute gradient in meters (default: 5.0)
+            max_distance: Maximum distance to compute gradient in meters (default: 2.0)
 
         Returns:
             New OccupancyGrid with gradient values:
-            - -1: Unknown cells far from obstacles (beyond max_distance)
+            - -1: Unknown cells (preserved as-is)
             - 0: Free space far from obstacles
             - 1-99: Increasing cost as you approach obstacles
             - 100: At obstacles
 
-        Note: Unknown cells within max_distance of obstacles will have gradient
-        values assigned, allowing path planning through unknown areas.
+        Note: Unknown cells remain as unknown (-1) and do not receive gradient values.
         """
 
         # Remember which cells are unknown
-        unknown_mask = self.grid == -1
+        unknown_mask = self.grid == CostValues.UNKNOWN
 
-        # Create a working grid where unknown cells are treated as free for distance calculation
-        working_grid = self.grid.copy()
-        working_grid[unknown_mask] = 0  # Treat unknown as free for gradient computation
-
-        # Create binary obstacle map from working grid
+        # Create binary obstacle map
         # Consider cells >= threshold as obstacles (1), everything else as free (0)
-        obstacle_map = (working_grid >= obstacle_threshold).astype(np.float32)
+        # Unknown cells are not considered obstacles for distance calculation
+        obstacle_map = (self.grid >= obstacle_threshold).astype(np.float32)
 
         # Compute distance transform (distance to nearest obstacle in cells)
+        # Unknown cells are treated as if they don't exist for distance calculation
         distance_cells = ndimage.distance_transform_edt(1 - obstacle_map)
 
         # Convert to meters and clip to max distance
@@ -520,15 +503,13 @@ class OccupancyGrid(Timestamped):
         gradient_values = (1 - distance_meters / max_distance) * 100
 
         # Ensure obstacles are exactly 100
-        gradient_values[obstacle_map > 0] = 100
+        gradient_values[obstacle_map > 0] = CostValues.OCCUPIED
 
         # Convert to int8 for OccupancyGrid
         gradient_data = gradient_values.astype(np.int8)
 
-        # Only preserve unknown cells that are beyond max_distance from any obstacle
-        # This allows gradient to spread through unknown areas near obstacles
-        far_unknown_mask = unknown_mask & (distance_meters >= max_distance)
-        gradient_data[far_unknown_mask] = -1
+        # Preserve unknown cells as unknown (don't apply gradient to them)
+        gradient_data[unknown_mask] = CostValues.UNKNOWN
 
         # Create new OccupancyGrid with gradient
         gradient_grid = OccupancyGrid(

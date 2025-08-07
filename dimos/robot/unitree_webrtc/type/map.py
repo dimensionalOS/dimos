@@ -65,7 +65,7 @@ class Map(Module):
                     max_height=0.6,
                 )
                 .inflate(0.1)
-                .gradient(max_distance=1.5)
+                .gradient(max_distance=1.0)
             )
 
             self.global_costmap.publish(occupancygrid)

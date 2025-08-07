@@ -25,7 +25,9 @@ from typing import Optional
 
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.navigation.local_planner.local_planner import BaseLocalPlanner
+from dimos.navigation.bt_navigator.goal_validator import find_safe_goal
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 from dimos_lcm.std_msgs import Bool
@@ -59,6 +61,7 @@ class BehaviorTreeNavigator(Module):
     # LCM inputs
     odom: In[PoseStamped] = None
     goal_request: In[PoseStamped] = None  # Input for receiving goal requests
+    global_costmap: In[OccupancyGrid] = None
 
     # LCM outputs
     goal: Out[PoseStamped] = None
@@ -95,6 +98,7 @@ class BehaviorTreeNavigator(Module):
 
         # Latest data
         self.latest_odom: Optional[PoseStamped] = None
+        self.latest_costmap: Optional[OccupancyGrid] = None
 
         # Control thread
         self.control_thread: Optional[threading.Thread] = None
@@ -112,6 +116,7 @@ class BehaviorTreeNavigator(Module):
         # Subscribe to inputs
         self.odom.subscribe(self._on_odom)
         self.goal_request.subscribe(self._on_goal_request)
+        self.global_costmap.subscribe(self._on_costmap)
 
         # Start control thread
         self.stop_event.clear()
@@ -193,12 +198,12 @@ class BehaviorTreeNavigator(Module):
         """Handle incoming goal requests."""
         self.set_goal(msg)
 
+    def _on_costmap(self, msg: OccupancyGrid):
+        """Handle incoming costmap messages."""
+        self.latest_costmap = msg
+
     def _transform_goal_to_odom_frame(self, goal: PoseStamped) -> Optional[PoseStamped]:
         """Transform goal pose to the odometry frame."""
-        if not self.latest_odom:
-            logger.warning("No odometry available yet, cannot transform goal")
-            return None
-
         if not goal.frame_id:
             return goal
 
@@ -241,8 +246,28 @@ class BehaviorTreeNavigator(Module):
                 with self.goal_lock:
                     goal = self.current_goal
 
-                if goal is not None:
-                    self.goal.publish(goal)
+                if goal is not None and self.latest_costmap is not None:
+                    # Find safe goal position
+                    safe_goal_pos = find_safe_goal(
+                        self.latest_costmap,
+                        goal.position,
+                        algorithm="bfs",
+                        cost_threshold=80,
+                        min_clearance=0.1,
+                        max_search_distance=5.0,
+                    )
+
+                    # Create new goal with safe position
+                    if safe_goal_pos:
+                        safe_goal = PoseStamped(
+                            position=safe_goal_pos,
+                            orientation=goal.orientation,
+                            frame_id=goal.frame_id,
+                            ts=goal.ts,
+                        )
+                        self.goal.publish(safe_goal)
+                    else:
+                        self.cancel_goal()
 
                     if self.local_planner.is_goal_reached():
                         with self._goal_reached_lock:
