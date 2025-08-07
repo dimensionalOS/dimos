@@ -100,6 +100,7 @@ class TestUnitreeGo2CoreModules:
             navigator.goal.transport = core.LCMTransport("/navigation_goal", PoseStamped)
             navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
             navigator.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+            navigator.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)
             global_planner.path.transport = core.LCMTransport("/global_path", Path)
             local_planner.cmd_vel.transport = core.LCMTransport("/cmd_vel", Vector3)
 
