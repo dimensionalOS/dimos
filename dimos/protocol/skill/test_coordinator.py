@@ -23,44 +23,30 @@ def test_coordinator_skill_export():
     skillCoordinator.register_skills(TestContainer())
 
     assert skillCoordinator.get_tools() == [
-        (
-            "add",
-            {
-                "function": {
-                    "description": "",
-                    "name": "add",
-                    "parameters": {
-                        "properties": {
-                            "self": {"type": "string"},
-                            "x": {"type": "integer"},
-                            "y": {"type": "integer"},
-                        },
-                        "required": ["self", "x", "y"],
-                        "type": "object",
-                    },
+        {
+            "function": {
+                "description": "",
+                "name": "add",
+                "parameters": {
+                    "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
+                    "required": ["x", "y"],
+                    "type": "object",
                 },
-                "type": "function",
             },
-        ),
-        (
-            "delayadd",
-            {
-                "function": {
-                    "description": "",
-                    "name": "delayadd",
-                    "parameters": {
-                        "properties": {
-                            "self": {"type": "string"},
-                            "x": {"type": "integer"},
-                            "y": {"type": "integer"},
-                        },
-                        "required": ["self", "x", "y"],
-                        "type": "object",
-                    },
+            "type": "function",
+        },
+        {
+            "function": {
+                "description": "",
+                "name": "delayadd",
+                "parameters": {
+                    "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
+                    "required": ["x", "y"],
+                    "type": "object",
                 },
-                "type": "function",
             },
-        ),
+            "type": "function",
+        },
     ]
 
     print(pprint(skillCoordinator.get_tools()))

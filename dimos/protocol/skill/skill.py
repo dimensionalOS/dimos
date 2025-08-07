@@ -14,7 +14,7 @@
 
 import inspect
 import threading
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, get_origin, get_args, Union, List, Dict
 
 from dimos.core import rpc
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
@@ -28,35 +28,78 @@ from dimos.protocol.skill.types import (
 )
 
 
-def function_to_schema(func) -> dict:
+def python_type_to_json_schema(python_type) -> dict:
+    """Convert Python type annotations to JSON Schema format."""
+    # Handle None/NoneType
+    if python_type is type(None) or python_type is None:
+        return {"type": "null"}
+
+    # Handle Union types (including Optional)
+    origin = get_origin(python_type)
+    if origin is Union:
+        args = get_args(python_type)
+        # Handle Optional[T] which is Union[T, None]
+        if len(args) == 2 and type(None) in args:
+            non_none_type = args[0] if args[1] is type(None) else args[1]
+            schema = python_type_to_json_schema(non_none_type)
+            # For OpenAI function calling, we don't use anyOf for optional params
+            return schema
+        else:
+            # For other Union types, use anyOf
+            return {"anyOf": [python_type_to_json_schema(arg) for arg in args]}
+
+    # Handle List/list types
+    if origin in (list, List):
+        args = get_args(python_type)
+        if args:
+            return {"type": "array", "items": python_type_to_json_schema(args[0])}
+        return {"type": "array"}
+
+    # Handle Dict/dict types
+    if origin in (dict, Dict):
+        return {"type": "object"}
+
+    # Handle basic types
     type_map = {
-        str: "string",
-        int: "integer",
-        float: "number",
-        bool: "boolean",
-        list: "array",
-        dict: "object",
-        type(None): "null",
+        str: {"type": "string"},
+        int: {"type": "integer"},
+        float: {"type": "number"},
+        bool: {"type": "boolean"},
+        list: {"type": "array"},
+        dict: {"type": "object"},
     }
 
+    return type_map.get(python_type, {"type": "string"})
+
+
+def function_to_schema(func) -> dict:
+    """Convert a function to OpenAI function schema format."""
     try:
         signature = inspect.signature(func)
     except ValueError as e:
         raise ValueError(f"Failed to get signature for function {func.__name__}: {str(e)}")
 
-    parameters = {}
-    for param in signature.parameters.values():
-        try:
-            param_type = type_map.get(param.annotation, "string")
-        except KeyError as e:
-            raise KeyError(
-                f"Unknown type annotation {param.annotation} for parameter {param.name}: {str(e)}"
-            )
-        parameters[param.name] = {"type": param_type}
+    properties = {}
+    required = []
 
-    required = [
-        param.name for param in signature.parameters.values() if param.default == inspect._empty
-    ]
+    for param_name, param in signature.parameters.items():
+        # Skip 'self' parameter for methods
+        if param_name == "self":
+            continue
+
+        # Get the type annotation
+        if param.annotation != inspect.Parameter.empty:
+            param_schema = python_type_to_json_schema(param.annotation)
+        else:
+            # Default to string if no type annotation
+            param_schema = {"type": "string"}
+
+        # Add description from docstring if available (would need more sophisticated parsing)
+        properties[param_name] = param_schema
+
+        # Add to required list if no default value
+        if param.default == inspect.Parameter.empty:
+            required.append(param_name)
 
     return {
         "type": "function",
@@ -65,7 +108,7 @@ def function_to_schema(func) -> dict:
             "description": (func.__doc__ or "").strip(),
             "parameters": {
                 "type": "object",
-                "properties": parameters,
+                "properties": properties,
                 "required": required,
             },
         },

@@ -62,7 +62,7 @@ def test_internals():
 
     print(agentInterface)
 
-    agentInterface.execute_skill("delayadd", 1, 2)
+    agentInterface.call("delayadd", 1, 2)
 
     time.sleep(0.25)
     print(agentInterface)
@@ -83,7 +83,7 @@ def test_standard_usage():
     print(agentInterface.skills())
 
     # we can execute a skill
-    agentInterface.execute_skill("delayadd", 1, 2)
+    agentInterface.call("delayadd", 1, 2)
 
     # while skill is executing, we can introspect the state
     # (we see that the skill is running)
@@ -118,7 +118,7 @@ def test_module():
     agentInterface.register_skills(mock_module)
 
     # we can execute a skill
-    agentInterface.execute_skill("add", 1, 2)
+    agentInterface.call("add", 1, 2)
 
     # while skill is executing, we can introspect the state
     # (we see that the skill is running)

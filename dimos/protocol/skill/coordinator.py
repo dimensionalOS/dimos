@@ -48,7 +48,7 @@ class SkillState(TimestampedCollection):
     def __init__(self, name: str, skill_config: Optional[SkillConfig] = None) -> None:
         super().__init__()
         self.skill_config = skill_config or SkillConfig(
-            name=name, stream=Stream.none, ret=Return.none, reducer=Reducer.none
+            name=name, stream=Stream.none, ret=Return.none, reducer=Reducer.none, schema={}
         )
 
         self.state = SkillStateEnum.pending
@@ -99,6 +99,8 @@ class SkillState(TimestampedCollection):
 
 
 class SkillCoordinator(SkillContainer):
+    empty: bool = True
+
     _static_containers: list[SkillContainer]
     _dynamic_containers: list[SkillContainer]
     _skill_state: dict[str, SkillState]
@@ -123,6 +125,12 @@ class SkillCoordinator(SkillContainer):
 
     def stop(self) -> None:
         self.agent_comms.stop()
+
+    def len(self) -> int:
+        return len(self._skills)
+
+    def __len__(self) -> int:
+        return self.len()
 
     # This is used by agent to call skills
     def call(self, skill_name: str, *args, **kwargs) -> None:
@@ -209,6 +217,7 @@ class SkillCoordinator(SkillContainer):
     # Dynamic containers will be queried at runtime via
     # .skills() method
     def register_skills(self, container: SkillContainer):
+        self.empty = False
         if not container.dynamic_skills:
             logger.info(f"Registering static skill container, {container}")
             self._static_containers.append(container)
@@ -235,5 +244,5 @@ class SkillCoordinator(SkillContainer):
 
         return all_skills
 
-    def get_tools(self) -> list[str, dict]:
-        return [(name, skill.schema) for name, skill in self.skills().items()]
+    def get_tools(self) -> list[dict]:
+        return [skill.schema for skill in self.skills().values()]
