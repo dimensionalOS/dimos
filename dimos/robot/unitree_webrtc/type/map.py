@@ -32,6 +32,7 @@ class Map(Module):
     lidar: In[LidarMessage] = None
     global_map: Out[LidarMessage] = None
     global_costmap: Out[OccupancyGrid] = None
+    local_costmap: Out[OccupancyGrid] = None
 
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
 
@@ -59,12 +60,12 @@ class Map(Module):
             occupancygrid = (
                 OccupancyGrid.from_pointcloud(
                     self.to_lidar_message(),
-                    resolution=0.05,
-                    min_height=0.1,
-                    max_height=2.0,
+                    resolution=self.cost_resolution,
+                    min_height=0.15,
+                    max_height=0.6,
                 )
                 .inflate(0.1)
-                .gradient()
+                .gradient(max_distance=1.0)
             )
 
             self.global_costmap.publish(occupancygrid)
@@ -91,19 +92,17 @@ class Map(Module):
         """Voxelise *frame* and splice it into the running map."""
         new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
-        return self
-
-    def consume(self, observable: Observable[LidarMessage]) -> Observable["Map"]:
-        """Reactive operator that folds a stream of `LidarMessage` into the map."""
-        return observable.pipe(ops.map(self.add_frame))
+        local_costmap = OccupancyGrid.from_pointcloud(
+            frame,
+            resolution=self.cost_resolution,
+            min_height=0.15,
+            max_height=0.6,
+        ).gradient(max_distance=0.25)
+        self.local_costmap.publish(local_costmap)
 
     @property
     def o3d_geometry(self) -> o3d.geometry.PointCloud:
         return self.pointcloud
-
-    @rpc
-    def costmap(self) -> OccupancyGrid:
-        return OccupancyGrid.from_pointcloud(self.to_PointCloud2())
 
 
 def splice_sphere(
@@ -149,21 +148,3 @@ def splice_cylinder(
 
     survivors = map_pcd.select_by_index(victims, invert=True)
     return survivors + patch_pcd
-
-
-def _inflate_lethal(costmap: np.ndarray, radius: int, lethal_val: int = 100) -> np.ndarray:
-    """Return *costmap* with lethal cells dilated by *radius* grid steps (circular)."""
-    if radius <= 0 or not np.any(costmap == lethal_val):
-        return costmap
-
-    mask = costmap == lethal_val
-    dilated = mask.copy()
-    for dy in range(-radius, radius + 1):
-        for dx in range(-radius, radius + 1):
-            if dx * dx + dy * dy > radius * radius or (dx == 0 and dy == 0):
-                continue
-            dilated |= np.roll(mask, shift=(dy, dx), axis=(0, 1))
-
-    out = costmap.copy()
-    out[dilated] = lethal_val
-    return out

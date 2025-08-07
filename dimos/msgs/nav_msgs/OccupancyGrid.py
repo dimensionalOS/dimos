@@ -14,13 +14,14 @@
 
 from __future__ import annotations
 
-import math
+import time
 from enum import IntEnum
 from typing import TYPE_CHECKING, BinaryIO, Optional
 
 import numpy as np
 from dimos_lcm.nav_msgs import MapMetaData
 from dimos_lcm.nav_msgs import OccupancyGrid as LCMOccupancyGrid
+from dimos_lcm.std_msgs import Time as LCMTime
 from scipy import ndimage
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
@@ -79,7 +80,6 @@ class OccupancyGrid(Timestamped):
             frame_id: Reference frame
             ts: Timestamp (defaults to current time if 0)
         """
-        import time
 
         self.frame_id = frame_id
         self.ts = ts if ts != 0 else time.time()
@@ -114,7 +114,6 @@ class OccupancyGrid(Timestamped):
 
     def _to_lcm_time(self):
         """Convert timestamp to LCM Time."""
-        from dimos_lcm.std_msgs import Time as LCMTime
 
         s = int(self.ts)
         return LCMTime(sec=s, nsec=int((self.ts - s) * 1_000_000_000))
@@ -174,11 +173,10 @@ class OccupancyGrid(Timestamped):
         """Percentage of cells that are unknown."""
         return (self.unknown_cells / self.total_cells * 100) if self.total_cells > 0 else 0.0
 
-    def inflate(self, radius: float, cost_scaling_factor: float = 0.0) -> "OccupancyGrid":
-        """Inflate obstacles by a given radius (vectorized).
+    def inflate(self, radius: float) -> "OccupancyGrid":
+        """Inflate obstacles by a given radius (binary inflation).
         Args:
             radius: Inflation radius in meters
-            cost_scaling_factor: Factor for decay (0.0 = no decay, binary inflation)
         Returns:
             New OccupancyGrid with inflated obstacles
         """
@@ -188,31 +186,18 @@ class OccupancyGrid(Timestamped):
         # Get grid as numpy array
         grid_array = self.grid
 
-        # Create square kernel for binary inflation
+        # Create circular kernel for binary inflation
         kernel_size = 2 * cell_radius + 1
-        kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+        y, x = np.ogrid[-cell_radius : cell_radius + 1, -cell_radius : cell_radius + 1]
+        kernel = (x**2 + y**2 <= cell_radius**2).astype(np.uint8)
 
         # Find occupied cells
         occupied_mask = grid_array >= CostValues.OCCUPIED
 
-        if cost_scaling_factor == 0.0:
-            # Binary inflation
-            inflated = ndimage.binary_dilation(occupied_mask, structure=kernel)
-            result_grid = grid_array.copy()
-            result_grid[inflated] = CostValues.OCCUPIED
-        else:
-            # Distance-based inflation with decay
-            # Create distance transform from occupied cells
-            distance_field = ndimage.distance_transform_edt(~occupied_mask)
-
-            # Apply exponential decay based on distance
-            cost_field = CostValues.OCCUPIED * np.exp(-cost_scaling_factor * distance_field)
-
-            # Combine with original grid, keeping higher values
-            result_grid = np.maximum(grid_array, cost_field).astype(np.int8)
-
-            # Ensure occupied cells remain at max value
-            result_grid[occupied_mask] = CostValues.OCCUPIED
+        # Binary inflation
+        inflated = ndimage.binary_dilation(occupied_mask, structure=kernel)
+        result_grid = grid_array.copy()
+        result_grid[inflated] = CostValues.OCCUPIED
 
         # Create new OccupancyGrid with inflated data using numpy constructor
         return OccupancyGrid(
@@ -350,7 +335,7 @@ class OccupancyGrid(Timestamped):
         min_height: float = 0.1,
         max_height: float = 2.0,
         frame_id: Optional[str] = None,
-        mark_free_radius: float = 0.0,
+        mark_free_radius: float = 0.4,
     ) -> "OccupancyGrid":
         """Create an OccupancyGrid from a PointCloud2 message.
 
@@ -367,8 +352,6 @@ class OccupancyGrid(Timestamped):
         Returns:
             OccupancyGrid with occupied cells where points were projected
         """
-        # Import here to avoid circular dependency
-        from dimos.msgs.sensor_msgs import PointCloud2
 
         # Get points as numpy array
         points = cloud.as_numpy()
@@ -379,21 +362,25 @@ class OccupancyGrid(Timestamped):
                 width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
             )
 
-        # Filter points by height
-        height_mask = (points[:, 2] >= min_height) & (points[:, 2] <= max_height)
-        filtered_points = points[height_mask]
+        # Filter points by height for obstacles
+        obstacle_mask = (points[:, 2] >= min_height) & (points[:, 2] <= max_height)
+        obstacle_points = points[obstacle_mask]
 
-        if len(filtered_points) == 0:
-            # No points in height range
+        # Get points below min_height for marking as free space
+        ground_mask = points[:, 2] < min_height
+        ground_points = points[ground_mask]
+
+        # Find bounds of the point cloud in X-Y plane (use all points)
+        if len(points) > 0:
+            min_x = np.min(points[:, 0])
+            max_x = np.max(points[:, 0])
+            min_y = np.min(points[:, 1])
+            max_y = np.max(points[:, 1])
+        else:
+            # Return empty grid if no points at all
             return cls(
                 width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
             )
-
-        # Find bounds of the point cloud in X-Y plane
-        min_x = np.min(filtered_points[:, 0])
-        max_x = np.max(filtered_points[:, 0])
-        min_y = np.min(filtered_points[:, 1])
-        max_y = np.max(filtered_points[:, 1])
 
         # Add some padding around the bounds
         padding = 1.0  # 1 meter padding
@@ -416,23 +403,36 @@ class OccupancyGrid(Timestamped):
         # Initialize grid (all unknown)
         grid = np.full((height, width), -1, dtype=np.int8)
 
-        # Convert points to grid indices
-        grid_x = ((filtered_points[:, 0] - min_x) / resolution).astype(np.int32)
-        grid_y = ((filtered_points[:, 1] - min_y) / resolution).astype(np.int32)
+        # First, mark ground points as free space
+        if len(ground_points) > 0:
+            ground_x = ((ground_points[:, 0] - min_x) / resolution).astype(np.int32)
+            ground_y = ((ground_points[:, 1] - min_y) / resolution).astype(np.int32)
 
-        # Clip indices to grid bounds
-        grid_x = np.clip(grid_x, 0, width - 1)
-        grid_y = np.clip(grid_y, 0, height - 1)
+            # Clip indices to grid bounds
+            ground_x = np.clip(ground_x, 0, width - 1)
+            ground_y = np.clip(ground_y, 0, height - 1)
 
-        # Mark cells as occupied
-        grid[grid_y, grid_x] = 100  # Lethal obstacle
+            # Mark ground cells as free
+            grid[ground_y, ground_x] = 0  # Free space
 
-        # Mark free space around obstacles based on mark_free_radius
+        # Then mark obstacle points (will override ground if at same location)
+        if len(obstacle_points) > 0:
+            obs_x = ((obstacle_points[:, 0] - min_x) / resolution).astype(np.int32)
+            obs_y = ((obstacle_points[:, 1] - min_y) / resolution).astype(np.int32)
+
+            # Clip indices to grid bounds
+            obs_x = np.clip(obs_x, 0, width - 1)
+            obs_y = np.clip(obs_y, 0, height - 1)
+
+            # Mark cells as occupied
+            grid[obs_y, obs_x] = 100  # Lethal obstacle
+
+        # Apply mark_free_radius to expand free space areas
         if mark_free_radius > 0:
-            # Mark a specified radius around occupied cells as free
-            from scipy.ndimage import binary_dilation
+            # Expand existing free space areas by the specified radius
+            # This will NOT expand from obstacles, only from free space
 
-            occupied_mask = grid == 100
+            free_mask = grid == 0  # Current free space
             free_radius_cells = int(np.ceil(mark_free_radius / resolution))
 
             # Create circular kernel
@@ -442,20 +442,11 @@ class OccupancyGrid(Timestamped):
             ]
             kernel = x**2 + y**2 <= free_radius_cells**2
 
-            known_area = binary_dilation(occupied_mask, structure=kernel, iterations=1)
-            # Mark non-occupied cells in the known area as free
-            grid[known_area & (grid != 100)] = 0
-        else:
-            # Default: only mark immediate neighbors as free to preserve unknown
-            from scipy.ndimage import binary_dilation
+            # Dilate free space areas
+            expanded_free = ndimage.binary_dilation(free_mask, structure=kernel, iterations=1)
 
-            occupied_mask = grid == 100
-            # Use a small 3x3 kernel to only mark immediate neighbors
-            structure = np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]])
-            immediate_neighbors = binary_dilation(occupied_mask, structure=structure, iterations=1)
-
-            # Mark only immediate neighbors as free (not the occupied cells themselves)
-            grid[immediate_neighbors & (grid != 100)] = 0
+            # Mark expanded areas as free, but don't override obstacles
+            grid[expanded_free & (grid != 100)] = 0
 
         # Create and return OccupancyGrid
         # Get timestamp from cloud if available
@@ -479,31 +470,28 @@ class OccupancyGrid(Timestamped):
 
         Args:
             obstacle_threshold: Cell values >= this are considered obstacles (default: 50)
-            max_distance: Maximum distance to compute gradient in meters (default: 5.0)
+            max_distance: Maximum distance to compute gradient in meters (default: 2.0)
 
         Returns:
             New OccupancyGrid with gradient values:
-            - -1: Unknown cells far from obstacles (beyond max_distance)
+            - -1: Unknown cells (preserved as-is)
             - 0: Free space far from obstacles
             - 1-99: Increasing cost as you approach obstacles
             - 100: At obstacles
 
-        Note: Unknown cells within max_distance of obstacles will have gradient
-        values assigned, allowing path planning through unknown areas.
+        Note: Unknown cells remain as unknown (-1) and do not receive gradient values.
         """
 
         # Remember which cells are unknown
-        unknown_mask = self.grid == -1
+        unknown_mask = self.grid == CostValues.UNKNOWN
 
-        # Create a working grid where unknown cells are treated as free for distance calculation
-        working_grid = self.grid.copy()
-        working_grid[unknown_mask] = 0  # Treat unknown as free for gradient computation
-
-        # Create binary obstacle map from working grid
+        # Create binary obstacle map
         # Consider cells >= threshold as obstacles (1), everything else as free (0)
-        obstacle_map = (working_grid >= obstacle_threshold).astype(np.float32)
+        # Unknown cells are not considered obstacles for distance calculation
+        obstacle_map = (self.grid >= obstacle_threshold).astype(np.float32)
 
         # Compute distance transform (distance to nearest obstacle in cells)
+        # Unknown cells are treated as if they don't exist for distance calculation
         distance_cells = ndimage.distance_transform_edt(1 - obstacle_map)
 
         # Convert to meters and clip to max distance
@@ -515,15 +503,13 @@ class OccupancyGrid(Timestamped):
         gradient_values = (1 - distance_meters / max_distance) * 100
 
         # Ensure obstacles are exactly 100
-        gradient_values[obstacle_map > 0] = 100
+        gradient_values[obstacle_map > 0] = CostValues.OCCUPIED
 
         # Convert to int8 for OccupancyGrid
         gradient_data = gradient_values.astype(np.int8)
 
-        # Only preserve unknown cells that are beyond max_distance from any obstacle
-        # This allows gradient to spread through unknown areas near obstacles
-        far_unknown_mask = unknown_mask & (distance_meters >= max_distance)
-        gradient_data[far_unknown_mask] = -1
+        # Preserve unknown cells as unknown (don't apply gradient to them)
+        gradient_data[unknown_mask] = CostValues.UNKNOWN
 
         # Create new OccupancyGrid with gradient
         gradient_grid = OccupancyGrid(

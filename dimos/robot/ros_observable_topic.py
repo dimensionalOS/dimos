@@ -23,8 +23,8 @@ from rxpy_backpressure import BackPressure
 from nav_msgs import msg
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import get_scheduler
-from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector
+from dimos.msgs.nav_msgs import OccupancyGrid
 
 from typing import Union, Callable, Any
 
@@ -37,8 +37,7 @@ from rclpy.qos import (
 
 __all__ = ["ROSObservableTopicAbility", "QOS"]
 
-ConversionType = Costmap
-TopicType = Union[ConversionType, msg.OccupancyGrid, msg.Odometry]
+TopicType = Union[OccupancyGrid, msg.OccupancyGrid, msg.Odometry]
 
 
 class QOS(enum.Enum):
@@ -82,15 +81,15 @@ class ROSObservableTopicAbility:
     #                          └──► observe_on(pool) ─► backpressure.latest ─► sub3 (slower)
     #
     def _maybe_conversion(self, msg_type: TopicType, callback) -> Callable[[TopicType], Any]:
-        if msg_type == Costmap:
-            return lambda msg: callback(Costmap.from_msg(msg))
+        if msg_type == "Costmap":
+            return lambda msg: callback(OccupancyGrid.from_msg(msg))
         # just for test, not sure if this Vector auto-instantiation is used irl
         if msg_type == Vector:
             return lambda msg: callback(Vector.from_msg(msg))
         return callback
 
     def _sub_msg_type(self, msg_type):
-        if msg_type == Costmap:
+        if msg_type == "Costmap":
             return msg.OccupancyGrid
 
         if msg_type == Vector:

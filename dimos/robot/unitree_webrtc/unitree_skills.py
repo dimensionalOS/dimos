@@ -26,7 +26,7 @@ else:
 
 from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
 from dimos.types.constants import Colors
-from dimos.types.vector import Vector
+from dimos.msgs.geometry_msgs import Vector3
 from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD
 
 # Module-level constant for Unitree WebRTC control definitions
@@ -231,8 +231,8 @@ class MyUnitreeSkills(SkillLibrary):
                         f"{Colors.RESET_COLOR}"
                     )
                 else:
-                    # Use WebRTC publish_request interface through the robot's webrtc_connection
-                    result = self._robot.webrtc_connection.publish_request(
+                    # Use WebRTC publish_request interface through the robot's connection module
+                    result = self._robot.connection.publish_request(
                         RTC_TOPIC["SPORT_MOD"], {"api_id": self._app_id}
                     )
                     string = f"{Colors.GREEN_PRINT_COLOR}{self.__class__.__name__} was successful: id={self._app_id}{Colors.RESET_COLOR}"
@@ -262,7 +262,8 @@ class MyUnitreeSkills(SkillLibrary):
         duration: float = Field(default=0.0, description="How long to move (seconds).")
 
         def __call__(self):
-            return self._robot.move(Vector(self.x, self.y, self.yaw), duration=self.duration)
+            self._robot.move(Vector3(self.x, self.y, self.yaw), duration=self.duration)
+            return f"started moving with velocity={self.x}, {self.y}, {self.yaw} for {self.duration} seconds"
 
     class Wait(AbstractSkill):
         """Wait for a specified amount of time."""

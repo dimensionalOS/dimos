@@ -34,7 +34,6 @@ from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
 from dimos.utils.transform_utils import distance_angle_to_goal_xy
-from dimos.robot.local_planner.local_planner import navigate_to_goal_local
 
 logger = setup_logger("dimos.skills.semantic_map_skills")
 
@@ -653,27 +652,36 @@ class Explore(AbstractRobotSkill):
 
         try:
             # Start exploration using the robot's explore method
-            result = self._robot.explore(stop_event=self._stop_event)
+            result = self._robot.explore()
 
             if result:
-                logger.info("Exploration completed successfully - no more frontiers found")
+                logger.info("Exploration started successfully")
+
+                # Wait for exploration to complete or timeout
+                start_time = time.time()
+                while time.time() - start_time < self.timeout:
+                    if self._stop_event.is_set():
+                        logger.info("Exploration stopped by user")
+                        self._robot.stop_exploration()
+                        return {
+                            "success": False,
+                            "message": "Exploration stopped by user",
+                        }
+                    time.sleep(0.5)
+
+                # Timeout reached, stop exploration
+                logger.info(f"Exploration timeout reached after {self.timeout} seconds")
+                self._robot.stop_exploration()
                 return {
                     "success": True,
-                    "message": "Exploration completed - all accessible areas explored",
+                    "message": f"Exploration ran for {self.timeout} seconds",
                 }
             else:
-                if self._stop_event.is_set():
-                    logger.info("Exploration stopped by user")
-                    return {
-                        "success": False,
-                        "message": "Exploration stopped by user",
-                    }
-                else:
-                    logger.warning("Exploration did not complete successfully")
-                    return {
-                        "success": False,
-                        "message": "Exploration failed or was interrupted",
-                    }
+                logger.warning("Failed to start exploration")
+                return {
+                    "success": False,
+                    "message": "Failed to start exploration",
+                }
 
         except Exception as e:
             error_msg = f"Error during exploration: {e}"
@@ -696,4 +704,11 @@ class Explore(AbstractRobotSkill):
         skill_library = self._robot.get_skills()
         self.unregister_as_running("Explore", skill_library)
         self._stop_event.set()
+
+        # Stop the robot's exploration if it's running
+        try:
+            self._robot.stop_exploration()
+        except Exception as e:
+            logger.error(f"Error stopping exploration: {e}")
+
         return "Exploration stopped"

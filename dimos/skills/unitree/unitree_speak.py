@@ -82,9 +82,7 @@ class UnitreeSpeak(AbstractRobotSkill):
 
         request_data = {"api_id": api_id, "parameter": json.dumps(parameter) if parameter else "{}"}
 
-        return self._robot.webrtc_connection.publish_request(
-            RTC_TOPIC["AUDIO_HUB_REQ"], request_data
-        )
+        return self._robot.connection.publish_request(RTC_TOPIC["AUDIO_HUB_REQ"], request_data)
 
     def _upload_audio_to_robot(self, audio_data: bytes, filename: str) -> str:
         try:

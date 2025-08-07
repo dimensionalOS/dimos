@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import subprocess
+import threading
 import time
 from unittest.mock import patch
 
@@ -179,3 +180,211 @@ def test_lcm_geometry_msgs_autopickle_pubsub(test_message):
     assert received_topic == topic
 
     print(test_message, topic)
+
+
+def test_wait_for_message_basic():
+    """Test basic wait_for_message functionality - message arrives before timeout."""
+    lcm = LCM(autoconf=True)
+    lcm.start()
+
+    topic = Topic(topic="/test_wait", lcm_type=MockLCMMessage)
+    test_message = MockLCMMessage("wait_test_data")
+
+    # Publish message after a short delay in another thread
+    def publish_delayed():
+        time.sleep(0.1)
+        lcm.publish(topic, test_message)
+
+    publisher_thread = threading.Thread(target=publish_delayed)
+    publisher_thread.start()
+
+    # Wait for message with 1 second timeout
+    start_time = time.time()
+    received_msg = lcm.wait_for_message(topic, timeout=1.0)
+    elapsed_time = time.time() - start_time
+
+    publisher_thread.join()
+
+    # Check that we received the message
+    assert received_msg is not None
+    assert isinstance(received_msg, MockLCMMessage)
+    assert received_msg.data == "wait_test_data"
+
+    # Check that we didn't wait the full timeout
+    assert elapsed_time < 0.5  # Should receive message in ~0.1 seconds
+
+
+def test_wait_for_message_timeout():
+    """Test wait_for_message timeout - no message published."""
+    lcm = LCM(autoconf=True)
+    lcm.start()
+
+    topic = Topic(topic="/test_timeout", lcm_type=MockLCMMessage)
+
+    # Wait for message that will never come
+    start_time = time.time()
+    received_msg = lcm.wait_for_message(topic, timeout=0.5)
+    elapsed_time = time.time() - start_time
+
+    # Check that we got None (timeout)
+    assert received_msg is None
+
+    # Check that we waited approximately the timeout duration
+    assert 0.4 < elapsed_time < 0.7  # Allow some tolerance
+
+
+def test_wait_for_message_immediate():
+    """Test wait_for_message with message published immediately after subscription."""
+    lcm = LCM(autoconf=True)
+    lcm.start()
+
+    topic = Topic(topic="/test_immediate", lcm_type=MockLCMMessage)
+    test_message = MockLCMMessage("immediate_data")
+
+    # Start waiting in a thread
+    received_msg = None
+
+    def wait_for_msg():
+        nonlocal received_msg
+        received_msg = lcm.wait_for_message(topic, timeout=1.0)
+
+    wait_thread = threading.Thread(target=wait_for_msg)
+    wait_thread.start()
+
+    # Give a tiny bit of time for subscription to be established
+    time.sleep(0.01)
+
+    # Now publish the message
+    start_time = time.time()
+    lcm.publish(topic, test_message)
+
+    # Wait for the thread to complete
+    wait_thread.join()
+    elapsed_time = time.time() - start_time
+
+    # Check that we received the message quickly
+    assert received_msg is not None
+    assert isinstance(received_msg, MockLCMMessage)
+    assert received_msg.data == "immediate_data"
+    assert elapsed_time < 0.2  # Should be nearly immediate
+
+
+def test_wait_for_message_multiple_sequential():
+    """Test multiple sequential wait_for_message calls."""
+    lcm = LCM(autoconf=True)
+    lcm.start()
+
+    topic = Topic(topic="/test_sequential", lcm_type=MockLCMMessage)
+
+    # Test multiple messages in sequence
+    messages = ["msg1", "msg2", "msg3"]
+
+    for msg_data in messages:
+        test_message = MockLCMMessage(msg_data)
+
+        # Publish in background
+        def publish_delayed(msg=test_message):
+            time.sleep(0.05)
+            lcm.publish(topic, msg)
+
+        publisher_thread = threading.Thread(target=publish_delayed)
+        publisher_thread.start()
+
+        # Wait and verify
+        received_msg = lcm.wait_for_message(topic, timeout=1.0)
+        assert received_msg is not None
+        assert received_msg.data == msg_data
+
+        publisher_thread.join()
+
+
+def test_wait_for_message_concurrent():
+    """Test concurrent wait_for_message calls on different topics."""
+    lcm = LCM(autoconf=True)
+    lcm.start()
+
+    topic1 = Topic(topic="/test_concurrent1", lcm_type=MockLCMMessage)
+    topic2 = Topic(topic="/test_concurrent2", lcm_type=MockLCMMessage)
+
+    message1 = MockLCMMessage("concurrent1")
+    message2 = MockLCMMessage("concurrent2")
+
+    received_messages = {}
+
+    def wait_for_topic(topic_name, topic):
+        msg = lcm.wait_for_message(topic, timeout=2.0)
+        received_messages[topic_name] = msg
+
+    # Start waiting on both topics
+    thread1 = threading.Thread(target=wait_for_topic, args=("topic1", topic1))
+    thread2 = threading.Thread(target=wait_for_topic, args=("topic2", topic2))
+
+    thread1.start()
+    thread2.start()
+
+    # Publish to both topics after a delay
+    time.sleep(0.1)
+    lcm.publish(topic1, message1)
+    lcm.publish(topic2, message2)
+
+    # Wait for both threads to complete
+    thread1.join(timeout=3.0)
+    thread2.join(timeout=3.0)
+
+    # Verify both messages were received
+    assert "topic1" in received_messages
+    assert "topic2" in received_messages
+    assert received_messages["topic1"].data == "concurrent1"
+    assert received_messages["topic2"].data == "concurrent2"
+
+
+def test_wait_for_message_wrong_topic():
+    """Test wait_for_message doesn't receive messages from wrong topic."""
+    lcm = LCM(autoconf=True)
+    lcm.start()
+
+    topic_correct = Topic(topic="/test_correct", lcm_type=MockLCMMessage)
+    topic_wrong = Topic(topic="/test_wrong", lcm_type=MockLCMMessage)
+
+    message = MockLCMMessage("wrong_topic_data")
+
+    # Publish to wrong topic
+    lcm.publish(topic_wrong, message)
+
+    # Wait on correct topic
+    received_msg = lcm.wait_for_message(topic_correct, timeout=0.3)
+
+    # Should timeout and return None
+    assert received_msg is None
+
+
+def test_wait_for_message_pickle():
+    """Test wait_for_message with PickleLCM."""
+    lcm = PickleLCM(autoconf=True)
+    lcm.start()
+
+    topic = Topic(topic="/test_pickle")
+    test_obj = {"key": "value", "number": 42}
+
+    # Publish after delay
+    def publish_delayed():
+        time.sleep(0.1)
+        lcm.publish(topic, test_obj)
+
+    publisher_thread = threading.Thread(target=publish_delayed)
+    publisher_thread.start()
+
+    # Wait for message
+    received_msg = lcm.wait_for_message(topic, timeout=1.0)
+
+    publisher_thread.join()
+
+    # Verify received object
+    assert received_msg is not None
+    # PickleLCM's wait_for_message returns the pickled bytes, need to decode
+    import pickle
+
+    decoded_msg = pickle.loads(received_msg)
+    assert decoded_msg == test_obj
+    assert decoded_msg["key"] == "value"
+    assert decoded_msg["number"] == 42
