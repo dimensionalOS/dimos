@@ -17,10 +17,11 @@
 import threading
 from typing import Any, Dict, List, Optional, Union
 
-from dimos.core import Module, In, Out, rpc
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse
+from dimos.agents.memory.base import AbstractAgentSemanticMemory
+from dimos.core import In, Module, Out, rpc
+from dimos.protocol.skill import SkillCoordinator
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
 
@@ -47,7 +48,7 @@ class BaseAgentModule(BaseAgent, Module):
         self,
         model: str = "openai::gpt-4o-mini",
         system_prompt: Optional[str] = None,
-        skills: Optional[Union[SkillLibrary, List[AbstractSkill], AbstractSkill]] = None,
+        skills: Optional[SkillCoordinator] = None,
         memory: Optional[AbstractAgentSemanticMemory] = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
@@ -111,6 +112,8 @@ class BaseAgentModule(BaseAgent, Module):
         """Start the agent module and connect streams."""
         logger.info(f"Starting agent module with model: {self.model}")
 
+        BaseAgent.start(self)
+
         # Primary AgentMessage input
         if self.message_in and self.message_in.connection is not None:
             try:
@@ -141,7 +144,7 @@ class BaseAgentModule(BaseAgent, Module):
         self._module_disposables.clear()
 
         # Dispose BaseAgent resources
-        self.dispose()
+        BaseAgent.stop(self)
 
         logger.info("Agent module stopped")
 

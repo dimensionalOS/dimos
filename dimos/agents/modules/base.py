@@ -36,6 +36,7 @@ except ImportError:
 
 logger = setup_logger("dimos.agents.modules.base")
 
+# TODO should this be an enum or something?
 # Vision-capable models
 VISION_MODELS = {
     "openai::gpt-4o",
@@ -109,7 +110,6 @@ class BaseAgent:
         self.agent_type = agent_type
 
         self.skills = skills if skills else SkillCoordinator()
-        self.skills.start()
 
         # Initialize memory - allow None for testing
         if memory is False:  # Explicit False means no memory
@@ -135,6 +135,10 @@ class BaseAgent:
 
         # Initialize memory with default context
         self._initialize_memory()
+
+    # should we be starting skills here?
+    def start(self):
+        self.skills.start()
 
     def _check_vision_support(self) -> bool:
         """Check if the model supports vision."""
@@ -183,7 +187,7 @@ class BaseAgent:
         messages = self._build_messages(agent_msg, rag_context)
 
         # Get tools if available
-        tools = self.skills.get_tools() if len(self.skills) > 0 else None
+        tools = self.skills.get_tools() if not self.skills.empty else None
 
         # Make inference call
         response = await self.gateway.ainference(
@@ -229,6 +233,7 @@ class BaseAgent:
                 requires_follow_up=False,  # Already handled
                 metadata={"model": self.model},
             )
+
         else:
             # No tools, add both user and assistant messages to history
             with self._history_lock:
@@ -445,7 +450,8 @@ class BaseAgent:
 
         return await self._process_query_async(agent_msg)
 
-    def dispose(self):
+    def stop(self):
+        self.skills.stop()
         """Dispose of all resources and close gateway."""
         self.response_subject.on_completed()
         if self._executor:

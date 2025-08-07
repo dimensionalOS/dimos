@@ -18,6 +18,7 @@ from enum import Enum
 from pprint import pformat
 from typing import Any, Callable, Optional
 
+from dimos.agents.agent_types import AgentResponse, ToolCall
 from dimos.protocol.skill.comms import AgentMsg, LCMSkillComms, MsgType, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
 from dimos.protocol.skill.types import Reducer, Return, Stream
@@ -41,11 +42,12 @@ class SkillStateEnum(Enum):
 
 # TODO pending timeout, running timeout, etc.
 class SkillState(TimestampedCollection):
+    call_id: str
     name: str
     state: SkillStateEnum
     skill_config: SkillConfig
 
-    def __init__(self, name: str, skill_config: Optional[SkillConfig] = None) -> None:
+    def __init__(self, call_id: str, name: str, skill_config: Optional[SkillConfig] = None) -> None:
         super().__init__()
         self.skill_config = skill_config or SkillConfig(
             name=name, stream=Stream.none, ret=Return.none, reducer=Reducer.none, schema={}
@@ -113,7 +115,6 @@ class SkillCoordinator(SkillContainer):
         self, agent_callback: Optional[Callable[[dict[str, SkillState]], Any]] = None
     ) -> None:
         super().__init__()
-        self._agent_callback = agent_callback
         self._static_containers = []
         self._dynamic_containers = []
         self._skills = {}
@@ -132,8 +133,16 @@ class SkillCoordinator(SkillContainer):
     def __len__(self) -> int:
         return self.len()
 
+    # used by agent to get a list of available tools
+    def get_tools(self) -> list[dict]:
+        return [skill.schema for skill in self.skills().values()]
+
+    # used by agent to call a tool
+    def tool_call(self, tool_call: ToolCall):
+        return self.call(tool_call.id, tool_call.name, **tool_call.arguments)
+
     # This is used by agent to call skills
-    def call(self, skill_name: str, *args, **kwargs) -> None:
+    def call(self, call_id: str, skill_name: str, *args, **kwargs) -> None:
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
             logger.error(
@@ -142,7 +151,9 @@ class SkillCoordinator(SkillContainer):
             return
 
         # This initializes the skill state if it doesn't exist
-        self._skill_state[skill_name] = SkillState(name=skill_name, skill_config=skill_config)
+        self._skill_state[skill_name] = SkillState(
+            name=skill_name, skill_config=skill_config, call_id=call_id
+        )
         return skill_config.call(*args, **kwargs)
 
     # Receives a message from active skill
@@ -193,9 +204,6 @@ class SkillCoordinator(SkillContainer):
         state = self.state_snapshot(clear=True)
         logger.info(f"Calling agent with current skill state: {state}")
 
-        if self._agent_callback:
-            self._agent_callback(state)
-
     def __str__(self):
         # Convert objects to their string representations
         def stringify_value(obj):
@@ -242,6 +250,3 @@ class SkillCoordinator(SkillContainer):
                 all_skills[skill_name] = skill_config.bind(getattr(container, skill_name))
 
         return all_skills
-
-    def get_tools(self) -> list[dict]:
-        return [skill.schema for skill in self.skills().values()]
