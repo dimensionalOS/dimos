@@ -114,6 +114,7 @@ class FakeRTC:
         """Fake publish request for testing."""
         return {"status": "ok", "message": "Fake publish"}
 
+
 class ConnectionModule(Module):
     """Module that handles robot sensor data and movement commands."""
 
