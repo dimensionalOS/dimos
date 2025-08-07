@@ -231,14 +231,14 @@ def test_gradient():
     grid_with_unknown = OccupancyGrid(data_with_unknown, resolution=0.1)
     gradient_with_unknown = grid_with_unknown.gradient(max_distance=1.0)  # 1m max distance
 
-    # Unknown cells close to obstacles should get gradient values
-    assert gradient_with_unknown.grid[0, 0] != -1  # Should have gradient
-    assert gradient_with_unknown.grid[1, 1] != -1  # Should have gradient
+    # Unknown cells should remain unknown (new behavior - unknowns are preserved)
+    assert gradient_with_unknown.grid[0, 0] == -1  # Should remain unknown
+    assert gradient_with_unknown.grid[1, 1] == -1  # Should remain unknown
+    assert gradient_with_unknown.grid[8, 8] == -1  # Should remain unknown
+    assert gradient_with_unknown.grid[9, 9] == -1  # Should remain unknown
 
-    # Unknown cells far from obstacles (beyond max_distance) should remain unknown
-    # The far corner (8,8) is ~0.57m from nearest obstacle, within 1m threshold
-    # So it will get a gradient value, not remain unknown
-    assert gradient_with_unknown.unknown_cells < 8  # Some unknowns converted to gradient
+    # Unknown cells count should be preserved
+    assert gradient_with_unknown.unknown_cells == 8  # All unknowns preserved
 
 
 def test_filter_above():
