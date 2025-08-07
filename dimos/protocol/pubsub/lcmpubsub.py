@@ -80,6 +80,43 @@ class LCMPubSubBase(PubSub[Topic, Any], LCMService):
 
         return unsubscribe
 
+    def wait_for_message(self, topic: Topic, timeout: float = 1.0) -> Any:
+        """Wait for a single message on the specified topic.
+
+        Args:
+            topic: The topic to listen on
+            timeout: Maximum time to wait for a message in seconds
+
+        Returns:
+            The received message or None if timeout occurred
+        """
+        received_message = None
+        message_event = threading.Event()
+
+        def message_handler(channel, data):
+            nonlocal received_message
+            try:
+                # Decode the message if type is specified
+                if hasattr(self, "decode") and topic.lcm_type is not None:
+                    received_message = self.decode(data, topic)
+                else:
+                    received_message = data
+                message_event.set()
+            except Exception as e:
+                print(f"Error decoding message: {e}")
+                message_event.set()
+
+        # Subscribe to the topic
+        subscription = self.l.subscribe(str(topic), message_handler)
+
+        try:
+            # Wait for message or timeout
+            message_event.wait(timeout)
+            return received_message
+        finally:
+            # Clean up subscription
+            self.l.unsubscribe(subscription)
+
 
 class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
     def encode(self, msg: LCMMsg, _: Topic) -> bytes:
