@@ -87,7 +87,7 @@ class NavigateWithText(AbstractRobotSkill):
         """
         super().__init__(robot=robot, **data)
         self._spatial_memory = None
-        self._similarity_threshold = 0.25
+        self._similarity_threshold = 0.24
 
     def _navigate_to_object(self):
         """
@@ -514,7 +514,7 @@ class Explore(AbstractRobotSkill):
     Don't save GetPose locations when frontier exploring. Don't call any other skills except stop skill when needed.
     """
 
-    timeout: float = Field(60.0, description="Maximum time (in seconds) allowed for exploration")
+    timeout: float = Field(120.0, description="Maximum time (in seconds) allowed for exploration")
 
     def __init__(self, robot=None, **data):
         """
