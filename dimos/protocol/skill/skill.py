@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import threading
 from typing import Any, Callable, Optional
 
@@ -25,6 +26,50 @@ from dimos.protocol.skill.types import (
     SkillConfig,
     Stream,
 )
+
+
+def function_to_schema(func) -> dict:
+    type_map = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        list: "array",
+        dict: "object",
+        type(None): "null",
+    }
+
+    try:
+        signature = inspect.signature(func)
+    except ValueError as e:
+        raise ValueError(f"Failed to get signature for function {func.__name__}: {str(e)}")
+
+    parameters = {}
+    for param in signature.parameters.values():
+        try:
+            param_type = type_map.get(param.annotation, "string")
+        except KeyError as e:
+            raise KeyError(
+                f"Unknown type annotation {param.annotation} for parameter {param.name}: {str(e)}"
+            )
+        parameters[param.name] = {"type": param_type}
+
+    required = [
+        param.name for param in signature.parameters.values() if param.default == inspect._empty
+    ]
+
+    return {
+        "type": "function",
+        "function": {
+            "name": func.__name__,
+            "description": (func.__doc__ or "").strip(),
+            "parameters": {
+                "type": "object",
+                "properties": parameters,
+                "required": required,
+            },
+        },
+    }
 
 
 def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
@@ -49,7 +94,9 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
 
             return f(self, *args, **kwargs)
 
-        skill_config = SkillConfig(name=f.__name__, reducer=reducer, stream=stream, ret=ret)
+        skill_config = SkillConfig(
+            name=f.__name__, reducer=reducer, stream=stream, ret=ret, schema=function_to_schema(f)
+        )
 
         # implicit RPC call as well
         wrapper.__rpc__ = True  # type: ignore[attr-defined]

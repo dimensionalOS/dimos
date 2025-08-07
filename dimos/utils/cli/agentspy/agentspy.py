@@ -27,7 +27,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Header, RichLog
 
-from dimos.protocol.skill.agent_interface import AgentInterface, SkillState, SkillStateEnum
+from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateEnum
 from dimos.protocol.skill.comms import AgentMsg, LCMSkillComms
 from dimos.protocol.skill.types import MsgType
 
@@ -36,7 +36,7 @@ class AgentSpy:
     """Spy on agent skill executions via LCM messages."""
 
     def __init__(self):
-        self.agent_interface = AgentInterface()
+        self.agent_interface = SkillCoordinator()
         self.message_callbacks: list[Callable[[Dict[str, SkillState]], None]] = []
         self._lock = threading.Lock()
         self._latest_state: Dict[str, SkillState] = {}

@@ -56,6 +56,7 @@ class SkillConfig:
     reducer: Reducer
     stream: Stream
     ret: Return
+    schema: dict[str, Any]
     f: Callable | None = None
     autostart: bool = False
 

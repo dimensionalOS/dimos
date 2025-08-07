@@ -14,8 +14,9 @@
 
 import time
 
-from dimos.protocol.skill.agent_interface import AgentInterface
+from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import SkillContainer, skill
+from dimos.protocol.skill.testing_utils import TestContainer
 
 
 class TestContainer(SkillContainer):
@@ -35,7 +36,7 @@ def test_introspect_skill():
 
 
 def test_internals():
-    agentInterface = AgentInterface()
+    agentInterface = SkillCoordinator()
     agentInterface.start()
 
     testContainer = TestContainer()
@@ -71,7 +72,7 @@ def test_internals():
 
 
 def test_standard_usage():
-    agentInterface = AgentInterface(agent_callback=print)
+    agentInterface = SkillCoordinator(agent_callback=print)
     agentInterface.start()
 
     testContainer = TestContainer()
@@ -108,7 +109,7 @@ def test_module():
             time.sleep(0.5)
             return x * y
 
-    agentInterface = AgentInterface(agent_callback=print)
+    agentInterface = SkillCoordinator(agent_callback=print)
     agentInterface.start()
 
     dimos = start(1)

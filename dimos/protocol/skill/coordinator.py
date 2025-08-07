@@ -24,7 +24,7 @@ from dimos.protocol.skill.types import Reducer, Return, Stream
 from dimos.types.timestamped import TimestampedCollection
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.protocol.skill.agent_interface")
+logger = setup_logger("dimos.protocol.skill.coordinator")
 
 
 @dataclass
@@ -98,7 +98,7 @@ class SkillState(TimestampedCollection):
         return head + ", No Messages)"
 
 
-class AgentInterface(SkillContainer):
+class SkillCoordinator(SkillContainer):
     _static_containers: list[SkillContainer]
     _dynamic_containers: list[SkillContainer]
     _skill_state: dict[str, SkillState]
@@ -125,7 +125,7 @@ class AgentInterface(SkillContainer):
         self.agent_comms.stop()
 
     # This is used by agent to call skills
-    def execute_skill(self, skill_name: str, *args, **kwargs) -> None:
+    def call(self, skill_name: str, *args, **kwargs) -> None:
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
             logger.error(
@@ -234,3 +234,6 @@ class AgentInterface(SkillContainer):
                 all_skills[skill_name] = skill_config.bind(getattr(container, skill_name))
 
         return all_skills
+
+    def get_tools(self) -> list[str, dict]:
+        return [(name, skill.schema) for name, skill in self.skills().items()]

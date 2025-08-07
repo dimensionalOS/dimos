@@ -17,7 +17,7 @@
 
 import time
 import threading
-from dimos.protocol.skill.agent_interface import AgentInterface
+from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import SkillContainer, skill
 
 
@@ -56,7 +56,7 @@ class DemoSkills(SkillContainer):
 def run_demo_skills():
     """Run demo skills in background."""
     # Create and start agent interface
-    agent_interface = AgentInterface()
+    agent_interface = SkillCoordinator()
     agent_interface.start()
 
     # Register skills

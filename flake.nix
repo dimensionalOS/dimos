@@ -62,6 +62,14 @@
             export DISPLAY=:0
 
             PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
+            
+            # Load .env file if it exists
+            if [ -f "$PROJECT_ROOT/.env" ]; then
+              set -a
+              . "$PROJECT_ROOT/.env"
+              set +a
+            fi
+            
             if [ -f "$PROJECT_ROOT/env/bin/activate" ]; then
               . "$PROJECT_ROOT/env/bin/activate"
             fi
