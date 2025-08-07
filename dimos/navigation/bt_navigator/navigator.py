@@ -108,9 +108,6 @@ class BehaviorTreeNavigator(Module):
         # TF listener
         self.tf = TF()
 
-        # TF listener
-        self.tf = TF()
-
         logger.info("Navigator initialized")
 
     @rpc
