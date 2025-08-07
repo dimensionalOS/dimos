@@ -190,9 +190,8 @@ class SkillCoordinator(SkillContainer):
 
     def call_agent(self) -> None:
         """Call the agent with the current state of skill runs."""
-        logger.info(f"Calling agent with current skill state: {self.state_snapshot(clear=False)}")
-
         state = self.state_snapshot(clear=True)
+        logger.info(f"Calling agent with current skill state: {state}")
 
         if self._agent_callback:
             self._agent_callback(state)

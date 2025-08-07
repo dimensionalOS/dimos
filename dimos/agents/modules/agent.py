@@ -27,9 +27,9 @@ from reactivex import operators as ops
 from reactivex.disposable import CompositeDisposable
 from reactivex.subject import Subject
 
-from dimos.core import Module, In, Out, rpc
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
+from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
@@ -319,18 +319,18 @@ class AgentModule(Module):
             # Execute each tool
             tool_results = []
             for tool_call in tool_calls:
-                tool_id = tool_call["id"]
+                call_id = tool_call["id"]
                 tool_name = tool_call["function"]["name"]
                 tool_args = json.loads(tool_call["function"]["arguments"])
 
                 logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
 
                 try:
-                    result = self._skills.call(tool_name, **tool_args)
+                    result = self._skills.call(call_id, tool_name, **tool_args)
                     tool_results.append(
                         {
                             "role": "tool",
-                            "tool_call_id": tool_id,
+                            "tool_call_id": call_id,
                             "content": str(result),
                             "name": tool_name,
                         }
@@ -340,7 +340,7 @@ class AgentModule(Module):
                     tool_results.append(
                         {
                             "role": "tool",
-                            "tool_call_id": tool_id,
+                            "tool_call_id": call_id,
                             "content": f"Error: {str(e)}",
                             "name": tool_name,
                         }

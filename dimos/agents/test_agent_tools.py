@@ -14,63 +14,53 @@
 
 """Production test for BaseAgent tool handling functionality."""
 
-import pytest
 import asyncio
 import os
-from dotenv import load_dotenv
-from pydantic import Field
 
-from dimos.agents.modules.base import BaseAgent
-from dimos.agents.modules.base_agent import BaseAgentModule
+import pytest
+from dotenv import load_dotenv
+
+from dimos import core
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse
-from dimos.skills.skills import AbstractSkill, SkillLibrary
-from dimos import core
-from dimos.core import Module, Out, In, rpc
+from dimos.agents.modules.base import BaseAgent
+from dimos.agents.modules.base_agent import BaseAgentModule
+from dimos.core import In, Module, Out, rpc
 from dimos.protocol import pubsub
+from dimos.protocol.skill import SkillContainer, SkillCoordinator, skill
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("test_agent_tools")
 
 
 # Test Skills
-class CalculateSkill(AbstractSkill):
-    """Perform a calculation."""
-
-    expression: str = Field(description="Mathematical expression to evaluate")
-
-    def __call__(self) -> str:
+class TestSkills(SkillContainer):
+    # description="Mathematical expression to evaluate"
+    @skill()
+    def calculate(self, expression: str) -> str:
         try:
             # Simple evaluation for testing
-            result = eval(self.expression)
+            result = eval(expression)
             return f"The result is {result}"
         except Exception as e:
             return f"Error calculating: {str(e)}"
 
-
-class WeatherSkill(AbstractSkill):
-    """Get current weather information for a location. This is a mock weather service that returns test data."""
-
-    location: str = Field(description="Location to get weather for (e.g. 'London', 'New York')")
-
-    def __call__(self) -> str:
+    # "Location to get weather for (e.g. 'London', 'New York')"
+    @skill()
+    def weather(self, location: str) -> str:
         # Mock weather response
-        return f"The weather in {self.location} is sunny with a temperature of 72°F"
+        return f"The weather in {location} is sunny with a temperature of 72°F"
 
-
-class NavigationSkill(AbstractSkill):
-    """Navigate to a location (potentially long-running)."""
-
-    destination: str = Field(description="Destination to navigate to")
-    speed: float = Field(default=1.0, description="Navigation speed in m/s")
-
-    def __call__(self) -> str:
+    # destination: str = Field(description="Destination to navigate to")
+    # speed: float = Field(default=1.0, description="Navigation speed in m/s")
+    @skill()
+    def navigation(self, destination: str, speed: float) -> str:
         # In real implementation, this would start navigation
         # For now, simulate blocking behavior
         import time
 
         time.sleep(0.5)  # Simulate some processing
-        return f"Navigation to {self.destination} completed successfully"
+        return f"Navigation to {destination} completed successfully"
 
 
 # Module for testing tool execution
@@ -124,10 +114,8 @@ async def test_agent_module_with_tools():
 
     try:
         # Create skill library
-        skill_library = SkillLibrary()
-        skill_library.add(CalculateSkill)
-        skill_library.add(WeatherSkill)
-        skill_library.add(NavigationSkill)
+        skill_library = SkillCoordinator()
+        skill_library.register_skills(TestSkills())
 
         # Deploy modules
         controller = dimos.deploy(ToolTestController)
@@ -214,10 +202,10 @@ async def test_agent_module_with_tools():
         # Check if NavigationSkill was called
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             # Tool was called - verify it
-            assert any(tc.name == "NavigationSkill" for tc in response.tool_calls), (
-                "Expected NavigationSkill to be called"
+            assert any(tc.name == "navigation" for tc in response.tool_calls), (
+                "Expected navigation to be called"
             )
-            logger.info("✓ NavigationSkill was called")
+            logger.info("✓ navigation was called")
         else:
             # Tool wasn't called - just verify response mentions navigation
             logger.info("Note: NavigationSkill was not called, agent gave instructions instead")
@@ -246,9 +234,10 @@ def test_base_agent_direct_tools():
         pytest.skip("No OPENAI_API_KEY found")
 
     # Create skill library
-    skill_library = SkillLibrary()
-    skill_library.add(CalculateSkill)
-    skill_library.add(WeatherSkill)
+    skill_library = SkillCoordinator()
+    skill_library.register_skills(TestSkills())
+
+    print(skill_library.get_tools())
 
     # Create agent with skills
     agent = BaseAgent(
@@ -261,7 +250,7 @@ def test_base_agent_direct_tools():
 
     # Test calculation with explicit tool request
     logger.info("\n=== Direct Test 1: Calculation Tool ===")
-    response = agent.query("Calculate 144**0.5")
+    response = agent.query("Calculate 144**0.5 using the 'calculate' tool")
 
     logger.info(f"Response content: {response.content}")
     logger.info(f"Tool calls: {response.tool_calls}")
@@ -272,21 +261,19 @@ def test_base_agent_direct_tools():
     )
 
     # Verify tool was called OR answer is correct
-    if response.tool_calls is not None:
-        assert len(response.tool_calls) > 0, "Expected at least one tool call"
-        assert response.tool_calls[0].name == "CalculateSkill", (
-            f"Expected CalculateSkill, got: {response.tool_calls[0].name}"
-        )
-        assert response.tool_calls[0].status == "completed", (
-            f"Expected completed status, got: {response.tool_calls[0].status}"
-        )
-        logger.info("✓ Tool was called successfully")
-    else:
-        logger.warning("Tool was not called - agent answered directly")
+    assert response.tool_calls is not None
+    assert len(response.tool_calls) > 0, "Expected at least one tool call"
+    assert response.tool_calls[0].name == "calculate", (
+        f"Expected calculate, got: {response.tool_calls[0].name}"
+    )
+    assert response.tool_calls[0].status == "completed", (
+        f"Expected completed status, got: {response.tool_calls[0].status}"
+    )
+    logger.info("✓ Tool was called successfully")
 
     # Test weather tool
     logger.info("\n=== Direct Test 2: Weather Tool ===")
-    response2 = agent.query("Use the WeatherSkill to check the weather in London")
+    response2 = agent.query("Use the 'weather' function to check the weather in London")
 
     logger.info(f"Response content: {response2.content}")
     logger.info(f"Tool calls: {response2.tool_calls}")
@@ -299,8 +286,8 @@ def test_base_agent_direct_tools():
     # Verify tool was called
     if response2.tool_calls is not None:
         assert len(response2.tool_calls) > 0, "Expected at least one tool call"
-        assert response2.tool_calls[0].name == "WeatherSkill", (
-            f"Expected WeatherSkill, got: {response2.tool_calls[0].name}"
+        assert response2.tool_calls[0].name == "weather", (
+            f"Expected weather, got: {response2.tool_calls[0].name}"
         )
         logger.info("✓ Weather tool was called successfully")
     else:
@@ -308,97 +295,3 @@ def test_base_agent_direct_tools():
 
     # Clean up
     agent.dispose()
-
-
-class MockToolAgent(BaseAgent):
-    """Mock agent for CI testing without API calls."""
-
-    def __init__(self, **kwargs):
-        # Skip gateway initialization
-        self.model = kwargs.get("model", "mock::test")
-        self.system_prompt = kwargs.get("system_prompt", "Mock agent")
-        self.skills = kwargs.get("skills", SkillLibrary())
-        self.history = []
-        self._history_lock = __import__("threading").Lock()
-        self._supports_vision = False
-        self.response_subject = None
-        self.gateway = None
-        self._executor = None
-
-    async def _process_query_async(self, agent_msg, base64_image=None, base64_images=None):
-        """Mock tool execution."""
-        from dimos.agents.agent_types import AgentResponse, ToolCall
-        from dimos.agents.agent_message import AgentMessage
-
-        # Get text from AgentMessage
-        if isinstance(agent_msg, AgentMessage):
-            query = agent_msg.get_combined_text()
-        else:
-            query = str(agent_msg)
-
-        # Simple pattern matching for tools
-        if "calculate" in query.lower():
-            # Extract expression
-            import re
-
-            match = re.search(r"(\d+\s*[\+\-\*/]\s*\d+)", query)
-            if match:
-                expr = match.group(1)
-                tool_call = ToolCall(
-                    id="mock_calc_1",
-                    name="CalculateSkill",
-                    arguments={"expression": expr},
-                    status="completed",
-                )
-                # Execute the tool
-                result = self.skills.call("CalculateSkill", expression=expr)
-                return AgentResponse(
-                    content=f"I calculated {expr} and {result}", tool_calls=[tool_call]
-                )
-
-        # Default response
-        return AgentResponse(content=f"Mock response to: {query}")
-
-    def dispose(self):
-        pass
-
-
-def test_mock_agent_tools():
-    """Test mock agent with tools for CI."""
-    # Create skill library
-    skill_library = SkillLibrary()
-    skill_library.add(CalculateSkill)
-
-    # Create mock agent
-    agent = MockToolAgent(model="mock::test", skills=skill_library)
-
-    # Test calculation
-    logger.info("\n=== Mock Test: Calculation ===")
-    response = agent.query("Calculate 25 + 17")
-
-    logger.info(f"Mock response: {response.content}")
-    logger.info(f"Mock tool calls: {response.tool_calls}")
-
-    assert response.content is not None
-    assert "42" in response.content, f"Expected '42' in response"
-    assert response.tool_calls is not None, "Expected tool calls"
-    assert len(response.tool_calls) == 1, "Expected exactly one tool call"
-    assert response.tool_calls[0].name == "CalculateSkill", "Expected CalculateSkill"
-    assert response.tool_calls[0].status == "completed", "Expected completed status"
-
-    # Clean up
-    agent.dispose()
-
-
-if __name__ == "__main__":
-    # Run tests
-    test_mock_agent_tools()
-    print("✅ Mock agent tools test passed")
-
-    test_base_agent_direct_tools()
-    print("✅ Direct agent tools test passed")
-
-    asyncio.run(test_agent_module_with_tools())
-    print("✅ Module agent tools test passed")
-
-    print("\n✅ All production tool tests passed!")

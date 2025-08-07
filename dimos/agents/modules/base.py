@@ -22,12 +22,12 @@ from typing import Any, Dict, List, Optional, Union
 
 from reactivex.subject import Subject
 
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
-from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
-from dimos.skills.skills import AbstractSkill, SkillLibrary
-from dimos.utils.logging_config import setup_logger
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse, ToolCall
+from dimos.agents.memory.base import AbstractAgentSemanticMemory
+from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
+from dimos.protocol.skill import SkillCoordinator
+from dimos.utils.logging_config import setup_logger
 
 try:
     from .gateway import UnifiedGatewayClient
@@ -68,7 +68,7 @@ class BaseAgent:
         self,
         model: str = "openai::gpt-4o-mini",
         system_prompt: Optional[str] = None,
-        skills: Optional[Union[SkillLibrary, List[AbstractSkill], AbstractSkill]] = None,
+        skills: Optional[SkillCoordinator] = None,
         memory: Optional[AbstractAgentSemanticMemory] = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
@@ -108,20 +108,8 @@ class BaseAgent:
         self.dev_name = dev_name
         self.agent_type = agent_type
 
-        # Initialize skills
-        if skills is None:
-            self.skills = SkillLibrary()
-        elif isinstance(skills, SkillLibrary):
-            self.skills = skills
-        elif isinstance(skills, list):
-            self.skills = SkillLibrary()
-            for skill in skills:
-                self.skills.add(skill)
-        elif isinstance(skills, AbstractSkill):
-            self.skills = SkillLibrary()
-            self.skills.add(skills)
-        else:
-            self.skills = SkillLibrary()
+        self.skills = skills if skills else SkillCoordinator()
+        self.skills.start()
 
         # Initialize memory - allow None for testing
         if memory is False:  # Explicit False means no memory
@@ -161,7 +149,7 @@ class BaseAgent:
                 (
                     "ctx3",
                     "I have access to tools and skills for specific operations."
-                    if len(self.skills) > 0
+                    if not self.skills.empty
                     else "I do not have access to external tools.",
                 ),
                 (
