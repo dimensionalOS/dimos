@@ -340,3 +340,39 @@ def get_distance(pose1: Pose, pose2: Pose) -> float:
     dz = pose1.position.z - pose2.position.z
 
     return np.linalg.norm(np.array([dx, dy, dz]))
+
+
+def retract_distance(target_pose: Pose, distance: float) -> Pose:
+    """
+    Apply distance offset to target pose along its approach direction.
+
+    This is commonly used in grasping to retract the gripper by a certain distance
+    along the approach vector before or after grasping.
+
+    Args:
+        target_pose: Target pose (e.g., grasp pose)
+        distance: Distance to offset along the approach direction (meters)
+
+    Returns:
+        Target pose offset by the specified distance along its approach direction
+    """
+    # Convert pose to transformation matrix to extract rotation
+    T_target = pose_to_matrix(target_pose)
+    rotation_matrix = T_target[:3, :3]
+
+    # Define the approach vector based on the target pose orientation
+    # Assuming the gripper approaches along its local -z axis (common for downward grasps)
+    # You can change this to [1, 0, 0] for x-axis or [0, 1, 0] for y-axis based on your gripper
+    approach_vector_local = np.array([0, 0, -1])
+
+    # Transform approach vector to world coordinates
+    approach_vector_world = rotation_matrix @ approach_vector_local
+
+    # Apply offset along the approach direction
+    offset_position = Vector3(
+        target_pose.position.x + distance * approach_vector_world[0],
+        target_pose.position.y + distance * approach_vector_world[1],
+        target_pose.position.z + distance * approach_vector_world[2],
+    )
+
+    return Pose(position=offset_position, orientation=target_pose.orientation)
