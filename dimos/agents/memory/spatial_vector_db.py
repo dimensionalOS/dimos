@@ -38,7 +38,11 @@ class SpatialVectorDB:
     """
 
     def __init__(
-        self, collection_name: str = "spatial_memory", chroma_client=None, visual_memory=None
+        self,
+        collection_name: str = "spatial_memory",
+        chroma_client=None,
+        visual_memory=None,
+        embedding_provider=None,
     ):
         """
         Initialize the spatial vector database.
@@ -47,6 +51,7 @@ class SpatialVectorDB:
             collection_name: Name of the vector database collection
             chroma_client: Optional ChromaDB client for persistence. If None, an in-memory client is used.
             visual_memory: Optional VisualMemory instance for storing images. If None, a new one is created.
+            embedding_provider: Optional ImageEmbeddingProvider instance for computing embeddings. If None, one will be created.
         """
         self.collection_name = collection_name
 
@@ -76,6 +81,9 @@ class SpatialVectorDB:
 
         # Use provided visual memory or create a new one
         self.visual_memory = visual_memory if visual_memory is not None else VisualMemory()
+
+        # Store the embedding provider to reuse for all operations
+        self.embedding_provider = embedding_provider
 
         # Log initialization info with details about whether using existing collection
         client_type = "persistent" if chroma_client is not None else "in-memory"
@@ -223,11 +231,12 @@ class SpatialVectorDB:
         Returns:
             List of results, each containing the image, its metadata, and similarity score
         """
-        from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
+        if self.embedding_provider is None:
+            from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
 
-        embedding_provider = ImageEmbeddingProvider(model_name="clip")
+            self.embedding_provider = ImageEmbeddingProvider(model_name="clip")
 
-        text_embedding = embedding_provider.get_text_embedding(text)
+        text_embedding = self.embedding_provider.get_text_embedding(text)
 
         results = self.image_collection.query(
             query_embeddings=[text_embedding.tolist()],

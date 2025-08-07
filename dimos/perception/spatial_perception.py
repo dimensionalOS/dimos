@@ -145,15 +145,15 @@ class SpatialMemory(Module):
                     logger.error(f"Error loading visual memory: {e}")
                     self._visual_memory = VisualMemory(output_dir=output_dir)
 
-        # Initialize vector database
+        self.embedding_provider: ImageEmbeddingProvider = ImageEmbeddingProvider(
+            model_name=embedding_model, dimensions=embedding_dimensions
+        )
+
         self.vector_db: SpatialVectorDB = SpatialVectorDB(
             collection_name=collection_name,
             chroma_client=self._chroma_client,
             visual_memory=self._visual_memory,
-        )
-
-        self.embedding_provider: ImageEmbeddingProvider = ImageEmbeddingProvider(
-            model_name=embedding_model, dimensions=embedding_dimensions
+            embedding_provider=self.embedding_provider,
         )
 
         self.last_position: Optional[Vector3] = None
