@@ -17,12 +17,15 @@ from copy import copy
 from dataclasses import dataclass
 from enum import Enum
 from pprint import pformat
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from dimos.agents.agent_types import ToolCall, ToolMessage
+from dimos.agents2 import ToolCall, ToolMessage
+
+# from dimos.agents import msgs as agentmsg
+# import ToolCall, ToolMessage
 from dimos.protocol.skill.comms import LCMSkillComms, MsgType, SkillCommsSpec, SkillMsg
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
-from dimos.protocol.skill.types import Reducer, Return, Stream
+from dimos.protocol.skill.type import Reducer, Return, Stream
 from dimos.types.timestamped import TimestampedCollection
 from dimos.utils.logging_config import setup_logger
 
@@ -48,12 +51,17 @@ class SkillState(TimestampedCollection):
     state: SkillStateEnum
     skill_config: SkillConfig
 
+    # https://platform.openai.com/docs/guides/function-calling
+    # skill state knows how to encode itself for agent
+    # depending on the policy defined by the @skill decorator
+    # this is a simplification
     def agent_encode(self) -> ToolMessage:
+        return_msg = self._items[-1]
+
         return {
-            "status": self.state.name,
-            "name": self.name,
+            "role": "tool",
             "tool_call_id": self.call_id,
-            "content": self._items[-1].content,
+            "content": return_msg.content,
         }
 
     def __init__(self, call_id: str, name: str, skill_config: Optional[SkillConfig] = None) -> None:
@@ -76,6 +84,7 @@ class SkillState(TimestampedCollection):
                 or self.skill_config.stream == Stream.passive
             ):
                 return False
+
             if self.skill_config.stream == Stream.call_agent:
                 return True
 
@@ -159,10 +168,14 @@ class SkillCoordinator(SkillContainer):
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> None:
         """Execute a list of tool calls from the agent."""
         for tool_call in tool_calls:
-            self.call(tool_call.id, tool_call.name, **tool_call.arguments)
+            self.call(
+                tool_call.get("id"),
+                tool_call.get("name"),
+                tool_call.get("args"),
+            )
 
     # internal skill call
-    def call(self, call_id: str, skill_name: str, *args, **kwargs) -> None:
+    def call(self, call_id: str, skill_name: str, args: dict[str, Any]) -> None:
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
             logger.error(
@@ -174,7 +187,7 @@ class SkillCoordinator(SkillContainer):
         self._skill_state[call_id] = SkillState(
             name=skill_name, skill_config=skill_config, call_id=call_id
         )
-        return skill_config.call(*args, call_id=call_id, **kwargs)
+        return skill_config.call(*args, call_id, args)
 
     # Receives a message from active skill
     # Updates local skill state (appends to streamed data if needed etc)

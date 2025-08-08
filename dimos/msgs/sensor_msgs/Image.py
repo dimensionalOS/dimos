@@ -24,6 +24,7 @@ import numpy as np
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
 
+import dimos.agent.msgs as agent
 from dimos.types.timestamped import Timestamped
 
 
@@ -371,7 +372,10 @@ class Image(Timestamped):
         """Return total number of pixels."""
         return self.height * self.width
 
-    def agent_encode(self) -> str:
+    # theoretically we can also decode images from agent that can generate them
+    @classmethod
+    def agent_decode(self, data: dict) -> "Image": ...
+    def agent_encode(self) -> agent.reply.Image:
         """Encode image to base64 JPEG format for agent processing.
 
         Returns:
@@ -395,4 +399,7 @@ class Image(Timestamped):
         jpeg_bytes = buffer.tobytes()
         base64_str = base64.b64encode(jpeg_bytes).decode("utf-8")
 
-        return base64_str
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{base64_str}"},
+        }
