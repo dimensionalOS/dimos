@@ -20,15 +20,14 @@ import logging
 import os
 import time
 import warnings
-from typing import List, Optional, Tuple
-import threading
-from reactivex import operators as ops
+from typing import List, Optional
 
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion, Pose
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
+from dimos_lcm.std_msgs import String
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import Detection2DArray, Detection3DArray
 from dimos.perception.spatial_perception import SpatialMemory
@@ -39,7 +38,7 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -76,7 +75,7 @@ class FakeRTC:
     """Fake WebRTC connection for testing with recorded data."""
 
     def __init__(self, *args, **kwargs):
-        data = get_data("unitree_office_walk")
+        get_data("unitree_office_walk")  # Preload data for testing
 
     def connect(self):
         pass
@@ -148,28 +147,6 @@ class ConnectionModule(Module):
         self.connection.odom_stream().subscribe(self._publish_tf)
         self.connection.video_stream().subscribe(self.video.publish)
         self.movecmd.subscribe(self.move)
-
-    def _publish_tf(self, msg):
-        self._odom = msg
-        self.odom.publish(msg)
-        self.tf.publish(Transform.from_pose("base_link", msg))
-        camera_link = Transform(
-            translation=Vector3(0.3, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="base_link",
-            child_frame_id="camera_link",
-            ts=time.time(),
-        )
-        self.tf.publish(camera_link)
-
-    @rpc
-    def get_odom(self) -> Optional[PoseStamped]:
-        """Get the robot's odometry.
-
-        Returns:
-            The robot's odometry
-        """
-        return self._odom
 
     def _publish_tf(self, msg):
         self._odom = msg
@@ -335,6 +312,7 @@ class UnitreeGo2:
         self.navigator.goal.transport = core.LCMTransport("/navigation_goal", PoseStamped)
         self.navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
         self.navigator.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+        self.navigator.navigation_state.transport = core.LCMTransport("/navigation_state", String)
         self.navigator.global_costmap.transport = core.LCMTransport(
             "/global_costmap", OccupancyGrid
         )

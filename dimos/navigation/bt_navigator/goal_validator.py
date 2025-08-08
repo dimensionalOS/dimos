@@ -400,6 +400,10 @@ def _is_position_safe(
         True if position is safe, False otherwise
     """
 
+    # Check bounds first
+    if not (0 <= x < costmap.width and 0 <= y < costmap.height):
+        return False
+
     # Check if position itself is free
     if costmap.grid[y, x] >= cost_threshold or costmap.grid[y, x] == CostValues.UNKNOWN:
         return False

@@ -26,12 +26,13 @@ from typing import Optional
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
+from dimos_lcm.std_msgs import String
 from dimos.navigation.local_planner.local_planner import BaseLocalPlanner
 from dimos.navigation.bt_navigator.goal_validator import find_safe_goal
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 from dimos_lcm.std_msgs import Bool
-from dimos.utils.transform_utils import apply_transform
+from dimos.utils.transform_utils import apply_transform, get_distance
 
 logger = setup_logger("dimos.navigation.bt_navigator")
 
@@ -66,23 +67,27 @@ class BehaviorTreeNavigator(Module):
     # LCM outputs
     goal: Out[PoseStamped] = None
     goal_reached: Out[Bool] = None
+    navigation_state: Out[String] = None
 
     def __init__(
         self,
         local_planner: BaseLocalPlanner,
         publishing_frequency: float = 1.0,
+        goal_tolerance: float = 0.5,
         **kwargs,
     ):
         """Initialize the Navigator.
 
         Args:
             publishing_frequency: Frequency to publish goals to global planner (Hz)
+            goal_tolerance: Distance threshold to consider goal reached (meters)
         """
         super().__init__(**kwargs)
 
         # Parameters
         self.publishing_frequency = publishing_frequency
         self.publishing_period = 1.0 / publishing_frequency
+        self.goal_tolerance = goal_tolerance
 
         # State machine
         self.state = NavigatorState.IDLE
@@ -177,10 +182,10 @@ class BehaviorTreeNavigator(Module):
 
         if blocking:
             while not self.is_goal_reached():
-                if self.state == NavigatorState.IDLE:
-                    logger.info("Navigation was cancelled")
-                    return False
-
+                with self.state_lock:
+                    if self.state == NavigatorState.IDLE:
+                        logger.info("Navigation was cancelled")
+                        return False
                 time.sleep(self.publishing_period)
 
         return True
@@ -188,12 +193,8 @@ class BehaviorTreeNavigator(Module):
     @rpc
     def get_state(self) -> NavigatorState:
         """Get the current state of the navigator."""
-        return self.state
-
-    @rpc
-    def get_state(self) -> NavigatorState:
-        """Get the current state of the navigator."""
-        return self.state
+        with self.state_lock:
+            return self.state
 
     def _on_odom(self, msg: PoseStamped):
         """Handle incoming odometry messages."""
@@ -246,6 +247,7 @@ class BehaviorTreeNavigator(Module):
         while not self.stop_event.is_set():
             with self.state_lock:
                 current_state = self.state
+                self.navigation_state.publish(String(data=current_state.value))
 
             if current_state == NavigatorState.FOLLOWING_PATH:
                 with self.goal_lock:
@@ -258,7 +260,7 @@ class BehaviorTreeNavigator(Module):
                         goal.position,
                         algorithm="bfs",
                         cost_threshold=80,
-                        min_clearance=0.1,
+                        min_clearance=0.25,
                         max_search_distance=5.0,
                     )
 
@@ -272,9 +274,11 @@ class BehaviorTreeNavigator(Module):
                         )
                         self.goal.publish(safe_goal)
                     else:
+                        logger.warning("Could not find safe goal position, cancelling goal")
                         self.cancel_goal()
 
-                    if self.local_planner.is_goal_reached():
+                    # Check if goal is reached
+                    if self._check_goal_reached():
                         with self._goal_reached_lock:
                             self._goal_reached = True
                         logger.info("Goal reached!")
@@ -293,9 +297,24 @@ class BehaviorTreeNavigator(Module):
 
             time.sleep(self.publishing_period)
 
+    def _check_goal_reached(self) -> bool:
+        """Internal method to check if the current goal has been reached."""
+        if self.latest_odom is None:
+            return False
+
+        if self.current_goal is None:
+            return True
+
+        distance = get_distance(self.latest_odom, self.current_goal)
+        return distance < self.goal_tolerance
+
     @rpc
     def is_goal_reached(self) -> bool:
-        """Check if the current goal has been reached."""
+        """Check if the current goal has been reached.
+
+        Returns:
+            True if goal was reached, False otherwise
+        """
         with self._goal_reached_lock:
             return self._goal_reached
 

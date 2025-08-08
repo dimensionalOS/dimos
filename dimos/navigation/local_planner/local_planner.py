@@ -113,7 +113,6 @@ class BaseLocalPlanner(Module):
         """Main planning loop that runs in a separate thread."""
         while not self.stop_planning.is_set():
             if self.is_goal_reached():
-                logger.info("Goal reached, stopping planning thread")
                 self.stop_planning.set()
                 stop_cmd = Vector3(0, 0, 0)
                 self.cmd_vel.publish(stop_cmd)
@@ -142,7 +141,6 @@ class BaseLocalPlanner(Module):
         """
         pass
 
-    @rpc
     def is_goal_reached(self) -> bool:
         """
         Check if the robot has reached the goal position.
@@ -159,12 +157,7 @@ class BaseLocalPlanner(Module):
         goal_pose = self.latest_path.poses[-1]
         distance = get_distance(self.latest_odom, goal_pose)
 
-        goal_reached = distance < self.goal_tolerance
-
-        if goal_reached:
-            logger.info(f"Goal reached! Distance: {distance:.3f}m < {self.goal_tolerance}m")
-
-        return goal_reached
+        return distance < self.goal_tolerance
 
     @rpc
     def reset(self):
