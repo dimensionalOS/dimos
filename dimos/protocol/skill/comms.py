@@ -21,17 +21,17 @@ from typing import Callable, Generic, Optional, TypeVar, Union
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service import Service
-from dimos.protocol.skill.types import AgentMsg, Call, MsgType, Reducer, SkillConfig, Stream
+from dimos.protocol.skill.types import SkillMsg, Call, MsgType, Reducer, SkillConfig, Stream
 from dimos.types.timestamped import Timestamped
 
 
 # defines a protocol for communication between skills and agents
 class SkillCommsSpec:
     @abstractmethod
-    def publish(self, msg: AgentMsg) -> None: ...
+    def publish(self, msg: SkillMsg) -> None: ...
 
     @abstractmethod
-    def subscribe(self, cb: Callable[[AgentMsg], None]) -> None: ...
+    def subscribe(self, cb: Callable[[SkillMsg], None]) -> None: ...
 
     @abstractmethod
     def start(self) -> None: ...
@@ -74,15 +74,15 @@ class PubSubComms(Service[PubSubCommsConfig], SkillCommsSpec):
     def stop(self):
         self.pubsub.stop()
 
-    def publish(self, msg: AgentMsg) -> None:
+    def publish(self, msg: SkillMsg) -> None:
         self.pubsub.publish(self.config.topic, msg)
 
-    def subscribe(self, cb: Callable[[AgentMsg], None]) -> None:
+    def subscribe(self, cb: Callable[[SkillMsg], None]) -> None:
         self.pubsub.subscribe(self.config.topic, lambda msg, topic: cb(msg))
 
 
 @dataclass
-class LCMCommsConfig(PubSubCommsConfig[str, AgentMsg]):
+class LCMCommsConfig(PubSubCommsConfig[str, SkillMsg]):
     topic: str = "/agent"
     pubsub: Union[type[PubSub], PubSub, None] = PickleLCM
     # lcm needs to be started only if receiving

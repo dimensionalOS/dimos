@@ -19,7 +19,7 @@ from typing import Any, Callable, Optional, get_origin, get_args, Union, List, D
 from dimos.core import rpc
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.types import (
-    AgentMsg,
+    SkillMsg,
     MsgType,
     Reducer,
     Return,
@@ -122,14 +122,17 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
 
             if kwargs.get("skillcall"):
                 del kwargs["skillcall"]
+                call_id = kwargs.pop("call_id", "unknown")
 
                 def run_function():
-                    self.agent_comms.publish(AgentMsg(skill, None, type=MsgType.start))
+                    self.agent_comms.publish(SkillMsg(call_id, skill, None, type=MsgType.start))
                     try:
                         val = f(self, *args, **kwargs)
-                        self.agent_comms.publish(AgentMsg(skill, val, type=MsgType.ret))
+                        self.agent_comms.publish(SkillMsg(call_id, skill, val, type=MsgType.ret))
                     except Exception as e:
-                        self.agent_comms.publish(AgentMsg(skill, str(e), type=MsgType.error))
+                        self.agent_comms.publish(
+                            SkillMsg(call_id, skill, str(e), type=MsgType.error)
+                        )
 
                 thread = threading.Thread(target=run_function)
                 thread.start()

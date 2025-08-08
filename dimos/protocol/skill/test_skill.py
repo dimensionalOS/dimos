@@ -46,7 +46,7 @@ def test_internals():
     # skillcall=True makes the skill function exit early,
     # it doesn't behave like a blocking function,
     #
-    # return is passed as AgentMsg to the agent topic
+    # return is passed as SkillMsg to the agent topic
     testContainer.delayadd(2, 4, skillcall=True)
     testContainer.add(1, 2, skillcall=True)
 
@@ -62,7 +62,7 @@ def test_internals():
 
     print(agentInterface)
 
-    agentInterface.call("delayadd", 1, 2)
+    agentInterface.call("test-call-1", "delayadd", 1, 2)
 
     time.sleep(0.25)
     print(agentInterface)
@@ -83,7 +83,7 @@ def test_standard_usage():
     print(agentInterface.skills())
 
     # we can execute a skill
-    agentInterface.call("delayadd", 1, 2)
+    agentInterface.call("test-call-2", "delayadd", 1, 2)
 
     # while skill is executing, we can introspect the state
     # (we see that the skill is running)
@@ -118,7 +118,7 @@ def test_module():
     agentInterface.register_skills(mock_module)
 
     # we can execute a skill
-    agentInterface.call("add", 1, 2)
+    agentInterface.call("test-call-3", "add", 1, 2)
 
     # while skill is executing, we can introspect the state
     # (we see that the skill is running)

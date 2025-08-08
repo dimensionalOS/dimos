@@ -19,7 +19,7 @@ from pprint import pformat
 from typing import Any, Callable, Optional
 
 from dimos.agents.agent_types import AgentResponse, ToolCall
-from dimos.protocol.skill.comms import AgentMsg, LCMSkillComms, MsgType, SkillCommsSpec
+from dimos.protocol.skill.comms import LCMSkillComms, MsgType, SkillCommsSpec, SkillMsg
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
 from dimos.protocol.skill.types import Reducer, Return, Stream
 from dimos.types.timestamped import TimestampedCollection
@@ -54,10 +54,11 @@ class SkillState(TimestampedCollection):
         )
 
         self.state = SkillStateEnum.pending
+        self.call_id = call_id
         self.name = name
 
     # returns True if the agent should be called for this message
-    def handle_msg(self, msg: AgentMsg) -> bool:
+    def handle_msg(self, msg: SkillMsg) -> bool:
         self.add(msg)
 
         if msg.type == MsgType.stream:
@@ -86,7 +87,7 @@ class SkillState(TimestampedCollection):
         return False
 
     def __str__(self) -> str:
-        head = f"SkillState(state={self.state}"
+        head = f"SkillState(name={self.name}, call_id={self.call_id}, state={self.state}"
 
         if self.state == SkillStateEnum.returned or self.state == SkillStateEnum.error:
             head += ", ran for="
@@ -105,7 +106,7 @@ class SkillCoordinator(SkillContainer):
 
     _static_containers: list[SkillContainer]
     _dynamic_containers: list[SkillContainer]
-    _skill_state: dict[str, SkillState]
+    _skill_state: dict[str, SkillState]  # key is call_id, not skill_name
     _skills: dict[str, SkillConfig]
     _agent_callback: Optional[Callable[[dict[str, SkillState]], Any]] = None
 
@@ -119,6 +120,7 @@ class SkillCoordinator(SkillContainer):
         self._dynamic_containers = []
         self._skills = {}
         self._skill_state = {}
+        self._agent_callback = agent_callback
 
     def start(self) -> None:
         self.agent_comms.start()
@@ -151,25 +153,26 @@ class SkillCoordinator(SkillContainer):
             return
 
         # This initializes the skill state if it doesn't exist
-        self._skill_state[skill_name] = SkillState(
+        self._skill_state[call_id] = SkillState(
             name=skill_name, skill_config=skill_config, call_id=call_id
         )
-        return skill_config.call(*args, **kwargs)
+        return skill_config.call(*args, call_id=call_id, **kwargs)
 
     # Receives a message from active skill
     # Updates local skill state (appends to streamed data if needed etc)
     #
     # Checks if agent needs to be called (if ToolConfig has Return=call_agent or Stream=call_agent)
-    def handle_message(self, msg: AgentMsg) -> None:
-        logger.info(f"{msg.skill_name} - {msg}")
+    def handle_message(self, msg: SkillMsg) -> None:
+        logger.info(f"{msg.skill_name} (call_id={msg.call_id}) - {msg}")
 
-        if self._skill_state.get(msg.skill_name) is None:
+        if self._skill_state.get(msg.call_id) is None:
             logger.warn(
-                f"Skill state for {msg.skill_name} not found, (skill not called by our agent?) initializing. (message received: {msg})"
+                f"Skill state for {msg.skill_name} (call_id={msg.call_id}) not found, (skill not called by our agent?) initializing. (message received: {msg})"
             )
-            self._skill_state[msg.skill_name] = SkillState(name=msg.skill_name)
+            self._skill_state[msg.call_id] = SkillState(call_id=msg.call_id, name=msg.skill_name)
 
-        should_call_agent = self._skill_state[msg.skill_name].handle_msg(msg)
+        should_call_agent = self._skill_state[msg.call_id].handle_msg(msg)
+
         if should_call_agent:
             self.call_agent()
 
@@ -185,24 +188,26 @@ class SkillCoordinator(SkillContainer):
 
         to_delete = []
         # Since state is exported, we can clear the finished skill runs
-        for skill_name, skill_run in self._skill_state.items():
+        for call_id, skill_run in self._skill_state.items():
             if skill_run.state == SkillStateEnum.returned:
-                logger.info(f"Skill {skill_name} finished")
-                to_delete.append(skill_name)
+                logger.info(f"Skill {skill_run.name} (call_id={call_id}) finished")
+                to_delete.append(call_id)
             if skill_run.state == SkillStateEnum.error:
-                logger.error(f"Skill run error for {skill_name}")
-                to_delete.append(skill_name)
+                logger.error(f"Skill run error for {skill_run.name} (call_id={call_id})")
+                to_delete.append(call_id)
 
-        for skill_name in to_delete:
-            logger.debug(f"{skill_name} finished, removing from state")
-            del self._skill_state[skill_name]
+        for call_id in to_delete:
+            logger.debug(f"Call {call_id} finished, removing from state")
+            del self._skill_state[call_id]
 
         return ret
 
     def call_agent(self) -> None:
         """Call the agent with the current state of skill runs."""
         state = self.state_snapshot(clear=True)
-        logger.info(f"Calling agent with current skill state: {state}")
+        logger.info(f"Calling agent with current skill state: {list(state.keys())}")
+        if self._agent_callback:
+            self._agent_callback(state)
 
     def __str__(self):
         # Convert objects to their string representations

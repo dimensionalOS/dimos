@@ -28,7 +28,7 @@ from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Header, RichLog
 
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateEnum
-from dimos.protocol.skill.comms import AgentMsg, LCMSkillComms
+from dimos.protocol.skill.comms import SkillMsg, LCMSkillComms
 from dimos.protocol.skill.types import MsgType
 
 
@@ -53,8 +53,8 @@ class AgentSpy:
         """Stop spying."""
         self.agent_interface.stop()
 
-    def _handle_message(self, msg: AgentMsg):
-        """Handle incoming agent messages."""
+    def _handle_message(self, msg: SkillMsg):
+        """Handle incoming skill messages."""
 
         # Small delay to ensure agent_interface has processed the message
         def delayed_update():
@@ -181,11 +181,12 @@ class AgentSpyApp(App):
         self.spy = AgentSpy()
         self.table: Optional[DataTable] = None
         self.log_view: Optional[RichLog] = None
-        self.skill_history: list[tuple[str, SkillState, float]] = []  # (name, state, start_time)
+        self.skill_history: list[tuple[str, SkillState, float]] = []  # (call_id, state, start_time)
         self.log_handler: Optional[TextualLogHandler] = None
 
     def compose(self) -> ComposeResult:
         self.table = DataTable(zebra_stripes=False, cursor_type=None)
+        self.table.add_column("Call ID")
         self.table.add_column("Skill Name")
         self.table.add_column("State")
         self.table.add_column("Duration")
@@ -219,12 +220,23 @@ class AgentSpyApp(App):
         if self.log_view:
             self.log_handler = TextualLogHandler(self.log_view)
 
-            # Custom formatter that shortens the logger name
+            # Custom formatter that shortens the logger name and highlights call_ids
             class ShortNameFormatter(logging.Formatter):
                 def format(self, record):
                     # Remove the common prefix from logger names
                     if record.name.startswith("dimos.protocol.skill."):
                         record.name = record.name.replace("dimos.protocol.skill.", "")
+
+                    # Highlight call_ids in the message
+                    msg = record.getMessage()
+                    if "call_id=" in msg:
+                        # Extract and colorize call_id
+                        import re
+
+                        msg = re.sub(r"call_id=([^\s\)]+)", r"call_id=\033[94m\1\033[0m", msg)
+                        record.msg = msg
+                        record.args = ()
+
                     return super().format(record)
 
             self.log_handler.setFormatter(
@@ -257,18 +269,18 @@ class AgentSpyApp(App):
             root_logger.removeHandler(self.log_handler)
 
     def update_state(self, state: Dict[str, SkillState]):
-        """Update state from spy callback."""
+        """Update state from spy callback. State dict is keyed by call_id."""
         # Update history with current state
         current_time = time.time()
 
         # Add new skills or update existing ones
-        for skill_name, skill_state in state.items():
-            # Find if skill already in history
+        for call_id, skill_state in state.items():
+            # Find if this call_id already in history
             found = False
-            for i, (name, old_state, start_time) in enumerate(self.skill_history):
-                if name == skill_name:
+            for i, (existing_call_id, old_state, start_time) in enumerate(self.skill_history):
+                if existing_call_id == call_id:
                     # Update existing entry
-                    self.skill_history[i] = (skill_name, skill_state, start_time)
+                    self.skill_history[i] = (call_id, skill_state, start_time)
                     found = True
                     break
 
@@ -278,7 +290,7 @@ class AgentSpyApp(App):
                 if len(skill_state) > 0:
                     # Use first message timestamp if available
                     start_time = skill_state._items[0].ts
-                self.skill_history.append((skill_name, skill_state, start_time))
+                self.skill_history.append((call_id, skill_state, start_time))
 
         # Schedule UI update
         self.call_from_thread(self.refresh_table)
@@ -299,7 +311,7 @@ class AgentSpyApp(App):
         max_rows = max(1, height)
 
         # Show only top N entries
-        for skill_name, skill_state, start_time in sorted_history[:max_rows]:
+        for call_id, skill_state, start_time in sorted_history[:max_rows]:
             # Calculate how long ago it started
             time_ago = time.time() - start_time
             start_str = format_duration(time_ago) + " ago"
@@ -326,9 +338,15 @@ class AgentSpyApp(App):
                 # Show progress indicator
                 details = "⋯ " + "▸" * min(int(time_ago), 20)
 
+            # Format call_id for display (truncate if too long)
+            display_call_id = call_id
+            if len(call_id) > 16:
+                display_call_id = call_id[:13] + "..."
+
             # Add row with colored state
             self.table.add_row(
-                Text(skill_name, style="white"),
+                Text(display_call_id, style="bright_blue"),
+                Text(skill_state.name, style="white"),
                 Text(skill_state.state.name, style=state_color(skill_state.state)),
                 Text(duration_str, style="dim"),
                 Text(start_str, style="dim"),

@@ -100,17 +100,22 @@ class MsgType(Enum):
     error = 4
 
 
-class AgentMsg(Timestamped):
+class SkillMsg(Timestamped):
     ts: float
     type: MsgType
+    call_id: str
+    skill_name: str
+    content: str | int | float | dict | list
 
     def __init__(
         self,
+        call_id: str,
         skill_name: str,
         content: str | int | float | dict | list,
         type: MsgType = MsgType.ret,
     ) -> None:
         self.ts = time.time()
+        self.call_id = call_id
         self.skill_name = skill_name
         self.content = content
         self.type = type
