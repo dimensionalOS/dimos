@@ -69,7 +69,7 @@ class AgentResponse:
         return f"AgentResponse(role='{self.role}', content='{content_preview}'{tool_info})"
 
 
-class ToolOutput(TypedDict):
+class ToolMessage(TypedDict):
     role = "tool"
     tool_call_id: str
     content: str
