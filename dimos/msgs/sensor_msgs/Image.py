@@ -377,14 +377,11 @@ class Image(Timestamped):
         Returns:
             Base64 encoded JPEG string suitable for LLM/agent consumption.
         """
-        # Convert to RGB format first (agents typically expect RGB)
-        rgb_image = self.to_rgb()
+        bgr_image = self.to_bgr()
 
         # Encode as JPEG
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 95]  # 95% quality
-        success, buffer = cv2.imencode(
-            ".jpg", cv2.cvtColor(rgb_image.data, cv2.COLOR_RGB2BGR), encode_param
-        )
+        success, buffer = cv2.imencode(".jpg", bgr_image.data, encode_param)
 
         if not success:
             raise ValueError("Failed to encode image as JPEG")
