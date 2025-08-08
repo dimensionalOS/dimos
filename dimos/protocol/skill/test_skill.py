@@ -19,17 +19,6 @@ from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.protocol.skill.testing_utils import TestContainer
 
 
-class TestContainer(SkillContainer):
-    @skill()
-    def add(self, x: int, y: int) -> int:
-        return x + y
-
-    @skill()
-    def delayadd(self, x: int, y: int) -> int:
-        time.sleep(0.5)
-        return x + y
-
-
 def test_introspect_skill():
     testContainer = TestContainer()
     print(testContainer.skills())

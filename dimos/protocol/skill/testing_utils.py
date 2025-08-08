@@ -24,5 +24,5 @@ class TestContainer(SkillContainer):
 
     @skill()
     def delayadd(self, x: int, y: int) -> int:
-        time.sleep(0.5)
+        time.sleep(0.3)
         return x + y

@@ -11,10 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import asyncio
+import time
 from pprint import pprint
 
+import pytest
+
 from dimos.protocol.skill.coordinator import SkillCoordinator
+from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.protocol.skill.testing_utils import TestContainer
 
 
@@ -50,3 +54,47 @@ def test_coordinator_skill_export():
     ]
 
     print(pprint(skillCoordinator.get_tools()))
+
+
+class TestContainer2(SkillContainer):
+    @skill()
+    def add(self, x: int, y: int) -> int:
+        #        time.sleep(0.25)
+        return x + y
+
+    @skill()
+    def delayadd(self, x: int, y: int) -> int:
+        time.sleep(0.5)
+        return x + y
+
+
+@pytest.mark.asyncio
+async def test_coordinator_generator():
+    skillCoordinator = SkillCoordinator()
+    skillCoordinator.register_skills(TestContainer())
+
+    skillCoordinator.start()
+
+    skillCoordinator.call("test-call-0", "delayadd", 1, 2)
+
+    time.sleep(0.1)
+
+    cnt = 0
+    while await skillCoordinator.wait_for_updates(1):
+        skillstates = skillCoordinator.generate_snapshot(clear=True)
+        for name, state in skillstates.items():
+            print(state)
+            print(state.agent_encode())
+
+        tool_msg = skillstates[f"test-call-{cnt}"].agent_encode()
+        print(tool_msg)
+        tool_msg["content"] == cnt + 1
+
+        cnt += 1
+        if cnt < 5:
+            skillCoordinator.call(f"test-call-{cnt}-delay", "delayadd", cnt, 2)
+            skillCoordinator.call(f"test-call-{cnt}", "add", cnt, 2)
+
+        time.sleep(0.1 * cnt)
+
+    print("All updates processed successfully.")

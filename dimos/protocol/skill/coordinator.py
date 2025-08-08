@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
 from pprint import pformat
-from typing import Any, Callable, Optional
+from typing import List, Optional
 
-from dimos.agents.agent_types import AgentResponse, ToolCall
+from dimos.agents.agent_types import ToolCall, ToolMessage
 from dimos.protocol.skill.comms import LCMSkillComms, MsgType, SkillCommsSpec, SkillMsg
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
 from dimos.protocol.skill.types import Reducer, Return, Stream
@@ -36,7 +37,7 @@ class AgentInputConfig:
 class SkillStateEnum(Enum):
     pending = 0
     running = 1
-    returned = 2
+    completed = 2
     error = 3
 
 
@@ -46,6 +47,14 @@ class SkillState(TimestampedCollection):
     name: str
     state: SkillStateEnum
     skill_config: SkillConfig
+
+    def agent_encode(self) -> ToolMessage:
+        return {
+            "status": self.state.name,
+            "name": self.name,
+            "tool_call_id": self.call_id,
+            "content": self._items[-1].content,
+        }
 
     def __init__(self, call_id: str, name: str, skill_config: Optional[SkillConfig] = None) -> None:
         super().__init__()
@@ -71,7 +80,7 @@ class SkillState(TimestampedCollection):
                 return True
 
         if msg.type == MsgType.ret:
-            self.state = SkillStateEnum.returned
+            self.state = SkillStateEnum.completed
             if self.skill_config.ret == Return.call_agent:
                 return True
             return False
@@ -87,9 +96,9 @@ class SkillState(TimestampedCollection):
         return False
 
     def __str__(self) -> str:
-        head = f"SkillState(name={self.name}, call_id={self.call_id}, state={self.state}"
+        head = f"SkillState({self.name} {self.state}, call_id={self.call_id}"
 
-        if self.state == SkillStateEnum.returned or self.state == SkillStateEnum.error:
+        if self.state == SkillStateEnum.completed or self.state == SkillStateEnum.error:
             head += ", ran for="
         else:
             head += ", running for="
@@ -101,6 +110,9 @@ class SkillState(TimestampedCollection):
         return head + ", No Messages)"
 
 
+SkillStates = dict[str, SkillState]
+
+
 class SkillCoordinator(SkillContainer):
     empty: bool = True
 
@@ -108,21 +120,25 @@ class SkillCoordinator(SkillContainer):
     _dynamic_containers: list[SkillContainer]
     _skill_state: dict[str, SkillState]  # key is call_id, not skill_name
     _skills: dict[str, SkillConfig]
-    _agent_callback: Optional[Callable[[dict[str, SkillState]], Any]] = None
+    _updates_available: asyncio.Event
+    _loop: Optional[asyncio.AbstractEventLoop]
 
-    # Agent callback is called with a state snapshot once system decides
-    # that agents needs to be woken up, according to inputs from active skills
-    def __init__(
-        self, agent_callback: Optional[Callable[[dict[str, SkillState]], Any]] = None
-    ) -> None:
+    def __init__(self) -> None:
         super().__init__()
         self._static_containers = []
         self._dynamic_containers = []
         self._skills = {}
         self._skill_state = {}
-        self._agent_callback = agent_callback
+        self._updates_available = asyncio.Event()
+        self._loop = None
 
     def start(self) -> None:
+        # Try to get the current event loop
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No loop running, we'll set it when wait_for_updates is called
+            pass
         self.agent_comms.start()
         self.agent_comms.subscribe(self.handle_message)
 
@@ -139,11 +155,13 @@ class SkillCoordinator(SkillContainer):
     def get_tools(self) -> list[dict]:
         return [skill.schema for skill in self.skills().values()]
 
-    # used by agent to call a tool
-    def tool_call(self, tool_call: ToolCall):
-        return self.call(tool_call.id, tool_call.name, **tool_call.arguments)
+    # Used by agent to execute tool calls
+    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> None:
+        """Execute a list of tool calls from the agent."""
+        for tool_call in tool_calls:
+            self.call(tool_call.id, tool_call.name, **tool_call.arguments)
 
-    # This is used by agent to call skills
+    # internal skill call
     def call(self, call_id: str, skill_name: str, *args, **kwargs) -> None:
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
@@ -161,9 +179,9 @@ class SkillCoordinator(SkillContainer):
     # Receives a message from active skill
     # Updates local skill state (appends to streamed data if needed etc)
     #
-    # Checks if agent needs to be called (if ToolConfig has Return=call_agent or Stream=call_agent)
+    # Checks if agent needs to be notified (if ToolConfig has Return=call_agent or Stream=call_agent)
     def handle_message(self, msg: SkillMsg) -> None:
-        logger.info(f"{msg.skill_name} (call_id={msg.call_id}) - {msg}")
+        logger.info(f"{msg.skill_name}, {msg.call_id} - {msg}")
 
         if self._skill_state.get(msg.call_id) is None:
             logger.warn(
@@ -171,43 +189,69 @@ class SkillCoordinator(SkillContainer):
             )
             self._skill_state[msg.call_id] = SkillState(call_id=msg.call_id, name=msg.skill_name)
 
-        should_call_agent = self._skill_state[msg.call_id].handle_msg(msg)
+        should_notify = self._skill_state[msg.call_id].handle_msg(msg)
 
-        if should_call_agent:
-            self.call_agent()
+        if should_notify:
+            # Thread-safe way to set the event
+            if self._loop and self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._updates_available.set)
+            else:
+                # Fallback for when no loop is available
+                self._updates_available.set()
 
-    # Returns a snapshot of the current state of skill runs.
-    #
-    # If clear=True, it will assume the snapshot is being sent to an agent
-    # and will clear the finished skill runs from the state
-    def state_snapshot(self, clear: bool = True) -> dict[str, SkillState]:
-        if not clear:
-            return self._skill_state
+    async def wait_for_updates(self, timeout: Optional[float] = None) -> True:
+        """Wait for skill updates to become available.
 
+        This method should be called by the agent when it's ready to receive updates.
+        It will block until updates are available or timeout is reached.
+
+        Args:
+            timeout: Optional timeout in seconds
+
+        Returns:
+            True if updates are available, False on timeout
+        """
+        # Ensure we have the current event loop
+        if not self._loop:
+            self._loop = asyncio.get_running_loop()
+
+        try:
+            if timeout:
+                await asyncio.wait_for(self._updates_available.wait(), timeout=timeout)
+            else:
+                await self._updates_available.wait()
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    def generate_snapshot(self, clear: bool = False) -> SkillStates:
+        """Generate a fresh snapshot of completed skills and optionally clear them."""
         ret = copy(self._skill_state)
 
-        to_delete = []
-        # Since state is exported, we can clear the finished skill runs
-        for call_id, skill_run in self._skill_state.items():
-            if skill_run.state == SkillStateEnum.returned:
-                logger.info(f"Skill {skill_run.name} (call_id={call_id}) finished")
-                to_delete.append(call_id)
-            if skill_run.state == SkillStateEnum.error:
-                logger.error(f"Skill run error for {skill_run.name} (call_id={call_id})")
-                to_delete.append(call_id)
+        if clear:
+            self._updates_available.clear()
+            to_delete = []
+            # Since snapshot is being sent to agent, we can clear the finished skill runs
+            for call_id, skill_run in self._skill_state.items():
+                if skill_run.state == SkillStateEnum.completed:
+                    logger.info(f"Skill {skill_run.name} (call_id={call_id}) finished")
+                    to_delete.append(call_id)
+                if skill_run.state == SkillStateEnum.error:
+                    logger.error(f"Skill run error for {skill_run.name} (call_id={call_id})")
+                    to_delete.append(call_id)
 
-        for call_id in to_delete:
-            logger.debug(f"Call {call_id} finished, removing from state")
-            del self._skill_state[call_id]
+            for call_id in to_delete:
+                logger.debug(f"Call {call_id} finished, removing from state")
+                del self._skill_state[call_id]
 
         return ret
 
-    def call_agent(self) -> None:
-        """Call the agent with the current state of skill runs."""
-        state = self.state_snapshot(clear=True)
-        logger.info(f"Calling agent with current skill state: {list(state.keys())}")
-        if self._agent_callback:
-            self._agent_callback(state)
+    def has_pending_updates(self) -> bool:
+        """Check if there are any completed skills waiting to be sent to agent."""
+        for skill_run in self._skill_state.values():
+            if skill_run.state in (SkillStateEnum.completed, SkillStateEnum.error):
+                return True
+        return False
 
     def __str__(self):
         # Convert objects to their string representations
@@ -221,7 +265,7 @@ class SkillCoordinator(SkillContainer):
 
         ret = stringify_value(self._skill_state)
 
-        return f"AgentInput({pformat(ret, indent=2, depth=3, width=120, compact=True)})"
+        return f"SkillCoordinator({pformat(ret, indent=2, depth=3, width=120, compact=True)})"
 
     # Given skillcontainers can run remotely, we are
     # Caching available skills from static containers

@@ -14,9 +14,9 @@
 
 """Agent-specific types for message passing."""
 
-from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
 import time
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, TypedDict
 
 
 @dataclass
@@ -67,3 +67,10 @@ class AgentResponse:
         content_preview = self.content[:50] + "..." if len(self.content) > 50 else self.content
         tool_info = f", tools={len(self.tool_calls)}" if self.tool_calls else ""
         return f"AgentResponse(role='{self.role}', content='{content_preview}'{tool_info})"
+
+
+class ToolOutput(TypedDict):
+    role = "tool"
+    tool_call_id: str
+    content: str
+    name: str

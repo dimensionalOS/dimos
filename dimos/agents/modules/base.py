@@ -17,16 +17,13 @@
 import asyncio
 import json
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Union
-
-from reactivex.subject import Subject
 
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse, ToolCall
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
-from dimos.protocol.skill import SkillCoordinator
+from dimos.protocol.skill import SkillCoordinator, SkillState
 from dimos.utils.logging_config import setup_logger
 
 try:
@@ -36,7 +33,6 @@ except ImportError:
 
 logger = setup_logger("dimos.agents.modules.base")
 
-# TODO should this be an enum or something?
 # Vision-capable models
 VISION_MODELS = {
     "openai::gpt-4o",
@@ -60,7 +56,7 @@ class BaseAgent:
     - LLM gateway integration
     - Conversation history
     - Semantic memory (RAG)
-    - Skills/tools execution
+    - Skills/tools execution (non-blocking)
     - Multimodal support (text, images, data)
     - Model capability detection
     """
@@ -124,20 +120,14 @@ class BaseAgent:
         self.history = []
         self._history_lock = threading.Lock()
 
-        # Thread pool for async operations
-        self._executor = ThreadPoolExecutor(max_workers=2)
-
-        # Response subject for emitting responses
-        self.response_subject = Subject()
-
         # Check model capabilities
         self._supports_vision = self._check_vision_support()
 
         # Initialize memory with default context
         self._initialize_memory()
 
-    # should we be starting skills here?
     def start(self):
+        """Start the agent and its skills."""
         self.skills.start()
 
     def _check_vision_support(self) -> bool:
@@ -169,8 +159,16 @@ class BaseAgent:
         except Exception as e:
             logger.warning(f"Failed to initialize memory: {e}")
 
-    async def _process_query_async(self, agent_msg: AgentMessage) -> AgentResponse:
-        """Process query asynchronously and return AgentResponse."""
+    async def aquery(self, agent_msg: AgentMessage) -> AgentResponse:
+        """Process query asynchronously and return AgentResponse.
+
+        Args:
+            agent_msg: The agent message containing text/images
+            skill_results: Optional skill execution results from coordinator
+
+        Returns:
+            AgentResponse with content and optional tool calls
+        """
         query_text = agent_msg.get_combined_text()
         logger.info(f"Processing query: {query_text}")
 
@@ -183,9 +181,12 @@ class BaseAgent:
             # Clear images from message
             agent_msg.images.clear()
 
-        # Build messages - pass AgentMessage directly
-        messages = self._build_messages(agent_msg, rag_context)
+        # Build messages including skill results if provided
+        messages = self._build_messages(agent_msg, rag_context, skill_results)
 
+        from pprint import pprint
+
+        print("RETURNING", pprint(messages))
         # Get tools if available
         tools = self.skills.get_tools() if not self.skills.empty else None
 
@@ -203,8 +204,23 @@ class BaseAgent:
         message = response["choices"][0]["message"]
         content = message.get("content", "")
 
-        # Don't update history yet - wait until we have the complete interaction
-        # This follows Claude's pattern of locking history until tool execution is complete
+        # Update history with user message and assistant response
+        with self._history_lock:
+            # Add user message (last message before assistant)
+            if skill_results:
+                # If we have skill results, add them to history
+                # This includes the original user message + tool results
+                self.history.extend(messages[-len(skill_results) - 1 :])
+            else:
+                # Just add the user message
+                self.history.append(messages[-1])
+
+            # Add assistant response
+            self.history.append(message)
+
+            # Trim history if needed
+            if len(self.history) > self.max_history:
+                self.history = self.history[-self.max_history :]
 
         # Check for tool calls
         tool_calls = None
@@ -219,42 +235,23 @@ class BaseAgent:
                 for tc in message["tool_calls"]
             ]
 
-            # Get the user message for history
-            user_message = messages[-1]
-
-            # Handle tool calls (blocking by default)
-            final_content = await self._handle_tool_calls(tool_calls, messages, user_message)
-
-            # Return response with tool information
-            return AgentResponse(
-                content=final_content,
-                role="assistant",
-                tool_calls=tool_calls,
-                requires_follow_up=False,  # Already handled
-                metadata={"model": self.model},
-            )
-
-        else:
-            # No tools, add both user and assistant messages to history
-            with self._history_lock:
-                # Add user message
-                user_msg = messages[-1]  # Last message in messages is the user message
-                self.history.append(user_msg)
-
-                # Add assistant response
-                self.history.append(message)
-
-                # Trim history if needed
-                if len(self.history) > self.max_history:
-                    self.history = self.history[-self.max_history :]
-
+            # Return response indicating tools need to be executed
             return AgentResponse(
                 content=content,
                 role="assistant",
-                tool_calls=None,
-                requires_follow_up=False,
+                tool_calls=tool_calls,
+                requires_follow_up=True,  # Indicates coordinator should execute tools
                 metadata={"model": self.model},
             )
+
+        # No tools, return final response
+        return AgentResponse(
+            content=content,
+            role="assistant",
+            tool_calls=None,
+            requires_follow_up=False,
+            metadata={"model": self.model},
+        )
 
     def _get_rag_context(self, query: str) -> str:
         """Get relevant context from memory."""
@@ -275,9 +272,12 @@ class BaseAgent:
         return ""
 
     def _build_messages(
-        self, agent_msg: AgentMessage, rag_context: str = ""
+        self,
+        agent_msg: AgentMessage,
+        rag_context: str = "",
+        skill_results: Optional[Dict[str, SkillState]] = None,
     ) -> List[Dict[str, Any]]:
-        """Build messages list from AgentMessage."""
+        """Build messages list from AgentMessage and optional skill results."""
         messages = []
 
         # System prompt with RAG context if available
@@ -288,8 +288,29 @@ class BaseAgent:
 
         # Add conversation history
         with self._history_lock:
-            # History items should already be Message objects or dicts
             messages.extend(self.history)
+
+        # If we have skill results, add them as tool messages
+        if skill_results:
+            for call_id, skill_state in skill_results.items():
+                # Extract the return value from skill state
+                for msg in skill_state._items:
+                    if msg.type.name == "ret":
+                        tool_msg = {
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": str(msg.content),
+                            "name": skill_state.name,
+                        }
+                        messages.append(tool_msg)
+                    elif msg.type.name == "error":
+                        tool_msg = {
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": f"Error: {msg.content}",
+                            "name": skill_state.name,
+                        }
+                        messages.append(tool_msg)
 
         # Build user message content from AgentMessage
         user_content = agent_msg.get_combined_text() if agent_msg.has_text() else ""
@@ -318,101 +339,16 @@ class BaseAgent:
 
         return messages
 
-    async def _handle_tool_calls(
+    def query(
         self,
-        tool_calls: List[ToolCall],
-        messages: List[Dict[str, Any]],
-        user_message: Dict[str, Any],
-    ) -> str:
-        """Handle tool calls from LLM (blocking mode by default)."""
-        try:
-            # Build assistant message with tool calls
-            assistant_msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
-                    }
-                    for tc in tool_calls
-                ],
-            }
-            messages.append(assistant_msg)
-
-            # Execute tools and collect results
-            tool_results = []
-            for tool_call in tool_calls:
-                logger.info(f"Executing tool: {tool_call.name}")
-
-                try:
-                    # Execute the tool
-                    result = self.skills.call(tool_call.name, **tool_call.arguments)
-                    tool_call.status = "completed"
-
-                    # Format tool result message
-                    tool_result = {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": str(result),
-                        "name": tool_call.name,
-                    }
-                    tool_results.append(tool_result)
-
-                except Exception as e:
-                    logger.error(f"Tool execution failed: {e}")
-                    tool_call.status = "failed"
-
-                    # Add error result
-                    tool_result = {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": f"Error: {str(e)}",
-                        "name": tool_call.name,
-                    }
-                    tool_results.append(tool_result)
-
-            # Add tool results to messages
-            messages.extend(tool_results)
-
-            # Get follow-up response
-            response = await self.gateway.ainference(
-                model=self.model,
-                messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-            )
-
-            # Extract final response
-            final_message = response["choices"][0]["message"]
-
-            # Now add all messages to history in order (like Claude does)
-            with self._history_lock:
-                # Add user message
-                self.history.append(user_message)
-                # Add assistant message with tool calls
-                self.history.append(assistant_msg)
-                # Add all tool results
-                self.history.extend(tool_results)
-                # Add final assistant response
-                self.history.append(final_message)
-
-                # Trim history if needed
-                if len(self.history) > self.max_history:
-                    self.history = self.history[-self.max_history :]
-
-            return final_message.get("content", "")
-
-        except Exception as e:
-            logger.error(f"Error handling tool calls: {e}")
-            return f"Error executing tools: {str(e)}"
-
-    def query(self, message: Union[str, AgentMessage]) -> AgentResponse:
+        message: Union[str, AgentMessage],
+        skill_results: Optional[Dict[str, SkillState]] = None,
+    ) -> AgentResponse:
         """Synchronous query method for direct usage.
 
         Args:
             message: Either a string query or an AgentMessage with text and/or images
+            skill_results: Optional skill execution results from coordinator
 
         Returns:
             AgentResponse object with content and tool information
@@ -428,33 +364,12 @@ class BaseAgent:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            return loop.run_until_complete(self._process_query_async(agent_msg))
+            return loop.run_until_complete(self._process_query_async(agent_msg, skill_results))
         finally:
             loop.close()
 
-    async def aquery(self, message: Union[str, AgentMessage]) -> AgentResponse:
-        """Asynchronous query method.
-
-        Args:
-            message: Either a string query or an AgentMessage with text and/or images
-
-        Returns:
-            AgentResponse object with content and tool information
-        """
-        # Convert string to AgentMessage if needed
-        if isinstance(message, str):
-            agent_msg = AgentMessage()
-            agent_msg.add_text(message)
-        else:
-            agent_msg = message
-
-        return await self._process_query_async(agent_msg)
-
     def stop(self):
+        """Stop the agent and clean up resources."""
         self.skills.stop()
-        """Dispose of all resources and close gateway."""
-        self.response_subject.on_completed()
-        if self._executor:
-            self._executor.shutdown(wait=False)
         if self.gateway:
             self.gateway.close()

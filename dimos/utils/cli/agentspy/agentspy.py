@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 import time
@@ -23,12 +22,12 @@ from typing import Callable, Dict, Optional
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Vertical
 from textual.reactive import reactive
-from textual.widgets import DataTable, Footer, Header, RichLog
+from textual.widgets import DataTable, Footer, RichLog
 
+from dimos.protocol.skill.comms import SkillMsg
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateEnum
-from dimos.protocol.skill.comms import SkillMsg, LCMSkillComms
 from dimos.protocol.skill.types import MsgType
 
 
@@ -60,7 +59,7 @@ class AgentSpy:
         def delayed_update():
             time.sleep(0.1)
             with self._lock:
-                self._latest_state = self.agent_interface.state_snapshot(clear=False)
+                self._latest_state = self.agent_interface.generate_snapshot(clear=False)
                 for callback in self.message_callbacks:
                     callback(self._latest_state)
 
@@ -258,7 +257,7 @@ class AgentSpyApp(App):
         self.spy.start()
 
         # Also set up periodic refresh to update durations
-        self.set_interval(0.5, self.refresh_table)
+        self.set_interval(1.0, self.refresh_table)
 
     def on_unmount(self):
         """Stop the spy when app unmounts."""
