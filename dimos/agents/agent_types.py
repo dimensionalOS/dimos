@@ -15,8 +15,10 @@
 """Agent-specific types for message passing."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
+import threading
 import time
+import json
 
 
 @dataclass
@@ -67,3 +69,177 @@ class AgentResponse:
         content_preview = self.content[:50] + "..." if len(self.content) > 50 else self.content
         tool_info = f", tools={len(self.tool_calls)}" if self.tool_calls else ""
         return f"AgentResponse(role='{self.role}', content='{content_preview}'{tool_info})"
+
+
+@dataclass
+class ConversationMessage:
+    """Single message in conversation history.
+
+    Represents a message in the conversation that can be converted to
+    different formats (OpenAI, TensorZero, etc).
+    """
+
+    role: str  # "system", "user", "assistant", "tool"
+    content: Union[str, List[Dict[str, Any]]]  # Text or content blocks
+    tool_calls: Optional[List[ToolCall]] = None
+    tool_call_id: Optional[str] = None  # For tool responses
+    timestamp: float = field(default_factory=time.time)
+
+    def to_openai_format(self) -> Dict[str, Any]:
+        """Convert to OpenAI API format."""
+        msg = {"role": self.role}
+
+        # Handle content
+        if isinstance(self.content, str):
+            msg["content"] = self.content
+        else:
+            # Content is already a list of content blocks
+            msg["content"] = self.content
+
+        # Add tool calls if present
+        if self.tool_calls:
+            msg["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                }
+                for tc in self.tool_calls
+            ]
+
+        # Add tool_call_id for tool responses
+        if self.tool_call_id:
+            msg["tool_call_id"] = self.tool_call_id
+
+        return msg
+
+    def __repr__(self) -> str:
+        content_preview = (
+            str(self.content)[:50] + "..." if len(str(self.content)) > 50 else str(self.content)
+        )
+        return f"ConversationMessage(role='{self.role}', content='{content_preview}')"
+
+
+class ConversationHistory:
+    """Thread-safe conversation history manager.
+
+    Manages conversation history with proper formatting for different
+    LLM providers and automatic trimming.
+    """
+
+    def __init__(self, max_size: int = 20):
+        """Initialize conversation history.
+
+        Args:
+            max_size: Maximum number of messages to keep
+        """
+        self._messages: List[ConversationMessage] = []
+        self._lock = threading.Lock()
+        self.max_size = max_size
+
+    def add_user_message(self, content: Union[str, List[Dict[str, Any]]]) -> None:
+        """Add user message to history.
+
+        Args:
+            content: Text string or list of content blocks (for multimodal)
+        """
+        with self._lock:
+            self._messages.append(ConversationMessage(role="user", content=content))
+            self._trim()
+
+    def add_assistant_message(
+        self, content: str, tool_calls: Optional[List[ToolCall]] = None
+    ) -> None:
+        """Add assistant response to history.
+
+        Args:
+            content: Response text
+            tool_calls: Optional list of tool calls made
+        """
+        with self._lock:
+            self._messages.append(
+                ConversationMessage(role="assistant", content=content, tool_calls=tool_calls)
+            )
+            self._trim()
+
+    def add_tool_result(self, tool_call_id: str, content: str) -> None:
+        """Add tool execution result to history.
+
+        Args:
+            tool_call_id: ID of the tool call this is responding to
+            content: Result of the tool execution
+        """
+        with self._lock:
+            self._messages.append(
+                ConversationMessage(role="tool", content=content, tool_call_id=tool_call_id)
+            )
+            self._trim()
+
+    def add_raw_message(self, message: Dict[str, Any]) -> None:
+        """Add a raw message dict to history.
+
+        Args:
+            message: Message dict with role and content
+        """
+        with self._lock:
+            # Extract fields from raw message
+            role = message.get("role", "user")
+            content = message.get("content", "")
+
+            # Handle tool calls if present
+            tool_calls = None
+            if "tool_calls" in message:
+                tool_calls = [
+                    ToolCall(
+                        id=tc["id"],
+                        name=tc["function"]["name"],
+                        arguments=json.loads(tc["function"]["arguments"])
+                        if isinstance(tc["function"]["arguments"], str)
+                        else tc["function"]["arguments"],
+                        status="completed",
+                    )
+                    for tc in message["tool_calls"]
+                ]
+
+            # Handle tool_call_id for tool responses
+            tool_call_id = message.get("tool_call_id")
+
+            self._messages.append(
+                ConversationMessage(
+                    role=role, content=content, tool_calls=tool_calls, tool_call_id=tool_call_id
+                )
+            )
+            self._trim()
+
+    def to_openai_format(self) -> List[Dict[str, Any]]:
+        """Export history in OpenAI format.
+
+        Returns:
+            List of message dicts in OpenAI format
+        """
+        with self._lock:
+            return [msg.to_openai_format() for msg in self._messages]
+
+    def clear(self) -> None:
+        """Clear all conversation history."""
+        with self._lock:
+            self._messages.clear()
+
+    def size(self) -> int:
+        """Get number of messages in history.
+
+        Returns:
+            Number of messages
+        """
+        with self._lock:
+            return len(self._messages)
+
+    def _trim(self) -> None:
+        """Trim history to max_size (must be called within lock)."""
+        if len(self._messages) > self.max_size:
+            # Keep the most recent messages
+            self._messages = self._messages[-self.max_size :]
+
+    def __repr__(self) -> str:
+        with self._lock:
+            return f"ConversationHistory(messages={len(self._messages)}, max_size={self.max_size})"

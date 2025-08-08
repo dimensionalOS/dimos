@@ -27,7 +27,7 @@ from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
 from dimos.agents.agent_message import AgentMessage
-from dimos.agents.agent_types import AgentResponse, ToolCall
+from dimos.agents.agent_types import AgentResponse, ToolCall, ConversationHistory
 
 try:
     from .gateway import UnifiedGatewayClient
@@ -102,7 +102,7 @@ class BaseAgent:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_input_tokens = max_input_tokens
-        self.max_history = max_history
+        self._max_history = max_history
         self.rag_n = rag_n
         self.rag_threshold = rag_threshold
         self.dev_name = dev_name
@@ -132,9 +132,8 @@ class BaseAgent:
         # Initialize gateway
         self.gateway = UnifiedGatewayClient()
 
-        # Conversation history
-        self.history = []
-        self._history_lock = threading.Lock()
+        # Conversation history with proper format management
+        self.conversation = ConversationHistory(max_size=self._max_history)
 
         # Thread pool for async operations
         self._executor = ThreadPoolExecutor(max_workers=2)
@@ -147,6 +146,17 @@ class BaseAgent:
 
         # Initialize memory with default context
         self._initialize_memory()
+
+    @property
+    def max_history(self) -> int:
+        """Get max history size."""
+        return self._max_history
+
+    @max_history.setter
+    def max_history(self, value: int):
+        """Set max history size and update conversation."""
+        self._max_history = value
+        self.conversation.max_size = value
 
     def _check_vision_support(self) -> bool:
         """Check if the model supports vision."""
@@ -197,6 +207,23 @@ class BaseAgent:
         # Get tools if available
         tools = self.skills.get_tools() if len(self.skills) > 0 else None
 
+        # Debug logging before gateway call
+        logger.debug("=== Gateway Request ===")
+        logger.debug(f"Model: {self.model}")
+        logger.debug(f"Number of messages: {len(messages)}")
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                content_preview = content[:100]
+            elif isinstance(content, list):
+                content_preview = f"[{len(content)} content blocks]"
+            else:
+                content_preview = str(content)[:100]
+            logger.debug(f"  Message {i}: role={role}, content={content_preview}...")
+        logger.debug(f"Tools available: {len(tools) if tools else 0}")
+        logger.debug("======================")
+
         # Make inference call
         response = await self.gateway.ainference(
             model=self.model,
@@ -243,17 +270,17 @@ class BaseAgent:
             )
         else:
             # No tools, add both user and assistant messages to history
-            with self._history_lock:
-                # Add user message
-                user_msg = messages[-1]  # Last message in messages is the user message
-                self.history.append(user_msg)
+            # Get the user message content from the built message
+            user_msg = messages[-1]  # Last message in messages is the user message
+            user_content = user_msg["content"]
 
-                # Add assistant response
-                self.history.append(message)
-
-                # Trim history if needed
-                if len(self.history) > self.max_history:
-                    self.history = self.history[-self.max_history :]
+            # Add to conversation history
+            logger.info(f"=== Adding to history (no tools) ===")
+            logger.info(f"  Adding user message: {str(user_content)[:100]}...")
+            self.conversation.add_user_message(user_content)
+            logger.info(f"  Adding assistant response: {content[:100]}...")
+            self.conversation.add_assistant_message(content)
+            logger.info(f"  History size now: {self.conversation.size()}")
 
             return AgentResponse(
                 content=content,
@@ -293,10 +320,23 @@ class BaseAgent:
             system_content += f"\n\nRelevant context: {rag_context}"
         messages.append({"role": "system", "content": system_content})
 
-        # Add conversation history
-        with self._history_lock:
-            # History items should already be Message objects or dicts
-            messages.extend(self.history)
+        # Add conversation history in OpenAI format
+        history_messages = self.conversation.to_openai_format()
+        messages.extend(history_messages)
+
+        # Debug history state
+        logger.info(f"=== Building messages with {len(history_messages)} history messages ===")
+        if history_messages:
+            for i, msg in enumerate(history_messages):
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    preview = content[:100]
+                elif isinstance(content, list):
+                    preview = f"[{len(content)} content blocks]"
+                else:
+                    preview = str(content)[:100]
+                logger.info(f"  History[{i}]: role={role}, content={preview}")
 
         # Build user message content from AgentMessage
         user_content = agent_msg.get_combined_text() if agent_msg.has_text() else ""
@@ -395,19 +435,22 @@ class BaseAgent:
             final_message = response["choices"][0]["message"]
 
             # Now add all messages to history in order (like Claude does)
-            with self._history_lock:
-                # Add user message
-                self.history.append(user_message)
-                # Add assistant message with tool calls
-                self.history.append(assistant_msg)
-                # Add all tool results
-                self.history.extend(tool_results)
-                # Add final assistant response
-                self.history.append(final_message)
+            # Add user message
+            user_content = user_message["content"]
+            self.conversation.add_user_message(user_content)
 
-                # Trim history if needed
-                if len(self.history) > self.max_history:
-                    self.history = self.history[-self.max_history :]
+            # Add assistant message with tool calls
+            self.conversation.add_assistant_message("", tool_calls)
+
+            # Add tool results
+            for result in tool_results:
+                self.conversation.add_tool_result(
+                    tool_call_id=result["tool_call_id"], content=result["content"]
+                )
+
+            # Add final assistant response
+            final_content = final_message.get("content", "")
+            self.conversation.add_assistant_message(final_content)
 
             return final_message.get("content", "")
 
