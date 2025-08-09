@@ -142,6 +142,7 @@ jobs:
     needs: [check-changes, ros-dev]
     if: always()
     uses: ./.github/workflows/tests.yml
+    secrets: inherit
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
@@ -156,6 +157,7 @@ jobs:
     needs: [check-changes, dev]
     if: always()
     uses: ./.github/workflows/tests.yml
+    secrets: inherit
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
@@ -171,6 +173,7 @@ jobs:
     needs: [check-changes, dev]
     if: always()
     uses: ./.github/workflows/tests.yml
+    secrets: inherit
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
@@ -185,6 +188,7 @@ jobs:
     needs: [check-changes, dev]
     if: always()
     uses: ./.github/workflows/tests.yml
+    secrets: inherit
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
