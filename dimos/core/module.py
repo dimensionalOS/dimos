@@ -13,6 +13,7 @@
 # limitations under the License.
 import asyncio
 import inspect
+from dataclasses import dataclass
 from typing import (
     Any,
     Callable,
@@ -28,40 +29,33 @@ from dimos.core import colors
 from dimos.core.core import T, rpc
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
-from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
+from dimos.protocol.service import Configurable
 from dimos.protocol.tf import LCMTF, TFSpec
 
 
-class CommsSpec:
-    rpc: type[RPCSpec]
-    agent: type[SkillCommsSpec]
-    tf: type[TFSpec]
+@dataclass
+class ModuleConfig:
+    rpc_transport: type[RPCSpec] = LCMRPC
+    tf_transport: type[TFSpec] = LCMTF
 
 
-class LCMComms(CommsSpec):
-    rpc = LCMRPC
-    agent = LCMSkillComms
-    tf = LCMTF
-
-
-class ModuleBase:
-    comms: CommsSpec = LCMComms
+class ModuleBase(Configurable[ModuleConfig]):
     _rpc: Optional[RPCSpec] = None
-    _agent: Optional[SkillCommsSpec] = None
     _tf: Optional[TFSpec] = None
     _loop: asyncio.AbstractEventLoop = None
 
+    default_config = ModuleConfig
+
     def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         # we can completely override comms protocols if we want
-        if kwargs.get("comms", None) is not None:
-            self.comms = kwargs["comms"]
         try:
             # here we attempt to figure out if we are running on a dask worker
             # if so we use the dask worker _loop as ours,
             # and we register our RPC server
             worker = get_worker()
             self._loop = worker.loop if worker else None
-            self.rpc = self.comms.rpc()
+            self.rpc = self.config.rpc_transport()
             self.rpc.serve_module_rpc(self)
             self.rpc.start()
         except ValueError:
@@ -79,7 +73,7 @@ class ModuleBase:
     @property
     def tf(self):
         if self._tf is None:
-            self._tf = self.comms.tf()
+            self._tf = self.config.tf_transport()
         return self._tf
 
     @tf.setter

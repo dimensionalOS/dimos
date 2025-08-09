@@ -37,14 +37,23 @@ class TestContainer(SkillContainer):
 
 @pytest.mark.asyncio
 async def test_agent_init():
-    # dimos = start(2)
-    # agent = dimos.deploy(Agent)
-    agent = Agent()
+    from dimos.core import start
+
+    dimos = start(2)
+    agent = dimos.deploy(
+        Agent,
+        system_prompt="Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate",
+    )
+    # agent = Agent(
+    #    system_prompt="Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
+    # )
     agent.register_skills(TestContainer())
     agent.start()
 
-    agent.query(
-        "hi there, please tell me what's your name, and use add tool to add 124181112 and 124124. don't sum yourself, use a tool I provided"
+    print(
+        agent.query_async(
+            "hi there, please tell me what's your name, and use add tool to add 124181112 and 124124."
+        )
     )
 
     await asyncio.sleep(10)

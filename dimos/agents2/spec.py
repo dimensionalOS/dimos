@@ -14,6 +14,7 @@
 
 """Base agent module that wraps BaseAgent for DimOS module usage."""
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Tuple, Union
@@ -125,19 +126,21 @@ class AgentConfig:
     provider: Provider = Provider.OPENAI
 
 
-class AgentSpec(
-    Service[AgentConfig],
-):
+class AgentSpec(Service[AgentConfig], ABC):
     default_config: type[AgentConfig] = AgentConfig
 
     @rpc
+    @abstractmethod
     def start(self): ...
 
     @rpc
+    @abstractmethod
     def stop(self): ...
 
     @rpc
+    @abstractmethod
     def clear_history(self): ...
 
     @rpc
+    @abstractmethod
     def query(self, query: str): ...

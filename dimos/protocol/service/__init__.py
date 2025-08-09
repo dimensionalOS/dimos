@@ -1,2 +1,2 @@
 from dimos.protocol.service.lcmservice import LCMService
-from dimos.protocol.service.spec import Service
+from dimos.protocol.service.spec import Configurable, Service

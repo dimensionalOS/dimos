@@ -54,7 +54,7 @@ class Topic:
         return f"{self.topic}#{self.lcm_type.msg_name}"
 
 
-class LCMPubSubBase(PubSub[Topic, Any], LCMService):
+class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
     default_config = LCMConfig
     lc: lcm.LCM
     _stop_event: threading.Event

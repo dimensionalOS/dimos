@@ -36,15 +36,15 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger("dimos.protocol.agents2")
 
 
-class Agent(AgentSpec, SkillCoordinator):
+class Agent(AgentSpec):
     def __init__(
         self,
         *args,
         **kwargs,
     ):
         AgentSpec.__init__(self, *args, **kwargs)
-        SkillCoordinator.__init__(self)
 
+        self.coordinator = SkillCoordinator()
         self.messages = []
 
         if self.config.system_prompt:
@@ -57,11 +57,15 @@ class Agent(AgentSpec, SkillCoordinator):
 
     @rpc
     def start(self):
-        SkillCoordinator.start(self)
+        self.coordinator.start()
 
     @rpc
     def stop(self):
-        SkillCoordinator.stop(self)
+        self.coordinator.stop()
+
+    @rpc
+    def clear_history(self):
+        self.messages.clear()
 
     async def agent_loop(self, seed_query: str = ""):
         self.messages.append(HumanMessage(seed_query))
@@ -75,15 +79,15 @@ class Agent(AgentSpec, SkillCoordinator):
 
                 logger.info(f"Agent response: {msg.content}")
                 if msg.tool_calls:
-                    self.execute_tool_calls(msg.tool_calls)
+                    self.coordinator.execute_tool_calls(msg.tool_calls)
 
-                if not self.has_active_skills():
+                if not self.coordinator.has_active_skills():
                     logger.info("No active tasks, exiting agent loop.")
-                    return
+                    return msg.content
 
-                await self.wait_for_updates()
+                await self.coordinator.wait_for_updates()
 
-                for call_id, update in self.generate_snapshot(clear=True).items():
+                for call_id, update in self.coordinator.generate_snapshot(clear=True).items():
                     self.messages.append(update.agent_encode())
 
         except Exception as e:
@@ -93,5 +97,8 @@ class Agent(AgentSpec, SkillCoordinator):
             traceback.print_exc()
 
     @rpc
+    def query_async(self, query: str):
+        return asyncio.ensure_future(self.agent_loop(query), loop=self._loop)
+
     def query(self, query: str):
-        asyncio.ensure_future(self.agent_loop(query), loop=self._loop)
+        return asyncio.run_coroutine_threadsafe(self.agent_loop(query), self._loop).result()
