@@ -43,8 +43,9 @@ class RPCClient(Protocol):
     ) -> Optional[Callable[[], Any]]: ...
 
     # we bootstrap these from the call() implementation above
-    def call_sync(self, name: str, arguments: Args, rpc_timeout: float = None) -> Any:
+    def call_sync(self, name: str, arguments: Args, timeout: float = 1.0) -> Any:
         res = Empty
+        start_time = time.time()
 
         def receive_value(val):
             nonlocal res
@@ -54,9 +55,9 @@ class RPCClient(Protocol):
 
         total_time = 0.0
         while res is Empty:
-            if rpc_timeout is not None and total_time >= rpc_timeout:
-                raise TimeoutError(f"RPC call to {name} timed out after {rpc_timeout} seconds")
-
+            if time.time() - start_time > timeout:
+                print(f"RPC {name} timed out")
+                return None
             time.sleep(0.05)
             total_time += 0.1
         return res
