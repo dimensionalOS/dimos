@@ -29,10 +29,11 @@ from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos_lcm.std_msgs import String
 from dimos.navigation.local_planner.local_planner import BaseLocalPlanner
 from dimos.navigation.bt_navigator.goal_validator import find_safe_goal
+from dimos.navigation.bt_navigator.recovery_server import RecoveryServer
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 from dimos_lcm.std_msgs import Bool
-from dimos.utils.transform_utils import apply_transform, get_distance
+from dimos.utils.transform_utils import apply_transform
 
 logger = setup_logger("dimos.navigation.bt_navigator")
 
@@ -112,7 +113,10 @@ class BehaviorTreeNavigator(Module):
         # TF listener
         self.tf = TF()
 
-        logger.info("Navigator initialized")
+        # Recovery server for stuck detection
+        self.recovery_server = RecoveryServer(stuck_duration=5.0)
+
+        logger.info("Navigator initialized with stuck detection")
 
     @rpc
     def start(self):
@@ -192,12 +196,14 @@ class BehaviorTreeNavigator(Module):
     @rpc
     def get_state(self) -> NavigatorState:
         """Get the current state of the navigator."""
-        with self.state_lock:
-            return self.state
+        return self.state
 
     def _on_odom(self, msg: PoseStamped):
         """Handle incoming odometry messages."""
         self.latest_odom = msg
+
+        if self.state == NavigatorState.FOLLOWING_PATH:
+            self.recovery_server.update_odom(msg)
 
     def _on_goal_request(self, msg: PoseStamped):
         """Handle incoming goal requests."""
@@ -254,6 +260,12 @@ class BehaviorTreeNavigator(Module):
                     original_goal = self.original_goal
 
                 if goal is not None and self.latest_costmap is not None:
+                    # Check if robot is stuck
+                    if self.recovery_server.check_stuck():
+                        logger.warning("Robot is stuck! Cancelling goal and resetting.")
+                        self.cancel_goal()
+                        continue
+
                     # Find safe goal position
                     safe_goal_pos = find_safe_goal(
                         self.latest_costmap,
@@ -280,17 +292,12 @@ class BehaviorTreeNavigator(Module):
 
                     # Check if goal is reached
                     if self.local_planner.is_goal_reached():
-                        with self._goal_reached_lock:
-                            self._goal_reached = True
-                        logger.info("Goal reached!")
                         reached_msg = Bool()
                         reached_msg.data = True
                         self.goal_reached.publish(reached_msg)
-                        self.local_planner.reset()
-                        with self.goal_lock:
-                            self.current_goal = None
-                        with self.state_lock:
-                            self.state = NavigatorState.IDLE
+                        self.stop()
+                        with self._goal_reached_lock:
+                            self._goal_reached = True
                         logger.info("Goal reached, resetting local planner")
 
             elif current_state == NavigatorState.RECOVERY:
@@ -306,8 +313,7 @@ class BehaviorTreeNavigator(Module):
         Returns:
             True if goal was reached, False otherwise
         """
-        with self._goal_reached_lock:
-            return self._goal_reached
+        return self.local_planner.is_goal_reached()
 
     def stop(self):
         """Stop navigation and return to IDLE state."""
@@ -321,5 +327,6 @@ class BehaviorTreeNavigator(Module):
             self.state = NavigatorState.IDLE
 
         self.local_planner.reset()
+        self.recovery_server.reset()  # Reset recovery server when stopping
 
         logger.info("Navigator stopped")
