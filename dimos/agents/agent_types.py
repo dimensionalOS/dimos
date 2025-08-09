@@ -83,6 +83,7 @@ class ConversationMessage:
     content: Union[str, List[Dict[str, Any]]]  # Text or content blocks
     tool_calls: Optional[List[ToolCall]] = None
     tool_call_id: Optional[str] = None  # For tool responses
+    name: Optional[str] = None  # For tool messages (function name)
     timestamp: float = field(default_factory=time.time)
 
     def to_openai_format(self) -> Dict[str, Any]:
@@ -98,18 +99,26 @@ class ConversationMessage:
 
         # Add tool calls if present
         if self.tool_calls:
-            msg["tool_calls"] = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
-                }
-                for tc in self.tool_calls
-            ]
+            # Handle both ToolCall objects and dicts
+            if isinstance(self.tool_calls[0], dict):
+                msg["tool_calls"] = self.tool_calls
+            else:
+                msg["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+                    }
+                    for tc in self.tool_calls
+                ]
 
         # Add tool_call_id for tool responses
         if self.tool_call_id:
             msg["tool_call_id"] = self.tool_call_id
+
+        # Add name field if present (for tool messages)
+        if self.name:
+            msg["name"] = self.name
 
         return msg
 
@@ -162,16 +171,19 @@ class ConversationHistory:
             )
             self._trim()
 
-    def add_tool_result(self, tool_call_id: str, content: str) -> None:
+    def add_tool_result(self, tool_call_id: str, content: str, name: Optional[str] = None) -> None:
         """Add tool execution result to history.
 
         Args:
             tool_call_id: ID of the tool call this is responding to
             content: Result of the tool execution
+            name: Optional name of the tool/function
         """
         with self._lock:
             self._messages.append(
-                ConversationMessage(role="tool", content=content, tool_call_id=tool_call_id)
+                ConversationMessage(
+                    role="tool", content=content, tool_call_id=tool_call_id, name=name
+                )
             )
             self._trim()
 
