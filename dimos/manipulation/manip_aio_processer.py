@@ -98,7 +98,6 @@ class ManipulationProcessor:
         self.segmenter = None
         if self.enable_segmentation:
             self.segmenter = Sam2DSegmenter(
-                device="cuda",
                 use_tracker=False,  # Disable tracker for simple segmentation
                 use_analyzer=False,  # Disable analyzer for simple segmentation
             )

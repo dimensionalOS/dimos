@@ -54,6 +54,7 @@ class ImageEmbeddingProvider:
         self.dimensions = dimensions
         self.model = None
         self.processor = None
+        self.model_path = None
 
         self._initialize_model()
 
@@ -68,10 +69,16 @@ class ImageEmbeddingProvider:
 
             if self.model_name == "clip":
                 model_id = get_data("models_clip") / "model.onnx"
+                self.model_path = str(model_id)  # Store for pickling
                 processor_id = "openai/clip-vit-base-patch32"
-                self.model = ort.InferenceSession(model_id)
+
+                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+                self.model = ort.InferenceSession(str(model_id), providers=providers)
+
+                actual_providers = self.model.get_providers()
                 self.processor = CLIPProcessor.from_pretrained(processor_id)
-                logger.info(f"Loaded CLIP model: {model_id}")
+                logger.info(f"Loaded CLIP model: {model_id} with providers: {actual_providers}")
             elif self.model_name == "resnet":
                 model_id = "microsoft/resnet-50"
                 self.model = AutoModel.from_pretrained(model_id)

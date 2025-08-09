@@ -11,22 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import math
-from datetime import datetime
-from io import BytesIO
-from typing import BinaryIO, Literal, TypeAlias, TypedDict
+import time
+from typing import Literal, TypedDict
 
 from scipy.spatial.transform import Rotation as R
 
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.robot.unitree_webrtc.type.timeseries import (
-    EpochLike,
     Timestamped,
-    to_datetime,
-    to_human_readable,
 )
-from dimos.types.timestamped import to_timestamp
-from dimos.types.vector import Vector, VectorLike
 
 raw_odometry_msg_sample = {
     "type": "msg",
@@ -104,7 +97,7 @@ class Odometry(PoseStamped, Timestamped):
             pose["orientation"].get("w"),
         )
 
-        ts = to_timestamp(msg["data"]["header"]["stamp"])
+        ts = time.time()
         return Odometry(position=pos, orientation=rot, ts=ts, frame_id="world")
 
     def __repr__(self) -> str:

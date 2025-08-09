@@ -28,12 +28,11 @@ from reactivex.subject import Subject
 from dimos.msgs.geometry_msgs import Pose
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.stream.video_provider import VideoProvider
-from dimos.types.vector import Vector
 
 
 @pytest.mark.heavy
 class TestSpatialMemory:
-    @pytest.fixture(scope="function")
+    @pytest.fixture(scope="class")
     def temp_dir(self):
         # Create a temporary directory for storing spatial memory data
         temp_dir = tempfile.mkdtemp()
@@ -41,66 +40,60 @@ class TestSpatialMemory:
         # Clean up
         shutil.rmtree(temp_dir)
 
-    def test_spatial_memory_initialization(self):
+    @pytest.fixture(scope="class")
+    def spatial_memory(self, temp_dir):
+        # Create a single SpatialMemory instance to be reused across all tests
+        memory = SpatialMemory(
+            collection_name="test_collection",
+            embedding_model="clip",
+            new_memory=True,
+            db_path=os.path.join(temp_dir, "chroma_db"),
+            visual_memory_path=os.path.join(temp_dir, "visual_memory.pkl"),
+            output_dir=os.path.join(temp_dir, "images"),
+            min_distance_threshold=0.01,
+            min_time_threshold=0.01,
+        )
+        yield memory
+        # Clean up
+        memory.cleanup()
+
+    def test_spatial_memory_initialization(self, spatial_memory):
         """Test SpatialMemory initializes correctly with CLIP model."""
-        try:
-            # Initialize spatial memory with default CLIP model
-            memory = SpatialMemory(
-                collection_name="test_collection", embedding_model="clip", new_memory=True
-            )
-            assert memory is not None
-            assert memory.embedding_model == "clip"
-            assert memory.embedding_provider is not None
-        except Exception as e:
-            # If the model doesn't initialize, skip the test
-            pytest.fail(f"Failed to initialize model: {e}")
+        # Use the shared spatial_memory fixture
+        assert spatial_memory is not None
+        assert spatial_memory.embedding_model == "clip"
+        assert spatial_memory.embedding_provider is not None
 
-    def test_image_embedding(self):
+    def test_image_embedding(self, spatial_memory):
         """Test generating image embeddings using CLIP."""
-        try:
-            # Initialize spatial memory with CLIP model
-            memory = SpatialMemory(
-                collection_name="test_collection", embedding_model="clip", new_memory=True
-            )
+        # Use the shared spatial_memory fixture
+        # Create a test image - use a simple colored square
+        test_image = np.zeros((224, 224, 3), dtype=np.uint8)
+        test_image[50:150, 50:150] = [0, 0, 255]  # Blue square
 
-            # Create a test image - use a simple colored square
-            test_image = np.zeros((224, 224, 3), dtype=np.uint8)
-            test_image[50:150, 50:150] = [0, 0, 255]  # Blue square
+        # Generate embedding
+        embedding = spatial_memory.embedding_provider.get_embedding(test_image)
 
-            # Generate embedding
-            embedding = memory.embedding_provider.get_embedding(test_image)
+        # Check embedding shape and characteristics
+        assert embedding is not None
+        assert isinstance(embedding, np.ndarray)
+        assert embedding.shape[0] == spatial_memory.embedding_dimensions
 
-            # Check embedding shape and characteristics
-            assert embedding is not None
-            assert isinstance(embedding, np.ndarray)
-            assert embedding.shape[0] == memory.embedding_dimensions
+        # Check that embedding is normalized (unit vector)
+        assert np.isclose(np.linalg.norm(embedding), 1.0, atol=1e-5)
 
-            # Check that embedding is normalized (unit vector)
-            assert np.isclose(np.linalg.norm(embedding), 1.0, atol=1e-5)
+        # Test text embedding
+        text_embedding = spatial_memory.embedding_provider.get_text_embedding("a blue square")
+        assert text_embedding is not None
+        assert isinstance(text_embedding, np.ndarray)
+        assert text_embedding.shape[0] == spatial_memory.embedding_dimensions
+        assert np.isclose(np.linalg.norm(text_embedding), 1.0, atol=1e-5)
 
-            # Test text embedding
-            text_embedding = memory.embedding_provider.get_text_embedding("a blue square")
-            assert text_embedding is not None
-            assert isinstance(text_embedding, np.ndarray)
-            assert text_embedding.shape[0] == memory.embedding_dimensions
-            assert np.isclose(np.linalg.norm(text_embedding), 1.0, atol=1e-5)
-        except Exception as e:
-            pytest.fail(f"Error in test: {e}")
-
-    def test_spatial_memory_processing(self, temp_dir):
+    def test_spatial_memory_processing(self, spatial_memory, temp_dir):
         """Test processing video frames and building spatial memory with CLIP embeddings."""
         try:
-            # Initialize spatial memory with temporary storage
-            memory = SpatialMemory(
-                collection_name="test_collection",
-                embedding_model="clip",
-                new_memory=True,
-                db_path=os.path.join(temp_dir, "chroma_db"),
-                visual_memory_path=os.path.join(temp_dir, "visual_memory.pkl"),
-                output_dir=os.path.join(temp_dir, "images"),
-                min_distance_threshold=0.01,
-                min_time_threshold=0.01,
-            )
+            # Use the shared spatial_memory fixture
+            memory = spatial_memory
 
             from dimos.utils.data import get_data
 
@@ -206,7 +199,6 @@ class TestSpatialMemory:
         except Exception as e:
             pytest.fail(f"Error in test: {e}")
         finally:
-            memory.cleanup()
             video_provider.dispose_all()
 
 

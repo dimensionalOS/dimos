@@ -12,27 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-import functools
 import time
 from typing import Callable
 
 import pytest
-from reactivex import operators as ops
 
 from dimos import core
-from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import Vector3
-from dimos.msgs.sensor_msgs import Image
-from dimos.protocol import pubsub
-from dimos.robot.global_planner import AstarPlanner
+from dimos.core import Module, rpc
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.map import Map as Mapper
-from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from dimos.types.costmap import Costmap
-from dimos.types.vector import Vector
-from dimos.utils.reactive import backpressure, getter_streaming
-from dimos.utils.testing import TimedSensorReplay
 
 
 @pytest.fixture
