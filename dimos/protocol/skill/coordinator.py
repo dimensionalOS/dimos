@@ -23,8 +23,6 @@ from langchain_core.tools import tool as langchain_tool
 
 from dimos.agents2 import ToolCall, ToolMessage
 
-# from dimos.agents import msgs as agentmsg
-# import ToolCall, ToolMessage
 from dimos.protocol.skill.comms import LCMSkillComms, MsgType, SkillCommsSpec, SkillMsg
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
 from dimos.protocol.skill.type import Reducer, Return, Stream

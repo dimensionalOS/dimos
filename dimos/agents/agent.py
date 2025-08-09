@@ -30,14 +30,13 @@ from __future__ import annotations
 import json
 import os
 import threading
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Tuple, Optional, Union
 
 # Third-party imports
 from dotenv import load_dotenv
 from openai import NOT_GIVEN, OpenAI
 from pydantic import BaseModel
-from reactivex import Observable, Observer, create, empty, just
-from reactivex import operators as RxOps
+from reactivex import Observer, create, Observable, empty, operators as RxOps, just
 from reactivex.disposable import CompositeDisposable, Disposable
 from reactivex.scheduler import ThreadPoolScheduler
 from reactivex.subject import Subject
@@ -51,10 +50,9 @@ from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.stream_merger import create_stream_merger
-from dimos.stream.video_operators import Operators as MyOps
-from dimos.stream.video_operators import VideoOperators as MyVidOps
-from dimos.utils.logging_config import setup_logger
+from dimos.stream.video_operators import Operators as MyOps, VideoOperators as MyVidOps
 from dimos.utils.threadpool import get_scheduler
+from dimos.utils.logging_config import setup_logger
 
 # Initialize environment variables
 load_dotenv()
@@ -102,6 +100,9 @@ class Agent:
             self.disposables.dispose()
         else:
             logger.info("No disposables to dispose.")
+
+
+# endregion Agent Base Class
 
 
 # -----------------------------------------------------------------------------
