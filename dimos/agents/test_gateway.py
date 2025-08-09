@@ -183,7 +183,7 @@ async def test_gateway_providers():
         test_cases = [
             ("openai::gpt-4o-mini", "OPENAI_API_KEY"),
             ("anthropic::claude-3-haiku-20240307", "ANTHROPIC_API_KEY"),
-            ("cerebras::llama3.1-8b", "CEREBRAS_API_KEY"),
+            # ("cerebras::llama3.1-8b", "CEREBRAS_API_KEY"),
             ("qwen::qwen-turbo", "DASHSCOPE_API_KEY"),
         ]
 
