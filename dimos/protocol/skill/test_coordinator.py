@@ -21,44 +21,10 @@ from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.protocol.skill.testing_utils import TestContainer
 
-# def test_coordinator_skill_export():
-#     skillCoordinator = SkillCoordinator()
-#     skillCoordinator.register_skills(TestContainer())
-
-#     assert skillCoordinator.get_tools() == [
-#         {
-#             "function": {
-#                 "description": "",
-#                 "name": "add",
-#                 "parameters": {
-#                     "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
-#                     "required": ["x", "y"],
-#                     "type": "object",
-#                 },
-#             },
-#             "type": "function",
-#         },
-#         {
-#             "function": {
-#                 "description": "",
-#                 "name": "delayadd",
-#                 "parameters": {
-#                     "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
-#                     "required": ["x", "y"],
-#                     "type": "object",
-#                 },
-#             },
-#             "type": "function",
-#         },
-#     ]
-
-#     print(pprint(skillCoordinator.get_tools()))
-
 
 class TestContainer2(SkillContainer):
     @skill()
     def add(self, x: int, y: int) -> int:
-        #        time.sleep(0.25)
         return x + y
 
     @skill()
