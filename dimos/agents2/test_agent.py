@@ -17,8 +17,7 @@ import time
 
 import pytest
 
-from dimos.agents2.main import Agent
-from dimos.core import start
+from dimos.agents2.agent import Agent
 from dimos.protocol.skill import SkillContainer, skill
 
 
@@ -45,7 +44,7 @@ async def test_agent_init():
     agent.start()
 
     agent.query(
-        "hi there, use add tool to add 124181112 and 124124. don't sum yourself, use a tool I provided"
+        "hi there, please tell me what's your name, and use add tool to add 124181112 and 124124. don't sum yourself, use a tool I provided"
     )
 
-    await asyncio.sleep(5)
+    await asyncio.sleep(10)

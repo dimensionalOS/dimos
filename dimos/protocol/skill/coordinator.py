@@ -18,12 +18,19 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, List, Optional
 
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    MessageLikeRepresentation,
+    SystemMessage,
+    ToolCall,
+    ToolMessage,
+)
 from langchain_core.tools import tool as langchain_tool
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from dimos.agents2 import ToolCall, ToolMessage
 from dimos.core import Module, rpc
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer

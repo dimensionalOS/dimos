@@ -14,6 +14,7 @@
 
 import asyncio
 from pprint import pprint
+from typing import Optional
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -26,6 +27,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from dimos.agents2.spec import AgentSpec
 from dimos.core import Module, rpc
 from dimos.protocol.skill import skill
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState
@@ -34,15 +36,32 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger("dimos.protocol.agents2")
 
 
-class Agent(SkillCoordinator):
-    def __init__(self, model: str = "gpt-4o", model_provider: str = "openai", *args, **kwargs):
-        super().__init__(*args, **kwargs)
+class Agent(AgentSpec, SkillCoordinator):
+    def __init__(
+        self,
+        *args,
+        **kwargs,
+    ):
+        AgentSpec.__init__(self, *args, **kwargs)
+        SkillCoordinator.__init__(self)
 
         self.messages = []
-        self._llm = init_chat_model(
-            model=model,
-            model_provider=model_provider,
-        )
+
+        if self.config.system_prompt:
+            if isinstance(self.config.system_prompt, str):
+                self.messages.append(self.config.system_prompt)
+            else:
+                self.messages.append(self.config.system_prompt)
+
+        self._llm = init_chat_model(model_provider=self.config.provider, model=self.config.model)
+
+    @rpc
+    def start(self):
+        SkillCoordinator.start(self)
+
+    @rpc
+    def stop(self):
+        SkillCoordinator.stop(self)
 
     async def agent_loop(self, seed_query: str = ""):
         self.messages.append(HumanMessage(seed_query))

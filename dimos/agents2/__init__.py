@@ -6,3 +6,6 @@ from langchain_core.messages import (
     ToolCall,
     ToolMessage,
 )
+
+from dimos.agents2.agent import Agent
+from dimos.agents2.spec import AgentSpec
