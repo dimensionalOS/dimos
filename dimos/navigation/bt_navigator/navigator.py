@@ -73,7 +73,6 @@ class BehaviorTreeNavigator(Module):
         self,
         local_planner: BaseLocalPlanner,
         publishing_frequency: float = 1.0,
-        goal_tolerance: float = 0.5,
         **kwargs,
     ):
         """Initialize the Navigator.
@@ -87,7 +86,6 @@ class BehaviorTreeNavigator(Module):
         # Parameters
         self.publishing_frequency = publishing_frequency
         self.publishing_period = 1.0 / publishing_frequency
-        self.goal_tolerance = goal_tolerance
 
         # State machine
         self.state = NavigatorState.IDLE
@@ -281,7 +279,7 @@ class BehaviorTreeNavigator(Module):
                         self.cancel_goal()
 
                     # Check if goal is reached
-                    if self._check_goal_reached():
+                    if self.local_planner.is_goal_reached():
                         with self._goal_reached_lock:
                             self._goal_reached = True
                         logger.info("Goal reached!")
@@ -300,17 +298,6 @@ class BehaviorTreeNavigator(Module):
                     self.state = NavigatorState.IDLE
 
             time.sleep(self.publishing_period)
-
-    def _check_goal_reached(self) -> bool:
-        """Internal method to check if the current goal has been reached."""
-        if self.latest_odom is None:
-            return False
-
-        if self.current_goal is None:
-            return True
-
-        distance = get_distance(self.latest_odom, self.current_goal)
-        return distance < self.goal_tolerance
 
     @rpc
     def is_goal_reached(self) -> bool:

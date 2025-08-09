@@ -24,7 +24,7 @@ import numpy as np
 
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.navigation.local_planner import BaseLocalPlanner
-from dimos.utils.transform_utils import quaternion_to_euler, normalize_angle
+from dimos.utils.transform_utils import quaternion_to_euler, normalize_angle, get_distance
 
 
 class HolonomicLocalPlanner(BaseLocalPlanner):
@@ -51,12 +51,16 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         alpha: float = 0.5,
         v_max: float = 0.8,
         goal_tolerance: float = 0.5,
+        orientation_tolerance: float = 0.2,
         control_frequency: float = 10.0,
         **kwargs,
     ):
         """Initialize the GLAP planner with specified parameters."""
         super().__init__(
-            goal_tolerance=goal_tolerance, control_frequency=control_frequency, **kwargs
+            goal_tolerance=goal_tolerance,
+            orientation_tolerance=orientation_tolerance,
+            control_frequency=control_frequency,
+            **kwargs,
         )
 
         # Algorithm parameters
@@ -108,13 +112,23 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         v_robot_x = cos_yaw * v_odom[0] + sin_yaw * v_odom[1]
         v_robot_y = -sin_yaw * v_odom[0] + cos_yaw * v_odom[1]
 
-        # Compute angular velocity to align with path direction
+        # Compute angular velocity
         closest_idx, _ = self._find_closest_point_on_path(pose, path)
-        lookahead_point = self._find_lookahead_point(path, closest_idx)
 
-        dx = lookahead_point[0] - pose[0]
-        dy = lookahead_point[1] - pose[1]
-        desired_yaw = np.arctan2(dy, dx)
+        # Check if we're near the final goal
+        goal_pose = self.latest_path.poses[-1]
+        distance_to_goal = get_distance(self.latest_odom, goal_pose)
+
+        if distance_to_goal < self.goal_tolerance:
+            # Near goal - rotate to match final goal orientation
+            goal_euler = quaternion_to_euler(goal_pose.orientation)
+            desired_yaw = goal_euler.z
+        else:
+            # Not near goal - align with path direction
+            lookahead_point = self._find_lookahead_point(path, closest_idx)
+            dx = lookahead_point[0] - pose[0]
+            dy = lookahead_point[1] - pose[1]
+            desired_yaw = np.arctan2(dy, dx)
 
         yaw_error = normalize_angle(desired_yaw - robot_yaw)
         k_angular = self.k_angular
