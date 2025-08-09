@@ -132,7 +132,9 @@ jobs:
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       should-run: ${{
-        needs.check-changes.result == 'success' && ((needs.ros-python.result == 'success') || (needs.ros-python.result == 'skipped')) && (needs.check-changes.outputs.dev == 'true')
+        needs.check-changes.result == 'success' && 
+        (needs.check-changes.outputs.dev == 'true' ||
+         (needs.ros-python.result == 'success' && (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.ros == 'true')))
         }}
       from-image: ghcr.io/dimensionalos/ros-python:${{ needs.ros-python.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
       to-image: ghcr.io/dimensionalos/ros-dev:${{ needs.check-changes.outputs.branch-tag }}
