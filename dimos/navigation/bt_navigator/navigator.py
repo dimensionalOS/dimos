@@ -95,6 +95,7 @@ class BehaviorTreeNavigator(Module):
 
         # Current goal
         self.current_goal: Optional[PoseStamped] = None
+        self.original_goal: Optional[PoseStamped] = None
         self.goal_lock = threading.Lock()
 
         # Goal reached state
@@ -173,7 +174,7 @@ class BehaviorTreeNavigator(Module):
 
         with self.goal_lock:
             self.current_goal = transformed_goal
-
+            self.original_goal = transformed_goal
         with self._goal_reached_lock:
             self._goal_reached = False
 
@@ -252,14 +253,15 @@ class BehaviorTreeNavigator(Module):
             if current_state == NavigatorState.FOLLOWING_PATH:
                 with self.goal_lock:
                     goal = self.current_goal
+                    original_goal = self.original_goal
 
                 if goal is not None and self.latest_costmap is not None:
                     # Find safe goal position
                     safe_goal_pos = find_safe_goal(
                         self.latest_costmap,
-                        goal.position,
+                        original_goal.position,
                         algorithm="bfs",
-                        cost_threshold=80,
+                        cost_threshold=60,
                         min_clearance=0.25,
                         max_search_distance=5.0,
                     )
@@ -273,6 +275,7 @@ class BehaviorTreeNavigator(Module):
                             ts=goal.ts,
                         )
                         self.goal.publish(safe_goal)
+                        self.current_goal = safe_goal
                     else:
                         logger.warning("Could not find safe goal position, cancelling goal")
                         self.cancel_goal()
@@ -290,6 +293,7 @@ class BehaviorTreeNavigator(Module):
                             self.current_goal = None
                         with self.state_lock:
                             self.state = NavigatorState.IDLE
+                        logger.info("Goal reached, resetting local planner")
 
             elif current_state == NavigatorState.RECOVERY:
                 with self.state_lock:
