@@ -28,7 +28,7 @@ from textual.widgets import DataTable, Footer, RichLog
 
 from dimos.protocol.skill.comms import SkillMsg
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateEnum
-from dimos.protocol.skill.types import MsgType
+from dimos.protocol.skill.type import MsgType
 
 
 class AgentSpy:
@@ -82,7 +82,7 @@ def state_color(state: SkillStateEnum) -> str:
         return "yellow"
     elif state == SkillStateEnum.running:
         return "green"
-    elif state == SkillStateEnum.returned:
+    elif state == SkillStateEnum.completed:
         return "cyan"
     elif state == SkillStateEnum.error:
         return "red"
@@ -328,7 +328,7 @@ class AgentSpyApp(App):
                 last_msg = skill_state._items[-1]
                 if last_msg.type == MsgType.error:
                     details = str(last_msg.content)[:40]
-            elif skill_state.state == SkillStateEnum.returned and msg_count > 0:
+            elif skill_state.state == SkillStateEnum.completed and msg_count > 0:
                 # Show return value
                 last_msg = skill_state._items[-1]
                 if last_msg.type == MsgType.ret:

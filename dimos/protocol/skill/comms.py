@@ -21,7 +21,7 @@ from typing import Callable, Generic, Optional, TypeVar, Union
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service import Service
-from dimos.protocol.skill.types import SkillMsg, Call, MsgType, Reducer, SkillConfig, Stream
+from dimos.protocol.skill.type import Call, MsgType, Reducer, SkillConfig, SkillMsg, Stream
 from dimos.types.timestamped import Timestamped
 
 

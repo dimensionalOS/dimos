@@ -61,7 +61,7 @@ def test_internals():
 
 
 def test_standard_usage():
-    agentInterface = SkillCoordinator(agent_callback=print)
+    agentInterface = SkillCoordinator()
     agentInterface.start()
 
     testContainer = TestContainer()
@@ -98,7 +98,7 @@ def test_module():
             time.sleep(0.5)
             return x * y
 
-    agentInterface = SkillCoordinator(agent_callback=print)
+    agentInterface = SkillCoordinator()
     agentInterface.start()
 
     dimos = start(1)

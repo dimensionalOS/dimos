@@ -16,8 +16,10 @@ import asyncio
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
-from pprint import pformat
+from pprint import pformat, pprint
 from typing import Any, List, Optional
+
+from langchain_core.tools import tool as langchain_tool
 
 from dimos.agents2 import ToolCall, ToolMessage
 
@@ -51,19 +53,6 @@ class SkillState(TimestampedCollection):
     state: SkillStateEnum
     skill_config: SkillConfig
 
-    # https://platform.openai.com/docs/guides/function-calling
-    # skill state knows how to encode itself for agent
-    # depending on the policy defined by the @skill decorator
-    # this is a simplification
-    def agent_encode(self) -> ToolMessage:
-        return_msg = self._items[-1]
-
-        return {
-            "role": "tool",
-            "tool_call_id": self.call_id,
-            "content": return_msg.content,
-        }
-
     def __init__(self, call_id: str, name: str, skill_config: Optional[SkillConfig] = None) -> None:
         super().__init__()
         self.skill_config = skill_config or SkillConfig(
@@ -73,6 +62,10 @@ class SkillState(TimestampedCollection):
         self.state = SkillStateEnum.pending
         self.call_id = call_id
         self.name = name
+
+    def agent_encode(self) -> ToolMessage:
+        last_msg = self._items[-1]
+        return ToolMessage(last_msg.content, name=self.name, tool_call_id=self.call_id)
 
     # returns True if the agent should be called for this message
     def handle_msg(self, msg: SkillMsg) -> bool:
@@ -160,14 +153,24 @@ class SkillCoordinator(SkillContainer):
     def __len__(self) -> int:
         return self.len()
 
-    # used by agent to get a list of available tools
+    # this can be converted to non-langchain json schema output
+    # and langchain takes this output as well
+    # just faster for now
     def get_tools(self) -> list[dict]:
-        return [skill.schema for skill in self.skills().values()]
+        # return [skill.schema for skill in self.skills().values()]
+
+        ret = []
+        for name, skill_config in self.skills().items():
+            # print(f"Tool {name} config: {skill_config}, {skill_config.f}")
+            ret.append(langchain_tool(skill_config.f))
+
+        return ret
 
     # Used by agent to execute tool calls
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> None:
         """Execute a list of tool calls from the agent."""
         for tool_call in tool_calls:
+            logger.info(f"executing skill call {tool_call}")
             self.call(
                 tool_call.get("id"),
                 tool_call.get("name"),
@@ -187,7 +190,7 @@ class SkillCoordinator(SkillContainer):
         self._skill_state[call_id] = SkillState(
             name=skill_name, skill_config=skill_config, call_id=call_id
         )
-        return skill_config.call(*args, call_id, args)
+        return skill_config.call(call_id, *args.get("args", []), **args.get("kwargs", {}))
 
     # Receives a message from active skill
     # Updates local skill state (appends to streamed data if needed etc)
@@ -211,6 +214,12 @@ class SkillCoordinator(SkillContainer):
             else:
                 # Fallback for when no loop is available
                 self._updates_available.set()
+
+    def has_active_skills(self) -> bool:
+        # check if dict is empty
+        if self._skill_state == {}:
+            return False
+        return True
 
     async def wait_for_updates(self, timeout: Optional[float] = None) -> True:
         """Wait for skill updates to become available.
@@ -258,13 +267,6 @@ class SkillCoordinator(SkillContainer):
                 del self._skill_state[call_id]
 
         return ret
-
-    def has_pending_updates(self) -> bool:
-        """Check if there are any completed skills waiting to be sent to agent."""
-        for skill_run in self._skill_state.values():
-            if skill_run.state in (SkillStateEnum.completed, SkillStateEnum.error):
-                return True
-        return False
 
     def __str__(self):
         # Convert objects to their string representations

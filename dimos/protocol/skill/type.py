@@ -64,13 +64,13 @@ class SkillConfig:
         self.f = f
         return self
 
-    def call(self, *args, **kwargs) -> Any:
+    def call(self, call_id, *args, **kwargs) -> Any:
         if self.f is None:
             raise ValueError(
                 "Function is not bound to the SkillConfig. This should be called only within AgentListener."
             )
 
-        return self.f(*args, **kwargs, skillcall=True)
+        return self.f(*args, **kwargs, call_id=call_id)
 
     def __str__(self):
         parts = [f"name={self.name}"]

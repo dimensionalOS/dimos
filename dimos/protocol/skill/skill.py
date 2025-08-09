@@ -14,16 +14,16 @@
 
 import inspect
 import threading
-from typing import Any, Callable, Optional, get_origin, get_args, Union, List, Dict
+from typing import Any, Callable, Dict, List, Optional, Union, get_args, get_origin
 
 from dimos.core import rpc
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
-from dimos.protocol.skill.types import (
-    SkillMsg,
+from dimos.protocol.skill.type import (
     MsgType,
     Reducer,
     Return,
     SkillConfig,
+    SkillMsg,
     Stream,
 )
 
@@ -120,9 +120,9 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
         def wrapper(self, *args, **kwargs):
             skill = f"{f.__name__}"
 
-            if kwargs.get("skillcall"):
-                del kwargs["skillcall"]
-                call_id = kwargs.pop("call_id", "unknown")
+            call_id = kwargs.get("call_id", None)
+            if call_id:
+                del kwargs["call_id"]
 
                 def run_function():
                     self.agent_comms.publish(SkillMsg(call_id, skill, None, type=MsgType.start))
@@ -139,6 +139,13 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
                 return None
 
             return f(self, *args, **kwargs)
+
+        # sig = inspect.signature(f)
+        # params = list(sig.parameters.values())
+        # if params and params[0].name == "self":
+        #     params = params[1:]  # Remove first parameter 'self'
+
+        # wrapper.__signature__ = sig.replace(parameters=params)
 
         skill_config = SkillConfig(
             name=f.__name__, reducer=reducer, stream=stream, ret=ret, schema=function_to_schema(f)
