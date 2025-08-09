@@ -535,8 +535,13 @@ class UnitreeGo2:
         self.object_tracker.track(bbox)
 
         start_time = time.time()
+        goal_set = False
 
         while time.time() - start_time < timeout:
+            if self.navigator.is_goal_reached() and goal_set:
+                logger.info("Object tracking goal reached")
+                return True
+
             detection_topic = Topic("/go2/detection3d", Detection3DArray)
             detection_msg = self.lcm.wait_for_message(detection_topic, timeout=1.0)
 
@@ -550,16 +555,11 @@ class UnitreeGo2:
                     position=retracted_pose.position,
                     orientation=retracted_pose.orientation,
                 )
-
                 self.navigator.set_goal(goal_pose, blocking=False)
+                goal_set = True
 
-            if self.navigator.is_goal_reached():
-                logger.info("Object tracking goal reached")
-                return True
+            time.sleep(0.3)
 
-            time.sleep(0.2)
-
-        self.object_tracker.stop_track()
         logger.info("Object tracking timed out")
         return False
 
