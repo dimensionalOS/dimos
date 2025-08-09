@@ -151,7 +151,7 @@ jobs:
         needs.check-changes.outputs.tests == 'true'))
         }}
       cmd: "pytest && pytest -m ros" # run tests that depend on ros as well
-      dev-image: ros-dev:${{ needs.check-changes.outputs.dev == 'true' && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-tests:
     needs: [check-changes, dev]
