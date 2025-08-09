@@ -17,7 +17,7 @@
 
 import time
 import threading
-from dimos.protocol.skill.agent_interface import AgentInterface
+from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import SkillContainer, skill
 
 
@@ -56,7 +56,7 @@ class DemoSkills(SkillContainer):
 def run_demo_skills():
     """Run demo skills in background."""
     # Create and start agent interface
-    agent_interface = AgentInterface()
+    agent_interface = SkillCoordinator()
     agent_interface.start()
 
     # Register skills
@@ -69,18 +69,21 @@ def run_demo_skills():
         while True:
             time.sleep(2)
 
+            # Generate unique call_id for each invocation
+            call_id = f"demo-{counter}"
+
             # Run different skills based on counter
             if counter % 4 == 0:
-                demo_skills.count_to(3, skillcall=True)
+                # Run multiple count_to in parallel to show parallel execution
+                agent_interface.call(f"{call_id}-count-1", "count_to", 3)
+                agent_interface.call(f"{call_id}-count-2", "count_to", 5)
+                agent_interface.call(f"{call_id}-count-3", "count_to", 2)
             elif counter % 4 == 1:
-                demo_skills.compute_fibonacci(10, skillcall=True)
+                agent_interface.call(f"{call_id}-fib", "compute_fibonacci", 10)
             elif counter % 4 == 2:
-                demo_skills.quick_task(f"task-{counter}", skillcall=True)
+                agent_interface.call(f"{call_id}-quick", "quick_task", f"task-{counter}")
             else:
-                try:
-                    demo_skills.simulate_error(skillcall=True)
-                except:
-                    pass  # Expected to fail
+                agent_interface.call(f"{call_id}-error", "simulate_error")
 
             counter += 1
 

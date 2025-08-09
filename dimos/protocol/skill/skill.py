@@ -17,12 +17,13 @@ from typing import Any, Callable, Optional
 
 from dimos.core import rpc
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
-from dimos.protocol.skill.types import (
-    AgentMsg,
+from dimos.protocol.skill.schema import function_to_schema
+from dimos.protocol.skill.type import (
     MsgType,
     Reducer,
     Return,
     SkillConfig,
+    SkillMsg,
     Stream,
 )
 
@@ -32,16 +33,19 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
         def wrapper(self, *args, **kwargs):
             skill = f"{f.__name__}"
 
-            if kwargs.get("skillcall"):
-                del kwargs["skillcall"]
+            call_id = kwargs.get("call_id", None)
+            if call_id:
+                del kwargs["call_id"]
 
                 def run_function():
-                    self.agent_comms.publish(AgentMsg(skill, None, type=MsgType.start))
+                    self.agent_comms.publish(SkillMsg(call_id, skill, None, type=MsgType.start))
                     try:
                         val = f(self, *args, **kwargs)
-                        self.agent_comms.publish(AgentMsg(skill, val, type=MsgType.ret))
+                        self.agent_comms.publish(SkillMsg(call_id, skill, val, type=MsgType.ret))
                     except Exception as e:
-                        self.agent_comms.publish(AgentMsg(skill, str(e), type=MsgType.error))
+                        self.agent_comms.publish(
+                            SkillMsg(call_id, skill, str(e), type=MsgType.error)
+                        )
 
                 thread = threading.Thread(target=run_function)
                 thread.start()
@@ -49,7 +53,16 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
 
             return f(self, *args, **kwargs)
 
-        skill_config = SkillConfig(name=f.__name__, reducer=reducer, stream=stream, ret=ret)
+        # sig = inspect.signature(f)
+        # params = list(sig.parameters.values())
+        # if params and params[0].name == "self":
+        #     params = params[1:]  # Remove first parameter 'self'
+
+        # wrapper.__signature__ = sig.replace(parameters=params)
+
+        skill_config = SkillConfig(
+            name=f.__name__, reducer=reducer, stream=stream, ret=ret, schema=function_to_schema(f)
+        )
 
         # implicit RPC call as well
         wrapper.__rpc__ = True  # type: ignore[attr-defined]

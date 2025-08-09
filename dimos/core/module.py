@@ -11,13 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import asyncio
 import inspect
-from enum import Enum
 from typing import (
     Any,
     Callable,
     Optional,
-    TypeVar,
     get_args,
     get_origin,
     get_type_hints,
@@ -50,18 +49,32 @@ class ModuleBase:
     _rpc: Optional[RPCSpec] = None
     _agent: Optional[SkillCommsSpec] = None
     _tf: Optional[TFSpec] = None
+    _loop: asyncio.AbstractEventLoop = None
 
     def __init__(self, *args, **kwargs):
         # we can completely override comms protocols if we want
         if kwargs.get("comms", None) is not None:
             self.comms = kwargs["comms"]
         try:
-            get_worker()
+            # here we attempt to figure out if we are running on a dask worker
+            # if so we use the dask worker _loop as ours,
+            # and we register our RPC server
+            worker = get_worker()
+            self._loop = worker.loop if worker else None
             self.rpc = self.comms.rpc()
             self.rpc.serve_module_rpc(self)
             self.rpc.start()
         except ValueError:
-            return
+            ...
+
+        # assuming we are not running on a dask worker,
+        # it's our job to determine or create the event loop
+        if not self._loop:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._loop)
 
     @property
     def tf(self):

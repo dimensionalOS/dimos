@@ -14,19 +14,9 @@
 
 import time
 
-from dimos.protocol.skill.agent_interface import AgentInterface
+from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import SkillContainer, skill
-
-
-class TestContainer(SkillContainer):
-    @skill()
-    def add(self, x: int, y: int) -> int:
-        return x + y
-
-    @skill()
-    def delayadd(self, x: int, y: int) -> int:
-        time.sleep(0.5)
-        return x + y
+from dimos.protocol.skill.testing_utils import TestContainer
 
 
 def test_introspect_skill():
@@ -35,7 +25,7 @@ def test_introspect_skill():
 
 
 def test_internals():
-    agentInterface = AgentInterface()
+    agentInterface = SkillCoordinator()
     agentInterface.start()
 
     testContainer = TestContainer()
@@ -45,7 +35,7 @@ def test_internals():
     # skillcall=True makes the skill function exit early,
     # it doesn't behave like a blocking function,
     #
-    # return is passed as AgentMsg to the agent topic
+    # return is passed as SkillMsg to the agent topic
     testContainer.delayadd(2, 4, skillcall=True)
     testContainer.add(1, 2, skillcall=True)
 
@@ -61,7 +51,7 @@ def test_internals():
 
     print(agentInterface)
 
-    agentInterface.execute_skill("delayadd", 1, 2)
+    agentInterface.call("test-call-1", "delayadd", 1, 2)
 
     time.sleep(0.25)
     print(agentInterface)
@@ -71,7 +61,7 @@ def test_internals():
 
 
 def test_standard_usage():
-    agentInterface = AgentInterface(agent_callback=print)
+    agentInterface = SkillCoordinator()
     agentInterface.start()
 
     testContainer = TestContainer()
@@ -82,7 +72,7 @@ def test_standard_usage():
     print(agentInterface.skills())
 
     # we can execute a skill
-    agentInterface.execute_skill("delayadd", 1, 2)
+    agentInterface.call("test-call-2", "delayadd", 1, 2)
 
     # while skill is executing, we can introspect the state
     # (we see that the skill is running)
@@ -108,7 +98,7 @@ def test_module():
             time.sleep(0.5)
             return x * y
 
-    agentInterface = AgentInterface(agent_callback=print)
+    agentInterface = SkillCoordinator()
     agentInterface.start()
 
     dimos = start(1)
@@ -117,7 +107,7 @@ def test_module():
     agentInterface.register_skills(mock_module)
 
     # we can execute a skill
-    agentInterface.execute_skill("add", 1, 2)
+    agentInterface.call("test-call-3", "add", 1, 2)
 
     # while skill is executing, we can introspect the state
     # (we see that the skill is running)
