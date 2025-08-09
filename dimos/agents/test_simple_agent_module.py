@@ -91,7 +91,7 @@ async def test_simple_agent_module(model, provider):
         pytest.skip(f"No Anthropic API key found")
     elif provider == "Cerebras" and not os.getenv("CEREBRAS_API_KEY"):
         pytest.skip(f"No Cerebras API key found")
-    elif provider == "Qwen" and not os.getenv("DASHSCOPE_API_KEY"):
+    elif provider == "Qwen" and not os.getenv("ALIBABA_API_KEY"):
         pytest.skip(f"No Qwen API key found")
 
     pubsub.lcm.autoconf()
