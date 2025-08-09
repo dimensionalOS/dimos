@@ -23,7 +23,6 @@ from dotenv import load_dotenv
 from dimos.agents.modules.gateway import UnifiedGatewayClient
 
 
-@pytest.mark.tofix
 @pytest.mark.asyncio
 async def test_gateway_basic():
     """Test basic gateway functionality."""
@@ -70,7 +69,6 @@ async def test_gateway_basic():
         gateway.close()
 
 
-@pytest.mark.tofix
 @pytest.mark.asyncio
 async def test_gateway_streaming():
     """Test gateway streaming functionality."""
@@ -111,7 +109,6 @@ async def test_gateway_streaming():
         gateway.close()
 
 
-@pytest.mark.tofix
 @pytest.mark.asyncio
 async def test_gateway_tools():
     """Test gateway with tool calls."""
@@ -172,7 +169,6 @@ async def test_gateway_tools():
         gateway.close()
 
 
-@pytest.mark.tofix
 @pytest.mark.asyncio
 async def test_gateway_providers():
     """Test gateway with different providers."""
