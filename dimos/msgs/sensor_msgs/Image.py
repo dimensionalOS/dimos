@@ -370,3 +370,26 @@ class Image(Timestamped):
     def __len__(self) -> int:
         """Return total number of pixels."""
         return self.height * self.width
+
+    def agent_encode(self) -> str:
+        """Encode image to base64 JPEG format for agent processing.
+
+        Returns:
+            Base64 encoded JPEG string suitable for LLM/agent consumption.
+        """
+        bgr_image = self.to_bgr()
+
+        # Encode as JPEG
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 95]  # 95% quality
+        success, buffer = cv2.imencode(".jpg", bgr_image.data, encode_param)
+
+        if not success:
+            raise ValueError("Failed to encode image as JPEG")
+
+        # Convert to base64
+        import base64
+
+        jpeg_bytes = buffer.tobytes()
+        base64_str = base64.b64encode(jpeg_bytes).decode("utf-8")
+
+        return base64_str

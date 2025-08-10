@@ -37,6 +37,7 @@ dependencies = [
     "rxpy-backpressure @ git+https://github.com/dimensionalOS/rxpy-backpressure.git",
     "asyncio==3.4.3",
     "go2-webrtc-connect @ git+https://github.com/dimensionalOS/go2_webrtc_connect.git",
+    "tensorzero==2025.7.5",
     
     # Web Extensions
     "fastapi>=0.115.6",
@@ -199,10 +200,11 @@ markers = [
     "lcm: tests that run actual LCM bus (can't execute in CI)",
     "module: tests that need to run directly as modules",
     "gpu: tests that require GPU"
-
 ]
 
-addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"
+addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module'"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 
 
