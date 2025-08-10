@@ -43,9 +43,10 @@ dependencies = [
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
     
-    # Agent Memory
+    # Agents
     "langchain-chroma>=0.1.4",
     "langchain-openai>=0.2.14",
+    "langchain==0.3.27",
     
     # Class Extraction
     "pydantic",
