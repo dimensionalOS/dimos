@@ -102,3 +102,10 @@ class Agent(AgentSpec):
 
     def query(self, query: str):
         return asyncio.run_coroutine_threadsafe(self.agent_loop(query), self._loop).result()
+
+    @rpc
+    def register_skills(self, container):
+        return self.coordinator.register_skills(container)
+
+    def get_tools(self):
+        return self.coordinator.get_tools()

@@ -40,12 +40,14 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
                 del kwargs["call_id"]
 
                 def run_function():
-                    self.agent_comms.publish(SkillMsg(call_id, skill, None, type=MsgType.start))
+                    self.skill_transport.publish(SkillMsg(call_id, skill, None, type=MsgType.start))
                     try:
                         val = f(self, *args, **kwargs)
-                        self.agent_comms.publish(SkillMsg(call_id, skill, val, type=MsgType.ret))
+                        self.skill_transport.publish(
+                            SkillMsg(call_id, skill, val, type=MsgType.ret)
+                        )
                     except Exception as e:
-                        self.agent_comms.publish(
+                        self.skill_transport.publish(
                             SkillMsg(call_id, skill, str(e), type=MsgType.error)
                         )
 

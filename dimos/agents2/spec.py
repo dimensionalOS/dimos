@@ -24,7 +24,8 @@ from langchain_core.messages import (
     SystemMessage,
 )
 
-from dimos.core import rpc
+from dimos.core import Module, rpc
+from dimos.core.module import ModuleConfig
 from dimos.protocol.service import Service
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.utils.logging_config import setup_logger
@@ -119,14 +120,14 @@ class Model(str, Enum):
 
 
 @dataclass
-class AgentConfig:
+class AgentConfig(ModuleConfig):
     system_prompt: Optional[str | SystemMessage] = None
     skills: Optional[SkillContainer | list[SkillContainer]] = None
     model: Model = Model.GPT_4O
     provider: Provider = Provider.OPENAI
 
 
-class AgentSpec(Service[AgentConfig], ABC):
+class AgentSpec(Service[AgentConfig], Module, ABC):
     default_config: type[AgentConfig] = AgentConfig
 
     @rpc

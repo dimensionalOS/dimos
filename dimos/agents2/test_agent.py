@@ -51,9 +51,7 @@ async def test_agent_init():
     agent.start()
 
     print(
-        agent.query_async(
+        agent.query(
             "hi there, please tell me what's your name, and use add tool to add 124181112 and 124124."
         )
     )
-
-    await asyncio.sleep(10)

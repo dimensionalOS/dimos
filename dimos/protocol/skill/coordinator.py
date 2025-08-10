@@ -31,7 +31,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from dimos.core import Module, rpc
+from dimos.core import rpc
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
 from dimos.protocol.skill.type import MsgType, Reducer, Return, SkillMsg, Stream
@@ -42,8 +42,8 @@ logger = setup_logger("dimos.protocol.skill.coordinator")
 
 
 @dataclass
-class AgentInputConfig:
-    agent_comms: type[SkillCommsSpec] = LCMSkillComms
+class SkillCoordinatorConfig:
+    skill_transport: type[SkillCommsSpec] = LCMSkillComms
 
 
 class SkillStateEnum(Enum):
@@ -163,7 +163,8 @@ class SkillStateDict(dict[str, SkillState]):
         return "\n".join(lines)
 
 
-class SkillCoordinator(SkillContainer, Module):
+class SkillCoordinator(SkillContainer):
+    default_config = SkillCoordinatorConfig
     empty: bool = True
 
     _static_containers: list[SkillContainer]
@@ -174,7 +175,6 @@ class SkillCoordinator(SkillContainer, Module):
     _loop: Optional[asyncio.AbstractEventLoop]
 
     def __init__(self) -> None:
-        Module.__init__(self)
         SkillContainer.__init__(self)
         self._static_containers = []
         self._dynamic_containers = []
@@ -184,12 +184,12 @@ class SkillCoordinator(SkillContainer, Module):
 
     @rpc
     def start(self) -> None:
-        self.agent_comms.start()
-        self.agent_comms.subscribe(self.handle_message)
+        self.skill_transport.start()
+        self.skill_transport.subscribe(self.handle_message)
 
     @rpc
     def stop(self) -> None:
-        self.agent_comms.stop()
+        self.skill_transport.stop()
 
     def len(self) -> int:
         return len(self._skills)

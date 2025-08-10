@@ -46,7 +46,7 @@ class AgentSpy:
         self.agent_interface.start()
 
         # Subscribe to the agent interface's comms
-        self.agent_interface.agent_comms.subscribe(self._handle_message)
+        self.agent_interface.skill_transport.subscribe(self._handle_message)
 
     def stop(self):
         """Stop spying."""
