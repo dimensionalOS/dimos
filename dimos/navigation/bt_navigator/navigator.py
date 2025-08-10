@@ -204,6 +204,10 @@ class BehaviorTreeNavigator(Module):
 
     def _transform_goal_to_odom_frame(self, goal: PoseStamped) -> Optional[PoseStamped]:
         """Transform goal pose to the odometry frame."""
+        if self.latest_odom is None:
+            logger.error("Odometry not available, cannot transform goal.")
+            return None
+
         if not goal.frame_id:
             return goal
 
@@ -267,6 +271,7 @@ class BehaviorTreeNavigator(Module):
                         )
                         self.goal.publish(safe_goal)
                     else:
+                        logger.info("No safe goal found, cancelling navigation")
                         self.cancel_goal()
 
                     if self.local_planner.is_goal_reached():

@@ -20,7 +20,7 @@ import logging
 import os
 import time
 import warnings
-from typing import Callable, Optional
+from typing import Optional
 
 from dimos import core
 from dimos.core import In, Module, Out, rpc
@@ -31,6 +31,7 @@ from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
@@ -113,14 +114,14 @@ class ConnectionModule(Module):
     lidar: Out[LidarMessage] = None
     video: Out[Image] = None
     ip: str
-    playback: bool
+    connection_type: str = "webrtc"
 
     _odom: PoseStamped = None
     _lidar: LidarMessage = None
 
-    def __init__(self, ip: str = None, playback: bool = False, *args, **kwargs):
+    def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
         self.ip = ip
-        self.playback = playback
+        self.connection_type = connection_type
         self.tf = TF()
         self.connection = None
         Module.__init__(self, *args, **kwargs)
@@ -128,11 +129,17 @@ class ConnectionModule(Module):
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
-        if self.playback:
-            self.connection = FakeRTC(self.ip)
-        else:
-            self.connection = UnitreeWebRTCConnection(self.ip)
-
+        match self.connection_type:
+            case "webrtc":
+                self.connection = UnitreeWebRTCConnection(self.ip)
+            case "fake":
+                self.connection = FakeRTC(self.ip)
+            case "mujoco":
+                self.connection = MujocoConnection(self.ip)
+                self.connection.start()
+            case _:
+                raise ValueError(f"Unknown connection type: {self.connection_type}")
+                
         # Connect sensor streams to outputs
         self.connection.lidar_stream().subscribe(self.lidar.publish)
         self.connection.odom_stream().subscribe(self._publish_tf)
@@ -197,7 +204,7 @@ class UnitreeGo2:
         output_dir: str = None,
         websocket_port: int = 7779,
         skill_library: Optional[SkillLibrary] = None,
-        playback: bool = False,
+        connection_type: Optional[str] = 'webrtc',
     ):
         """Initialize the robot system.
 
@@ -210,7 +217,9 @@ class UnitreeGo2:
             playback: If True, use recorded data instead of real robot connection
         """
         self.ip = ip
-        self.playback = playback or (ip is None)  # Auto-enable playback if no IP provided
+        self.connection_type = connection_type or "webrtc"
+        if ip is None and self.connection_type == "webrtc":
+            self.connection_type = "fake"# Auto-enable playback if no IP provided
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.websocket_port = websocket_port
 
@@ -268,7 +277,7 @@ class UnitreeGo2:
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
-        self.connection = self.dimos.deploy(ConnectionModule, self.ip, playback=self.playback)
+        self.connection = self.dimos.deploy(ConnectionModule, self.ip, connection_type=self.connection_type)
 
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
@@ -317,6 +326,7 @@ class UnitreeGo2:
         self.connection.movecmd.connect(self.local_planner.cmd_vel)
 
         self.navigator.odom.connect(self.connection.odom)
+        self.navigator.global_costmap.connect(self.mapper.global_costmap)
 
         self.frontier_explorer.costmap.connect(self.mapper.global_costmap)
         self.frontier_explorer.odometry.connect(self.connection.odom)
@@ -329,6 +339,7 @@ class UnitreeGo2:
         self.websocket_vis.robot_pose.connect(self.connection.odom)
         self.websocket_vis.path.connect(self.global_planner.path)
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
+        self.navigator.goal_request.connect(self.websocket_vis.click_goal)
 
         self.foxglove_bridge = FoxgloveBridge()
 
@@ -445,10 +456,11 @@ class UnitreeGo2:
 def main():
     """Main entry point."""
     ip = os.getenv("ROBOT_IP")
+    connection_type = os.getenv("CONNECTION_TYPE", "webrtc")
 
     pubsub.lcm.autoconf()
 
-    robot = UnitreeGo2(ip=ip, websocket_port=7779, playback=False)
+    robot = UnitreeGo2(ip=ip, websocket_port=7779, connection_type=connection_type)
     robot.start()
 
     try:
