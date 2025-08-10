@@ -132,7 +132,9 @@ jobs:
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       should-run: ${{
-        needs.check-changes.result == 'success' && ((needs.ros-python.result == 'success') || (needs.ros-python.result == 'skipped')) && (needs.check-changes.outputs.dev == 'true')
+        needs.check-changes.result == 'success' && 
+        (needs.check-changes.outputs.dev == 'true' ||
+         (needs.ros-python.result == 'success' && (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.ros == 'true')))
         }}
       from-image: ghcr.io/dimensionalos/ros-python:${{ needs.ros-python.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
       to-image: ghcr.io/dimensionalos/ros-dev:${{ needs.check-changes.outputs.branch-tag }}
@@ -142,6 +144,7 @@ jobs:
     needs: [check-changes, ros-dev]
     if: always()
     uses: ./.github/workflows/tests.yml
+    secrets: inherit
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
@@ -150,12 +153,13 @@ jobs:
         needs.check-changes.outputs.tests == 'true'))
         }}
       cmd: "pytest && pytest -m ros" # run tests that depend on ros as well
-      dev-image: ros-dev:${{ needs.check-changes.outputs.dev == 'true' && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-tests:
     needs: [check-changes, dev]
     if: always()
     uses: ./.github/workflows/tests.yml
+    secrets: inherit
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
@@ -164,13 +168,14 @@ jobs:
         needs.check-changes.outputs.tests == 'true'))
         }}
       cmd: "pytest"
-      dev-image: dev:${{ needs.check-changes.outputs.dev == 'true' && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   # we run in parallel with normal tests for speed
   run-heavy-tests:
     needs: [check-changes, dev]
     if: always()
     uses: ./.github/workflows/tests.yml
+    secrets: inherit
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
@@ -179,12 +184,13 @@ jobs:
         needs.check-changes.outputs.tests == 'true'))
         }}
       cmd: "pytest -m heavy"
-      dev-image: dev:${{ needs.check-changes.outputs.dev == 'true' && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-lcm-tests:
     needs: [check-changes, dev]
     if: always()
     uses: ./.github/workflows/tests.yml
+    secrets: inherit
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
@@ -193,7 +199,7 @@ jobs:
         needs.check-changes.outputs.tests == 'true'))
         }}
       cmd: "pytest -m lcm"
-      dev-image: dev:${{ needs.check-changes.outputs.dev == 'true' && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   # Run module tests directly to avoid pytest forking issues
   # run-module-tests:

@@ -40,6 +40,10 @@ jobs:
     runs-on: [self-hosted, Linux]
     container:
       image: ghcr.io/dimensionalos/${{ inputs.dev-image }}
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
 
     steps:
       - uses: actions/checkout@v4
