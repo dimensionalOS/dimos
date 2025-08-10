@@ -32,6 +32,7 @@ from rich.table import Table
 from rich.text import Text
 
 from dimos.core import rpc
+from dimos.core.module import get_loop
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
 from dimos.protocol.skill.type import MsgType, Reducer, Return, SkillMsg, Stream
@@ -74,6 +75,7 @@ class SkillState(TimestampedCollection):
 
     def __init__(self, call_id: str, name: str, skill_config: Optional[SkillConfig] = None) -> None:
         super().__init__()
+
         self.skill_config = skill_config or SkillConfig(
             name=name, stream=Stream.none, ret=Return.none, reducer=Reducer.none, schema={}
         )
@@ -176,6 +178,7 @@ class SkillCoordinator(SkillContainer):
 
     def __init__(self) -> None:
         SkillContainer.__init__(self)
+        self._loop = get_loop()
         self._static_containers = []
         self._dynamic_containers = []
         self._skills = {}

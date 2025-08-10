@@ -33,6 +33,26 @@ from dimos.protocol.service import Configurable
 from dimos.protocol.tf import LCMTF, TFSpec
 
 
+def get_loop() -> asyncio.AbstractEventLoop:
+    try:
+        # here we attempt to figure out if we are running on a dask worker
+        # if so we use the dask worker _loop as ours,
+        # and we register our RPC server
+        worker = get_worker()
+        if worker.loop:
+            return worker.loop
+
+    except ValueError:
+        ...
+
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
+
+
 @dataclass
 class ModuleConfig:
     rpc_transport: type[RPCSpec] = LCMRPC
@@ -48,6 +68,7 @@ class ModuleBase(Configurable[ModuleConfig]):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._loop = get_loop()
         # we can completely override comms protocols if we want
         try:
             # here we attempt to figure out if we are running on a dask worker

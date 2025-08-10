@@ -39,19 +39,21 @@ class TestContainer(SkillContainer):
 async def test_agent_init():
     from dimos.core import start
 
-    dimos = start(2)
-    agent = dimos.deploy(
-        Agent,
-        system_prompt="Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate",
-    )
-    # agent = Agent(
-    #    system_prompt="Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
+    # dimos = start(2)
+    # agent = dimos.deploy(
+    #    Agent,
+    #    system_prompt="Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate",
     # )
+    agent = Agent(
+        system_prompt="Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
+    )
     agent.register_skills(TestContainer())
     agent.start()
 
     print(
-        agent.query(
+        agent.query_async(
             "hi there, please tell me what's your name, and use add tool to add 124181112 and 124124."
         )
     )
+
+    await asyncio.sleep(5)
