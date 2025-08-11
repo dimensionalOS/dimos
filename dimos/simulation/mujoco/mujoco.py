@@ -15,6 +15,8 @@
 # limitations under the License.
 
 
+import atexit
+import logging
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -39,6 +41,8 @@ VIDEO_FREQUENCY = 30
 
 _HERE = epath.Path(__file__).parent
 
+logger = logging.getLogger(__name__)
+
 
 def get_assets() -> dict[str, bytes]:
     assets: dict[str, bytes] = {}
@@ -53,7 +57,7 @@ def get_assets() -> dict[str, bytes]:
 
 class MujocoThread(threading.Thread):
     def __init__(self):
-        super().__init__()
+        super().__init__(daemon=True)
         self.shared_pixels = None
         self.pixels_lock = threading.RLock()
         self.odom_data = None
@@ -65,42 +69,58 @@ class MujocoThread(threading.Thread):
         self._command_lock = threading.RLock()
         self._is_running = True
         self._stop_timer: threading.Timer | None = None
+        self._viewer = None
+        self._renderer = None
+        self._cleanup_registered = False
+
+        # Register cleanup on exit
+        atexit.register(self.cleanup)
 
     def run(self):
-        self.model, self.data = load_model(self)
+        try:
+            self.model, self.data = load_model(self)
 
-        camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
-        last_render = time.time()
-        render_interval = 1.0 / VIDEO_FREQUENCY
+            camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
+            last_render = time.time()
+            render_interval = 1.0 / VIDEO_FREQUENCY
 
-        with viewer.launch_passive(self.model, self.data) as m_viewer:
-            # Comment this out to show the rangefinders.
-            m_viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = 0
-            window_size = (640, 480)
-            renderer = mujoco.Renderer(self.model, height=window_size[1], width=window_size[0])
-            scene_option = mujoco.MjvOption()
-            scene_option.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = False
+            with viewer.launch_passive(self.model, self.data) as m_viewer:
+                self._viewer = m_viewer
+                # Comment this out to show the rangefinders.
+                m_viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = 0
+                window_size = (640, 480)
+                self._renderer = mujoco.Renderer(
+                    self.model, height=window_size[1], width=window_size[0]
+                )
+                scene_option = mujoco.MjvOption()
+                scene_option.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = False
 
-            while m_viewer.is_running() and self._is_running:
-                mujoco.mj_step(self.model, self.data)
+                while m_viewer.is_running() and self._is_running:
+                    mujoco.mj_step(self.model, self.data)
 
-                with self.odom_lock:
-                    # base position
-                    pos = self.data.qpos[0:3]
-                    # base orientation
-                    quat = self.data.qpos[3:7]  # (w, x, y, z)
-                    self.odom_data = (pos.copy(), quat.copy())
+                    with self.odom_lock:
+                        # base position
+                        pos = self.data.qpos[0:3]
+                        # base orientation
+                        quat = self.data.qpos[3:7]  # (w, x, y, z)
+                        self.odom_data = (pos.copy(), quat.copy())
 
-                now = time.time()
-                if now - last_render > render_interval:
-                    last_render = now
-                    renderer.update_scene(self.data, camera=camera_id, scene_option=scene_option)
-                    pixels = renderer.render()
+                    now = time.time()
+                    if now - last_render > render_interval:
+                        last_render = now
+                        self._renderer.update_scene(
+                            self.data, camera=camera_id, scene_option=scene_option
+                        )
+                        pixels = self._renderer.render()
 
-                    with self.pixels_lock:
-                        self.shared_pixels = pixels.copy()
+                        with self.pixels_lock:
+                            self.shared_pixels = pixels.copy()
 
-                m_viewer.sync()
+                    m_viewer.sync()
+        except Exception as e:
+            logger.error(f"MuJoCo simulation thread error: {e}")
+        finally:
+            self._cleanup_resources()
 
     def get_lidar_message(self) -> LidarMessage | None:
         num_rays = 360
@@ -205,7 +225,73 @@ class MujocoThread(threading.Thread):
             return self._command.copy()
 
     def stop(self):
+        """Stop the simulation thread gracefully."""
         self._is_running = False
+
+        # Cancel any pending timers
+        if self._stop_timer:
+            self._stop_timer.cancel()
+            self._stop_timer = None
+
+        # Wait for thread to finish
+        if self.is_alive():
+            self.join(timeout=5.0)
+            if self.is_alive():
+                logger.warning("MuJoCo thread did not stop gracefully within timeout")
+
+    def cleanup(self):
+        """Clean up all resources. Can be called multiple times safely."""
+        if self._cleanup_registered:
+            return
+        self._cleanup_registered = True
+
+        logger.debug("Cleaning up MuJoCo resources")
+        self.stop()
+        self._cleanup_resources()
+
+    def _cleanup_resources(self):
+        """Internal method to clean up MuJoCo-specific resources."""
+        try:
+            # Cancel any timers
+            if self._stop_timer:
+                self._stop_timer.cancel()
+                self._stop_timer = None
+
+            # Clean up renderer
+            if self._renderer is not None:
+                try:
+                    self._renderer.close()
+                except Exception as e:
+                    logger.debug(f"Error closing renderer: {e}")
+                finally:
+                    self._renderer = None
+
+            # Clear data references
+            with self.pixels_lock:
+                self.shared_pixels = None
+
+            with self.odom_lock:
+                self.odom_data = None
+
+            # Clear model and data
+            self.model = None
+            self.data = None
+
+            # Reset MuJoCo control callback
+            try:
+                mujoco.set_mjcb_control(None)
+            except Exception as e:
+                logger.debug(f"Error resetting MuJoCo control callback: {e}")
+
+        except Exception as e:
+            logger.error(f"Error during resource cleanup: {e}")
+
+    def __del__(self):
+        """Destructor to ensure cleanup on object deletion."""
+        try:
+            self.cleanup()
+        except Exception:
+            pass
 
 
 class InputController(Protocol):
@@ -258,6 +344,7 @@ class OnnxController:
         return obs.astype(np.float32)
 
     def get_control(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+
         self._counter += 1
         if self._counter % self._n_substeps == 0:
             obs = self.get_obs(model, data)

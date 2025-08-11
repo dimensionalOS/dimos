@@ -15,9 +15,12 @@
 # limitations under the License.
 
 
+import atexit
 import functools
+import logging
 import threading
 import time
+from typing import List
 
 from reactivex import Observable
 
@@ -29,10 +32,18 @@ LIDAR_FREQUENCY = 10
 ODOM_FREQUENCY = 50
 VIDEO_FREQUENCY = 30
 
+logger = logging.getLogger(__name__)
+
 
 class MujocoConnection:
     def __init__(self, *args, **kwargs):
         self.mujoco_thread = MujocoThread()
+        self._stream_threads: List[threading.Thread] = []
+        self._stop_events: List[threading.Event] = []
+        self._is_cleaned_up = False
+
+        # Register cleanup on exit
+        atexit.register(self.cleanup)
 
     def start(self):
         self.mujoco_thread.start()
@@ -46,20 +57,29 @@ class MujocoConnection:
     @functools.cache
     def lidar_stream(self):
         def on_subscribe(observer, scheduler):
+            if self._is_cleaned_up:
+                observer.on_completed()
+                return lambda: None
+
             stop_event = threading.Event()
+            self._stop_events.append(stop_event)
 
             def run():
-                while not stop_event.is_set():
-                    lidar_to_publish = self.mujoco_thread.get_lidar_message()
+                try:
+                    while not stop_event.is_set() and not self._is_cleaned_up:
+                        lidar_to_publish = self.mujoco_thread.get_lidar_message()
 
-                    if lidar_to_publish:
-                        observer.on_next(lidar_to_publish)
+                        if lidar_to_publish:
+                            observer.on_next(lidar_to_publish)
 
-                    time.sleep(1 / LIDAR_FREQUENCY)
-
-                observer.on_completed()
+                        time.sleep(1 / LIDAR_FREQUENCY)
+                except Exception as e:
+                    logger.error(f"Lidar stream error: {e}")
+                finally:
+                    observer.on_completed()
 
             thread = threading.Thread(target=run, daemon=True)
+            self._stream_threads.append(thread)
             thread.start()
 
             def dispose():
@@ -74,18 +94,28 @@ class MujocoConnection:
         print("odom stream start")
 
         def on_subscribe(observer, scheduler):
+            if self._is_cleaned_up:
+                observer.on_completed()
+                return lambda: None
+
             stop_event = threading.Event()
+            self._stop_events.append(stop_event)
 
             def run():
-                while not stop_event.is_set():
-                    odom_to_publish = self.mujoco_thread.get_odom_message()
-                    if odom_to_publish:
-                        observer.on_next(odom_to_publish)
+                try:
+                    while not stop_event.is_set() and not self._is_cleaned_up:
+                        odom_to_publish = self.mujoco_thread.get_odom_message()
+                        if odom_to_publish:
+                            observer.on_next(odom_to_publish)
 
-                    time.sleep(1 / ODOM_FREQUENCY)
-                observer.on_completed()
+                        time.sleep(1 / ODOM_FREQUENCY)
+                except Exception as e:
+                    logger.error(f"Odom stream error: {e}")
+                finally:
+                    observer.on_completed()
 
             thread = threading.Thread(target=run, daemon=True)
+            self._stream_threads.append(thread)
             thread.start()
 
             def dispose():
@@ -100,18 +130,28 @@ class MujocoConnection:
         print("video stream start")
 
         def on_subscribe(observer, scheduler):
+            if self._is_cleaned_up:
+                observer.on_completed()
+                return lambda: None
+
             stop_event = threading.Event()
+            self._stop_events.append(stop_event)
 
             def run():
-                while not stop_event.is_set():
-                    with self.mujoco_thread.pixels_lock:
-                        if self.mujoco_thread.shared_pixels is not None:
-                            img = Image.from_numpy(self.mujoco_thread.shared_pixels.copy())
-                            observer.on_next(img)
-                    time.sleep(1 / VIDEO_FREQUENCY)
-                observer.on_completed()
+                try:
+                    while not stop_event.is_set() and not self._is_cleaned_up:
+                        with self.mujoco_thread.pixels_lock:
+                            if self.mujoco_thread.shared_pixels is not None:
+                                img = Image.from_numpy(self.mujoco_thread.shared_pixels.copy())
+                                observer.on_next(img)
+                        time.sleep(1 / VIDEO_FREQUENCY)
+                except Exception as e:
+                    logger.error(f"Video stream error: {e}")
+                finally:
+                    observer.on_completed()
 
             thread = threading.Thread(target=run, daemon=True)
+            self._stream_threads.append(thread)
             thread.start()
 
             def dispose():
@@ -122,4 +162,51 @@ class MujocoConnection:
         return Observable(on_subscribe)
 
     def move(self, vector: Vector3, duration: float = 0.0):
-        self.mujoco_thread.move(vector, duration)
+        if not self._is_cleaned_up:
+            self.mujoco_thread.move(vector, duration)
+
+    def stop(self):
+        """Stop the MuJoCo connection gracefully."""
+        self.cleanup()
+
+    def cleanup(self):
+        """Clean up all resources. Can be called multiple times safely."""
+        if self._is_cleaned_up:
+            return
+
+        logger.debug("Cleaning up MuJoCo connection resources")
+        self._is_cleaned_up = True
+
+        # Stop all stream threads
+        for stop_event in self._stop_events:
+            stop_event.set()
+
+        # Wait for threads to finish
+        for thread in self._stream_threads:
+            if thread.is_alive():
+                thread.join(timeout=2.0)
+                if thread.is_alive():
+                    logger.warning(f"Stream thread {thread.name} did not stop gracefully")
+
+        # Clean up the MuJoCo thread
+        if hasattr(self, "mujoco_thread") and self.mujoco_thread:
+            self.mujoco_thread.cleanup()
+
+        # Clear references
+        self._stream_threads.clear()
+        self._stop_events.clear()
+
+        # Clear cached methods to prevent memory leaks
+        if hasattr(self, "lidar_stream"):
+            self.lidar_stream.cache_clear()
+        if hasattr(self, "odom_stream"):
+            self.odom_stream.cache_clear()
+        if hasattr(self, "video_stream"):
+            self.video_stream.cache_clear()
+
+    def __del__(self):
+        """Destructor to ensure cleanup on object deletion."""
+        try:
+            self.cleanup()
+        except Exception:
+            pass

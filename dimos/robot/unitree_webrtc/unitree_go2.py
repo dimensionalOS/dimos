@@ -194,6 +194,34 @@ class ConnectionModule(Module):
         """
         return self.connection.publish_request(topic, data)
 
+    @rpc
+    def stop(self):
+        """Stop the connection module and clean up resources."""
+        self.cleanup()
+
+    def cleanup(self):
+        """Clean up connection resources."""
+        logger.debug("Cleaning up ConnectionModule resources")
+
+        # Clean up the connection
+        if hasattr(self, "connection") and self.connection:
+            if hasattr(self.connection, "cleanup"):
+                self.connection.cleanup()
+            elif hasattr(self.connection, "stop"):
+                self.connection.stop()
+
+        # Clear references
+        self.connection = None
+        self._odom = None
+        self._lidar = None
+
+    def __del__(self):
+        """Destructor to ensure cleanup on object deletion."""
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+
 
 class UnitreeGo2:
     """Full Unitree Go2 robot with navigation and perception capabilities."""
@@ -288,8 +316,10 @@ class UnitreeGo2:
 
     def _deploy_mapping(self):
         """Deploy and configure the mapping module."""
-        inflate_radius = 0.25 if self.connection_type == "mujoco" else 0.1
-        self.mapper = self.dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5, inflate_radius=inflate_radius)
+        inflate_radius = 0.3 if self.connection_type == "mujoco" else 0.1
+        self.mapper = self.dimos.deploy(
+            Map, voxel_size=0.5, global_publish_interval=2.5, inflate_radius=inflate_radius
+        )
 
         self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
         self.mapper.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)
@@ -462,6 +492,64 @@ class UnitreeGo2:
         """
         return self.connection.get_odom()
 
+    def stop(self):
+        """Stop the robot system and clean up all resources."""
+        logger.info("Stopping UnitreeGo2 robot system...")
+        self.cleanup()
+
+    def cleanup(self):
+        """Clean up all resources used by the robot system."""
+        logger.debug("Cleaning up UnitreeGo2 resources")
+
+        # Stop navigation and exploration
+        try:
+            if hasattr(self, "navigator") and self.navigator:
+                self.navigator.cancel_goal()
+            if hasattr(self, "frontier_explorer") and self.frontier_explorer:
+                self.frontier_explorer.stop_exploration()
+        except Exception as e:
+            logger.error(f"Error stopping navigation: {e}")
+
+        # Clean up modules
+        modules_to_cleanup = [
+            "connection",
+            "mapper",
+            "global_planner",
+            "local_planner",
+            "navigator",
+            "frontier_explorer",
+            "websocket_vis",
+            "foxglove_bridge",
+            "spatial_memory_module",
+        ]
+
+        for module_name in modules_to_cleanup:
+            try:
+                module = getattr(self, module_name, None)
+                if module:
+                    if hasattr(module, "cleanup"):
+                        module.cleanup()
+                    elif hasattr(module, "stop"):
+                        module.stop()
+                    setattr(self, module_name, None)
+            except Exception as e:
+                logger.error(f"Error cleaning up {module_name}: {e}")
+
+        # Clean up DimOS core
+        try:
+            if hasattr(self, "dimos") and self.dimos:
+                # Note: DimOS core cleanup would depend on its API
+                self.dimos = None
+        except Exception as e:
+            logger.error(f"Error cleaning up DimOS core: {e}")
+
+    def __del__(self):
+        """Destructor to ensure cleanup on object deletion."""
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+
 
 def main():
     """Main entry point."""
@@ -471,13 +559,23 @@ def main():
     pubsub.lcm.autoconf()
 
     robot = UnitreeGo2(ip=ip, websocket_port=7779, connection_type=connection_type)
-    robot.start()
 
     try:
+        robot.start()
+        logger.info("Robot system started successfully. Press Ctrl+C to stop...")
+
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        logger.info("Received shutdown signal...")
+    except Exception as e:
+        logger.error(f"Robot system error: {e}")
+    finally:
+        try:
+            robot.stop()
+            logger.info("Robot system shutdown complete.")
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
 
 
 if __name__ == "__main__":
