@@ -100,8 +100,6 @@ dependencies = [
     # Simulation
     "mujoco>=3.3.4",
     "playground>=0.0.5",
-    "pygame>=2.6.1",
-    "pynput>=1.8.1",
 ]
 
 
