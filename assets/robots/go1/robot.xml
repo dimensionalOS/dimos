@@ -281,7 +281,7 @@
       conaffinity="0" priority="1"
       friction="1.0" />
     <geom name="box" type="box" size="2 2 2" pos="5 0 2" />
-    <body name="obstacle_cube" pos="1.0 1.2 0.8">
+    <body name="obstacle_cube" pos="1.0 1.6 0.8">
       <geom name="cube_geom" type="box" size="1 1 1" 
             rgba="0.8 0.2 0.2 1.0" mass="1.0"/>
     </body>

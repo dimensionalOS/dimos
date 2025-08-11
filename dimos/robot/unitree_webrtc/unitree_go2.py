@@ -300,7 +300,14 @@ class UnitreeGo2:
         """Deploy and configure navigation modules."""
         self.global_planner = self.dimos.deploy(AstarPlanner)
         self.local_planner = self.dimos.deploy(HolonomicLocalPlanner)
-        self.navigator = self.dimos.deploy(BehaviorTreeNavigator, local_planner=self.local_planner)
+
+        # Configure navigator to treat unknown as safe when using mujoco simulation
+        treat_unknown_as_safe = self.connection_type == "mujoco"
+        self.navigator = self.dimos.deploy(
+            BehaviorTreeNavigator,
+            local_planner=self.local_planner,
+            treat_unknown_as_safe=treat_unknown_as_safe,
+        )
         self.frontier_explorer = self.dimos.deploy(WavefrontFrontierExplorer)
 
         self.navigator.goal.transport = core.LCMTransport("/navigation_goal", PoseStamped)

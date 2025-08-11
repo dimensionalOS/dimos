@@ -42,8 +42,9 @@ _HERE = epath.Path(__file__).parent
 
 def get_assets() -> dict[str, bytes]:
     assets: dict[str, bytes] = {}
-    mjx_env.update_assets(assets, _HERE / "go1", "*.xml")
-    mjx_env.update_assets(assets, _HERE / "go1" / "assets")
+    assets_path = _HERE / "../../../assets/robots/go1"
+    mjx_env.update_assets(assets, assets_path, "*.xml")
+    mjx_env.update_assets(assets, assets_path / "assets")
     path = mjx_env.MENAGERIE_PATH / "unitree_go1"
     mjx_env.update_assets(assets, path, "*.xml")
     mjx_env.update_assets(assets, path / "assets")
@@ -74,7 +75,7 @@ class MujocoThread(threading.Thread):
 
         with viewer.launch_passive(self.model, self.data) as m_viewer:
             # Comment this out to show the rangefinders.
-            m_viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = 0
+            # m_viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = 0
             window_size = (640, 480)
             renderer = mujoco.Renderer(self.model, height=window_size[1], width=window_size[0])
             scene_option = mujoco.MjvOption()
@@ -268,7 +269,7 @@ class OnnxController:
 
 def get_robot_xml() -> str:
     # Generate the XML at runtime
-    xml_path = (_HERE / "go1/robot.xml").as_posix()
+    xml_path = (_HERE / "../../../assets/robots/go1/robot.xml").as_posix()
 
     tree = ET.parse(xml_path)
     root = tree.getroot()
