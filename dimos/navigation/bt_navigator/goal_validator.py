@@ -444,12 +444,18 @@ def _is_position_safe(
         True if position is safe, False otherwise
     """
 
+    try:
+        costmap_value = costmap.grid[y, x]
+    except IndexError:
+        # Out of bounds, treat as unsafe
+        return False
+
     # Check if position itself is free
     if treat_unknown_as_safe:
-        if costmap.grid[y, x] >= cost_threshold and costmap.grid[y, x] != CostValues.UNKNOWN:
+        if costmap_value >= cost_threshold and costmap_value != CostValues.UNKNOWN:
             return False
     else:
-        if costmap.grid[y, x] >= cost_threshold or costmap.grid[y, x] == CostValues.UNKNOWN:
+        if costmap_value >= cost_threshold or costmap_value == CostValues.UNKNOWN:
             return False
 
     # Check clearance around position

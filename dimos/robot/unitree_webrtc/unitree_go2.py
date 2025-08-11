@@ -288,7 +288,8 @@ class UnitreeGo2:
 
     def _deploy_mapping(self):
         """Deploy and configure the mapping module."""
-        self.mapper = self.dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
+        inflate_radius = 0.25 if self.connection_type == "mujoco" else 0.1
+        self.mapper = self.dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5, inflate_radius=inflate_radius)
 
         self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
         self.mapper.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)

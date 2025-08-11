@@ -41,11 +41,13 @@ class Map(Module):
         voxel_size: float = 0.05,
         cost_resolution: float = 0.05,
         global_publish_interval: Optional[float] = None,
+        inflate_radius: float = 0.1,
         **kwargs,
     ):
         self.voxel_size = voxel_size
         self.cost_resolution = cost_resolution
         self.global_publish_interval = global_publish_interval
+        self.inflate_radius = inflate_radius
         super().__init__(**kwargs)
 
     @rpc
@@ -64,7 +66,7 @@ class Map(Module):
                     min_height=0.15,
                     max_height=0.6,
                 )
-                .inflate(0.1)
+                .inflate(self.inflate_radius)
                 .gradient(max_distance=1.0)
             )
 

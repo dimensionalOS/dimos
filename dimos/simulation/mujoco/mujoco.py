@@ -33,7 +33,7 @@ from dimos.msgs.geometry_msgs import Quaternion, Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 
-RANGE_FINDER_MAX_RANGE = 10
+RANGE_FINDER_MAX_RANGE = 4
 LIDAR_RESOLUTION = 0.05
 VIDEO_FREQUENCY = 30
 
@@ -75,7 +75,7 @@ class MujocoThread(threading.Thread):
 
         with viewer.launch_passive(self.model, self.data) as m_viewer:
             # Comment this out to show the rangefinders.
-            # m_viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = 0
+            m_viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_RANGEFINDER] = 0
             window_size = (640, 480)
             renderer = mujoco.Renderer(self.model, height=window_size[1], width=window_size[0])
             scene_option = mujoco.MjvOption()
