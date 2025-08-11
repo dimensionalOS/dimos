@@ -60,7 +60,7 @@ class ObjectTracking(Module):
     def __init__(
         self,
         camera_intrinsics: Optional[List[float]] = None,  # [fx, fy, cx, cy]
-        reid_threshold: int = 8,
+        reid_threshold: int = 10,
         reid_fail_tolerance: int = 5,
         frame_id: str = "camera_link",
     ):

@@ -473,7 +473,22 @@ class UnitreeGo2:
         logger.info(
             f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
         )
-        return self.navigator.set_goal(pose, blocking=blocking)
+        self.navigator.set_goal(pose)
+        time.sleep(1.0)
+
+        if blocking:
+            while self.navigator.get_state() == NavigatorState.FOLLOWING_PATH:
+                time.sleep(0.25)
+
+            time.sleep(1.0)
+            if not self.navigator.is_goal_reached():
+                logger.info("Navigation was cancelled or failed")
+                return False
+            else:
+                logger.info("Navigation goal reached")
+                return True
+
+        return True
 
     def stop_exploration(self) -> bool:
         """Stop autonomous exploration.
@@ -538,13 +553,15 @@ class UnitreeGo2:
         goal_set = False
 
         while time.time() - start_time < timeout:
-            if self.navigator.is_goal_reached() and goal_set:
-                logger.info("Object tracking goal reached")
-                return True
-
-            if self.navigator.get_state() == NavigatorState.IDLE.value and goal_set:
-                logger.info("Goal cancelled, object tracking failed")
-                return False
+            if self.navigator.get_state() == NavigatorState.IDLE and goal_set:
+                logger.info("Waiting for goal result")
+                time.sleep(1.0)
+                if not self.navigator.is_goal_reached():
+                    logger.info("Goal cancelled, object tracking failed")
+                    return False
+                else:
+                    logger.info("Object tracking goal reached")
+                    return True
 
             detection_topic = Topic("/go2/detection3d", Detection3DArray)
             detection_msg = self.lcm.wait_for_message(detection_topic, timeout=1.0)
@@ -559,7 +576,7 @@ class UnitreeGo2:
                     position=retracted_pose.position,
                     orientation=retracted_pose.orientation,
                 )
-                self.navigator.set_goal(goal_pose, blocking=False)
+                self.navigator.set_goal(goal_pose)
                 goal_set = True
 
             time.sleep(0.3)

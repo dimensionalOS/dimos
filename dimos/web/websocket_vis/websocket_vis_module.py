@@ -22,6 +22,8 @@ import asyncio
 import os
 import threading
 from typing import Any, Dict, Optional
+import base64
+import numpy as np
 
 import socketio
 import uvicorn
@@ -221,8 +223,7 @@ class WebsocketVisModule(Module):
 
     def _process_costmap(self, costmap: OccupancyGrid) -> Dict[str, Any]:
         """Convert OccupancyGrid to visualization format."""
-        import base64
-        import numpy as np
+        costmap = costmap.inflate(0.1).gradient(max_distance=1.0)
 
         # Convert grid data to base64 encoded string
         grid_bytes = costmap.grid.astype(np.float32).tobytes()
