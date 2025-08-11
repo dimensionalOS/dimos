@@ -139,7 +139,7 @@ class ConnectionModule(Module):
                 self.connection.start()
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
-                
+
         # Connect sensor streams to outputs
         self.connection.lidar_stream().subscribe(self.lidar.publish)
         self.connection.odom_stream().subscribe(self._publish_tf)
@@ -204,7 +204,7 @@ class UnitreeGo2:
         output_dir: str = None,
         websocket_port: int = 7779,
         skill_library: Optional[SkillLibrary] = None,
-        connection_type: Optional[str] = 'webrtc',
+        connection_type: Optional[str] = "webrtc",
     ):
         """Initialize the robot system.
 
@@ -219,7 +219,7 @@ class UnitreeGo2:
         self.ip = ip
         self.connection_type = connection_type or "webrtc"
         if ip is None and self.connection_type == "webrtc":
-            self.connection_type = "fake"# Auto-enable playback if no IP provided
+            self.connection_type = "fake"  # Auto-enable playback if no IP provided
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.websocket_port = websocket_port
 
@@ -277,7 +277,9 @@ class UnitreeGo2:
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
-        self.connection = self.dimos.deploy(ConnectionModule, self.ip, connection_type=self.connection_type)
+        self.connection = self.dimos.deploy(
+            ConnectionModule, self.ip, connection_type=self.connection_type
+        )
 
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)

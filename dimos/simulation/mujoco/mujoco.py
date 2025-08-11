@@ -39,6 +39,7 @@ VIDEO_FREQUENCY = 30
 
 _HERE = epath.Path(__file__).parent
 
+
 def get_assets() -> dict[str, bytes]:
     assets: dict[str, bytes] = {}
     mjx_env.update_assets(assets, _HERE / "go1", "*.xml")
@@ -298,7 +299,11 @@ def get_robot_xml() -> str:
 
     for i in range(num_rays):
         ET.SubElement(
-            sensor_element, "rangefinder", name=f"range_{i}", site=f"lidar_{i}", cutoff=str(RANGE_FINDER_MAX_RANGE)
+            sensor_element,
+            "rangefinder",
+            name=f"range_{i}",
+            site=f"lidar_{i}",
+            cutoff=str(RANGE_FINDER_MAX_RANGE),
         )
 
     xml_content = ET.tostring(root, encoding="unicode")
@@ -307,7 +312,6 @@ def get_robot_xml() -> str:
 
 def load_model(input_device: InputController, model=None, data=None):
     mujoco.set_mjcb_control(None)
-
 
     xml_content = get_robot_xml()
     model = mujoco.MjModel.from_xml_string(
