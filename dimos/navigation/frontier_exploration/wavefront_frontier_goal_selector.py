@@ -32,6 +32,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, CostValues
 from dimos.utils.logging_config import setup_logger
 from dimos_lcm.std_msgs import Bool
+from dimos.utils.transform_utils import get_distance
 
 logger = setup_logger("dimos.robot.unitree.frontier_exploration")
 
@@ -100,7 +101,8 @@ class WavefrontFrontierExplorer(Module):
         self,
         min_frontier_perimeter: float = 0.5,
         occupancy_threshold: int = 99,
-        safe_distance: float = 2.0,
+        safe_distance: float = 3.0,
+        lookahead_distance: float = 5.0,
         max_explored_distance: float = 10.0,
         info_gain_threshold: float = 0.03,
         num_no_gain_attempts: int = 4,
@@ -122,6 +124,7 @@ class WavefrontFrontierExplorer(Module):
         self.occupancy_threshold = occupancy_threshold
         self.safe_distance = safe_distance
         self.max_explored_distance = max_explored_distance
+        self.lookahead_distance = lookahead_distance
         self.info_gain_threshold = info_gain_threshold
         self.num_no_gain_attempts = num_no_gain_attempts
         self._cache = FrontierCache()
@@ -496,17 +499,24 @@ class WavefrontFrontierExplorer(Module):
     ) -> float:
         """Compute comprehensive score considering multiple criteria."""
 
-        # 1. Information gain (frontier size)
+        # 1. Distance from robot (preference for moderate distances)
+        robot_distance = get_distance(frontier, robot_pose)
+
+        # Distance score: prefer moderate distances (not too close, not too far)
+        # Normalized to 0-1 range
+        distance_score = 1.0 / (1.0 + abs(robot_distance - self.lookahead_distance))
+
+        # 2. Information gain (frontier size)
         # Normalize by a reasonable max frontier size
         max_expected_frontier_size = self.min_frontier_perimeter / costmap.resolution * 10
         info_gain_score = min(frontier_size / max_expected_frontier_size, 1.0)
 
-        # 2. Distance to explored goals (bonus for being far from explored areas)
+        # 3. Distance to explored goals (bonus for being far from explored areas)
         # Normalize by a reasonable max distance (e.g., 10 meters)
         explored_goals_distance = self._compute_distance_to_explored_goals(frontier)
         explored_goals_score = min(explored_goals_distance / self.max_explored_distance, 1.0)
 
-        # 3. Distance to obstacles (score based on safety)
+        # 4. Distance to obstacles (score based on safety)
         # 0 = too close to obstacles, 1 = at or beyond safe distance
         obstacles_distance = self._compute_distance_to_obstacles(frontier, costmap)
         if obstacles_distance >= self.safe_distance:
@@ -514,17 +524,18 @@ class WavefrontFrontierExplorer(Module):
         else:
             obstacles_score = obstacles_distance / self.safe_distance  # Linear penalty
 
-        # 4. Direction momentum (already in 0-1 range from dot product)
+        # 5. Direction momentum (already in 0-1 range from dot product)
         momentum_score = self._compute_direction_momentum_score(frontier, robot_pose)
 
         logger.info(
-            f"Info gain score: {info_gain_score}, Explored goals score: {explored_goals_score}, Obstacles score: {obstacles_score}, Momentum score: {momentum_score}"
+            f"Distance score: {distance_score:.2f}, Info gain: {info_gain_score:.2f}, Explored goals: {explored_goals_score:.2f}, Obstacles: {obstacles_score:.2f}, Momentum: {momentum_score:.2f}"
         )
 
-        # Combine scores with consistent scaling (no arbitrary multipliers)
+        # Combine scores with consistent scaling
         total_score = (
-            0.5 * info_gain_score  # 30% information gain
+            0.3 * info_gain_score  # 30% information gain
             + 0.3 * explored_goals_score  # 30% distance from explored goals
+            + 0.2 * distance_score  # 20% distance optimization
             + 0.15 * obstacles_score  # 15% distance from obstacles
             + 0.05 * momentum_score  # 5% direction momentum
         )

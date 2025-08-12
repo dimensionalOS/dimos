@@ -30,7 +30,7 @@ from dimos.utils.transform_utils import (
     compose_transforms,
     yaw_towards_point,
     get_distance,
-    retract_distance,
+    offset_distance,
 )
 
 
@@ -261,7 +261,7 @@ def update_target_grasp_pose(
     updated_pose = Pose(target_pos, target_orientation)
 
     if grasp_distance > 0.0:
-        return retract_distance(updated_pose, grasp_distance)
+        return offset_distance(updated_pose, grasp_distance)
     else:
         return updated_pose
 

@@ -61,9 +61,10 @@ class UnitreeCameraModule(Module):
     def __init__(
         self,
         camera_intrinsics: List[float],
+        world_frame_id: str = "world",
         camera_frame_id: str = "camera_link",
         base_frame_id: str = "base_link",
-        gt_depth_scale: float = 2.2,
+        gt_depth_scale: float = 2.0,
         **kwargs,
     ):
         """
@@ -82,6 +83,7 @@ class UnitreeCameraModule(Module):
         self.camera_intrinsics = camera_intrinsics
         self.camera_frame_id = camera_frame_id
         self.base_frame_id = base_frame_id
+        self.world_frame_id = world_frame_id
 
         # Initialize components
         from dimos.models.depth.metric3d import Metric3D
@@ -296,7 +298,7 @@ class UnitreeCameraModule(Module):
         try:
             # Look up transform from base_link to camera_link
             transform = self.tf.get(
-                parent_frame=self.base_frame_id,
+                parent_frame=self.world_frame_id,
                 child_frame=self.camera_frame_id,
                 time_point=header.ts,
                 time_tolerance=1.0,
@@ -306,7 +308,7 @@ class UnitreeCameraModule(Module):
                 # Create PoseStamped from transform
                 pose_msg = PoseStamped(
                     ts=header.ts,
-                    frame_id=self.base_frame_id,
+                    frame_id=self.camera_frame_id,
                     position=transform.translation,
                     orientation=transform.rotation,
                 )

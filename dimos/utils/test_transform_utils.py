@@ -570,6 +570,12 @@ class TestGetDistance:
         distance = transform_utils.get_distance(pose1, pose2)
         assert np.isclose(distance, 0)
 
+    def test_vector_distance(self):
+        pose1 = Vector3(1, 2, 3)
+        pose2 = Vector3(4, 5, 6)
+        distance = transform_utils.get_distance(pose1, pose2)
+        assert np.isclose(distance, np.sqrt(3**2 + 3**2 + 3**2))
+
     def test_distance_x_axis(self):
         pose1 = Pose(Vector3(0, 0, 0), Quaternion(0, 0, 0, 1))
         pose2 = Pose(Vector3(5, 0, 0), Quaternion(0, 0, 0, 1))
@@ -607,7 +613,7 @@ class TestRetractDistance:
         # Default case: gripper approaches along -z axis
         # Positive distance moves away from the surface (opposite to approach direction)
         target_pose = Pose(Vector3(0, 0, 1), Quaternion(0, 0, 0, 1))
-        retracted = transform_utils.retract_distance(target_pose, 0.5)
+        retracted = transform_utils.offset_distance(target_pose, 0.5)
 
         # Moving along -z approach vector with positive distance = retracting upward
         # Since approach is -z and we retract (positive distance), we move in +z
@@ -627,7 +633,7 @@ class TestRetractDistance:
         q = r.as_quat()
         target_pose = Pose(Vector3(0, 0, 1), Quaternion(q[0], q[1], q[2], q[3]))
 
-        retracted = transform_utils.retract_distance(target_pose, 0.5)
+        retracted = transform_utils.offset_distance(target_pose, 0.5)
 
         # After 90 degree rotation around x, -z becomes +y
         assert np.isclose(retracted.position.x, 0)
@@ -637,7 +643,7 @@ class TestRetractDistance:
     def test_retract_negative_distance(self):
         # Negative distance should move forward (toward the approach direction)
         target_pose = Pose(Vector3(0, 0, 1), Quaternion(0, 0, 0, 1))
-        retracted = transform_utils.retract_distance(target_pose, -0.3)
+        retracted = transform_utils.offset_distance(target_pose, -0.3)
 
         # Moving along -z approach vector with negative distance = moving downward
         assert np.isclose(retracted.position.x, 0)
@@ -651,7 +657,7 @@ class TestRetractDistance:
         target_pose = Pose(Vector3(5, 3, 2), Quaternion(q[0], q[1], q[2], q[3]))
 
         distance = 1.0
-        retracted = transform_utils.retract_distance(target_pose, distance)
+        retracted = transform_utils.offset_distance(target_pose, distance)
 
         # Verify the distance between original and retracted is as expected
         # (approximately, due to the approach vector direction)

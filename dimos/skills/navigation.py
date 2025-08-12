@@ -73,7 +73,7 @@ class NavigateWithText(AbstractRobotSkill):
     query: str = Field("", description="Text query to search for in the semantic map")
 
     limit: int = Field(1, description="Maximum number of results to return")
-    distance: float = Field(1.0, description="Desired distance to maintain from object in meters")
+    distance: float = Field(0.3, description="Desired distance to maintain from object in meters")
     skip_visual_search: bool = Field(False, description="Skip visual search for object in view")
     timeout: float = Field(40.0, description="Maximum time to spend navigating in seconds")
 
@@ -514,7 +514,7 @@ class Explore(AbstractRobotSkill):
     Don't save GetPose locations when frontier exploring. Don't call any other skills except stop skill when needed.
     """
 
-    timeout: float = Field(120.0, description="Maximum time (in seconds) allowed for exploration")
+    timeout: float = Field(240.0, description="Maximum time (in seconds) allowed for exploration")
 
     def __init__(self, robot=None, **data):
         """

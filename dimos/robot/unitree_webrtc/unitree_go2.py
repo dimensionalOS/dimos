@@ -50,7 +50,7 @@ from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
-from dimos.utils.transform_utils import retract_distance
+from dimos.utils.transform_utils import offset_distance
 from dimos.perception.common.utils import extract_pose_from_detection3d
 from dimos.perception.object_tracker import ObjectTracking
 from dimos_lcm.std_msgs import Bool
@@ -361,8 +361,10 @@ class UnitreeGo2:
             output_dir=self.spatial_memory_dir,
         )
 
-        self.spatial_memory_module.video.connect(self.connection.video)
-        self.spatial_memory_module.odom.connect(self.connection.odom)
+        self.spatial_memory_module.video.transport = core.LCMTransport("/go2/color_image", Image)
+        self.spatial_memory_module.odom.transport = core.LCMTransport(
+            "/go2/camera_pose", PoseStamped
+        )
 
         logger.info("Spatial memory module deployed and connected")
 
@@ -531,7 +533,7 @@ class UnitreeGo2:
         """
         return self.connection.get_odom()
 
-    def navigate_to_object(self, bbox: List[float], distance: float, timeout: float = 30.0):
+    def navigate_to_object(self, bbox: List[float], distance: float = 0.5, timeout: float = 30.0):
         """Navigate to an object by tracking it and maintaining a specified distance.
 
         Args:
@@ -563,13 +565,18 @@ class UnitreeGo2:
                     logger.info("Object tracking goal reached")
                     return True
 
+            if not self.object_tracker.is_tracking():
+                continue
+
             detection_topic = Topic("/go2/detection3d", Detection3DArray)
             detection_msg = self.lcm.wait_for_message(detection_topic, timeout=1.0)
 
             if detection_msg and len(detection_msg.detections) > 0:
                 target_pose = extract_pose_from_detection3d(detection_msg.detections[0])
 
-                retracted_pose = retract_distance(target_pose, distance)
+                retracted_pose = offset_distance(
+                    target_pose, distance, approach_vector=Vector3(-1, 0, 0)
+                )
 
                 goal_pose = PoseStamped(
                     frame_id=detection_msg.header.frame_id,
@@ -579,7 +586,7 @@ class UnitreeGo2:
                 self.navigator.set_goal(goal_pose)
                 goal_set = True
 
-            time.sleep(0.3)
+            time.sleep(0.25)
 
         logger.info("Object tracking timed out")
         return False

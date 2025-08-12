@@ -29,7 +29,6 @@ from datetime import datetime
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.geometry_msgs import Vector3, Quaternion, Pose, PoseStamped
-from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.logging_config import setup_logger
 from dimos.agents.memory.spatial_vector_db import SpatialVectorDB
 from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
@@ -52,7 +51,7 @@ class SpatialMemory(Module):
 
     # LCM inputs
     video: In[Image] = None
-    odom: In[Odometry] = None
+    odom: In[PoseStamped] = None
 
     def __init__(
         self,
@@ -168,7 +167,7 @@ class SpatialMemory(Module):
 
         # Track latest data for processing
         self._latest_video_frame: Optional[np.ndarray] = None
-        self._latest_odom: Optional[Odometry] = None
+        self._latest_odom: Optional[PoseStamped] = None
         self._process_interval = 1
 
         logger.info(f"SpatialMemory initialized with model {embedding_model}")
@@ -185,7 +184,7 @@ class SpatialMemory(Module):
             else:
                 logger.warning("Received image message without data attribute")
 
-        def set_odom(odom_msg: Odometry):
+        def set_odom(odom_msg: PoseStamped):
             self._latest_odom = odom_msg
 
         self.video.subscribe(set_video)
