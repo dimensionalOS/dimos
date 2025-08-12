@@ -31,7 +31,6 @@ from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
@@ -135,8 +134,7 @@ class ConnectionModule(Module):
             case "fake":
                 self.connection = FakeRTC(self.ip)
             case "mujoco":
-                self.connection = MujocoConnection(self.ip)
-                self.connection.start()
+                self.connection = self._make_mujoco_connection()
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
@@ -158,6 +156,17 @@ class ConnectionModule(Module):
             ts=time.time(),
         )
         self.tf.publish(camera_link)
+
+    def _make_mujoco_connection(self):
+        try:
+            import mujoco
+        except ImportError:
+            raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
+
+        from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+        connection = MujocoConnection(self.ip)
+        connection.start()
+        return connection
 
     @rpc
     def get_odom(self) -> Optional[PoseStamped]:
