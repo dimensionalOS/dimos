@@ -20,7 +20,7 @@ import logging
 import os
 import time
 import warnings
-from typing import Callable, Optional
+from typing import Optional
 
 from dimos import core
 from dimos.core import In, Module, Out, rpc
@@ -113,14 +113,14 @@ class ConnectionModule(Module):
     lidar: Out[LidarMessage] = None
     video: Out[Image] = None
     ip: str
-    playback: bool
+    connection_type: str = "webrtc"
 
     _odom: PoseStamped = None
     _lidar: LidarMessage = None
 
-    def __init__(self, ip: str = None, playback: bool = False, *args, **kwargs):
+    def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
         self.ip = ip
-        self.playback = playback
+        self.connection_type = connection_type
         self.tf = TF()
         self.connection = None
         Module.__init__(self, *args, **kwargs)
@@ -128,10 +128,15 @@ class ConnectionModule(Module):
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
-        if self.playback:
-            self.connection = FakeRTC(self.ip)
-        else:
-            self.connection = UnitreeWebRTCConnection(self.ip)
+        match self.connection_type:
+            case "webrtc":
+                self.connection = UnitreeWebRTCConnection(self.ip)
+            case "fake":
+                self.connection = FakeRTC(self.ip)
+            case "mujoco":
+                self.connection = self._make_mujoco_connection()
+            case _:
+                raise ValueError(f"Unknown connection type: {self.connection_type}")
 
         # Connect sensor streams to outputs
         self.connection.lidar_stream().subscribe(self.lidar.publish)
@@ -151,6 +156,18 @@ class ConnectionModule(Module):
             ts=time.time(),
         )
         self.tf.publish(camera_link)
+
+    def _make_mujoco_connection(self):
+        try:
+            import mujoco
+        except ImportError:
+            raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
+
+        from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+
+        connection = MujocoConnection(self.ip)
+        connection.start()
+        return connection
 
     @rpc
     def get_odom(self) -> Optional[PoseStamped]:
@@ -187,6 +204,34 @@ class ConnectionModule(Module):
         """
         return self.connection.publish_request(topic, data)
 
+    @rpc
+    def stop(self):
+        """Stop the connection module and clean up resources."""
+        self.cleanup()
+
+    def cleanup(self):
+        """Clean up connection resources."""
+        logger.debug("Cleaning up ConnectionModule resources")
+
+        # Clean up the connection
+        if hasattr(self, "connection") and self.connection:
+            if hasattr(self.connection, "cleanup"):
+                self.connection.cleanup()
+            elif hasattr(self.connection, "stop"):
+                self.connection.stop()
+
+        # Clear references
+        self.connection = None
+        self._odom = None
+        self._lidar = None
+
+    def __del__(self):
+        """Destructor to ensure cleanup on object deletion."""
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+
 
 class UnitreeGo2:
     """Full Unitree Go2 robot with navigation and perception capabilities."""
@@ -197,7 +242,7 @@ class UnitreeGo2:
         output_dir: str = None,
         websocket_port: int = 7779,
         skill_library: Optional[SkillLibrary] = None,
-        playback: bool = False,
+        connection_type: Optional[str] = "webrtc",
     ):
         """Initialize the robot system.
 
@@ -210,7 +255,9 @@ class UnitreeGo2:
             playback: If True, use recorded data instead of real robot connection
         """
         self.ip = ip
-        self.playback = playback or (ip is None)  # Auto-enable playback if no IP provided
+        self.connection_type = connection_type or "webrtc"
+        if ip is None and self.connection_type == "webrtc":
+            self.connection_type = "fake"  # Auto-enable playback if no IP provided
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.websocket_port = websocket_port
 
@@ -268,7 +315,9 @@ class UnitreeGo2:
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
-        self.connection = self.dimos.deploy(ConnectionModule, self.ip, playback=self.playback)
+        self.connection = self.dimos.deploy(
+            ConnectionModule, self.ip, connection_type=self.connection_type
+        )
 
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
@@ -277,7 +326,10 @@ class UnitreeGo2:
 
     def _deploy_mapping(self):
         """Deploy and configure the mapping module."""
-        self.mapper = self.dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
+        inflate_radius = 0.3 if self.connection_type == "mujoco" else 0.1
+        self.mapper = self.dimos.deploy(
+            Map, voxel_size=0.5, global_publish_interval=2.5, inflate_radius=inflate_radius
+        )
 
         self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
         self.mapper.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)
@@ -289,7 +341,14 @@ class UnitreeGo2:
         """Deploy and configure navigation modules."""
         self.global_planner = self.dimos.deploy(AstarPlanner)
         self.local_planner = self.dimos.deploy(HolonomicLocalPlanner)
-        self.navigator = self.dimos.deploy(BehaviorTreeNavigator, local_planner=self.local_planner)
+
+        # Configure navigator to treat unknown as safe when using mujoco simulation
+        treat_unknown_as_safe = self.connection_type == "mujoco"
+        self.navigator = self.dimos.deploy(
+            BehaviorTreeNavigator,
+            local_planner=self.local_planner,
+            treat_unknown_as_safe=treat_unknown_as_safe,
+        )
         self.frontier_explorer = self.dimos.deploy(WavefrontFrontierExplorer)
 
         self.navigator.goal.transport = core.LCMTransport("/navigation_goal", PoseStamped)
@@ -317,6 +376,7 @@ class UnitreeGo2:
         self.connection.movecmd.connect(self.local_planner.cmd_vel)
 
         self.navigator.odom.connect(self.connection.odom)
+        self.navigator.global_costmap.connect(self.mapper.global_costmap)
 
         self.frontier_explorer.costmap.connect(self.mapper.global_costmap)
         self.frontier_explorer.odometry.connect(self.connection.odom)
@@ -329,6 +389,7 @@ class UnitreeGo2:
         self.websocket_vis.robot_pose.connect(self.connection.odom)
         self.websocket_vis.path.connect(self.global_planner.path)
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
+        self.navigator.goal_request.connect(self.websocket_vis.click_goal)
 
         self.foxglove_bridge = FoxgloveBridge()
 
@@ -441,21 +502,90 @@ class UnitreeGo2:
         """
         return self.connection.get_odom()
 
+    def stop(self):
+        """Stop the robot system and clean up all resources."""
+        logger.info("Stopping UnitreeGo2 robot system...")
+        self.cleanup()
+
+    def cleanup(self):
+        """Clean up all resources used by the robot system."""
+        logger.debug("Cleaning up UnitreeGo2 resources")
+
+        # Stop navigation and exploration
+        try:
+            if hasattr(self, "navigator") and self.navigator:
+                self.navigator.cancel_goal()
+            if hasattr(self, "frontier_explorer") and self.frontier_explorer:
+                self.frontier_explorer.stop_exploration()
+        except Exception as e:
+            logger.error(f"Error stopping navigation: {e}")
+
+        # Clean up modules
+        modules_to_cleanup = [
+            "connection",
+            "mapper",
+            "global_planner",
+            "local_planner",
+            "navigator",
+            "frontier_explorer",
+            "websocket_vis",
+            "foxglove_bridge",
+            "spatial_memory_module",
+        ]
+
+        for module_name in modules_to_cleanup:
+            try:
+                module = getattr(self, module_name, None)
+                if module:
+                    if hasattr(module, "cleanup"):
+                        module.cleanup()
+                    elif hasattr(module, "stop"):
+                        module.stop()
+                    setattr(self, module_name, None)
+            except Exception as e:
+                logger.error(f"Error cleaning up {module_name}: {e}")
+
+        # Clean up DimOS core
+        try:
+            if hasattr(self, "dimos") and self.dimos:
+                # Note: DimOS core cleanup would depend on its API
+                self.dimos = None
+        except Exception as e:
+            logger.error(f"Error cleaning up DimOS core: {e}")
+
+    def __del__(self):
+        """Destructor to ensure cleanup on object deletion."""
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+
 
 def main():
     """Main entry point."""
     ip = os.getenv("ROBOT_IP")
+    connection_type = os.getenv("CONNECTION_TYPE", "webrtc")
 
     pubsub.lcm.autoconf()
 
-    robot = UnitreeGo2(ip=ip, websocket_port=7779, playback=False)
-    robot.start()
+    robot = UnitreeGo2(ip=ip, websocket_port=7779, connection_type=connection_type)
 
     try:
+        robot.start()
+        logger.info("Robot system started successfully. Press Ctrl+C to stop...")
+
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        logger.info("Received shutdown signal...")
+    except Exception as e:
+        logger.error(f"Robot system error: {e}")
+    finally:
+        try:
+            robot.stop()
+            logger.info("Robot system shutdown complete.")
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
 
 
 if __name__ == "__main__":
