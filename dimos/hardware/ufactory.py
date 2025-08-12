@@ -50,7 +50,7 @@ class UFactory7DOFArm:
             self.xarm_type = input("Enter the type of xArm: ")
         else:
             self.xarm_type = xarm_type
-        
+
         # To be used in future for changing between different xArm types
         # from configparser import ConfigParser
         # parser = ConfigParser()
@@ -84,7 +84,6 @@ class UFactory7DOFArm:
         self.arm.move_gohome(wait=True)
 
     def cmd_joint_angles(self, angles, speed, is_radian=False):
-        
         target = np.array(angles)
         self.enable_joint_mode()
         # Move to target position
@@ -125,7 +124,7 @@ class xArmBridge(Module):
         # print(f"Initialized xArmBridge with arm type: {self.arm.xarm_type}")
         self.joint_state.subscribe(self._on_joint_state)
         # print(f"Subscribed to {self.joint_state}")
-    
+
     # @rpc
     def command_arm(self):
         print("[xArmBridge] Commanding arm with target joint state:", self.target_joint_state)
@@ -177,12 +176,11 @@ def TestXarmBridge(arm_ip: str = None, arm_type: str = "xArm7"):
 
     while True:
         # print(armBridge.target_joint_state)
-        armBridge.command_arm()                     # Command the arm  at 100hz with the target joint state
+        armBridge.command_arm()  # Command the arm  at 100hz with the target joint state
         time.sleep(0.01)
 
 
 if __name__ == "__main__":
-
     TestXarmBridge(arm_ip="192.168.1.197", arm_type="xarm7")
 
     # # arm.cmd_joint_angles([0, 0, 0, 120, 0, 0, 0], speed=speed)
