@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, overload
 
@@ -45,21 +46,21 @@ class RPCClient(Protocol):
     # we bootstrap these from the call() implementation above
     def call_sync(self, name: str, arguments: Args, timeout: float = 1.0) -> Any:
         res = Empty
-        start_time = time.time()
+        event = threading.Event()
 
         def receive_value(val):
             nonlocal res
             res = val
+            event.set()
 
         self.call(name, arguments, receive_value)
 
-        total_time = 0.0
+        # Wait for response with a timeout to prevent infinite blocking
+        # Use small timeout chunks to allow for interruption
         while res is Empty:
-            if time.time() - start_time > timeout:
-                print(f"RPC {name} timed out")
-                return None
-            time.sleep(0.05)
-            total_time += 0.1
+            if event.wait(timeout=0.1):  # 1ms timeout chunks
+                break
+            time.sleep(0.0001)  # 0.1ms
         return res
 
     async def call_async(self, name: str, arguments: Args) -> Any:
