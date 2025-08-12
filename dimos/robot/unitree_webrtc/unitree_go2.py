@@ -54,6 +54,8 @@ from dimos.utils.transform_utils import offset_distance
 from dimos.perception.common.utils import extract_pose_from_detection3d
 from dimos.perception.object_tracker import ObjectTracking
 from dimos_lcm.std_msgs import Bool
+from dimos.robot.robot import Robot
+from dimos.types.robot_capabilities import RobotCapability
 
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
@@ -197,7 +199,7 @@ class ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
 
-class UnitreeGo2:
+class UnitreeGo2(Robot):
     """Full Unitree Go2 robot with navigation and perception capabilities."""
 
     def __init__(
@@ -217,6 +219,7 @@ class UnitreeGo2:
             skill_library: Skill library instance
             playback: If True, use recorded data instead of real robot connection
         """
+        super().__init__()
         self.ip = ip
         self.playback = playback or (ip is None)  # Auto-enable playback if no IP provided
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
@@ -230,6 +233,9 @@ class UnitreeGo2:
         if skill_library is None:
             skill_library = MyUnitreeSkills()
         self.skill_library = skill_library
+
+        # Set capabilities
+        self.capabilities = [RobotCapability.LOCOMOTION, RobotCapability.VISION]
 
         self.dimos = None
         self.connection = None
@@ -516,14 +522,6 @@ class UnitreeGo2:
             SpatialMemory module instance or None if perception is disabled
         """
         return self.spatial_memory_module
-
-    def get_skills(self):
-        """Get the robot's skill library.
-
-        Returns:
-            The robot's skill library for adding/managing skills
-        """
-        return self.skill_library
 
     def get_odom(self) -> PoseStamped:
         """Get the robot's odometry.

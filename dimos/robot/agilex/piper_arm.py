@@ -25,6 +25,7 @@ from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.logging_config import setup_logger
+from dimos.robot.robot import Robot
 
 # Import LCM message types
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -32,10 +33,11 @@ from dimos_lcm.sensor_msgs import CameraInfo
 logger = setup_logger("dimos.robot.agilex.piper_arm")
 
 
-class PiperArmRobot:
+class PiperArmRobot(Robot):
     """Piper Arm robot with ZED camera and manipulation capabilities."""
 
     def __init__(self, robot_capabilities: Optional[List[RobotCapability]] = None):
+        super().__init__()
         self.dimos = None
         self.stereo_camera = None
         self.manipulation_interface = None
@@ -106,14 +108,6 @@ class PiperArmRobot:
 
         logger.info("PiperArmRobot initialized and started")
 
-    def get_skills(self):
-        """Get the robot's skill library.
-
-        Returns:
-            The robot's skill library for adding/managing skills
-        """
-        return self.skill_library
-
     def pick_and_place(
         self, pick_x: int, pick_y: int, place_x: Optional[int] = None, place_y: Optional[int] = None
     ):
@@ -148,17 +142,6 @@ class PiperArmRobot:
         else:
             logger.error("Manipulation module not initialized")
             return None
-
-    def has_capability(self, capability: RobotCapability) -> bool:
-        """Check if the robot has a specific capability.
-
-        Args:
-            capability: The capability to check for
-
-        Returns:
-            bool: True if the robot has the capability
-        """
-        return capability in self.capabilities
 
     def stop(self):
         """Stop all modules and clean up."""
