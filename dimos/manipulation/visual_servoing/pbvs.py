@@ -158,11 +158,7 @@ class PBVS:
             True if target was successfully tracked, False if lost (but target is kept)
         """
         # Check if we have a current target
-        if (
-            not self.current_target
-            or not self.current_target.bbox
-            or not self.current_target.bbox.center
-        ):
+        if not self.current_target:
             return False
 
         # Add new detections to history if provided
