@@ -61,7 +61,7 @@ class UFactoryArm:
         # Initialize with proper connection settings
         self.arm = XArmAPI(self.ip, do_not_open=False, is_radian=False)
         self.arm.clean_error()  # Clear any existing errors
-        self.arm.clean_warn()   # Clear any warnings
+        self.arm.clean_warn()  # Clear any warnings
         print("initializing arm")
         self.arm.motion_enable(enable=True)
         self.arm.set_mode(1)  # Set to joint control mode since we're using joint commands
@@ -87,9 +87,7 @@ class UFactoryArm:
         self.arm.move_gohome(wait=True)
 
     def cmd_joint_angles(self, angles, speed, is_radian=False):
-        self.arm.set_servo_angle_j(
-            angles=angles, speed=speed, wait=False, is_radian=is_radian
-        )
+        self.arm.set_servo_angle_j(angles=angles, speed=speed, wait=False, is_radian=is_radian)
         print(f"Moved to angles: {angles}")
 
     def enable_joint_mode(self):
@@ -187,7 +185,7 @@ def TestXarmBridge(arm_ip: str = None, arm_type: str = "xArm6"):
     except Exception as e:
         print(f"Error: {e}")
     finally:
-        if 'armBridge' in locals() and armBridge.arm:
+        if "armBridge" in locals() and armBridge.arm:
             armBridge.arm.disconnect()
         dimos.stop()
         print("Cleanup complete")
