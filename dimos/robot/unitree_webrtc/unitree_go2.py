@@ -312,7 +312,11 @@ class UnitreeGo2(Robot):
         """Deploy and configure navigation modules."""
         self.global_planner = self.dimos.deploy(AstarPlanner)
         self.local_planner = self.dimos.deploy(HolonomicLocalPlanner)
-        self.navigator = self.dimos.deploy(BehaviorTreeNavigator, local_planner=self.local_planner)
+        self.navigator = self.dimos.deploy(
+            BehaviorTreeNavigator,
+            reset_local_planner=self.local_planner.reset,
+            check_goal_reached=self.local_planner.is_goal_reached,
+        )
         self.frontier_explorer = self.dimos.deploy(WavefrontFrontierExplorer)
 
         self.navigator.goal.transport = core.LCMTransport("/navigation_goal", PoseStamped)

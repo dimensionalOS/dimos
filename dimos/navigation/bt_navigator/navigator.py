@@ -21,7 +21,7 @@ Navigator module for coordinating global and local planning.
 import threading
 import time
 from enum import Enum
-from typing import Optional
+from typing import Callable, Optional
 
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
@@ -72,8 +72,9 @@ class BehaviorTreeNavigator(Module):
 
     def __init__(
         self,
-        local_planner: BaseLocalPlanner,
         publishing_frequency: float = 1.0,
+        reset_local_planner: Callable[[], None] = None,
+        check_goal_reached: Callable[[], bool] = None,
         **kwargs,
     ):
         """Initialize the Navigator.
@@ -108,9 +109,12 @@ class BehaviorTreeNavigator(Module):
         self.control_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
 
-        self.local_planner = local_planner
         # TF listener
         self.tf = TF()
+
+        # Local planner
+        self.reset_local_planner = reset_local_planner
+        self.check_goal_reached = check_goal_reached
 
         # Recovery server for stuck detection
         self.recovery_server = RecoveryServer(stuck_duration=5.0)
@@ -284,7 +288,7 @@ class BehaviorTreeNavigator(Module):
                         self.cancel_goal()
 
                     # Check if goal is reached
-                    if self.local_planner.is_goal_reached():
+                    if self.check_goal_reached():
                         reached_msg = Bool()
                         reached_msg.data = True
                         self.goal_reached.publish(reached_msg)
@@ -317,7 +321,7 @@ class BehaviorTreeNavigator(Module):
         with self.state_lock:
             self.state = NavigatorState.IDLE
 
-        self.local_planner.reset()
+        self.reset_local_planner()
         self.recovery_server.reset()  # Reset recovery server when stopping
 
         logger.info("Navigator stopped")
