@@ -43,27 +43,54 @@ def check_root() -> bool:
 
 def check_multicast() -> list[str]:
     """Check if multicast configuration is needed and return required commands."""
+    import platform
     commands_needed = []
 
     sudo = "" if check_root() else "sudo "
+    is_macos = platform.system() == "Darwin"
+    
+    if is_macos:
+        # macOS uses lo0 instead of lo
+        loopback_interface = "lo0"
+        
+        # Check if loopback interface has multicast enabled
+        try:
+            result = subprocess.run(["ifconfig", loopback_interface], capture_output=True, text=True)
+            if "MULTICAST" not in result.stdout:
+                commands_needed.append(f"{sudo}ifconfig {loopback_interface} multicast")
+        except Exception:
+            commands_needed.append(f"{sudo}ifconfig {loopback_interface} multicast")
 
-    # Check if loopback interface has multicast enabled
-    try:
-        result = subprocess.run(["ip", "link", "show", "lo"], capture_output=True, text=True)
-        if "MULTICAST" not in result.stdout:
-            commands_needed.append(f"{sudo}ifconfig lo multicast")
-    except Exception:
-        commands_needed.append(f"{sudo}ifconfig lo multicast")
+        # Check if multicast route exists
+        try:
+            result = subprocess.run(
+                ["netstat", "-nr"], capture_output=True, text=True
+            )
+            if "224.0.0.0" not in result.stdout and "224.0/4" not in result.stdout:
+                commands_needed.append(f"{sudo}route add -net 224.0.0.0/4 127.0.0.1")
+        except Exception:
+            commands_needed.append(f"{sudo}route add -net 224.0.0.0/4 127.0.0.1")
+    else:
+        # Linux configuration
+        loopback_interface = "lo"
+        
+        # Check if loopback interface has multicast enabled
+        try:
+            result = subprocess.run(["ip", "link", "show", loopback_interface], capture_output=True, text=True)
+            if "MULTICAST" not in result.stdout:
+                commands_needed.append(f"{sudo}ifconfig {loopback_interface} multicast")
+        except Exception:
+            commands_needed.append(f"{sudo}ifconfig {loopback_interface} multicast")
 
-    # Check if multicast route exists
-    try:
-        result = subprocess.run(
-            ["ip", "route", "show", "224.0.0.0/4"], capture_output=True, text=True
-        )
-        if not result.stdout.strip():
-            commands_needed.append(f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
-    except Exception:
-        commands_needed.append(f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
+        # Check if multicast route exists
+        try:
+            result = subprocess.run(
+                ["ip", "route", "show", "224.0.0.0/4"], capture_output=True, text=True
+            )
+            if not result.stdout.strip():
+                commands_needed.append(f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}")
+        except Exception:
+            commands_needed.append(f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}")
 
     return commands_needed
 
@@ -138,8 +165,16 @@ def check_system() -> None:
         logger.warning("Note: This may not be possible in Docker containers.")
 
 
+_autoconf_done = False
+
 def autoconf() -> None:
     """Auto-configure system by running checks and executing required commands if needed."""
+    global _autoconf_done
+    
+    if _autoconf_done:
+        logger.debug("System already configured, skipping autoconf.")
+        return
+        
     if os.environ.get("CI"):
         logger.info("CI environment detected: Skipping automatic system configuration.")
         return
@@ -154,6 +189,7 @@ def autoconf() -> None:
     commands_needed.extend(buffer_commands)
 
     if not commands_needed:
+        _autoconf_done = True
         return
 
     logger.info("System configuration required. Executing commands...")
@@ -183,6 +219,7 @@ def autoconf() -> None:
             if "route" in cmd or "multicast" in cmd:
                 raise
 
+    _autoconf_done = True
     logger.info("System configuration completed.")
 
 
