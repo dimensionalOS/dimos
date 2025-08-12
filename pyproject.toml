@@ -158,13 +158,6 @@ dev = [
     "textual==3.7.1"
 ]
 
-sim = [
-    # Simulation
-    "mujoco>=3.3.4",
-    "playground>=0.0.5",
-]
-
-
 [tool.ruff]
 line-length = 100
 exclude = [
