@@ -335,9 +335,9 @@ def get_distance(pose1: Pose | Vector3, pose2: Pose | Vector3) -> float:
     Returns:
         Euclidean distance between the two poses in meters
     """
-    if isinstance(pose1, Pose):
+    if hasattr(pose1, "position"):
         pose1 = pose1.position
-    if isinstance(pose2, Pose):
+    if hasattr(pose2, "position"):
         pose2 = pose2.position
 
     dx = pose1.x - pose2.x
