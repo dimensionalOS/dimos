@@ -92,6 +92,7 @@ class WebsocketVisModule(Module):
 
     def _start_broadcast_loop(self):
         """Start the broadcast event loop in a background thread."""
+
         def run_loop():
             self._broadcast_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._broadcast_loop)
