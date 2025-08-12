@@ -28,7 +28,6 @@ def find_safe_goal(
     min_clearance: float = 0.3,
     max_search_distance: float = 5.0,
     connectivity_check_radius: int = 3,
-    treat_unknown_as_safe: bool = False,
 ) -> Optional[Vector3]:
     """
     Find a safe goal position when the original goal is in collision or too close to obstacles.
@@ -41,7 +40,6 @@ def find_safe_goal(
         min_clearance: Minimum clearance from obstacles in meters (default: 0.3m)
         max_search_distance: Maximum distance to search from original goal in meters (default: 5.0m)
         connectivity_check_radius: Radius in cells to check for connectivity (default: 3)
-        treat_unknown_as_safe: Whether to treat UNKNOWN cost values as safe (default: False)
 
     Returns:
         Safe goal position in world coordinates, or None if no safe position found
@@ -55,7 +53,6 @@ def find_safe_goal(
             min_clearance,
             max_search_distance,
             connectivity_check_radius,
-            treat_unknown_as_safe,
         )
     elif algorithm == "spiral":
         return _find_safe_goal_spiral(
@@ -65,11 +62,10 @@ def find_safe_goal(
             min_clearance,
             max_search_distance,
             connectivity_check_radius,
-            treat_unknown_as_safe,
         )
     elif algorithm == "voronoi":
         return _find_safe_goal_voronoi(
-            costmap, goal, cost_threshold, min_clearance, max_search_distance, treat_unknown_as_safe
+            costmap, goal, cost_threshold, min_clearance, max_search_distance
         )
     elif algorithm == "gradient_descent":
         return _find_safe_goal_gradient(
@@ -79,7 +75,6 @@ def find_safe_goal(
             min_clearance,
             max_search_distance,
             connectivity_check_radius,
-            treat_unknown_as_safe,
         )
     else:
         raise ValueError(f"Unknown algorithm: {algorithm}")
@@ -92,7 +87,6 @@ def _find_safe_goal_bfs(
     min_clearance: float,
     max_search_distance: float,
     connectivity_check_radius: int,
-    treat_unknown_as_safe: bool = False,
 ) -> Optional[Vector3]:
     """
     BFS-based search for nearest safe goal position.
@@ -132,13 +126,7 @@ def _find_safe_goal_bfs(
 
         # Check if position is valid
         if _is_position_safe(
-            costmap,
-            x,
-            y,
-            cost_threshold,
-            clearance_cells,
-            connectivity_check_radius,
-            treat_unknown_as_safe,
+            costmap, x, y, cost_threshold, clearance_cells, connectivity_check_radius
         ):
             # Convert back to world coordinates
             return costmap.grid_to_world((x, y))
@@ -163,7 +151,6 @@ def _find_safe_goal_spiral(
     min_clearance: float,
     max_search_distance: float,
     connectivity_check_radius: int,
-    treat_unknown_as_safe: bool = False,
 ) -> Optional[Vector3]:
     """
     Spiral search pattern from goal outward.
@@ -191,13 +178,7 @@ def _find_safe_goal_spiral(
         if radius == 0:
             # Check center point
             if _is_position_safe(
-                costmap,
-                cx,
-                cy,
-                cost_threshold,
-                clearance_cells,
-                connectivity_check_radius,
-                treat_unknown_as_safe,
+                costmap, cx, cy, cost_threshold, clearance_cells, connectivity_check_radius
             ):
                 return costmap.grid_to_world((cx, cy))
         else:
@@ -218,13 +199,7 @@ def _find_safe_goal_spiral(
             for x, y in points:
                 if 0 <= x < costmap.width and 0 <= y < costmap.height:
                     if _is_position_safe(
-                        costmap,
-                        x,
-                        y,
-                        cost_threshold,
-                        clearance_cells,
-                        connectivity_check_radius,
-                        treat_unknown_as_safe,
+                        costmap, x, y, cost_threshold, clearance_cells, connectivity_check_radius
                     ):
                         return costmap.grid_to_world((x, y))
 
@@ -237,7 +212,6 @@ def _find_safe_goal_voronoi(
     cost_threshold: int,
     min_clearance: float,
     max_search_distance: float,
-    treat_unknown_as_safe: bool = False,
 ) -> Optional[Vector3]:
     """
     Find safe position using Voronoi diagram (ridge points equidistant from obstacles).
@@ -262,10 +236,7 @@ def _find_safe_goal_voronoi(
 
     # Create binary obstacle map
     obstacle_map = costmap.grid >= cost_threshold
-    if treat_unknown_as_safe:
-        free_map = (costmap.grid < cost_threshold) | (costmap.grid == CostValues.UNKNOWN)
-    else:
-        free_map = (costmap.grid < cost_threshold) & (costmap.grid != CostValues.UNKNOWN)
+    free_map = (costmap.grid < cost_threshold) & (costmap.grid != CostValues.UNKNOWN)
 
     # Compute distance transform
     distance_field = ndimage.distance_transform_edt(free_map)
@@ -280,13 +251,7 @@ def _find_safe_goal_voronoi(
     if not np.any(valid_skeleton):
         # Fall back to BFS if no valid skeleton points
         return _find_safe_goal_bfs(
-            costmap,
-            goal,
-            cost_threshold,
-            min_clearance,
-            max_search_distance,
-            3,
-            treat_unknown_as_safe,
+            costmap, goal, cost_threshold, min_clearance, max_search_distance, 3
         )
 
     # Find nearest valid skeleton point to goal
@@ -320,7 +285,6 @@ def _find_safe_goal_gradient(
     min_clearance: float,
     max_search_distance: float,
     connectivity_check_radius: int,
-    treat_unknown_as_safe: bool = False,
 ) -> Optional[Vector3]:
     """
     Use gradient descent on the costmap to find a safe position.
@@ -376,13 +340,7 @@ def _find_safe_goal_gradient(
 
             # Check if position is safe
             if _is_position_safe(
-                costmap,
-                ix,
-                iy,
-                cost_threshold,
-                clearance_cells,
-                connectivity_check_radius,
-                treat_unknown_as_safe,
+                costmap, ix, iy, cost_threshold, clearance_cells, connectivity_check_radius
             ):
                 if current_cost < best_cost:
                     best_x, best_y = ix, iy
@@ -427,7 +385,6 @@ def _is_position_safe(
     cost_threshold: int,
     clearance_cells: int,
     connectivity_check_radius: int,
-    treat_unknown_as_safe: bool = False,
 ) -> bool:
     """
     Check if a position is safe based on multiple criteria.
@@ -438,25 +395,14 @@ def _is_position_safe(
         cost_threshold: Maximum acceptable cost
         clearance_cells: Minimum clearance in cells
         connectivity_check_radius: Radius to check for connectivity
-        treat_unknown_as_safe: Whether to treat UNKNOWN cost values as safe
 
     Returns:
         True if position is safe, False otherwise
     """
 
-    try:
-        costmap_value = costmap.grid[y, x]
-    except IndexError:
-        # Out of bounds, treat as unsafe
-        return False
-
     # Check if position itself is free
-    if treat_unknown_as_safe:
-        if costmap_value >= cost_threshold and costmap_value != CostValues.UNKNOWN:
-            return False
-    else:
-        if costmap_value >= cost_threshold or costmap_value == CostValues.UNKNOWN:
-            return False
+    if costmap.grid[y, x] >= cost_threshold or costmap.grid[y, x] == CostValues.UNKNOWN:
+        return False
 
     # Check clearance around position
     for dy in range(-clearance_cells, clearance_cells + 1):
@@ -481,18 +427,11 @@ def _is_position_safe(
             nx, ny = x + dx, y + dy
             if 0 <= nx < costmap.width and 0 <= ny < costmap.height:
                 total_count += 1
-                if treat_unknown_as_safe:
-                    if (
-                        costmap.grid[ny, nx] < cost_threshold
-                        or costmap.grid[ny, nx] == CostValues.UNKNOWN
-                    ):
-                        free_count += 1
-                else:
-                    if (
-                        costmap.grid[ny, nx] < cost_threshold
-                        and costmap.grid[ny, nx] != CostValues.UNKNOWN
-                    ):
-                        free_count += 1
+                if (
+                    costmap.grid[ny, nx] < cost_threshold
+                    and costmap.grid[ny, nx] != CostValues.UNKNOWN
+                ):
+                    free_count += 1
 
     # Require at least 50% of neighbors to be free (not surrounded)
     if total_count > 0 and free_count < total_count * 0.5:
