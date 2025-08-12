@@ -50,7 +50,8 @@ class UFactory7DOFArm:
             self.xarm_type = input("Enter the type of xArm: ")
         else:
             self.xarm_type = xarm_type
-
+        
+        # To be used in future for changing between different xArm types
         # from configparser import ConfigParser
         # parser = ConfigParser()
         # parser.read('../robot.conf')
@@ -62,7 +63,7 @@ class UFactory7DOFArm:
         self.arm.motion_enable(enable=True)
         self.arm.set_mode(0)
         self.arm.set_state(state=0)
-        self.gotoZero()
+        # self.gotoZero()
 
     def get_arm_length(self):
         return self.arm_length
@@ -83,33 +84,14 @@ class UFactory7DOFArm:
         self.arm.move_gohome(wait=True)
 
     def cmd_joint_angles(self, angles, speed, is_radian=False):
-        step_size = 0.017453292519943295  # rad per step
-        current = np.array(self.arm.get_servo_angle(is_radian=True)[1])
+        
         target = np.array(angles)
-        error = target - current
-        print(f"Initial error: {error}")
-
-        steps_needed = np.abs(error) / step_size
-        max_steps = int(np.ceil(np.max(steps_needed)))
-        print(f"Steps needed: {max_steps}, Step size: {step_size}")
-
         self.enable_joint_mode()
-
-        # Perform incremental movement
-        for step in range(max_steps):
-            # Calculate current step progress
-            progress = (step + 1) / max_steps
-
-            # Calculate intermediate target for this step
-            intermediate_target = current + (error * progress)
-            # print(f"Intermediate target at step {step}: {intermediate_target}")
-            # Move to intermediate position
-            self.arm.set_servo_angle_j(
-                angles=intermediate_target.tolist(), speed=speed, wait=True, is_radian=is_radian
-            )
-
-            # Small delay for smooth motion
-            time.sleep(0.01)
+        # Move to target position
+        self.arm.set_servo_angle_j(
+            angles=target.tolist(), speed=speed, wait=True, is_radian=is_radian
+        )
+        print(f"Moved to angles: {target}")
 
     def enable_joint_mode(self):
         self.arm.set_mode(1)
@@ -125,26 +107,34 @@ class UFactory7DOFArm:
 class xArmBridge(Module):
     joint_state: In[JointState] = None
     pose_state: Out[JointState] = None
+    target_joint_state = None
+    arm = None
 
     def __init__(self, arm_ip: str = None, arm_type: str = "xarm7", *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.arm_ip = arm_ip
         self.arm_type = arm_type
         self.arm = None
+        self.target_joint_state = [0, 0, 0, 0, 0, 0, 0]
 
     @rpc
     def start(self):
         # subscribe to incoming LCM JointState messages
         self.arm = UFactory7DOFArm(ip=self.arm_ip, xarm_type=self.arm_type)
         self.arm.enable()
-        print(f"Initialized xArmBridge with arm type: {self.arm.xarm_type}")
+        # print(f"Initialized xArmBridge with arm type: {self.arm.xarm_type}")
         self.joint_state.subscribe(self._on_joint_state)
-        print(f"Subscribed to {self.joint_state}")
+        # print(f"Subscribed to {self.joint_state}")
+    
+    # @rpc
+    def command_arm(self):
+        print("[xArmBridge] Commanding arm with target joint state:", self.target_joint_state)
+        self.arm.cmd_joint_angles(self.target_joint_state, speed=3.14, is_radian=True)
 
     def _on_joint_state(self, msg: JointState):
-        print(f"[xArmBridge] Received joint state: {msg}")
+        # print(f"[xArmBridge] Received joint state: {msg}")
         if not msg:
-            print("[xArmBridge] No joint names found in message.")
+            # print("[xArmBridge] No joint names found in message.")
             return
 
         # Extract joint1-joint7 values from indices 3-9
@@ -158,15 +148,11 @@ class xArmBridge(Module):
             joint7 = msg.position[9]
 
             # print(f"[xArmBridge] Joint values - joint1: {joint1}, joint2: {joint2}, joint3: {joint3}, joint4: {joint4}, joint5: {joint5}, joint6: {joint6}, joint7: {joint7}")
+            self.target_joint_state = [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
         else:
             print(
                 f"[xArmBridge] Insufficient joint data: expected at least 10 joints, got {len(msg.position)}"
             )
-
-        # Set servo angles for the xArm
-        angles = [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
-        # print(f"[xArmBridge] Setting servo angles: {angles}")
-        self.arm.cmd_joint_angles(angles, speed=0.1, is_radian=True)
 
     def _reader(self):
         while True:
@@ -190,15 +176,12 @@ def TestXarmBridge(arm_ip: str = None, arm_type: str = "xArm7"):
     print("xArmBridge started and listening for joint states.")
 
     while True:
-        time.sleep(1)
+        # print(armBridge.target_joint_state)
+        armBridge.command_arm()                     # Command the arm  at 100hz with the target joint state
+        time.sleep(0.01)
 
 
 if __name__ == "__main__":
-    # arm = UFactory7DOFArm(ip="192.168.1.197", xarm_type="xarm7")
-    # arm.enable()
-    # print("enabled")
-    # time.sleep(1)
-    # speed = 10
 
     TestXarmBridge(arm_ip="192.168.1.197", arm_type="xarm7")
 
