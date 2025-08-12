@@ -164,6 +164,7 @@ class ConnectionModule(Module):
             raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
 
         from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+
         connection = MujocoConnection(self.ip)
         connection.start()
         return connection
