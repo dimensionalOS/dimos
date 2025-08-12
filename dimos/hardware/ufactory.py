@@ -39,8 +39,8 @@ class UFactoryEndEffector(EndEffector):
         return self.model
 
 
-class UFactory7DOFArm:
-    def __init__(self, ip=None, xarm_type="xarm7"):
+class UFactoryArm:
+    def __init__(self, ip=None, xarm_type="xarm6"):
         if ip is None:
             self.ip = input("Enter the IP address of the xArm: ")
         else:
@@ -58,10 +58,13 @@ class UFactory7DOFArm:
         # self.arm_length = parser.get(xarm_type, 'arm_length')
         # print(parser)
 
-        self.arm = XArmAPI(self.ip)
+        # Initialize with proper connection settings
+        self.arm = XArmAPI(self.ip, do_not_open=False, is_radian=False)
+        self.arm.clean_error()  # Clear any existing errors
+        self.arm.clean_warn()   # Clear any warnings
         print("initializing arm")
         self.arm.motion_enable(enable=True)
-        self.arm.set_mode(0)
+        self.arm.set_mode(1)  # Set to joint control mode since we're using joint commands
         self.arm.set_state(state=0)
         # self.gotoZero()
 
@@ -84,13 +87,10 @@ class UFactory7DOFArm:
         self.arm.move_gohome(wait=True)
 
     def cmd_joint_angles(self, angles, speed, is_radian=False):
-        target = np.array(angles)
-        self.enable_joint_mode()
-        # Move to target position
         self.arm.set_servo_angle_j(
-            angles=target.tolist(), speed=speed, wait=True, is_radian=is_radian
+            angles=angles, speed=speed, wait=False, is_radian=is_radian
         )
-        print(f"Moved to angles: {target}")
+        print(f"Moved to angles: {angles}")
 
     def enable_joint_mode(self):
         self.arm.set_mode(1)
@@ -109,17 +109,17 @@ class xArmBridge(Module):
     target_joint_state = None
     arm = None
 
-    def __init__(self, arm_ip: str = None, arm_type: str = "xarm7", *args, **kwargs):
+    def __init__(self, arm_ip: str = None, arm_type: str = "xarm6", *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.arm_ip = arm_ip
         self.arm_type = arm_type
         self.arm = None
-        self.target_joint_state = [0, 0, 0, 0, 0, 0, 0]
+        self.target_joint_state = [0, 0, 0, 0, 0, 0]
 
     @rpc
     def start(self):
         # subscribe to incoming LCM JointState messages
-        self.arm = UFactory7DOFArm(ip=self.arm_ip, xarm_type=self.arm_type)
+        self.arm = UFactoryArm(ip=self.arm_ip, xarm_type=self.arm_type)
         self.arm.enable()
         # print(f"Initialized xArmBridge with arm type: {self.arm.xarm_type}")
         self.joint_state.subscribe(self._on_joint_state)
@@ -128,7 +128,10 @@ class xArmBridge(Module):
     # @rpc
     def command_arm(self):
         print("[xArmBridge] Commanding arm with target joint state:", self.target_joint_state)
-        self.arm.cmd_joint_angles(self.target_joint_state, speed=3.14, is_radian=True)
+        try:
+            self.arm.cmd_joint_angles(self.target_joint_state, speed=3.14, is_radian=True)
+        except Exception as e:
+            print(f"[xArmBridge] Error commanding arm: {e}")
 
     def _on_joint_state(self, msg: JointState):
         # print(f"[xArmBridge] Received joint state: {msg}")
@@ -144,10 +147,10 @@ class xArmBridge(Module):
             joint4 = msg.position[6]
             joint5 = msg.position[7]
             joint6 = msg.position[8]
-            joint7 = msg.position[9]
+            # joint7 = msg.position[9]
 
             # print(f"[xArmBridge] Joint values - joint1: {joint1}, joint2: {joint2}, joint3: {joint3}, joint4: {joint4}, joint5: {joint5}, joint6: {joint6}, joint7: {joint7}")
-            self.target_joint_state = [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
+            self.target_joint_state = [joint1, joint2, joint3, joint4, joint5, joint6]
         else:
             print(
                 f"[xArmBridge] Insufficient joint data: expected at least 10 joints, got {len(msg.position)}"
@@ -162,30 +165,33 @@ class xArmBridge(Module):
                 continue
 
 
-def TestXarmBridge(arm_ip: str = None, arm_type: str = "xArm7"):
+def TestXarmBridge(arm_ip: str = None, arm_type: str = "xArm6"):
     lcmservice.autoconf()
     dimos = core.start(2)
 
-    armBridge = dimos.deploy(xArmBridge, arm_ip=arm_ip, arm_type=arm_type)
+    try:
+        armBridge = dimos.deploy(xArmBridge, arm_ip=arm_ip, arm_type=arm_type)
 
-    armBridge.pose_state.transport = core.LCMTransport("/armJointState", JointState)
-    armBridge.joint_state.transport = core.LCMTransport("/joint_states", JointState)
+        armBridge.pose_state.transport = core.LCMTransport("/armJointState", JointState)
+        armBridge.joint_state.transport = core.LCMTransport("joint_states", JointState)
 
-    armBridge.start()
-    print("xArmBridge started and listening for joint states.")
+        armBridge.start()
+        print("xArmBridge started and listening for joint states.")
 
-    while True:
-        # print(armBridge.target_joint_state)
-        armBridge.command_arm()  # Command the arm  at 100hz with the target joint state
-        time.sleep(0.01)
+        while True:
+            # print(armBridge.target_joint_state)
+            armBridge.command_arm()  # Command the arm  at 100hz with the target joint state
+            time.sleep(0.02)
+    except KeyboardInterrupt:
+        print("\nShutting down gracefully...")
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        if 'armBridge' in locals() and armBridge.arm:
+            armBridge.arm.disconnect()
+        dimos.stop()
+        print("Cleanup complete")
 
 
 if __name__ == "__main__":
-    TestXarmBridge(arm_ip="192.168.1.197", arm_type="xarm7")
-
-    # # arm.cmd_joint_angles([0, 0, 0, 120, 0, 0, 0], speed=speed)
-
-    # arm.gotoZero()
-
-    # arm.disconnect()
-    # print("disconnected")
+    TestXarmBridge(arm_ip="192.168.1.210", arm_type="xarm6")
