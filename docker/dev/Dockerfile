@@ -24,19 +24,16 @@ RUN git config --global --add safe.directory '*'
 
 WORKDIR /app
 
-COPY pyproject.toml /app/
-RUN mkdir -p /app/dimos
-RUN touch /app/dimos/__init__.py
-
 # Install UV for fast Python package management
 ENV UV_SYSTEM_PYTHON=1
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
+# Copy entire project first to ensure proper package installation
+COPY . /app/
+
 # Install dependencies with UV (10-100x faster than pip)
 RUN uv pip install .[dev]
-
-COPY . /app/
 
 # Copy files and add version to motd
 COPY /assets/dimensionalascii.txt /etc/motd
