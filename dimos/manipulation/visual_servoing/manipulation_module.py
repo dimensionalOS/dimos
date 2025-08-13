@@ -13,14 +13,15 @@
 # limitations under the License.
 
 """
-Manipulation module for robotic grasping with visual servoing.
-Handles grasping logic, state machine, and hardware coordination as a Dimos module.
+Manipulation module for robotic grasping with visual servoing and integrated 3D detection.
+Handles object detection, grasping logic, state machine, and hardware coordination as a Dimos module.
+Processes RGB-D data directly to reduce latency and publishes detection arrays.
 """
 
 import cv2
 import time
 import threading
-from typing import Optional, Tuple, Any, Dict
+from typing import Optional, Any, Dict, Tuple
 from enum import Enum
 from collections import deque
 
@@ -29,25 +30,20 @@ import numpy as np
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.geometry_msgs import Vector3, Pose, Quaternion
-from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import Detection3DArray, Detection2DArray
-
-from dimos.hardware.piper_arm import PiperArm
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.std_msgs import String
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
+from dimos.protocol.tf import TF
+from dimos.utils.transform_utils import pose_to_matrix, create_transform_from_6dof
 from dimos.manipulation.visual_servoing.pbvs import PBVS
 from dimos.perception.common.utils import find_clicked_detection
 from dimos.manipulation.visual_servoing.utils import (
     create_manipulation_visualization,
-    select_points_from_depth,
-    transform_points_3d,
     update_target_grasp_pose,
     is_target_reached,
-)
-from dimos.utils.transform_utils import (
-    pose_to_matrix,
-    matrix_to_pose,
-    create_transform_from_6dof,
-    compose_transforms,
+    select_points_from_depth,
+    transform_points_3d,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -91,19 +87,23 @@ class Feedback:
 
 class ManipulationModule(Module):
     """
-    Manipulation module for visual servoing and grasping.
+    Manipulation module with integrated 3D detection for visual servoing and grasping.
 
     Subscribes to:
-        - ZED RGB images
-        - ZED depth images
-        - ZED camera info
+        - RGB images (for detection and visualization)
+        - Depth images (for 3D detection)
+        - Camera info (for intrinsics)
 
     Publishes:
+        - Detection3DArray (3D object detections in base frame)
+        - Detection2DArray (2D object detections)
         - Visualization images
+        - Grasp state
 
     RPC methods:
         - handle_keyboard_command: Process keyboard input
-        - pick_and_place: Execute pick and place task
+        - pick_and_place: Execute pick and place task with optional place location
+        - get_single_rgb_frame: Get latest RGB frame
     """
 
     # LCM inputs
@@ -113,35 +113,55 @@ class ManipulationModule(Module):
 
     # LCM outputs
     viz_image: Out[Image] = None
+    grasp_state: Out[String] = None  # Publish grasp state
+    detection3d_array: Out[Detection3DArray] = None  # Output 3D detections
+    detection2d_array: Out[Detection2DArray] = None  # Output 2D detections
 
     def __init__(
         self,
-        ee_to_camera_6dof: Optional[list] = None,
+        piper_arm_module=None,  # PiperArmModule instance
+        min_confidence: float = 0.6,
+        min_points: int = 30,
+        max_depth: float = 1.0,
+        max_object_size: float = 0.15,
+        camera_frame_id: str = "camera_link",
+        base_frame_id: str = "base_link",
         **kwargs,
     ):
         """
         Initialize manipulation module.
 
         Args:
-            ee_to_camera_6dof: EE to camera transform [x, y, z, rx, ry, rz] in meters and radians
-            workspace_min_radius: Minimum workspace radius in meters
-            workspace_max_radius: Maximum workspace radius in meters
-            min_grasp_pitch_degrees: Minimum grasp pitch angle (at max radius)
-            max_grasp_pitch_degrees: Maximum grasp pitch angle (at min radius)
+            piper_arm_module: PiperArmModule instance for arm control
+            min_confidence: Minimum detection confidence threshold
+            min_points: Minimum 3D points required for valid detection
+            max_depth: Maximum valid depth in meters
+            max_object_size: Maximum object size to consider valid
+            camera_frame_id: TF frame ID for camera
+            base_frame_id: TF frame ID for robot base
         """
         super().__init__(**kwargs)
 
-        self.arm = PiperArm()
+        # Store reference to PiperArmModule
+        self.arm = piper_arm_module
 
-        if ee_to_camera_6dof is None:
-            ee_to_camera_6dof = [-0.065, 0.03, -0.095, 0.0, -1.57, 0.0]
-        pos = Vector3(ee_to_camera_6dof[0], ee_to_camera_6dof[1], ee_to_camera_6dof[2])
-        rot = Vector3(ee_to_camera_6dof[3], ee_to_camera_6dof[4], ee_to_camera_6dof[5])
-        self.T_ee_to_camera = create_transform_from_6dof(pos, rot)
+        # Detection parameters
+        self.min_confidence = min_confidence
+        self.min_points = min_points
+        self.max_depth = max_depth
+        self.max_object_size = max_object_size
+        self.camera_frame_id = camera_frame_id
+        self.base_frame_id = base_frame_id
 
-        self.camera_intrinsics = None
+        # Initialize PBVS controller
+        self.pbvs = PBVS()
+
+        # Initialize TF listener
+        self.tf = TF()
+
+        # Detection processor (will be initialized when camera info is received)
         self.detector = None
-        self.pbvs = None
+        self.camera_intrinsics = None
 
         # Control state
         self.last_valid_target = None
@@ -185,8 +205,6 @@ class ManipulationModule(Module):
 
         # State for visualization
         self.current_visualization = None
-        self.last_detection_3d_array = None
-        self.last_detection_2d_array = None
 
         # Grasp result and task tracking
         self.pick_success = None
@@ -203,6 +221,7 @@ class ManipulationModule(Module):
         self.latest_rgb = None
         self.latest_depth = None
         self.latest_camera_info = None
+        self.ee_frame_id = "ee_link"  # Frame ID for end-effector
 
         # Target selection
         self.target_click = None
@@ -216,15 +235,17 @@ class ManipulationModule(Module):
         self.retract_distance = 0.12
         self.place_pose = None
         self.retract_pose = None
-        self.arm.gotoObserve()
 
     @rpc
     def start(self):
         """Start the manipulation module."""
-        # Subscribe to camera data
+        # Subscribe to sensor inputs
         self.rgb_image.subscribe(self._on_rgb_image)
         self.depth_image.subscribe(self._on_depth_image)
         self.camera_info.subscribe(self._on_camera_info)
+
+        # Go to observe position after start
+        self.arm.goto_observe()
 
         logger.info("Manipulation module started")
 
@@ -248,24 +269,80 @@ class ManipulationModule(Module):
 
     def _on_depth_image(self, msg: Image):
         """Handle depth image messages."""
-        try:
-            self.latest_depth = msg.data
-        except Exception as e:
-            logger.error(f"Error processing depth image: {e}")
+        self.latest_depth = msg.data
 
     def _on_camera_info(self, msg: CameraInfo):
         """Handle camera info messages."""
+        self.latest_camera_info = msg
+        # Extract camera intrinsics
+        intrinsics = [msg.K[0], msg.K[4], msg.K[2], msg.K[5]]
+        # Initialize detector if not already done or intrinsics changed
+        if self.detector is None or self.camera_intrinsics != intrinsics:
+            self.camera_intrinsics = intrinsics
+            self.detector = Detection3DProcessor(
+                camera_intrinsics=self.camera_intrinsics,
+                min_confidence=self.min_confidence,
+                min_points=self.min_points,
+                max_depth=self.max_depth,
+                max_object_size=self.max_object_size,
+            )
+            logger.info(f"Initialized detector with intrinsics: {self.camera_intrinsics}")
+
+    def _get_ee_pose(self) -> Optional[Pose]:
+        """Get current end-effector pose from TF."""
         try:
-            self.camera_intrinsics = [msg.K[0], msg.K[4], msg.K[2], msg.K[5]]
-
-            if self.detector is None:
-                self.detector = Detection3DProcessor(self.camera_intrinsics)
-                self.pbvs = PBVS()
-                logger.info("Initialized detection and PBVS processors")
-
-            self.latest_camera_info = msg
+            transform = self.tf.get(
+                parent_frame=self.base_frame_id,
+                child_frame=self.ee_frame_id,
+                time_point=None,
+                time_tolerance=1.0,
+            )
+            if transform:
+                return transform.to_pose()
+            else:
+                logger.warning(
+                    f"No transform available from {self.base_frame_id} to {self.ee_frame_id}"
+                )
+                return None
         except Exception as e:
-            logger.error(f"Error processing camera info: {e}")
+            logger.error(f"Error getting EE pose from TF: {e}")
+            return None
+
+    def _process_detections(self):
+        """Process current frame and generate detections."""
+        if self.latest_rgb is None or self.latest_depth is None or self.detector is None:
+            return
+
+        try:
+            # Get transform from camera to base frame
+            transform = self.tf.get(
+                parent_frame=self.base_frame_id,
+                child_frame=self.camera_frame_id,
+                time_point=None,
+                time_tolerance=1.0,
+            )
+
+            transform_matrix = None
+            if transform:
+                transform_matrix = pose_to_matrix(transform.to_pose())
+
+            # Process frame with detector
+            detection3d_array, detection2d_array = self.detector.process_frame(
+                self.latest_rgb, self.latest_depth, transform_matrix
+            )
+
+            # Publish detections
+            if self.detection3d_array:
+                self.detection3d_array.publish(detection3d_array)
+            if self.detection2d_array:
+                self.detection2d_array.publish(detection2d_array)
+
+            # Store for internal use
+            self.last_detection_3d_array = detection3d_array
+            self.last_detection_2d_array = detection2d_array
+
+        except Exception as e:
+            logger.error(f"Error processing detections: {e}")
 
     @rpc
     def get_single_rgb_frame(self) -> Optional[np.ndarray]:
@@ -294,7 +371,7 @@ class ManipulationModule(Module):
             return "reset"
         elif key_code == ord("s"):
             logger.info("SOFT STOP - Emergency stopping robot!")
-            self.arm.softStop()
+            self.arm.soft_stop()
             self.stop_event.set()
             self.task_running = False
             return "stop"
@@ -329,12 +406,11 @@ class ManipulationModule(Module):
         if self.task_running:
             return {"status": "error", "message": "Task already running"}
 
-        if self.camera_intrinsics is None:
-            return {"status": "error", "message": "Camera not initialized"}
-
         if target_x is not None and target_y is not None:
             self.target_click = (target_x, target_y)
-        if place_x is not None and self.latest_depth is not None:
+
+        # Handle place location if provided
+        if place_x is not None and place_y is not None and self.latest_depth is not None:
             points_3d_camera = select_points_from_depth(
                 self.latest_depth,
                 (place_x, place_y),
@@ -343,21 +419,30 @@ class ManipulationModule(Module):
             )
 
             if points_3d_camera.size > 0:
-                ee_pose = self.arm.get_ee_pose()
-                ee_transform = pose_to_matrix(ee_pose)
-                camera_transform = compose_transforms(ee_transform, self.T_ee_to_camera)
-
-                points_3d_world = transform_points_3d(
-                    points_3d_camera,
-                    camera_transform,
-                    to_robot=True,
+                # Get camera transform from TF to transform points to world frame
+                camera_transform_msg = self.tf.get(
+                    parent_frame=self.base_frame_id,
+                    child_frame=self.camera_frame_id,
+                    time_point=None,
+                    time_tolerance=1.0,
                 )
+                if camera_transform_msg:
+                    camera_transform = pose_to_matrix(camera_transform_msg.to_pose())
 
-                place_position = np.mean(points_3d_world, axis=0)
-                self.place_target_position = place_position
-                logger.info(
-                    f"Place target set at position: ({place_position[0]:.3f}, {place_position[1]:.3f}, {place_position[2]:.3f})"
-                )
+                    points_3d_world = transform_points_3d(
+                        points_3d_camera,
+                        camera_transform,
+                        to_robot=True,
+                    )
+
+                    place_position = np.mean(points_3d_world, axis=0)
+                    self.place_target_position = place_position
+                    logger.info(
+                        f"Place target set at position: ({place_position[0]:.3f}, {place_position[1]:.3f}, {place_position[2]:.3f})"
+                    )
+                else:
+                    logger.warning("No EE pose available for place location transformation")
+                    self.place_target_position = None
             else:
                 logger.warning("No valid depth points found at place location")
                 self.place_target_position = None
@@ -414,6 +499,9 @@ class ManipulationModule(Module):
         """Set the grasp stage."""
         self.grasp_stage = stage
         logger.info(f"Grasp stage: {stage.value}")
+        # Publish state change
+        if self.grasp_state:
+            self.grasp_state.publish(String(data=stage.value))
 
     def calculate_dynamic_grasp_pitch(self, target_pose: Pose) -> float:
         """
@@ -520,12 +608,14 @@ class ManipulationModule(Module):
         if not self.waiting_for_reach or not self.current_executed_pose:
             return False
 
-        # Get current end-effector pose
-        ee_pose = self.arm.get_ee_pose()
+        # Get current end-effector pose from TF
+        ee_pose = self._get_ee_pose()
+        if not ee_pose:
+            return False
         target_pose = self.current_executed_pose
 
         # Check for timeout - this will fail task and reset if timeout occurred
-        timed_out, time_elapsed = self._check_reach_timeout()
+        timed_out, _ = self._check_reach_timeout()
         if timed_out:
             return False
 
@@ -551,6 +641,8 @@ class ManipulationModule(Module):
                 self.min_grasp_pitch_degrees, min(self.max_grasp_pitch_degrees, pitch_degrees)
             )
             updated_target_pose = update_target_grasp_pose(target_pose, ee_pose, 0.0, pitch_degrees)
+            self.arm.goto_observe()
+            time.sleep(1.5)
             self.arm.cmd_ee_pose(updated_target_pose)
             self.current_executed_pose = updated_target_pose
             self.ee_pose_history.clear()
@@ -603,7 +695,7 @@ class ManipulationModule(Module):
         self.retract_pose = None
         self.stuck_count = 0
 
-        self.arm.gotoObserve()
+        self.arm.goto_observe()
 
     def execute_idle(self):
         """Execute idle stage."""
@@ -628,7 +720,9 @@ class ManipulationModule(Module):
             self.reset_to_idle()
             return
 
-        ee_pose = self.arm.get_ee_pose()
+        ee_pose = self._get_ee_pose()
+        if not ee_pose:
+            return
         dynamic_pitch = self.calculate_dynamic_grasp_pitch(self.pbvs.current_target.bbox.center)
 
         _, _, _, has_target, target_pose = self.pbvs.compute_control(
@@ -677,7 +771,9 @@ class ManipulationModule(Module):
                 2 * self.grasp_distance_range * normalized_pitch
             )
 
-            ee_pose = self.arm.get_ee_pose()
+            ee_pose = self._get_ee_pose()
+            if not ee_pose:
+                return
             _, _, _, has_target, target_pose = self.pbvs.compute_control(
                 ee_pose, grasp_distance, dynamic_pitch
             )
@@ -722,8 +818,8 @@ class ManipulationModule(Module):
         if not self.waiting_for_reach:
             logger.info("Retracting to pre-grasp position")
             self.arm.cmd_ee_pose(self.final_pregrasp_pose, line_mode=True)
-            self.current_executed_pose = self.final_pregrasp_pose
             self.arm.close_gripper()
+            self.current_executed_pose = self.final_pregrasp_pose
             self.waiting_for_reach = True
             self.waiting_start_time = time.time()
 
@@ -759,7 +855,7 @@ class ManipulationModule(Module):
             if self.check_reach_and_adjust():
                 logger.info("Reached retract position")
                 logger.info("Returning to observe position")
-                self.arm.gotoObserve()
+                self.arm.goto_observe()
                 self.arm.close_gripper()
                 self.overall_success = True
                 logger.info("Pick and place completed successfully!")
@@ -780,25 +876,6 @@ class ManipulationModule(Module):
                 logger.error("No place pose stored for retraction")
                 self.task_failed = True
                 self.overall_success = False
-
-    def capture_and_process(
-        self,
-    ) -> Tuple[
-        Optional[np.ndarray], Optional[Detection3DArray], Optional[Detection2DArray], Optional[Pose]
-    ]:
-        """Capture frame from camera data and process detections."""
-        if self.latest_rgb is None or self.latest_depth is None or self.detector is None:
-            return None, None, None, None
-
-        ee_pose = self.arm.get_ee_pose()
-        ee_transform = pose_to_matrix(ee_pose)
-        camera_transform = compose_transforms(ee_transform, self.T_ee_to_camera)
-        camera_pose = matrix_to_pose(camera_transform)
-        detection_3d_array, detection_2d_array = self.detector.process_frame(
-            self.latest_rgb, self.latest_depth, camera_transform
-        )
-
-        return self.latest_rgb, detection_3d_array, detection_2d_array, camera_pose
 
     def pick_target(self, x: int, y: int) -> bool:
         """Select a target object at the given pixel coordinates."""
@@ -836,23 +913,23 @@ class ManipulationModule(Module):
 
     def update(self) -> Optional[Dict[str, Any]]:
         """Main update function that handles capture, processing, control, and visualization."""
-        rgb, detection_3d_array, detection_2d_array, camera_pose = self.capture_and_process()
-        if rgb is None:
+        if self.latest_rgb is None:
             return None
 
-        self.last_detection_3d_array = detection_3d_array
-        self.last_detection_2d_array = detection_2d_array
+        # Process detections in the update loop instead of callback
+        self._process_detections()
+
         if self.target_click:
             x, y = self.target_click
             if self.pick_target(x, y):
                 self.target_click = None
 
         if (
-            detection_3d_array
+            self.last_detection_3d_array
             and self.grasp_stage in [GraspStage.PRE_GRASP, GraspStage.GRASP]
             and not self.waiting_for_reach
         ):
-            self._update_tracking(detection_3d_array)
+            self._update_tracking(self.last_detection_3d_array)
         stage_handlers = {
             GraspStage.IDLE: self.execute_idle,
             GraspStage.PRE_GRASP: self.execute_pre_grasp,
@@ -865,13 +942,13 @@ class ManipulationModule(Module):
             stage_handlers[self.grasp_stage]()
 
         target_tracked = self.pbvs.get_current_target() is not None if self.pbvs else False
-        ee_pose = self.arm.get_ee_pose()
+        ee_pose = self._get_ee_pose()
         feedback = Feedback(
             grasp_stage=self.grasp_stage,
             target_tracked=target_tracked,
             current_executed_pose=self.current_executed_pose,
             current_ee_pose=ee_pose,
-            current_camera_pose=camera_pose,
+            current_camera_pose=None,  # Not computed anymore with TF-based system
             target_pose=self.pbvs.target_grasp_pose if self.pbvs else None,
             waiting_for_reach=self.waiting_for_reach,
             success=self.overall_success,
@@ -879,7 +956,10 @@ class ManipulationModule(Module):
 
         if self.task_running:
             self.current_visualization = create_manipulation_visualization(
-                rgb, feedback, detection_3d_array, detection_2d_array
+                self.latest_rgb,
+                feedback,
+                self.last_detection_3d_array,
+                self.last_detection_2d_array,
             )
 
             if self.current_visualization is not None:
@@ -922,7 +1002,9 @@ class ManipulationModule(Module):
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         )
 
-        ee_pose = self.arm.get_ee_pose()
+        ee_pose = self._get_ee_pose()
+        if not ee_pose:
+            return None
 
         # Calculate dynamic pitch for place position
         dynamic_pitch = self.calculate_dynamic_grasp_pitch(place_center_pose)
@@ -939,6 +1021,5 @@ class ManipulationModule(Module):
     @rpc
     def cleanup(self):
         """Clean up resources on module destruction."""
-        if self.detector and hasattr(self.detector, "cleanup"):
-            self.detector.cleanup()
-        self.arm.disable()
+        # Arm cleanup is handled by PiperArmModule
+        pass

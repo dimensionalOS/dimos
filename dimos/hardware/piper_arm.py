@@ -14,10 +14,7 @@
 
 # dimos/hardware/piper_arm.py
 
-from typing import (
-    Optional,
-    Tuple,
-)
+from typing import Tuple, Optional
 from piper_sdk import *  # from the official Piper SDK
 import numpy as np
 import time
@@ -32,13 +29,19 @@ from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 from dimos.utils.logging_config import setup_logger
 
 import threading
+from reactivex import interval
 
 import pytest
 
 import dimos.core as core
 import dimos.protocol.service.lcmservice as lcmservice
-from dimos.core import In, Module, rpc
+from dimos.core import In, Module, Out, rpc
 from dimos_lcm.geometry_msgs import Pose, Vector3, Twist
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3 as MsgVector3
+from dimos.msgs.std_msgs import Header
+from dimos.protocol.tf import TF
+from dimos.utils.transform_utils import create_transform_from_6dof
 
 logger = setup_logger("dimos.hardware.piper_arm")
 
@@ -55,7 +58,6 @@ class PiperArm:
         self.enable_gripper()  # Enable gripper after arm is enabled
         self.gotoZero()
         time.sleep(1)
-        self.init_vel_controller()
 
     def enable(self):
         while not self.arm.EnablePiper():
@@ -242,108 +244,6 @@ class PiperArm:
         self.arm.MotionCtrl_2(0, 0, 0, 0x00)
         logger.info("Resetting arm")
 
-    def init_vel_controller(self):
-        self.chain = kp.build_serial_chain_from_urdf(
-            open("dimos/hardware/piper_description.urdf"), "gripper_base"
-        )
-        self.J = self.chain.jacobian(np.zeros(6))
-        self.J_pinv = np.linalg.pinv(self.J)
-        self.dt = 0.01
-
-    def cmd_vel(self, x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot):
-        joint_state = self.arm.GetArmJointMsgs().joint_state
-        # print(f"[PiperArm] Current Joints (direct): {joint_state}", type(joint_state))
-        joint_angles = np.array(
-            [
-                joint_state.joint_1,
-                joint_state.joint_2,
-                joint_state.joint_3,
-                joint_state.joint_4,
-                joint_state.joint_5,
-                joint_state.joint_6,
-            ]
-        )
-        # print(f"[PiperArm] Current Joints: {joint_angles}", type(joint_angles))
-        factor = 57295.7795  # 1000*180/3.1415926
-        joint_angles = joint_angles / factor  # convert to radians
-
-        q = np.array(
-            [
-                joint_angles[0],
-                joint_angles[1],
-                joint_angles[2],
-                joint_angles[3],
-                joint_angles[4],
-                joint_angles[5],
-            ]
-        )
-        J = self.chain.jacobian(q)
-        self.J_pinv = np.linalg.pinv(J)
-        dq = self.J_pinv @ np.array([x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot]) * self.dt
-        newq = q + dq
-
-        newq = newq * factor
-
-        self.arm.MotionCtrl_2(0x01, 0x01, 100, 0xAD)
-        self.arm.JointCtrl(
-            int(round(newq[0])),
-            int(round(newq[1])),
-            int(round(newq[2])),
-            int(round(newq[3])),
-            int(round(newq[4])),
-            int(round(newq[5])),
-        )
-        time.sleep(self.dt)
-        # print(f"[PiperArm] Moving to Joints to : {newq}")
-
-    def cmd_vel_ee(self, x_dot, y_dot, z_dot, RX_dot, PY_dot, YZ_dot):
-        factor = 1000
-        x_dot = x_dot * factor
-        y_dot = y_dot * factor
-        z_dot = z_dot * factor
-        RX_dot = RX_dot * factor
-        PY_dot = PY_dot * factor
-        YZ_dot = YZ_dot * factor
-
-        current_pose_msg = self.get_ee_pose()
-
-        # Convert quaternion to euler angles
-        quat = [
-            current_pose_msg.orientation.x,
-            current_pose_msg.orientation.y,
-            current_pose_msg.orientation.z,
-            current_pose_msg.orientation.w,
-        ]
-        rotation = R.from_quat(quat)
-        euler = rotation.as_euler("xyz")  # Returns [rx, ry, rz] in radians
-
-        # Create current pose array [x, y, z, rx, ry, rz]
-        current_pose = np.array(
-            [
-                current_pose_msg.position.x,
-                current_pose_msg.position.y,
-                current_pose_msg.position.z,
-                euler[0],
-                euler[1],
-                euler[2],
-            ]
-        )
-
-        # Apply velocity increment
-        current_pose = (
-            current_pose + np.array([x_dot, y_dot, z_dot, RX_dot, PY_dot, YZ_dot]) * self.dt
-        )
-
-        self.cmd_ee_pose_values(
-            current_pose[0],
-            current_pose[1],
-            current_pose[2],
-            current_pose[3],
-            current_pose[4],
-            current_pose[5],
-        )
-        time.sleep(self.dt)
-
     def disable(self):
         self.softStop()
 
@@ -353,165 +253,301 @@ class PiperArm:
         self.arm.DisconnectPort()
 
 
-class VelocityController(Module):
-    cmd_vel: In[Twist] = None
+class PiperArmModule(Module):
+    """
+    Dimos module for Piper Arm that provides RPC control interface and publishes EE pose.
 
-    def __init__(self, arm, period=0.01, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.arm = arm
-        self.period = period
-        self.latest_cmd = None
-        self.last_cmd_time = None
+    Publishes:
+        - ee_pose: End-effector pose as PoseStamped
+
+    RPC methods:
+        - All PiperArm control methods exposed via RPC
+    """
+
+    # LCM outputs
+    ee_pose: Out[PoseStamped] = None
+
+    def __init__(
+        self,
+        publish_rate: float = 30.0,
+        base_frame_id: str = "base_link",
+        ee_frame_id: str = "ee_link",
+        camera_frame_id: str = "camera_link",
+        ee_to_camera_6dof: Optional[list] = None,
+        **kwargs,
+    ):
+        """
+        Initialize Piper Arm Module.
+
+        Args:
+            publish_rate: Rate to publish EE pose and transforms (Hz)
+            base_frame_id: TF frame ID for robot base
+            ee_frame_id: TF frame ID for end-effector
+            camera_frame_id: TF frame ID for camera
+            ee_to_camera_6dof: EE to camera transform [x, y, z, rx, ry, rz] in meters and radians
+        """
+        super().__init__(**kwargs)
+
+        self.publish_rate = publish_rate
+        self.base_frame_id = base_frame_id
+        self.ee_frame_id = ee_frame_id
+        self.camera_frame_id = camera_frame_id
+        self.publish_period = 1.0 / publish_rate
+
+        # EE to camera transform
+        if ee_to_camera_6dof is None:
+            ee_to_camera_6dof = [-0.065, 0.03, -0.095, 0.0, -1.57, 0.0]
+        pos = Vector3(ee_to_camera_6dof[0], ee_to_camera_6dof[1], ee_to_camera_6dof[2])
+        rot = Vector3(ee_to_camera_6dof[3], ee_to_camera_6dof[4], ee_to_camera_6dof[5])
+        self.T_ee_to_camera = create_transform_from_6dof(pos, rot)
+
+        # Extract translation and rotation for TF
+        self.ee_to_camera_translation = Vector3(
+            ee_to_camera_6dof[0], ee_to_camera_6dof[1], ee_to_camera_6dof[2]
+        )
+        # Convert euler to quaternion for TF
+        from dimos.utils.transform_utils import euler_to_quaternion
+
+        self.ee_to_camera_rotation = euler_to_quaternion(rot, degrees=False)
+
+        # Internal PiperArm instance
+        self.arm = None
+
+        # Publishing control
+        self._running = False
+        self._subscription = None
+        self._sequence = 0
+
+        # Initialize TF publisher
+        self.tf = TF()
+
+        logger.info(f"PiperArmModule initialized, will publish at {publish_rate} Hz")
 
     @rpc
     def start(self):
-        self.cmd_vel.subscribe(self.handle_cmd_vel)
+        """Start the Piper Arm module and begin publishing EE pose."""
+        if self._running:
+            logger.warning("Piper Arm module already running")
+            return
 
-        def control_loop():
-            while True:
-                # Check for timeout (1 second)
-                if self.last_cmd_time and (time.time() - self.last_cmd_time) > 1.0:
-                    logger.warning(
-                        "No velocity command received for 1 second, stopping control loop"
-                    )
-                    break
+        # Initialize the actual Piper Arm
+        logger.info("Initializing Piper Arm hardware...")
+        self.arm = PiperArm()
 
-                cmd_vel = self.latest_cmd
+        # Start publishing EE pose
+        self._running = True
 
-                joint_state = self.arm.GetArmJointMsgs().joint_state
-                # print(f"[PiperArm] Current Joints (direct): {joint_state}", type(joint_state))
-                joint_angles = np.array(
-                    [
-                        joint_state.joint_1,
-                        joint_state.joint_2,
-                        joint_state.joint_3,
-                        joint_state.joint_4,
-                        joint_state.joint_5,
-                        joint_state.joint_6,
-                    ]
-                )
-                factor = 57295.7795  # 1000*180/3.1415926
-                joint_angles = joint_angles / factor  # convert to radians
-                q = np.array(
-                    [
-                        joint_angles[0],
-                        joint_angles[1],
-                        joint_angles[2],
-                        joint_angles[3],
-                        joint_angles[4],
-                        joint_angles[5],
-                    ]
-                )
+        # Use reactivex interval for consistent publishing rate
+        self._subscription = interval(self.publish_period).subscribe(
+            lambda _: self._publish_ee_pose_and_transforms()
+        )
 
-                J = self.chain.jacobian(q)
-                self.J_pinv = np.linalg.pinv(J)
-                dq = (
-                    self.J_pinv
-                    @ np.array(
-                        [
-                            cmd_vel.linear.X,
-                            cmd_vel.linear.y,
-                            cmd_vel.linear.z,
-                            cmd_vel.angular.x,
-                            cmd_vel.angular.y,
-                            cmd_vel.angular.z,
-                        ]
-                    )
-                    * self.dt
-                )
-                newq = q + dq
+        logger.info("Piper Arm module started successfully")
 
-                newq = newq * factor  # convert radians to scaled degree units for joint control
+    @rpc
+    def stop(self):
+        """Stop the Piper Arm module."""
+        if not self._running:
+            return
 
-                self.arm.MotionCtrl_2(0x01, 0x01, 100, 0xAD)
-                self.arm.JointCtrl(
-                    int(round(newq[0])),
-                    int(round(newq[1])),
-                    int(round(newq[2])),
-                    int(round(newq[3])),
-                    int(round(newq[4])),
-                    int(round(newq[5])),
-                )
-                time.sleep(self.period)
+        self._running = False
 
-        thread = threading.Thread(target=control_loop, daemon=True)
-        thread.start()
+        # Stop subscription
+        if self._subscription:
+            self._subscription.dispose()
+            self._subscription = None
 
-    def handle_cmd_vel(self, cmd_vel: Twist):
-        self.latest_cmd = cmd_vel
-        self.last_cmd_time = time.time()
+        # Disable arm
+        if self.arm:
+            try:
+                self.arm.disable()
+            except Exception as e:
+                logger.warning(f"Error disabling arm: {e}")
 
+        logger.info("Piper Arm module stopped")
 
-@pytest.mark.tool
-def run_velocity_controller():
-    lcmservice.autoconf()
-    dimos = core.start(2)
+    def _publish_ee_pose_and_transforms(self):
+        """Publish current end-effector pose and TF transforms."""
+        if not self._running or not self.arm:
+            return
 
-    velocity_controller = dimos.deploy(VelocityController, arm=arm, period=0.01)
-    velocity_controller.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
-
-    velocity_controller.start()
-
-    logger.info("Velocity controller started")
-    while True:
-        time.sleep(1)
-
-
-if __name__ == "__main__":
-    arm = PiperArm()
-
-    def get_key(timeout=0.1):
-        """Non-blocking key reader for arrow keys."""
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
         try:
-            tty.setraw(fd)
-            rlist, _, _ = select.select([fd], [], [], timeout)
-            if rlist:
-                ch1 = sys.stdin.read(1)
-                if ch1 == "\x1b":  # Arrow keys start with ESC
-                    ch2 = sys.stdin.read(1)
-                    if ch2 == "[":
-                        ch3 = sys.stdin.read(1)
-                        return ch1 + ch2 + ch3
-                else:
-                    return ch1
-            return None
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            # Get current EE pose
+            pose = self.arm.get_ee_pose()
 
-    def teleop_linear_vel(arm):
-        print("Use arrow keys to control linear velocity (x/y/z). Press 'q' to quit.")
-        print("Up/Down: +x/-x, Left/Right: +y/-y, 'w'/'s': +z/-z")
-        x_dot, y_dot, z_dot = 0.0, 0.0, 0.0
-        while True:
-            key = get_key(timeout=0.1)
-            if key == "\x1b[A":  # Up arrow
-                x_dot += 0.01
-            elif key == "\x1b[B":  # Down arrow
-                x_dot -= 0.01
-            elif key == "\x1b[C":  # Right arrow
-                y_dot += 0.01
-            elif key == "\x1b[D":  # Left arrow
-                y_dot -= 0.01
-            elif key == "w":
-                z_dot += 0.01
-            elif key == "s":
-                z_dot -= 0.01
-            elif key == "q":
-                logger.info("Exiting teleop")
-                arm.disable()
-                break
+            if pose:
+                # Create header with timestamp
+                header = Header(self.base_frame_id)
+                self._sequence += 1
 
-            # Optionally, clamp velocities to reasonable limits
-            x_dot = max(min(x_dot, 0.5), -0.5)
-            y_dot = max(min(y_dot, 0.5), -0.5)
-            z_dot = max(min(z_dot, 0.5), -0.5)
+                # Publish EE pose as PoseStamped
+                msg = PoseStamped(
+                    ts=header.ts,
+                    position=[pose.position.x, pose.position.y, pose.position.z],
+                    orientation=[
+                        pose.orientation.x,
+                        pose.orientation.y,
+                        pose.orientation.z,
+                        pose.orientation.w,
+                    ],
+                    frame_id=self.base_frame_id,
+                )
+                self.ee_pose.publish(msg)
 
-            # Only linear velocities, angular set to zero
-            arm.cmd_vel_ee(x_dot, y_dot, z_dot, 0, 0, 0)
-            logger.debug(
-                f"Current linear velocity: x={x_dot:.3f} m/s, y={y_dot:.3f} m/s, z={z_dot:.3f} m/s"
-            )
+                # Publish TF transforms
+                # 1. base_link -> ee_link transform
+                ee_transform = Transform(
+                    translation=pose.position,
+                    rotation=pose.orientation,
+                    frame_id=self.base_frame_id,
+                    child_frame_id=self.ee_frame_id,
+                    ts=header.ts,
+                )
+                self.tf.publish(ee_transform)
 
-    run_velocity_controller()
+                # 2. ee_link -> camera_link transform (static offset)
+                camera_transform = Transform(
+                    translation=self.ee_to_camera_translation,
+                    rotation=self.ee_to_camera_rotation,
+                    frame_id=self.ee_frame_id,
+                    child_frame_id=self.camera_frame_id,
+                    ts=header.ts,
+                )
+                self.tf.publish(camera_transform)
+
+        except Exception as e:
+            logger.error(f"Error publishing EE pose and transforms: {e}")
+
+    # Expose all PiperArm methods via RPC
+
+    @rpc
+    def enable(self):
+        """Enable the Piper Arm."""
+        if self.arm:
+            self.arm.enable()
+
+    @rpc
+    def disable(self):
+        """Disable the Piper Arm."""
+        if self.arm:
+            self.arm.disable()
+
+    @rpc
+    def goto_zero(self):
+        """Move arm to zero position."""
+        if self.arm:
+            self.arm.gotoZero()
+
+    @rpc
+    def goto_observe(self):
+        """Move arm to observe position."""
+        if self.arm:
+            self.arm.gotoObserve()
+        else:
+            logger.warning("Cannot go to observe position - arm not initialized yet")
+
+    @rpc
+    def soft_stop(self):
+        """Perform soft stop."""
+        if self.arm:
+            self.arm.softStop()
+
+    @rpc
+    def cmd_ee_pose(self, pose: Pose, line_mode: bool = False):
+        """
+        Command end-effector to target pose.
+
+        Args:
+            pose: Target pose for end-effector
+            line_mode: Whether to use line mode for movement
+        """
+        if self.arm:
+            self.arm.cmd_ee_pose(pose, line_mode)
+
+    @rpc
+    def get_ee_pose(self) -> Pose:
+        """
+        Get current end-effector pose.
+
+        Returns:
+            Current EE pose
+        """
+        if self.arm:
+            return self.arm.get_ee_pose()
+        # Return a default pose if arm not initialized
+        return Pose(
+            position=MsgVector3(0.057, 0.0, 0.215), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+        )
+
+    @rpc
+    def cmd_gripper_ctrl(self, position: float, effort: float = 0.25):
+        """
+        Command gripper position and effort.
+
+        Args:
+            position: Gripper opening in meters
+            effort: Gripper effort (N/m)
+        """
+        if self.arm:
+            self.arm.cmd_gripper_ctrl(position, effort)
+
+    @rpc
+    def enable_gripper(self):
+        """Enable the gripper."""
+        if self.arm:
+            self.arm.enable_gripper()
+
+    @rpc
+    def release_gripper(self):
+        """Release (open) the gripper."""
+        if self.arm:
+            self.arm.release_gripper()
+
+    @rpc
+    def close_gripper(self, commanded_effort: float = 0.5):
+        """
+        Close the gripper.
+
+        Args:
+            commanded_effort: Effort to use when closing
+        """
+        if self.arm:
+            self.arm.close_gripper(commanded_effort)
+
+    @rpc
+    def get_gripper_feedback(self) -> Tuple[float, float]:
+        """
+        Get gripper feedback.
+
+        Returns:
+            Tuple of (angle_degrees, effort)
+        """
+        if self.arm:
+            return self.arm.get_gripper_feedback()
+        return (0.0, 0.0)
+
+    @rpc
+    def gripper_object_detected(self, commanded_effort: float = 0.25) -> bool:
+        """
+        Check if object is detected in gripper.
+
+        Args:
+            commanded_effort: The effort that was used when closing
+
+        Returns:
+            True if object is detected
+        """
+        if self.arm:
+            return self.arm.gripper_object_detected(commanded_effort)
+        return False
+
+    @rpc
+    def reset_arm(self):
+        """Reset the arm."""
+        if self.arm:
+            self.arm.resetArm()
+
+    @rpc
+    def cleanup(self):
+        """Clean up resources on module destruction."""
+        self.stop()

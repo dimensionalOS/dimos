@@ -18,8 +18,10 @@ from typing import Optional, List
 
 from dimos import core
 from dimos.hardware.zed_camera import ZEDModule
+from dimos.hardware.piper_arm import PiperArmModule
 from dimos.manipulation.visual_servoing.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.protocol import pubsub
 from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
@@ -29,17 +31,20 @@ from dimos.robot.robot import Robot
 
 # Import LCM message types
 from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.vision_msgs import Detection3DArray, Detection2DArray
+from dimos_lcm.std_msgs import String
 
 logger = setup_logger("dimos.robot.agilex.piper_arm")
 
 
 class PiperArmRobot(Robot):
-    """Piper Arm robot with ZED camera and manipulation capabilities."""
+    """Piper Arm robot with ZED camera, detection, and manipulation capabilities."""
 
     def __init__(self, robot_capabilities: Optional[List[RobotCapability]] = None):
         super().__init__()
         self.dimos = None
         self.stereo_camera = None
+        self.piper_arm = None
         self.manipulation_interface = None
         self.skill_library = SkillLibrary()
 
@@ -52,7 +57,7 @@ class PiperArmRobot(Robot):
     async def start(self):
         """Start the robot modules."""
         # Start Dimos
-        self.dimos = core.start(2)  # Need 2 workers for ZED and manipulation modules
+        self.dimos = core.start(4)  # Need 4 workers for ZED, Piper, Detection, and Manipulation
         self.foxglove_bridge = FoxgloveBridge()
 
         # Enable LCM auto-configuration
@@ -76,24 +81,57 @@ class PiperArmRobot(Robot):
         self.stereo_camera.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
         self.stereo_camera.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
 
-        # Deploy manipulation module
-        logger.info("Deploying manipulation module...")
-        self.manipulation_interface = self.dimos.deploy(ManipulationModule)
+        # Deploy Piper Arm module
+        logger.info("Deploying Piper Arm module...")
+        self.piper_arm = self.dimos.deploy(
+            PiperArmModule,
+            publish_rate=30.0,
+            base_frame_id="base_link",
+            ee_frame_id="ee_link",
+            camera_frame_id="camera_link",
+            ee_to_camera_6dof=[-0.065, 0.03, -0.095, 0.0, -1.57, 0.0],  # EE to camera transform
+        )
 
-        # Connect manipulation inputs to ZED outputs
+        # Configure Piper Arm output
+        self.piper_arm.ee_pose.transport = core.LCMTransport("/piper/ee_pose", PoseStamped)
+
+        # Deploy manipulation module with integrated detection
+        logger.info("Deploying manipulation module with integrated detection...")
+        self.manipulation_interface = self.dimos.deploy(
+            ManipulationModule,
+            piper_arm_module=self.piper_arm,  # Pass the arm module reference
+            min_confidence=0.6,
+            max_depth=1.0,
+            max_object_size=0.15,
+            camera_frame_id="camera_link",
+            base_frame_id="base_link",
+        )
+
+        # Connect manipulation inputs
         self.manipulation_interface.rgb_image.connect(self.stereo_camera.color_image)
         self.manipulation_interface.depth_image.connect(self.stereo_camera.depth_image)
         self.manipulation_interface.camera_info.connect(self.stereo_camera.camera_info)
 
-        # Configure manipulation output
+        # Configure manipulation outputs
         self.manipulation_interface.viz_image.transport = core.LCMTransport(
             "/manipulation/viz", Image
+        )
+        self.manipulation_interface.grasp_state.transport = core.LCMTransport(
+            "/manipulation/grasp_state", String
+        )
+        self.manipulation_interface.detection3d_array.transport = core.LCMTransport(
+            "/detection/3d_array", Detection3DArray
+        )
+        self.manipulation_interface.detection2d_array.transport = core.LCMTransport(
+            "/detection/2d_array", Detection2DArray
         )
 
         # Print module info
         logger.info("Modules configured:")
         print("\nZED Module:")
         print(self.stereo_camera.io())
+        print("\nPiper Arm Module:")
+        print(self.piper_arm.io())
         print("\nManipulation Module:")
         print(self.manipulation_interface.io())
 
@@ -101,12 +139,13 @@ class PiperArmRobot(Robot):
         logger.info("Starting modules...")
         self.foxglove_bridge.start()
         self.stereo_camera.start()
+        self.piper_arm.start()
         self.manipulation_interface.start()
 
         # Give modules time to initialize
         await asyncio.sleep(2)
 
-        logger.info("PiperArmRobot initialized and started")
+        logger.info("PiperArmRobot initialized and started with modular architecture")
 
     def pick_and_place(
         self, pick_x: int, pick_y: int, place_x: Optional[int] = None, place_y: Optional[int] = None
@@ -151,6 +190,9 @@ class PiperArmRobot(Robot):
             if self.manipulation_interface:
                 self.manipulation_interface.stop()
                 self.manipulation_interface.cleanup()
+
+            if self.piper_arm:
+                self.piper_arm.stop()
 
             if self.stereo_camera:
                 self.stereo_camera.stop()
