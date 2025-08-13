@@ -30,7 +30,7 @@ from dimos.msgs.sensor_msgs import Image
 try:
     from dimos.simulation.mujoco.mujoco import MujocoThread
 except ImportError:
-    raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
+    MujocoThread = None
 
 LIDAR_FREQUENCY = 10
 ODOM_FREQUENCY = 50
@@ -41,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 class MujocoConnection:
     def __init__(self, *args, **kwargs):
+        if MujocoThread is None:
+            raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
         self.mujoco_thread = MujocoThread()
         self._stream_threads: List[threading.Thread] = []
         self._stop_events: List[threading.Event] = []

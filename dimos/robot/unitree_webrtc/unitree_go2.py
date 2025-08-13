@@ -41,7 +41,6 @@ from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLoca
 from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -146,6 +145,8 @@ class ConnectionModule(Module):
             case "fake":
                 self.connection = FakeRTC(self.ip)
             case "mujoco":
+                from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+
                 self.connection = MujocoConnection()
                 self.connection.start()
             case _:
