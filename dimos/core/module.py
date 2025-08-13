@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import inspect
+from enum import Enum
 from typing import (
     Any,
     Callable,
+    Optional,
+    TypeVar,
     get_args,
     get_origin,
     get_type_hints,
@@ -25,18 +28,56 @@ from dask.distributed import Actor, get_worker
 from dimos.core import colors
 from dimos.core.core import T, rpc
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
-from dimos.protocol.rpc.lcmrpc import LCMRPC
+from dimos.protocol.rpc import LCMRPC, RPCSpec
+from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
+from dimos.protocol.tf import LCMTF, TFSpec
+
+
+class CommsSpec:
+    rpc: type[RPCSpec]
+    agent: type[SkillCommsSpec]
+    tf: type[TFSpec]
+
+
+class LCMComms(CommsSpec):
+    rpc = LCMRPC
+    agent = LCMSkillComms
+    tf = LCMTF
 
 
 class ModuleBase:
+    comms: CommsSpec = LCMComms
+    _rpc: Optional[RPCSpec] = None
+    _agent: Optional[SkillCommsSpec] = None
+    _tf: Optional[TFSpec] = None
+
     def __init__(self, *args, **kwargs):
+        # we can completely override comms protocols if we want
+        if kwargs.get("comms", None) is not None:
+            self.comms = kwargs["comms"]
         try:
             get_worker()
-            self.rpc = LCMRPC()
+            self.rpc = self.comms.rpc()
             self.rpc.serve_module_rpc(self)
             self.rpc.start()
         except ValueError:
             return
+
+    @property
+    def tf(self):
+        if self._tf is None:
+            self._tf = self.comms.tf()
+        return self._tf
+
+    @tf.setter
+    def tf(self, value):
+        import warnings
+
+        warnings.warn(
+            "tf is available on all modules. Call self.tf.start() to activate tf functionality. No need to assign it",
+            UserWarning,
+            stacklevel=2,
+        )
 
     @property
     def outputs(self) -> dict[str, Out]:
