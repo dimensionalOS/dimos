@@ -22,18 +22,16 @@ This module provides two skills:
 
 import os
 import time
-import threading
 from typing import Optional, Tuple
-from dimos.utils.threadpool import get_scheduler
 
-from reactivex import operators as ops
 from pydantic import Field
 
 from dimos.skills.skills import AbstractRobotSkill
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
-from dimos.utils.transform_utils import distance_angle_to_goal_xy
+from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.utils.transform_utils import euler_to_quaternion
 
 logger = setup_logger("dimos.skills.semantic_map_skills")
 
@@ -75,7 +73,7 @@ class NavigateWithText(AbstractRobotSkill):
     query: str = Field("", description="Text query to search for in the semantic map")
 
     limit: int = Field(1, description="Maximum number of results to return")
-    distance: float = Field(1.0, description="Desired distance to maintain from object in meters")
+    distance: float = Field(0.3, description="Desired distance to maintain from object in meters")
     skip_visual_search: bool = Field(False, description="Skip visual search for object in view")
     timeout: float = Field(40.0, description="Maximum time to spend navigating in seconds")
 
@@ -88,12 +86,8 @@ class NavigateWithText(AbstractRobotSkill):
             **data: Additional data for configuration
         """
         super().__init__(robot=robot, **data)
-        self._stop_event = threading.Event()
         self._spatial_memory = None
-        self._scheduler = get_scheduler()  # Use the shared DiMOS thread pool
-        self._navigation_disposable = None  # Disposable returned by scheduler.schedule()
-        self._tracking_subscriber = None  # For object tracking
-        self._similarity_threshold = 0.25
+        self._similarity_threshold = 0.24
 
     def _navigate_to_object(self):
         """
@@ -102,128 +96,58 @@ class NavigateWithText(AbstractRobotSkill):
         Returns:
             dict: Result dictionary with success status and details
         """
-        # Stop any existing operation
-        self._stop_event.clear()
+        logger.info(
+            f"Attempting to navigate to visible object: {self.query} with desired distance {self.distance}m, timeout {self.timeout} seconds..."
+        )
 
+        # Try to get a bounding box from Qwen
+        bbox = None
         try:
-            logger.warning(
-                f"Attempting to navigate to visible object: {self.query} with desired distance {self.distance}m, timeout {self.timeout} seconds..."
-            )
-
-            # Try to get a bounding box from Qwen - only try once
-            bbox = None
-            try:
-                # Use the robot's existing video stream instead of creating a new one
-                frame = self._robot.get_video_stream().pipe(ops.take(1)).run()
-                # Use the frame-based function
-                bbox, object_size = get_bbox_from_qwen_frame(frame, object_name=self.query)
-            except Exception as e:
-                logger.error(f"Error querying Qwen: {e}")
+            # Get a single frame from the robot's camera
+            frame = self._robot.get_single_rgb_frame()
+            if frame is None:
+                logger.error("Failed to get camera frame")
                 return {
                     "success": False,
                     "failure_reason": "Perception",
-                    "error": f"Could not detect {self.query} in view: {e}",
+                    "error": "Could not get camera frame",
                 }
-
-            if bbox is None or self._stop_event.is_set():
-                logger.error(f"Failed to get bounding box for {self.query}")
-                return {
-                    "success": False,
-                    "failure_reason": "Perception",
-                    "error": f"Could not find {self.query} in view",
-                }
-
-            logger.info(f"Found {self.query} at {bbox} with size {object_size}")
-
-            # Start the object tracker with the detected bbox
-            self._robot.object_tracker.track(bbox, frame=frame)
-
-            # Get the first tracking data with valid distance and angle
-            start_time = time.time()
-            target_acquired = False
-            goal_x_robot = 0
-            goal_y_robot = 0
-            goal_angle = 0
-
-            while (
-                time.time() - start_time < 10.0
-                and not self._stop_event.is_set()
-                and not target_acquired
-            ):
-                # Get the latest tracking data
-                tracking_data = self._robot.object_tracking_stream.pipe(ops.take(1)).run()
-
-                if tracking_data and tracking_data.get("targets") and tracking_data["targets"]:
-                    target = tracking_data["targets"][0]
-
-                    if "distance" in target and "angle" in target:
-                        # Convert target distance and angle to xy coordinates in robot frame
-                        goal_distance = (
-                            target["distance"] - self.distance
-                        )  # Subtract desired distance to stop short
-                        goal_angle = -target["angle"]
-                        logger.info(f"Target distance: {goal_distance}, Target angle: {goal_angle}")
-
-                        goal_x_robot, goal_y_robot = distance_angle_to_goal_xy(
-                            goal_distance, goal_angle
-                        )
-                        target_acquired = True
-                        break
-
-                    else:
-                        logger.warning("No valid target tracking data found.")
-
-                else:
-                    logger.warning("No valid target tracking data found.")
-
-                time.sleep(0.1)
-
-            if not target_acquired:
-                logger.error("Failed to acquire valid target tracking data")
-                return {
-                    "success": False,
-                    "failure_reason": "Perception",
-                    "error": "Failed to track object",
-                }
-
-            logger.info(
-                f"Navigating to target at local coordinates: ({goal_x_robot:.2f}, {goal_y_robot:.2f}), angle: {goal_angle:.2f}"
-            )
-
-            # Use navigate_to_goal_local instead of directly controlling the local planner
-            success = navigate_to_goal_local(
-                robot=self._robot,
-                goal_xy_robot=(goal_x_robot, goal_y_robot),
-                goal_theta=goal_angle,
-                distance=0.0,  # We already accounted for desired distance
-                timeout=self.timeout,
-                stop_event=self._stop_event,
-            )
-
-            if success:
-                logger.info(f"Successfully navigated to {self.query}")
-                return {
-                    "success": True,
-                    "failure_reason": None,
-                    "query": self.query,
-                    "message": f"Successfully navigated to {self.query} in view",
-                }
-            else:
-                logger.warning(
-                    f"Failed to reach {self.query} within timeout or operation was stopped"
-                )
-                return {
-                    "success": False,
-                    "failure_reason": "Navigation",
-                    "error": f"Failed to reach {self.query} within timeout",
-                }
-
+            bbox = get_bbox_from_qwen_frame(frame.data, object_name=self.query)
         except Exception as e:
-            logger.error(f"Error in navigate to object: {e}")
-            return {"success": False, "failure_reason": "Code Error", "error": f"Error: {e}"}
-        finally:
-            # Clean up
-            self._robot.object_tracker.cleanup()
+            logger.error(f"Error getting frame or bbox: {e}")
+            return {
+                "success": False,
+                "failure_reason": "Perception",
+                "error": f"Error getting frame or bbox: {e}",
+            }
+        if bbox is None:
+            logger.error(f"Failed to get bounding box for {self.query}")
+            return {
+                "success": False,
+                "failure_reason": "Perception",
+                "error": f"Could not find {self.query} in view",
+            }
+
+        logger.info(f"Found {self.query} at {bbox}")
+
+        # Use the robot's navigate_to_object method
+        success = self._robot.navigate_to_object(bbox, self.distance, self.timeout)
+
+        if success:
+            logger.info(f"Successfully navigated to {self.query}")
+            return {
+                "success": True,
+                "failure_reason": None,
+                "query": self.query,
+                "message": f"Successfully navigated to {self.query} in view",
+            }
+        else:
+            logger.warning(f"Failed to reach {self.query} within timeout")
+            return {
+                "success": False,
+                "failure_reason": "Navigation",
+                "error": f"Failed to reach {self.query} within timeout",
+            }
 
     def _navigate_using_semantic_map(self):
         """
@@ -235,10 +159,10 @@ class NavigateWithText(AbstractRobotSkill):
         logger.info(f"Querying semantic map for: '{self.query}'")
 
         try:
-            self._spatial_memory = self._robot.get_spatial_memory()
+            self._spatial_memory = self._robot.spatial_memory
 
             # Run the query
-            results = self._spatial_memory.query_by_text(self.query, limit=self.limit)
+            results = self._spatial_memory.query_by_text(self.query, self.limit)
 
             if not results:
                 logger.warning(f"No results found for query: '{self.query}'")
@@ -289,56 +213,40 @@ class NavigateWithText(AbstractRobotSkill):
                         "error": f"Match found but similarity score ({similarity:.4f}) is below threshold ({self._similarity_threshold})",
                     }
 
-                # Reset the stop event before starting navigation
-                self._stop_event.clear()
+                # Create a PoseStamped for navigation
+                goal_pose = PoseStamped(
+                    position=Vector3(pos_x, pos_y, 0),
+                    orientation=euler_to_quaternion(Vector3(0, 0, theta)),
+                    frame_id="world",
+                )
 
-                # The scheduler approach isn't working, switch to direct threading
-                # Define a navigation function that will run on a separate thread
-                def run_navigation():
-                    skill_library = self._robot.get_skills()
-                    self.register_as_running("Navigate", skill_library)
+                logger.info(
+                    f"Starting navigation to ({pos_x:.2f}, {pos_y:.2f}) with rotation {theta:.2f}"
+                )
 
-                    try:
-                        logger.info(
-                            f"Starting navigation to ({pos_x:.2f}, {pos_y:.2f}) with rotation {theta:.2f}"
-                        )
-                        # Pass our stop_event to allow cancellation
-                        result = False
-                        try:
-                            result = self._robot.global_planner.set_goal(
-                                (pos_x, pos_y), goal_theta=theta, stop_event=self._stop_event
-                            )
-                        except Exception as e:
-                            logger.error(f"Error calling global_planner.set_goal: {e}")
+                # Use the robot's navigate_to method
+                result = self._robot.navigate_to(goal_pose, blocking=True)
 
-                        if result:
-                            logger.info("Navigation completed successfully")
-                        else:
-                            logger.error("Navigation did not complete successfully")
-                        return result
-                    except Exception as e:
-                        logger.error(f"Unexpected error in navigation thread: {e}")
-                        return False
-                    finally:
-                        self.stop()
-
-                # Cancel any existing navigation before starting a new one
-                # Signal stop to any running navigation
-                self._stop_event.set()
-                # Clear stop event for new navigation
-                self._stop_event.clear()
-
-                # Run the navigation in the main thread
-                run_navigation()
-
-                return {
-                    "success": True,
-                    "query": self.query,
-                    "position": (pos_x, pos_y),
-                    "rotation": theta,
-                    "similarity": similarity,
-                    "metadata": metadata,
-                }
+                if result:
+                    logger.info("Navigation completed successfully")
+                    return {
+                        "success": True,
+                        "query": self.query,
+                        "position": (pos_x, pos_y),
+                        "rotation": theta,
+                        "similarity": similarity,
+                        "metadata": metadata,
+                    }
+                else:
+                    logger.error("Navigation did not complete successfully")
+                    return {
+                        "success": False,
+                        "query": self.query,
+                        "position": (pos_x, pos_y),
+                        "rotation": theta,
+                        "similarity": similarity,
+                        "error": "Navigation did not complete successfully",
+                    }
             else:
                 logger.warning(f"No valid position data found for query: '{self.query}'")
                 return {
@@ -397,20 +305,11 @@ class NavigateWithText(AbstractRobotSkill):
         """
         logger.info("Stopping Navigate skill")
 
-        # Signal any running processes to stop via the shared event
-        self._stop_event.set()
+        # Cancel navigation
+        self._robot.cancel_navigation()
 
         skill_library = self._robot.get_skills()
         self.unregister_as_running("Navigate", skill_library)
-
-        # Dispose of any existing navigation task
-        if hasattr(self, "_navigation_disposable") and self._navigation_disposable:
-            logger.info("Disposing navigation task")
-            try:
-                self._navigation_disposable.dispose()
-            except Exception as e:
-                logger.error(f"Error disposing navigation task: {e}")
-            self._navigation_disposable = None
 
         return "Navigate skill stopped successfully."
 
@@ -478,7 +377,7 @@ class GetPose(AbstractRobotSkill):
             # If location_name is provided, remember this location
             if self.location_name:
                 # Get the spatial memory instance
-                spatial_memory = self._robot.get_spatial_memory()
+                spatial_memory = self._robot.spatial_memory
 
                 # Create a RobotLocation object
                 location = RobotLocation(
@@ -528,7 +427,6 @@ class NavigateToGoal(AbstractRobotSkill):
             **data: Additional data for configuration
         """
         super().__init__(robot=robot, **data)
-        self._stop_event = threading.Event()
 
     def __call__(self):
         """
@@ -544,9 +442,6 @@ class NavigateToGoal(AbstractRobotSkill):
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
 
-        # Reset stop event to make sure we don't immediately abort
-        self._stop_event.clear()
-
         skill_library = self._robot.get_skills()
         self.register_as_running("NavigateToGoal", skill_library)
 
@@ -557,10 +452,14 @@ class NavigateToGoal(AbstractRobotSkill):
         )
 
         try:
-            # Use the global planner to set the goal and generate a path
-            result = self._robot.global_planner.set_goal(
-                self.position, goal_theta=self.rotation, stop_event=self._stop_event
+            # Create a PoseStamped for navigation
+            goal_pose = PoseStamped(
+                position=Vector3(self.position[0], self.position[1], 0),
+                orientation=euler_to_quaternion(Vector3(0, 0, self.rotation or 0)),
             )
+
+            # Use the robot's navigate_to method
+            result = self._robot.navigate_to(goal_pose, blocking=True)
 
             if result:
                 logger.info("Navigation completed successfully")
@@ -601,7 +500,7 @@ class NavigateToGoal(AbstractRobotSkill):
         logger.info("Stopping NavigateToGoal")
         skill_library = self._robot.get_skills()
         self.unregister_as_running("NavigateToGoal", skill_library)
-        self._stop_event.set()
+        self._robot.cancel_navigation()
         return "Navigation stopped"
 
 
@@ -615,7 +514,7 @@ class Explore(AbstractRobotSkill):
     Don't save GetPose locations when frontier exploring. Don't call any other skills except stop skill when needed.
     """
 
-    timeout: float = Field(60.0, description="Maximum time (in seconds) allowed for exploration")
+    timeout: float = Field(240.0, description="Maximum time (in seconds) allowed for exploration")
 
     def __init__(self, robot=None, **data):
         """
@@ -626,7 +525,6 @@ class Explore(AbstractRobotSkill):
             **data: Additional data for configuration
         """
         super().__init__(robot=robot, **data)
-        self._stop_event = threading.Event()
 
     def __call__(self):
         """
@@ -641,9 +539,6 @@ class Explore(AbstractRobotSkill):
             error_msg = "No robot instance provided to Explore skill"
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
-
-        # Reset stop event to make sure we don't immediately abort
-        self._stop_event.clear()
 
         skill_library = self._robot.get_skills()
         self.register_as_running("Explore", skill_library)
@@ -660,13 +555,6 @@ class Explore(AbstractRobotSkill):
                 # Wait for exploration to complete or timeout
                 start_time = time.time()
                 while time.time() - start_time < self.timeout:
-                    if self._stop_event.is_set():
-                        logger.info("Exploration stopped by user")
-                        self._robot.stop_exploration()
-                        return {
-                            "success": False,
-                            "message": "Exploration stopped by user",
-                        }
                     time.sleep(0.5)
 
                 # Timeout reached, stop exploration
@@ -703,7 +591,6 @@ class Explore(AbstractRobotSkill):
         logger.info("Stopping Explore")
         skill_library = self._robot.get_skills()
         self.unregister_as_running("Explore", skill_library)
-        self._stop_event.set()
 
         # Stop the robot's exploration if it's running
         try:

@@ -57,15 +57,11 @@ class Map(Module):
 
             # temporary, not sure if it belogs in mapper
             # used only for visualizations, not for any algo
-            occupancygrid = (
-                OccupancyGrid.from_pointcloud(
-                    self.to_lidar_message(),
-                    resolution=self.cost_resolution,
-                    min_height=0.15,
-                    max_height=0.6,
-                )
-                .inflate(0.1)
-                .gradient(max_distance=1.0)
+            occupancygrid = OccupancyGrid.from_pointcloud(
+                self.to_lidar_message(),
+                resolution=self.cost_resolution,
+                min_height=0.15,
+                max_height=0.6,
             )
 
             self.global_costmap.publish(occupancygrid)

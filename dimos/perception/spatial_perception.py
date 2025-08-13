@@ -29,7 +29,6 @@ from datetime import datetime
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.geometry_msgs import Vector3, Quaternion, Pose, PoseStamped
-from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.logging_config import setup_logger
 from dimos.agents.memory.spatial_vector_db import SpatialVectorDB
 from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
@@ -52,7 +51,7 @@ class SpatialMemory(Module):
 
     # LCM inputs
     video: In[Image] = None
-    odom: In[Odometry] = None
+    odom: In[PoseStamped] = None
 
     def __init__(
         self,
@@ -63,14 +62,12 @@ class SpatialMemory(Module):
         min_time_threshold: float = 1.0,  # Min time in seconds to record a new frame
         db_path: Optional[str] = None,  # Path for ChromaDB persistence
         visual_memory_path: Optional[str] = None,  # Path for saving/loading visual memory
-        new_memory: bool = False,  # Whether to create a new memory from scratch
+        new_memory: bool = True,  # Whether to create a new memory from scratch
         output_dir: Optional[str] = None,  # Directory for storing visual memory data
         chroma_client: Any = None,  # Optional ChromaDB client for persistence
         visual_memory: Optional[
             "VisualMemory"
         ] = None,  # Optional VisualMemory instance for storing images
-        video_stream: Optional[Observable] = None,  # Video stream to process
-        get_pose: Optional[callable] = None,  # Function that returns position and rotation
     ):
         """
         Initialize the spatial perception system.
@@ -170,7 +167,7 @@ class SpatialMemory(Module):
 
         # Track latest data for processing
         self._latest_video_frame: Optional[np.ndarray] = None
-        self._latest_odom: Optional[Odometry] = None
+        self._latest_odom: Optional[PoseStamped] = None
         self._process_interval = 1
 
         logger.info(f"SpatialMemory initialized with model {embedding_model}")
@@ -187,7 +184,7 @@ class SpatialMemory(Module):
             else:
                 logger.warning("Received image message without data attribute")
 
-        def set_odom(odom_msg: Odometry):
+        def set_odom(odom_msg: PoseStamped):
             self._latest_odom = odom_msg
 
         self.video.subscribe(set_video)
@@ -416,7 +413,8 @@ class SpatialMemory(Module):
                 logger.info("No position or rotation data available, skipping frame")
                 return None
 
-            position_v3 = Vector3(position_vec.x, position_vec.y, position_vec.z)
+            # position_vec is already a Vector3, no need to recreate it
+            position_v3 = position_vec
 
             if self.last_position is not None:
                 distance_moved = np.linalg.norm(

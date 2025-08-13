@@ -13,64 +13,76 @@
 # limitations under the License.
 
 import cv2
-from reactivex import Observable, interval
-from reactivex import operators as ops
 import numpy as np
+import time
+import threading
 from typing import Dict, List, Optional
 
 from dimos.core import In, Out, Module, rpc
+from dimos.msgs.std_msgs import Header
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.common.ibvs import ObjectDistanceEstimator
-from dimos.models.depth.metric3d import Metric3D
-from dimos.perception.detection2d.utils import calculate_depth_from_bbox
+from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, Pose, PoseStamped
+from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
+
+# Import LCM messages
+from dimos_lcm.vision_msgs import (
+    Detection2D,
+    Detection2DArray,
+    Detection3D,
+    Detection3DArray,
+    ObjectHypothesisWithPose,
+)
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos.utils.transform_utils import (
+    yaw_towards_point,
+    optical_to_robot_frame,
+    euler_to_quaternion,
+)
+from dimos.manipulation.visual_servoing.utils import visualize_detections_3d
 
 logger = setup_logger("dimos.perception.object_tracker")
 
 
-class ObjectTrackingStream(Module):
+class ObjectTracking(Module):
     """Module for object tracking with LCM input/output."""
 
     # LCM inputs
-    video: In[Image] = None
+    color_image: In[Image] = None
+    depth: In[Image] = None
+    camera_info: In[CameraInfo] = None
 
     # LCM outputs
-    tracking_data: Out[Dict] = None
+    detection2darray: Out[Detection2DArray] = None
+    detection3darray: Out[Detection3DArray] = None
+    tracked_overlay: Out[Image] = None  # Visualization output
 
     def __init__(
         self,
-        camera_intrinsics=None,
-        camera_pitch=0.0,
-        camera_height=1.0,
-        reid_threshold=5,
-        reid_fail_tolerance=10,
-        gt_depth_scale=1000.0,
+        camera_intrinsics: Optional[List[float]] = None,  # [fx, fy, cx, cy]
+        reid_threshold: int = 10,
+        reid_fail_tolerance: int = 5,
+        frame_id: str = "camera_link",
     ):
         """
-        Initialize an object tracking stream using OpenCV's CSRT tracker with ORB re-ID.
+        Initialize an object tracking module using OpenCV's CSRT tracker with ORB re-ID.
 
         Args:
-            camera_intrinsics: List in format [fx, fy, cx, cy] where:
-                - fx: Focal length in x direction (pixels)
-                - fy: Focal length in y direction (pixels)
-                - cx: Principal point x-coordinate (pixels)
-                - cy: Principal point y-coordinate (pixels)
-            camera_pitch: Camera pitch angle in radians (positive is up)
-            camera_height: Height of the camera from the ground in meters
+            camera_intrinsics: Optional [fx, fy, cx, cy] camera parameters.
+                              If None, will use camera_info input.
             reid_threshold: Minimum good feature matches needed to confirm re-ID.
             reid_fail_tolerance: Number of consecutive frames Re-ID can fail before
                                  tracking is stopped.
-            gt_depth_scale: Ground truth depth scale factor for Metric3D model
+            frame_id: TF frame ID for the camera (default: "camera_link")
         """
         # Call parent Module init
         super().__init__()
 
         self.camera_intrinsics = camera_intrinsics
-        self.camera_pitch = camera_pitch
-        self.camera_height = camera_height
+        self._camera_info_received = False
         self.reid_threshold = reid_threshold
         self.reid_fail_tolerance = reid_fail_tolerance
-        self.gt_depth_scale = gt_depth_scale
+        self.frame_id = frame_id
 
         self.tracker = None
         self.tracking_bbox = None  # Stores (x, y, w, h) for tracker initialization
@@ -78,173 +90,128 @@ class ObjectTrackingStream(Module):
         self.orb = cv2.ORB_create()
         self.bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
         self.original_des = None  # Store original ORB descriptors
-        self.reid_threshold = reid_threshold
-        self.reid_fail_tolerance = reid_fail_tolerance
+        self.original_kps = None  # Store original ORB keypoints
         self.reid_fail_count = 0  # Counter for consecutive re-id failures
-
-        # Initialize distance estimator if camera parameters are provided
-        self.distance_estimator = None
-        if camera_intrinsics is not None:
-            # Convert [fx, fy, cx, cy] to 3x3 camera matrix
-            fx, fy, cx, cy = camera_intrinsics
-            K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
-
-            self.distance_estimator = ObjectDistanceEstimator(
-                K=K, camera_pitch=camera_pitch, camera_height=camera_height
-            )
-
-        # Initialize depth model with error handling
-        try:
-            self.depth_model = Metric3D(gt_depth_scale)
-            if camera_intrinsics is not None:
-                self.depth_model.update_intrinsic(camera_intrinsics)
-        except RuntimeError as e:
-            logger.error(f"Failed to initialize Metric3D depth model: {e}")
-            if "CUDA" in str(e):
-                logger.error("This appears to be a CUDA initialization error. Please check:")
-                logger.error("- CUDA is properly installed")
-                logger.error("- GPU drivers are up to date")
-                logger.error("- CUDA_VISIBLE_DEVICES environment variable is set correctly")
-            raise  # Re-raise the exception to fail initialization
-        except Exception as e:
-            logger.error(f"Unexpected error initializing Metric3D depth model: {e}")
-            raise
+        self.last_good_matches = []  # Store good matches for visualization
+        self.last_roi_kps = None  # Store last ROI keypoints for visualization
+        self.last_roi_bbox = None  # Store last ROI bbox for visualization
+        self.reid_confirmed = False  # Store current reid confirmation state
 
         # For tracking latest frame data
-        self._latest_frame: Optional[np.ndarray] = None
-        self._process_interval = 0.1  # Process at 10Hz
+        self._latest_rgb_frame: Optional[np.ndarray] = None
+        self._latest_depth_frame: Optional[np.ndarray] = None
+        self._latest_camera_info: Optional[CameraInfo] = None
+
+        # Tracking thread control
+        self.tracking_thread: Optional[threading.Thread] = None
+        self.stop_tracking = threading.Event()
+        self.tracking_rate = 30.0  # Hz
+        self.tracking_period = 1.0 / self.tracking_rate
+
+        # Initialize TF publisher
+        self.tf = TF()
+
+        # Store latest detections for RPC access
+        self._latest_detection2d: Optional[Detection2DArray] = None
+        self._latest_detection3d: Optional[Detection3DArray] = None
+        self._detection_event = threading.Event()
 
     @rpc
     def start(self):
         """Start the object tracking module and subscribe to LCM streams."""
 
-        # Subscribe to video stream
-        def set_video(image_msg: Image):
-            if hasattr(image_msg, "data"):
-                self._latest_frame = image_msg.data
-            else:
-                logger.warning("Received image message without data attribute")
+        # Subscribe to rgb image stream
+        def on_rgb(image_msg: Image):
+            self._latest_rgb_frame = image_msg.data
 
-        self.video.subscribe(set_video)
+        self.color_image.subscribe(on_rgb)
 
-        # Start periodic processing
-        interval(self._process_interval).subscribe(lambda _: self._process_frame())
+        # Subscribe to depth stream
+        def on_depth(image_msg: Image):
+            self._latest_depth_frame = image_msg.data
+
+        self.depth.subscribe(on_depth)
+
+        # Subscribe to camera info stream
+        def on_camera_info(camera_info_msg: CameraInfo):
+            self._latest_camera_info = camera_info_msg
+            # Extract intrinsics from camera info K matrix
+            # K is a 3x3 matrix in row-major order: [fx, 0, cx, 0, fy, cy, 0, 0, 1]
+            self.camera_intrinsics = [
+                camera_info_msg.K[0],
+                camera_info_msg.K[4],
+                camera_info_msg.K[2],
+                camera_info_msg.K[5],
+            ]
+            if not self._camera_info_received:
+                self._camera_info_received = True
+                logger.info(
+                    f"Camera intrinsics received from camera_info: {self.camera_intrinsics}"
+                )
+
+        self.camera_info.subscribe(on_camera_info)
 
         logger.info("ObjectTracking module started and subscribed to LCM streams")
-
-    def _process_frame(self):
-        """Process the latest frame if available."""
-        if self._latest_frame is None:
-            return
-
-        # TODO: Better implementation for handling track RPC init
-        if self.tracker is None or self.tracking_bbox is None:
-            return
-
-        # Process frame through tracking pipeline
-        result = self._process_tracking(self._latest_frame)
-
-        # Publish result to LCM
-        if result:
-            self.tracking_data.publish(result)
 
     @rpc
     def track(
         self,
         bbox: List[float],
-        frame: Optional[np.ndarray] = None,
-        distance: Optional[float] = None,
-        size: Optional[float] = None,
-    ) -> bool:
+    ) -> Dict:
         """
-        Set the initial bounding box for tracking. Features are extracted later.
+        Initialize tracking with a bounding box and process current frame.
 
         Args:
             bbox: Bounding box in format [x1, y1, x2, y2]
-            frame: Optional - Current frame for depth estimation and feature extraction
-            distance: Optional - Known distance to object (meters)
-            size: Optional - Known size of object (meters)
 
         Returns:
-            bool: True if intention to track is set (bbox is valid)
+            Dict containing tracking results with 2D and 3D detections
         """
-        if frame is None:
-            frame = self._latest_frame
+        if self._latest_rgb_frame is None:
+            logger.warning("No RGB frame available for tracking")
+
+        # Initialize tracking
         x1, y1, x2, y2 = map(int, bbox)
         w, h = x2 - x1, y2 - y1
         if w <= 0 or h <= 0:
             logger.warning(f"Invalid initial bbox provided: {bbox}. Tracking not started.")
-            self.stop_track()  # Ensure clean state
-            return False
 
+        # Set tracking parameters
         self.tracking_bbox = (x1, y1, w, h)  # Store in (x, y, w, h) format
         self.tracker = cv2.legacy.TrackerCSRT_create()
-        self.tracking_initialized = False  # Reset flag
-        self.original_des = None  # Clear previous descriptors
-        self.reid_fail_count = 0  # Reset counter on new track
+        self.tracking_initialized = False
+        self.original_des = None
+        self.reid_fail_count = 0
         logger.info(f"Tracking target set with bbox: {self.tracking_bbox}")
 
-        # Calculate depth only if distance and size not provided
-        depth_estimate = None
-        if frame is not None and distance is None and size is None:
-            depth_map = self.depth_model.infer_depth(frame)
-            depth_map = np.array(depth_map)
-            depth_estimate = calculate_depth_from_bbox(depth_map, bbox)
-            if depth_estimate is not None:
-                logger.info(f"Estimated depth for object: {depth_estimate:.2f}m")
-
-        # Update distance estimator if needed
-        if self.distance_estimator is not None:
-            if size is not None:
-                self.distance_estimator.set_estimated_object_size(size)
-            elif distance is not None:
-                self.distance_estimator.estimate_object_size(bbox, distance)
-            elif depth_estimate is not None:
-                self.distance_estimator.estimate_object_size(bbox, depth_estimate)
+        # Extract initial features
+        roi = self._latest_rgb_frame[y1:y2, x1:x2]
+        if roi.size > 0:
+            self.original_kps, self.original_des = self.orb.detectAndCompute(roi, None)
+            if self.original_des is None:
+                logger.warning("No ORB features found in initial ROI.")
+                self.stop_track()
+                return {"status": "tracking_failed", "bbox": self.tracking_bbox}
             else:
-                logger.info("No distance or size provided. Cannot estimate object size.")
+                logger.info(f"Initial ORB features extracted: {len(self.original_des)}")
 
-        return True  # Indicate intention to track is set
+            # Initialize the tracker
+            init_success = self.tracker.init(self._latest_rgb_frame, self.tracking_bbox)
+            if init_success:
+                self.tracking_initialized = True
+                logger.info("Tracker initialized successfully.")
+            else:
+                logger.error("Tracker initialization failed.")
+                self.stop_track()
+        else:
+            logger.error("Empty ROI during tracker initialization.")
+            self.stop_track()
 
-    def calculate_depth_from_bbox(self, frame, bbox):
-        """
-        Calculate the average depth of an object within a bounding box.
-        Uses the 25th to 75th percentile range to filter outliers.
+        # Start tracking thread
+        self._start_tracking_thread()
 
-        Args:
-            frame: The image frame
-            bbox: Bounding box in format [x1, y1, x2, y2]
-
-        Returns:
-            float: Average depth in meters, or None if depth estimation fails
-        """
-        try:
-            # Get depth map for the entire frame
-            depth_map = self.depth_model.infer_depth(frame)
-            depth_map = np.array(depth_map)
-
-            # Extract region of interest from the depth map
-            x1, y1, x2, y2 = map(int, bbox)
-            roi_depth = depth_map[y1:y2, x1:x2]
-
-            if roi_depth.size == 0:
-                return None
-
-            # Calculate 25th and 75th percentile to filter outliers
-            p25 = np.percentile(roi_depth, 25)
-            p75 = np.percentile(roi_depth, 75)
-
-            # Filter depth values within this range
-            filtered_depth = roi_depth[(roi_depth >= p25) & (roi_depth <= p75)]
-
-            # Calculate average depth (convert to meters)
-            if filtered_depth.size > 0:
-                return np.mean(filtered_depth) / 1000.0  # Convert mm to meters
-
-            return None
-        except Exception as e:
-            logger.error(f"Error calculating depth from bbox: {e}")
-            return None
+        # Return initial tracking result
+        return {"status": "tracking_started", "bbox": self.tracking_bbox}
 
     def reid(self, frame, current_bbox) -> bool:
         """Check if features in current_bbox match stored original features."""
@@ -255,26 +222,73 @@ class ObjectTrackingStream(Module):
         if roi.size == 0:
             return False  # Empty ROI cannot match
 
-        _, des_current = self.orb.detectAndCompute(roi, None)
+        kps_current, des_current = self.orb.detectAndCompute(roi, None)
         if des_current is None or len(des_current) < 2:
             return False  # Need at least 2 descriptors for knnMatch
+
+        # Store ROI keypoints and bbox for visualization
+        self.last_roi_kps = kps_current
+        self.last_roi_bbox = [x1, y1, x2, y2]
 
         # Handle case where original_des has only 1 descriptor (cannot use knnMatch with k=2)
         if len(self.original_des) < 2:
             matches = self.bf.match(self.original_des, des_current)
+            self.last_good_matches = matches  # Store all matches for visualization
             good_matches = len(matches)
         else:
             matches = self.bf.knnMatch(self.original_des, des_current, k=2)
             # Apply Lowe's ratio test robustly
+            good_matches_list = []
             good_matches = 0
             for match_pair in matches:
                 if len(match_pair) == 2:
                     m, n = match_pair
                     if m.distance < 0.75 * n.distance:
+                        good_matches_list.append(m)
                         good_matches += 1
+            self.last_good_matches = good_matches_list  # Store good matches for visualization
 
-        # print(f"ReID: Good Matches={good_matches}, Threshold={self.reid_threshold}") # Debug
         return good_matches >= self.reid_threshold
+
+    def _start_tracking_thread(self):
+        """Start the tracking thread."""
+        self.stop_tracking.clear()
+        self.tracking_thread = threading.Thread(target=self._tracking_loop, daemon=True)
+        self.tracking_thread.start()
+        logger.info("Started tracking thread")
+
+    def _tracking_loop(self):
+        """Main tracking loop that runs in a separate thread."""
+        while not self.stop_tracking.is_set() and self.tracking_initialized:
+            # Process tracking for current frame
+            self._process_tracking()
+
+            # Sleep to maintain tracking rate
+            time.sleep(self.tracking_period)
+
+        logger.info("Tracking loop ended")
+
+    def _reset_tracking_state(self):
+        """Reset tracking state without stopping the thread."""
+        self.tracker = None
+        self.tracking_bbox = None
+        self.tracking_initialized = False
+        self.original_des = None
+        self.original_kps = None
+        self.reid_fail_count = 0  # Reset counter
+        self.last_good_matches = []
+        self.last_roi_kps = None
+        self.last_roi_bbox = None
+        self.reid_confirmed = False  # Reset reid confirmation state
+
+        # Publish empty detections to clear any visualizations
+        empty_2d = Detection2DArray(detections_length=0, header=Header(), detections=[])
+        empty_3d = Detection3DArray(detections_length=0, header=Header(), detections=[])
+        self._latest_detection2d = empty_2d
+        self._latest_detection3d = empty_3d
+        self._detection_event.clear()
+        self.detection2darray.publish(empty_2d)
+        self.detection3darray.publish(empty_3d)
 
     @rpc
     def stop_track(self) -> bool:
@@ -285,166 +299,296 @@ class ObjectTrackingStream(Module):
         Returns:
             bool: True if tracking was successfully stopped
         """
-        self.tracker = None
-        self.tracking_bbox = None
-        self.tracking_initialized = False
-        self.original_des = None
-        self.reid_fail_count = 0  # Reset counter
+        # Reset tracking state first
+        self._reset_tracking_state()
+
+        # Stop tracking thread if running (only if called from outside the thread)
+        if self.tracking_thread and self.tracking_thread.is_alive():
+            # Check if we're being called from within the tracking thread
+            if threading.current_thread() != self.tracking_thread:
+                self.stop_tracking.set()
+                self.tracking_thread.join(timeout=1.0)
+                self.tracking_thread = None
+            else:
+                # If called from within thread, just set the stop flag
+                self.stop_tracking.set()
+
+        logger.info("Tracking stopped")
         return True
 
-    def _process_tracking(self, frame):
-        """Process a single frame for tracking."""
-        viz_frame = frame.copy()
+    @rpc
+    def is_tracking(self) -> bool:
+        """
+        Check if the tracker is currently tracking an object successfully.
+
+        Returns:
+            bool: True if tracking is active and REID is confirmed, False otherwise
+        """
+        return self.tracking_initialized and self.reid_confirmed
+
+    def _process_tracking(self):
+        """Process current frame for tracking and publish detections."""
+        if self._latest_rgb_frame is None or self.tracker is None or not self.tracking_initialized:
+            return
+
+        frame = self._latest_rgb_frame
         tracker_succeeded = False
         reid_confirmed_this_frame = False
         final_success = False
-        target_data = None
         current_bbox_x1y1x2y2 = None
 
-        if self.tracker is not None and self.tracking_bbox is not None:
-            if not self.tracking_initialized:
-                # Extract initial features and initialize tracker on first frame
-                x_init, y_init, w_init, h_init = self.tracking_bbox
-                roi = frame[y_init : y_init + h_init, x_init : x_init + w_init]
+        # Perform tracker update
+        tracker_succeeded, bbox_cv = self.tracker.update(frame)
+        if tracker_succeeded:
+            x, y, w, h = map(int, bbox_cv)
+            current_bbox_x1y1x2y2 = [x, y, x + w, y + h]
+            # Perform re-ID check
+            reid_confirmed_this_frame = self.reid(frame, current_bbox_x1y1x2y2)
+            self.reid_confirmed = reid_confirmed_this_frame  # Store for is_tracking() RPC
 
-                if roi.size > 0:
-                    _, self.original_des = self.orb.detectAndCompute(roi, None)
-                    if self.original_des is None:
-                        logger.warning(
-                            "No ORB features found in initial ROI during stream processing."
-                        )
-                    else:
-                        logger.info(f"Initial ORB features extracted: {len(self.original_des)}")
+            if reid_confirmed_this_frame:
+                self.reid_fail_count = 0
+            else:
+                self.reid_fail_count += 1
+        else:
+            self.reid_confirmed = False  # No tracking if tracker failed
 
-                    # Initialize the tracker
-                    init_success = self.tracker.init(frame, self.tracking_bbox)
-                    if init_success:
-                        self.tracking_initialized = True
-                        tracker_succeeded = True
-                        reid_confirmed_this_frame = True
-                        current_bbox_x1y1x2y2 = [
-                            x_init,
-                            y_init,
-                            x_init + w_init,
-                            y_init + h_init,
-                        ]
-                        logger.info("Tracker initialized successfully.")
-                    else:
-                        logger.error("Tracker initialization failed in stream.")
-                        self.stop_track()
-                else:
-                    logger.error("Empty ROI during tracker initialization in stream.")
-                    self.stop_track()
-
-            else:  # Tracker already initialized, perform update and re-id
-                tracker_succeeded, bbox_cv = self.tracker.update(frame)
-                if tracker_succeeded:
-                    x, y, w, h = map(int, bbox_cv)
-                    current_bbox_x1y1x2y2 = [x, y, x + w, y + h]
-                    # Perform re-ID check
-                    reid_confirmed_this_frame = self.reid(frame, current_bbox_x1y1x2y2)
-
-                    if reid_confirmed_this_frame:
-                        self.reid_fail_count = 0
-                    else:
-                        self.reid_fail_count += 1
-                        logger.warning(
-                            f"Re-ID failed ({self.reid_fail_count}/{self.reid_fail_tolerance}). Continuing track..."
-                        )
-
-        # Determine final success and stop tracking if needed
+        # Determine final success
         if tracker_succeeded:
             if self.reid_fail_count >= self.reid_fail_tolerance:
                 logger.warning(
                     f"Re-ID failed consecutively {self.reid_fail_count} times. Target lost."
                 )
                 final_success = False
+                self._reset_tracking_state()
             else:
                 final_success = True
         else:
             final_success = False
             if self.tracking_initialized:
                 logger.info("Tracker update failed. Stopping track.")
+                self._reset_tracking_state()
 
-        # Post-processing based on final_success
+        if not reid_confirmed_this_frame:
+            return
+
+        # Create detections if tracking succeeded
+        header = Header(self.frame_id)
+        detection2darray = Detection2DArray(detections_length=0, header=header, detections=[])
+        detection3darray = Detection3DArray(detections_length=0, header=header, detections=[])
+
         if final_success and current_bbox_x1y1x2y2 is not None:
             x1, y1, x2, y2 = current_bbox_x1y1x2y2
-            viz_color = (0, 255, 0) if reid_confirmed_this_frame else (0, 165, 255)
-            cv2.rectangle(viz_frame, (x1, y1), (x2, y2), viz_color, 2)
+            center_x = (x1 + x2) / 2.0
+            center_y = (y1 + y2) / 2.0
+            width = float(x2 - x1)
+            height = float(y2 - y1)
 
-            target_data = {
-                "target_id": 0,
-                "bbox": current_bbox_x1y1x2y2,
-                "confidence": 1.0,
-                "reid_confirmed": reid_confirmed_this_frame,
-            }
+            # Create Detection2D
+            detection_2d = Detection2D()
+            detection_2d.id = "0"
+            detection_2d.results_length = 1
+            detection_2d.header = header
 
-            dist_text = "Object Tracking"
-            if not reid_confirmed_this_frame:
-                dist_text += " (Re-ID Failed - Tolerated)"
+            # Create hypothesis
+            hypothesis = ObjectHypothesisWithPose()
+            hypothesis.hypothesis.class_id = "tracked_object"
+            hypothesis.hypothesis.score = 1.0
+            detection_2d.results = [hypothesis]
 
-            if (
-                self.distance_estimator is not None
-                and self.distance_estimator.estimated_object_size is not None
-            ):
-                distance, angle = self.distance_estimator.estimate_distance_angle(
-                    current_bbox_x1y1x2y2
-                )
-                if distance is not None:
-                    target_data["distance"] = distance
-                    target_data["angle"] = angle
-                    dist_text = f"Object: {distance:.2f}m, {np.rad2deg(angle):.1f} deg"
-                    if not reid_confirmed_this_frame:
-                        dist_text += " (Re-ID Failed - Tolerated)"
+            # Create bounding box
+            detection_2d.bbox.center.position.x = center_x
+            detection_2d.bbox.center.position.y = center_y
+            detection_2d.bbox.center.theta = 0.0
+            detection_2d.bbox.size_x = width
+            detection_2d.bbox.size_y = height
 
-            text_size = cv2.getTextSize(dist_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
-            label_bg_y = max(y1 - text_size[1] - 5, 0)
-            cv2.rectangle(viz_frame, (x1, label_bg_y), (x1 + text_size[0], y1), (0, 0, 0), -1)
-            cv2.putText(
-                viz_frame,
-                dist_text,
-                (x1, y1 - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 255, 255),
-                1,
+            detection2darray = Detection2DArray()
+            detection2darray.detections_length = 1
+            detection2darray.header = header
+            detection2darray.detections = [detection_2d]
+
+            # Create Detection3D if depth is available
+            if self._latest_depth_frame is not None:
+                # Calculate 3D position using depth and camera intrinsics
+                depth_value = self._get_depth_from_bbox(current_bbox_x1y1x2y2)
+                if (
+                    depth_value is not None
+                    and depth_value > 0
+                    and self.camera_intrinsics is not None
+                ):
+                    fx, fy, cx, cy = self.camera_intrinsics
+
+                    # Convert pixel coordinates to 3D in optical frame
+                    z_optical = depth_value
+                    x_optical = (center_x - cx) * z_optical / fx
+                    y_optical = (center_y - cy) * z_optical / fy
+
+                    # Create pose in optical frame
+                    optical_pose = Pose()
+                    optical_pose.position = Vector3(x_optical, y_optical, z_optical)
+                    optical_pose.orientation = Quaternion(0.0, 0.0, 0.0, 1.0)  # Identity for now
+
+                    # Convert to robot frame
+                    robot_pose = optical_to_robot_frame(optical_pose)
+
+                    # Calculate orientation: object facing towards camera (origin)
+                    yaw = yaw_towards_point(robot_pose.position)
+                    euler = Vector3(0.0, 0.0, yaw)  # Only yaw, no roll/pitch
+                    robot_pose.orientation = euler_to_quaternion(euler)
+
+                    # Estimate object size in meters
+                    size_x = width * z_optical / fx
+                    size_y = height * z_optical / fy
+                    size_z = 0.1  # Default depth size
+
+                    # Create Detection3D
+                    detection_3d = Detection3D()
+                    detection_3d.id = "0"
+                    detection_3d.results_length = 1
+                    detection_3d.header = header
+
+                    # Reuse hypothesis from 2D
+                    detection_3d.results = [hypothesis]
+
+                    # Create 3D bounding box with robot frame pose
+                    detection_3d.bbox.center = Pose()
+                    detection_3d.bbox.center.position = robot_pose.position
+                    detection_3d.bbox.center.orientation = robot_pose.orientation
+                    detection_3d.bbox.size = Vector3(size_x, size_y, size_z)
+
+                    detection3darray = Detection3DArray()
+                    detection3darray.detections_length = 1
+                    detection3darray.header = header
+                    detection3darray.detections = [detection_3d]
+
+                    # Publish transform for tracked object
+                    # The optical pose is in camera optical frame, so publish it relative to the camera frame
+                    tracked_object_tf = Transform(
+                        translation=robot_pose.position,
+                        rotation=robot_pose.orientation,
+                        frame_id=self.frame_id,  # Use configured camera frame
+                        child_frame_id=f"tracked_object",
+                        ts=header.ts,
+                    )
+                    self.tf.publish(tracked_object_tf)
+
+        # Store latest detections for RPC access
+        self._latest_detection2d = detection2darray
+        self._latest_detection3d = detection3darray
+
+        # Signal that new detections are available
+        if detection2darray.detections_length > 0 or detection3darray.detections_length > 0:
+            self._detection_event.set()
+
+        # Publish detections
+        self.detection2darray.publish(detection2darray)
+        self.detection3darray.publish(detection3darray)
+
+        # Create and publish visualization if tracking is active
+        if self.tracking_initialized and self._latest_rgb_frame is not None:
+            # Convert single detection to list for visualization
+            detections_3d = (
+                detection3darray.detections if detection3darray.detections_length > 0 else []
+            )
+            detections_2d = (
+                detection2darray.detections if detection2darray.detections_length > 0 else []
             )
 
-        elif self.tracking_initialized:
-            self.stop_track()
+            if detections_3d and detections_2d:
+                # Extract 2D bbox for visualization
+                det_2d = detections_2d[0]
+                bbox_2d = []
+                if det_2d.bbox:
+                    x1 = det_2d.bbox.center.position.x - det_2d.bbox.size_x / 2
+                    y1 = det_2d.bbox.center.position.y - det_2d.bbox.size_y / 2
+                    x2 = det_2d.bbox.center.position.x + det_2d.bbox.size_x / 2
+                    y2 = det_2d.bbox.center.position.y + det_2d.bbox.size_y / 2
+                    bbox_2d = [[x1, y1, x2, y2]]
 
-        return {
-            "frame": frame,
-            "viz_frame": viz_frame,
-            "targets": [target_data] if target_data else [],
-        }
+                # Create visualization
+                viz_image = visualize_detections_3d(
+                    self._latest_rgb_frame, detections_3d, show_coordinates=True, bboxes_2d=bbox_2d
+                )
 
-    @rpc
-    def get_tracking_data(self) -> Dict:
-        """Get the latest tracking data.
+                # Overlay REID feature matches if available
+                if self.last_good_matches and self.last_roi_kps and self.last_roi_bbox:
+                    viz_image = self._draw_reid_matches(viz_image)
 
-        Returns:
-            Dictionary containing tracking results
-        """
-        if self._latest_frame is not None:
-            return self._process_tracking(self._latest_frame)
-        return {"frame": None, "viz_frame": None, "targets": []}
+                # Convert to Image message and publish
+                viz_msg = Image.from_numpy(viz_image)
+                self.tracked_overlay.publish(viz_msg)
 
-    def create_stream(self, video_stream: Observable) -> Observable:
-        """
-        Create an Observable stream of object tracking results from a video stream.
-        This method is maintained for backward compatibility.
+    def _draw_reid_matches(self, image: np.ndarray) -> np.ndarray:
+        """Draw REID feature matches on the image."""
+        viz_image = image.copy()
 
-        Args:
-            video_stream: Observable that emits video frames
+        x1, y1, x2, y2 = self.last_roi_bbox
 
-        Returns:
-            Observable that emits dictionaries containing tracking results and visualizations
-        """
-        return video_stream.pipe(ops.map(self._process_tracking))
+        # Draw keypoints from current ROI in green
+        for kp in self.last_roi_kps:
+            pt = (int(kp.pt[0] + x1), int(kp.pt[1] + y1))
+            cv2.circle(viz_image, pt, 3, (0, 255, 0), -1)
+
+        for match in self.last_good_matches:
+            current_kp = self.last_roi_kps[match.trainIdx]
+            pt_current = (int(current_kp.pt[0] + x1), int(current_kp.pt[1] + y1))
+
+            # Draw a larger circle for matched points in yellow
+            cv2.circle(viz_image, pt_current, 5, (0, 255, 255), 2)  # Yellow for matched points
+
+            # Draw match strength indicator (smaller circle with intensity based on distance)
+            # Lower distance = better match = brighter color
+            intensity = int(255 * (1.0 - min(match.distance / 100.0, 1.0)))
+            cv2.circle(viz_image, pt_current, 2, (intensity, intensity, 255), -1)
+
+        text = f"REID Matches: {len(self.last_good_matches)}/{len(self.last_roi_kps) if self.last_roi_kps else 0}"
+        cv2.putText(viz_image, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        if len(self.last_good_matches) >= self.reid_threshold:
+            status_text = "REID: CONFIRMED"
+            status_color = (0, 255, 0)  # Green
+        else:
+            status_text = f"REID: WEAK ({self.reid_fail_count}/{self.reid_fail_tolerance})"
+            status_color = (0, 165, 255)  # Orange
+
+        cv2.putText(
+            viz_image, status_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2
+        )
+
+        return viz_image
+
+    def _get_depth_from_bbox(self, bbox: List[int]) -> Optional[float]:
+        """Calculate depth from bbox using the 25th percentile of closest points."""
+        if self._latest_depth_frame is None:
+            return None
+
+        x1, y1, x2, y2 = bbox
+
+        # Ensure bbox is within frame bounds
+        y1 = max(0, y1)
+        y2 = min(self._latest_depth_frame.shape[0], y2)
+        x1 = max(0, x1)
+        x2 = min(self._latest_depth_frame.shape[1], x2)
+
+        # Extract depth values from the entire bbox
+        roi_depth = self._latest_depth_frame[y1:y2, x1:x2]
+
+        # Get valid (finite and positive) depth values
+        valid_depths = roi_depth[np.isfinite(roi_depth) & (roi_depth > 0)]
+
+        if len(valid_depths) > 0:
+            depth_25th_percentile = float(np.percentile(valid_depths, 25))
+            return depth_25th_percentile
+
+        return None
 
     @rpc
     def cleanup(self):
         """Clean up resources."""
         self.stop_track()
-        # CUDA cleanup is now handled by WorkerPlugin in dimos.core
+
+        # Ensure thread is stopped
+        if self.tracking_thread and self.tracking_thread.is_alive():
+            self.stop_tracking.set()
+            self.tracking_thread.join(timeout=2.0)

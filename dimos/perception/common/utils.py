@@ -19,6 +19,7 @@ from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 from dimos_lcm.vision_msgs import Detection3D, Detection2D, BoundingBox2D
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 import torch
 
 logger = setup_logger("dimos.perception.common.utils")
@@ -121,13 +122,16 @@ def project_2d_points_to_3d(
     return points_3d
 
 
-def colorize_depth(depth_img: np.ndarray, max_depth: float = 5.0) -> Optional[np.ndarray]:
+def colorize_depth(
+    depth_img: np.ndarray, max_depth: float = 5.0, overlay_stats: bool = True
+) -> Optional[np.ndarray]:
     """
-    Normalize and colorize depth image using COLORMAP_JET.
+    Normalize and colorize depth image using COLORMAP_JET with optional statistics overlay.
 
     Args:
         depth_img: Depth image (H, W) in meters
         max_depth: Maximum depth value for normalization
+        overlay_stats: Whether to overlay depth statistics on the image
 
     Returns:
         Colorized depth image (H, W, 3) in RGB format, or None if input is None
@@ -143,6 +147,122 @@ def colorize_depth(depth_img: np.ndarray, max_depth: float = 5.0) -> Optional[np
 
     # Make the depth image less bright by scaling down the values
     depth_rgb = (depth_rgb * 0.6).astype(np.uint8)
+
+    if overlay_stats and valid_mask.any():
+        # Calculate statistics
+        valid_depths = depth_img[valid_mask]
+        min_depth = np.min(valid_depths)
+        max_depth_actual = np.max(valid_depths)
+
+        # Get center depth
+        h, w = depth_img.shape
+        center_y, center_x = h // 2, w // 2
+        # Sample a small region around center for robustness
+        center_region = depth_img[
+            max(0, center_y - 2) : min(h, center_y + 3), max(0, center_x - 2) : min(w, center_x + 3)
+        ]
+        center_mask = np.isfinite(center_region) & (center_region > 0)
+        if center_mask.any():
+            center_depth = np.median(center_region[center_mask])
+        else:
+            center_depth = depth_img[center_y, center_x] if valid_mask[center_y, center_x] else 0.0
+
+        # Prepare text overlays
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        thickness = 1
+        line_type = cv2.LINE_AA
+
+        # Text properties
+        text_color = (255, 255, 255)  # White
+        bg_color = (0, 0, 0)  # Black background
+        padding = 5
+
+        # Min depth (top-left)
+        min_text = f"Min: {min_depth:.2f}m"
+        (text_w, text_h), _ = cv2.getTextSize(min_text, font, font_scale, thickness)
+        cv2.rectangle(
+            depth_rgb,
+            (padding, padding),
+            (padding + text_w + 4, padding + text_h + 6),
+            bg_color,
+            -1,
+        )
+        cv2.putText(
+            depth_rgb,
+            min_text,
+            (padding + 2, padding + text_h + 2),
+            font,
+            font_scale,
+            text_color,
+            thickness,
+            line_type,
+        )
+
+        # Max depth (top-right)
+        max_text = f"Max: {max_depth_actual:.2f}m"
+        (text_w, text_h), _ = cv2.getTextSize(max_text, font, font_scale, thickness)
+        cv2.rectangle(
+            depth_rgb,
+            (w - padding - text_w - 4, padding),
+            (w - padding, padding + text_h + 6),
+            bg_color,
+            -1,
+        )
+        cv2.putText(
+            depth_rgb,
+            max_text,
+            (w - padding - text_w - 2, padding + text_h + 2),
+            font,
+            font_scale,
+            text_color,
+            thickness,
+            line_type,
+        )
+
+        # Center depth (center)
+        if center_depth > 0:
+            center_text = f"{center_depth:.2f}m"
+            (text_w, text_h), _ = cv2.getTextSize(center_text, font, font_scale, thickness)
+            center_text_x = center_x - text_w // 2
+            center_text_y = center_y + text_h // 2
+
+            # Draw crosshair
+            cross_size = 10
+            cross_color = (255, 255, 255)
+            cv2.line(
+                depth_rgb,
+                (center_x - cross_size, center_y),
+                (center_x + cross_size, center_y),
+                cross_color,
+                1,
+            )
+            cv2.line(
+                depth_rgb,
+                (center_x, center_y - cross_size),
+                (center_x, center_y + cross_size),
+                cross_color,
+                1,
+            )
+
+            # Draw center depth text with background
+            cv2.rectangle(
+                depth_rgb,
+                (center_text_x - 2, center_text_y - text_h - 2),
+                (center_text_x + text_w + 2, center_text_y + 2),
+                bg_color,
+                -1,
+            )
+            cv2.putText(
+                depth_rgb,
+                center_text,
+                (center_text_x, center_text_y),
+                font,
+                font_scale,
+                text_color,
+                thickness,
+                line_type,
+            )
 
     return depth_rgb
 
@@ -492,3 +612,27 @@ def find_clicked_detection(
                 return detections_3d[i]
 
     return None
+
+
+def extract_pose_from_detection3d(detection3d: Detection3D):
+    """Extract PoseStamped from Detection3D message.
+
+    Args:
+        detection3d: Detection3D message
+
+    Returns:
+        Pose or None if no valid detection
+    """
+    if not detection3d or not detection3d.bbox or not detection3d.bbox.center:
+        return None
+
+    # Extract position
+    pos = detection3d.bbox.center.position
+    position = Vector3(pos.x, pos.y, pos.z)
+
+    # Extract orientation
+    orient = detection3d.bbox.center.orientation
+    orientation = Quaternion(orient.x, orient.y, orient.z, orient.w)
+
+    pose = Pose(position=position, orientation=orientation)
+    return pose

@@ -26,7 +26,8 @@ from dimos.perception.pointcloud.utils import extract_centroids_from_masks
 from dimos.perception.detection2d.utils import calculate_object_size_from_bbox
 from dimos.perception.common.utils import bbox2d_to_corners
 
-from dimos_lcm.geometry_msgs import Pose, Vector3, Quaternion, Point
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
+from dimos.msgs.std_msgs import Header
 from dimos_lcm.vision_msgs import (
     Detection3D,
     Detection3DArray,
@@ -39,7 +40,6 @@ from dimos_lcm.vision_msgs import (
     Pose2D,
     Point2D,
 )
-from dimos_lcm.std_msgs import Header
 from dimos.manipulation.visual_servoing.utils import (
     estimate_object_depth,
     visualize_detections_3d,
@@ -179,8 +179,8 @@ class Detection3DProcessor:
             else:
                 # If no transform, use camera coordinates
                 center_pose = Pose(
-                    Point(obj_cam_pos[0], obj_cam_pos[1], obj_cam_pos[2]),
-                    Quaternion(0.0, 0.0, 0.0, 1.0),  # Default orientation
+                    position=Vector3(obj_cam_pos[0], obj_cam_pos[1], obj_cam_pos[2]),
+                    orientation=Quaternion(0.0, 0.0, 0.0, 1.0),  # Default orientation
                 )
 
             # Create Detection3D object

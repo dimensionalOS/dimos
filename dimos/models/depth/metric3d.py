@@ -24,7 +24,7 @@ import numpy as np
 
 
 class Metric3D:
-    def __init__(self, gt_depth_scale=256.0):
+    def __init__(self, camera_intrinsics=None, gt_depth_scale=256.0):
         # self.conf = get_config("zoedepth", "infer")
         # self.depth_model = build_model(self.conf)
         self.depth_model = torch.hub.load(
@@ -35,7 +35,7 @@ class Metric3D:
             # self.depth_model = torch.nn.DataParallel(self.depth_model)
         self.depth_model.eval()
 
-        self.intrinsic = [707.0493, 707.0493, 604.0814, 180.5066]
+        self.intrinsic = camera_intrinsics
         self.intrinsic_scaled = None
         self.gt_depth_scale = gt_depth_scale  # And this
         self.pad_info = None
@@ -76,12 +76,8 @@ class Metric3D:
 
         # Convert to PIL format
         depth_image = self.unpad_transform_depth(pred_depth)
-        out_16bit_numpy = (depth_image.squeeze().cpu().numpy() * self.gt_depth_scale).astype(
-            np.uint16
-        )
-        depth_map_pil = Image.fromarray(out_16bit_numpy)
 
-        return depth_map_pil
+        return depth_image.cpu().numpy()
 
     def save_depth(self, pred_depth):
         # Save the depth map to a file

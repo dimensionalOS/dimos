@@ -21,8 +21,56 @@ from dimos.msgs.geometry_msgs import Pose, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.global_planner.algo import astar
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import euler_to_quaternion
 
 logger = setup_logger("dimos.robot.unitree.global_planner")
+
+import math
+from dimos.msgs.geometry_msgs import Quaternion, Vector3
+
+
+def add_orientations_to_path(path: Path, goal_orientation: Quaternion = None) -> Path:
+    """Add orientations to path poses based on direction of movement.
+
+    Args:
+        path: Path with poses to add orientations to
+        goal_orientation: Desired orientation for the final pose
+
+    Returns:
+        Path with orientations added to all poses
+    """
+    if not path.poses or len(path.poses) < 2:
+        return path
+
+    # Calculate orientations for all poses except the last one
+    for i in range(len(path.poses) - 1):
+        current_pose = path.poses[i]
+        next_pose = path.poses[i + 1]
+
+        # Calculate direction to next point
+        dx = next_pose.position.x - current_pose.position.x
+        dy = next_pose.position.y - current_pose.position.y
+
+        # Calculate yaw angle
+        yaw = math.atan2(dy, dx)
+
+        # Convert to quaternion (roll=0, pitch=0, yaw)
+        orientation = euler_to_quaternion(Vector3(0, 0, yaw))
+        current_pose.orientation = orientation
+
+    # Set last pose orientation
+    identity_quat = Quaternion(0, 0, 0, 1)
+    if goal_orientation is not None and goal_orientation != identity_quat:
+        # Use the provided goal orientation if it's not the identity
+        path.poses[-1].orientation = goal_orientation
+    elif len(path.poses) > 1:
+        # Use the previous pose's orientation
+        path.poses[-1].orientation = path.poses[-2].orientation
+    else:
+        # Single pose with identity goal orientation
+        path.poses[-1].orientation = identity_quat
+
+    return path
 
 
 def resample_path(path: Path, spacing: float) -> Path:
@@ -142,6 +190,8 @@ class AstarPlanner(Planner):
 
         path = self.plan(msg)
         if path:
+            # Add orientations to the path, using the goal's orientation for the final pose
+            path = add_orientations_to_path(path, msg.orientation)
             self.path.publish(path)
 
     def plan(self, goal: Pose) -> Optional[Path]:
@@ -154,9 +204,10 @@ class AstarPlanner(Planner):
 
         # Get current position from odometry
         robot_pos = self.latest_odom.position
+        costmap = self.latest_costmap.inflate(0.1).gradient(max_distance=1.0)
 
         # Run A* planning
-        path = astar(self.latest_costmap, goal.position, robot_pos)
+        path = astar(costmap, goal.position, robot_pos)
 
         if path:
             path = resample_path(path, 0.1)

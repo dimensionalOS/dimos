@@ -28,14 +28,15 @@ from dimos.types.timestamped import Timestamped
 
 
 class ImageFormat(Enum):
-    """Supported image formats."""
+    """Supported image formats for internal representation."""
 
-    BGR = "bgr8"
-    RGB = "rgb8"
-    RGBA = "rgba8"
-    BGRA = "bgra8"
-    GRAY = "mono8"
-    GRAY16 = "mono16"
+    BGR = "BGR"  # 8-bit Blue-Green-Red color
+    RGB = "RGB"  # 8-bit Red-Green-Blue color
+    RGBA = "RGBA"  # 8-bit RGB with Alpha
+    BGRA = "BGRA"  # 8-bit BGR with Alpha
+    GRAY = "GRAY"  # 8-bit Grayscale
+    GRAY16 = "GRAY16"  # 16-bit Grayscale
+    DEPTH = "DEPTH"  # 32-bit Float Depth
 
 
 @dataclass
@@ -124,9 +125,12 @@ class Image(Timestamped):
         if cv_image is None:
             raise ValueError(f"Could not load image from {filepath}")
 
-        # Detect format based on channels
+        # Detect format based on channels and data type
         if len(cv_image.shape) == 2:
-            detected_format = ImageFormat.GRAY
+            if cv_image.dtype == np.uint16:
+                detected_format = ImageFormat.GRAY16
+            else:
+                detected_format = ImageFormat.GRAY
         elif cv_image.shape[2] == 3:
             detected_format = ImageFormat.BGR  # OpenCV default
         elif cv_image.shape[2] == 4:
@@ -135,6 +139,19 @@ class Image(Timestamped):
             detected_format = format
 
         return cls(data=cv_image, format=detected_format)
+
+    @classmethod
+    def from_depth(cls, depth_data: np.ndarray, frame_id: str = "", ts: float = None) -> "Image":
+        """Create Image from depth data (float32 array)."""
+        if depth_data.dtype != np.float32:
+            depth_data = depth_data.astype(np.float32)
+
+        return cls(
+            data=depth_data,
+            format=ImageFormat.DEPTH,
+            frame_id=frame_id,
+            ts=ts if ts is not None else time.time(),
+        )
 
     def to_opencv(self) -> np.ndarray:
         """Convert to OpenCV-compatible array (BGR format)."""
@@ -150,6 +167,8 @@ class Image(Timestamped):
             return self.data
         elif self.format == ImageFormat.GRAY16:
             return self.data
+        elif self.format == ImageFormat.DEPTH:
+            return self.data  # Depth images are already in the correct format
         else:
             raise ValueError(f"Unsupported format conversion: {self.format}")
 
@@ -284,7 +303,7 @@ class Image(Timestamped):
         # Image properties
         msg.height = self.height
         msg.width = self.width
-        msg.encoding = self.format.value
+        msg.encoding = self._get_lcm_encoding()  # Convert format to LCM encoding
         msg.is_bigendian = False  # Use little endian
         msg.step = self._get_row_step()
 
@@ -331,9 +350,38 @@ class Image(Timestamped):
         bytes_per_element = self.data.dtype.itemsize
         return self.channels * bytes_per_element
 
+    def _get_lcm_encoding(self) -> str:
+        """Get LCM encoding string from internal format and data type."""
+        # Map internal format to LCM encoding based on format and dtype
+        if self.format == ImageFormat.GRAY:
+            if self.dtype == np.uint8:
+                return "mono8"
+            elif self.dtype == np.uint16:
+                return "mono16"
+        elif self.format == ImageFormat.GRAY16:
+            return "mono16"
+        elif self.format == ImageFormat.RGB:
+            return "rgb8"
+        elif self.format == ImageFormat.RGBA:
+            return "rgba8"
+        elif self.format == ImageFormat.BGR:
+            return "bgr8"
+        elif self.format == ImageFormat.BGRA:
+            return "bgra8"
+        elif self.format == ImageFormat.DEPTH:
+            if self.dtype == np.float32:
+                return "32FC1"
+            elif self.dtype == np.float64:
+                return "64FC1"
+
+        raise ValueError(
+            f"Cannot determine LCM encoding for format={self.format}, dtype={self.dtype}"
+        )
+
     @staticmethod
     def _parse_encoding(encoding: str) -> dict:
         """Parse LCM image encoding string to determine format and data type."""
+        # Standard encodings
         encoding_map = {
             "mono8": {"format": ImageFormat.GRAY, "dtype": np.uint8, "channels": 1},
             "mono16": {"format": ImageFormat.GRAY16, "dtype": np.uint16, "channels": 1},
@@ -341,6 +389,10 @@ class Image(Timestamped):
             "rgba8": {"format": ImageFormat.RGBA, "dtype": np.uint8, "channels": 4},
             "bgr8": {"format": ImageFormat.BGR, "dtype": np.uint8, "channels": 3},
             "bgra8": {"format": ImageFormat.BGRA, "dtype": np.uint8, "channels": 4},
+            # Depth/float encodings
+            "32FC1": {"format": ImageFormat.DEPTH, "dtype": np.float32, "channels": 1},
+            "32FC3": {"format": ImageFormat.RGB, "dtype": np.float32, "channels": 3},
+            "64FC1": {"format": ImageFormat.DEPTH, "dtype": np.float64, "channels": 1},
         }
 
         if encoding not in encoding_map:
