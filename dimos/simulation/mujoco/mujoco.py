@@ -29,7 +29,7 @@ from mujoco import viewer
 from dimos.msgs.geometry_msgs import Quaternion, Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud, points_to_unique_voxels
+from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud
 from dimos.simulation.mujoco.model import load_model
 
 RANGE_FINDER_MAX_RANGE = 4
@@ -220,9 +220,10 @@ class MujocoThread(threading.Thread):
 
         combined_points = np.vstack(all_points)
         pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(
-            points_to_unique_voxels(combined_points, LIDAR_RESOLUTION)
-        )
+        pcd.points = o3d.utility.Vector3dVector(combined_points)
+
+        # Apply voxel downsampling to remove overlapping points
+        pcd = pcd.voxel_down_sample(voxel_size=LIDAR_RESOLUTION)
         lidar_to_publish = LidarMessage(
             pointcloud=pcd,
             ts=time.time(),

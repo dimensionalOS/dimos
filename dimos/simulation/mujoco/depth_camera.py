@@ -81,26 +81,3 @@ def depth_image_to_point_cloud(
     world_points = (camera_mat @ camera_points.T).T + camera_pos
 
     return world_points
-
-
-def points_to_unique_voxels(points, voxel_size):
-    """
-    Convert 3D points to unique voxel centers (removes duplicates).
-
-    Args:
-        points: numpy array of shape (N, 3) containing 3D points
-        voxel_size: size of each voxel (default 0.05m)
-
-    Returns:
-        unique_voxels: numpy array of unique voxel center coordinates
-    """
-    # Quantize to voxel indices
-    voxel_indices = np.round(points / voxel_size).astype(np.int32)
-
-    # Get unique voxel indices
-    unique_indices = np.unique(voxel_indices, axis=0)
-
-    # Convert back to world coordinates
-    unique_voxels = unique_indices * voxel_size
-
-    return unique_voxels
