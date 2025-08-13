@@ -133,26 +133,35 @@ class xArmBridge(Module):
 
     def _on_joint_state(self, msg: JointState):
         # print(f"[xArmBridge] Received joint state: {msg}")
-        if not msg:
-            # print("[xArmBridge] No joint names found in message.")
+        if not msg or not msg.name or not msg.position:
+            # print("[xArmBridge] No joint names or positions found in message.")
             return
 
-        # Extract joint1-joint7 values from indices 3-9
-        if len(msg.position) >= 10:
-            joint1 = msg.position[3]
-            joint2 = msg.position[4]
-            joint3 = msg.position[5]
-            joint4 = msg.position[6]
-            joint5 = msg.position[7]
-            joint6 = msg.position[8]
-            # joint7 = msg.position[9]
-
-            # print(f"[xArmBridge] Joint values - joint1: {joint1}, joint2: {joint2}, joint3: {joint3}, joint4: {joint4}, joint5: {joint5}, joint6: {joint6}, joint7: {joint7}")
-            self.target_joint_state = [joint1, joint2, joint3, joint4, joint5, joint6]
-        else:
-            print(
-                f"[xArmBridge] Insufficient joint data: expected at least 10 joints, got {len(msg.position)}"
-            )
+        # Create a mapping of joint names to positions
+        joint_map = {}
+        for i, name in enumerate(msg.name):
+            if i < len(msg.position):
+                joint_map[name] = msg.position[i]
+        
+        # Extract joint1 through joint6 values by name
+        joint_values = []
+        missing_joints = []
+        
+        for i in range(1, 7):  # joint1 through joint6
+            joint_name = f"joint{i}"
+            if joint_name in joint_map:
+                joint_values.append(joint_map[joint_name])
+            else:
+                missing_joints.append(joint_name)
+                joint_values.append(0.0)  # Default to 0 if joint not found
+        
+        if missing_joints:
+            print(f"[xArmBridge] Warning: Missing joints in message: {missing_joints}")
+            print(f"[xArmBridge] Available joints: {list(joint_map.keys())}")
+        
+        # Update target joint state
+        self.target_joint_state = joint_values
+        # print(f"[xArmBridge] Updated target joint state: {self.target_joint_state}")
 
     def _reader(self):
         while True:
