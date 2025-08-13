@@ -138,11 +138,11 @@ cpu = [
 
 cuda = [
     "pycuda",
-    "onnxruntime-gpu>=1.17.1,<=1.18.1", # Only versions supporting both cuda11 and cuda12
+    "onnxruntime-gpu>=1.17.1", # Only versions supporting both cuda11 and cuda12
     "ctransformers[cuda]==0.2.27",
     "mmengine>=0.10.3",
     "mmcv>=2.1.0",
-    "xformers",
+    "xformers>=0.0.20",
 
     # Detic GPU stack 
     "mss",
