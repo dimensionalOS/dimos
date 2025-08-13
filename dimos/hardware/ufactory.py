@@ -90,7 +90,9 @@ class UFactoryArm:
         # Validate that we have the correct number of joints
         expected_joints = 7 if self.xarm_type == "xarm7" else 6
         if len(angles) != expected_joints:
-            print(f"[xArmBridge] Error: Expected {expected_joints} joint values for {self.xarm_type}, got {len(angles)}")
+            print(
+                f"[xArmBridge] Error: Expected {expected_joints} joint values for {self.xarm_type}, got {len(angles)}"
+            )
             return
 
         # Clear any errors before sending command
@@ -101,7 +103,9 @@ class UFactoryArm:
                 self.arm.clean_error()
                 self.arm.set_state(0)
 
-        code = self.arm.set_servo_angle_j(angles=list(angles), speed=speed, wait=False, is_radian=is_radian)
+        code = self.arm.set_servo_angle_j(
+            angles=list(angles), speed=speed, wait=False, is_radian=is_radian
+        )
         if code != 0:
             print(f"[xArmBridge] Warning: Command returned code {code}")
         print(f"Moved to angles: {angles}")
@@ -155,7 +159,9 @@ class xArmBridge(Module):
             if max_diff > 0.2:
                 print("[xArmBridge] Using position mode due to large difference")
                 self.arm.enable_position_mode()
-                self.arm.arm.set_servo_angle(angle=self.target_joint_state, speed=3.14, wait=True, is_radian=True)
+                self.arm.arm.set_servo_angle(
+                    angle=self.target_joint_state, speed=3.14, wait=True, is_radian=True
+                )
                 self.arm.enable_joint_mode()
                 return
 
@@ -175,14 +181,14 @@ class xArmBridge(Module):
         for i, name in enumerate(msg.name):
             if i < len(msg.position):
                 joint_map[name] = msg.position[i]
-        
+
         # Determine number of joints based on arm type
         num_joints = 7 if self.arm_type == "xarm7" else 6
-        
+
         # Extract joint values by name
         joint_values = []
         missing_joints = []
-        
+
         for i in range(1, num_joints + 1):  # joint1 through joint6/7
             joint_name = f"joint{i}"
             if joint_name in joint_map:
@@ -190,11 +196,11 @@ class xArmBridge(Module):
             else:
                 missing_joints.append(joint_name)
                 joint_values.append(0.0)  # Default to 0 if joint not found
-        
+
         if missing_joints:
             print(f"[xArmBridge] Warning: Missing joints in message: {missing_joints}")
             print(f"[xArmBridge] Available joints: {list(joint_map.keys())}")
-        
+
         # Update target joint state
         self.prev_joint_state = self.target_joint_state.copy()
         self.target_joint_state = joint_values
@@ -227,7 +233,7 @@ def TestXarmBridge(arm_ip: str = None, arm_type: str = "xArm6"):
 
         while True:
             # print(armBridge.target_joint_state)
-            if (armBridge.target_joint_state != armBridge.prev_joint_state):
+            if armBridge.target_joint_state != armBridge.prev_joint_state:
                 armBridge.command_arm()  # Command the arm  at 50hz with the target joint state
             time.sleep(0.02)
     except KeyboardInterrupt:
