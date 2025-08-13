@@ -43,25 +43,16 @@ class RPCClient(Protocol):
         self, name: str, arguments: Args, cb: Optional[Callable]
     ) -> Optional[Callable[[], Any]]: ...
 
-    # we bootstrap these from the call() implementation above
-    def call_sync(self, name: str, arguments: Args, timeout: float = 1.0) -> Any:
-        res = Empty
+    def call_sync(self, name: str, arguments: Args, rpc_timeout=Optional[float]) -> Any:
         event = threading.Event()
 
         def receive_value(val):
-            nonlocal res
-            res = val
+            event.result = val  # attach to event
             event.set()
 
         self.call(name, arguments, receive_value)
-
-        # Wait for response with a timeout to prevent infinite blocking
-        # Use small timeout chunks to allow for interruption
-        while res is Empty:
-            if event.wait(timeout=0.1):  # 1ms timeout chunks
-                break
-            time.sleep(0.0001)  # 0.1ms
-        return res
+        event.wait(rpc_timeout)
+        return event.result
 
     async def call_async(self, name: str, arguments: Args) -> Any:
         loop = asyncio.get_event_loop()
