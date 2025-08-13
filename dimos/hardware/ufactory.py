@@ -229,7 +229,7 @@ class xArmBridge(Module):
         if missing_joints:
             print(f"[xArmBridge] Warning: Missing joints in message: {missing_joints}")
             print(f"[xArmBridge] Available joints: {list(joint_map.keys())}")
-        
+
         # Updating gripper position
         self.prev_gripper_pos = self.target_gripper_pos
         self.target_gripper_pos = joint_map["drive_joint"] * 1000
