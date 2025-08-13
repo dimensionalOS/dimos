@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime, timezone
-from typing import Generic, Iterable, List, Optional, Tuple, TypedDict, TypeVar, Union
-from sortedcontainers import SortedList
 import bisect
+from datetime import datetime, timezone
+from typing import Generic, Iterable, Optional, Tuple, TypedDict, TypeVar, Union
+
+from sortedcontainers import SortedList
 
 # any class that carries a timestamp should inherit from this
 # this allows us to work with timeseries in consistent way, allign messages, replay etc
@@ -158,6 +159,16 @@ class TimestampedCollection(Generic[T]):
         start_idx = bisect.bisect_left(timestamps, start)
         end_idx = bisect.bisect_right(timestamps, end)
         return TimestampedCollection(self._items[start_idx:end_idx])
+
+    @property
+    def start_ts(self) -> Optional[float]:
+        """Get the start timestamp of the collection."""
+        return self._items[0].ts if self._items else None
+
+    @property
+    def end_ts(self) -> Optional[float]:
+        """Get the end timestamp of the collection."""
+        return self._items[-1].ts if self._items else None
 
     def __len__(self) -> int:
         return len(self._items)
