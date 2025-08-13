@@ -186,6 +186,9 @@ files = [
     "dimos/protocol/**/*.py"
 ]
 
+[project.scripts]
+lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
+
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
 markers = [
