@@ -120,12 +120,35 @@ class UFactoryArm:
         self.arm.set_state(0)
         time.sleep(0.1)
 
+    def initialize_gripper(self):
+        """Initialize the gripper if it exists."""
+        try:
+            print("[xArmBridge] Initializing gripper...")
+            self.arm.set_gripper_mode(0)
+            self.arm.set_gripper_enable(True)
+            self.arm.set_gripper_speed(5000)
+            self.arm.clean_gripper_error()
+        except Exception as e:
+            print(f"[xArmBridge] Error initializing gripper: {e}")
+            err = self.arm.get_gripper_err_code()
+            print(err)
+
+    def set_gripper_pos(self, gripper_pos):
+        """Set the position of the gripper."""
+        try:
+            print(f"[xArmBridge] Setting gripper position to: {gripper_pos}")
+            self.arm.set_gripper_position(gripper_pos)
+        except Exception as e:
+            print(f"[xArmBridge] Error setting gripper position: {e}")
+
 
 class xArmBridge(Module):
     joint_state: In[JointState] = None
     pose_state: Out[JointState] = None
     target_joint_state = None
+    target_gripper_pos = None
     prev_joint_state = None
+    prev_gripper_pos = None
     arm = None
     first_message = True
 
@@ -141,12 +164,15 @@ class xArmBridge(Module):
         else:  # xarm6
             self.target_joint_state = [0, 0, 0, 0, 0, 0]
             self.prev_joint_state = [0, 0, 0, 0, 0, 0]
+        self.target_gripper_pos = 850
+        self.prev_gripper_pos = 850
 
     @rpc
     def start(self):
         # subscribe to incoming LCM JointState messages
         self.arm = UFactoryArm(ip=self.arm_ip, xarm_type=self.arm_type)
         self.arm.enable()
+        self.arm.initialize_gripper()
         # print(f"Initialized xArmBridge with arm type: {self.arm.xarm_type}")
         self.joint_state.subscribe(self._on_joint_state)
         # print(f"Subscribed to {self.joint_state}")
@@ -169,6 +195,9 @@ class xArmBridge(Module):
             self.arm.cmd_joint_angles(self.target_joint_state, speed=3.14, is_radian=True)
         except Exception as e:
             print(f"[xArmBridge] Error commanding arm: {e}")
+
+    def set_gripper_pos(self, gripper_pos):
+        self.arm.set_gripper_pos(gripper_pos)
 
     def _on_joint_state(self, msg: JointState):
         # print(f"[xArmBridge] Received joint state: {msg}")
@@ -200,6 +229,10 @@ class xArmBridge(Module):
         if missing_joints:
             print(f"[xArmBridge] Warning: Missing joints in message: {missing_joints}")
             print(f"[xArmBridge] Available joints: {list(joint_map.keys())}")
+        
+        # Updating gripper position
+        self.prev_gripper_pos = self.target_gripper_pos
+        self.target_gripper_pos = joint_map["drive_joint"] * 1000
 
         # Update target joint state
         self.prev_joint_state = self.target_joint_state.copy()
@@ -235,6 +268,8 @@ def TestXarmBridge(arm_ip: str = None, arm_type: str = "xArm6"):
             # print(armBridge.target_joint_state)
             if armBridge.target_joint_state != armBridge.prev_joint_state:
                 armBridge.command_arm()  # Command the arm  at 50hz with the target joint state
+            if armBridge.target_gripper_pos != armBridge.prev_gripper_pos:
+                armBridge.set_gripper_pos(armBridge.target_gripper_pos)
             time.sleep(0.02)
     except KeyboardInterrupt:
         print("\nShutting down gracefully...")
