@@ -18,23 +18,11 @@ from pprint import pprint
 import pytest
 
 from dimos.protocol.skill.coordinator import SkillCoordinator
-from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.protocol.skill.testing_utils import TestContainer
 
 
-class TestContainer2(SkillContainer):
-    @skill()
-    def add(self, x: int, y: int) -> int:
-        return x + y
-
-    @skill()
-    def delayadd(self, x: int, y: int) -> int:
-        time.sleep(0.5)
-        return x + y
-
-
 @pytest.mark.asyncio
-async def test_coordinator_generator():
+async def test_coordinator_parallel_calls():
     skillCoordinator = SkillCoordinator()
     skillCoordinator.register_skills(TestContainer())
 
@@ -67,4 +55,27 @@ async def test_coordinator_generator():
 
         time.sleep(0.1 * cnt)
 
-    print("All updates processed successfully.")
+
+@pytest.mark.asyncio
+async def test_coordinator_generator():
+    skillCoordinator = SkillCoordinator()
+    skillCoordinator.register_skills(TestContainer())
+
+    skillCoordinator.start()
+    skillCoordinator.call_skill("test-call-0", "counter", {"args": [10]})
+
+    skillstate = None
+    while await skillCoordinator.wait_for_updates(1):
+        skillstate = skillCoordinator.generate_snapshot(clear=True)
+        print("Skill State:", skillstate)
+        print("Agent update:", skillstate["test-call-0"].agent_encode())
+        # we simulate agent thinking
+        await asyncio.sleep(0.25)
+
+    print("Skill lifecycle finished")
+    print(
+        "All messages:"
+        + "".join(
+            map(lambda x: f"\n  {x}", skillstate["test-call-0"].messages),
+        ),
+    )

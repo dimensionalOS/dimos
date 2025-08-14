@@ -85,8 +85,13 @@ class SkillState(TimestampedCollection):
         self.call_id = call_id
         self.name = name
 
+    @property
+    def messages(self) -> List[SkillMsg]:
+        return self._items
+
     def agent_encode(self) -> ToolMessage:
-        last_msg = self._items[-1]
+        # here we need to process streamed messages depending on the reducer
+        last_msg = self.messages[-1]
         return ToolMessage(last_msg.content, name=self.name, tool_call_id=self.call_id)
 
     # returns True if the agent should be called for this message
@@ -137,7 +142,7 @@ class SkillState(TimestampedCollection):
         parts.append(Text(f"{self.duration():.2f}s"))
 
         if len(self):
-            parts.append(Text(f", last_msg={self._items[-1]})"))
+            parts.append(Text(f", last_msg={self.messages[-1]})"))
         else:
             parts.append(Text(", No Messages)"))
 
@@ -254,7 +259,7 @@ class SkillCoordinator(SkillContainer):
     #
     # Checks if agent needs to be notified (if ToolConfig has Return=call_agent or Stream=call_agent)
     def handle_message(self, msg: SkillMsg) -> None:
-        logger.info(f"{msg.skill_name}, {msg.call_id} - {msg}")
+        logger.info(f"SkillMsg from {msg.skill_name}, {msg.call_id} - {msg}")
 
         if self._skill_state.get(msg.call_id) is None:
             logger.warn(

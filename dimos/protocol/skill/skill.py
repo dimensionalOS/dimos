@@ -161,10 +161,19 @@ class SkillContainer(Configurable[SkillContainerConfig]):
 
             # check if the skill is a generator, if it is, we need to iterate over it
             if hasattr(val, "__iter__") and not isinstance(val, str):
+                last_value = None
                 for v in val:
-                    self.skill_transport.publish(SkillMsg(call_id, skill, v, type=MsgType.stream))
+                    last_value = v
+                    self.skill_transport.publish(
+                        SkillMsg(call_id, skill_name, v, type=MsgType.stream)
+                    )
+                self.skill_transport.publish(
+                    SkillMsg(call_id, skill_name, last_value, type=MsgType.ret)
+                )
 
-            self.skill_transport.publish(SkillMsg(call_id, skill, val, type=MsgType.ret))
+            else:
+                self.skill_transport.publish(SkillMsg(call_id, skill_name, val, type=MsgType.ret))
+
         except Exception as e:
             import traceback
 

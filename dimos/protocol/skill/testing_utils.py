@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import time
+from typing import Generator, Optional
 
 from dimos.protocol.skill.skill import SkillContainer, skill
+from dimos.protocol.skill.type import Reducer, Return, Stream
 
 
 class TestContainer(SkillContainer):
@@ -26,3 +28,11 @@ class TestContainer(SkillContainer):
     def delayadd(self, x: int, y: int) -> int:
         time.sleep(0.3)
         return x + y
+
+    @skill(stream=Stream.call_agent)
+    def counter(self, count_to: int, delay: Optional[float] = 0.1) -> Generator[int, None, None]:
+        """Counts from 1 to count_to, with an optional delay between counts."""
+        for i in range(1, count_to + 1):
+            if delay > 0:
+                time.sleep(delay)
+            yield i
