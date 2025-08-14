@@ -251,7 +251,7 @@ class SkillCoordinator(SkillContainer):
 
         # This initializes the skill state if it doesn't exist
         self._skill_state[call_id] = SkillState(
-            name=skill_name, skill_config=skill_config, call_id=call_id
+            call_id=call_id, name=skill_name, skill_config=skill_config
         )
 
         return skill_config.call(call_id, *args.get("args", []), **args.get("kwargs", {}))

@@ -150,7 +150,7 @@ class SkillContainer(Configurable[SkillContainerConfig]):
             raise ValueError(f"Function '{skill_name}' in {self.__class__.__name__} is not a skill")
 
         # we notify the skill transport about the start of the skill call
-        self.skill_transport.publish(SkillMsg(call_id, skill, None, type=MsgType.start))
+        self.skill_transport.publish(SkillMsg(call_id, skill_name, None, type=MsgType.start))
 
         try:
             val = f(*args, **kwargs)
@@ -182,7 +182,7 @@ class SkillContainer(Configurable[SkillContainerConfig]):
             self.skill_transport.publish(
                 SkillMsg(
                     call_id,
-                    skill,
+                    skill_name,
                     {"msg": str(e), "traceback": formatted_traceback},
                     type=MsgType.error,
                 )
