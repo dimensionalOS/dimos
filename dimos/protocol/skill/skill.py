@@ -40,16 +40,7 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
                 del kwargs["call_id"]
 
                 def run_function():
-                    self.skill_transport.publish(SkillMsg(call_id, skill, None, type=MsgType.start))
-                    try:
-                        val = f(self, *args, **kwargs)
-                        self.skill_transport.publish(
-                            SkillMsg(call_id, skill, val, type=MsgType.ret)
-                        )
-                    except Exception as e:
-                        self.skill_transport.publish(
-                            SkillMsg(call_id, skill, str(e), type=MsgType.error)
-                        )
+                    return self.call_skill(call_id, skill, args, kwargs)
 
                 thread = threading.Thread(target=run_function)
                 thread.start()
@@ -93,6 +84,32 @@ class SkillContainer(Configurable[SkillContainerConfig]):
 
     def __str__(self) -> str:
         return f"SkillContainer({self.__class__.__name__})"
+
+    def call_skill(
+        self, call_id: str, skill_name: str, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> None:
+        f = getattr(self, skill_name, None)
+
+        if f is None:
+            raise ValueError(f"Skill '{skill_name}' not found in {self.__class__.__name__}")
+
+        self.skill_transport.publish(SkillMsg(call_id, skill, None, type=MsgType.start))
+        try:
+            val = f(*args, **kwargs)
+            self.skill_transport.publish(SkillMsg(call_id, skill, val, type=MsgType.ret))
+        except Exception as e:
+            import traceback
+
+            formatted_traceback = "".join(traceback.TracebackException.from_exception(e).format())
+
+            self.skill_transport.publish(
+                SkillMsg(
+                    call_id,
+                    skill,
+                    {"msg": str(e), "traceback": formatted_traceback},
+                    type=MsgType.error,
+                )
+            )
 
     @rpc
     def skills(self) -> dict[str, SkillConfig]:

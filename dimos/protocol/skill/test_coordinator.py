@@ -39,8 +39,7 @@ async def test_coordinator_generator():
     skillCoordinator.register_skills(TestContainer())
 
     skillCoordinator.start()
-
-    skillCoordinator.call("test-call-0", "delayadd", {"args": [1, 2]})
+    skillCoordinator.call_skill("test-call-0", "delayadd", {"args": [1, 2]})
 
     time.sleep(0.1)
 
@@ -55,12 +54,12 @@ async def test_coordinator_generator():
 
         cnt += 1
         if cnt < 5:
-            skillCoordinator.call(
+            skillCoordinator.call_skill(
                 f"test-call-{cnt}-delay",
                 "delayadd",
                 {"args": [cnt, 2]},
             )
-            skillCoordinator.call(
+            skillCoordinator.call_skill(
                 f"test-call-{cnt}",
                 "add",
                 {"args": [cnt, 2]},

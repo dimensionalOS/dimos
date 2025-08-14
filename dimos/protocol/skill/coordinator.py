@@ -72,6 +72,7 @@ class SkillState(TimestampedCollection):
     name: str
     state: SkillStateEnum
     skill_config: SkillConfig
+    value: Optional[Any] = None
 
     def __init__(self, call_id: str, name: str, skill_config: Optional[SkillConfig] = None) -> None:
         super().__init__()
@@ -104,11 +105,13 @@ class SkillState(TimestampedCollection):
 
         if msg.type == MsgType.ret:
             self.state = SkillStateEnum.completed
+            self.value = msg.content
             if self.skill_config.ret == Return.call_agent:
                 return True
             return False
 
         if msg.type == MsgType.error:
+            self.value = msg.content
             self.state = SkillStateEnum.error
             return True
 
@@ -218,14 +221,14 @@ class SkillCoordinator(SkillContainer):
         """Execute a list of tool calls from the agent."""
         for tool_call in tool_calls:
             logger.info(f"executing skill call {tool_call}")
-            self.call(
+            self.call_skill(
                 tool_call.get("id"),
                 tool_call.get("name"),
                 tool_call.get("args"),
             )
 
     # internal skill call
-    def call(self, call_id: str, skill_name: str, args: dict[str, Any]) -> None:
+    def call_skill(self, call_id: str, skill_name: str, args: dict[str, Any]) -> None:
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
             logger.error(
@@ -237,6 +240,7 @@ class SkillCoordinator(SkillContainer):
         self._skill_state[call_id] = SkillState(
             name=skill_name, skill_config=skill_config, call_id=call_id
         )
+
         return skill_config.call(call_id, *args.get("args", []), **args.get("kwargs", {}))
 
     # Receives a message from active skill
@@ -297,7 +301,13 @@ class SkillCoordinator(SkillContainer):
                     logger.info(f"Skill {skill_run.name} (call_id={call_id}) finished")
                     to_delete.append(call_id)
                 if skill_run.state == SkillStateEnum.error:
-                    logger.error(f"Skill run error for {skill_run.name} (call_id={call_id})")
+                    error_msg = skill_run.value.get("msg", "Unknown error")
+                    error_traceback = skill_run.value.get("traceback", "No traceback available")
+
+                    logger.error(
+                        f"Skill error for {skill_run.name} (call_id={call_id}): {error_msg}"
+                    )
+                    print(error_traceback)
                     to_delete.append(call_id)
 
             for call_id in to_delete:
