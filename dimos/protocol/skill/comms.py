@@ -22,8 +22,10 @@ from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service import Service
 from dimos.protocol.skill.type import SkillMsg
 
-
 # defines a protocol for communication between skills and agents
+# it has simple requirements of pub/sub semantics capable of sending and receiving SkillMsg objects
+
+
 class SkillCommsSpec:
     @abstractmethod
     def publish(self, msg: SkillMsg) -> None: ...
@@ -44,11 +46,12 @@ TopicT = TypeVar("TopicT")
 
 @dataclass
 class PubSubCommsConfig(Generic[TopicT, MsgT]):
-    topic: Optional[TopicT] = None  # Required field but needs default for dataclass inheritance
+    topic: Optional[TopicT] = None
     pubsub: Union[type[PubSub[TopicT, MsgT]], PubSub[TopicT, MsgT], None] = None
     autostart: bool = True
 
 
+# implementation of the SkillComms using any standard PubSub mechanism
 class PubSubComms(Service[PubSubCommsConfig], SkillCommsSpec):
     default_config: type[PubSubCommsConfig] = PubSubCommsConfig
 
