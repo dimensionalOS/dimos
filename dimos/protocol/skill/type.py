@@ -15,11 +15,11 @@
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable
+from typing import Any, Callable, Generic, Literal, Optional, TypeVar
 
 from dimos.types.timestamped import Timestamped
 
-# defines protocol messages used for communication between skills and agents
+# This file defines protocol messages used for communication between skills and agents
 
 
 class Call(Enum):
@@ -97,13 +97,17 @@ class MsgType(Enum):
     pending = 0
     start = 1
     stream = 2
-    ret = 3
-    error = 4
+    reduced = 3
+    ret = 4
+    error = 5
 
 
-class SkillMsg(Timestamped):
+M = TypeVar("M", bound="MsgType")
+
+
+class SkillMsg(Timestamped, Generic[M]):
     ts: float
-    type: MsgType
+    type: M
     call_id: str
     skill_name: str
     content: str | int | float | dict | list
@@ -113,7 +117,7 @@ class SkillMsg(Timestamped):
         call_id: str,
         skill_name: str,
         content: str | int | float | dict | list,
-        type: MsgType = MsgType.ret,
+        type: M,
     ) -> None:
         self.ts = time.time()
         self.call_id = call_id
@@ -145,3 +149,15 @@ class SkillMsg(Timestamped):
             return f"Pending({time_ago:.1f}s ago)"
         if self.type == MsgType.stream:
             return f"Stream({time_ago:.1f}s ago, val={self.content})"
+
+
+# Reducers take stream messages, combine them and return a reduced message.
+type ReducerFunction = Callable[
+    [
+        list[
+            SkillMsg[Literal[MsgType.Stream]],
+            Optional[SkillMsg[Literal[MsgType.Reduced]]],
+        ],
+        SkillMsg[Literal[MsgType.Reduced]],
+    ]
+]

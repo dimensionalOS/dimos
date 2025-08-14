@@ -91,6 +91,8 @@ class SkillState(TimestampedCollection):
 
     def agent_encode(self) -> ToolMessage:
         # here we need to process streamed messages depending on the reducer
+        # we also want to reduce the messages we are storing so that long running streams
+        # don't fill up the memory
         last_msg = self.messages[-1]
         return ToolMessage(last_msg.content, name=self.name, tool_call_id=self.call_id)
 
