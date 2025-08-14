@@ -124,14 +124,14 @@ class ConnectionModule(Module):
     lidar: Out[LidarMessage] = None
     video: Out[Image] = None
     ip: str
-    playback: bool
+    connection_type: str = "webrtc"
 
     _odom: PoseStamped = None
     _lidar: LidarMessage = None
 
-    def __init__(self, ip: str = None, playback: bool = False, *args, **kwargs):
+    def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
         self.ip = ip
-        self.playback = playback
+        self.connection_type = connection_type
         self.tf = TF()
         self.connection = None
         Module.__init__(self, *args, **kwargs)
@@ -139,10 +139,18 @@ class ConnectionModule(Module):
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
-        if self.playback:
-            self.connection = FakeRTC(self.ip)
-        else:
-            self.connection = UnitreeWebRTCConnection(self.ip)
+        match self.connection_type:
+            case "webrtc":
+                self.connection = UnitreeWebRTCConnection(self.ip)
+            case "fake":
+                self.connection = FakeRTC(self.ip)
+            case "mujoco":
+                from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+
+                self.connection = MujocoConnection()
+                self.connection.start()
+            case _:
+                raise ValueError(f"Unknown connection type: {self.connection_type}")
 
         # Connect sensor streams to outputs
         self.connection.lidar_stream().subscribe(self.lidar.publish)
@@ -208,7 +216,7 @@ class UnitreeGo2(Robot):
         output_dir: str = None,
         websocket_port: int = 7779,
         skill_library: Optional[SkillLibrary] = None,
-        playback: bool = False,
+        connection_type: Optional[str] = "webrtc",
     ):
         """Initialize the robot system.
 
@@ -221,7 +229,9 @@ class UnitreeGo2(Robot):
         """
         super().__init__()
         self.ip = ip
-        self.playback = playback or (ip is None)  # Auto-enable playback if no IP provided
+        self.connection_type = connection_type or "webrtc"
+        if ip is None and self.connection_type == "webrtc":
+            self.connection_type = "fake"  # Auto-enable playback if no IP provided
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.websocket_port = websocket_port
         self.lcm = LCM()
@@ -291,7 +301,9 @@ class UnitreeGo2(Robot):
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
-        self.connection = self.dimos.deploy(ConnectionModule, self.ip, playback=self.playback)
+        self.connection = self.dimos.deploy(
+            ConnectionModule, self.ip, connection_type=self.connection_type
+        )
 
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
@@ -300,7 +312,10 @@ class UnitreeGo2(Robot):
 
     def _deploy_mapping(self):
         """Deploy and configure the mapping module."""
-        self.mapper = self.dimos.deploy(Map, voxel_size=0.5, global_publish_interval=2.5)
+        min_height = 0.3 if self.connection_type == "mujoco" else 0.15
+        self.mapper = self.dimos.deploy(
+            Map, voxel_size=0.5, global_publish_interval=2.5, min_height=min_height
+        )
 
         self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
         self.mapper.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)
@@ -597,10 +612,11 @@ class UnitreeGo2(Robot):
 def main():
     """Main entry point."""
     ip = os.getenv("ROBOT_IP")
+    connection_type = os.getenv("CONNECTION_TYPE", "webrtc")
 
     pubsub.lcm.autoconf()
 
-    robot = UnitreeGo2(ip=ip, websocket_port=7779, playback=False)
+    robot = UnitreeGo2(ip=ip, websocket_port=7779, connection_type=connection_type)
     robot.start()
 
     try:
