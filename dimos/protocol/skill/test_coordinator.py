@@ -62,13 +62,13 @@ async def test_coordinator_generator():
     skillCoordinator.register_skills(TestContainer())
 
     skillCoordinator.start()
-    skillCoordinator.call_skill("test-call-0", "counter", {"args": [10]})
+    skillCoordinator.call_skill("test-gen-0", "counter", {"args": [10]})
 
     skillstate = None
     while await skillCoordinator.wait_for_updates(1):
         skillstate = skillCoordinator.generate_snapshot(clear=True)
         print("Skill State:", skillstate)
-        print("Agent update:", skillstate["test-call-0"].agent_encode())
+        print("Agent update:", skillstate["test-gen-0"].agent_encode())
         # we simulate agent thinking
         await asyncio.sleep(0.25)
 
@@ -76,6 +76,6 @@ async def test_coordinator_generator():
     print(
         "All messages:"
         + "".join(
-            map(lambda x: f"\n  {x}", skillstate["test-call-0"].messages),
+            map(lambda x: f"\n  {x}", skillstate["test-gen-0"].messages),
         ),
     )
