@@ -29,6 +29,31 @@ from dimos.protocol.skill.type import (
     Stream,
 )
 
+# skill is a decorator that allows us to specify a skill behaviour for a function.
+#
+# there are several parameters that can be specified:
+# - ret: how to return the value from the skill, can be one of:
+#
+#        Return.none: doesn't return anything to an agent
+#        Return.passive: doesn't schedule an agent call but
+#                        returns the value to the agent when agent is called
+#        Return.call_agent: calls the agent with the value, scheduling an agent call
+#
+# - stream: if the skill streams values, it can behave in several ways:
+#
+#        Stream.none: no streaming, skill doesn't emit any values
+#        Stream.passive: doesn't schedule an agent call upon emitting a value,
+#                        returns the streamed value to the agent when agent is called
+#        Stream.call_agent: calls the agent with every value emitted, scheduling an agent call
+#
+# - reducer: defines an optional strategy for passive streams and how we collapse potential
+#            multiple values into something meaningful for the agent
+#
+#        Reducer.none: no reduction, every emitted value is returned to the agent
+#        Reducer.latest: only the latest value is returned to the agent
+#        Reducer.average: assumes the skill emits a number,
+#                         the average of all values is returned to the agent
+
 
 def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
     def decorator(f: Callable[..., Any]) -> Any:
@@ -74,8 +99,19 @@ class SkillContainerConfig:
     skill_transport: type[SkillCommsSpec] = LCMSkillComms
 
 
-# here we can have also dynamic skills potentially
-# agent can check .skills each time when introspecting
+# Inherited by any class that wants to provide skills
+# (This component works standalone but commonly used by DimOS modules)
+#
+# - It allows us to specify a communication layer for skills (LCM for now by default)
+# - introspection of available skills via the `skills` RPC method
+# - ability to provide dynamic context dependant skills with dynamic_skills flag
+#   for this you'll need to override the `skills` method to return a dynamic set of skills
+#   SkillCoordinator will call this method to get the skills available upon every request to
+#   the agent
+#
+#
+# Hosts the function execution and handles correct publishing of skill messages
+# according to the skill decorator configuration
 class SkillContainer(Configurable[SkillContainerConfig]):
     default_config = SkillContainerConfig
     _skill_transport: Optional[SkillCommsSpec] = None

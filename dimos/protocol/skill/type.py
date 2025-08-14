@@ -27,9 +27,8 @@ class Call(Enum):
 
 class Reducer(Enum):
     none = 0
-    all = 1
-    latest = 2
-    average = 3
+    latest = 1
+    average = 2
 
 
 class Stream(Enum):

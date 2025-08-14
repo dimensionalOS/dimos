@@ -65,8 +65,8 @@ class SkillStateEnum(Enum):
 
 
 # TODO pending timeout, running timeout, etc.
-# This object maintains the state of a skill run
-# It is used to track the skill's progress, messages, and state
+#
+# This object maintains the state of a skill run on a caller end
 class SkillState(TimestampedCollection):
     call_id: str
     name: str
@@ -152,6 +152,7 @@ class SkillState(TimestampedCollection):
         return capture.get()
 
 
+# subclassed the dict just to have a better string representation
 class SkillStateDict(dict[str, SkillState]):
     """Custom dict for skill states with better string representation."""
 
@@ -168,6 +169,11 @@ class SkillStateDict(dict[str, SkillState]):
         return "\n".join(lines)
 
 
+# This class is responsible for managing the lifecycle of skills,
+# handling skill calls, and coordinating communication between the agent and skills.
+#
+# It aggregates skills from static and dynamic containers, manages skill states,
+# and decides when to notify the agent about updates.
 class SkillCoordinator(SkillContainer):
     default_config = SkillCoordinatorConfig
     empty: bool = True
