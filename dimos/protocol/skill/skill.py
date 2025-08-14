@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -87,7 +88,7 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
 
         # implicit RPC call as well
         wrapper.__rpc__ = True  # type: ignore[attr-defined]
-        wrapper._skill = skill_config  # type: ignore[attr-defined]
+        wrapper._skill_config = skill_config  # type: ignore[attr-defined]
         wrapper.__name__ = f.__name__  # Preserve original function name
         wrapper.__doc__ = f.__doc__  # Preserve original docstring
         return wrapper
@@ -133,7 +134,8 @@ class SkillContainer(Configurable[SkillContainerConfig]):
     def __str__(self) -> str:
         return f"SkillContainer({self.__class__.__name__})"
 
-    # same interface as coordinator call_skill
+    # TODO: figure out standard args/kwargs passing format,
+    # use same interface as skill coordinator call_skill method
     @threaded
     def call_skill(
         self, call_id: str, skill_name: str, args: tuple[Any, ...], kwargs: dict[str, Any]
@@ -141,11 +143,27 @@ class SkillContainer(Configurable[SkillContainerConfig]):
         f = getattr(self, skill_name, None)
 
         if f is None:
-            raise ValueError(f"Skill '{skill_name}' not found in {self.__class__.__name__}")
+            raise ValueError(f"Function '{skill_name}' not found in {self.__class__.__name__}")
 
+        config = getattr(f, "_skill_config", None)
+        if config is None:
+            raise ValueError(f"Function '{skill_name}' in {self.__class__.__name__} is not a skill")
+
+        # we notify the skill transport about the start of the skill call
         self.skill_transport.publish(SkillMsg(call_id, skill, None, type=MsgType.start))
+
         try:
             val = f(*args, **kwargs)
+
+            # check if the skill returned a coroutine, if it is, block until it resolves
+            if isinstance(val, asyncio.Future):
+                val = asyncio.run(val)
+
+            # check if the skill is a generator, if it is, we need to iterate over it
+            if hasattr(val, "__iter__") and not isinstance(val, str):
+                for v in val:
+                    self.skill_transport.publish(SkillMsg(call_id, skill, v, type=MsgType.stream))
+
             self.skill_transport.publish(SkillMsg(call_id, skill, val, type=MsgType.ret))
         except Exception as e:
             import traceback
@@ -165,11 +183,11 @@ class SkillContainer(Configurable[SkillContainerConfig]):
     def skills(self) -> dict[str, SkillConfig]:
         # Avoid recursion by excluding this property itself
         return {
-            name: getattr(self, name)._skill
+            name: getattr(self, name)._skill_config
             for name in dir(self)
             if not name.startswith("_")
             and name != "skills"
-            and hasattr(getattr(self, name), "_skill")
+            and hasattr(getattr(self, name), "_skill_config")
         }
 
     @property
