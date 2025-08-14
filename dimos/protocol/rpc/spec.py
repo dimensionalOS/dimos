@@ -51,7 +51,8 @@ class RPCClient(Protocol):
             event.set()
 
         self.call(name, arguments, receive_value)
-        event.wait(rpc_timeout)
+        if not event.wait(rpc_timeout):
+            raise TimeoutError(f"RPC call to '{name}' timed out after {rpc_timeout} seconds")
         return event.result
 
     async def call_async(self, name: str, arguments: Args) -> Any:
