@@ -107,7 +107,7 @@ class WavefrontFrontierExplorer(Module):
         lookahead_distance: float = 5.0,
         max_explored_distance: float = 10.0,
         info_gain_threshold: float = 0.03,
-        num_no_gain_attempts: int = 4,
+        num_no_gain_attempts: int = 2,
         goal_timeout: float = 15.0,
         **kwargs,
     ):
@@ -639,7 +639,7 @@ class WavefrontFrontierExplorer(Module):
                         logger.info(
                             f"No information gain for {self.no_gain_counter} consecutive attempts"
                         )
-                        self.reset_exploration_session()
+                        self.stop_exploration()
                         return None
                 else:
                     self.no_gain_counter = 0

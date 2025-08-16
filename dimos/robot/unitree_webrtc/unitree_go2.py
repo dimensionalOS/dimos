@@ -527,6 +527,7 @@ class UnitreeGo2(Robot):
         Returns:
             True if exploration was stopped
         """
+        self.navigator.cancel_goal()
         return self.frontier_explorer.stop_exploration()
 
     def cancel_navigation(self) -> bool:

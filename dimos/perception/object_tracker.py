@@ -97,7 +97,7 @@ class ObjectTracking(Module):
         self.last_roi_bbox = None  # Store last ROI bbox for visualization
         self.reid_confirmed = False  # Store current reid confirmation state
 
-        # For tracking latest frame data
+        self._frame_lock = threading.Lock()
         self._latest_rgb_frame: Optional[np.ndarray] = None
         self._latest_depth_frame: Optional[np.ndarray] = None
         self._latest_camera_info: Optional[CameraInfo] = None
@@ -122,13 +122,15 @@ class ObjectTracking(Module):
 
         # Subscribe to rgb image stream
         def on_rgb(image_msg: Image):
-            self._latest_rgb_frame = image_msg.data
+            with self._frame_lock:
+                self._latest_rgb_frame = image_msg.data
 
         self.color_image.subscribe(on_rgb)
 
         # Subscribe to depth stream
         def on_depth(image_msg: Image):
-            self._latest_depth_frame = image_msg.data
+            with self._frame_lock:
+                self._latest_depth_frame = image_msg.data
 
         self.depth.subscribe(on_depth)
 
@@ -328,10 +330,15 @@ class ObjectTracking(Module):
 
     def _process_tracking(self):
         """Process current frame for tracking and publish detections."""
-        if self._latest_rgb_frame is None or self.tracker is None or not self.tracking_initialized:
+        if self.tracker is None or not self.tracking_initialized:
             return
 
-        frame = self._latest_rgb_frame
+        # Get local copies of frames under lock
+        with self._frame_lock:
+            if self._latest_rgb_frame is None:
+                return
+            frame = self._latest_rgb_frame.copy()
+            depth_frame = self._latest_depth_frame.copy()
         tracker_succeeded = False
         reid_confirmed_this_frame = False
         final_success = False
@@ -409,9 +416,9 @@ class ObjectTracking(Module):
             detection2darray.detections = [detection_2d]
 
             # Create Detection3D if depth is available
-            if self._latest_depth_frame is not None:
+            if depth_frame is not None:
                 # Calculate 3D position using depth and camera intrinsics
-                depth_value = self._get_depth_from_bbox(current_bbox_x1y1x2y2)
+                depth_value = self._get_depth_from_bbox(current_bbox_x1y1x2y2, depth_frame)
                 if (
                     depth_value is not None
                     and depth_value > 0
@@ -486,7 +493,7 @@ class ObjectTracking(Module):
         self.detection3darray.publish(detection3darray)
 
         # Create and publish visualization if tracking is active
-        if self.tracking_initialized and self._latest_rgb_frame is not None:
+        if self.tracking_initialized:
             # Convert single detection to list for visualization
             detections_3d = (
                 detection3darray.detections if detection3darray.detections_length > 0 else []
@@ -508,7 +515,7 @@ class ObjectTracking(Module):
 
                 # Create visualization
                 viz_image = visualize_detections_3d(
-                    self._latest_rgb_frame, detections_3d, show_coordinates=True, bboxes_2d=bbox_2d
+                    frame, detections_3d, show_coordinates=True, bboxes_2d=bbox_2d
                 )
 
                 # Overlay REID feature matches if available
@@ -558,21 +565,29 @@ class ObjectTracking(Module):
 
         return viz_image
 
-    def _get_depth_from_bbox(self, bbox: List[int]) -> Optional[float]:
-        """Calculate depth from bbox using the 25th percentile of closest points."""
-        if self._latest_depth_frame is None:
+    def _get_depth_from_bbox(self, bbox: List[int], depth_frame: np.ndarray) -> Optional[float]:
+        """Calculate depth from bbox using the 25th percentile of closest points.
+
+        Args:
+            bbox: Bounding box coordinates [x1, y1, x2, y2]
+            depth_frame: Depth frame to extract depth values from
+
+        Returns:
+            Depth value or None if not available
+        """
+        if depth_frame is None:
             return None
 
         x1, y1, x2, y2 = bbox
 
         # Ensure bbox is within frame bounds
         y1 = max(0, y1)
-        y2 = min(self._latest_depth_frame.shape[0], y2)
+        y2 = min(depth_frame.shape[0], y2)
         x1 = max(0, x1)
-        x2 = min(self._latest_depth_frame.shape[1], x2)
+        x2 = min(depth_frame.shape[1], x2)
 
         # Extract depth values from the entire bbox
-        roi_depth = self._latest_depth_frame[y1:y2, x1:x2]
+        roi_depth = depth_frame[y1:y2, x1:x2]
 
         # Get valid (finite and positive) depth values
         valid_depths = roi_depth[np.isfinite(roi_depth) & (roi_depth > 0)]
