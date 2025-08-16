@@ -98,6 +98,7 @@ class UnitreeCameraModule(Module):
         self._last_image = None
         self._last_timestamp = None
         self._last_depth = None
+        self._cannot_process_depth = False
 
         # Threading
         self._processing_thread: Optional[threading.Thread] = None
@@ -182,6 +183,10 @@ class UnitreeCameraModule(Module):
 
     def _process_depth(self, img_array: np.ndarray):
         """Process depth estimation using Metric3D."""
+        if self._cannot_process_depth:
+            self._last_depth = None
+            return
+
         try:
             logger.debug(f"Processing depth for image shape: {img_array.shape}")
 
@@ -195,6 +200,7 @@ class UnitreeCameraModule(Module):
 
         except Exception as e:
             logger.error(f"Error processing depth: {e}", exc_info=True)
+            self._cannot_process_depth = True
 
     def _publish_synchronized_data(self):
         """Publish all data synchronously."""

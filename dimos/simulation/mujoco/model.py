@@ -24,18 +24,14 @@ from mujoco_playground._src import mjx_env
 from dimos.simulation.mujoco.policy import OnnxController
 from dimos.simulation.mujoco.types import InputController
 
-RANGE_FINDER_MAX_RANGE = 4
-RANGE_FINDER_MIN_RANGE = 0.2
-LIDAR_RESOLUTION = 0.05
-VIDEO_FREQUENCY = 30
-DEPTH_CAMERA_FOV = 160
-
 _HERE = epath.Path(__file__).parent
 
 
 def get_assets() -> dict[str, bytes]:
+    # Assets used from https://sketchfab.com/3d-models/mersus-office-8714be387bcd406898b2615f7dae3a47
+    # Created by Ryan Cassidy and Coleman Costello
     assets: dict[str, bytes] = {}
-    assets_path = _HERE / "../../../assets/robots/go1"
+    assets_path = _HERE / "../../../data/mujoco_sim/go1"
     mjx_env.update_assets(assets, assets_path, "*.xml")
     mjx_env.update_assets(assets, assets_path / "assets")
     path = mjx_env.MENAGERIE_PATH / "unitree_go1"
@@ -48,7 +44,7 @@ def load_model(input_device: InputController, model=None, data=None):
     mujoco.set_mjcb_control(None)
 
     model = mujoco.MjModel.from_xml_path(
-        (_HERE / "../../../assets/robots/go1/robot.xml").as_posix(),
+        (_HERE / "../../../data/mujoco_sim/go1/robot.xml").as_posix(),
         assets=get_assets(),
     )
     data = mujoco.MjData(model)
@@ -56,12 +52,12 @@ def load_model(input_device: InputController, model=None, data=None):
     mujoco.mj_resetDataKeyframe(model, data, 0)
 
     ctrl_dt = 0.02
-    sim_dt = 0.004
+    sim_dt = 0.01
     n_substeps = int(round(ctrl_dt / sim_dt))
     model.opt.timestep = sim_dt
 
     policy = OnnxController(
-        policy_path=(_HERE / "../../../assets/policies/go1_policy.onnx").as_posix(),
+        policy_path=(_HERE / "../../../data/mujoco_sim/go1/go1_policy.onnx").as_posix(),
         default_angles=np.array(model.keyframe("home").qpos[7:]),
         n_substeps=n_substeps,
         action_scale=0.5,

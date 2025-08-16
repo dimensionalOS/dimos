@@ -26,6 +26,7 @@ from reactivex import Observable
 
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.utils.data import get_data
 
 try:
     from dimos.simulation.mujoco.mujoco import MujocoThread
@@ -43,6 +44,7 @@ class MujocoConnection:
     def __init__(self, *args, **kwargs):
         if MujocoThread is None:
             raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
+        get_data("mujoco_sim")
         self.mujoco_thread = MujocoThread()
         self._stream_threads: List[threading.Thread] = []
         self._stop_events: List[threading.Event] = []
