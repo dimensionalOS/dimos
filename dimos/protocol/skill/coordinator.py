@@ -13,11 +13,12 @@
 # limitations under the License.
 
 import asyncio
+import json
 import time
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, List, Literal, Optional
+from typing import Any, List, Literal, Optional, Union
 
 from langchain_core.messages import (
     AIMessage,
@@ -37,7 +38,6 @@ from dimos.core.module import get_loop
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
 from dimos.protocol.skill.type import MsgType, Reducer, Return, SkillMsg, Stream
-from dimos.types.timestamped import TimestampedCollection
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.protocol.skill.coordinator")
@@ -65,8 +65,6 @@ class SkillStateEnum(Enum):
         return Text(self.name, style=colors.get(self, "white"))
 
 
-# TODO pending timeout, running timeout, etc.
-#
 # This object maintains the state of a skill run on a caller end
 class SkillState:
     call_id: str
@@ -75,6 +73,7 @@ class SkillState:
     skill_config: SkillConfig
 
     msg_count: int = 0
+    sent_tool_msg: bool = False
 
     start_msg: SkillMsg[Literal[MsgType.start]] = None
     end_msg: SkillMsg[Literal[MsgType.ret]] = None
@@ -102,33 +101,49 @@ class SkillState:
         else:
             return 0.0
 
-    def agent_encode(self) -> ToolMessage:
+    def agent_encode(self) -> Union[ToolMessage, HumanMessage]:
+        # any tool output can be a custom type that knows how to encode itself
+        # like a costmap, path, transform etc could be translatable into strings
+        def maybe_encode(something: Any) -> str:
+            if getattr(something, "agent_encode", None):
+                return something.agent_encode()
+            return str(something)
+
         agent_data = {"state": self.state.name, "ran_for": f"{round(self.duration())} seconds"}
 
         if self.state == SkillStateEnum.running:
             if self.reduced_stream_msg:
-                agent_data["stream_data"] = self.reduced_stream_msg.content
+                agent_data["stream_data"] = maybe_encode(self.reduced_stream_msg.content)
 
         if self.state == SkillStateEnum.completed:
             if self.reduced_stream_msg:
-                agent_data["return_value"] = self.reduced_stream_msg.content
+                agent_data["return_value"] = maybe_encode(self.reduced_stream_msg.content)
             else:
-                agent_data["return_value"] = self.ret_msg.content
+                agent_data["return_value"] = maybe_encode(self.ret_msg.content)
 
         if self.state == SkillStateEnum.error:
-            agent_data["return_value"] = self.error_msg.content
+            agent_data["return_value"] = maybe_encode(self.error_msg.content)
             if self.reduced_stream_msg:
-                agent_data["stream_data"] = self.reduced_stream_msg.content
+                agent_data["stream_data"] = maybe_encode(self.reduced_stream_msg.content)
 
         if self.error_msg:
             if self.reduced_stream_msg:
-                agent_data["stream_data"] = self.reduced_stream_msg.content
+                agent_data["stream_data"] = maybe_encode(self.reduced_stream_msg.content)
             agent_data["error"] = {
                 "msg": self.error_msg.content.get("msg", "Unknown error"),
                 "traceback": self.error_msg.content.get("traceback", "No traceback available"),
             }
 
-        return ToolMessage(agent_data, name=self.name, tool_call_id=self.call_id)
+        # tool call can emit a single ToolMessage
+        # subsequent messages are considered SituationalAwarenessMessages,
+        # those are collapsed into a HumanMessage, that's artificially prepended to history
+        if not self.sent_tool_msg:
+            self.sent_tool_msg = True
+            return ToolMessage(agent_data, name=self.name, tool_call_id=self.call_id)
+        else:
+            return HumanMessage(
+                content=json.dumps(agent_data),
+            )
 
     # returns True if the agent should be called for this message
     def handle_msg(self, msg: SkillMsg) -> bool:
@@ -303,7 +318,9 @@ class SkillCoordinator(SkillContainer):
         return ret
 
     # internal skill call
-    def call_skill(self, call_id: str, skill_name: str, args: dict[str, Any]) -> None:
+    def call_skill(
+        self, call_id: Union[str | Literal[False]], skill_name: str, args: dict[str, Any]
+    ) -> None:
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
             logger.error(
@@ -312,9 +329,16 @@ class SkillCoordinator(SkillContainer):
             return
 
         # This initializes the skill state if it doesn't exist
-        self._skill_state[call_id] = SkillState(
-            call_id=call_id, name=skill_name, skill_config=skill_config
-        )
+        if call_id:
+            self._skill_state[call_id] = SkillState(
+                call_id=call_id, name=skill_name, skill_config=skill_config
+            )
+        else:
+            call_id = time.time()
+            self._skill_state[call_id] = SkillState(
+                call_id=call_id, name=skill_name, skill_config=skill_config
+            )
+            self._skill_state[call_id].sent_tool_msg = True
 
         return skill_config.call(call_id, *args.get("args", []), **args.get("kwargs", {}))
 

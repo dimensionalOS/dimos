@@ -83,7 +83,7 @@ class Agent(AgentSpec):
     # used to inject skill calls into the agent loop without agent asking for it
     def run_implicit_skill(self, skill_name: str, *args, **kwargs) -> None:
         self.coordinator.call_skill(
-            f"implicit-skill-{self.implicit_skill_counter}",
+            False,
             skill_name,
             {"args": args, "kwargs": kwargs},
         )

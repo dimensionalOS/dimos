@@ -18,23 +18,25 @@ import time
 import pytest
 
 from dimos.agents2.agent import Agent
-from dimos.protocol.skill import SkillContainer, skill
 from dimos.protocol.skill.test_coordinator import TestContainer
 
 
 @pytest.mark.asyncio
 async def test_agent_init():
-    from dimos.core import start
-
-    # dimos = start(2)
-    # agent = dimos.deploy(
-    #    Agent,
-    #    system_prompt="Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate",
-    # )
-    agent = Agent(
-        system_prompt="Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
+    system_prompt = (
+        "Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
     )
-    agent.register_skills(TestContainer())
+
+    ## Uncomment the following lines to use a real module system
+    # from dimos.core import start
+    # dimos = start(2)
+    # testcontainer = dimos.deploy(TestContainer)
+    # agent = dimos.deploy(Agent, system_prompt=system_prompt)
+
+    testcontainer = TestContainer()
+    agent = Agent(system_prompt=system_prompt)
+
+    agent.register_skills(testcontainer)
     agent.run_implicit_skill("passive_time", frequency=1)
 
     agent.start()
