@@ -120,20 +120,34 @@ class SkillState:
 
         if self.state == SkillStateEnum.error:
             if self.reduced_stream_msg:
-                (
-                    maybe_encode(self.reduced_stream_msg.content)
-                    + "\n"
-                    + maybe_encode(self.error_msg.content)
-                )
+                (maybe_encode(self.reduced_stream_msg.content) + "\n" + self.error_msg.content)
+            else:
+                return self.error_msg.content
 
     def agent_encode(self) -> Union[ToolMessage, str]:
         # tool call can emit a single ToolMessage
         # subsequent messages are considered SituationalAwarenessMessages,
         # those are collapsed into a HumanMessage, that's artificially prepended to history
+
         if not self.sent_tool_msg:
             self.sent_tool_msg = True
-            return ToolMessage(self.content(), name=self.name, tool_call_id=self.call_id)
+            return ToolMessage(
+                self.content() or "Querying, please wait, you will receive a response soon.",
+                name=self.name,
+                tool_call_id=self.call_id,
+            )
         else:
+            if self.skill_config.ret_type == ReturnType.auto:
+                # if we are not a streaming skill, we return a string
+                return json.dumps(
+                    {
+                        "name": self.name,
+                        "call_id": self.call_id,
+                        "state": self.state.name,
+                        "data": self.content(),
+                        "ran_for": self.duration(),
+                    }
+                )
             return self.name + ": " + json.dumps(self.content())
 
     # returns True if the agent should be called for this message
@@ -327,7 +341,7 @@ class SkillCoordinator(SkillContainer):
 
     # internal skill call
     def call_skill(
-        self, call_id: Union[str | Literal[False]], skill_name: str, args: dict[str, Any]
+        self, call_id: Union[str | Literal[False]], skill_name: str, args: dict[str, Any] = {}
     ) -> None:
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
@@ -348,6 +362,7 @@ class SkillCoordinator(SkillContainer):
             )
             self._skill_state[call_id].sent_tool_msg = True
 
+        print("ARGS ARE", args)
         return skill_config.call(call_id, *args.get("args", []), **args.get("kwargs", {}))
 
     # Receives a message from active skill
