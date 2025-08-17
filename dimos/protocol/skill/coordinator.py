@@ -202,17 +202,47 @@ class SkillState:
 class SkillStateDict(dict[str, SkillState]):
     """Custom dict for skill states with better string representation."""
 
-    def __str__(self) -> str:
-        if not self:
-            return "SkillStates empty"
-
-        lines = []
+    def table(self) -> Table:
+        # Add skill states section
+        states_table = Table(show_header=True)
+        states_table.add_column("Call ID", style="dim", width=12)
+        states_table.add_column("Skill", style="white")
+        states_table.add_column("State", style="white")
+        states_table.add_column("Duration", style="yellow")
+        states_table.add_column("Messages", style="dim")
 
         for call_id, skill_state in self.items():
-            # Use the SkillState's own __str__ method for individual items
-            lines.append(f"{skill_state}")
+            # Get colored state name
+            state_text = skill_state.state.colored_name()
 
-        return "\n".join(lines)
+            # Duration formatting
+            if (
+                skill_state.state == SkillStateEnum.completed
+                or skill_state.state == SkillStateEnum.error
+            ):
+                duration = f"{skill_state.duration():.2f}s"
+            else:
+                duration = f"{skill_state.duration():.2f}s..."
+
+            # Messages info
+            msg_count = str(len(skill_state))
+
+            states_table.add_row(
+                call_id[:8] + "...", skill_state.name, state_text, duration, msg_count
+            )
+
+        if not self:
+            states_table.add_row("", "[dim]No active skills[/dim]", "", "", "")
+        return states_table
+
+    def __str__(self):
+        console = Console(force_terminal=True, legacy_windows=False)
+
+        # Render to string with title above
+        with console.capture() as capture:
+            console.print(Text("  SkillState", style="bold blue"))
+            console.print(self.table())
+        return capture.get().strip()
 
 
 # This class is responsible for managing the lifecycle of skills,
@@ -393,35 +423,9 @@ class SkillCoordinator(SkillContainer):
             containers_table.add_row("", "[dim]No containers registered[/dim]")
 
         # Add skill states section
-        states_table = Table(show_header=True, show_edge=False, box=None)
-        states_table.add_column("Call ID", style="dim", width=12)
-        states_table.add_column("Skill", style="white")
-        states_table.add_column("State", style="white")
-        states_table.add_column("Duration", style="yellow")
-        states_table.add_column("Messages", style="dim")
-
-        for call_id, skill_state in self._skill_state.items():
-            # Get colored state name
-            state_text = skill_state.state.colored_name()
-
-            # Duration formatting
-            if (
-                skill_state.state == SkillStateEnum.completed
-                or skill_state.state == SkillStateEnum.error
-            ):
-                duration = f"{skill_state.duration():.2f}s"
-            else:
-                duration = f"{skill_state.duration():.2f}s..."
-
-            # Messages info
-            msg_count = str(len(skill_state))
-
-            states_table.add_row(
-                call_id[:8] + "...", skill_state.name, state_text, duration, msg_count
-            )
-
-        if not self._skill_state:
-            states_table.add_row("", "[dim]No active skills[/dim]", "", "", "")
+        states_table = self._skill_state.table()
+        states_table.show_edge = False
+        states_table.box = None
 
         # Combine into main table
         table.add_column("Section", style="bold")
