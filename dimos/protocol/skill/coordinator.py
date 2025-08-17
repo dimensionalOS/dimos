@@ -103,9 +103,32 @@ class SkillState:
             return 0.0
 
     def agent_encode(self) -> ToolMessage:
-        # last_msg = self.messages[-1]
-        # return ToolMessage(last_msg.content, name=self.name, tool_call_id=self.call_id)
-        return ToolMessage("something smart", name=self.name, tool_call_id=self.call_id)
+        agent_data = {"state": self.state.name, "ran_for": f"{round(self.duration())} seconds"}
+
+        if self.state == SkillStateEnum.running:
+            if self.reduced_stream_msg:
+                agent_data["stream_data"] = self.reduced_stream_msg.content
+
+        if self.state == SkillStateEnum.completed:
+            if self.reduced_stream_msg:
+                agent_data["return_value"] = self.reduced_stream_msg.content
+            else:
+                agent_data["return_value"] = self.ret_msg.content
+
+        if self.state == SkillStateEnum.error:
+            agent_data["return_value"] = self.error_msg.content
+            if self.reduced_stream_msg:
+                agent_data["stream_data"] = self.reduced_stream_msg.content
+
+        if self.error_msg:
+            if self.reduced_stream_msg:
+                agent_data["stream_data"] = self.reduced_stream_msg.content
+            agent_data["error"] = {
+                "msg": self.error_msg.content.get("msg", "Unknown error"),
+                "traceback": self.error_msg.content.get("traceback", "No traceback available"),
+            }
+
+        return ToolMessage(agent_data, name=self.name, tool_call_id=self.call_id)
 
     # returns True if the agent should be called for this message
     def handle_msg(self, msg: SkillMsg) -> bool:

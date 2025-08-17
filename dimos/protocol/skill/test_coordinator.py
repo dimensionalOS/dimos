@@ -33,7 +33,7 @@ class TestContainer(SkillContainer):
         return x + y
 
     @skill(stream=Stream.call_agent, reducer=Reducer.all)
-    def counter(self, count_to: int, delay: Optional[float] = 0.1) -> Generator[int, None, None]:
+    def counter(self, count_to: int, delay: Optional[float] = 0.05) -> Generator[int, None, None]:
         """Counts from 1 to count_to, with an optional delay between counts."""
         for i in range(1, count_to + 1):
             if delay > 0:
@@ -41,8 +41,8 @@ class TestContainer(SkillContainer):
             yield i
 
     @skill(stream=Stream.passive, reducer=Reducer.sum)
-    def counter_passive(
-        self, count_to: int, delay: Optional[float] = 0.1
+    def counter_passive_sum(
+        self, count_to: int, delay: Optional[float] = 0.05
     ) -> Generator[int, None, None]:
         """Counts from 1 to count_to, with an optional delay between counts."""
         for i in range(1, count_to + 1):
@@ -95,16 +95,17 @@ async def test_coordinator_generator():
 
     # here we call a skill that generates a sequence of messages
     skillCoordinator.call_skill("test-gen-0", "counter", {"args": [10]})
+    skillCoordinator.call_skill("test-gen-1", "counter_passive_sum", {"args": [5]})
 
     skillstate = None
     # periodically agent is stopping it's thinking cycle and asks for updates
-    while await skillCoordinator.wait_for_updates(1):
-        skillstate = skillCoordinator.generate_snapshot(clear=True)
+    while await skillCoordinator.wait_for_updates(2):
+        print(skillCoordinator)
 
         # reducer is generating a summary
-        print("Skill State:", skillstate)
-        print("Agent update:", skillstate["test-gen-0"].agent_encode())
+        skillstate = skillCoordinator.generate_snapshot(clear=True)
+        print("Agent update:", skillstate)
         # we simulate agent thinking
-        await asyncio.sleep(0.25)
+        await asyncio.sleep(0.125)
 
     print("Skill lifecycle finished")
