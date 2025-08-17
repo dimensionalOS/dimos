@@ -78,7 +78,7 @@ class SkillState(TimestampedCollection):
         super().__init__()
 
         self.skill_config = skill_config or SkillConfig(
-            name=name, stream=Stream.none, ret=Return.none, reducer=Reducer.none, schema={}
+            name=name, stream=Stream.none, ret=Return.none, reducer=Reducer.all, schema={}
         )
 
         self.state = SkillStateEnum.pending

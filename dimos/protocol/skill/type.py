@@ -15,17 +15,12 @@
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Generic, Literal, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Optional, TypeVar
 
+from dimos.protocol.skill.reducer import Reducer
 from dimos.types.timestamped import Timestamped
 
 # This file defines protocol messages used for communication between skills and agents
-
-
-class Reducer(Enum):
-    none = 0
-    latest = 1
-    average = 2
 
 
 class Stream(Enum):
@@ -73,14 +68,14 @@ class SkillConfig:
 
         # Only show reducer if stream is not none (streaming is happening)
         if self.stream != Stream.none:
-            reducer_name = "unknown"
-            if self.reducer == Reducer.latest:
-                reducer_name = "latest"
-            elif self.reducer == Reducer.all:
-                reducer_name = "all"
-            elif self.reducer == Reducer.average:
-                reducer_name = "average"
-            parts.append(f"reducer={reducer_name}")
+            # reducer_name = "unknown"
+            # if self.reducer == Reducer.latest:
+            #     reducer_name = "latest"
+            # elif self.reducer == Reducer.all:
+            #     reducer_name = "all"
+            # elif self.reducer == Reducer.average:
+            #     reducer_name = "average"
+            # parts.append(f"reducer={reducer_name}")
             parts.append(f"stream={self.stream.name}")
 
         # Always show return mode
@@ -92,7 +87,7 @@ class MsgType(Enum):
     pending = 0
     start = 1
     stream = 2
-    reduced = 3
+    reduced_stream = 3
     ret = 4
     error = 5
 
@@ -144,15 +139,3 @@ class SkillMsg(Timestamped, Generic[M]):
             return f"Pending({time_ago:.1f}s ago)"
         if self.type == MsgType.stream:
             return f"Stream({time_ago:.1f}s ago, val={self.content})"
-
-
-# Reducers take stream messages, combine them and return a reduced message.
-type ReducerFunction = Callable[
-    [
-        list[
-            SkillMsg[Literal[MsgType.Stream]],
-            Optional[SkillMsg[Literal[MsgType.Reduced]]],
-        ],
-        SkillMsg[Literal[MsgType.Reduced]],
-    ]
-]

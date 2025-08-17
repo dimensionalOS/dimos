@@ -32,7 +32,7 @@ class TestContainer(SkillContainer):
         time.sleep(0.3)
         return x + y
 
-    @skill(stream=Stream.call_agent)
+    @skill(stream=Stream.call_agent, reducer=Reducer.all)
     def counter(self, count_to: int, delay: Optional[float] = 0.1) -> Generator[int, None, None]:
         """Counts from 1 to count_to, with an optional delay between counts."""
         for i in range(1, count_to + 1):
