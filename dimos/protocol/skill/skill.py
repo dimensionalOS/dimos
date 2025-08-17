@@ -20,10 +20,10 @@ from typing import Any, Callable, Optional
 from dimos.core import rpc
 from dimos.protocol.service import Configurable
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
+from dimos.protocol.skill.reducer import Reducer
 from dimos.protocol.skill.schema import function_to_schema
 from dimos.protocol.skill.type import (
     MsgType,
-    Reducer,
     Return,
     SkillConfig,
     SkillMsg,
