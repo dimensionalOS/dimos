@@ -11,13 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
 import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Optional, TypeVar
 
-from dimos.protocol.skill.reducer import Reducer
 from dimos.types.timestamped import Timestamped
 
 # This file defines protocol messages used for communication between skills and agents
@@ -44,7 +44,7 @@ class Return(Enum):
 @dataclass
 class SkillConfig:
     name: str
-    reducer: Reducer
+    reducer: "ReducerF"
     stream: Stream
     ret: Return
     schema: dict[str, Any]
@@ -139,3 +139,55 @@ class SkillMsg(Timestamped, Generic[M]):
             return f"Pending({time_ago:.1f}s ago)"
         if self.type == MsgType.stream:
             return f"Stream({time_ago:.1f}s ago, val={self.content})"
+
+
+# typing looks complex but it's a standard reducer function signature, using SkillMsgs
+# (Optional[accumulator], msg) -> accumulator
+type ReducerF = Callable[
+    [Optional[SkillMsg[Literal[MsgType.reduced_stream]]], SkillMsg[Literal[MsgType.stream]]],
+    SkillMsg[Literal[MsgType.reduced_stream]],
+]
+
+
+C = TypeVar("C")  # content type
+A = TypeVar("A")  # accumulator type
+# define a naive reducer function type that's generic in terms of the accumulator type
+type SimpleReducerF[A, C] = Callable[[Optional[A], C], A]
+
+
+def make_reducer(simple_reducer: SimpleReducerF) -> ReducerF:
+    """
+    Converts a naive reducer function into a standard reducer function.
+    The naive reducer function should accept an accumulator and a message,
+    and return the updated accumulator.
+    """
+
+    def reducer(
+        accumulator: Optional[SkillMsg[Literal[MsgType.reduced_stream]]],
+        msg: SkillMsg[Literal[MsgType.stream]],
+    ) -> SkillMsg[Literal[MsgType.reduced_stream]]:
+        # Extract the content from the accumulator if it exists
+        acc_value = accumulator.content if accumulator else None
+
+        # Apply the simple reducer to get the new accumulated value
+        new_value = simple_reducer(acc_value, msg.content)
+
+        # Wrap the result in a SkillMsg with reduced_stream type
+        return SkillMsg(
+            call_id=msg.call_id,
+            skill_name=msg.skill_name,
+            content=new_value,
+            type=MsgType.reduced_stream,
+        )
+
+    return reducer
+
+
+class Reducer:
+    sum = staticmethod(make_reducer(lambda x, y: x + y if x else y))
+    latest = staticmethod(make_reducer(lambda x, y: y))
+    all = staticmethod(make_reducer(lambda x, y: x + [y] if x else [y]))
+
+
+# Create singleton instance
+Reducer = Reducer()

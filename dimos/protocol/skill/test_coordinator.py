@@ -40,7 +40,7 @@ class TestContainer(SkillContainer):
                 time.sleep(delay)
             yield i
 
-    @skill(stream=Stream.passive)
+    @skill(stream=Stream.passive, reducer=Reducer.sum)
     def counter_passive(
         self, count_to: int, delay: Optional[float] = 0.1
     ) -> Generator[int, None, None]:
@@ -108,9 +108,3 @@ async def test_coordinator_generator():
         await asyncio.sleep(0.25)
 
     print("Skill lifecycle finished")
-    print(
-        "All messages:"
-        + "".join(
-            map(lambda x: f"\n  {x}", skillstate["test-gen-0"].messages),
-        ),
-    )

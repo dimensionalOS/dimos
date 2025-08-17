@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import asyncio
+import time
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 from langchain_core.messages import (
     AIMessage,
@@ -67,12 +68,19 @@ class SkillStateEnum(Enum):
 # TODO pending timeout, running timeout, etc.
 #
 # This object maintains the state of a skill run on a caller end
-class SkillState(TimestampedCollection):
+class SkillState:
     call_id: str
     name: str
     state: SkillStateEnum
     skill_config: SkillConfig
-    value: Optional[Any] = None
+
+    msg_count: int = 0
+
+    start_msg: SkillMsg[Literal[MsgType.start]] = None
+    end_msg: SkillMsg[Literal[MsgType.ret]] = None
+    error_msg: SkillMsg[Literal[MsgType.error]] = None
+    ret_msg: SkillMsg[Literal[MsgType.ret]] = None
+    reduced_stream_msg: List[SkillMsg[Literal[MsgType.reduced_stream]]] = None
 
     def __init__(self, call_id: str, name: str, skill_config: Optional[SkillConfig] = None) -> None:
         super().__init__()
@@ -85,22 +93,26 @@ class SkillState(TimestampedCollection):
         self.call_id = call_id
         self.name = name
 
-    @property
-    def messages(self) -> List[SkillMsg]:
-        return self._items
+    def duration(self) -> float:
+        """Calculate the duration of the skill run."""
+        if self.start_msg and self.end_msg:
+            return self.end_msg.ts - self.start_msg.ts
+        elif self.start_msg:
+            return time.time() - self.start_msg.ts
+        else:
+            return 0.0
 
     def agent_encode(self) -> ToolMessage:
-        # here we need to process streamed messages depending on the reducer
-        # we also want to reduce the messages we are storing so that long running streams
-        # don't fill up the memory
-        last_msg = self.messages[-1]
-        return ToolMessage(last_msg.content, name=self.name, tool_call_id=self.call_id)
+        # last_msg = self.messages[-1]
+        # return ToolMessage(last_msg.content, name=self.name, tool_call_id=self.call_id)
+        return ToolMessage("something smart", name=self.name, tool_call_id=self.call_id)
 
     # returns True if the agent should be called for this message
     def handle_msg(self, msg: SkillMsg) -> bool:
-        self.add(msg)
-
+        self.msg_count += 1
         if msg.type == MsgType.stream:
+            self.reduced_stream_msg = self.skill_config.reducer(self.reduced_stream_msg, msg)
+
             if (
                 self.skill_config.stream == Stream.none
                 or self.skill_config.stream == Stream.passive
@@ -112,21 +124,25 @@ class SkillState(TimestampedCollection):
 
         if msg.type == MsgType.ret:
             self.state = SkillStateEnum.completed
-            self.value = msg.content
+            self.ret_msg = msg
             if self.skill_config.ret == Return.call_agent:
                 return True
             return False
 
         if msg.type == MsgType.error:
-            self.value = msg.content
             self.state = SkillStateEnum.error
+            self.error_msg = msg
             return True
 
         if msg.type == MsgType.start:
             self.state = SkillStateEnum.running
+            self.start_msg = msg
             return False
 
         return False
+
+    def __len__(self) -> int:
+        return self.msg_count
 
     def __str__(self) -> str:
         # For standard string representation, we'll use rich's Console to render the colored text
@@ -144,7 +160,7 @@ class SkillState(TimestampedCollection):
         parts.append(Text(f"{self.duration():.2f}s"))
 
         if len(self):
-            parts.append(Text(f", last_msg={self.messages[-1]})"))
+            parts.append(Text(f", msg_count={self.msg_count})"))
         else:
             parts.append(Text(", No Messages)"))
 
@@ -314,8 +330,10 @@ class SkillCoordinator(SkillContainer):
                     logger.info(f"Skill {skill_run.name} (call_id={call_id}) finished")
                     to_delete.append(call_id)
                 if skill_run.state == SkillStateEnum.error:
-                    error_msg = skill_run.value.get("msg", "Unknown error")
-                    error_traceback = skill_run.value.get("traceback", "No traceback available")
+                    error_msg = skill_run.error_msg.content.get("msg", "Unknown error")
+                    error_traceback = skill_run.error_msg.content.get(
+                        "traceback", "No traceback available"
+                    )
 
                     logger.error(
                         f"Skill error for {skill_run.name} (call_id={call_id}): {error_msg}"
