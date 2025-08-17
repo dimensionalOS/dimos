@@ -687,7 +687,7 @@ class UnitreeGo2(Robot):
         while time.time() - start_time < timeout:
             if self.navigator.get_state() == NavigatorState.IDLE and goal_set:
                 logger.info("Waiting for goal result")
-                time.sleep(1.0)
+                time.sleep(1.5)
                 if not self.navigator.is_goal_reached():
                     logger.info("Goal cancelled, object tracking failed")
                     return False

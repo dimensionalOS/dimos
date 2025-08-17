@@ -241,6 +241,8 @@ class BehaviorTreeNavigator(Module):
                     )
                     return None
 
+                time.sleep(1.0)
+
             pose = apply_transform(goal, transform)
             transformed_goal = PoseStamped(
                 position=pose.position,
