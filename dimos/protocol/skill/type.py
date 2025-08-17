@@ -22,11 +22,6 @@ from dimos.types.timestamped import Timestamped
 # This file defines protocol messages used for communication between skills and agents
 
 
-class Call(Enum):
-    Implicit = 0
-    Explicit = 1
-
-
 class Reducer(Enum):
     none = 0
     latest = 1

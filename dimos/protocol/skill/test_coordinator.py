@@ -13,12 +13,42 @@
 # limitations under the License.
 import asyncio
 import time
-from pprint import pprint
+from typing import Generator, Optional
 
 import pytest
 
 from dimos.protocol.skill.coordinator import SkillCoordinator
-from dimos.protocol.skill.testing_utils import TestContainer
+from dimos.protocol.skill.skill import SkillContainer, skill
+from dimos.protocol.skill.type import Reducer, Return, Stream
+
+
+class TestContainer(SkillContainer):
+    @skill()
+    def add(self, x: int, y: int) -> int:
+        return x + y
+
+    @skill()
+    def delayadd(self, x: int, y: int) -> int:
+        time.sleep(0.3)
+        return x + y
+
+    @skill(stream=Stream.call_agent)
+    def counter(self, count_to: int, delay: Optional[float] = 0.1) -> Generator[int, None, None]:
+        """Counts from 1 to count_to, with an optional delay between counts."""
+        for i in range(1, count_to + 1):
+            if delay > 0:
+                time.sleep(delay)
+            yield i
+
+    @skill(stream=Stream.passive)
+    def counter_passive(
+        self, count_to: int, delay: Optional[float] = 0.1
+    ) -> Generator[int, None, None]:
+        """Counts from 1 to count_to, with an optional delay between counts."""
+        for i in range(1, count_to + 1):
+            if delay > 0:
+                time.sleep(delay)
+            yield i
 
 
 @pytest.mark.asyncio
@@ -62,11 +92,16 @@ async def test_coordinator_generator():
     skillCoordinator.register_skills(TestContainer())
 
     skillCoordinator.start()
+
+    # here we call a skill that generates a sequence of messages
     skillCoordinator.call_skill("test-gen-0", "counter", {"args": [10]})
 
     skillstate = None
+    # periodically agent is stopping it's thinking cycle and asks for updates
     while await skillCoordinator.wait_for_updates(1):
         skillstate = skillCoordinator.generate_snapshot(clear=True)
+
+        # reducer is generating a summary
         print("Skill State:", skillstate)
         print("Agent update:", skillstate["test-gen-0"].agent_encode())
         # we simulate agent thinking
