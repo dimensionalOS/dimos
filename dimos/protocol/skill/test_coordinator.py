@@ -97,15 +97,10 @@ async def test_coordinator_generator():
     skillCoordinator.call_skill("test-gen-0", "counter", {"args": [10]})
     skillCoordinator.call_skill("test-gen-1", "counter_passive_sum", {"args": [5]})
 
-    skillstate = None
     # periodically agent is stopping it's thinking cycle and asks for updates
     while await skillCoordinator.wait_for_updates(2):
         print(skillCoordinator)
-
-        # reducer is generating a summary
-        skillstate = skillCoordinator.generate_snapshot(clear=True)
-        print("Agent update:", skillstate)
-        # we simulate agent thinking
+        agent_update = skillCoordinator.generate_snapshot(clear=True)
         await asyncio.sleep(0.125)
 
     print("Skill lifecycle finished")
