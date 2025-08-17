@@ -21,7 +21,15 @@ from dimos.core import rpc
 from dimos.protocol.service import Configurable
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.schema import function_to_schema
-from dimos.protocol.skill.type import MsgType, Reducer, Return, SkillConfig, SkillMsg, Stream
+from dimos.protocol.skill.type import (
+    MsgType,
+    Reducer,
+    Return,
+    ReturnType,
+    SkillConfig,
+    SkillMsg,
+    Stream,
+)
 
 # skill is a decorator that allows us to specify a skill behaviour for a function.
 #
@@ -49,7 +57,9 @@ from dimos.protocol.skill.type import MsgType, Reducer, Return, SkillConfig, Ski
 #                         the average of all values is returned to the agent
 
 
-def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
+def skill(
+    reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent, ret_type=ReturnType.auto
+) -> Callable:
     def decorator(f: Callable[..., Any]) -> Any:
         def wrapper(self, *args, **kwargs):
             skill = f"{f.__name__}"
@@ -76,7 +86,12 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
         # wrapper.__signature__ = sig.replace(parameters=params)
 
         skill_config = SkillConfig(
-            name=f.__name__, reducer=reducer, stream=stream, ret=ret, schema=function_to_schema(f)
+            name=f.__name__,
+            reducer=reducer,
+            stream=stream,
+            ret=ret,
+            schema=function_to_schema(f),
+            ret_type=ret_type,
         )
 
         # implicit RPC call as well

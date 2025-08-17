@@ -20,7 +20,7 @@ import pytest
 
 from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.protocol.skill.type import Reducer, Stream
+from dimos.protocol.skill.type import Reducer, Return, ReturnType, Stream
 
 
 class TestContainer(SkillContainer):
@@ -53,12 +53,25 @@ class TestContainer(SkillContainer):
                 time.sleep(delay)
             yield i
 
-    @skill(stream=Stream.passive, reducer=Reducer.latest)
-    def passive_time(self, frequency: Optional[float] = 10) -> Generator[str, None, None]:
+    @skill(stream=Stream.passive, reducer=Reducer.latest, ret_type=ReturnType.passthrough)
+    def current_time(self, frequency: Optional[float] = 10) -> Generator[str, None, None]:
         """Provides current time."""
         while True:
-            time.sleep(1 / frequency)
             yield str(datetime.datetime.now())
+            time.sleep(1 / frequency)
+
+    @skill(stream=Stream.passive, reducer=Reducer.latest, ret_type=ReturnType.passthrough)
+    def uptime_seconds(self, frequency: Optional[float] = 10) -> Generator[float, None, None]:
+        """Provides current uptime."""
+        start_time = datetime.datetime.now()
+        while True:
+            yield (datetime.datetime.now() - start_time).total_seconds()
+            time.sleep(1 / frequency)
+
+    @skill(ret_type=ReturnType.passthrough)
+    def current_date(self, frequency: Optional[float] = 10) -> str:
+        """Provides current date."""
+        return str(datetime.datetime.now())
 
 
 @pytest.mark.asyncio

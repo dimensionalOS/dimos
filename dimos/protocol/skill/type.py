@@ -39,6 +39,13 @@ class Return(Enum):
     passive = 1
     # calls the agent with the value, scheduling an agent call
     call_agent = 2
+    # calls the function to get a value, when the agent is being called
+    callback = 3  # TODO: this is a work in progress, not implemented yet
+
+
+class ReturnType(Enum):
+    auto = 0
+    passthrough = 1
 
 
 @dataclass
@@ -48,6 +55,7 @@ class SkillConfig:
     stream: Stream
     ret: Return
     schema: dict[str, Any]
+    ret_type: ReturnType = ReturnType.auto
     f: Callable | None = None
     autostart: bool = False
 

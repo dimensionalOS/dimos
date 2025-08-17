@@ -37,7 +37,7 @@ from dimos.core import rpc
 from dimos.core.module import get_loop
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
-from dimos.protocol.skill.type import MsgType, Reducer, Return, SkillMsg, Stream
+from dimos.protocol.skill.type import MsgType, Reducer, Return, ReturnType, SkillMsg, Stream
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.protocol.skill.coordinator")
@@ -101,7 +101,7 @@ class SkillState:
         else:
             return 0.0
 
-    def agent_encode(self) -> Union[ToolMessage, HumanMessage]:
+    def content(self) -> str:
         # any tool output can be a custom type that knows how to encode itself
         # like a costmap, path, transform etc could be translatable into strings
         def maybe_encode(something: Any) -> str:
@@ -109,46 +109,38 @@ class SkillState:
                 return something.agent_encode()
             return str(something)
 
-        agent_data = {"state": self.state.name, "ran_for": f"{round(self.duration())} seconds"}
-
         if self.state == SkillStateEnum.running:
             if self.reduced_stream_msg:
-                agent_data["stream_data"] = maybe_encode(self.reduced_stream_msg.content)
+                return maybe_encode(self.reduced_stream_msg.content)
 
         if self.state == SkillStateEnum.completed:
-            if self.reduced_stream_msg:
-                agent_data["return_value"] = maybe_encode(self.reduced_stream_msg.content)
-            else:
-                agent_data["return_value"] = maybe_encode(self.ret_msg.content)
+            if self.reduced_stream_msg:  # are we a streaming skill?
+                return maybe_encode(self.reduced_stream_msg.content)
+            return maybe_encode(self.ret_msg.content)
 
         if self.state == SkillStateEnum.error:
-            agent_data["return_value"] = maybe_encode(self.error_msg.content)
             if self.reduced_stream_msg:
-                agent_data["stream_data"] = maybe_encode(self.reduced_stream_msg.content)
+                (
+                    maybe_encode(self.reduced_stream_msg.content)
+                    + "\n"
+                    + maybe_encode(self.error_msg.content)
+                )
 
-        if self.error_msg:
-            if self.reduced_stream_msg:
-                agent_data["stream_data"] = maybe_encode(self.reduced_stream_msg.content)
-            agent_data["error"] = {
-                "msg": self.error_msg.content.get("msg", "Unknown error"),
-                "traceback": self.error_msg.content.get("traceback", "No traceback available"),
-            }
-
+    def agent_encode(self) -> Union[ToolMessage, str]:
         # tool call can emit a single ToolMessage
         # subsequent messages are considered SituationalAwarenessMessages,
         # those are collapsed into a HumanMessage, that's artificially prepended to history
         if not self.sent_tool_msg:
             self.sent_tool_msg = True
-            return ToolMessage(agent_data, name=self.name, tool_call_id=self.call_id)
+            return ToolMessage(self.content(), name=self.name, tool_call_id=self.call_id)
         else:
-            return HumanMessage(
-                content=json.dumps(agent_data),
-            )
+            return self.name + ": " + json.dumps(self.content())
 
     # returns True if the agent should be called for this message
     def handle_msg(self, msg: SkillMsg) -> bool:
         self.msg_count += 1
         if msg.type == MsgType.stream:
+            self.state = SkillStateEnum.running
             self.reduced_stream_msg = self.skill_config.reducer(self.reduced_stream_msg, msg)
 
             if (
@@ -219,7 +211,23 @@ class SkillStateDict(dict[str, SkillState]):
 
     def agent_encode(self) -> list[ToolMessage]:
         """Encode all skill states into a list of ToolMessages for the agent."""
-        return [skill_state.agent_encode() for skill_state in self.values()]
+        tool_responses = []
+        overview_msg = []
+
+        for skill_state in self.values():
+            response = skill_state.agent_encode()
+            if isinstance(response, ToolMessage):
+                tool_responses.append(response)
+            else:
+                overview_msg.append(response)
+
+        if overview_msg:
+            state = AIMessage(
+                "System Overview:\n" + "\n".join(overview_msg),
+                metadata={"state": True},
+            )
+            return tool_responses + [state]
+        return tool_responses
 
     def table(self) -> Table:
         # Add skill states section
@@ -334,7 +342,7 @@ class SkillCoordinator(SkillContainer):
                 call_id=call_id, name=skill_name, skill_config=skill_config
             )
         else:
-            call_id = time.time()
+            call_id = str(time.time())
             self._skill_state[call_id] = SkillState(
                 call_id=call_id, name=skill_name, skill_config=skill_config
             )
@@ -347,7 +355,7 @@ class SkillCoordinator(SkillContainer):
     #
     # Checks if agent needs to be notified (if ToolConfig has Return=call_agent or Stream=call_agent)
     def handle_message(self, msg: SkillMsg) -> None:
-        logger.info(f"SkillMsg from {msg.skill_name}, {msg.call_id} - {msg}")
+        # logger.info(f"SkillMsg from {msg.skill_name}, {msg.call_id} - {msg}")
 
         if self._skill_state.get(msg.call_id) is None:
             logger.warn(

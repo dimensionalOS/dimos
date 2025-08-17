@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import asyncio
 from pprint import pprint
 from typing import List, Optional
@@ -26,6 +25,9 @@ from langchain_core.messages import (
     ToolCall,
     ToolMessage,
 )
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
 
 from dimos.agents2.spec import AgentSpec
 from dimos.core import Module, rpc
@@ -36,9 +38,12 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger("dimos.protocol.agents2")
 
 
-class Agent(AgentSpec):
-    implicit_skill_counter: int = 0
+SYSTEM_MSG_APPEND = """
+Your message history will always be appended with a System Overview message that provides situational awareness.
+"""
 
+
+class Agent(AgentSpec):
     def __init__(
         self,
         *args,
@@ -51,8 +56,9 @@ class Agent(AgentSpec):
 
         if self.config.system_prompt:
             if isinstance(self.config.system_prompt, str):
-                self.messages.append(self.config.system_prompt)
+                self.messages.append(SystemMessage(self.config.system_prompt + SYSTEM_MSG_APPEND))
             else:
+                self.config.system_prompt.content += SYSTEM_MSG_APPEND
                 self.messages.append(self.config.system_prompt)
 
         self._llm = init_chat_model(model_provider=self.config.provider, model=self.config.model)
@@ -80,6 +86,45 @@ class Agent(AgentSpec):
                 tool_call.get("args"),
             )
 
+    def __str__(self) -> str:
+        console = Console(force_terminal=True, legacy_windows=False)
+
+        table = Table(title="Agent History", show_header=True)
+
+        table.add_column("Message Type", style="cyan", no_wrap=True)
+        table.add_column("Content")
+
+        for message in self.messages:
+            if isinstance(message, HumanMessage):
+                table.add_row(Text("Human", style="green"), Text(message.content, style="green"))
+            elif isinstance(message, AIMessage):
+                table.add_row(
+                    Text("Agent", style="magenta"), Text(message.content, style="magenta")
+                )
+
+                for tool_call in message.tool_calls:
+                    table.add_row(
+                        "Tool Call",
+                        Text(
+                            f"{tool_call.get('name')}({tool_call.get('args').get('args')})",
+                            style="bold magenta",
+                        ),
+                    )
+            elif isinstance(message, ToolMessage):
+                table.add_row(
+                    "Tool Response", Text(f"{message.name}() -> {message.content}"), style="red"
+                )
+            elif isinstance(message, SystemMessage):
+                table.add_row("System", Text(message.content, style="yellow"))
+            else:
+                table.add_row("Unknown", str(message))
+
+        # Render to string with title above
+        with console.capture() as capture:
+            console.print(Text("  Agent", style="bold blue"))
+            console.print(table)
+        return capture.get().strip()
+
     # used to inject skill calls into the agent loop without agent asking for it
     def run_implicit_skill(self, skill_name: str, *args, **kwargs) -> None:
         self.coordinator.call_skill(
@@ -87,7 +132,6 @@ class Agent(AgentSpec):
             skill_name,
             {"args": args, "kwargs": kwargs},
         )
-        self.implicit_skill_counter += 1
 
     async def agent_loop(self, seed_query: str = ""):
         self.messages.append(HumanMessage(seed_query))
@@ -109,8 +153,10 @@ class Agent(AgentSpec):
 
                 await self.coordinator.wait_for_updates()
 
-                for call_id, update in self.coordinator.generate_snapshot(clear=True).items():
-                    self.messages.append(update.agent_encode())
+                update = self.coordinator.generate_snapshot(clear=True)
+                self.messages = self.messages + update.agent_encode()
+                print(self)
+                print(self.coordinator)
 
         except Exception as e:
             logger.error(f"Error in agent loop: {e}")
