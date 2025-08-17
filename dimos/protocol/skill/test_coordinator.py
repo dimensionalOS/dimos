@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import datetime
 import time
 from typing import Generator, Optional
 
@@ -25,10 +26,12 @@ from dimos.protocol.skill.type import Reducer, Stream
 class TestContainer(SkillContainer):
     @skill()
     def add(self, x: int, y: int) -> int:
+        """adds x and y."""
         return x + y
 
     @skill()
     def delayadd(self, x: int, y: int) -> int:
+        """waits 0.3 seconds before adding x and y."""
         time.sleep(0.3)
         return x + y
 
@@ -49,6 +52,13 @@ class TestContainer(SkillContainer):
             if delay > 0:
                 time.sleep(delay)
             yield i
+
+    @skill(stream=Stream.passive, reducer=Reducer.latest)
+    def passive_time(self, frequency: Optional[float] = 10) -> Generator[str, None, None]:
+        """Provides current time."""
+        while True:
+            time.sleep(1 / frequency)
+            yield str(datetime.datetime.now())
 
 
 @pytest.mark.asyncio

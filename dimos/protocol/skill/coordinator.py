@@ -302,17 +302,6 @@ class SkillCoordinator(SkillContainer):
 
         return ret
 
-    # Used by agent to execute tool calls
-    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> None:
-        """Execute a list of tool calls from the agent."""
-        for tool_call in tool_calls:
-            logger.info(f"executing skill call {tool_call}")
-            self.call_skill(
-                tool_call.get("id"),
-                tool_call.get("name"),
-                tool_call.get("args"),
-            )
-
     # internal skill call
     def call_skill(self, call_id: str, skill_name: str, args: dict[str, Any]) -> None:
         skill_config = self.get_skill_config(skill_name)

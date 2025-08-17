@@ -14,7 +14,7 @@
 
 import asyncio
 from pprint import pprint
-from typing import Optional
+from typing import List, Optional
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -37,6 +37,8 @@ logger = setup_logger("dimos.protocol.agents2")
 
 
 class Agent(AgentSpec):
+    implicit_skill_counter: int = 0
+
     def __init__(
         self,
         *args,
@@ -67,6 +69,26 @@ class Agent(AgentSpec):
     def clear_history(self):
         self.messages.clear()
 
+    # Used by agent to execute tool calls
+    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> None:
+        """Execute a list of tool calls from the agent."""
+        for tool_call in tool_calls:
+            logger.info(f"executing skill call {tool_call}")
+            self.coordinator.call_skill(
+                tool_call.get("id"),
+                tool_call.get("name"),
+                tool_call.get("args"),
+            )
+
+    # used to inject skill calls into the agent loop without agent asking for it
+    def run_implicit_skill(self, skill_name: str, *args, **kwargs) -> None:
+        self.coordinator.call_skill(
+            f"implicit-skill-{self.implicit_skill_counter}",
+            skill_name,
+            {"args": args, "kwargs": kwargs},
+        )
+        self.implicit_skill_counter += 1
+
     async def agent_loop(self, seed_query: str = ""):
         self.messages.append(HumanMessage(seed_query))
         try:
@@ -79,7 +101,7 @@ class Agent(AgentSpec):
 
                 logger.info(f"Agent response: {msg.content}")
                 if msg.tool_calls:
-                    self.coordinator.execute_tool_calls(msg.tool_calls)
+                    self.execute_tool_calls(msg.tool_calls)
 
                 if not self.coordinator.has_active_skills():
                     logger.info("No active tasks, exiting agent loop.")

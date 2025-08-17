@@ -19,20 +19,7 @@ import pytest
 
 from dimos.agents2.agent import Agent
 from dimos.protocol.skill import SkillContainer, skill
-
-
-class TestContainer(SkillContainer):
-    @skill()
-    def add(self, x: int, y: int) -> int:
-        """Adds two integers."""
-        time.sleep(0.3)
-        return x + y
-
-    @skill()
-    def sub(self, x: int, y: int) -> int:
-        """Subs two integers."""
-        time.sleep(0.3)
-        return x - y
+from dimos.protocol.skill.test_coordinator import TestContainer
 
 
 @pytest.mark.asyncio
@@ -48,6 +35,8 @@ async def test_agent_init():
         system_prompt="Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
     )
     agent.register_skills(TestContainer())
+    agent.run_implicit_skill("passive_time", frequency=1)
+
     agent.start()
 
     print(
