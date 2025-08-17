@@ -19,7 +19,7 @@ import pytest
 
 from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.protocol.skill.type import Reducer, Return, Stream
+from dimos.protocol.skill.type import Reducer, Stream
 
 
 class TestContainer(SkillContainer):
@@ -90,7 +90,6 @@ async def test_coordinator_parallel_calls():
 async def test_coordinator_generator():
     skillCoordinator = SkillCoordinator()
     skillCoordinator.register_skills(TestContainer())
-
     skillCoordinator.start()
 
     # here we call a skill that generates a sequence of messages
@@ -101,6 +100,7 @@ async def test_coordinator_generator():
     while await skillCoordinator.wait_for_updates(2):
         print(skillCoordinator)
         agent_update = skillCoordinator.generate_snapshot(clear=True)
+        print(agent_update.agent_encode())
         await asyncio.sleep(0.125)
 
     print("Skill lifecycle finished")

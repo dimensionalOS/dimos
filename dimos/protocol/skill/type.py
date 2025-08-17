@@ -68,14 +68,6 @@ class SkillConfig:
 
         # Only show reducer if stream is not none (streaming is happening)
         if self.stream != Stream.none:
-            # reducer_name = "unknown"
-            # if self.reducer == Reducer.latest:
-            #     reducer_name = "latest"
-            # elif self.reducer == Reducer.all:
-            #     reducer_name = "all"
-            # elif self.reducer == Reducer.average:
-            #     reducer_name = "average"
-            # parts.append(f"reducer={reducer_name}")
             parts.append(f"stream={self.stream.name}")
 
         # Always show return mode
@@ -183,11 +175,8 @@ def make_reducer(simple_reducer: SimpleReducerF) -> ReducerF:
     return reducer
 
 
+# just a convinience class to hold reducer functions
 class Reducer:
-    sum = staticmethod(make_reducer(lambda x, y: x + y if x else y))
-    latest = staticmethod(make_reducer(lambda x, y: y))
-    all = staticmethod(make_reducer(lambda x, y: x + [y] if x else [y]))
-
-
-# Create singleton instance
-Reducer = Reducer()
+    sum = make_reducer(lambda x, y: x + y if x else y)
+    latest = make_reducer(lambda x, y: y)
+    all = make_reducer(lambda x, y: x + [y] if x else [y])

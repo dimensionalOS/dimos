@@ -202,6 +202,10 @@ class SkillState:
 class SkillStateDict(dict[str, SkillState]):
     """Custom dict for skill states with better string representation."""
 
+    def agent_encode(self) -> list[ToolMessage]:
+        """Encode all skill states into a list of ToolMessages for the agent."""
+        return [skill_state.agent_encode() for skill_state in self.values()]
+
     def table(self) -> Table:
         # Add skill states section
         states_table = Table(show_header=True)
