@@ -53,14 +53,14 @@ class TestContainer(SkillContainer):
                 time.sleep(delay)
             yield i
 
-    @skill(stream=Stream.passive, reducer=Reducer.latest, ret_type=ReturnType.passthrough)
+    @skill(stream=Stream.passive, reducer=Reducer.latest, ret_type=ReturnType.auto)
     def current_time(self, frequency: Optional[float] = 10) -> Generator[str, None, None]:
         """Provides current time."""
         while True:
             yield str(datetime.datetime.now())
             time.sleep(1 / frequency)
 
-    @skill(stream=Stream.passive, reducer=Reducer.latest, ret_type=ReturnType.passthrough)
+    @skill(stream=Stream.passive, reducer=Reducer.latest, ret_type=ReturnType.auto)
     def uptime_seconds(self, frequency: Optional[float] = 10) -> Generator[float, None, None]:
         """Provides current uptime."""
         start_time = datetime.datetime.now()
@@ -68,9 +68,10 @@ class TestContainer(SkillContainer):
             yield (datetime.datetime.now() - start_time).total_seconds()
             time.sleep(1 / frequency)
 
-    @skill(ret_type=ReturnType.passthrough)
+    @skill(ret_type=ReturnType.auto)
     def current_date(self, frequency: Optional[float] = 10) -> str:
         """Provides current date."""
+        time.sleep(3)
         return str(datetime.datetime.now())
 
 

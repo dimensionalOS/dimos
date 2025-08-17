@@ -98,9 +98,15 @@ class Agent(AgentSpec):
             if isinstance(message, HumanMessage):
                 table.add_row(Text("Human", style="green"), Text(message.content, style="green"))
             elif isinstance(message, AIMessage):
-                table.add_row(
-                    Text("Agent", style="magenta"), Text(message.content, style="magenta")
-                )
+                if hasattr(message, "metadata") and message.metadata.get("state"):
+                    table.add_row(
+                        Text("State Summary", style="blue"),
+                        Text(message.content, style="blue"),
+                    )
+                else:
+                    table.add_row(
+                        Text("Agent", style="magenta"), Text(message.content, style="magenta")
+                    )
 
                 for tool_call in message.tool_calls:
                     table.add_row(
