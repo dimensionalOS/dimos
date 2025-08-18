@@ -46,6 +46,7 @@ def toolmsg_from_state(state: SkillState) -> ToolMessage:
     return ToolMessage(
         # if agent call has been triggered by another skill,
         # but this specific skill didn't finish yet so we don't have data for a tool call response
+        # we generate an informative message instead
         state.content()
         or "Loading, you will be called with an update, no need for subsequent tool calls",
         name=state.name,
@@ -62,6 +63,8 @@ def summary_from_state(state: SkillState) -> Dict[str, Any]:
     }
 
 
+# we take overview of running skills from the coorindator
+# and build messages to be sent to an agent
 def snapshot_to_messages(
     state: SkillStateDict,
     tool_calls: List[ToolCall],
