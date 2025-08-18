@@ -1,0 +1,242 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from __future__ import annotations
+
+import time
+from collections import deque
+from dataclasses import dataclass
+from typing import Any, Deque, Dict, List, Optional, Union
+
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Container, ScrollableContainer
+from textual.reactive import reactive
+from textual.widgets import Footer, RichLog
+
+from dimos.protocol.pubsub import lcm
+from dimos.protocol.pubsub.lcmpubsub import PickleLCM
+from dimos.utils.logging_config import setup_logger
+
+# Type alias for all message types we might receive
+AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]
+
+
+@dataclass
+class MessageEntry:
+    """Store a single message with metadata."""
+
+    timestamp: float
+    message: AnyMessage
+
+    def __post_init__(self):
+        """Initialize timestamp if not provided."""
+        if self.timestamp is None:
+            self.timestamp = time.time()
+
+
+class AgentMessageMonitor:
+    """Monitor agent messages published via LCM."""
+
+    def __init__(self, topic: str = "/agent", max_messages: int = 1000):
+        self.topic = topic
+        self.max_messages = max_messages
+        self.messages: Deque[MessageEntry] = deque(maxlen=max_messages)
+        self.transport = PickleLCM()
+        self.transport.start()
+        self.callbacks: List[callable] = []
+        pass
+
+    def start(self):
+        """Start monitoring messages."""
+        self.transport.subscribe(self.topic, self._handle_message)
+
+    def stop(self):
+        """Stop monitoring."""
+        # PickleLCM doesn't have explicit stop method
+        pass
+
+    def _handle_message(self, msg: Any, topic: str):
+        """Handle incoming messages."""
+        # Check if it's one of the message types we care about
+        if isinstance(msg, (SystemMessage, ToolMessage, AIMessage, HumanMessage)):
+            entry = MessageEntry(timestamp=time.time(), message=msg)
+            self.messages.append(entry)
+
+            # Notify callbacks
+            for callback in self.callbacks:
+                callback(entry)
+        else:
+            pass
+
+    def subscribe(self, callback: callable):
+        """Subscribe to new messages."""
+        self.callbacks.append(callback)
+
+    def get_messages(self) -> List[MessageEntry]:
+        """Get all stored messages."""
+        return list(self.messages)
+
+
+def format_timestamp(timestamp: float) -> str:
+    """Format timestamp as HH:MM:SS.mmm."""
+    return (
+        time.strftime("%H:%M:%S", time.localtime(timestamp)) + f".{int((timestamp % 1) * 1000):03d}"
+    )
+
+
+def get_message_type_and_style(msg: AnyMessage) -> tuple[str, str]:
+    """Get message type name and style color."""
+    if isinstance(msg, HumanMessage):
+        return "Human ", "green"
+    elif isinstance(msg, AIMessage):
+        if hasattr(msg, "metadata") and msg.metadata.get("state"):
+            return "State ", "blue"
+        return "Agent ", "yellow"
+    elif isinstance(msg, ToolMessage):
+        return "Tool  ", "red"
+    elif isinstance(msg, SystemMessage):
+        return "System", "red"
+    else:
+        return "Unkn  ", "white"
+
+
+def format_message_content(msg: AnyMessage) -> str:
+    """Format message content for display."""
+    if isinstance(msg, ToolMessage):
+        return f"{msg.name}() -> {msg.content}"
+    elif isinstance(msg, AIMessage) and msg.tool_calls:
+        # Include tool calls in content
+        tool_info = []
+        for tc in msg.tool_calls:
+            args_str = str(tc.get("args", {}))
+            tool_info.append(f"{tc.get('name')}({args_str})")
+        content = msg.content or ""
+        if content and tool_info:
+            return f"{content}\n[Tool Calls: {', '.join(tool_info)}]"
+        elif tool_info:
+            return f"[Tool Calls: {', '.join(tool_info)}]"
+        return content
+    else:
+        return str(msg.content) if hasattr(msg, "content") else str(msg)
+
+
+class AgentSpyApp(App):
+    """TUI application for monitoring agent messages."""
+
+    CSS = """
+    Screen {
+        layout: vertical;
+        background: black;
+    }
+
+    RichLog {
+        height: 1fr;
+        border: none;
+        background: black;
+        padding: 0 1;
+    }
+
+    Footer {
+        dock: bottom;
+        height: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("q", "quit", "Quit"),
+        Binding("c", "clear", "Clear"),
+        Binding("ctrl+c", "quit", show=False),
+    ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.monitor = AgentMessageMonitor()
+        self.message_log: Optional[RichLog] = None
+
+    def compose(self) -> ComposeResult:
+        """Compose the UI."""
+        self.message_log = RichLog(wrap=True, highlight=True, markup=True)
+        yield self.message_log
+        yield Footer()
+
+    def on_mount(self):
+        """Start monitoring when app mounts."""
+        self.theme = "flexoki"
+
+        # Subscribe to new messages
+        self.monitor.subscribe(self.on_new_message)
+        self.monitor.start()
+
+        # Write existing messages to the log
+        for entry in self.monitor.get_messages():
+            self.on_new_message(entry)
+
+    def on_unmount(self):
+        """Stop monitoring when app unmounts."""
+        self.monitor.stop()
+
+    def on_new_message(self, entry: MessageEntry):
+        """Handle new messages."""
+        if self.message_log:
+            msg = entry.message
+            msg_type, style = get_message_type_and_style(msg)
+            content = format_message_content(msg)
+
+            # Format the message for the log
+            timestamp = format_timestamp(entry.timestamp)
+            self.message_log.write(
+                f"[dim white]{timestamp}[/dim white] | "
+                f"[bold {style}]{msg_type}[/bold {style}] | "
+                f"[{style}]{content}[/{style}]"
+            )
+
+    def refresh_display(self):
+        """Refresh the message display."""
+        # Not needed anymore as messages are written directly to the log
+
+    def action_clear(self):
+        """Clear message history."""
+        self.monitor.messages.clear()
+        if self.message_log:
+            self.message_log.clear()
+
+
+def main():
+    """Main entry point for agentspy."""
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "web":
+        import os
+
+        from textual_serve.server import Server
+
+        server = Server(f"python {os.path.abspath(__file__)}")
+        server.serve()
+    else:
+        app = AgentSpyApp()
+        app.run()
+
+
+if __name__ == "__main__":
+    main()

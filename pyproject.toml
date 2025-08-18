@@ -102,6 +102,7 @@ dependencies = [
 lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
 foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
 skillspy = "dimos.utils.cli.skillspy.skillspy:main"
+agentspy = "dimos.utils.cli.agentspy.agentspy:main"
 
 [project.optional-dependencies]
 manipulation = [

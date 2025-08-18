@@ -37,18 +37,16 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger("dimos.protocol.agents2")
 
 
-SYSTEM_MSG_APPEND = """
-Your message history will always be appended with a System Overview message that provides situational awareness.
-"""
+SYSTEM_MSG_APPEND = "\nYour message history will always be appended with a System Overview message that provides situational awareness."
 
 
 def toolmsg_from_state(state: SkillState) -> ToolMessage:
     return ToolMessage(
         # if agent call has been triggered by another skill,
-        # but this specific skill didn't finish yet so we don't have data for a tool call response
-        # we generate an informative message instead
+        # and this specific skill didn't finish yet but we need a tool call response
+        # we return a message explaining that execution is still ongoing
         state.content()
-        or "Loading, you will be called with an update, no need for subsequent tool calls",
+        or "Running, you will be called with an update, no need for subsequent tool calls",
         name=state.name,
         tool_call_id=state.call_id,
     )
@@ -126,6 +124,7 @@ class Agent(AgentSpec):
                 self.config.system_prompt.content += SYSTEM_MSG_APPEND
                 self.system_message = self.config.system_prompt
 
+        self.publish(self.system_message)
         self._llm = init_chat_model(model_provider=self.config.provider, model=self.config.model)
 
     @rpc
