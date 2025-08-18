@@ -46,4 +46,3 @@ async def test_agent_init():
     )
 
     await asyncio.sleep(20)
-    print(agent)

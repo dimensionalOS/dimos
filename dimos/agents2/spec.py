@@ -15,9 +15,9 @@
 """Base agent module that wraps BaseAgent for DimOS module usage."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 from langchain.chat_models.base import _SUPPORTED_PROVIDERS
 from langchain_core.messages import (
@@ -34,6 +34,7 @@ from rich.text import Text
 
 from dimos.core import Module, rpc
 from dimos.core.module import ModuleConfig
+from dimos.protocol.pubsub import PubSub, lcm
 from dimos.protocol.service import Service
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.utils.logging_config import setup_logger
@@ -134,9 +135,26 @@ class AgentConfig(ModuleConfig):
     model: Model = Model.GPT_4O
     provider: Provider = Provider.OPENAI
 
+    agent_transport: type[PubSub] = lcm.PickleLCM
+    agent_topic: Any = field(default_factory=lambda: lcm.Topic("/agent"))
+
+
+type AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]
+
 
 class AgentSpec(Service[AgentConfig], Module, ABC):
     default_config: type[AgentConfig] = AgentConfig
+
+    def __init__(self, *args, **kwargs):
+        Service.__init__(self, *args, **kwargs)
+        Module.__init__(self, *args, **kwargs)
+
+        if self.config.agent_transport:
+            self.transport = self.config.agent_transport()
+
+    def publish(self, msg: AnyMessage):
+        if self.transport:
+            self.transport.publish(self.config.agent_topic, msg)
 
     @rpc
     @abstractmethod
@@ -151,11 +169,10 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
     def clear_history(self): ...
 
     @abstractmethod
-    def append_history(self, *msgs: List[Union[AIMessage, HumanMessage]]):
-        self._history.extend(msgs)
+    def append_history(self, *msgs: List[Union[AIMessage, HumanMessage]]): ...
 
     @abstractmethod
-    def history(self) -> List[Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]]: ...
+    def history(self) -> List[AnyMessage]: ...
 
     @rpc
     @abstractmethod
@@ -163,8 +180,7 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
 
     def __str__(self) -> str:
         console = Console(force_terminal=True, legacy_windows=False)
-
-        table = Table(title="Agent History", show_header=True)
+        table = Table(show_header=True)
 
         table.add_column("Message Type", style="cyan", no_wrap=True)
         table.add_column("Content")

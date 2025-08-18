@@ -138,6 +138,9 @@ class Agent(AgentSpec):
         self._history.clear()
 
     def append_history(self, *msgs: List[Union[AIMessage, HumanMessage]]):
+        for msg in msgs:
+            self.publish(msg)
+
         self._history.extend(msgs)
 
     def history(self):
@@ -172,6 +175,9 @@ class Agent(AgentSpec):
 
                 # history() call ensures we include latest system state
                 # and system message in our invocation
+                if self.state_message:
+                    self.publish(self.state_message)
+
                 msg = self._llm.invoke(self.history())
                 self.append_history(msg)
 
@@ -179,6 +185,9 @@ class Agent(AgentSpec):
 
                 if msg.tool_calls:
                     self.execute_tool_calls(msg.tool_calls)
+
+                print(self)
+                print(self.coordinator)
 
                 if not self.coordinator.has_active_skills():
                     logger.info("No active tasks, exiting agent loop.")
@@ -198,9 +207,6 @@ class Agent(AgentSpec):
 
                 self.state_message = state_msg
                 self.append_history(*tool_msgs)
-
-                print(self)
-                print(self.coordinator)
 
         except Exception as e:
             logger.error(f"Error in agent loop: {e}")
