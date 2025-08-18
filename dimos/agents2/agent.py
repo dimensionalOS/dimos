@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import json
+from functools import reduce
 from pprint import pprint
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -25,14 +27,11 @@ from langchain_core.messages import (
     ToolCall,
     ToolMessage,
 )
-from rich.console import Console
-from rich.table import Table
-from rich.text import Text
 
 from dimos.agents2.spec import AgentSpec
 from dimos.core import Module, rpc
 from dimos.protocol.skill import skill
-from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState
+from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.protocol.agents2")
@@ -43,7 +42,70 @@ Your message history will always be appended with a System Overview message that
 """
 
 
+def toolmsg_from_state(state: SkillState) -> ToolMessage:
+    return ToolMessage(
+        # if agent call has been triggered by another skill,
+        # but this specific skill didn't finish yet so we don't have data for a tool call response
+        state.content()
+        or "Loading, you will be called with an update, no need for subsequent tool calls",
+        name=state.name,
+        tool_call_id=state.call_id,
+    )
+
+
+def summary_from_state(state: SkillState) -> Dict[str, Any]:
+    return {
+        "name": state.name,
+        "call_id": state.call_id,
+        "state": state.state.name,
+        "data": state.content(),
+    }
+
+
+def snapshot_to_messages(
+    state: SkillStateDict,
+    tool_calls: List[ToolCall],
+) -> Tuple[List[ToolMessage], Optional[AIMessage]]:
+    # tool call ids from a previous agent call
+    tool_call_ids = set(
+        map(
+            lambda tool_call: tool_call.get("id"),
+            tool_calls,
+        )
+    )
+
+    # we build a tool msg responses
+    tool_msgs: list[ToolMessage] = []
+
+    # we build a general skill state overview (for longer running skills)
+    state_overview: list[Dict[str, Any]] = []
+
+    for skill_state in sorted(
+        state.values(),
+        key=lambda skill_state: skill_state.duration(),
+    ):
+        if skill_state.call_id in tool_call_ids:
+            tool_msgs.append(toolmsg_from_state(skill_state))
+            continue
+
+        state_overview.append(summary_from_state(skill_state))
+
+    if state_overview:
+        state_msg = AIMessage(
+            "State Overview:\n" + "\n".join(map(json.dumps, state_overview)),
+            metadata={"state": True},
+        )
+
+        return tool_msgs, state_msg
+
+    return tool_msgs, None
+
+
+# Agent class job is to glue skill coordinator state to agent messages
 class Agent(AgentSpec):
+    system_message: SystemMessage
+    state_message: Optional[AIMessage] = None
+
     def __init__(
         self,
         *args,
@@ -52,14 +114,14 @@ class Agent(AgentSpec):
         AgentSpec.__init__(self, *args, **kwargs)
 
         self.coordinator = SkillCoordinator()
-        self.messages = []
+        self._history = []
 
         if self.config.system_prompt:
             if isinstance(self.config.system_prompt, str):
-                self.messages.append(SystemMessage(self.config.system_prompt + SYSTEM_MSG_APPEND))
+                self.system_message = SystemMessage(self.config.system_prompt + SYSTEM_MSG_APPEND)
             else:
                 self.config.system_prompt.content += SYSTEM_MSG_APPEND
-                self.messages.append(self.config.system_prompt)
+                self.system_message = self.config.system_prompt
 
         self._llm = init_chat_model(model_provider=self.config.provider, model=self.config.model)
 
@@ -73,7 +135,17 @@ class Agent(AgentSpec):
 
     @rpc
     def clear_history(self):
-        self.messages.clear()
+        self._history.clear()
+
+    def append_history(self, *msgs: List[Union[AIMessage, HumanMessage]]):
+        self._history.extend(msgs)
+
+    def history(self):
+        return (
+            [self.system_message]
+            + self._history
+            + ([self.state_message] if self.state_message else [])
+        )
 
     # Used by agent to execute tool calls
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> None:
@@ -86,70 +158,25 @@ class Agent(AgentSpec):
                 tool_call.get("args"),
             )
 
-    def __str__(self) -> str:
-        console = Console(force_terminal=True, legacy_windows=False)
-
-        table = Table(title="Agent History", show_header=True)
-
-        table.add_column("Message Type", style="cyan", no_wrap=True)
-        table.add_column("Content")
-
-        for message in self.messages:
-            if isinstance(message, HumanMessage):
-                table.add_row(Text("Human", style="green"), Text(message.content, style="green"))
-            elif isinstance(message, AIMessage):
-                if hasattr(message, "metadata") and message.metadata.get("state"):
-                    table.add_row(
-                        Text("State Summary", style="blue"),
-                        Text(message.content, style="blue"),
-                    )
-                else:
-                    table.add_row(
-                        Text("Agent", style="magenta"), Text(message.content, style="magenta")
-                    )
-
-                for tool_call in message.tool_calls:
-                    table.add_row(
-                        "Tool Call",
-                        Text(
-                            f"{tool_call.get('name')}({tool_call.get('args').get('args')})",
-                            style="bold magenta",
-                        ),
-                    )
-            elif isinstance(message, ToolMessage):
-                table.add_row(
-                    "Tool Response", Text(f"{message.name}() -> {message.content}"), style="red"
-                )
-            elif isinstance(message, SystemMessage):
-                table.add_row("System", Text(message.content, style="yellow"))
-            else:
-                table.add_row("Unknown", str(message))
-
-        # Render to string with title above
-        with console.capture() as capture:
-            console.print(Text("  Agent", style="bold blue"))
-            console.print(table)
-        return capture.get().strip()
-
     # used to inject skill calls into the agent loop without agent asking for it
     def run_implicit_skill(self, skill_name: str, *args, **kwargs) -> None:
-        self.coordinator.call_skill(
-            False,
-            skill_name,
-            {"args": args, "kwargs": kwargs},
-        )
+        self.coordinator.call_skill(False, skill_name, {"args": args, "kwargs": kwargs})
 
     async def agent_loop(self, seed_query: str = ""):
-        self.messages.append(HumanMessage(seed_query))
+        self.append_history(HumanMessage(seed_query))
+
         try:
             while True:
                 tools = self.get_tools()
                 self._llm = self._llm.bind_tools(tools)
 
-                msg = self._llm.invoke(self.messages)
-                self.messages.append(msg)
+                # history() call ensures we include latest system state
+                # and system message in our invocation
+                msg = self._llm.invoke(self.history())
+                self.append_history(msg)
 
                 logger.info(f"Agent response: {msg.content}")
+
                 if msg.tool_calls:
                     self.execute_tool_calls(msg.tool_calls)
 
@@ -157,10 +184,21 @@ class Agent(AgentSpec):
                     logger.info("No active tasks, exiting agent loop.")
                     return msg.content
 
+                # coordinator will continue once a skill state has changed in
+                # such a way that agent call needs to be executed
                 await self.coordinator.wait_for_updates()
 
+                # we build a full snapshot of currently running skills
+                # we also remove finished/errored out skills from subsequent snapshots (clear=True)
                 update = self.coordinator.generate_snapshot(clear=True)
-                self.messages = self.messages + update.agent_encode()
+
+                # generate tool_msgs and general state update message,
+                # depending on a skill is a tool call from previous interaction or not
+                tool_msgs, state_msg = snapshot_to_messages(update, msg.tool_calls)
+
+                self.state_message = state_msg
+                self.append_history(*tool_msgs)
+
                 print(self)
                 print(self.coordinator)
 

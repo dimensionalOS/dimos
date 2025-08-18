@@ -84,7 +84,7 @@ class PubSubComms(Service[PubSubCommsConfig], SkillCommsSpec):
 
 @dataclass
 class LCMCommsConfig(PubSubCommsConfig[str, SkillMsg]):
-    topic: str = "/agent"
+    topic: str = "/skill"
     pubsub: Union[type[PubSub], PubSub, None] = PickleLCM
     # lcm needs to be started only if receiving
     # skill comms are broadcast only in modules so we don't autostart

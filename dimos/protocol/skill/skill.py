@@ -25,7 +25,6 @@ from dimos.protocol.skill.type import (
     MsgType,
     Reducer,
     Return,
-    ReturnType,
     SkillConfig,
     SkillMsg,
     Stream,
@@ -58,7 +57,9 @@ from dimos.protocol.skill.type import (
 
 
 def skill(
-    reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent, ret_type=ReturnType.auto
+    reducer=Reducer.latest,
+    stream=Stream.none,
+    ret=Return.call_agent,
 ) -> Callable:
     def decorator(f: Callable[..., Any]) -> Any:
         def wrapper(self, *args, **kwargs):
@@ -82,7 +83,6 @@ def skill(
         # params = list(sig.parameters.values())
         # if params and params[0].name == "self":
         #     params = params[1:]  # Remove first parameter 'self'
-
         # wrapper.__signature__ = sig.replace(parameters=params)
 
         skill_config = SkillConfig(
@@ -91,10 +91,8 @@ def skill(
             stream=stream,
             ret=ret,
             schema=function_to_schema(f),
-            ret_type=ret_type,
         )
 
-        # implicit RPC call as well
         wrapper.__rpc__ = True  # type: ignore[attr-defined]
         wrapper._skill_config = skill_config  # type: ignore[attr-defined]
         wrapper.__name__ = f.__name__  # Preserve original function name

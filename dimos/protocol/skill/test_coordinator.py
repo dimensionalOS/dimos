@@ -18,9 +18,10 @@ from typing import Generator, Optional
 
 import pytest
 
+from dimos.core import Module
 from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.protocol.skill.type import Reducer, Return, ReturnType, Stream
+from dimos.protocol.skill.type import Reducer, Return, Stream
 
 
 class TestContainer(SkillContainer):
@@ -53,14 +54,14 @@ class TestContainer(SkillContainer):
                 time.sleep(delay)
             yield i
 
-    @skill(stream=Stream.passive, reducer=Reducer.latest, ret_type=ReturnType.auto)
+    @skill(stream=Stream.passive, reducer=Reducer.latest)
     def current_time(self, frequency: Optional[float] = 10) -> Generator[str, None, None]:
         """Provides current time."""
         while True:
             yield str(datetime.datetime.now())
             time.sleep(1 / frequency)
 
-    @skill(stream=Stream.passive, reducer=Reducer.latest, ret_type=ReturnType.auto)
+    @skill(stream=Stream.passive, reducer=Reducer.latest)
     def uptime_seconds(self, frequency: Optional[float] = 10) -> Generator[float, None, None]:
         """Provides current uptime."""
         start_time = datetime.datetime.now()
@@ -68,7 +69,7 @@ class TestContainer(SkillContainer):
             yield (datetime.datetime.now() - start_time).total_seconds()
             time.sleep(1 / frequency)
 
-    @skill(ret_type=ReturnType.auto)
+    @skill()
     def current_date(self, frequency: Optional[float] = 10) -> str:
         """Provides current date."""
         time.sleep(3)

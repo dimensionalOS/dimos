@@ -43,11 +43,6 @@ class Return(Enum):
     callback = 3  # TODO: this is a work in progress, not implemented yet
 
 
-class ReturnType(Enum):
-    auto = 0
-    passthrough = 1
-
-
 @dataclass
 class SkillConfig:
     name: str
@@ -55,7 +50,6 @@ class SkillConfig:
     stream: Stream
     ret: Return
     schema: dict[str, Any]
-    ret_type: ReturnType = ReturnType.auto
     f: Callable | None = None
     autostart: bool = False
 

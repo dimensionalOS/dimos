@@ -189,7 +189,6 @@ class AgentSpyApp(App):
         self.table.add_column("Skill Name")
         self.table.add_column("State")
         self.table.add_column("Duration")
-        self.table.add_column("Start Time")
         self.table.add_column("Messages")
         self.table.add_column("Details")
 
@@ -286,9 +285,9 @@ class AgentSpyApp(App):
             if not found:
                 # Add new entry with current time as start
                 start_time = current_time
-                if len(skill_state) > 0:
-                    # Use first message timestamp if available
-                    start_time = skill_state._items[0].ts
+                if skill_state.start_msg:
+                    # Use start message timestamp if available
+                    start_time = skill_state.start_msg.ts
                 self.skill_history.append((call_id, skill_state, start_time))
 
         # Schedule UI update
@@ -311,9 +310,8 @@ class AgentSpyApp(App):
 
         # Show only top N entries
         for call_id, skill_state, start_time in sorted_history[:max_rows]:
-            # Calculate how long ago it started
+            # Calculate how long ago it started (for progress indicator)
             time_ago = time.time() - start_time
-            start_str = format_duration(time_ago) + " ago"
 
             # Duration
             duration_str = format_duration(skill_state.duration())
@@ -323,16 +321,16 @@ class AgentSpyApp(App):
 
             # Details based on state and last message
             details = ""
-            if skill_state.state == SkillStateEnum.error and msg_count > 0:
+            if skill_state.state == SkillStateEnum.error and skill_state.error_msg:
                 # Show error message
-                last_msg = skill_state._items[-1]
-                if last_msg.type == MsgType.error:
-                    details = str(last_msg.content)[:40]
-            elif skill_state.state == SkillStateEnum.completed and msg_count > 0:
+                error_content = skill_state.error_msg.content
+                if isinstance(error_content, dict):
+                    details = error_content.get("msg", "Error")[:40]
+                else:
+                    details = str(error_content)[:40]
+            elif skill_state.state == SkillStateEnum.completed and skill_state.ret_msg:
                 # Show return value
-                last_msg = skill_state._items[-1]
-                if last_msg.type == MsgType.ret:
-                    details = f"→ {str(last_msg.content)[:37]}"
+                details = f"→ {str(skill_state.ret_msg.content)[:37]}"
             elif skill_state.state == SkillStateEnum.running:
                 # Show progress indicator
                 details = "⋯ " + "▸" * min(int(time_ago), 20)
@@ -348,7 +346,6 @@ class AgentSpyApp(App):
                 Text(skill_state.name, style="white"),
                 Text(skill_state.state.name, style=state_color(skill_state.state)),
                 Text(duration_str, style="dim"),
-                Text(start_str, style="dim"),
                 Text(str(msg_count), style="dim"),
                 Text(details, style="dim white"),
             )

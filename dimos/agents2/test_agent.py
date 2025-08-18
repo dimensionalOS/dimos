@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import asyncio
-import time
 
 import pytest
 
@@ -37,7 +36,6 @@ async def test_agent_init():
     agent = Agent(system_prompt=system_prompt)
 
     agent.register_skills(testcontainer)
-    agent.run_implicit_skill("uptime_seconds", frequency=1)
 
     agent.start()
 

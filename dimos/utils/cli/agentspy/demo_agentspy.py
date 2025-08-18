@@ -75,15 +75,17 @@ def run_demo_skills():
             # Run different skills based on counter
             if counter % 4 == 0:
                 # Run multiple count_to in parallel to show parallel execution
-                agent_interface.call(f"{call_id}-count-1", "count_to", 3)
-                agent_interface.call(f"{call_id}-count-2", "count_to", 5)
-                agent_interface.call(f"{call_id}-count-3", "count_to", 2)
+                agent_interface.call_skill(f"{call_id}-count-1", "count_to", {"args": [3]})
+                agent_interface.call_skill(f"{call_id}-count-2", "count_to", {"args": [5]})
+                agent_interface.call_skill(f"{call_id}-count-3", "count_to", {"args": [2]})
             elif counter % 4 == 1:
-                agent_interface.call(f"{call_id}-fib", "compute_fibonacci", 10)
+                agent_interface.call_skill(f"{call_id}-fib", "compute_fibonacci", {"args": [10]})
             elif counter % 4 == 2:
-                agent_interface.call(f"{call_id}-quick", "quick_task", f"task-{counter}")
+                agent_interface.call_skill(
+                    f"{call_id}-quick", "quick_task", {"args": [f"task-{counter}"]}
+                )
             else:
-                agent_interface.call(f"{call_id}-error", "simulate_error")
+                agent_interface.call_skill(f"{call_id}-error", "simulate_error", {})
 
             counter += 1
 

@@ -17,12 +17,20 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 from langchain.chat_models.base import _SUPPORTED_PROVIDERS
 from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    MessageLikeRepresentation,
     SystemMessage,
+    ToolCall,
+    ToolMessage,
 )
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
 
 from dimos.core import Module, rpc
 from dimos.core.module import ModuleConfig
@@ -142,6 +150,58 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
     @abstractmethod
     def clear_history(self): ...
 
+    @abstractmethod
+    def append_history(self, *msgs: List[Union[AIMessage, HumanMessage]]):
+        self._history.extend(msgs)
+
+    @abstractmethod
+    def history(self) -> List[Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]]: ...
+
     @rpc
     @abstractmethod
     def query(self, query: str): ...
+
+    def __str__(self) -> str:
+        console = Console(force_terminal=True, legacy_windows=False)
+
+        table = Table(title="Agent History", show_header=True)
+
+        table.add_column("Message Type", style="cyan", no_wrap=True)
+        table.add_column("Content")
+
+        for message in self.history():
+            if isinstance(message, HumanMessage):
+                table.add_row(Text("Human", style="green"), Text(message.content, style="green"))
+            elif isinstance(message, AIMessage):
+                if hasattr(message, "metadata") and message.metadata.get("state"):
+                    table.add_row(
+                        Text("State Summary", style="blue"),
+                        Text(message.content, style="blue"),
+                    )
+                else:
+                    table.add_row(
+                        Text("Agent", style="magenta"), Text(message.content, style="magenta")
+                    )
+
+                for tool_call in message.tool_calls:
+                    table.add_row(
+                        "Tool Call",
+                        Text(
+                            f"{tool_call.get('name')}({tool_call.get('args').get('args')})",
+                            style="bold magenta",
+                        ),
+                    )
+            elif isinstance(message, ToolMessage):
+                table.add_row(
+                    "Tool Response", Text(f"{message.name}() -> {message.content}"), style="red"
+                )
+            elif isinstance(message, SystemMessage):
+                table.add_row("System", Text(message.content, style="yellow"))
+            else:
+                table.add_row("Unknown", str(message))
+
+        # Render to string with title above
+        with console.capture() as capture:
+            console.print(Text("  Agent", style="bold blue"))
+            console.print(table)
+        return capture.get().strip()

@@ -37,7 +37,7 @@ from dimos.core import rpc
 from dimos.core.module import get_loop
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
-from dimos.protocol.skill.type import MsgType, Reducer, Return, ReturnType, SkillMsg, Stream
+from dimos.protocol.skill.type import MsgType, Reducer, Return, SkillMsg, Stream
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.protocol.skill.coordinator")
@@ -101,13 +101,13 @@ class SkillState:
         else:
             return 0.0
 
-    def content(self) -> str:
+    def content(self) -> dict[str, Any] | str | int | float | None:
         # any tool output can be a custom type that knows how to encode itself
         # like a costmap, path, transform etc could be translatable into strings
         def maybe_encode(something: Any) -> str:
             if getattr(something, "agent_encode", None):
-                return something.agent_encode()
-            return str(something)
+                something = something.agent_encode()
+            return something
 
         if self.state == SkillStateEnum.running:
             if self.reduced_stream_msg:
@@ -137,18 +137,15 @@ class SkillState:
                 tool_call_id=self.call_id,
             )
         else:
-            if self.skill_config.ret_type == ReturnType.auto:
-                # if we are not a streaming skill, we return a string
-                return json.dumps(
-                    {
-                        "name": self.name,
-                        "call_id": self.call_id,
-                        "state": self.state.name,
-                        "data": self.content(),
-                        "ran_for": self.duration(),
-                    }
-                )
-            return self.name + ": " + json.dumps(self.content())
+            return json.dumps(
+                {
+                    "name": self.name,
+                    "call_id": self.call_id,
+                    "state": self.state.name,
+                    "data": self.content(),
+                    "ran_for": self.duration(),
+                }
+            )
 
     # returns True if the agent should be called for this message
     def handle_msg(self, msg: SkillMsg) -> bool:
@@ -222,26 +219,6 @@ class SkillState:
 # subclassed the dict just to have a better string representation
 class SkillStateDict(dict[str, SkillState]):
     """Custom dict for skill states with better string representation."""
-
-    def agent_encode(self) -> list[ToolMessage]:
-        """Encode all skill states into a list of ToolMessages for the agent."""
-        tool_responses = []
-        overview_msg = []
-
-        for skill_state in self.values():
-            response = skill_state.agent_encode()
-            if isinstance(response, ToolMessage):
-                tool_responses.append(response)
-            else:
-                overview_msg.append(response)
-
-        if overview_msg:
-            state = AIMessage(
-                "System Overview:\n" + "\n".join(overview_msg),
-                metadata={"state": True},
-            )
-            return tool_responses + [state]
-        return tool_responses
 
     def table(self) -> Table:
         # Add skill states section
@@ -341,7 +318,7 @@ class SkillCoordinator(SkillContainer):
 
     # internal skill call
     def call_skill(
-        self, call_id: Union[str | Literal[False]], skill_name: str, args: dict[str, Any] = {}
+        self, call_id: Union[str | Literal[False]], skill_name: str, args: dict[str, Any]
     ) -> None:
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
@@ -350,20 +327,18 @@ class SkillCoordinator(SkillContainer):
             )
             return
 
-        # This initializes the skill state if it doesn't exist
-        if call_id:
-            self._skill_state[call_id] = SkillState(
-                call_id=call_id, name=skill_name, skill_config=skill_config
-            )
-        else:
-            call_id = str(time.time())
-            self._skill_state[call_id] = SkillState(
-                call_id=call_id, name=skill_name, skill_config=skill_config
-            )
-            self._skill_state[call_id].sent_tool_msg = True
+        self._skill_state[call_id] = SkillState(
+            call_id=call_id, name=skill_name, skill_config=skill_config
+        )
 
-        print("ARGS ARE", args)
-        return skill_config.call(call_id, *args.get("args", []), **args.get("kwargs", {}))
+        # TODO agent often calls the skill again if previous response is still loading.
+        # maybe create a new skill_state linked to a previous one? not sure
+
+        return skill_config.call(
+            call_id,
+            *(args.get("args") or []),
+            **(args.get("kwargs") or {}),
+        )
 
     # Receives a message from active skill
     # Updates local skill state (appends to streamed data if needed etc)
