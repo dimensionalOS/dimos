@@ -34,15 +34,11 @@ async def test_agent_init():
 
     testcontainer = TestContainer()
     agent = Agent(system_prompt=system_prompt)
-
     agent.register_skills(testcontainer)
-
     agent.start()
-
-    print(
-        agent.query_async(
-            "hi there, please tell me what's your name and current date, and how much is 124181112 + 124124?"
-        )
+    agent.run_implicit_skill("uptime_seconds")
+    agent.query_async(
+        "hi there, please tell me what's your name and current date, and how much is 124181112 + 124124?"
     )
 
     await asyncio.sleep(20)

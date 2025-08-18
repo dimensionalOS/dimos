@@ -320,6 +320,8 @@ class SkillCoordinator(SkillContainer):
     def call_skill(
         self, call_id: Union[str | Literal[False]], skill_name: str, args: dict[str, Any]
     ) -> None:
+        if not call_id:
+            call_id = str(round(time.time()))
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
             logger.error(
