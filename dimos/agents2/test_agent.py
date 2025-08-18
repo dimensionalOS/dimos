@@ -20,6 +20,7 @@ from dimos.agents2.agent import Agent
 from dimos.protocol.skill.test_coordinator import TestContainer
 
 
+@pytest.mark.tool
 @pytest.mark.asyncio
 async def test_agent_init():
     system_prompt = (

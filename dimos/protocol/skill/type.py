@@ -137,7 +137,7 @@ class SkillMsg(Timestamped, Generic[M]):
 
 # typing looks complex but it's a standard reducer function signature, using SkillMsgs
 # (Optional[accumulator], msg) -> accumulator
-type ReducerF = Callable[
+ReducerF = Callable[
     [Optional[SkillMsg[Literal[MsgType.reduced_stream]]], SkillMsg[Literal[MsgType.stream]]],
     SkillMsg[Literal[MsgType.reduced_stream]],
 ]
