@@ -125,7 +125,7 @@ async def test_coordinator_generator():
     while await skillCoordinator.wait_for_updates(2):
         print(skillCoordinator)
         agent_update = skillCoordinator.generate_snapshot(clear=True)
-        print(agent_update.agent_encode())
+        print(agent_update)
         await asyncio.sleep(0.125)
 
     print("Skill lifecycle finished")
