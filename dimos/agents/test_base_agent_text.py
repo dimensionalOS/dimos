@@ -81,6 +81,7 @@ def test_base_agent_direct_text():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful assistant. Answer in 10 words or less.",
         temperature=0.0,
+        seed=42,  # Fixed seed for deterministic results
     )
 
     # Test simple query with string (backward compatibility)
