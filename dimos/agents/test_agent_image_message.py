@@ -219,7 +219,7 @@ def test_agent_mixed_content():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful assistant that can see images when provided.",
         temperature=0.0,
-        seed=42,
+        seed=100,
     )
 
     # Text-only query

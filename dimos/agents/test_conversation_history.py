@@ -235,7 +235,7 @@ def test_conversation_history_with_tools():
         system_prompt="You are a helpful assistant with access to a calculator.",
         skills=TestSkillLibrary(),
         temperature=0.0,
-        seed=42,
+        seed=100,
     )
 
     try:
