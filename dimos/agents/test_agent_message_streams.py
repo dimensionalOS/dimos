@@ -341,6 +341,7 @@ def test_agent_message_text_only():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful assistant. Answer in 10 words or less.",
         temperature=0.0,
+        seed=42,
     )
 
     # Test with text-only AgentMessage

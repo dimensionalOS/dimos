@@ -44,6 +44,7 @@ def test_agent_single_image():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful vision assistant. Describe what you see concisely.",
         temperature=0.0,
+        seed=42,
     )
 
     # Create AgentMessage with text and single image
@@ -103,6 +104,7 @@ def test_agent_multiple_images():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful vision assistant that compares images.",
         temperature=0.0,
+        seed=42,
     )
 
     # Create AgentMessage with multiple images
@@ -169,6 +171,7 @@ def test_agent_image_with_context():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful vision assistant with good memory.",
         temperature=0.0,
+        seed=42,
     )
 
     # First query with image
@@ -216,6 +219,7 @@ def test_agent_mixed_content():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful assistant that can see images when provided.",
         temperature=0.0,
+        seed=42,
     )
 
     # Text-only query
@@ -288,7 +292,7 @@ def test_agent_empty_image_message():
 
     # Create agent
     agent = BaseAgent(
-        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0
+        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0, seed=42
     )
 
     # AgentMessage with only images, no text
@@ -335,6 +339,7 @@ def test_agent_non_vision_model_with_images():
         model="openai::gpt-3.5-turbo",  # This model doesn't support vision
         system_prompt="You are a helpful assistant.",
         temperature=0.0,
+        seed=42,
     )
 
     # Try to send an image
