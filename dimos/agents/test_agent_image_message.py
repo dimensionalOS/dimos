@@ -260,10 +260,10 @@ def test_agent_mixed_content():
 
     # Another text-only query
     response3 = agent.query("What did I just show you?")
-    assert any(
-        word in response3.content.lower()
-        for word in ["office", "room", "hallway", "image", "scene"]
-    )
+    words = ["office", "room", "hallway", "image", "scene"]
+    content = response3.content.lower()
+
+    assert any(word in content for word in words), f"{content=}"
 
     # Check history structure
     assert agent.conversation.size() == 6
