@@ -364,7 +364,10 @@ def test_conversation_edge_cases():
         pytest.skip("No OPENAI_API_KEY found")
 
     agent = BaseAgent(
-        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0, seed=42
+        model="openai::gpt-4o-mini",
+        system_prompt="You are a helpful assistant.",
+        temperature=0.0,
+        seed=42,
     )
 
     try:

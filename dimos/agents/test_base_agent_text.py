@@ -126,7 +126,10 @@ async def test_base_agent_async_text():
 
     # Create agent
     agent = BaseAgent(
-        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0, seed=42
+        model="openai::gpt-4o-mini",
+        system_prompt="You are a helpful assistant.",
+        temperature=0.0,
+        seed=42,
     )
 
     # Test async query with string
@@ -399,7 +402,10 @@ def test_base_agent_conversation_history():
 
     # Create agent
     agent = BaseAgent(
-        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0, seed=42
+        model="openai::gpt-4o-mini",
+        system_prompt="You are a helpful assistant.",
+        temperature=0.0,
+        seed=42,
     )
 
     # Test 1: Simple conversation

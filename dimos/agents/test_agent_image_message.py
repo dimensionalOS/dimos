@@ -292,7 +292,10 @@ def test_agent_empty_image_message():
 
     # Create agent
     agent = BaseAgent(
-        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0, seed=42
+        model="openai::gpt-4o-mini",
+        system_prompt="You are a helpful assistant.",
+        temperature=0.0,
+        seed=42,
     )
 
     # AgentMessage with only images, no text
