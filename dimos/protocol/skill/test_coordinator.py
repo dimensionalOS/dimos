@@ -18,10 +18,9 @@ from typing import Generator, Optional
 
 import pytest
 
-from dimos.core import Module
 from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.protocol.skill.type import Reducer, Return, Stream
+from dimos.protocol.skill.type import Reducer, Stream
 
 
 class TestContainer(SkillContainer):

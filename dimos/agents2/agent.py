@@ -13,24 +13,20 @@
 # limitations under the License.
 import asyncio
 import json
-from functools import reduce
-from pprint import pprint
+from operator import itemgetter
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from langchain.chat_models import init_chat_model
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
-    MessageLikeRepresentation,
     SystemMessage,
     ToolCall,
     ToolMessage,
 )
 
 from dimos.agents2.spec import AgentSpec
-from dimos.core import Module, rpc
-from dimos.protocol.skill import skill
+from dimos.core import rpc
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
 from dimos.utils.logging_config import setup_logger
 
@@ -61,24 +57,21 @@ def summary_from_state(state: SkillState) -> Dict[str, Any]:
     }
 
 
-# we take overview of running skills from the coorindator
-# and build messages to be sent to an agent
+# takes an overview of running skills from the coorindator
+# and builds messages to be sent to an agent
 def snapshot_to_messages(
     state: SkillStateDict,
     tool_calls: List[ToolCall],
 ) -> Tuple[List[ToolMessage], Optional[AIMessage]]:
-    # tool call ids from a previous agent call
+    # builds a set of tool call ids from a previous agent request
     tool_call_ids = set(
-        map(
-            lambda tool_call: tool_call.get("id"),
-            tool_calls,
-        )
+        map(itemgetter("id"), tool_calls),
     )
 
-    # we build a tool msg responses
+    # build a tool msg responses
     tool_msgs: list[ToolMessage] = []
 
-    # we build a general skill state overview (for longer running skills)
+    # build a general skill state overview (for longer running skills)
     state_overview: list[Dict[str, Any]] = []
 
     for skill_state in sorted(
@@ -102,7 +95,7 @@ def snapshot_to_messages(
     return tool_msgs, None
 
 
-# Agent class job is to glue skill coordinator state to agent messages
+# Agent class job is to glue skill coordinator state to an agent, builds langchain messages
 class Agent(AgentSpec):
     system_message: SystemMessage
     state_message: Optional[AIMessage] = None
@@ -172,14 +165,17 @@ class Agent(AgentSpec):
 
         try:
             while True:
+                # we are getting tools from the coordinator on each turn
+                # since this allows for skillcontainers to dynamically provide new skills
                 tools = self.get_tools()
                 self._llm = self._llm.bind_tools(tools)
 
-                # history() call ensures we include latest system state
-                # and system message in our invocation
+                # publish to /agent topic for observability
                 if self.state_message:
                     self.publish(self.state_message)
 
+                # history() builds our message history dynamically
+                # ensures we include latest system state, but not old ones.
                 msg = self._llm.invoke(self.history())
                 self.append_history(msg)
 
@@ -199,12 +195,13 @@ class Agent(AgentSpec):
                 # such a way that agent call needs to be executed
                 await self.coordinator.wait_for_updates()
 
-                # we build a full snapshot of currently running skills
-                # we also remove finished/errored out skills from subsequent snapshots (clear=True)
+                # we request a full snapshot of currently running, finished or errored out skills
+                # we ask for removal of finished skills from subsequent snapshots (clear=True)
                 update = self.coordinator.generate_snapshot(clear=True)
 
                 # generate tool_msgs and general state update message,
-                # depending on a skill is a tool call from previous interaction or not
+                # depending on a skill having associated tool call from previous interaction
+                # we will return a tool message, and not a general state message
                 tool_msgs, state_msg = snapshot_to_messages(update, msg.tool_calls)
 
                 self.state_message = state_msg
