@@ -29,10 +29,7 @@ ENV UV_SYSTEM_PYTHON=1
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-# Copy entire project first to ensure proper package installation
-COPY . /app/
-
-# Install dependencies with UV (10-100x faster than pip)
+# Install dependencies with UV
 RUN uv pip install .[dev]
 
 # Copy files and add version to motd
