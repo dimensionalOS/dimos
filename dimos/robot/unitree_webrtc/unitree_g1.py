@@ -33,6 +33,7 @@ from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.robot.unitree_webrtc.robot_config import RobotConfig
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import SkillLibrary
@@ -55,14 +56,12 @@ class G1ConnectionModule(Module):
 
     movecmd: In[Twist] = None
     odom: Out[PoseStamped] = None
-    ip: str
-    connection_type: str = "webrtc"
+    robot_config: RobotConfig
 
     _odom: PoseStamped = None
 
-    def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
-        self.ip = ip
-        self.connection_type = connection_type
+    def __init__(self, robot_config, *args, **kwargs):
+        self.robot_config = robot_config
         self.tf = TF()
         self.connection = None
         Module.__init__(self, *args, **kwargs)
@@ -71,7 +70,18 @@ class G1ConnectionModule(Module):
     def start(self):
         """Start the connection and subscribe to sensor streams."""
         # Use the exact same UnitreeWebRTCConnection as Go2
-        self.connection = UnitreeWebRTCConnection(self.ip)
+        match self.robot_config.connection_type:
+            case "webrtc":
+                self.connection = UnitreeWebRTCConnection(self.robot_config.robot_ip)
+            case "fake":
+                raise ValueError("Fake connection not supported for G1 robot.")
+            case "mujoco":
+                from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+
+                self.connection = MujocoConnection(self.robot_config)
+                self.connection.start()
+            case _:
+                raise ValueError(f"Unknown connection type: {self.robot_config.connection_type}")
 
         # Subscribe only to odometry (no video/lidar for G1)
         self.connection.odom_stream().subscribe(self._publish_tf)
@@ -124,7 +134,7 @@ class UnitreeG1(Robot):
 
     def __init__(
         self,
-        ip: str,
+        config: RobotConfig,
         output_dir: str = None,
         skill_library: Optional[SkillLibrary] = None,
         recording_path: str = None,
@@ -133,14 +143,14 @@ class UnitreeG1(Robot):
         """Initialize the G1 robot.
 
         Args:
-            ip: Robot IP address
+            config: RobotConfig instance with connection details
             output_dir: Directory for saving outputs
             skill_library: Skill library instance
             recording_path: Path to save recordings (if recording)
             replay_path: Path to replay recordings from (if replaying)
         """
         super().__init__()
-        self.ip = ip
+        self.config = config
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.recording_path = recording_path
         self.replay_path = replay_path
@@ -185,7 +195,7 @@ class UnitreeG1(Robot):
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
-        self.connection = self.dimos.deploy(G1ConnectionModule, self.ip)
+        self.connection = self.dimos.deploy(G1ConnectionModule, robot_config=self.config)
 
         # Configure LCM transports
         self.connection.odom.transport = core.LCMTransport("/g1/odom", PoseStamped)
@@ -280,14 +290,17 @@ def main():
 
     load_dotenv()
 
-    ip = os.getenv("ROBOT_IP")
-    if not ip:
-        logger.error("ROBOT_IP not set in environment")
-        return
+    config = RobotConfig(
+        connection_type=os.getenv("CONNECTION_TYPE"),
+        robot_model="unitree_g1",
+        robot_ip=os.getenv("ROBOT_IP"),
+        scene=os.getenv("SCENE"),
+        websocket_port=7779,
+    )
 
     pubsub.lcm.autoconf()
 
-    robot = UnitreeG1(ip=ip)
+    robot = UnitreeG1(config)
     robot.start()
 
     try:

@@ -27,6 +27,7 @@ from reactivex import Observable
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
+from dimos.robot.unitree_webrtc.robot_config import RobotConfig
 
 try:
     from dimos.simulation.mujoco.mujoco import MujocoThread
@@ -41,11 +42,12 @@ logger = logging.getLogger(__name__)
 
 
 class MujocoConnection:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, config: RobotConfig):
         if MujocoThread is None:
             raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
         get_data("mujoco_sim")
-        self.mujoco_thread = MujocoThread()
+        self.config = config
+        self.mujoco_thread = MujocoThread(config)
         self._stream_threads: List[threading.Thread] = []
         self._stop_events: List[threading.Event] = []
         self._is_cleaned_up = False

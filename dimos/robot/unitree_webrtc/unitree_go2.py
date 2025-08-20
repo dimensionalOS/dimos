@@ -53,6 +53,7 @@ from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.robot.unitree_webrtc.depth_module import DepthModule
+from dimos.robot.unitree_webrtc.robot_config import RobotConfig
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -64,7 +65,7 @@ from dimos.robot.robot import Robot
 from dimos.types.robot_capabilities import RobotCapability
 
 
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
+logger = setup_logger(__name__, level=logging.INFO)
 
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
@@ -133,6 +134,7 @@ class ConnectionModule(Module):
     camera_pose: Out[PoseStamped] = None
     ip: str
     connection_type: str = "webrtc"
+    robot_config: RobotConfig
 
     _odom: PoseStamped = None
     _lidar: LidarMessage = None
@@ -140,14 +142,12 @@ class ConnectionModule(Module):
 
     def __init__(
         self,
-        ip: str = None,
-        connection_type: str = "webrtc",
+        robot_config: RobotConfig,
         rectify_image: bool = True,
         *args,
         **kwargs,
     ):
-        self.ip = ip
-        self.connection_type = connection_type
+        self.robot_config = robot_config
         self.rectify_image = rectify_image
         self.tf = TF()
         self.connection = None
@@ -156,7 +156,7 @@ class ConnectionModule(Module):
         base_dir = os.path.dirname(os.path.abspath(__file__))
 
         # Use sim camera parameters for mujoco, real camera for others
-        if connection_type == "mujoco":
+        if robot_config.connection_type == "mujoco":
             camera_params_path = os.path.join(base_dir, "params", "sim_camera.yaml")
         else:
             camera_params_path = os.path.join(base_dir, "params", "front_camera_720.yaml")
@@ -178,18 +178,18 @@ class ConnectionModule(Module):
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
-        match self.connection_type:
+        match self.robot_config.connection_type:
             case "webrtc":
-                self.connection = UnitreeWebRTCConnection(self.ip)
+                self.connection = UnitreeWebRTCConnection(self.robot_config.robot_ip)
             case "fake":
-                self.connection = FakeRTC(self.ip)
+                self.connection = FakeRTC(self.robot_config.robot_ip)
             case "mujoco":
                 from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
-                self.connection = MujocoConnection()
+                self.connection = MujocoConnection(self.robot_config)
                 self.connection.start()
             case _:
-                raise ValueError(f"Unknown connection type: {self.connection_type}")
+                raise ValueError(f"Unknown connection type: {self.robot_config.connection_type}")
 
         # Connect sensor streams to outputs
         self.connection.lidar_stream().subscribe(self.lidar.publish)
@@ -293,32 +293,23 @@ class ConnectionModule(Module):
 
 
 class UnitreeGo2(Robot):
-    """Full Unitree Go2 robot with navigation and perception capabilities."""
+    """Unitree robot with navigation and perception capabilities."""
 
     def __init__(
         self,
-        ip: str,
-        output_dir: str = None,
-        websocket_port: int = 7779,
+        config: RobotConfig,
         skill_library: Optional[SkillLibrary] = None,
-        connection_type: Optional[str] = "webrtc",
     ):
         """Initialize the robot system.
 
         Args:
-            ip: Robot IP address (or None for fake connection)
-            output_dir: Directory for saving outputs (default: assets/output)
-            websocket_port: Port for web visualization
+            config: Robot configuration specifying connection type, model, etc.
             skill_library: Skill library instance
-            connection_type: webrtc, fake, or mujoco
         """
         super().__init__()
-        self.ip = ip
-        self.connection_type = connection_type or "webrtc"
-        if ip is None and self.connection_type == "webrtc":
-            self.connection_type = "fake"  # Auto-enable playback if no IP provided
-        self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
-        self.websocket_port = websocket_port
+        self.config = config
+        self.output_dir = config.output_dir or os.path.join(os.getcwd(), "assets", "output")
+        self.websocket_port = config.websocket_port
         self.lcm = LCM()
 
         # Initialize skill library
@@ -326,7 +317,7 @@ class UnitreeGo2(Robot):
             skill_library = MyUnitreeSkills()
         self.skill_library = skill_library
 
-        # Set capabilities
+        # Set capabilities based on robot model
         self.capabilities = [RobotCapability.LOCOMOTION, RobotCapability.VISION]
 
         self.dimos = None
@@ -378,14 +369,12 @@ class UnitreeGo2(Robot):
 
         self.lcm.start()
 
-        logger.info("UnitreeGo2 initialized and started")
+        logger.info(f"UnitreeGo2 ({self.config.robot_model}) initialized and started")
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
-        self.connection = self.dimos.deploy(
-            ConnectionModule, self.ip, connection_type=self.connection_type
-        )
+        self.connection = self.dimos.deploy(ConnectionModule, self.config)
 
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
@@ -396,7 +385,7 @@ class UnitreeGo2(Robot):
 
     def _deploy_mapping(self):
         """Deploy and configure the mapping module."""
-        min_height = 0.3 if self.connection_type == "mujoco" else 0.15
+        min_height = 0.3 if self.config.connection_type == "mujoco" else 0.15
         self.mapper = self.dimos.deploy(
             Map, voxel_size=0.5, global_publish_interval=2.5, min_height=min_height
         )
@@ -505,7 +494,7 @@ class UnitreeGo2(Robot):
 
     def _deploy_camera(self):
         """Deploy and configure the camera module."""
-        gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.5
+        gt_depth_scale = 1.0 if self.config.connection_type == "mujoco" else 0.5
         self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
 
         # Set up transports
@@ -688,13 +677,16 @@ class UnitreeGo2(Robot):
 
 
 def main():
-    """Main entry point."""
-    ip = os.getenv("ROBOT_IP")
-    connection_type = os.getenv("CONNECTION_TYPE", "webrtc")
-
     pubsub.lcm.autoconf()
 
-    robot = UnitreeGo2(ip=ip, websocket_port=7779, connection_type=connection_type)
+    config = RobotConfig(
+        connection_type=os.getenv("CONNECTION_TYPE"),
+        robot_model=os.getenv("ROBOT_MODEL"),
+        robot_ip=os.getenv("ROBOT_IP"),
+        scene=os.getenv("SCENE"),
+        websocket_port=7779,
+    )
+    robot = UnitreeGo2(config=config)
     robot.start()
 
     try:
