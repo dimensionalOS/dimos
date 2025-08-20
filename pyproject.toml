@@ -3,7 +3,14 @@ requires = ["setuptools>=70", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["dimos"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dimos*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.html", "*.css", "*.js", "*.json", "*.txt", "*.yaml", "*.yml"]
 
 [project]
 name = "dimos"
@@ -135,11 +142,11 @@ cpu = [
 
 cuda = [
     "pycuda",
-    "onnxruntime-gpu>=1.17.1,<=1.18.1", # Only versions supporting both cuda11 and cuda12
+    "onnxruntime-gpu>=1.17.1", # Only versions supporting both cuda11 and cuda12
     "ctransformers[cuda]==0.2.27",
     "mmengine>=0.10.3",
     "mmcv>=2.1.0",
-    "xformers==0.0.20",
+    "xformers>=0.0.20",
 
     # Detic GPU stack 
     "mss",
