@@ -146,7 +146,7 @@ ReducerF = Callable[
 C = TypeVar("C")  # content type
 A = TypeVar("A")  # accumulator type
 # define a naive reducer function type that's generic in terms of the accumulator type
-type SimpleReducerF[A, C] = Callable[[Optional[A], C], A]
+SimpleReducerF = Callable[[Optional[A], C], A]
 
 
 def make_reducer(simple_reducer: SimpleReducerF) -> ReducerF:
