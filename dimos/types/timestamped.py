@@ -16,6 +16,7 @@ import bisect
 from datetime import datetime, timezone
 from typing import Generic, Iterable, Optional, Tuple, TypedDict, TypeVar, Union
 
+from reactivex.observable import Observable
 from sortedcontainers import SortedList
 
 # any class that carries a timestamp should inherit from this
@@ -102,26 +103,42 @@ class TimestampedCollection(Generic[T]):
         """Add a timestamped item to the collection."""
         self._items.add(item)
 
-    def find_closest(self, timestamp: float) -> Optional[T]:
+    def find_closest(self, timestamp: float, tolerance: float = 0.05) -> Optional[T]:
         """Find the timestamped object closest to the given timestamp."""
         if not self._items:
             return None
 
-        # Find insertion point using binary search on timestamps
+        # Use binary search to find insertion point
         timestamps = [item.ts for item in self._items]
         idx = bisect.bisect_left(timestamps, timestamp)
 
-        # Check boundaries
-        if idx == 0:
-            return self._items[0]
-        if idx == len(self._items):
-            return self._items[-1]
+        # Check exact match
+        if idx < len(self._items) and self._items[idx].ts == timestamp:
+            return self._items[idx]
 
-        # Compare distances to neighbors
-        left_diff = abs(timestamp - self._items[idx - 1].ts)
-        right_diff = abs(self._items[idx].ts - timestamp)
+        # Find candidates: item before and after
+        candidates = []
 
-        return self._items[idx - 1] if left_diff < right_diff else self._items[idx]
+        # Item before
+        if idx > 0:
+            candidates.append((idx - 1, abs(self._items[idx - 1].ts - timestamp)))
+
+        # Item after
+        if idx < len(self._items):
+            candidates.append((idx, abs(self._items[idx].ts - timestamp)))
+
+        if not candidates:
+            return None
+
+        # Find closest
+        # When distances are equal, prefer the later item (higher index)
+        closest_idx, closest_distance = min(candidates, key=lambda x: (x[1], -x[0]))
+
+        # Check tolerance
+        if closest_distance > tolerance:
+            return None
+
+        return self._items[closest_idx]
 
     def find_before(self, timestamp: float) -> Optional[T]:
         """Find the last item before the given timestamp."""
