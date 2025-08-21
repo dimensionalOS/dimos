@@ -195,3 +195,77 @@ class TimestampedCollection(Generic[T]):
 
     def __getitem__(self, idx: int) -> T:
         return self._items[idx]
+
+
+PRIMARY = TypeVar("PRIMARY", bound=Timestamped)
+SECONDARY = TypeVar("SECONDARY", bound=Timestamped)
+
+
+class TimestampedBufferCollection(TimestampedCollection[T]):
+    """A timestamped collection that maintains a sliding time window, dropping old messages."""
+
+    def __init__(self, window_duration: float, items: Optional[Iterable[T]] = None):
+        """
+        Initialize with a time window duration in seconds.
+
+        Args:
+            window_duration: Maximum age of messages to keep in seconds
+            items: Optional initial items
+        """
+        super().__init__(items)
+        self.window_duration = window_duration
+
+    def add(self, item: T) -> None:
+        """Add a timestamped item and remove any items outside the time window."""
+        super().add(item)
+        self._prune_old_messages(item.ts)
+
+    def _prune_old_messages(self, current_ts: float) -> None:
+        """Remove messages older than window_duration from the given timestamp."""
+        cutoff_ts = current_ts - self.window_duration
+
+        # Find the index of the first item that should be kept
+        timestamps = [item.ts for item in self._items]
+        keep_idx = bisect.bisect_left(timestamps, cutoff_ts)
+
+        # Remove old items
+        if keep_idx > 0:
+            # Create new SortedList with items to keep
+            self._items = SortedList(self._items[keep_idx:], key=lambda x: x.ts)
+
+
+def align_timestamped(
+    primary_observable: Observable[PRIMARY],
+    secondary_observable: Observable[SECONDARY],
+    buffer_size: float = 1.0,  # seconds
+    match_tolerance: float = 0.05,  # seconds
+) -> Observable[Tuple[PRIMARY, SECONDARY]]:
+    from reactivex import create
+
+    def subscribe(observer, scheduler=None):
+        secondary_collection: TimestampedBufferCollection[SECONDARY] = TimestampedBufferCollection(
+            buffer_size
+        )
+        # Subscribe to secondary to populate the buffer
+        secondary_sub = secondary_observable.subscribe(secondary_collection.add)
+
+        def on_primary(primary_item: PRIMARY):
+            secondary_item = secondary_collection.find_closest(
+                primary_item.ts, tolerance=match_tolerance
+            )
+            if secondary_item is not None:
+                observer.on_next((primary_item, secondary_item))
+
+        # Subscribe to primary and emit aligned pairs
+        primary_sub = primary_observable.subscribe(
+            on_next=on_primary, on_error=observer.on_error, on_completed=observer.on_completed
+        )
+
+        # Return cleanup function
+        def dispose():
+            secondary_sub.dispose()
+            primary_sub.dispose()
+
+        return dispose
+
+    return create(subscribe)
