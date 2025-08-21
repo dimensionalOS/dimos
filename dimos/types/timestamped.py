@@ -103,7 +103,7 @@ class TimestampedCollection(Generic[T]):
         """Add a timestamped item to the collection."""
         self._items.add(item)
 
-    def find_closest(self, timestamp: float, tolerance: float = 0.05) -> Optional[T]:
+    def find_closest(self, timestamp: float, tolerance: Optional[float] = None) -> Optional[T]:
         """Find the timestamped object closest to the given timestamp."""
         if not self._items:
             return None
@@ -134,8 +134,8 @@ class TimestampedCollection(Generic[T]):
         # When distances are equal, prefer the later item (higher index)
         closest_idx, closest_distance = min(candidates, key=lambda x: (x[1], -x[0]))
 
-        # Check tolerance
-        if closest_distance > tolerance:
+        # Check tolerance if provided
+        if tolerance is not None and closest_distance > tolerance:
             return None
 
         return self._items[closest_idx]
