@@ -225,7 +225,7 @@ class UnitreeGo2(Robot):
             output_dir: Directory for saving outputs (default: assets/output)
             websocket_port: Port for web visualization
             skill_library: Skill library instance
-            playback: If True, use recorded data instead of real robot connection
+            connection_type: webrtc, fake, or mujoco
         """
         super().__init__()
         self.ip = ip
@@ -347,6 +347,10 @@ class UnitreeGo2(Robot):
             "/goal_request", PoseStamped
         )
         self.frontier_explorer.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+        self.frontier_explorer.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
+        self.frontier_explorer.stop_explore_cmd.transport = core.LCMTransport(
+            "/stop_explore_cmd", Bool
+        )
 
         self.global_planner.target.connect(self.navigator.goal)
 

@@ -257,6 +257,7 @@ def test_base_agent_direct_tools():
         skills=skill_library,
         temperature=0.0,
         memory=False,
+        seed=42,
     )
 
     # Test calculation with explicit tool request

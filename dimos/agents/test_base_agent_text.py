@@ -81,6 +81,7 @@ def test_base_agent_direct_text():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful assistant. Answer in 10 words or less.",
         temperature=0.0,
+        seed=42,  # Fixed seed for deterministic results
     )
 
     # Test simple query with string (backward compatibility)
@@ -125,7 +126,10 @@ async def test_base_agent_async_text():
 
     # Create agent
     agent = BaseAgent(
-        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0
+        model="openai::gpt-4o-mini",
+        system_prompt="You are a helpful assistant.",
+        temperature=0.0,
+        seed=42,
     )
 
     # Test async query with string
@@ -248,6 +252,7 @@ def test_base_agent_providers(model, provider):
         model=model,
         system_prompt="You are a helpful assistant. Answer in 10 words or less.",
         temperature=0.0,
+        seed=42,
     )
 
     # Test query with AgentMessage
@@ -274,6 +279,7 @@ def test_base_agent_memory():
         system_prompt="You are a helpful assistant. Use the provided context when answering.",
         temperature=0.0,
         rag_threshold=0.3,
+        seed=42,
     )
 
     # Add context to memory
@@ -396,7 +402,10 @@ def test_base_agent_conversation_history():
 
     # Create agent
     agent = BaseAgent(
-        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0
+        model="openai::gpt-4o-mini",
+        system_prompt="You are a helpful assistant.",
+        temperature=0.0,
+        seed=42,
     )
 
     # Test 1: Simple conversation
@@ -477,6 +486,7 @@ def test_base_agent_history_with_tools():
         system_prompt="You are a helpful assistant with a calculator. Use the calculator tool when asked to compute something.",
         skills=skills,
         temperature=0.0,
+        seed=42,
     )
 
     # Make a query that should trigger tool use

@@ -93,6 +93,8 @@ class WavefrontFrontierExplorer(Module):
     costmap: In[OccupancyGrid] = None
     odometry: In[PoseStamped] = None
     goal_reached: In[Bool] = None
+    explore_cmd: In[Bool] = None
+    stop_explore_cmd: In[Bool] = None
 
     # LCM outputs
     goal_request: Out[PoseStamped] = None
@@ -159,6 +161,12 @@ class WavefrontFrontierExplorer(Module):
         if self.goal_reached.transport is not None:
             self.goal_reached.subscribe(self._on_goal_reached)
 
+        # Subscribe to exploration commands
+        if self.explore_cmd.transport is not None:
+            self.explore_cmd.subscribe(self._on_explore_cmd)
+        if self.stop_explore_cmd.transport is not None:
+            self.stop_explore_cmd.subscribe(self._on_stop_explore_cmd)
+
         logger.info("WavefrontFrontierExplorer started")
 
     @rpc
@@ -179,6 +187,18 @@ class WavefrontFrontierExplorer(Module):
         """Handle goal reached messages."""
         if msg.data:
             self.goal_reached_event.set()
+
+    def _on_explore_cmd(self, msg: Bool):
+        """Handle exploration command messages."""
+        if msg.data:
+            logger.info("Received exploration start command via LCM")
+            self.explore()
+
+    def _on_stop_explore_cmd(self, msg: Bool):
+        """Handle stop exploration command messages."""
+        if msg.data:
+            logger.info("Received exploration stop command via LCM")
+            self.stop_exploration()
 
     def _count_costmap_information(self, costmap: OccupancyGrid) -> int:
         """

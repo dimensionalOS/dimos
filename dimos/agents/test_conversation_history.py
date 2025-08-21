@@ -43,6 +43,7 @@ def test_conversation_history_basic():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful assistant with perfect memory.",
         temperature=0.0,
+        seed=42,
     )
 
     try:
@@ -98,6 +99,7 @@ def test_conversation_history_with_images():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful vision assistant.",
         temperature=0.0,
+        seed=42,
     )
 
     try:
@@ -159,6 +161,7 @@ def test_conversation_history_trimming():
         system_prompt="You are a helpful assistant.",
         temperature=0.0,
         max_history=3,  # Keep 3 message pairs (6 messages total)
+        seed=42,
     )
 
     try:
@@ -232,6 +235,7 @@ def test_conversation_history_with_tools():
         system_prompt="You are a helpful assistant with access to a calculator.",
         skills=TestSkillLibrary(),
         temperature=0.0,
+        seed=100,
     )
 
     try:
@@ -267,7 +271,7 @@ def test_conversation_thread_safety():
     if not os.getenv("OPENAI_API_KEY"):
         pytest.skip("No OPENAI_API_KEY found")
 
-    agent = BaseAgent(model="openai::gpt-4o-mini", temperature=0.0)
+    agent = BaseAgent(model="openai::gpt-4o-mini", temperature=0.0, seed=42)
 
     try:
 
@@ -300,7 +304,7 @@ def test_conversation_history_formats():
     if not os.getenv("OPENAI_API_KEY"):
         pytest.skip("No OPENAI_API_KEY found")
 
-    agent = BaseAgent(model="openai::gpt-4o-mini", temperature=0.0)
+    agent = BaseAgent(model="openai::gpt-4o-mini", temperature=0.0, seed=42)
 
     try:
         # Create a conversation
@@ -360,7 +364,10 @@ def test_conversation_edge_cases():
         pytest.skip("No OPENAI_API_KEY found")
 
     agent = BaseAgent(
-        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0
+        model="openai::gpt-4o-mini",
+        system_prompt="You are a helpful assistant.",
+        temperature=0.0,
+        seed=42,
     )
 
     try:
