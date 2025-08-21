@@ -145,19 +145,24 @@ def test_find_closest(collection):
     assert collection.find_closest(3.0).data == "third"
 
     # Between items (closer to left)
-    assert collection.find_closest(1.5).data == "first"
+    assert collection.find_closest(1.5, tolerance=1.0).data == "first"
 
     # Between items (closer to right)
-    assert collection.find_closest(3.5).data == "third"
+    assert collection.find_closest(3.5, tolerance=1.0).data == "third"
 
     # Exactly in the middle (should pick the later one due to >= comparison)
-    assert collection.find_closest(4.0).data == "fifth"  # 4.0 is equidistant from 3.0 and 5.0
+    assert (
+        collection.find_closest(4.0, tolerance=1.0).data == "fifth"
+    )  # 4.0 is equidistant from 3.0 and 5.0
 
     # Before all items
-    assert collection.find_closest(0.0).data == "first"
+    assert collection.find_closest(0.0, tolerance=1.0).data == "first"
 
     # After all items
-    assert collection.find_closest(10.0).data == "seventh"
+    assert collection.find_closest(10.0, tolerance=4.0).data == "seventh"
+
+    # low tolerance, should return None
+    assert collection.find_closest(10.0, tolerance=2.0) is None
 
 
 def test_find_before_after(collection):
@@ -223,4 +228,3 @@ def test_single_item_collection():
     single = TimestampedCollection([SimpleTimestamped(5.0, "only")])
     assert single.duration() == 0.0
     assert single.time_range() == (5.0, 5.0)
-    assert single.find_closest(100.0).data == "only"
