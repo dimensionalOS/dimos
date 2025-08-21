@@ -56,7 +56,7 @@ class SerialBrige(Module):
         # subscribe to incoming LCM Twist messages
         self.joint_state.subscribe(self._on_joint_state)
         print(f"Subscribed to {self.joint_state}")
-        
+
         # start reader thread for bidirectional communication
         self.reader_thread = threading.Thread(target=self._reader, daemon=True)
         self.reader_thread.start()
@@ -64,20 +64,20 @@ class SerialBrige(Module):
 
     def _on_joint_state(self, msg: JointState):
         # print(f"[SerialBrige] Received joint state: {msg}")
-        
+
         # Store the latest joint state for merging with device feedback
         self.latest_joint_state = msg
-        
+
         for joint_name in self.joint_names:
             if joint_name not in msg.name:
                 print(
                     f"[SerialBrige] Joint name {joint_name} not found in message names: {msg.name}"
                 )
                 continue
-            
+
             idx = msg.name.index(joint_name)
             position = msg.position[idx]
-            
+
             # Check if the position has changed and if so, send the command
             if position != self.last_positions.get(joint_name):
                 # Format: <sec,joint_name,position>
@@ -85,7 +85,7 @@ class SerialBrige(Module):
                 self.ser.write(cmd.encode("ascii"))
                 print(f"[SerialBrige] Sent to serial: {cmd}")
                 self.last_positions[joint_name] = position
-        
+
         # mirror your pc_echo.py's sleep to let Arduino respond
         time.sleep(0.05)
 
@@ -94,28 +94,34 @@ class SerialBrige(Module):
         if self.latest_joint_state is None:
             print(f"[SerialBrige] No joint state available for merging feedback")
             return
-            
+
         # Create a fresh JointState message
         feedback_msg = JointState()
         feedback_msg.header = self.latest_joint_state.header
         feedback_msg.header.stamp.sec = timestamp
-        
+
         # Copy data from latest joint state
         feedback_msg.name = list(self.latest_joint_state.name)
         feedback_msg.position = list(self.latest_joint_state.position)
-        feedback_msg.velocity = list(self.latest_joint_state.velocity) if self.latest_joint_state.velocity else []
-        feedback_msg.effort = list(self.latest_joint_state.effort) if self.latest_joint_state.effort else []
-        
+        feedback_msg.velocity = (
+            list(self.latest_joint_state.velocity) if self.latest_joint_state.velocity else []
+        )
+        feedback_msg.effort = (
+            list(self.latest_joint_state.effort) if self.latest_joint_state.effort else []
+        )
+
         # Update the specific joint position
         if joint_name in feedback_msg.name:
             idx = feedback_msg.name.index(joint_name)
             old_position = feedback_msg.position[idx]
             feedback_msg.position[idx] = actual_position
-            print(f"[SerialBrige] Updated {joint_name} position from {old_position} to {actual_position}")
+            print(
+                f"[SerialBrige] Updated {joint_name} position from {old_position} to {actual_position}"
+            )
         else:
             print(f"[SerialBrige] Joint {joint_name} not found in latest joint state")
             return
-            
+
         # Publish the merged feedback
         self.joint_feedback.publish(feedback_msg)
         print(f"[SerialBrige] Published merged joint feedback")
@@ -126,22 +132,22 @@ class SerialBrige(Module):
             # Remove < and > brackets
             content = text[1:-1]
             parts = content.split(",")
-            
+
             if len(parts) != 3:
                 print(f"[SerialBrige] Invalid joint feedback format: {text}")
                 return
-                
+
             timestamp_str, joint_name, angle_str = parts
             timestamp = int(timestamp_str)
             angle = float(angle_str)
-            
+
             # Only process feedback for joints we're tracking
             if joint_name in self.joint_names:
                 # self._merge_joint_feedback(joint_name, angle, timestamp)
                 print(f"[SerialBrige] Received feedback for {joint_name}: {angle} at {timestamp}")
             else:
                 print(f"[SerialBrige] Ignoring feedback for untracked joint: {joint_name}")
-                
+
         except (ValueError, IndexError) as e:
             print(f"[SerialBrige] Failed to parse joint feedback '{text}': {e}")
 
@@ -152,13 +158,13 @@ class SerialBrige(Module):
                 continue
             text = line.decode("ascii", "ignore").strip()
             print(f"[SerialBrige] Received from serial: {text}")
-            
+
             # Handle joint feedback messages: <timestamp,joint_name,angle>
             if text.startswith("<") and text.endswith(">"):
                 print(f"[SerialBrige] Joint feedback: {text}")
                 self._parse_and_merge_feedback(text)
                 continue
-                
+
             # Handle pose messages: "POSE,0.100,0.200,…"
             if text.startswith("POSE"):
                 parts = text.split(",")
@@ -168,7 +174,12 @@ class SerialBrige(Module):
                         lx, ly, lz, ax, ay, az = map(float, parts[1:])
                         cp = Pose()
                         cp.position.x, cp.position.y, cp.position.z = lx, ly, lz
-                        cp.orientation.x, cp.orientation.y, cp.orientation.z, cp.orientation.w = ax, ay, az, 1.0
+                        cp.orientation.x, cp.orientation.y, cp.orientation.z, cp.orientation.w = (
+                            ax,
+                            ay,
+                            az,
+                            1.0,
+                        )
                         self.pose_state.publish(cp)
                     except ValueError:
                         print(f"[SerialBrige] Failed to parse pose: {text}")
