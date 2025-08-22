@@ -20,7 +20,7 @@ from typing import Dict, List, Optional
 
 from dimos.core import In, Out, Module, rpc
 from dimos.msgs.std_msgs import Header
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, Pose, PoseStamped
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
@@ -96,6 +96,8 @@ class ObjectTracking(Module):
         self.last_roi_kps = None  # Store last ROI keypoints for visualization
         self.last_roi_bbox = None  # Store last ROI bbox for visualization
         self.reid_confirmed = False  # Store current reid confirmation state
+        self.tracking_frame_count = 0  # Count frames since tracking started
+        self.reid_warmup_frames = 3  # Number of frames before REID starts
 
         self._frame_lock = threading.Lock()
         self._latest_rgb_frame: Optional[np.ndarray] = None
@@ -130,7 +132,11 @@ class ObjectTracking(Module):
         # Subscribe to depth stream
         def on_depth(image_msg: Image):
             with self._frame_lock:
-                self._latest_depth_frame = image_msg.data
+                depth_data = image_msg.data
+                # Convert from millimeters to meters if depth is DEPTH16 format
+                if image_msg.format == ImageFormat.DEPTH16:
+                    depth_data = depth_data.astype(np.float32) / 1000.0
+                self._latest_depth_frame = depth_data
 
         self.depth.subscribe(on_depth)
 
@@ -191,9 +197,7 @@ class ObjectTracking(Module):
         if roi.size > 0:
             self.original_kps, self.original_des = self.orb.detectAndCompute(roi, None)
             if self.original_des is None:
-                logger.warning("No ORB features found in initial ROI.")
-                self.stop_track()
-                return {"status": "tracking_failed", "bbox": self.tracking_bbox}
+                logger.warning("No ORB features found in initial ROI. REID will be disabled.")
             else:
                 logger.info(f"Initial ORB features extracted: {len(self.original_des)}")
 
@@ -201,6 +205,7 @@ class ObjectTracking(Module):
             init_success = self.tracker.init(self._latest_rgb_frame, self.tracking_bbox)
             if init_success:
                 self.tracking_initialized = True
+                self.tracking_frame_count = 0  # Reset frame counter
                 logger.info("Tracker initialized successfully.")
             else:
                 logger.error("Tracker initialization failed.")
@@ -217,8 +222,12 @@ class ObjectTracking(Module):
 
     def reid(self, frame, current_bbox) -> bool:
         """Check if features in current_bbox match stored original features."""
+        # During warm-up period, always return True
+        if self.tracking_frame_count < self.reid_warmup_frames:
+            return True
+
         if self.original_des is None:
-            return True  # Cannot re-id if no original features
+            return False
         x1, y1, x2, y2 = map(int, current_bbox)
         roi = frame[y1:y2, x1:x2]
         if roi.size == 0:
@@ -282,6 +291,7 @@ class ObjectTracking(Module):
         self.last_roi_kps = None
         self.last_roi_bbox = None
         self.reid_confirmed = False  # Reset reid confirmation state
+        self.tracking_frame_count = 0  # Reset frame counter
 
         # Publish empty detections to clear any visualizations
         empty_2d = Detection2DArray(detections_length=0, header=Header(), detections=[])
@@ -376,7 +386,9 @@ class ObjectTracking(Module):
                 logger.info("Tracker update failed. Stopping track.")
                 self._reset_tracking_state()
 
-        if not reid_confirmed_this_frame:
+        self.tracking_frame_count += 1
+
+        if not reid_confirmed_this_frame and self.tracking_frame_count >= self.reid_warmup_frames:
             return
 
         # Create detections if tracking succeeded
@@ -552,7 +564,12 @@ class ObjectTracking(Module):
         text = f"REID Matches: {len(self.last_good_matches)}/{len(self.last_roi_kps) if self.last_roi_kps else 0}"
         cv2.putText(viz_image, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
-        if len(self.last_good_matches) >= self.reid_threshold:
+        if self.tracking_frame_count < self.reid_warmup_frames:
+            status_text = (
+                f"REID: WARMING UP ({self.tracking_frame_count}/{self.reid_warmup_frames})"
+            )
+            status_color = (255, 255, 0)  # Yellow
+        elif len(self.last_good_matches) >= self.reid_threshold:
             status_text = "REID: CONFIRMED"
             status_color = (0, 255, 0)  # Green
         else:

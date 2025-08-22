@@ -229,14 +229,18 @@ class UnitreeCameraModule(Module):
 
             # Publish depth image
             if self._last_depth is not None:
+                # Convert depth to uint16 (millimeters) for more efficient storage
+                # Clamp to valid range [0, 65.535] meters before converting
+                depth_clamped = np.clip(self._last_depth, 0, 65.535)
+                depth_uint16 = (depth_clamped * 1000).astype(np.uint16)
                 depth_msg = Image(
-                    data=self._last_depth,
-                    format=ImageFormat.DEPTH,
+                    data=depth_uint16,
+                    format=ImageFormat.DEPTH16,  # Use DEPTH16 format for uint16 depth
                     frame_id=header.frame_id,
                     ts=header.ts,
                 )
                 self.depth_image.publish(depth_msg)
-                logger.debug(f"Published depth image: shape={self._last_depth.shape}")
+                logger.debug(f"Published depth image (uint16): shape={depth_uint16.shape}")
 
                 # Publish colorized depth image if enabled
                 if self.publish_colorized_depth:

@@ -587,7 +587,7 @@ class UnitreeGo2(Robot):
                     logger.info("Object tracking goal reached")
                     return True
 
-            if not self.object_tracker.is_tracking():
+            if goal_set and not self.object_tracker.is_tracking():
                 continue
 
             detection_topic = Topic("/go2/detection3d", Detection3DArray)

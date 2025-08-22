@@ -220,14 +220,11 @@ class BehaviorTreeNavigator(Module):
         try:
             transform = None
             max_retries = 3
-            time_point = goal.ts
 
             for attempt in range(max_retries):
                 transform = self.tf.get(
                     parent_frame=odom_frame,
                     child_frame=goal.frame_id,
-                    time_point=time_point,
-                    time_tolerance=1.0,
                 )
 
                 if transform:
@@ -237,7 +234,7 @@ class BehaviorTreeNavigator(Module):
                     logger.warning(
                         f"Transform attempt {attempt + 1}/{max_retries} failed, retrying..."
                     )
-                    time_point = time.time()
+                    time.sleep(1.0)
                 else:
                     logger.error(
                         f"Could not find transform from '{goal.frame_id}' to '{odom_frame}' after {max_retries} attempts"
