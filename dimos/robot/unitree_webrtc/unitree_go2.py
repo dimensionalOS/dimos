@@ -307,7 +307,7 @@ class UnitreeGo2(Robot):
 
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
-        self.connection.video.transport = core.LCMTransport("/video", Image)
+        self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Vector3)
 
     def _deploy_mapping(self):
@@ -429,16 +429,10 @@ class UnitreeGo2(Robot):
         # Set up transports
         self.camera_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
         self.camera_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
-        self.camera_module.depth_colorized.transport = core.LCMTransport(
-            "/go2/depth_colorized", Image
-        )
         self.camera_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
         self.camera_module.camera_pose.transport = core.LCMTransport(
             "/go2/camera_pose", PoseStamped
         )
-
-        # Connect video input from connection module
-        self.camera_module.video.connect(self.connection.video)
 
         logger.info("Camera module deployed and connected")
 

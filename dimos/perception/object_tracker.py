@@ -40,6 +40,7 @@ from dimos.utils.transform_utils import (
     euler_to_quaternion,
 )
 from dimos.manipulation.visual_servoing.utils import visualize_detections_3d
+from dimos.types.timestamped import align_timestamped
 
 logger = setup_logger("dimos.perception.object_tracker")
 
@@ -103,6 +104,7 @@ class ObjectTracking(Module):
         self._latest_rgb_frame: Optional[np.ndarray] = None
         self._latest_depth_frame: Optional[np.ndarray] = None
         self._latest_camera_info: Optional[CameraInfo] = None
+        self._aligned_frames_subscription = None
 
         # Tracking thread control
         self.tracking_thread: Optional[threading.Thread] = None
@@ -122,25 +124,28 @@ class ObjectTracking(Module):
     def start(self):
         """Start the object tracking module and subscribe to LCM streams."""
 
-        # Subscribe to rgb image stream
-        def on_rgb(image_msg: Image):
+        # Subscribe to aligned rgb and depth streams
+        def on_aligned_frames(frames_tuple):
+            rgb_msg, depth_msg = frames_tuple
             with self._frame_lock:
-                self._latest_rgb_frame = image_msg.data
+                self._latest_rgb_frame = rgb_msg.data
 
-        self.color_image.subscribe(on_rgb)
-
-        # Subscribe to depth stream
-        def on_depth(image_msg: Image):
-            with self._frame_lock:
-                depth_data = image_msg.data
+                depth_data = depth_msg.data
                 # Convert from millimeters to meters if depth is DEPTH16 format
-                if image_msg.format == ImageFormat.DEPTH16:
+                if depth_msg.format == ImageFormat.DEPTH16:
                     depth_data = depth_data.astype(np.float32) / 1000.0
                 self._latest_depth_frame = depth_data
 
-        self.depth.subscribe(on_depth)
+        # Create aligned observable for RGB and depth
+        aligned_frames = align_timestamped(
+            self.color_image.observable(),
+            self.depth.observable(),
+            buffer_size=2.0,  # 2 second buffer
+            match_tolerance=0.05,  # 50ms tolerance
+        )
+        self._aligned_frames_subscription = aligned_frames.subscribe(on_aligned_frames)
 
-        # Subscribe to camera info stream
+        # Subscribe to camera info stream separately (doesn't need alignment)
         def on_camera_info(camera_info_msg: CameraInfo):
             self._latest_camera_info = camera_info_msg
             # Extract intrinsics from camera info K matrix
@@ -159,7 +164,7 @@ class ObjectTracking(Module):
 
         self.camera_info.subscribe(on_camera_info)
 
-        logger.info("ObjectTracking module started and subscribed to LCM streams")
+        logger.info("ObjectTracking module started with aligned frame subscription")
 
     @rpc
     def track(
@@ -345,7 +350,7 @@ class ObjectTracking(Module):
 
         # Get local copies of frames under lock
         with self._frame_lock:
-            if self._latest_rgb_frame is None:
+            if self._latest_rgb_frame is None or self._latest_depth_frame is None:
                 return
             frame = self._latest_rgb_frame.copy()
             depth_frame = self._latest_depth_frame.copy()
@@ -624,3 +629,8 @@ class ObjectTracking(Module):
         if self.tracking_thread and self.tracking_thread.is_alive():
             self.stop_tracking.set()
             self.tracking_thread.join(timeout=2.0)
+
+        # Unsubscribe from aligned frames
+        if self._aligned_frames_subscription:
+            self._aligned_frames_subscription.dispose()
+            self._aligned_frames_subscription = None
