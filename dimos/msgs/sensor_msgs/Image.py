@@ -285,6 +285,9 @@ class Image(Timestamped):
         """
         Compute the Tenengrad focus measure for an image.
         Returns a normalized value between 0 and 1, where 1 is sharpest.
+
+        Uses adaptive normalization based on image statistics for better
+        discrimination across different image types.
         """
         grayscale = self.to_grayscale()
         # Sobel gradient computation in x and y directions
@@ -294,10 +297,23 @@ class Image(Timestamped):
         # Compute gradient magnitude
         magnitude = cv2.magnitude(sx, sy)
 
-        # Return normalized mean (0-1 range)
-        # Max theoretical magnitude ~1442, but typically much lower
-        # Using 255 as practical upper bound for 8-bit images
-        return min(magnitude.mean() / 255.0, 1.0)
+        mean_mag = magnitude.mean()
+
+        # Use log-scale normalization for better discrimination
+        # This maps typical values more evenly across the 0-1 range:
+        # - Blurry images (mean ~50-150): 0.15-0.35
+        # - Medium sharp (mean ~150-500): 0.35-0.65
+        # - Sharp images (mean ~500-2000): 0.65-0.85
+        # - Very sharp (mean >2000): 0.85-1.0
+
+        if mean_mag <= 0:
+            return 0.0
+
+        # Log scale with offset to handle the full range
+        # log10(50) ≈ 1.7, log10(5000) ≈ 3.7
+        normalized = (np.log10(mean_mag + 1) - 1.7) / 2.0
+
+        return np.clip(normalized, 0.0, 1.0)
 
     def save(self, filepath: str) -> bool:
         """Save image to file."""
