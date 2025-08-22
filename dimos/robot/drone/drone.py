@@ -48,7 +48,6 @@ class Drone(Robot):
         self.video_port = video_port
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         
-        # Default camera intrinsics (typical for DJI drones)
         if camera_intrinsics is None:
             # Assuming 1920x1080 with typical FOV
             self.camera_intrinsics = [1000.0, 1000.0, 960.0, 540.0]
@@ -108,6 +107,7 @@ class Drone(Robot):
         # Configure LCM transports
         self.connection.odom.transport = core.LCMTransport("/drone/odom", PoseStamped)
         self.connection.status.transport = core.LCMTransport("/drone/status", String)
+        self.connection.telemetry.transport = core.LCMTransport("/drone/telemetry", String)
         self.connection.video.transport = core.LCMTransport("/drone/video", Image)
         self.connection.movecmd.transport = core.LCMTransport("/drone/cmd_vel", Vector3)
         
@@ -268,7 +268,6 @@ def main():
     connection = os.getenv("DRONE_CONNECTION", "udp:0.0.0.0:14550")
     video_port = int(os.getenv("DRONE_VIDEO_PORT", "5600"))
     
-    # Configure LCM
     pubsub.lcm.autoconf()
     
     # Create and start drone
@@ -280,7 +279,6 @@ def main():
     drone.start()
     
     try:
-        # Keep running
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
