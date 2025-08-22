@@ -140,9 +140,12 @@ class DroneConnection(ConnectionInterface):
         if 'roll' not in attitude and 'GLOBAL_POSITION_INT' not in self.telemetry:
             logger.debug(f"No attitude or position data available")
             return
-            
+
+        # MAVLink --> ROS conversion
+        # MAVLink: positive pitch = nose up, positive yaw = clockwise
+        # ROS: positive pitch = nose down, positive yaw = counter-clockwise  
         quaternion = Quaternion.from_euler(
-            Vector3(roll, pitch, yaw)
+            Vector3(roll, -pitch, -yaw)
         )
         
         if not hasattr(self, '_position'):
@@ -161,10 +164,10 @@ class DroneConnection(ConnectionInterface):
             vx = pos_data.get('vx', 0)  # North velocity in m/s
             vy = pos_data.get('vy', 0)  # East velocity in m/s
             
-            # vx is North, vy is East in NED mavlink frame
-            # Convert to local frame (x=East, y=North for consistency)
-            self._position['y'] += vx * dt  # North
-            self._position['x'] += vy * dt  # East
+            # +vx is North, +vy is East in NED mavlink frame
+            # ROS/Foxglove: X=forward(North), Y=left(West), Z=up
+            self._position['x'] += vx * dt  # North → X (forward)
+            self._position['y'] += -vy * dt  # East → -Y (right in ROS, Y points left/West)
         
         if 'ALTITUDE' in self.telemetry:
             self._position['z'] = self.telemetry['ALTITUDE'].get('altitude_relative', 0)
