@@ -23,7 +23,7 @@ This module provides two skills:
 import os
 import time
 from typing import Optional, Tuple
-
+import cv2
 from pydantic import Field
 
 from dimos.skills.skills import AbstractRobotSkill
@@ -31,7 +31,7 @@ from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
-from dimos.utils.transform_utils import euler_to_quaternion
+from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 
 logger = setup_logger("dimos.skills.semantic_map_skills")
 
@@ -87,7 +87,7 @@ class NavigateWithText(AbstractRobotSkill):
         """
         super().__init__(robot=robot, **data)
         self._spatial_memory = None
-        self._similarity_threshold = 0.24
+        self._similarity_threshold = 0.23
 
     def _navigate_to_object(self):
         """
@@ -104,7 +104,8 @@ class NavigateWithText(AbstractRobotSkill):
         bbox = None
         try:
             # Get a single frame from the robot's camera
-            frame = self._robot.get_single_rgb_frame()
+            frame = self._robot.get_single_rgb_frame().data
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             if frame is None:
                 logger.error("Failed to get camera frame")
                 return {
@@ -112,7 +113,7 @@ class NavigateWithText(AbstractRobotSkill):
                     "failure_reason": "Perception",
                     "error": "Could not get camera frame",
                 }
-            bbox = get_bbox_from_qwen_frame(frame.data, object_name=self.query)
+            bbox = get_bbox_from_qwen_frame(frame, object_name=self.query)
         except Exception as e:
             logger.error(f"Error getting frame or bbox: {e}")
             return {
@@ -357,11 +358,11 @@ class GetPose(AbstractRobotSkill):
 
         try:
             # Get the current pose using the robot's get_pose method
-            pose_data = self._robot.get_pose()
+            pose_data = self._robot.get_odom()
 
             # Extract position and rotation from the new dictionary format
-            position = pose_data["position"]
-            rotation = pose_data["rotation"]
+            position = pose_data.position
+            rotation = quaternion_to_euler(pose_data.orientation)
 
             # Format the response
             result = {
