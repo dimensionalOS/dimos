@@ -27,16 +27,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
 
-try:
-    from dimos.robot.drone.video_stream_app import DroneVideoStream
-    logger.info("Using appsink video stream")
-except ImportError:
-    try:
-        from dimos.robot.drone.video_stream_gst import DroneVideoStream
-        logger.info("Using GStreamer Python bindings for video")
-    except ImportError:
-        from dimos.robot.drone.video_stream import DroneVideoStream
-        logger.warning("GStreamer Python bindings not available, using subprocess")
+from dimos.robot.drone.video_stream import DroneVideoStream
 
 
 class DroneConnectionModule(Module):
@@ -48,6 +39,7 @@ class DroneConnectionModule(Module):
     # Outputs
     odom: Out[PoseStamped] = None
     status: Out[String] = None  # JSON status
+    telemetry: Out[String] = None  # Full telemetry JSON
     video: Out[Image] = None
     
     # Parameters
@@ -92,6 +84,7 @@ class DroneConnectionModule(Module):
         # Subscribe to drone streams
         self.connection.odom_stream().subscribe(self._publish_tf)
         self.connection.status_stream().subscribe(self._publish_status)
+        self.connection.telemetry_stream().subscribe(self._publish_telemetry)
         
         # Subscribe to movement commands
         self.movecmd.subscribe(self.move)
@@ -122,7 +115,7 @@ class DroneConnectionModule(Module):
         )
         self.tf.publish(base_link)
         
-        # Publish camera_link transform (camera mounted on front of drone)
+        # Publish camera_link transform (camera mounted on front of drone, no gimbal factored in yet)
         camera_link = Transform(
             translation=Vector3(0.1, 0.0, -0.05),  # 10cm forward, 5cm down
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # No rotation relative to base
@@ -135,11 +128,15 @@ class DroneConnectionModule(Module):
     def _publish_status(self, status: dict):
         """Publish drone status as JSON string."""
         self._status = status
-        
-        # Convert to JSON string for LCM
         import json
         status_str = String(json.dumps(status))
         self.status.publish(status_str)
+    
+    def _publish_telemetry(self, telemetry: dict):
+        """Publish full telemetry as JSON string."""
+        import json
+        telemetry_str = String(json.dumps(telemetry))
+        self.telemetry.publish(telemetry_str)
     
     def _telemetry_loop(self):
         """Continuously update telemetry at 30Hz."""
