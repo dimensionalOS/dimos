@@ -64,21 +64,48 @@ def test_opencv_conversion(img: Image):
     assert decoded_img == img
 
 
+@pytest.mark.tool
 def test_sharpness_detector():
     get_data("unitree_office_walk")  # Preload data for testing
     video_store = TimedSensorReplay(
         "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
     )
 
+    cnt = 0
     for image in video_store.iterate():
+        cnt = cnt + 1
         print(image.sharpness())
+        if cnt > 30:
+            return
 
 
-def test_sharpness_sliding_window():
+@pytest.mark.tool
+def test_sharpness_sliding_window_foxglove():
+    import time
+
+    from dimos.msgs.geometry_msgs import Vector3
+    from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+
+    lcm = LCM()
+    lcm.start()
+
+    sharp_topic = Topic("/sharp", Image)
+    all_topic = Topic("/all", Image)
+    sharpness_topic = Topic("/sharpness", Vector3)
+
     get_data("unitree_office_walk")  # Preload data for testing
+    video_stream = TimedSensorReplay(
+        "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
+    ).stream()
+
+    # Publish all images to all_topic
+    video_stream.subscribe(lambda x: lcm.publish(all_topic, x))
+    video_stream.subscribe(lambda x: lcm.publish(sharpness_topic, Vector3([x.sharpness(), 0, 0])))
+
+    # Publish sharp images to sharp_topic
     sharpness_window(
-        0.5,
-        video_store=TimedSensorReplay(
-            "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
-        ).stream(),
-    ).subscribe(print)
+        1,
+        source=video_stream,
+    ).subscribe(lambda x: lcm.publish(sharp_topic, x))
+
+    time.sleep(120)
