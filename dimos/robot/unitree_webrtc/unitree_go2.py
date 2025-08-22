@@ -30,7 +30,7 @@ from dimos import core
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
+from dimos.msgs.sensor_msgs.Image import Image, frame_goodness_window
 from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.navigation.global_planner import AstarPlanner
@@ -105,7 +105,7 @@ class FakeRTC:
         video_store = TimedSensorReplay(
             "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
         )
-        return sharpness_window(0.5, video_store.stream())
+        return frame_goodness_window(0.5, video_store.stream())
 
     def move(self, vector: Vector3, duration: float = 0.0):
         pass

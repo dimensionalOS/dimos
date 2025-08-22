@@ -15,7 +15,7 @@
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_window
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, frame_goodness_window
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
 
@@ -102,9 +102,24 @@ def test_sharpness_sliding_window_foxglove():
     # Publish all images to all_topic
     video_stream.subscribe(lambda x: lcm.publish(all_topic, x))
 
+    count_bad_frames = 0
+    count_good_frames = 0
+
     def sharpness_vector(x: Image):
         nonlocal ping
-        sharpness = x.sharpness()
+        nonlocal count_bad_frames
+        nonlocal count_good_frames
+        frame_goodness = x.frame_goodness()
+        sharpness = frame_goodness["score"]
+        reasons = frame_goodness["reasons"]
+        if reasons != ['ok']:
+            x.save(f"/home/ubuntu/dimos/bad_frames/bad_{count_bad_frames}.png")
+            count_bad_frames += 1
+            print(f"Bad frame detected! {count_bad_frames}: {reasons}")
+        else:
+            x.save(f"/home/ubuntu/dimos/good_frames/good_{count_good_frames}_{sharpness}.png")
+            count_good_frames += 1
+            print(f"Good frame detected! {count_good_frames}")
         if ping:
             y = 1
             ping = ping - 1
@@ -120,7 +135,7 @@ def test_sharpness_sliding_window_foxglove():
         ping = 3
         lcm.publish(sharp_topic, x)
 
-    sharpness_window(
+    frame_goodness_window(
         1,
         source=video_stream,
     ).subscribe(pub_sharp)

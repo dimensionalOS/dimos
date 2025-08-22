@@ -281,39 +281,209 @@ class Image(Timestamped):
             ts=self.ts,
         )
 
-    def sharpness(self) -> float:
+    def frame_goodness(self, debug: bool = False):
         """
-        Compute the Tenengrad focus measure for an image.
-        Returns a normalized value between 0 and 1, where 1 is sharpest.
-
-        Uses adaptive normalization based on image statistics for better
-        discrimination across different image types.
+        Stateless per-frame 'goodness' in [0,1]. No rolling state.
+        Lenient on cheap/noisy cameras: center-ROI, light smoothing, stricter gating.
+        Returns:
+          {
+            "score": float in [0,1],
+            "metrics": {...},
+            "reasons": [..]
+          }
         """
-        grayscale = self.to_grayscale()
-        # Sobel gradient computation in x and y directions
-        sx = cv2.Sobel(grayscale.data, cv2.CV_32F, 1, 0, ksize=5)
-        sy = cv2.Sobel(grayscale.data, cv2.CV_32F, 0, 1, ksize=5)
 
-        # Compute gradient magnitude
-        magnitude = cv2.magnitude(sx, sy)
+        # ----------------- helpers -----------------
+        def _to_gray_f32(x):
+            if x.ndim == 3 and x.shape[2] == 3:
+                x = 0.299*x[...,0] + 0.587*x[...,1] + 0.114*x[...,2]
+            return np.asarray(x, np.float32)
 
-        mean_mag = magnitude.mean()
+        def _resize_if_needed(x, target_w=960):
+            h, w = x.shape[:2]
+            if w > target_w:
+                s = target_w / float(w)
+                x = cv2.resize(x, (int(w*s), int(h*s)), interpolation=cv2.INTER_AREA)
+            return x
 
-        # Use log-scale normalization for better discrimination
-        # This maps typical values more evenly across the 0-1 range:
-        # - Blurry images (mean ~50-150): 0.15-0.35
-        # - Medium sharp (mean ~150-500): 0.35-0.65
-        # - Sharp images (mean ~500-2000): 0.65-0.85
-        # - Very sharp (mean >2000): 0.85-1.0
+        def _center_crop(x, frac=0.85):
+            """Take central frac of the frame for glitch checks."""
+            h, w = x.shape
+            ch, cw = int(h*frac), int(w*frac)
+            y0 = (h - ch)//2; x0 = (w - cw)//2
+            return x[y0:y0+ch, x0:x0+cw]
 
-        if mean_mag <= 0:
-            return 0.0
+        def _sobel5_mag(x):
+            sx = cv2.Sobel(x, cv2.CV_32F, 1, 0, ksize=5)
+            sy = cv2.Sobel(x, cv2.CV_32F, 0, 1, ksize=5)
+            return cv2.magnitude(sx, sy)
 
-        # Log scale with offset to handle the full range
-        # log10(50) ≈ 1.7, log10(5000) ≈ 3.7
-        normalized = (np.log10(mean_mag + 1) - 1.7) / 2.0
+        def _lap_var(x):
+            L = cv2.Laplacian(x, cv2.CV_32F, ksize=3)
+            return float(L.var())
 
-        return np.clip(normalized, 0.0, 1.0)
+        def _noise_sigma_mad(x, grad_mag, flat_pct=40.0):
+            gth = np.percentile(grad_mag, flat_pct)
+            flat = grad_mag <= gth
+            low  = cv2.medianBlur(x, 3)
+            resid = x - low
+            r = resid[flat] if np.any(flat) else resid
+            med = np.median(r)
+            mad = np.median(np.abs(r - med))
+            return float(max(1.4826 * mad, 0.5))  # small floor
+
+        def _clip_tails(x):
+            return float((x <= 2).mean()), float((x >= 253).mean())
+
+        def _robust_step_z_of_means(img_for_rows_cols):
+            r = img_for_rows_cols.mean(axis=1)
+            c = img_for_rows_cols.mean(axis=0)
+            # Light 1D smoothing by blurring the image beforehand (done outside)
+            def z_of(v):
+                d = np.abs(np.diff(v))
+                if d.size == 0: return 0.0
+                m  = np.median(d)
+                mad = np.median(np.abs(d - m)) + 1e-6
+                return float((np.max(np.abs(d - m))) / (1.4826*mad + 1e-6))
+            return z_of(r), z_of(c)
+
+        def _stripe_score_db(gray_roi):
+            """
+            Robust banding score (0..~30 dB) on center ROI.
+            Detrend + Hann + local-median background; drop very low bins.
+            """
+            def proj_score(v):
+                v = v.astype(np.float32); N = v.size
+                if N < 32: return 0.0
+                t = np.arange(N, dtype=np.float32)
+                A = np.stack([t, np.ones_like(t)], axis=1)
+                m, b = np.linalg.lstsq(A, v, rcond=None)[0]
+                v = v - (m*t + b)
+                w = np.hanning(N).astype(np.float32)
+                V = np.fft.rfft(v * w)
+                P = (V.real**2 + V.imag**2) / (np.dot(w, w) + 1e-12)
+                low_bins = max(3, int(0.01 * P.size))
+                if P.size <= low_bins + 2: return 0.0
+                P = P[low_bins:]
+                k = max(9, (P.size // 64) * 2 + 1)
+                pad = k // 2
+                Ppad = np.pad(P, (pad, pad), mode="edge")
+                B = np.empty_like(P)
+                for i in range(P.size):
+                    B[i] = np.median(Ppad[i:i+k])
+                B = np.maximum(B, np.percentile(P, 10)*0.5 + 1e-12)
+                R = P / B
+                idx = int(np.argmax(R))
+                win = max(3, k // 3)
+                mask = np.ones_like(R, dtype=bool)
+                mask[max(0, idx-win):min(R.size, idx+win+1)] = False
+                second = R[mask].max() if mask.any() else 1.0
+                iso = R[idx] / (second + 1e-6)
+                score_db = 10.0 * np.log10(R[idx] + 1e-12)
+                if iso < 1.2: score_db = 0.0
+                return float(np.clip(score_db, 0.0, 30.0))
+            r = gray_roi.mean(axis=1)
+            c = gray_roi.mean(axis=0)
+            # Use the 90th percentile of row/col, not the max (less trigger-happy)
+            return float(np.percentile([proj_score(r), proj_score(c)], 90))
+
+        def _blockiness8(gray_roi):
+            dif = np.abs(np.diff(gray_roi, axis=1))
+            if dif.shape[1] == 0: return 1.0
+            cols = np.arange(dif.shape[1])
+            grid = dif[:, (cols+1) % 8 == 0]
+            interior = dif[:, (cols+1) % 8 != 0]
+            gm = grid.mean() if grid.size else 0.0
+            im = interior.mean() if interior.size else 1e-6
+            return float(gm / (im + 1e-6))
+
+        def _clip01(v): return float(max(0.0, min(1.0, v)))
+
+        # ----------------- preprocess -----------------
+        x = _to_gray_f32(self.to_grayscale().data)
+        x = _resize_if_needed(x, 960)
+
+        # ----------------- core metrics (full frame) -----------------
+        gmag = _sobel5_mag(x)
+        ten  = float(gmag.mean())
+        lapv = _lap_var(x)
+        sigma = _noise_sigma_mad(x, gmag)
+        snr  = float(ten / (sigma*sigma + 1e-6))
+        dclip, bclip = _clip_tails(x)
+        dyn  = float(x.max() - x.min())
+
+        # ----------------- glitch metrics (center ROI, smoothed) -----------------
+        roi = _center_crop(x, 0.85)
+        roi_s = cv2.GaussianBlur(roi, (0,0), 0.5)  # light smoothing to reduce noise-induced steps
+        # Tight texture gate: only test if image likely has structure
+        ten_log = np.log10(ten + 1.0)
+        sharp_q = _clip01((ten_log - 1.7) / (3.7 - 1.7 + 1e-6))
+        is_textured = (sharp_q > 0.45) and (lapv > 100.0) and (dyn >= 15.0)
+
+        if is_textured:
+            rowz, colz = _robust_step_z_of_means(roi_s)
+            stripe_db  = _stripe_score_db(roi_s)
+            block      = _blockiness8(roi_s)
+        else:
+            rowz = colz = stripe_db = 0.0
+            block = 1.0
+
+        # ----------------- stateless fusion -----------------
+        # Sharpness base
+        ten_lo, ten_hi = 1.7, 3.7
+        sharp_q = _clip01((ten_log - ten_lo) / (ten_hi - ten_lo + 1e-6))
+
+        # Penalties (lenient defaults)
+        p_noise = _clip01((sigma - 12.0) / 24.0)       # 0 at 12, 1 at 36
+        p_clip_dark   = _clip01((dclip - 0.10) / 0.40) # ignore small tails
+        p_clip_bright = _clip01((bclip - 0.10) / 0.40)
+        p_low_dyn     = _clip01((12.0 - dyn) / 12.0)
+        p_expo = max(p_clip_dark, p_clip_bright, p_low_dyn)
+
+        # Glitch votes (lenient thresholds)
+        step_bad  = (rowz > 16.0) or (colz > 16.0)
+        band_bad  = (stripe_db > 22.0)                 # dB
+        block_bad = (block > 2.6)
+        votes = int(step_bad) + int(band_bad) + int(block_bad) if is_textured else 0
+
+        # Demote single-vote; require consensus for strong penalty
+        p_glitch = 0.0
+        if votes >= 2:
+            p_glitch = 0.45
+        elif votes == 1:
+            p_glitch = 0.15  # tiny penalty; don't add "possible glitch" to reasons
+
+        score = sharp_q - 0.25*p_noise - 0.25*p_expo - p_glitch
+        score = _clip01(score)
+
+        # ----------------- reasons (quiet on single-vote glitch) -----------------
+        reasons = []
+        if sharp_q < 0.30: reasons.append("blur/low-sharpness")
+        if p_noise > 0.5:  reasons.append("grain/SNR")
+        if p_expo > 0.5:   reasons.append("exposure/clipping")
+        if votes >= 2:     reasons.append("glitch")
+
+        metrics = {
+            "tenengrad_mean": ten,
+            "ten_log": ten_log,
+            "sharp_q": sharp_q,
+            "laplacian_var": lapv,
+            "noise_sigma": sigma,
+            "snr": snr,
+            "clip_dark": dclip,
+            "clip_bright": bclip,
+            "row_step_z": rowz,
+            "col_step_z": colz,
+            "stripe_db": stripe_db,
+            "blockiness8": block,
+            "dyn_range": dyn,
+            "votes": votes,
+        }
+
+        report = {"score": score, "metrics": metrics, "reasons": reasons or ["ok"]}
+        if debug:
+            print(f"[frame_goodness lenient] {report}")
+        return report
 
     def save(self, filepath: str) -> bool:
         """Save image to file."""
@@ -486,7 +656,7 @@ class Image(Timestamped):
         return base64_str
 
 
-def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
+def frame_goodness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
     window = TimestampedBufferCollection(1.0 / target_frequency)
     source.subscribe(window.add)
 
@@ -495,7 +665,7 @@ def sharpness_window(target_frequency: float, source: Observable[Image]) -> Obse
     def find_best(*argv):
         if not window._items:
             return None
-        return max(window._items, key=lambda x: x.sharpness())
+        return max(window._items, key=lambda x: x.frame_goodness()["score"])
 
     return rx.interval(1.0 / target_frequency).pipe(
         ops.observe_on(thread_scheduler), ops.map(find_best)
