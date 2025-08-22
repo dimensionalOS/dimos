@@ -15,8 +15,9 @@
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_window
 from dimos.utils.data import get_data
+from dimos.utils.testing import TimedSensorReplay
 
 
 @pytest.fixture
@@ -61,3 +62,23 @@ def test_opencv_conversion(img: Image):
     # artificially patch timestamp
     decoded_img.ts = img.ts
     assert decoded_img == img
+
+
+def test_sharpness_detector():
+    get_data("unitree_office_walk")  # Preload data for testing
+    video_store = TimedSensorReplay(
+        "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
+    )
+
+    for image in video_store.iterate():
+        print(image.sharpness())
+
+
+def test_sharpness_sliding_window():
+    get_data("unitree_office_walk")  # Preload data for testing
+    sharpness_window(
+        0.5,
+        video_store=TimedSensorReplay(
+            "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
+        ).stream(),
+    ).subscribe(print)
