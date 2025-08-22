@@ -639,6 +639,7 @@ class WavefrontFrontierExplorer(Module):
                         logger.info(
                             f"No information gain for {self.no_gain_counter} consecutive attempts"
                         )
+                        self.no_gain_counter = 0  # Reset counter when stopping due to no gain
                         self.stop_exploration()
                         return None
                 else:
@@ -724,6 +725,7 @@ class WavefrontFrontierExplorer(Module):
             return False
 
         self.exploration_active = False
+        self.no_gain_counter = 0  # Reset counter when exploration stops
         self.stop_event.set()
 
         if self.exploration_thread and self.exploration_thread.is_alive():
