@@ -41,13 +41,13 @@ class DroneConnection(ConnectionInterface):
             connection_string: MAVLink connection string
         """
         self.connection_string = connection_string
-        self.master = None
+        self.mavlink = None
         self.connected = False
         self.telemetry = {}
         
-        # Subjects for streaming data
         self._odom_subject = Subject()
         self._status_subject = Subject()
+        self._telemetry_subject = Subject()
         
         self.connect()
     
@@ -55,12 +55,11 @@ class DroneConnection(ConnectionInterface):
         """Connect to drone via MAVLink."""
         try:
             logger.info(f"Connecting to {self.connection_string}")
-            self.master = mavutil.mavlink_connection(self.connection_string)
-            self.master.wait_heartbeat(timeout=30)
+            self.mavlink = mavutil.mavlink_connection(self.connection_string)
+            self.mavlink.wait_heartbeat(timeout=30)
             self.connected = True
-            logger.info(f"Connected to system {self.master.target_system}")
+            logger.info(f"Connected to system {self.mavlink.target_system}")
             
-            # Update initial telemetry
             self.update_telemetry()
             return True
             
@@ -75,68 +74,104 @@ class DroneConnection(ConnectionInterface):
             
         end_time = time.time() + timeout
         while time.time() < end_time:
-            msg = self.master.recv_match(
-                type=['ATTITUDE', 'GLOBAL_POSITION_INT', 'VFR_HUD', 
-                      'HEARTBEAT', 'SYS_STATUS', 'GPS_RAW_INT'],
-                blocking=False
-            )
+            msg = self.mavlink.recv_match(blocking=False)
             if not msg:
-                time.sleep(0.001)  # Small sleep then continue
+                time.sleep(0.001)
                 continue
-                
             msg_type = msg.get_type()
+            msg_dict = msg.to_dict()
             
-            if msg_type == 'ATTITUDE':
-                self.telemetry['roll'] = msg.roll
-                self.telemetry['pitch'] = msg.pitch
-                self.telemetry['yaw'] = msg.yaw
+            self.telemetry[msg_type] = msg_dict
+            
+            # Apply unit conversions for known fields
+            if msg_type == 'GLOBAL_POSITION_INT':
+                msg_dict['lat'] = msg_dict.get('lat', 0) / 1e7
+                msg_dict['lon'] = msg_dict.get('lon', 0) / 1e7
+                msg_dict['alt'] = msg_dict.get('alt', 0) / 1000.0
+                msg_dict['relative_alt'] = msg_dict.get('relative_alt', 0) / 1000.0
+                msg_dict['vx'] = msg_dict.get('vx', 0) / 100.0  # cm/s to m/s
+                msg_dict['vy'] = msg_dict.get('vy', 0) / 100.0
+                msg_dict['vz'] = msg_dict.get('vz', 0) / 100.0
+                msg_dict['hdg'] = msg_dict.get('hdg', 0) / 100.0  # centidegrees to degrees
                 self._publish_odom()
                 
-            elif msg_type == 'GLOBAL_POSITION_INT':
-                self.telemetry['lat'] = msg.lat / 1e7
-                self.telemetry['lon'] = msg.lon / 1e7
-                self.telemetry['alt'] = msg.alt / 1000.0
-                self.telemetry['relative_alt'] = msg.relative_alt / 1000.0
-                self._publish_odom()
-                
-            elif msg_type == 'VFR_HUD':
-                self.telemetry['groundspeed'] = msg.groundspeed
-                self.telemetry['airspeed'] = msg.airspeed
-                self.telemetry['heading'] = msg.heading
-                self.telemetry['climb'] = msg.climb
-                
-            elif msg_type == 'HEARTBEAT':
-                self.telemetry['armed'] = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-                self.telemetry['mode'] = msg.custom_mode
-                self._publish_status()
+            elif msg_type == 'GPS_RAW_INT':
+                msg_dict['lat'] = msg_dict.get('lat', 0) / 1e7
+                msg_dict['lon'] = msg_dict.get('lon', 0) / 1e7
+                msg_dict['alt'] = msg_dict.get('alt', 0) / 1000.0
+                msg_dict['vel'] = msg_dict.get('vel', 0) / 100.0
+                msg_dict['cog'] = msg_dict.get('cog', 0) / 100.0
                 
             elif msg_type == 'SYS_STATUS':
-                self.telemetry['battery_voltage'] = msg.voltage_battery / 1000.0
-                self.telemetry['battery_current'] = msg.current_battery / 100.0
+                msg_dict['voltage_battery'] = msg_dict.get('voltage_battery', 0) / 1000.0
+                msg_dict['current_battery'] = msg_dict.get('current_battery', 0) / 100.0
                 self._publish_status()
+                
+            elif msg_type == 'POWER_STATUS':
+                msg_dict['Vcc'] = msg_dict.get('Vcc', 0) / 1000.0
+                msg_dict['Vservo'] = msg_dict.get('Vservo', 0) / 1000.0
+                
+            elif msg_type == 'HEARTBEAT':
+                # Extract armed status
+                base_mode = msg_dict.get('base_mode', 0)
+                msg_dict['armed'] = bool(base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+                self._publish_status()
+            
+            elif msg_type == 'ATTITUDE':
+                self._publish_odom()
+            
+            self.telemetry[msg_type] = msg_dict
+            
+            self._publish_telemetry()
     
     def _publish_odom(self):
-        """Publish odometry data."""
-        if not all(k in self.telemetry for k in ['roll', 'pitch', 'yaw']):
-            logger.debug(f"Missing telemetry for odom: {self.telemetry.keys()}")
+        """Publish odometry data with velocity integration for indoor flight."""
+        attitude = self.telemetry.get('ATTITUDE', {})
+        roll = attitude.get('roll', 0)
+        pitch = attitude.get('pitch', 0)
+        yaw = attitude.get('yaw', 0)
+        
+        # Use heading from GLOBAL_POSITION_INT if no ATTITUDE data
+        if 'roll' not in attitude and 'GLOBAL_POSITION_INT' in self.telemetry:
+            import math
+            heading = self.telemetry['GLOBAL_POSITION_INT'].get('hdg', 0)
+            yaw = math.radians(heading)
+        
+        if 'roll' not in attitude and 'GLOBAL_POSITION_INT' not in self.telemetry:
+            logger.debug(f"No attitude or position data available")
             return
             
-        # Convert Euler angles to quaternion
         quaternion = Quaternion.from_euler(
-            Vector3(
-                self.telemetry.get('roll', 0),
-                self.telemetry.get('pitch', 0),
-                self.telemetry.get('yaw', 0)
-            )
+            Vector3(roll, pitch, yaw)
         )
         
-        # Create pose with proper local position
-        # For now, integrate velocity to get position (proper solution needs GPS->local conversion)
         if not hasattr(self, '_position'):
             self._position = {'x': 0.0, 'y': 0.0, 'z': 0.0}
+            self._last_update = time.time()
         
-        # Use altitude directly for Z
-        self._position['z'] = self.telemetry.get('relative_alt', 0)
+        # Use velocity integration when GPS is invalid / indoor flight
+        current_time = time.time()
+        dt = current_time - self._last_update
+        
+        # Get position data from GLOBAL_POSITION_INT
+        pos_data = self.telemetry.get('GLOBAL_POSITION_INT', {})
+        
+        # Integrate velocities to update position (NED frame)
+        if pos_data and dt > 0:
+            vx = pos_data.get('vx', 0)  # North velocity in m/s
+            vy = pos_data.get('vy', 0)  # East velocity in m/s
+            
+            # vx is North, vy is East in NED mavlink frame
+            # Convert to local frame (x=East, y=North for consistency)
+            self._position['y'] += vx * dt  # North
+            self._position['x'] += vy * dt  # East
+        
+        if 'ALTITUDE' in self.telemetry:
+            self._position['z'] = self.telemetry['ALTITUDE'].get('altitude_relative', 0)
+        elif pos_data:
+            self._position['z'] = pos_data.get('relative_alt', 0)
+        
+        self._last_update = current_time
         
         pose = PoseStamped(
             position=Vector3(
@@ -146,21 +181,42 @@ class DroneConnection(ConnectionInterface):
             ),
             orientation=quaternion,
             frame_id="world",
-            ts=time.time()
+            ts=current_time
         )
         
         self._odom_subject.on_next(pose)
     
     def _publish_status(self):
-        """Publish drone status."""
+        """Publish drone status with key telemetry."""
+        heartbeat = self.telemetry.get('HEARTBEAT', {})
+        sys_status = self.telemetry.get('SYS_STATUS', {})
+        gps_raw = self.telemetry.get('GPS_RAW_INT', {})
+        global_pos = self.telemetry.get('GLOBAL_POSITION_INT', {})
+        altitude = self.telemetry.get('ALTITUDE', {})
+        
         status = {
-            'armed': self.telemetry.get('armed', False),
-            'mode': self.telemetry.get('mode', -1),
-            'battery_voltage': self.telemetry.get('battery_voltage', 0),
-            'battery_current': self.telemetry.get('battery_current', 0),
+            'armed': heartbeat.get('armed', False),
+            'mode': heartbeat.get('custom_mode', -1),
+            'battery_voltage': sys_status.get('voltage_battery', 0),
+            'battery_current': sys_status.get('current_battery', 0),
+            'battery_remaining': sys_status.get('battery_remaining', 0),
+            'satellites': gps_raw.get('satellites_visible', 0),
+            'altitude': altitude.get('altitude_relative', global_pos.get('relative_alt', 0)),
+            'heading': global_pos.get('hdg', 0),
+            'vx': global_pos.get('vx', 0),
+            'vy': global_pos.get('vy', 0),
+            'vz': global_pos.get('vz', 0),
+            'lat': global_pos.get('lat', 0),
+            'lon': global_pos.get('lon', 0),
             'ts': time.time()
         }
         self._status_subject.on_next(status)
+    
+    def _publish_telemetry(self):
+        """Publish full telemetry data."""
+        telemetry_with_ts = self.telemetry.copy()
+        telemetry_with_ts['timestamp'] = time.time()
+        self._telemetry_subject.on_next(telemetry_with_ts)
     
     def move(self, velocity: Vector3, duration: float = 0.0) -> bool:
         """Send movement command to drone.
@@ -186,10 +242,10 @@ class DroneConnection(ConnectionInterface):
             # Send velocity for duration
             end_time = time.time() + duration
             while time.time() < end_time:
-                self.master.mav.set_position_target_local_ned_send(
+                self.mavlink.mav.set_position_target_local_ned_send(
                     0,  # time_boot_ms
-                    self.master.target_system,
-                    self.master.target_component,
+                    self.mavlink.target_system,
+                    self.mavlink.target_component,
                     mavutil.mavlink.MAV_FRAME_BODY_NED,
                     0b0000111111000111,  # type_mask (only velocities)
                     0, 0, 0,  # positions
@@ -201,8 +257,8 @@ class DroneConnection(ConnectionInterface):
             self.stop()
         else:
             # Single velocity command
-            self.master.mav.set_position_target_local_ned_send(
-                0, self.master.target_system, self.master.target_component,
+            self.mavlink.mav.set_position_target_local_ned_send(
+                0, self.mavlink.target_system, self.mavlink.target_component,
                 mavutil.mavlink.MAV_FRAME_BODY_NED,
                 0b0000111111000111,
                 0, 0, 0, forward, right, down, 0, 0, 0, 0, 0
@@ -215,8 +271,8 @@ class DroneConnection(ConnectionInterface):
         if not self.connected:
             return False
             
-        self.master.mav.set_position_target_local_ned_send(
-            0, self.master.target_system, self.master.target_component,
+        self.mavlink.mav.set_position_target_local_ned_send(
+            0, self.mavlink.target_system, self.mavlink.target_component,
             mavutil.mavlink.MAV_FRAME_BODY_NED,
             0b0000111111000111,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
@@ -231,22 +287,22 @@ class DroneConnection(ConnectionInterface):
         logger.info("Arming motors...")
         self.update_telemetry()
         
-        self.master.mav.command_long_send(
-            self.master.target_system,
-            self.master.target_component,
+        self.mavlink.mav.command_long_send(
+            self.mavlink.target_system,
+            self.mavlink.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             0, 1, 0, 0, 0, 0, 0, 0
         )
         
         # Wait for ACK
-        ack = self.master.recv_match(type='COMMAND_ACK', blocking=True, timeout=5)
+        ack = self.mavlink.recv_match(type='COMMAND_ACK', blocking=True, timeout=5)
         if ack and ack.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM:
             if ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
                 logger.info("Arm command accepted")
                 
                 # Verify armed status
                 for i in range(10):
-                    msg = self.master.recv_match(type='HEARTBEAT', blocking=True, timeout=1)
+                    msg = self.mavlink.recv_match(type='HEARTBEAT', blocking=True, timeout=1)
                     if msg:
                         armed = msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
                         if armed:
@@ -266,9 +322,9 @@ class DroneConnection(ConnectionInterface):
             
         logger.info("Disarming motors...")
         
-        self.master.mav.command_long_send(
-            self.master.target_system,
-            self.master.target_component,
+        self.mavlink.mav.command_long_send(
+            self.mavlink.target_system,
+            self.mavlink.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             0, 0, 0, 0, 0, 0, 0, 0
         )
@@ -295,14 +351,14 @@ class DroneConnection(ConnectionInterface):
                 return False
         
         # Send takeoff command
-        self.master.mav.command_long_send(
-            self.master.target_system,
-            self.master.target_component,
+        self.mavlink.mav.command_long_send(
+            self.mavlink.target_system,
+            self.mavlink.target_component,
             mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
             0, 0, 0, 0, 0, 0, 0, altitude
         )
         
-        ack = self.master.recv_match(type='COMMAND_ACK', blocking=True, timeout=5)
+        ack = self.mavlink.recv_match(type='COMMAND_ACK', blocking=True, timeout=5)
         if ack and ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
             logger.info("Takeoff command accepted")
             return True
@@ -317,14 +373,14 @@ class DroneConnection(ConnectionInterface):
             
         logger.info("Landing...")
         
-        self.master.mav.command_long_send(
-            self.master.target_system,
-            self.master.target_component,
+        self.mavlink.mav.command_long_send(
+            self.mavlink.target_system,
+            self.mavlink.target_component,
             mavutil.mavlink.MAV_CMD_NAV_LAND,
             0, 0, 0, 0, 0, 0, 0, 0
         )
         
-        ack = self.master.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
+        ack = self.mavlink.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
         if ack and ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
             logger.info("Land command accepted")
             return True
@@ -356,9 +412,9 @@ class DroneConnection(ConnectionInterface):
         
         self.update_telemetry()
         
-        self.master.mav.command_long_send(
-            self.master.target_system,
-            self.master.target_component,
+        self.mavlink.mav.command_long_send(
+            self.mavlink.target_system,
+            self.mavlink.target_component,
             mavutil.mavlink.MAV_CMD_DO_SET_MODE,
             0,
             mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
@@ -366,7 +422,7 @@ class DroneConnection(ConnectionInterface):
             0, 0, 0, 0, 0
         )
         
-        ack = self.master.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
+        ack = self.mavlink.recv_match(type='COMMAND_ACK', blocking=True, timeout=3)
         if ack and ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
             logger.info(f"Mode changed to {mode}")
             self.telemetry['mode'] = mode_id
@@ -384,6 +440,11 @@ class DroneConnection(ConnectionInterface):
         """Get status stream."""
         return self._status_subject
     
+    @functools.cache
+    def telemetry_stream(self):
+        """Get full telemetry stream."""
+        return self._telemetry_subject
+    
     def get_telemetry(self) -> Dict[str, Any]:
         """Get current telemetry."""
         # Update telemetry multiple times to ensure we get data
@@ -393,8 +454,8 @@ class DroneConnection(ConnectionInterface):
     
     def disconnect(self):
         """Disconnect from drone."""
-        if self.master:
-            self.master.close()
+        if self.mavlink:
+            self.mavlink.close()
         self.connected = False
         logger.info("Disconnected")
     
