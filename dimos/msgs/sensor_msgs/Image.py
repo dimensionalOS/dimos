@@ -14,15 +14,20 @@
 
 import time
 from dataclasses import dataclass, field
+from datetime import timedelta
 from enum import Enum
 from typing import Optional, Tuple
 
 import cv2
 import numpy as np
+import reactivex as rx
 
 # Import LCM types
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
+from reactivex import operators as ops
+from reactivex.observable import Observable
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.types.timestamped import Timestamped
 
@@ -463,3 +468,15 @@ class Image(Timestamped):
         base64_str = base64.b64encode(jpeg_bytes).decode("utf-8")
 
         return base64_str
+
+
+def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
+    pool = ThreadPoolScheduler()
+    window = timedelta(seconds=1 / target_frequency)
+
+    return source.pipe(
+        ops.flat_map(lambda img: rx.start(lambda: (img.sharpness(), img), scheduler=pool)),
+        ops.buffer_with_time(window, window),
+        ops.filter(bool),
+        ops.map(lambda buf: max(buf, key=lambda t: t[0])[1]),
+    )
