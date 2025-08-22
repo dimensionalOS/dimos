@@ -22,41 +22,40 @@ import time
 import warnings
 from typing import List, Optional
 
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.std_msgs import Bool, String
+from dimos_lcm.vision_msgs import Detection2DArray, Detection3DArray
+
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.msgs.sensor_msgs import Image
-from dimos_lcm.std_msgs import String
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
+from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
+from dimos.navigation.global_planner import AstarPlanner
+from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
+from dimos.perception.common.utils import extract_pose_from_detection3d
+from dimos.perception.object_tracker import ObjectTracking
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos.navigation.global_planner import AstarPlanner
-from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
-from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
+from dimos.robot.robot import Robot
+from dimos.robot.unitree_webrtc.camera_module import UnitreeCameraModule
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.unitree_webrtc.camera_module import UnitreeCameraModule
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
+from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.transform_utils import offset_distance
-from dimos.perception.common.utils import extract_pose_from_detection3d
-from dimos.perception.object_tracker import ObjectTracking
-from dimos_lcm.std_msgs import Bool
-from dimos.robot.robot import Robot
-from dimos.types.robot_capabilities import RobotCapability
-
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
 
@@ -106,7 +105,7 @@ class FakeRTC:
         video_store = TimedSensorReplay(
             "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
         )
-        return video_store.stream()
+        return sharpness_window(0.5, video_store.stream())
 
     def move(self, vector: Vector3, duration: float = 0.0):
         pass
@@ -289,8 +288,8 @@ class UnitreeGo2(Robot):
         self._deploy_mapping()
         self._deploy_navigation()
         self._deploy_visualization()
-        self._deploy_perception()
-        self._deploy_camera()
+        # self._deploy_perception()
+        # self._deploy_camera()
 
         self._start_modules()
 
@@ -459,9 +458,9 @@ class UnitreeGo2(Robot):
         self.frontier_explorer.start()
         self.websocket_vis.start()
         self.foxglove_bridge.start()
-        self.spatial_memory_module.start()
-        self.camera_module.start()
-        self.object_tracker.start()
+        # self.spatial_memory_module.start()
+        # self.camera_module.start()
+        # self.object_tracker.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
