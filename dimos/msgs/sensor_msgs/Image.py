@@ -296,22 +296,23 @@ class Image(Timestamped):
         # ----------------- helpers -----------------
         def _to_gray_f32(x):
             if x.ndim == 3 and x.shape[2] == 3:
-                x = 0.299*x[...,0] + 0.587*x[...,1] + 0.114*x[...,2]
+                x = 0.299 * x[..., 0] + 0.587 * x[..., 1] + 0.114 * x[..., 2]
             return np.asarray(x, np.float32)
 
         def _resize_if_needed(x, target_w=960):
             h, w = x.shape[:2]
             if w > target_w:
                 s = target_w / float(w)
-                x = cv2.resize(x, (int(w*s), int(h*s)), interpolation=cv2.INTER_AREA)
+                x = cv2.resize(x, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
             return x
 
         def _center_crop(x, frac=0.85):
             """Take central frac of the frame for glitch checks."""
             h, w = x.shape
-            ch, cw = int(h*frac), int(w*frac)
-            y0 = (h - ch)//2; x0 = (w - cw)//2
-            return x[y0:y0+ch, x0:x0+cw]
+            ch, cw = int(h * frac), int(w * frac)
+            y0 = (h - ch) // 2
+            x0 = (w - cw) // 2
+            return x[y0 : y0 + ch, x0 : x0 + cw]
 
         def _sobel5_mag(x):
             sx = cv2.Sobel(x, cv2.CV_32F, 1, 0, ksize=5)
@@ -325,7 +326,7 @@ class Image(Timestamped):
         def _noise_sigma_mad(x, grad_mag, flat_pct=40.0):
             gth = np.percentile(grad_mag, flat_pct)
             flat = grad_mag <= gth
-            low  = cv2.medianBlur(x, 3)
+            low = cv2.medianBlur(x, 3)
             resid = x - low
             r = resid[flat] if np.any(flat) else resid
             med = np.median(r)
@@ -338,13 +339,16 @@ class Image(Timestamped):
         def _robust_step_z_of_means(img_for_rows_cols):
             r = img_for_rows_cols.mean(axis=1)
             c = img_for_rows_cols.mean(axis=0)
+
             # Light 1D smoothing by blurring the image beforehand (done outside)
             def z_of(v):
                 d = np.abs(np.diff(v))
-                if d.size == 0: return 0.0
-                m  = np.median(d)
+                if d.size == 0:
+                    return 0.0
+                m = np.median(d)
                 mad = np.median(np.abs(d - m)) + 1e-6
-                return float((np.max(np.abs(d - m))) / (1.4826*mad + 1e-6))
+                return float((np.max(np.abs(d - m))) / (1.4826 * mad + 1e-6))
+
             return z_of(r), z_of(c)
 
         def _stripe_score_db(gray_roi):
@@ -352,36 +356,42 @@ class Image(Timestamped):
             Robust banding score (0..~30 dB) on center ROI.
             Detrend + Hann + local-median background; drop very low bins.
             """
+
             def proj_score(v):
-                v = v.astype(np.float32); N = v.size
-                if N < 32: return 0.0
+                v = v.astype(np.float32)
+                N = v.size
+                if N < 32:
+                    return 0.0
                 t = np.arange(N, dtype=np.float32)
                 A = np.stack([t, np.ones_like(t)], axis=1)
                 m, b = np.linalg.lstsq(A, v, rcond=None)[0]
-                v = v - (m*t + b)
+                v = v - (m * t + b)
                 w = np.hanning(N).astype(np.float32)
                 V = np.fft.rfft(v * w)
                 P = (V.real**2 + V.imag**2) / (np.dot(w, w) + 1e-12)
                 low_bins = max(3, int(0.01 * P.size))
-                if P.size <= low_bins + 2: return 0.0
+                if P.size <= low_bins + 2:
+                    return 0.0
                 P = P[low_bins:]
                 k = max(9, (P.size // 64) * 2 + 1)
                 pad = k // 2
                 Ppad = np.pad(P, (pad, pad), mode="edge")
                 B = np.empty_like(P)
                 for i in range(P.size):
-                    B[i] = np.median(Ppad[i:i+k])
-                B = np.maximum(B, np.percentile(P, 10)*0.5 + 1e-12)
+                    B[i] = np.median(Ppad[i : i + k])
+                B = np.maximum(B, np.percentile(P, 10) * 0.5 + 1e-12)
                 R = P / B
                 idx = int(np.argmax(R))
                 win = max(3, k // 3)
                 mask = np.ones_like(R, dtype=bool)
-                mask[max(0, idx-win):min(R.size, idx+win+1)] = False
+                mask[max(0, idx - win) : min(R.size, idx + win + 1)] = False
                 second = R[mask].max() if mask.any() else 1.0
                 iso = R[idx] / (second + 1e-6)
                 score_db = 10.0 * np.log10(R[idx] + 1e-12)
-                if iso < 1.2: score_db = 0.0
+                if iso < 1.2:
+                    score_db = 0.0
                 return float(np.clip(score_db, 0.0, 30.0))
+
             r = gray_roi.mean(axis=1)
             c = gray_roi.mean(axis=0)
             # Use the 90th percentile of row/col, not the max (less trigger-happy)
@@ -389,15 +399,17 @@ class Image(Timestamped):
 
         def _blockiness8(gray_roi):
             dif = np.abs(np.diff(gray_roi, axis=1))
-            if dif.shape[1] == 0: return 1.0
+            if dif.shape[1] == 0:
+                return 1.0
             cols = np.arange(dif.shape[1])
-            grid = dif[:, (cols+1) % 8 == 0]
-            interior = dif[:, (cols+1) % 8 != 0]
+            grid = dif[:, (cols + 1) % 8 == 0]
+            interior = dif[:, (cols + 1) % 8 != 0]
             gm = grid.mean() if grid.size else 0.0
             im = interior.mean() if interior.size else 1e-6
             return float(gm / (im + 1e-6))
 
-        def _clip01(v): return float(max(0.0, min(1.0, v)))
+        def _clip01(v):
+            return float(max(0.0, min(1.0, v)))
 
         # ----------------- preprocess -----------------
         x = _to_gray_f32(self.to_grayscale().data)
@@ -405,16 +417,16 @@ class Image(Timestamped):
 
         # ----------------- core metrics (full frame) -----------------
         gmag = _sobel5_mag(x)
-        ten  = float(gmag.mean())
+        ten = float(gmag.mean())
         lapv = _lap_var(x)
         sigma = _noise_sigma_mad(x, gmag)
-        snr  = float(ten / (sigma*sigma + 1e-6))
+        snr = float(ten / (sigma * sigma + 1e-6))
         dclip, bclip = _clip_tails(x)
-        dyn  = float(x.max() - x.min())
+        dyn = float(x.max() - x.min())
 
         # ----------------- glitch metrics (center ROI, smoothed) -----------------
         roi = _center_crop(x, 0.85)
-        roi_s = cv2.GaussianBlur(roi, (0,0), 0.5)  # light smoothing to reduce noise-induced steps
+        roi_s = cv2.GaussianBlur(roi, (0, 0), 0.5)  # light smoothing to reduce noise-induced steps
         # Tight texture gate: only test if image likely has structure
         ten_log = np.log10(ten + 1.0)
         sharp_q = _clip01((ten_log - 1.7) / (3.7 - 1.7 + 1e-6))
@@ -422,8 +434,8 @@ class Image(Timestamped):
 
         if is_textured:
             rowz, colz = _robust_step_z_of_means(roi_s)
-            stripe_db  = _stripe_score_db(roi_s)
-            block      = _blockiness8(roi_s)
+            stripe_db = _stripe_score_db(roi_s)
+            block = _blockiness8(roi_s)
         else:
             rowz = colz = stripe_db = 0.0
             block = 1.0
@@ -434,16 +446,16 @@ class Image(Timestamped):
         sharp_q = _clip01((ten_log - ten_lo) / (ten_hi - ten_lo + 1e-6))
 
         # Penalties (lenient defaults)
-        p_noise = _clip01((sigma - 12.0) / 24.0)       # 0 at 12, 1 at 36
-        p_clip_dark   = _clip01((dclip - 0.10) / 0.40) # ignore small tails
+        p_noise = _clip01((sigma - 12.0) / 24.0)  # 0 at 12, 1 at 36
+        p_clip_dark = _clip01((dclip - 0.10) / 0.40)  # ignore small tails
         p_clip_bright = _clip01((bclip - 0.10) / 0.40)
-        p_low_dyn     = _clip01((12.0 - dyn) / 12.0)
+        p_low_dyn = _clip01((12.0 - dyn) / 12.0)
         p_expo = max(p_clip_dark, p_clip_bright, p_low_dyn)
 
         # Glitch votes (lenient thresholds)
-        step_bad  = (rowz > 16.0) or (colz > 16.0)
-        band_bad  = (stripe_db > 22.0)                 # dB
-        block_bad = (block > 2.6)
+        step_bad = (rowz > 16.0) or (colz > 16.0)
+        band_bad = stripe_db > 22.0  # dB
+        block_bad = block > 2.6
         votes = int(step_bad) + int(band_bad) + int(block_bad) if is_textured else 0
 
         # Demote single-vote; require consensus for strong penalty
@@ -453,15 +465,19 @@ class Image(Timestamped):
         elif votes == 1:
             p_glitch = 0.15  # tiny penalty; don't add "possible glitch" to reasons
 
-        score = sharp_q - 0.25*p_noise - 0.25*p_expo - p_glitch
+        score = sharp_q - 0.25 * p_noise - 0.25 * p_expo - p_glitch
         score = _clip01(score)
 
         # ----------------- reasons (quiet on single-vote glitch) -----------------
         reasons = []
-        if sharp_q < 0.30: reasons.append("blur/low-sharpness")
-        if p_noise > 0.5:  reasons.append("grain/SNR")
-        if p_expo > 0.5:   reasons.append("exposure/clipping")
-        if votes >= 2:     reasons.append("glitch")
+        if sharp_q < 0.30:
+            reasons.append("blur/low-sharpness")
+        if p_noise > 0.5:
+            reasons.append("grain/SNR")
+        if p_expo > 0.5:
+            reasons.append("exposure/clipping")
+        if votes >= 2:
+            reasons.append("glitch")
 
         metrics = {
             "tenengrad_mean": ten,

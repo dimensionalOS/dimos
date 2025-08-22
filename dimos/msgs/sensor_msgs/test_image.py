@@ -112,7 +112,7 @@ def test_sharpness_sliding_window_foxglove():
         frame_goodness = x.frame_goodness()
         sharpness = frame_goodness["score"]
         reasons = frame_goodness["reasons"]
-        if reasons != ['ok']:
+        if reasons != ["ok"]:
             x.save(f"/home/ubuntu/dimos/bad_frames/bad_{count_bad_frames}.png")
             count_bad_frames += 1
             print(f"Bad frame detected! {count_bad_frames}: {reasons}")
