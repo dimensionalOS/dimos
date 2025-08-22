@@ -89,6 +89,7 @@ def test_sharpness_sliding_window_foxglove():
     lcm = LCM()
     lcm.start()
 
+    ping = 0
     sharp_topic = Topic("/sharp", Image)
     all_topic = Topic("/all", Image)
     sharpness_topic = Topic("/sharpness", Vector3)
@@ -100,12 +101,28 @@ def test_sharpness_sliding_window_foxglove():
 
     # Publish all images to all_topic
     video_stream.subscribe(lambda x: lcm.publish(all_topic, x))
-    video_stream.subscribe(lambda x: lcm.publish(sharpness_topic, Vector3([x.sharpness(), 0, 0])))
 
-    # Publish sharp images to sharp_topic
+    def sharpness_vector(x: Image):
+        nonlocal ping
+        sharpness = x.sharpness()
+        if ping:
+            y = 1
+            ping = ping - 1
+        else:
+            y = 0
+
+        return Vector3([sharpness, y, 0])
+
+    video_stream.subscribe(lambda x: lcm.publish(sharpness_topic, sharpness_vector(x)))
+
+    def pub_sharp(x: Image):
+        nonlocal ping
+        ping = 3
+        lcm.publish(sharp_topic, x)
+
     sharpness_window(
         1,
         source=video_stream,
-    ).subscribe(lambda x: lcm.publish(sharp_topic, x))
+    ).subscribe(pub_sharp)
 
     time.sleep(120)

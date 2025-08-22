@@ -29,7 +29,7 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.types.timestamped import Timestamped
+from dimos.types.timestamped import Timestamped, TimestampedBufferCollection
 
 
 class ImageFormat(Enum):
@@ -487,12 +487,16 @@ class Image(Timestamped):
 
 
 def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
-    pool = ThreadPoolScheduler()
-    window = timedelta(seconds=1 / target_frequency)
+    window = TimestampedBufferCollection(1.0 / target_frequency)
+    source.subscribe(window.add)
 
-    return source.pipe(
-        ops.flat_map(lambda img: rx.start(lambda: (img.sharpness(), img), scheduler=pool)),
-        ops.buffer_with_time(window, window),
-        ops.filter(bool),
-        ops.map(lambda buf: max(buf, key=lambda t: t[0])[1]),
+    thread_scheduler = ThreadPoolScheduler(max_workers=1)
+
+    def find_best(*argv):
+        if not window._items:
+            return None
+        return max(window._items, key=lambda x: x.sharpness())
+
+    return rx.interval(1.0 / target_frequency).pipe(
+        ops.observe_on(thread_scheduler), ops.map(find_best)
     )
