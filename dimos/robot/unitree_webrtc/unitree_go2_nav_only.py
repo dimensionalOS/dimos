@@ -1,0 +1,427 @@
+#!/usr/bin/env python3
+
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+import functools
+import logging
+import os
+import time
+import warnings
+from typing import Optional
+
+from dimos import core
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
+from dimos.msgs.nav_msgs import OccupancyGrid, Path
+from dimos.msgs.sensor_msgs import Image
+from dimos_lcm.std_msgs import String, Bool
+from dimos.protocol import pubsub
+from dimos.protocol.pubsub.lcmpubsub import LCM
+from dimos.protocol.tf import TF
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+from dimos.navigation.global_planner import AstarPlanner
+from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
+from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
+from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.map import Map
+from dimos.robot.unitree_webrtc.type.odometry import Odometry
+from dimos.utils.data import get_data
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.testing import TimedSensorReplay
+from dimos.robot.robot import Robot
+from dimos.types.robot_capabilities import RobotCapability
+
+
+logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2_nav_only", level=logging.INFO)
+
+# Suppress verbose loggers
+logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
+logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
+logging.getLogger("websockets.server").setLevel(logging.ERROR)
+logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
+logging.getLogger("asyncio").setLevel(logging.ERROR)
+logging.getLogger("root").setLevel(logging.WARNING)
+
+# Suppress warnings
+warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
+warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
+
+
+class FakeRTC:
+    """Fake WebRTC connection for testing with recorded data."""
+
+    def __init__(self, *args, **kwargs):
+        get_data("unitree_office_walk")  # Preload data for testing
+
+    def connect(self):
+        pass
+
+    def standup(self):
+        print("standup suppressed")
+
+    def liedown(self):
+        print("liedown suppressed")
+
+    @functools.cache
+    def lidar_stream(self):
+        print("lidar stream start")
+        lidar_store = TimedSensorReplay("unitree_office_walk/lidar", autocast=LidarMessage.from_msg)
+        return lidar_store.stream()
+
+    @functools.cache
+    def odom_stream(self):
+        print("odom stream start")
+        odom_store = TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+        return odom_store.stream()
+
+    @functools.cache
+    def video_stream(self):
+        print("video stream start")
+        video_store = TimedSensorReplay(
+            "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
+        )
+        return video_store.stream()
+
+    def move(self, vector: Vector3, duration: float = 0.0):
+        pass
+
+    def publish_request(self, topic: str, data: dict):
+        """Fake publish request for testing."""
+        return {"status": "ok", "message": "Fake publish"}
+
+
+class ConnectionModule(Module):
+    """Module that handles robot sensor data and movement commands."""
+
+    movecmd: In[Vector3] = None
+    odom: Out[PoseStamped] = None
+    lidar: Out[LidarMessage] = None
+    video: Out[Image] = None
+    ip: str
+    connection_type: str = "webrtc"
+
+    _odom: PoseStamped = None
+    _lidar: LidarMessage = None
+
+    def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
+        self.ip = ip
+        self.connection_type = connection_type
+        self.tf = TF()
+        self.connection = None
+        Module.__init__(self, *args, **kwargs)
+
+    @rpc
+    def start(self):
+        """Start the connection and subscribe to sensor streams."""
+        match self.connection_type:
+            case "webrtc":
+                self.connection = UnitreeWebRTCConnection(self.ip)
+            case "fake":
+                self.connection = FakeRTC(self.ip)
+            case "mujoco":
+                from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+
+                self.connection = MujocoConnection()
+                self.connection.start()
+            case _:
+                raise ValueError(f"Unknown connection type: {self.connection_type}")
+
+        # Connect sensor streams to outputs
+        self.connection.lidar_stream().subscribe(self.lidar.publish)
+        self.connection.odom_stream().subscribe(self._publish_tf)
+        self.connection.video_stream().subscribe(self.video.publish)
+        self.movecmd.subscribe(self.move)
+
+    def _publish_tf(self, msg):
+        self._odom = msg
+        self.odom.publish(msg)
+        self.tf.publish(Transform.from_pose("base_link", msg))
+        camera_link = Transform(
+            translation=Vector3(0.3, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="base_link",
+            child_frame_id="camera_link",
+            ts=time.time(),
+        )
+        self.tf.publish(camera_link)
+
+    @rpc
+    def get_odom(self) -> Optional[PoseStamped]:
+        """Get the robot's odometry.
+
+        Returns:
+            The robot's odometry
+        """
+        return self._odom
+
+    @rpc
+    def move(self, vector: Vector3, duration: float = 0.0):
+        """Send movement command to robot."""
+        self.connection.move(vector, duration)
+
+    @rpc
+    def standup(self):
+        """Make the robot stand up."""
+        return self.connection.standup()
+
+    @rpc
+    def liedown(self):
+        """Make the robot lie down."""
+        return self.connection.liedown()
+
+    @rpc
+    def publish_request(self, topic: str, data: dict):
+        """Publish a request to the WebRTC connection.
+        Args:
+            topic: The RTC topic to publish to
+            data: The data dictionary to publish
+        Returns:
+            The result of the publish request
+        """
+        return self.connection.publish_request(topic, data)
+
+
+class UnitreeGo2NavOnly(Robot):
+    """Minimal Unitree Go2 robot with only navigation and visualization capabilities."""
+
+    def __init__(
+        self,
+        ip: str,
+        websocket_port: int = 7779,
+        connection_type: Optional[str] = "webrtc",
+    ):
+        """Initialize the navigation-only robot system.
+
+        Args:
+            ip: Robot IP address (or None for fake connection)
+            websocket_port: Port for web visualization
+            connection_type: webrtc, fake, or mujoco
+        """
+        super().__init__()
+        self.ip = ip
+        self.connection_type = connection_type or "webrtc"
+        if ip is None and self.connection_type == "webrtc":
+            self.connection_type = "fake"  # Auto-enable playback if no IP provided
+        self.websocket_port = websocket_port
+        self.lcm = LCM()
+
+        # Set capabilities - navigation only
+        self.capabilities = [RobotCapability.LOCOMOTION]
+
+        self.dimos = None
+        self.connection = None
+        self.mapper = None
+        self.global_planner = None
+        self.local_planner = None
+        self.navigator = None
+        self.frontier_explorer = None
+        self.websocket_vis = None
+
+    def start(self):
+        """Start the robot system with navigation modules only."""
+        self.dimos = core.start(8)
+
+        self._deploy_connection()
+        self._deploy_mapping()
+        self._deploy_navigation()
+        self._deploy_visualization()
+
+        self._start_modules()
+
+        self.lcm.start()
+
+        logger.info("UnitreeGo2NavOnly initialized and started")
+        logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
+
+    def _deploy_connection(self):
+        """Deploy and configure the connection module."""
+        self.connection = self.dimos.deploy(
+            ConnectionModule, self.ip, connection_type=self.connection_type
+        )
+
+        self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
+        self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
+        self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
+        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Vector3)
+
+    def _deploy_mapping(self):
+        """Deploy and configure the mapping module."""
+        min_height = 0.3 if self.connection_type == "mujoco" else 0.15
+        self.mapper = self.dimos.deploy(
+            Map, voxel_size=0.5, global_publish_interval=2.5, min_height=min_height
+        )
+
+        self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
+        self.mapper.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)
+        self.mapper.local_costmap.transport = core.LCMTransport("/local_costmap", OccupancyGrid)
+
+        self.mapper.lidar.connect(self.connection.lidar)
+
+    def _deploy_navigation(self):
+        """Deploy and configure navigation modules."""
+        self.global_planner = self.dimos.deploy(AstarPlanner)
+        self.local_planner = self.dimos.deploy(HolonomicLocalPlanner)
+        self.navigator = self.dimos.deploy(
+            BehaviorTreeNavigator,
+            reset_local_planner=self.local_planner.reset,
+            check_goal_reached=self.local_planner.is_goal_reached,
+        )
+        self.frontier_explorer = self.dimos.deploy(WavefrontFrontierExplorer)
+
+        self.navigator.goal.transport = core.LCMTransport("/navigation_goal", PoseStamped)
+        self.navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
+        self.navigator.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+        self.navigator.navigation_state.transport = core.LCMTransport("/navigation_state", String)
+        self.navigator.global_costmap.transport = core.LCMTransport(
+            "/global_costmap", OccupancyGrid
+        )
+        self.global_planner.path.transport = core.LCMTransport("/global_path", Path)
+        self.local_planner.cmd_vel.transport = core.LCMTransport("/cmd_vel", Vector3)
+        self.frontier_explorer.goal_request.transport = core.LCMTransport(
+            "/goal_request", PoseStamped
+        )
+        self.frontier_explorer.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+        self.frontier_explorer.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
+        self.frontier_explorer.stop_explore_cmd.transport = core.LCMTransport(
+            "/stop_explore_cmd", Bool
+        )
+
+        self.global_planner.target.connect(self.navigator.goal)
+
+        self.global_planner.global_costmap.connect(self.mapper.global_costmap)
+        self.global_planner.odom.connect(self.connection.odom)
+
+        self.local_planner.path.connect(self.global_planner.path)
+        self.local_planner.local_costmap.connect(self.mapper.local_costmap)
+        self.local_planner.odom.connect(self.connection.odom)
+
+        self.connection.movecmd.connect(self.local_planner.cmd_vel)
+
+        self.navigator.odom.connect(self.connection.odom)
+
+        self.frontier_explorer.costmap.connect(self.mapper.global_costmap)
+        self.frontier_explorer.odometry.connect(self.connection.odom)
+
+    def _deploy_visualization(self):
+        """Deploy and configure visualization modules."""
+        self.websocket_vis = self.dimos.deploy(WebsocketVisModule, port=self.websocket_port)
+        self.websocket_vis.click_goal.transport = core.LCMTransport("/goal_request", PoseStamped)
+
+        self.websocket_vis.robot_pose.connect(self.connection.odom)
+        self.websocket_vis.path.connect(self.global_planner.path)
+        self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
+
+    def _start_modules(self):
+        """Start all deployed modules in the correct order."""
+        self.connection.start()
+        self.mapper.start()
+        self.global_planner.start()
+        self.local_planner.start()
+        self.navigator.start()
+        self.frontier_explorer.start()
+        self.websocket_vis.start()
+
+    def move(self, vector: Vector3, duration: float = 0.0):
+        """Send movement command to robot."""
+        self.connection.move(vector, duration)
+
+    def explore(self) -> bool:
+        """Start autonomous frontier exploration.
+
+        Returns:
+            True if exploration started successfully
+        """
+        return self.frontier_explorer.explore()
+
+    def navigate_to(self, pose: PoseStamped, blocking: bool = True):
+        """Navigate to a target pose.
+
+        Args:
+            pose: Target pose to navigate to
+            blocking: If True, block until goal is reached. If False, return immediately.
+
+        Returns:
+            If blocking=True: True if navigation was successful, False otherwise
+            If blocking=False: True if goal was accepted, False otherwise
+        """
+
+        logger.info(
+            f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
+        )
+        self.navigator.set_goal(pose)
+        time.sleep(1.0)
+
+        if blocking:
+            while self.navigator.get_state() == NavigatorState.FOLLOWING_PATH:
+                time.sleep(0.25)
+
+            time.sleep(1.0)
+            if not self.navigator.is_goal_reached():
+                logger.info("Navigation was cancelled or failed")
+                return False
+            else:
+                logger.info("Navigation goal reached")
+                return True
+
+        return True
+
+    def stop_exploration(self) -> bool:
+        """Stop autonomous exploration.
+
+        Returns:
+            True if exploration was stopped
+        """
+        self.navigator.cancel_goal()
+        return self.frontier_explorer.stop_exploration()
+
+    def cancel_navigation(self) -> bool:
+        """Cancel the current navigation goal.
+
+        Returns:
+            True if goal was cancelled
+        """
+        return self.navigator.cancel_goal()
+
+    def get_odom(self) -> PoseStamped:
+        """Get the robot's odometry.
+
+        Returns:
+            The robot's odometry
+        """
+        return self.connection.get_odom()
+
+
+def main():
+    """Main entry point."""
+    ip = os.getenv("ROBOT_IP")
+    connection_type = os.getenv("CONNECTION_TYPE", "webrtc")
+
+    pubsub.lcm.autoconf()
+
+    robot = UnitreeGo2NavOnly(ip=ip, websocket_port=7779, connection_type=connection_type)
+    robot.start()
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+
+
+if __name__ == "__main__":
+    main()
