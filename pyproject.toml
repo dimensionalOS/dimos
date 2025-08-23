@@ -190,6 +190,10 @@ jetson-jp6-cuda126 = [
     "xformers @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/731/15133b0ebb2b3/xformers-0.0.33+ac00641.d20250830-cp39-abi3-linux_aarch64.whl",
 ]
 
+drone = [
+    "pymavlink"
+]
+
 [tool.ruff]
 line-length = 100
 exclude = [
@@ -238,6 +242,4 @@ markers = [
 addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-
-
 
