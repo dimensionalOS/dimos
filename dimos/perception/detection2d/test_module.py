@@ -30,12 +30,24 @@ array_sample = better_detection_format(
     ]
 )
 
+import time
+
+
+class FakeImage:
+    ts: float
+
+    def __init__(self):
+        self.ts = time.time()
+
+
+detections = (FakeImage(), array_sample)
+
 
 def test_build_detectionarray():
-    print(build_detection2d_array(array_sample).lcm_encode())
+    print(build_detection2d_array(detections).lcm_encode())
 
 
 def test_build_imageannotations():
-    annotations = build_imageannotations(array_sample)
+    annotations = build_imageannotations(detections)
     print(annotations, annotations.texts)
     print(annotations.lcm_encode())

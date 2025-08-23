@@ -11,10 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import functools
 import time
 from typing import Any, Callable, List, Optional, Tuple
 
+from dimos_lcm.builtin_interfaces import Time as ROSTime
 from dimos_lcm.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
@@ -23,7 +24,6 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
 )
 from dimos_lcm.foxglove_msgs.Point2 import Point2
 from dimos_lcm.geometry_msgs import Point
-from dimos_lcm.std_msgs import Time as ROSTime
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D,
@@ -55,6 +55,8 @@ InconvinientDetectionFormat = Tuple[List[Bbox], List[int], List[int], List[float
 
 Detection = Tuple[Bbox, int, int, float, List[str]]
 Detections = List[Detection]
+ImageDetections = Tuple[Image, Detections]
+ImageDetection = Tuple[Image, Detection]
 
 
 def get_bbox_center(bbox: Bbox) -> CenteredBbox:
@@ -79,11 +81,11 @@ def build_bbox(bbox: Bbox) -> BoundingBox2D:
     )
 
 
-def build_detection2d(detection: Detection) -> Detection2D:
+def build_detection2d(image, detection) -> Detection2D:
     [bbox, track_id, class_id, confidence, name] = detection
 
     return Detection2D(
-        header=Header("camera_link"),
+        header=Header(image.ts, "camera_link"),
         bbox=build_bbox(bbox),
         results=[
             ObjectHypothesisWithPose(
@@ -96,13 +98,14 @@ def build_detection2d(detection: Detection) -> Detection2D:
     )
 
 
-def build_detection2d_array(detections: Detections) -> Detection2DArrayFix:
+def build_detection2d_array(imageDetections: ImageDetections) -> Detection2DArrayFix:
+    [image, detections] = imageDetections
     return Detection2DArrayFix(
         detections_length=len(detections),
-        header=Header("camera_link"),
+        header=Header(image.ts, "camera_link"),
         detections=list(
             map(
-                build_detection2d,
+                functools.partial(build_detection2d, image),
                 detections,
             )
         ),
@@ -123,12 +126,13 @@ def better_detection_format(inconvinient_detections: InconvinientDetectionFormat
 previous_markers = set()
 
 
-def build_imageannotation_text(detection: Detection) -> ImageAnnotations:
+def build_imageannotation_text(image: Image, detection: Detection) -> ImageAnnotations:
     [bbox, track_id, class_id, confidence, name] = detection
 
     x, y, width, height = get_bbox_center(bbox)
 
     return TextAnnotation(
+        timestamp=to_ros_stamp(image.ts),
         text_color=Color(r=1.0, g=1.0, b=1.0),
         background_color=Color(r=0, g=0, b=0),
         text=name,
@@ -137,13 +141,14 @@ def build_imageannotation_text(detection: Detection) -> ImageAnnotations:
     )
 
 
-def build_imageannotation(detection: Detection) -> ImageAnnotations:
+def build_imageannotation_box(image: Image, detection: Detection) -> ImageAnnotations:
     [bbox, track_id, class_id, confidence, name] = detection
 
     x1, y1, x2, y2 = bbox
     x, y, width, height = get_bbox_center(bbox)
 
     return PointsAnnotation(
+        timestamp=to_ros_stamp(image.ts),
         outline_color=Color(r=1.0, g=1.0, b=1.0),
         points_length=4,
         points=[
@@ -156,9 +161,12 @@ def build_imageannotation(detection: Detection) -> ImageAnnotations:
     )
 
 
-def build_imageannotations(detections: Detections) -> ImageAnnotations:
-    points = list(map(build_imageannotation, detections))
-    texts = list(map(build_imageannotation_text, detections))
+def build_imageannotations(image_detections: [Image, Detections]) -> ImageAnnotations:
+    [image, detections] = image_detections
+
+    points = list(map(functools.partial(build_imageannotation_box, image), detections))
+    texts = list(map(functools.partial(build_imageannotation_text, image), detections))
+
     return ImageAnnotations(
         texts=texts,
         texts_length=len(texts),
@@ -170,6 +178,7 @@ def build_imageannotations(detections: Detections) -> ImageAnnotations:
 class Detect2DModule(Module):
     image: In[Image] = None
     detections: Out[Detection2DArrayFix] = None
+    annotations: Out[ImageAnnotations] = None
 
     _initDetector = Yolo2DDetector
 
@@ -179,17 +188,17 @@ class Detect2DModule(Module):
         super().__init__(*args, **kwargs)
 
     def detect(self, image: Image) -> Detections:
-        return better_detection_format(self.detector.process_image(image.to_opencv()))
+        return [image, better_detection_format(self.detector.process_image(image.to_opencv()))]
 
     @rpc
     def start(self):
         self.detector = self._initDetector()
-        self.image.observable().pipe(
-            ops.map(self.detect),
-            ops.filter(lambda x: len(x) != 0),
-            # ops.map(build_detection2d_array),
-            ops.map(build_imageannotations),
-        ).subscribe(self.detections.publish)
+        detection_stream = self.image.observable().pipe(
+            ops.map(self.detect), ops.filter(lambda x: len(x) != 0)
+        )
+
+        detection_stream.pipe(ops.map(build_imageannotations)).subscribe(self.annotations.publish)
+        detection_stream.pipe(ops.map(build_detection2d_array)).subscribe(self.detections.publish)
 
     @rpc
     def stop(self): ...

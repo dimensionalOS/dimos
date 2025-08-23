@@ -54,8 +54,8 @@ class UnitreeGo2:
 
         detection = dimos.deploy(Detect2DModule)
         detection.image.connect(connection.video)
-        # detection.detections.transport = LCMTransport("/detections", Detection2DArrayFix)
-        detection.detections.transport = LCMTransport("/detections", ImageAnnotations)
+        detection.detections.transport = LCMTransport("/detections", Detection2DArrayFix)
+        detection.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
 
         connection.start()
         detection.start()

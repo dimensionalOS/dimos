@@ -16,6 +16,9 @@ import bisect
 from datetime import datetime, timezone
 from typing import Generic, Iterable, Optional, Tuple, TypedDict, TypeVar, Union
 
+from dimos_lcm.builtin_interfaces import Time as ROSTime
+
+# from dimos_lcm.std_msgs import Time as ROSTime
 from reactivex.observable import Observable
 from sortedcontainers import SortedList
 
@@ -24,12 +27,12 @@ from sortedcontainers import SortedList
 # aditional functionality will come to this class soon
 
 
-class RosStamp(TypedDict):
-    sec: int
-    nanosec: int
+# class RosStamp(TypedDict):
+#     sec: int
+#     nanosec: int
 
 
-TimeLike = Union[int, float, datetime, RosStamp]
+TimeLike = Union[int, float, datetime, ROSTime]
 
 
 def to_timestamp(ts: TimeLike) -> float:
@@ -43,7 +46,7 @@ def to_timestamp(ts: TimeLike) -> float:
     raise TypeError("unsupported timestamp type")
 
 
-def to_ros_stamp(ts: TimeLike) -> RosStamp:
+def to_ros_stamp(ts: TimeLike) -> ROSTime:
     """Convert TimeLike to a ROS-style timestamp dictionary."""
     if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
         return ts
@@ -51,7 +54,7 @@ def to_ros_stamp(ts: TimeLike) -> RosStamp:
     timestamp = to_timestamp(ts)
     sec = int(timestamp)
     nanosec = int((timestamp - sec) * 1_000_000_000)
-    return {"sec": sec, "nanosec": nanosec}
+    return ROSTime(sec=sec, nanosec=nanosec)
 
 
 def to_datetime(ts: TimeLike, tz=None) -> datetime:
@@ -111,6 +114,9 @@ class TimestampedCollection(Generic[T]):
         # Use binary search to find insertion point
         timestamps = [item.ts for item in self._items]
         idx = bisect.bisect_left(timestamps, timestamp)
+
+        timestamps = [item.ts for item in self._items]
+        idx = self._items.bisect_left(timestamps, timestamp)
 
         # Check exact match
         if idx < len(self._items) and self._items[idx].ts == timestamp:
@@ -231,7 +237,7 @@ class TimestampedBufferCollection(TimestampedCollection[T]):
         # Remove old items
         if keep_idx > 0:
             # Create new SortedList with items to keep
-            self._items = SortedList(self._items[keep_idx:], key=lambda x: x.ts)
+            self._items = SortedList(sel.f_items[keep_idx:], key=lambda x: x.ts)
 
 
 def align_timestamped(
