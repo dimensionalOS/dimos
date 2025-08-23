@@ -3,6 +3,7 @@
 
 """Video streaming using GStreamer appsink for proper frame extraction."""
 
+import functools
 import subprocess
 import threading
 import time
@@ -154,3 +155,34 @@ class DJIDroneVideoStream:
     def get_stream(self):
         """Get the video stream observable."""
         return self._video_subject
+
+
+class FakeDJIVideoStream(DJIDroneVideoStream):
+    """Replay video for testing."""
+    
+    def __init__(self, port: int = 5600):
+        super().__init__(port)
+        from dimos.utils.data import get_data
+        # Ensure data is available
+        get_data("drone")
+    
+    def start(self) -> bool:
+        """Start replay of recorded video."""
+        self._running = True
+        logger.info("Video replay started")
+        return True
+    
+    @functools.cache
+    def get_stream(self):
+        """Get the replay stream directly."""
+        from dimos.utils.testing import TimedSensorReplay
+        logger.info("Creating video replay stream")
+        video_store = TimedSensorReplay(
+            "drone/video"
+        )
+        return video_store.stream()
+    
+    def stop(self):
+        """Stop replay."""
+        self._running = False
+        logger.info("Video replay stopped")
