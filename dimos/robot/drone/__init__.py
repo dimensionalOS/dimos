@@ -19,9 +19,4 @@ from .connection_module import DroneConnectionModule
 from .camera_module import DroneCameraModule
 from .drone import Drone
 
-__all__ = [
-    "MavlinkConnection",
-    "DroneConnectionModule", 
-    "DroneCameraModule",
-    "Drone"
-]
+__all__ = ["MavlinkConnection", "DroneConnectionModule", "DroneCameraModule", "Drone"]
