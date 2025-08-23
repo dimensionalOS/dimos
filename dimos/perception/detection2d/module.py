@@ -133,11 +133,11 @@ def build_imageannotation_text(image: Image, detection: Detection) -> ImageAnnot
 
     return TextAnnotation(
         timestamp=to_ros_stamp(image.ts),
-        text_color=Color(r=1.0, g=1.0, b=1.0),
-        background_color=Color(r=0, g=0, b=0),
+        position=Point2(x=x, y=y),
         text=name,
-        position=Point2(x=0, y=0),
         font_size=20,
+        text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
+        background_color=Color(r=0, g=0, b=0, a=1),
     )
 
 
@@ -149,7 +149,9 @@ def build_imageannotation_box(image: Image, detection: Detection) -> ImageAnnota
 
     return PointsAnnotation(
         timestamp=to_ros_stamp(image.ts),
-        outline_color=Color(r=1.0, g=1.0, b=1.0),
+        outline_color=Color(r=1.0, g=0.0, b=0.0, a=1.0),
+        fill_color=Color(r=1.0, g=0.0, b=0.0, a=0.1),
+        thickness=1,
         points_length=4,
         points=[
             Point2(x1, y1),
@@ -165,7 +167,17 @@ def build_imageannotations(image_detections: [Image, Detections]) -> ImageAnnota
     [image, detections] = image_detections
 
     points = list(map(functools.partial(build_imageannotation_box, image), detections))
-    texts = list(map(functools.partial(build_imageannotation_text, image), detections))
+    texts = [
+        # TextAnnotation(
+        #     timestamp=to_ros_stamp(image.ts),
+        #     font_size=20,
+        #     position=Point2(x=200, y=200),
+        #     text="test annotation",
+        #     text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
+        #     background_color=Color(r=0, g=0, b=0, a=1),
+        # ),
+        *map(functools.partial(build_imageannotation_text, image), detections),
+    ]
 
     return ImageAnnotations(
         texts=texts,
