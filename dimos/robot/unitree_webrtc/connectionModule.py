@@ -205,8 +205,7 @@ class ConnectionModule(Module):
 
         camera_optical = Transform(
             translation=Vector3(0.0, 0.0, 0.0),
-            # roll = -pi/2, pitch = 0, yaw = -pi/2  (ROS-style RPY → ZYX composition)
-            rotation=Quaternion.from_euler(Vector3([-math.pi / 2, 0.0, -math.pi / 2])),
+            rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
             frame_id="camera_link",
             child_frame_id="camera_optical",
             ts=camera_link.ts,

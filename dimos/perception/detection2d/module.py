@@ -156,11 +156,12 @@ def build_imageannotation(detection: Detection) -> ImageAnnotations:
     )
 
 
-def build_imageannotations(detections: Detections) -> List[ImageMarker]:
+def build_imageannotations(detections: Detections) -> ImageAnnotations:
     points = list(map(build_imageannotation, detections))
+    texts = list(map(build_imageannotation_text, detections))
     return ImageAnnotations(
-        #        texts=texts,
-        #        texts_length=len(texts),
+        texts=texts,
+        texts_length=len(texts),
         points=points,
         points_length=len(points),
     )
@@ -186,7 +187,7 @@ class Detect2DModule(Module):
         self.image.observable().pipe(
             ops.map(self.detect),
             ops.filter(lambda x: len(x) != 0),
-            #            ops.map(build_detection2d_array),
+            # ops.map(build_detection2d_array),
             ops.map(build_imageannotations),
         ).subscribe(self.detections.publish)
 
