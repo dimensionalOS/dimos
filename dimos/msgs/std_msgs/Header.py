@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import Optional, Union
 
 from dimos_lcm.std_msgs import Header as LCMHeader
 from dimos_lcm.std_msgs import Time as LCMTime

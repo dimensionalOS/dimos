@@ -17,20 +17,21 @@ import os
 import time
 from typing import Optional
 
+from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos.core import LCMTransport, start
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.perception.detection2d import Detect2DModule, Detection2DArrayFix
 from dimos.protocol.pubsub import lcm
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.connectionModule import ConnectionModule, FakeRTC
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
-
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
 class UnitreeGo2:
@@ -51,7 +52,13 @@ class UnitreeGo2:
         connection.movecmd.transport = LCMTransport("/cmd_vel", Vector3)
         connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
 
+        detection = dimos.deploy(Detect2DModule)
+        detection.image.connect(connection.video)
+        # detection.detections.transport = LCMTransport("/detections", Detection2DArrayFix)
+        detection.detections.transport = LCMTransport("/detections", ImageAnnotations)
+
         connection.start()
+        detection.start()
 
     def stop(): ...
 

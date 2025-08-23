@@ -18,6 +18,7 @@
 
 import functools
 import logging
+import math
 import time
 import warnings
 from typing import Optional
@@ -139,7 +140,12 @@ class ConnectionModule(Module):
         # Connect sensor streams to outputs
         self.connection.lidar_stream().subscribe(self.lidar.publish)
         self.connection.odom_stream().subscribe(self._publish_tf)
-        self.connection.video_stream().subscribe(image_pub)
+
+        def attach_frame_id(image: Image) -> Image:
+            image.frame_id = "camera_optical"
+            return image
+
+        self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
         self.camera_info_stream().subscribe(self.camera_info.publish)
         self.movecmd.subscribe(self.move)
 
@@ -181,24 +187,32 @@ class ConnectionModule(Module):
             ops.map(
                 lambda x: CameraInfo(
                     **base_msg,
-                    header=Header("camera_link"),
+                    header=Header("camera_optical"),
                 )
             )
         )
 
     def _publish_tf(self, msg):
-        self._odom = msg
-        self.odom.publish(msg)
         self.tf.publish(Transform.from_pose("base_link", msg))
 
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            rotation=Quaternion.from_euler(Vector3([0, 0, 0])),
             frame_id="base_link",
             child_frame_id="camera_link",
             ts=time.time(),
         )
-        self.tf.publish(camera_link)
+
+        camera_optical = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            # roll = -pi/2, pitch = 0, yaw = -pi/2  (ROS-style RPY → ZYX composition)
+            rotation=Quaternion.from_euler(Vector3([-math.pi / 2, 0.0, -math.pi / 2])),
+            frame_id="camera_link",
+            child_frame_id="camera_optical",
+            ts=camera_link.ts,
+        )
+
+        self.tf.publish(camera_link, camera_optical)
 
     @rpc
     def get_odom(self) -> Optional[PoseStamped]:
