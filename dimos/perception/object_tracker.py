@@ -20,7 +20,7 @@ from typing import Dict, List, Optional
 
 from dimos.core import In, Out, Module, rpc
 from dimos.msgs.std_msgs import Header
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, Pose, PoseStamped
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
@@ -40,6 +40,7 @@ from dimos.utils.transform_utils import (
     euler_to_quaternion,
 )
 from dimos.manipulation.visual_servoing.utils import visualize_detections_3d
+from dimos.types.timestamped import align_timestamped
 
 logger = setup_logger("dimos.perception.object_tracker")
 
@@ -96,11 +97,14 @@ class ObjectTracking(Module):
         self.last_roi_kps = None  # Store last ROI keypoints for visualization
         self.last_roi_bbox = None  # Store last ROI bbox for visualization
         self.reid_confirmed = False  # Store current reid confirmation state
+        self.tracking_frame_count = 0  # Count frames since tracking started
+        self.reid_warmup_frames = 3  # Number of frames before REID starts
 
-        # For tracking latest frame data
+        self._frame_lock = threading.Lock()
         self._latest_rgb_frame: Optional[np.ndarray] = None
         self._latest_depth_frame: Optional[np.ndarray] = None
         self._latest_camera_info: Optional[CameraInfo] = None
+        self._aligned_frames_subscription = None
 
         # Tracking thread control
         self.tracking_thread: Optional[threading.Thread] = None
@@ -120,19 +124,28 @@ class ObjectTracking(Module):
     def start(self):
         """Start the object tracking module and subscribe to LCM streams."""
 
-        # Subscribe to rgb image stream
-        def on_rgb(image_msg: Image):
-            self._latest_rgb_frame = image_msg.data
+        # Subscribe to aligned rgb and depth streams
+        def on_aligned_frames(frames_tuple):
+            rgb_msg, depth_msg = frames_tuple
+            with self._frame_lock:
+                self._latest_rgb_frame = rgb_msg.data
 
-        self.color_image.subscribe(on_rgb)
+                depth_data = depth_msg.data
+                # Convert from millimeters to meters if depth is DEPTH16 format
+                if depth_msg.format == ImageFormat.DEPTH16:
+                    depth_data = depth_data.astype(np.float32) / 1000.0
+                self._latest_depth_frame = depth_data
 
-        # Subscribe to depth stream
-        def on_depth(image_msg: Image):
-            self._latest_depth_frame = image_msg.data
+        # Create aligned observable for RGB and depth
+        aligned_frames = align_timestamped(
+            self.color_image.observable(),
+            self.depth.observable(),
+            buffer_size=2.0,  # 2 second buffer
+            match_tolerance=0.05,  # 50ms tolerance
+        )
+        self._aligned_frames_subscription = aligned_frames.subscribe(on_aligned_frames)
 
-        self.depth.subscribe(on_depth)
-
-        # Subscribe to camera info stream
+        # Subscribe to camera info stream separately (doesn't need alignment)
         def on_camera_info(camera_info_msg: CameraInfo):
             self._latest_camera_info = camera_info_msg
             # Extract intrinsics from camera info K matrix
@@ -151,7 +164,7 @@ class ObjectTracking(Module):
 
         self.camera_info.subscribe(on_camera_info)
 
-        logger.info("ObjectTracking module started and subscribed to LCM streams")
+        logger.info("ObjectTracking module started with aligned frame subscription")
 
     @rpc
     def track(
@@ -189,9 +202,7 @@ class ObjectTracking(Module):
         if roi.size > 0:
             self.original_kps, self.original_des = self.orb.detectAndCompute(roi, None)
             if self.original_des is None:
-                logger.warning("No ORB features found in initial ROI.")
-                self.stop_track()
-                return {"status": "tracking_failed", "bbox": self.tracking_bbox}
+                logger.warning("No ORB features found in initial ROI. REID will be disabled.")
             else:
                 logger.info(f"Initial ORB features extracted: {len(self.original_des)}")
 
@@ -199,6 +210,7 @@ class ObjectTracking(Module):
             init_success = self.tracker.init(self._latest_rgb_frame, self.tracking_bbox)
             if init_success:
                 self.tracking_initialized = True
+                self.tracking_frame_count = 0  # Reset frame counter
                 logger.info("Tracker initialized successfully.")
             else:
                 logger.error("Tracker initialization failed.")
@@ -215,8 +227,12 @@ class ObjectTracking(Module):
 
     def reid(self, frame, current_bbox) -> bool:
         """Check if features in current_bbox match stored original features."""
+        # During warm-up period, always return True
+        if self.tracking_frame_count < self.reid_warmup_frames:
+            return True
+
         if self.original_des is None:
-            return True  # Cannot re-id if no original features
+            return False
         x1, y1, x2, y2 = map(int, current_bbox)
         roi = frame[y1:y2, x1:x2]
         if roi.size == 0:
@@ -280,6 +296,7 @@ class ObjectTracking(Module):
         self.last_roi_kps = None
         self.last_roi_bbox = None
         self.reid_confirmed = False  # Reset reid confirmation state
+        self.tracking_frame_count = 0  # Reset frame counter
 
         # Publish empty detections to clear any visualizations
         empty_2d = Detection2DArray(detections_length=0, header=Header(), detections=[])
@@ -328,10 +345,15 @@ class ObjectTracking(Module):
 
     def _process_tracking(self):
         """Process current frame for tracking and publish detections."""
-        if self._latest_rgb_frame is None or self.tracker is None or not self.tracking_initialized:
+        if self.tracker is None or not self.tracking_initialized:
             return
 
-        frame = self._latest_rgb_frame
+        # Get local copies of frames under lock
+        with self._frame_lock:
+            if self._latest_rgb_frame is None or self._latest_depth_frame is None:
+                return
+            frame = self._latest_rgb_frame.copy()
+            depth_frame = self._latest_depth_frame.copy()
         tracker_succeeded = False
         reid_confirmed_this_frame = False
         final_success = False
@@ -369,7 +391,9 @@ class ObjectTracking(Module):
                 logger.info("Tracker update failed. Stopping track.")
                 self._reset_tracking_state()
 
-        if not reid_confirmed_this_frame:
+        self.tracking_frame_count += 1
+
+        if not reid_confirmed_this_frame and self.tracking_frame_count >= self.reid_warmup_frames:
             return
 
         # Create detections if tracking succeeded
@@ -409,9 +433,9 @@ class ObjectTracking(Module):
             detection2darray.detections = [detection_2d]
 
             # Create Detection3D if depth is available
-            if self._latest_depth_frame is not None:
+            if depth_frame is not None:
                 # Calculate 3D position using depth and camera intrinsics
-                depth_value = self._get_depth_from_bbox(current_bbox_x1y1x2y2)
+                depth_value = self._get_depth_from_bbox(current_bbox_x1y1x2y2, depth_frame)
                 if (
                     depth_value is not None
                     and depth_value > 0
@@ -486,7 +510,7 @@ class ObjectTracking(Module):
         self.detection3darray.publish(detection3darray)
 
         # Create and publish visualization if tracking is active
-        if self.tracking_initialized and self._latest_rgb_frame is not None:
+        if self.tracking_initialized:
             # Convert single detection to list for visualization
             detections_3d = (
                 detection3darray.detections if detection3darray.detections_length > 0 else []
@@ -508,7 +532,7 @@ class ObjectTracking(Module):
 
                 # Create visualization
                 viz_image = visualize_detections_3d(
-                    self._latest_rgb_frame, detections_3d, show_coordinates=True, bboxes_2d=bbox_2d
+                    frame, detections_3d, show_coordinates=True, bboxes_2d=bbox_2d
                 )
 
                 # Overlay REID feature matches if available
@@ -545,7 +569,12 @@ class ObjectTracking(Module):
         text = f"REID Matches: {len(self.last_good_matches)}/{len(self.last_roi_kps) if self.last_roi_kps else 0}"
         cv2.putText(viz_image, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
-        if len(self.last_good_matches) >= self.reid_threshold:
+        if self.tracking_frame_count < self.reid_warmup_frames:
+            status_text = (
+                f"REID: WARMING UP ({self.tracking_frame_count}/{self.reid_warmup_frames})"
+            )
+            status_color = (255, 255, 0)  # Yellow
+        elif len(self.last_good_matches) >= self.reid_threshold:
             status_text = "REID: CONFIRMED"
             status_color = (0, 255, 0)  # Green
         else:
@@ -558,21 +587,29 @@ class ObjectTracking(Module):
 
         return viz_image
 
-    def _get_depth_from_bbox(self, bbox: List[int]) -> Optional[float]:
-        """Calculate depth from bbox using the 25th percentile of closest points."""
-        if self._latest_depth_frame is None:
+    def _get_depth_from_bbox(self, bbox: List[int], depth_frame: np.ndarray) -> Optional[float]:
+        """Calculate depth from bbox using the 25th percentile of closest points.
+
+        Args:
+            bbox: Bounding box coordinates [x1, y1, x2, y2]
+            depth_frame: Depth frame to extract depth values from
+
+        Returns:
+            Depth value or None if not available
+        """
+        if depth_frame is None:
             return None
 
         x1, y1, x2, y2 = bbox
 
         # Ensure bbox is within frame bounds
         y1 = max(0, y1)
-        y2 = min(self._latest_depth_frame.shape[0], y2)
+        y2 = min(depth_frame.shape[0], y2)
         x1 = max(0, x1)
-        x2 = min(self._latest_depth_frame.shape[1], x2)
+        x2 = min(depth_frame.shape[1], x2)
 
         # Extract depth values from the entire bbox
-        roi_depth = self._latest_depth_frame[y1:y2, x1:x2]
+        roi_depth = depth_frame[y1:y2, x1:x2]
 
         # Get valid (finite and positive) depth values
         valid_depths = roi_depth[np.isfinite(roi_depth) & (roi_depth > 0)]
@@ -592,3 +629,8 @@ class ObjectTracking(Module):
         if self.tracking_thread and self.tracking_thread.is_alive():
             self.stop_tracking.set()
             self.tracking_thread.join(timeout=2.0)
+
+        # Unsubscribe from aligned frames
+        if self._aligned_frames_subscription:
+            self._aligned_frames_subscription.dispose()
+            self._aligned_frames_subscription = None
