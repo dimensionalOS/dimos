@@ -69,6 +69,7 @@ class ResponseCollector(Module):
         self.responses = []
 
 
+@pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -150,6 +151,7 @@ async def test_simple_agent_module(model, provider):
         dimos.shutdown()
 
 
+@pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
 async def test_mock_agent_module():

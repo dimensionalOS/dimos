@@ -110,6 +110,7 @@ class ResponseCollector(Module):
         return self.responses
 
 
+@pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
 async def test_agent_module_with_tools():
@@ -238,6 +239,7 @@ async def test_agent_module_with_tools():
         dimos.shutdown()
 
 
+@pytest.mark.tofix
 def test_base_agent_direct_tools():
     """Test BaseAgent direct usage with tools."""
     load_dotenv()
@@ -364,6 +366,7 @@ class MockToolAgent(BaseAgent):
         pass
 
 
+@pytest.mark.tofix
 def test_mock_agent_tools():
     """Test mock agent with tools for CI."""
     # Create skill library

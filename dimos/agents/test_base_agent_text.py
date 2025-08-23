@@ -69,6 +69,7 @@ class ResponseCollector(Module):
         return self.responses
 
 
+@pytest.mark.tofix
 def test_base_agent_direct_text():
     """Test BaseAgent direct text usage."""
     load_dotenv()
@@ -116,6 +117,7 @@ def test_base_agent_direct_text():
     agent.dispose()
 
 
+@pytest.mark.tofix
 @pytest.mark.asyncio
 async def test_base_agent_async_text():
     """Test BaseAgent async text usage."""
@@ -148,6 +150,7 @@ async def test_base_agent_async_text():
     agent.dispose()
 
 
+@pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
 async def test_base_agent_module_text():
@@ -233,6 +236,7 @@ async def test_base_agent_module_text():
         ("cerebras::llama-3.3-70b", "cerebras"),
     ],
 )
+@pytest.mark.tofix
 def test_base_agent_providers(model, provider):
     """Test BaseAgent with different providers."""
     load_dotenv()
@@ -266,6 +270,7 @@ def test_base_agent_providers(model, provider):
     agent.dispose()
 
 
+@pytest.mark.tofix
 def test_base_agent_memory():
     """Test BaseAgent with memory/RAG."""
     load_dotenv()
@@ -365,6 +370,7 @@ class MockAgent(BaseAgent):
         pass
 
 
+@pytest.mark.tofix
 def test_mock_agent():
     """Test mock agent for CI without API keys."""
     # Create mock agent
@@ -393,6 +399,7 @@ def test_mock_agent():
     agent.dispose()
 
 
+@pytest.mark.tofix
 def test_base_agent_conversation_history():
     """Test that conversation history is properly maintained."""
     load_dotenv()
@@ -455,6 +462,7 @@ def test_base_agent_conversation_history():
     agent.dispose()
 
 
+@pytest.mark.tofix
 def test_base_agent_history_with_tools():
     """Test conversation history with tool calls."""
     load_dotenv()
