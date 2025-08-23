@@ -124,7 +124,7 @@ def build_imageannotation_text(image: Image, detection: Detection) -> ImageAnnot
 
     x1, y1, x2, y2 = bbox
 
-    font_size = 7
+    font_size = int(image.height / 35)
     return [
         TextAnnotation(
             timestamp=to_ros_stamp(image.ts),
@@ -150,11 +150,13 @@ def build_imageannotation_box(image: Image, detection: Detection) -> ImageAnnota
 
     x1, y1, x2, y2 = bbox
 
+    thickness = image.height / 720
+
     return PointsAnnotation(
         timestamp=to_ros_stamp(image.ts),
         outline_color=Color(r=0.0, g=0.0, b=0.0, a=1.0),
         fill_color=Color(r=1.0, g=0.0, b=0.0, a=0.15),
-        thickness=1,
+        thickness=thickness,
         points_length=4,
         points=[
             Point2(x1, y1),

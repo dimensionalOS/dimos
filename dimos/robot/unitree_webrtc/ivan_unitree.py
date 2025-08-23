@@ -22,6 +22,7 @@ from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos.core import LCMTransport, start
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
+from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection2d import Detect2DModule, Detection2DArrayFix
 from dimos.protocol.pubsub import lcm
@@ -29,6 +30,7 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.connectionModule import ConnectionModule, FakeRTC
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
@@ -51,6 +53,13 @@ class UnitreeGo2:
         connection.video.transport = LCMTransport("/image", Image)
         connection.movecmd.transport = LCMTransport("/cmd_vel", Vector3)
         connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
+
+        map = dimos.deploy(Map, voxel_size=0.5, cost_resolution=0.05, global_publish_interval=1.0)
+        map.lidar.connect(connection.lidar)
+        map.global_map.transport = LCMTransport("/global_map", LidarMessage)
+        map.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
+        map.local_costmap.transport = LCMTransport("/local_costmap", OccupancyGrid)
+        map.start()
 
         detection = dimos.deploy(Detect2DModule)
         detection.image.connect(connection.video)

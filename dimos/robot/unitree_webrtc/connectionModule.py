@@ -53,7 +53,7 @@ logging.getLogger("root").setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
-image_resize_factor = 2
+image_resize_factor = 4
 originalwidth, originalheight = (1280, 720)
 
 
