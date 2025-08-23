@@ -48,8 +48,13 @@ class MavlinkConnection():
         self._odom_subject = Subject()
         self._status_subject = Subject()
         self._telemetry_subject = Subject()
+        self._raw_mavlink_subject = Subject()
         
-        self.connect()
+        # # TEMPORARY - DELETE AFTER RECORDING
+        # from dimos.utils.testing import TimedSensorStorage
+        # self._mavlink_storage = TimedSensorStorage("drone/mavlink")
+        # self._mavlink_subscription = self._mavlink_storage.save_stream(self._raw_mavlink_subject).subscribe()
+        # logger.info("Recording MAVLink to data/drone/mavlink/")
     
     def connect(self):
         """Connect to drone via MAVLink."""
@@ -80,6 +85,9 @@ class MavlinkConnection():
                 continue
             msg_type = msg.get_type()
             msg_dict = msg.to_dict()
+            
+            # TEMPORARY - DELETE AFTER RECORDING
+            # self._raw_mavlink_subject.on_next(msg_dict)
             
             self.telemetry[msg_type] = msg_dict
             
@@ -466,3 +474,80 @@ class MavlinkConnection():
         """Get video stream (to be implemented with GStreamer)."""
         # Will be implemented in camera module
         return None
+
+
+class FakeMavlinkConnection(MavlinkConnection):
+    """Replay MAVLink for testing."""
+    
+    def __init__(self, connection_string: str):
+        # Call parent init (which no longer calls connect())
+        super().__init__(connection_string)
+        
+        # Create fake mavlink object
+        class FakeMavlink:
+            def __init__(self):
+                from dimos.utils.testing import TimedSensorReplay
+                from dimos.utils.data import get_data
+                
+                get_data("drone")
+                
+                self.replay = TimedSensorReplay("drone/mavlink")
+                self.messages = []
+                # The stream() method returns an Observable that emits messages with timing
+                self.replay.stream().subscribe(self.messages.append)
+                
+                # Properties that get accessed
+                self.target_system = 1
+                self.target_component = 1
+                self.mav = self  # self.mavlink.mav is used in many places
+            
+            def recv_match(self, blocking=False, type=None, timeout=None):
+                """Return next replay message as fake message object."""
+                if not self.messages:
+                    return None
+                    
+                msg_dict = self.messages.pop(0)
+                
+                # Create message object with ALL attributes that might be accessed
+                class FakeMsg:
+                    def __init__(self, d):
+                        self._dict = d
+                        # Set any direct attributes that get accessed
+                        self.base_mode = d.get('base_mode', 0)
+                        self.command = d.get('command', 0) 
+                        self.result = d.get('result', 0)
+                        
+                    def get_type(self):
+                        return self._dict.get('type', '')
+                    
+                    def to_dict(self):
+                        return self._dict
+                
+                # Filter by type if requested
+                if type and msg_dict.get('type') != type:
+                    return None
+                    
+                return FakeMsg(msg_dict)
+            
+            def wait_heartbeat(self, timeout=30):
+                """Fake heartbeat received."""
+                pass
+            
+            def close(self):
+                """Fake close."""
+                pass
+            
+            # Command methods that get called but don't need to do anything in replay
+            def command_long_send(self, *args, **kwargs):
+                pass
+            
+            def set_position_target_local_ned_send(self, *args, **kwargs):
+                pass
+        
+        # Set up fake mavlink
+        self.mavlink = FakeMavlink()
+        self.connected = True
+        
+        # Initialize position tracking (parent __init__ doesn't do this since connect wasn't called)
+        self._position = {'x': 0.0, 'y': 0.0, 'z': 0.0}
+        self._last_update = time.time()

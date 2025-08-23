@@ -264,6 +264,12 @@ class Drone(Robot):
 
 def main():
     """Main entry point for drone system."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="DimOS Drone System")
+    parser.add_argument("--replay", action="store_true", help="Use recorded data for testing")
+    args = parser.parse_args()
+    
     # Configure logging
     setup_logger("dimos.robot.drone", level=logging.INFO)
     
@@ -271,8 +277,11 @@ def main():
     logging.getLogger("distributed").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     
-    # Get configuration from environment
-    connection = os.getenv("DRONE_CONNECTION", "udp:0.0.0.0:14550")
+    if args.replay:
+        connection = "replay"
+        print("\n🔄 REPLAY MODE - Using drone replay data")
+    else:
+        connection = os.getenv("DRONE_CONNECTION", "udp:0.0.0.0:14550")
     video_port = int(os.getenv("DRONE_VIDEO_PORT", "5600"))
     
     print(f"""
@@ -288,7 +297,6 @@ def main():
     # Configure LCM
     pubsub.lcm.autoconf()
     
-    # Create and start drone
     drone = Drone(
         connection_string=connection,
         video_port=video_port

@@ -22,12 +22,12 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
 from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.std_msgs import String
-from dimos.robot.drone.connection import DroneConnection
+from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
 
-from dimos.robot.drone.video_stream import DroneVideoStream
+from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
 
 
 class DroneConnectionModule(Module):
@@ -65,19 +65,34 @@ class DroneConnectionModule(Module):
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
-        # Create and connect to drone
-        self.connection = DroneConnection(self.connection_string)
+        # Check for replay mode
+        if self.connection_string == 'replay':
+            from dimos.robot.drone.mavlink_connection import FakeMavlinkConnection
+            from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
+            
+            self.connection = FakeMavlinkConnection('replay')
+            self.video_stream = FakeDJIVideoStream(port=self.video_port)
+        else:
+            self.connection = MavlinkConnection(self.connection_string)
+            self.connection.connect()
+            
+            self.video_stream = DJIDroneVideoStream(port=self.video_port)
         
         if not self.connection.connected:
             logger.error("Failed to connect to drone")
             return False
         
-        # Start video stream
-        self.video_stream = DroneVideoStream(port=self.video_port)
+        # Start video stream (already created above)
         if self.video_stream.start():
             logger.info("Video stream started")
-            # Subscribe to video and publish it
-            self.video_stream.get_stream().subscribe(lambda img: self.video.publish(img))
+            # Subscribe to video and publish it - pass method directly like Unitree does
+            self._video_subscription = self.video_stream.get_stream().subscribe(self.video.publish)
+            
+            # # TEMPORARY - DELETE AFTER RECORDING
+            # from dimos.utils.testing import TimedSensorStorage
+            # self._video_storage = TimedSensorStorage("drone/video")
+            # self._video_subscription = self._video_storage.save_stream(self.video_stream.get_stream()).subscribe()
+            # logger.info("Recording video to data/drone/video/")
         else:
             logger.warning("Video stream failed to start")
         
