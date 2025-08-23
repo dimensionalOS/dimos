@@ -85,6 +85,8 @@ class MavlinkConnection():
                 continue
             msg_type = msg.get_type()
             msg_dict = msg.to_dict()
+            print("MESSAGE", msg_dict)
+            print("MESSAGE TYPE", msg_type)
             
             # TEMPORARY - DELETE AFTER RECORDING
             # self._raw_mavlink_subject.on_next(msg_dict)
@@ -518,7 +520,7 @@ class FakeMavlinkConnection(MavlinkConnection):
                         self.result = d.get('result', 0)
                         
                     def get_type(self):
-                        return self._dict.get('type', '')
+                        return self._dict.get('mavpackettype', '')
                     
                     def to_dict(self):
                         return self._dict
