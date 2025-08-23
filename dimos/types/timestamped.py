@@ -237,7 +237,7 @@ class TimestampedBufferCollection(TimestampedCollection[T]):
         # Remove old items
         if keep_idx > 0:
             # Create new SortedList with items to keep
-            self._items = SortedList(sel.f_items[keep_idx:], key=lambda x: x.ts)
+            self._items = SortedList(self._items[keep_idx:], key=lambda x: x.ts)
 
 
 def align_timestamped(
