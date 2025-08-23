@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import functools
-import time
 from typing import Any, Callable, List, Optional, Tuple
 
-from dimos_lcm.builtin_interfaces import Time as ROSTime
 from dimos_lcm.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
@@ -23,7 +21,6 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     TextAnnotation,
 )
 from dimos_lcm.foxglove_msgs.Point2 import Point2
-from dimos_lcm.geometry_msgs import Point
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D,
@@ -33,7 +30,6 @@ from dimos_lcm.vision_msgs import (
     Point2D,
     Pose2D,
 )
-from dimos_lcm.visualization_msgs import ImageMarker
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
@@ -123,34 +119,41 @@ def better_detection_format(inconvinient_detections: InconvinientDetectionFormat
     ]
 
 
-previous_markers = set()
-
-
 def build_imageannotation_text(image: Image, detection: Detection) -> ImageAnnotations:
     [bbox, track_id, class_id, confidence, name] = detection
 
-    x, y, width, height = get_bbox_center(bbox)
+    x1, y1, x2, y2 = bbox
 
-    return TextAnnotation(
-        timestamp=to_ros_stamp(image.ts),
-        position=Point2(x=x, y=y),
-        text=name,
-        font_size=20,
-        text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
-        background_color=Color(r=0, g=0, b=0, a=1),
-    )
+    font_size = 7
+    return [
+        TextAnnotation(
+            timestamp=to_ros_stamp(image.ts),
+            position=Point2(x=x1, y=y2 + font_size),
+            text=f"confidence: {confidence:.3f}",
+            font_size=font_size,
+            text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
+            background_color=Color(r=0, g=0, b=0, a=1),
+        ),
+        TextAnnotation(
+            timestamp=to_ros_stamp(image.ts),
+            position=Point2(x=x1, y=y1),
+            text=f"{name}_{class_id}_{track_id}",
+            font_size=font_size,
+            text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
+            background_color=Color(r=0, g=0, b=0, a=1),
+        ),
+    ]
 
 
 def build_imageannotation_box(image: Image, detection: Detection) -> ImageAnnotations:
     [bbox, track_id, class_id, confidence, name] = detection
 
     x1, y1, x2, y2 = bbox
-    x, y, width, height = get_bbox_center(bbox)
 
     return PointsAnnotation(
         timestamp=to_ros_stamp(image.ts),
-        outline_color=Color(r=1.0, g=0.0, b=0.0, a=1.0),
-        fill_color=Color(r=1.0, g=0.0, b=0.0, a=0.1),
+        outline_color=Color(r=0.0, g=0.0, b=0.0, a=1.0),
+        fill_color=Color(r=1.0, g=0.0, b=0.0, a=0.15),
         thickness=1,
         points_length=4,
         points=[
@@ -166,18 +169,11 @@ def build_imageannotation_box(image: Image, detection: Detection) -> ImageAnnota
 def build_imageannotations(image_detections: [Image, Detections]) -> ImageAnnotations:
     [image, detections] = image_detections
 
+    def flatten(xss):
+        return [x for xs in xss for x in xs]
+
     points = list(map(functools.partial(build_imageannotation_box, image), detections))
-    texts = [
-        # TextAnnotation(
-        #     timestamp=to_ros_stamp(image.ts),
-        #     font_size=20,
-        #     position=Point2(x=200, y=200),
-        #     text="test annotation",
-        #     text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
-        #     background_color=Color(r=0, g=0, b=0, a=1),
-        # ),
-        *map(functools.partial(build_imageannotation_text, image), detections),
-    ]
+    texts = list(flatten(map(functools.partial(build_imageannotation_text, image), detections)))
 
     return ImageAnnotations(
         texts=texts,
@@ -192,6 +188,7 @@ class Detect2DModule(Module):
     detections: Out[Detection2DArrayFix] = None
     annotations: Out[ImageAnnotations] = None
 
+    # _initDetector = Detic2DDetector
     _initDetector = Yolo2DDetector
 
     def __init__(self, *args, detector=Optional[Callable[[Any], Any]], **kwargs):
@@ -204,13 +201,14 @@ class Detect2DModule(Module):
 
     @rpc
     def start(self):
+        # from dimos.activate_cuda import _init_cuda
         self.detector = self._initDetector()
-        detection_stream = self.image.observable().pipe(
-            ops.map(self.detect), ops.filter(lambda x: len(x) != 0)
-        )
+        detection_stream = self.image.observable().pipe(ops.map(self.detect))
 
         detection_stream.pipe(ops.map(build_imageannotations)).subscribe(self.annotations.publish)
-        detection_stream.pipe(ops.map(build_detection2d_array)).subscribe(self.detections.publish)
+        detection_stream.pipe(
+            ops.filter(lambda x: len(x) != 0), ops.map(build_detection2d_array)
+        ).subscribe(self.detections.publish)
 
     @rpc
     def stop(self): ...

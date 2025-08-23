@@ -53,6 +53,9 @@ logging.getLogger("root").setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
+image_resize_factor = 2
+originalwidth, originalheight = (1280, 720)
+
 
 class FakeRTC:
     """Fake WebRTC connection for testing with recorded data."""
@@ -141,24 +144,29 @@ class ConnectionModule(Module):
 
         def attach_frame_id(image: Image) -> Image:
             image.frame_id = "camera_optical"
-            return image.resize(640, 360)
 
-        # sharpness_window(
-        #    10, self.connection.video_stream().pipe(ops.map(attach_frame_id))
-        # ).subscribe(image_pub)
-        self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
+            return image.resize(
+                int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
+            )
+
+        sharpness_window(
+            10, self.connection.video_stream().pipe(ops.map(attach_frame_id))
+        ).subscribe(image_pub)
+        # self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
         self.camera_info_stream().subscribe(self.camera_info.publish)
         self.movecmd.subscribe(self.move)
 
     @functools.cache
     def camera_info_stream(self) -> Subject[CameraInfo]:
         fx, fy, cx, cy = list(
-            map(lambda x: x / 2, [819.553492, 820.646595, 625.284099, 336.808987])
+            map(lambda x: x / image_resize_factor, [819.553492, 820.646595, 625.284099, 336.808987])
         )
 
-        # Get image dimensions from last image
         # width, height = (1280, 720)
-        width, height = (640, 360)
+        width, height = tuple(
+            map(lambda x: int(x / image_resize_factor), [originalwidth, originalheight])
+        )
+        print("WIIDHT", width, height)
         # Camera matrix K (3x3)
         K = [fx, 0, cx, 0, fy, cy, 0, 0, 1]
 
