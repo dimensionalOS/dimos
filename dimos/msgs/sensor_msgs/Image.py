@@ -37,6 +37,7 @@ class ImageFormat(Enum):
     GRAY = "GRAY"  # 8-bit Grayscale
     GRAY16 = "GRAY16"  # 16-bit Grayscale
     DEPTH = "DEPTH"  # 32-bit Float Depth
+    DEPTH16 = "DEPTH16"  # 16-bit Integer Depth (millimeters)
 
 
 @dataclass
@@ -169,6 +170,8 @@ class Image(Timestamped):
             return self.data
         elif self.format == ImageFormat.DEPTH:
             return self.data  # Depth images are already in the correct format
+        elif self.format == ImageFormat.DEPTH16:
+            return self.data  # 16-bit depth images are already in the correct format
         else:
             raise ValueError(f"Unsupported format conversion: {self.format}")
 
@@ -373,6 +376,11 @@ class Image(Timestamped):
                 return "32FC1"
             elif self.dtype == np.float64:
                 return "64FC1"
+        elif self.format == ImageFormat.DEPTH16:
+            if self.dtype == np.uint16:
+                return "16UC1"  # 16-bit unsigned depth
+            elif self.dtype == np.int16:
+                return "16SC1"  # 16-bit signed depth
 
         raise ValueError(
             f"Cannot determine LCM encoding for format={self.format}, dtype={self.dtype}"
@@ -393,6 +401,9 @@ class Image(Timestamped):
             "32FC1": {"format": ImageFormat.DEPTH, "dtype": np.float32, "channels": 1},
             "32FC3": {"format": ImageFormat.RGB, "dtype": np.float32, "channels": 3},
             "64FC1": {"format": ImageFormat.DEPTH, "dtype": np.float64, "channels": 1},
+            # 16-bit depth encodings
+            "16UC1": {"format": ImageFormat.DEPTH16, "dtype": np.uint16, "channels": 1},
+            "16SC1": {"format": ImageFormat.DEPTH16, "dtype": np.int16, "channels": 1},
         }
 
         if encoding not in encoding_map:
