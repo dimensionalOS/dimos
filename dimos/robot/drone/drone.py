@@ -5,6 +5,7 @@
 
 import os
 import time
+import logging
 from typing import Optional
 
 from dimos import core
@@ -54,7 +55,6 @@ class Drone(Robot):
         else:
             self.camera_intrinsics = camera_intrinsics
         
-        # Set capabilities
         self.capabilities = [
             RobotCapability.LOCOMOTION,  # Aerial locomotion
             RobotCapability.VISION
@@ -264,10 +264,28 @@ class Drone(Robot):
 
 def main():
     """Main entry point for drone system."""
+    # Configure logging
+    setup_logger("dimos.robot.drone", level=logging.INFO)
+    
+    # Suppress verbose loggers
+    logging.getLogger("distributed").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+    
     # Get configuration from environment
     connection = os.getenv("DRONE_CONNECTION", "udp:0.0.0.0:14550")
     video_port = int(os.getenv("DRONE_VIDEO_PORT", "5600"))
     
+    print(f"""
+╔══════════════════════════════════════════╗
+║         DimOS Mavlink Drone Runner       ║
+╠══════════════════════════════════════════╣
+║  MAVLink: {connection:<30} ║
+║  Video:   UDP port {video_port:<22} ║
+║  Foxglove: http://localhost:8765        ║
+╚══════════════════════════════════════════╝
+    """)
+    
+    # Configure LCM
     pubsub.lcm.autoconf()
     
     # Create and start drone
@@ -278,12 +296,25 @@ def main():
     
     drone.start()
     
+    print("\n✓ Drone system started successfully!")
+    print("\nLCM Topics:")
+    print("  • /drone/odom           - Odometry (PoseStamped)")
+    print("  • /drone/status         - Status (String/JSON)")
+    print("  • /drone/telemetry      - Full telemetry (String/JSON)")
+    print("  • /drone/color_image    - RGB Video (Image)")
+    print("  • /drone/depth_image    - Depth estimation (Image)")
+    print("  • /drone/depth_colorized - Colorized depth (Image)")
+    print("  • /drone/camera_info    - Camera calibration")
+    print("  • /drone/cmd_vel        - Movement commands (Vector3)")
+    print("\nPress Ctrl+C to stop the system...")
+    
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        print("\n\nShutting down drone system...")
         drone.stop()
+        print("✓ Drone system stopped cleanly")
 
 
 if __name__ == "__main__":
