@@ -87,9 +87,7 @@ class FakeRTC:
     @functools.cache
     def video_stream(self):
         print("video stream start")
-        video_store = TimedSensorReplay(
-            "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
-        )
+        video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
         return video_store.stream()
 
     def move(self, vector: Vector3, duration: float = 0.0):
@@ -149,10 +147,10 @@ class ConnectionModule(Module):
                 int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
             )
 
-        sharpness_window(
-            10, self.connection.video_stream().pipe(ops.map(attach_frame_id))
-        ).subscribe(image_pub)
-        # self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
+        # sharpness_window(
+        #    10, self.connection.video_stream().pipe(ops.map(attach_frame_id))
+        # ).subscribe(image_pub)
+        self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
         self.camera_info_stream().subscribe(self.camera_info.publish)
         self.movecmd.subscribe(self.move)
 
