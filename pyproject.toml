@@ -175,6 +175,10 @@ sim = [
     "playground>=0.0.5",
 ]
 
+drone = [
+    "pymavlink"
+]
+
 [tool.ruff]
 line-length = 100
 exclude = [
@@ -222,6 +226,4 @@ markers = [
 addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-
-
 
