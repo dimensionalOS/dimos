@@ -30,7 +30,7 @@ from reactivex.subject import Subject
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
 from dimos.msgs.std_msgs import Header
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -107,7 +107,6 @@ class ConnectionModule(Module):
     ip: str
     connection_type: str = "webrtc"
     camera_info: Out[CameraInfo] = None
-
     _odom: PoseStamped = None
     _lidar: LidarMessage = None
 
@@ -134,7 +133,6 @@ class ConnectionModule(Module):
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
         def image_pub(img):
-            self._last_image = img
             self.video.publish(img)
 
         # Connect sensor streams to outputs
@@ -143,21 +141,24 @@ class ConnectionModule(Module):
 
         def attach_frame_id(image: Image) -> Image:
             image.frame_id = "camera_optical"
-            return image
+            return image.resize(640, 360)
 
+        # sharpness_window(
+        #    10, self.connection.video_stream().pipe(ops.map(attach_frame_id))
+        # ).subscribe(image_pub)
         self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
         self.camera_info_stream().subscribe(self.camera_info.publish)
         self.movecmd.subscribe(self.move)
 
     @functools.cache
     def camera_info_stream(self) -> Subject[CameraInfo]:
-        if not self._last_image:
-            return
-        fx, fy, cx, cy = [819.553492, 820.646595, 625.284099, 336.808987]
+        fx, fy, cx, cy = list(
+            map(lambda x: x / 2, [819.553492, 820.646595, 625.284099, 336.808987])
+        )
 
         # Get image dimensions from last image
-        height, width = self._last_image.shape[:2]
-
+        # width, height = (1280, 720)
+        width, height = (640, 360)
         # Camera matrix K (3x3)
         K = [fx, 0, cx, 0, fy, cy, 0, 0, 1]
 

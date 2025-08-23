@@ -15,8 +15,9 @@
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_window
 from dimos.utils.data import get_data
+from dimos.utils.testing import TimedSensorReplay
 
 
 @pytest.fixture
@@ -61,3 +62,67 @@ def test_opencv_conversion(img: Image):
     # artificially patch timestamp
     decoded_img.ts = img.ts
     assert decoded_img == img
+
+
+@pytest.mark.tool
+def test_sharpness_detector():
+    get_data("unitree_office_walk")  # Preload data for testing
+    video_store = TimedSensorReplay(
+        "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
+    )
+
+    cnt = 0
+    for image in video_store.iterate():
+        cnt = cnt + 1
+        print(image.sharpness())
+        if cnt > 30:
+            return
+
+
+@pytest.mark.tool
+def test_sharpness_sliding_window_foxglove():
+    import time
+
+    from dimos.msgs.geometry_msgs import Vector3
+    from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+
+    lcm = LCM()
+    lcm.start()
+
+    ping = 0
+    sharp_topic = Topic("/sharp", Image)
+    all_topic = Topic("/all", Image)
+    sharpness_topic = Topic("/sharpness", Vector3)
+
+    get_data("unitree_office_walk")  # Preload data for testing
+    video_stream = TimedSensorReplay(
+        "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
+    ).stream()
+
+    # Publish all images to all_topic
+    video_stream.subscribe(lambda x: lcm.publish(all_topic, x))
+
+    def sharpness_vector(x: Image):
+        nonlocal ping
+        sharpness = x.sharpness()
+        if ping:
+            y = 1
+            ping = ping - 1
+        else:
+            y = 0
+
+        return Vector3([sharpness, y, 0])
+
+    video_stream.subscribe(lambda x: lcm.publish(sharpness_topic, sharpness_vector(x)))
+
+    def pub_sharp(x: Image):
+        nonlocal ping
+        ping = 3
+        lcm.publish(sharp_topic, x)
+
+    sharpness_window(
+        1,
+        source=video_stream,
+    ).subscribe(pub_sharp)
+
+    time.sleep(120)
