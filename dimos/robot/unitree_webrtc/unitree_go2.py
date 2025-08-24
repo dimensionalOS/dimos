@@ -153,8 +153,12 @@ class ConnectionModule(Module):
 
         # Load camera parameters from YAML
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        camera_params_path = os.path.join(base_dir, "params", "front_camera_720.yaml")
-        # TODO (Paul): add camera_params_path for sim camera
+
+        # Use sim camera parameters for mujoco, real camera for others
+        if connection_type == "mujoco":
+            camera_params_path = os.path.join(base_dir, "params", "sim_camera.yaml")
+        else:
+            camera_params_path = os.path.join(base_dir, "params", "front_camera_720.yaml")
 
         self.lcm_camera_info = load_camera_info(camera_params_path, frame_id="camera_link")
 
@@ -332,7 +336,7 @@ class UnitreeGo2(Robot):
         self.websocket_vis = None
         self.foxglove_bridge = None
         self.spatial_memory_module = None
-        self.camera_module = None
+        self.depth_module = None
         self.object_tracker = None
 
         self._setup_directories()
@@ -495,19 +499,20 @@ class UnitreeGo2(Robot):
 
     def _deploy_camera(self):
         """Deploy and configure the camera module."""
-        self.camera_module = self.dimos.deploy(DepthModule)
+        gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.5
+        self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
 
         # Set up transports
-        self.camera_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
-        self.camera_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
-        self.camera_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
+        self.depth_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
+        self.depth_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
+        self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
 
         logger.info("Camera module deployed and connected")
 
         # Connect object tracker inputs after camera module is deployed
         if self.object_tracker:
             self.object_tracker.color_image.connect(self.connection.video)
-            self.object_tracker.depth.connect(self.camera_module.depth_image)
+            self.object_tracker.depth.connect(self.depth_module.depth_image)
             self.object_tracker.camera_info.connect(self.connection.camera_info)
             logger.info("Object tracker connected to camera module")
 
@@ -522,7 +527,7 @@ class UnitreeGo2(Robot):
         self.websocket_vis.start()
         self.foxglove_bridge.start()
         self.spatial_memory_module.start()
-        self.camera_module.start()
+        self.depth_module.start()
         self.object_tracker.start()
 
         # Initialize skills after connection is established

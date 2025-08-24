@@ -50,7 +50,7 @@ class DepthModule(Module):
 
     def __init__(
         self,
-        gt_depth_scale: float = 2.0,
+        gt_depth_scale: float = 1.0,
         **kwargs,
     ):
         """
@@ -199,7 +199,7 @@ class DepthModule(Module):
             logger.debug(f"Processing depth for image shape: {img_array.shape}")
 
             # Generate depth map
-            depth_array = self.metric3d.infer_depth(img_array) / self.gt_depth_scale
+            depth_array = self.metric3d.infer_depth(img_array) * self.gt_depth_scale
 
             self._last_depth = depth_array
             logger.debug(f"Generated depth map shape: {depth_array.shape}")
