@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import time
 
 import numpy as np
@@ -329,6 +330,38 @@ def test_transform_from_pose():
     assert transform.rotation == pose.orientation
     assert transform.frame_id == "world"  # default frame_id
     assert transform.child_frame_id == "base_link"  # passed as first argument
+
+
+# validating results from example @
+# https://foxglove.dev/blog/understanding-ros-transforms
+def test_transform_from_ros():
+    """Test converting PoseStamped to Transform"""
+    test_time = time.time()
+    pose_stamped = PoseStamped(
+        ts=test_time,
+        frame_id="base_link",
+        position=Vector3(1, -1, 0),
+        orientation=Quaternion.from_euler(Vector3(0, 0, math.pi / 6)),
+    )
+    transform_base_link_to_arm = Transform.from_pose("arm_base_link", pose_stamped)
+
+    transform_arm_to_end = Transform.from_pose(
+        "end",
+        PoseStamped(
+            ts=test_time,
+            frame_id="arm_base_link",
+            position=Vector3(1, 1, 0),
+            orientation=Quaternion.from_euler(Vector3(0, 0, math.pi / 6)),
+        ),
+    )
+
+    print(transform_base_link_to_arm)
+    print(transform_arm_to_end)
+
+    end_effector_global_pose = transform_base_link_to_arm + transform_arm_to_end
+
+    assert end_effector_global_pose.translation.x == pytest.approx(1.366, abs=1e-3)
+    assert end_effector_global_pose.translation.y == pytest.approx(0.366, abs=1e-3)
 
 
 def test_transform_from_pose_stamped():

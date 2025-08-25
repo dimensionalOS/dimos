@@ -21,7 +21,7 @@ import numpy as np
 from typing import Optional, Tuple, List
 from collections import deque
 from scipy.spatial.transform import Rotation as R
-from dimos_lcm.geometry_msgs import Pose, Vector3, Quaternion, Point
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
 from dimos_lcm.vision_msgs import Detection3D, Detection3DArray
 from dimos.utils.logging_config import setup_logger
 from dimos.manipulation.visual_servoing.utils import (
@@ -158,11 +158,7 @@ class PBVS:
             True if target was successfully tracked, False if lost (but target is kept)
         """
         # Check if we have a current target
-        if (
-            not self.current_target
-            or not self.current_target.bbox
-            or not self.current_target.bbox.center
-        ):
+        if not self.current_target:
             return False
 
         # Add new detections to history if provided

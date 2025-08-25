@@ -31,18 +31,22 @@ except ImportError:
 
 class Header(LCMHeader):
     msg_name = "std_msgs.Header"
+    ts: float
 
     @dispatch
     def __init__(self) -> None:
         """Initialize a Header with current time and empty frame_id."""
-        super().__init__(seq=0, stamp=LCMTime(), frame_id="")
+        self.ts = time.time()
+        sec = int(self.ts)
+        nsec = int((self.ts - sec) * 1_000_000_000)
+        super().__init__(seq=0, stamp=LCMTime(sec=sec, nsec=nsec), frame_id="")
 
     @dispatch
     def __init__(self, frame_id: str) -> None:
         """Initialize a Header with current time and specified frame_id."""
-        ts = time.time()
-        sec = int(ts)
-        nsec = int((ts - sec) * 1_000_000_000)
+        self.ts = time.time()
+        sec = int(self.ts)
+        nsec = int((self.ts - sec) * 1_000_000_000)
         super().__init__(seq=1, stamp=LCMTime(sec=sec, nsec=nsec), frame_id=frame_id)
 
     @dispatch
@@ -55,9 +59,9 @@ class Header(LCMHeader):
     @dispatch
     def __init__(self, timestamp: datetime, frame_id: str = "") -> None:
         """Initialize a Header with datetime object and frame_id."""
-        ts = timestamp.timestamp()
-        sec = int(ts)
-        nsec = int((ts - sec) * 1_000_000_000)
+        self.ts = timestamp.timestamp()
+        sec = int(self.ts)
+        nsec = int((self.ts - sec) * 1_000_000_000)
         super().__init__(seq=1, stamp=LCMTime(sec=sec, nsec=nsec), frame_id=frame_id)
 
     @dispatch

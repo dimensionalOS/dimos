@@ -28,7 +28,7 @@ from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import Vector3, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import get_distance
+from dimos.utils.transform_utils import get_distance, quaternion_to_euler, normalize_angle
 
 logger = setup_logger("dimos.robot.local_planner")
 
@@ -54,17 +54,25 @@ class BaseLocalPlanner(Module):
     # LCM outputs
     cmd_vel: Out[Vector3] = None
 
-    def __init__(self, goal_tolerance: float = 0.5, control_frequency: float = 10.0, **kwargs):
+    def __init__(
+        self,
+        goal_tolerance: float = 0.5,
+        orientation_tolerance: float = 0.2,
+        control_frequency: float = 10.0,
+        **kwargs,
+    ):
         """Initialize the local planner module.
 
         Args:
             goal_tolerance: Distance threshold to consider goal reached (meters)
+            orientation_tolerance: Orientation threshold to consider goal reached (radians)
             control_frequency: Frequency for control loop (Hz)
         """
         super().__init__(**kwargs)
 
         # Parameters
         self.goal_tolerance = goal_tolerance
+        self.orientation_tolerance = orientation_tolerance
         self.control_frequency = control_frequency
         self.control_period = 1.0 / control_frequency
 
@@ -113,7 +121,6 @@ class BaseLocalPlanner(Module):
         """Main planning loop that runs in a separate thread."""
         while not self.stop_planning.is_set():
             if self.is_goal_reached():
-                logger.info("Goal reached, stopping planning thread")
                 self.stop_planning.set()
                 stop_cmd = Vector3(0, 0, 0)
                 self.cmd_vel.publish(stop_cmd)
@@ -145,7 +152,7 @@ class BaseLocalPlanner(Module):
     @rpc
     def is_goal_reached(self) -> bool:
         """
-        Check if the robot has reached the goal position.
+        Check if the robot has reached the goal position and orientation.
 
         Returns:
             True if goal is reached within tolerance, False otherwise
@@ -159,12 +166,18 @@ class BaseLocalPlanner(Module):
         goal_pose = self.latest_path.poses[-1]
         distance = get_distance(self.latest_odom, goal_pose)
 
-        goal_reached = distance < self.goal_tolerance
+        # Check distance tolerance
+        if distance >= self.goal_tolerance:
+            return False
 
-        if goal_reached:
-            logger.info(f"Goal reached! Distance: {distance:.3f}m < {self.goal_tolerance}m")
+        # Check orientation tolerance
+        current_euler = quaternion_to_euler(self.latest_odom.orientation)
+        goal_euler = quaternion_to_euler(goal_pose.orientation)
 
-        return goal_reached
+        # Calculate yaw difference and normalize to [-pi, pi]
+        yaw_error = normalize_angle(goal_euler.z - current_euler.z)
+
+        return abs(yaw_error) < self.orientation_tolerance
 
     @rpc
     def reset(self):

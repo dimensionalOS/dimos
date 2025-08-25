@@ -27,8 +27,9 @@ from collections import deque
 import numpy as np
 
 from dimos.core import Module, In, Out, rpc
-from dimos_lcm.sensor_msgs import Image, CameraInfo
-from dimos_lcm.geometry_msgs import Vector3, Pose, Point, Quaternion
+from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs import Vector3, Pose, Quaternion
+from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import Detection3DArray, Detection2DArray
 
 from dimos.hardware.piper_arm import PiperArm
@@ -207,7 +208,9 @@ class ManipulationModule(Module):
         self.target_click = None
 
         # Place target position and object info
-        self.home_pose = Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))
+        self.home_pose = Pose(
+            position=Vector3(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+        )
         self.place_target_position = None
         self.target_object_height = None
         self.retract_distance = 0.12
@@ -239,22 +242,14 @@ class ManipulationModule(Module):
     def _on_rgb_image(self, msg: Image):
         """Handle RGB image messages."""
         try:
-            data = np.frombuffer(msg.data, dtype=np.uint8)
-            if msg.encoding == "rgb8":
-                self.latest_rgb = data.reshape((msg.height, msg.width, 3))
-            else:
-                logger.warning(f"Unsupported RGB encoding: {msg.encoding}")
+            self.latest_rgb = msg.data
         except Exception as e:
             logger.error(f"Error processing RGB image: {e}")
 
     def _on_depth_image(self, msg: Image):
         """Handle depth image messages."""
         try:
-            if msg.encoding == "32FC1":
-                data = np.frombuffer(msg.data, dtype=np.float32)
-                self.latest_depth = data.reshape((msg.height, msg.width))
-            else:
-                logger.warning(f"Unsupported depth encoding: {msg.encoding}")
+            self.latest_depth = msg.data
         except Exception as e:
             logger.error(f"Error processing depth image: {e}")
 
@@ -896,19 +891,7 @@ class ManipulationModule(Module):
         """Publish visualization image to LCM."""
         try:
             viz_rgb = cv2.cvtColor(viz_image, cv2.COLOR_BGR2RGB)
-            height, width = viz_rgb.shape[:2]
-            data = viz_rgb.tobytes()
-
-            msg = Image(
-                data_length=len(data),
-                height=height,
-                width=width,
-                encoding="rgb8",
-                is_bigendian=0,
-                step=width * 3,
-                data=data,
-            )
-
+            msg = Image.from_numpy(viz_rgb)
             self.viz_image.publish(msg)
         except Exception as e:
             logger.error(f"Error publishing visualization: {e}")
@@ -935,7 +918,8 @@ class ManipulationModule(Module):
             place_pos[2] += z_offset + 0.1
 
         place_center_pose = Pose(
-            Point(place_pos[0], place_pos[1], place_pos[2]), Quaternion(0.0, 0.0, 0.0, 1.0)
+            position=Vector3(place_pos[0], place_pos[1], place_pos[2]),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         )
 
         ee_pose = self.arm.get_ee_pose()

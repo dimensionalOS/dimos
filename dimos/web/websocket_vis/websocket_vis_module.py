@@ -19,10 +19,11 @@ WebSocket Visualization Module for Dimos navigation and mapping.
 """
 
 import asyncio
-import concurrent.futures
 import os
 import threading
 from typing import Any, Dict, Optional
+import base64
+import numpy as np
 
 import socketio
 import uvicorn
@@ -78,7 +79,8 @@ class WebsocketVisModule(Module):
         self.server_thread: Optional[threading.Thread] = None
         self.sio: Optional[socketio.AsyncServer] = None
         self.app = None
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self._broadcast_loop = None
+        self._broadcast_thread = None
 
         # Visualization state
         self.vis_state = {
@@ -90,11 +92,30 @@ class WebsocketVisModule(Module):
 
         logger.info(f"WebSocket visualization module initialized on port {port}")
 
+    def _start_broadcast_loop(self):
+        """Start the broadcast event loop in a background thread."""
+
+        def run_loop():
+            self._broadcast_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._broadcast_loop)
+            try:
+                self._broadcast_loop.run_forever()
+            except Exception as e:
+                logger.error(f"Broadcast loop error: {e}")
+            finally:
+                self._broadcast_loop.close()
+
+        self._broadcast_thread = threading.Thread(target=run_loop, daemon=True)
+        self._broadcast_thread.start()
+
     @rpc
     def start(self):
         """Start the WebSocket server and subscribe to inputs."""
         # Create the server
         self._create_server()
+
+        # Start the broadcast event loop in a background thread
+        self._start_broadcast_loop()
 
         # Start the server in a background thread
         self.server_thread = threading.Thread(target=self._run_server, daemon=True)
@@ -110,8 +131,10 @@ class WebsocketVisModule(Module):
     @rpc
     def stop(self):
         """Stop the WebSocket server."""
-        if self._executor:
-            self._executor.shutdown(wait=True)
+        if self._broadcast_loop and not self._broadcast_loop.is_closed():
+            self._broadcast_loop.call_soon_threadsafe(self._broadcast_loop.stop)
+        if self._broadcast_thread and self._broadcast_thread.is_alive():
+            self._broadcast_thread.join(timeout=1.0)
         logger.info("WebSocket visualization module stopped")
 
     def _create_server(self):
@@ -200,8 +223,7 @@ class WebsocketVisModule(Module):
 
     def _process_costmap(self, costmap: OccupancyGrid) -> Dict[str, Any]:
         """Convert OccupancyGrid to visualization format."""
-        import base64
-        import numpy as np
+        costmap = costmap.inflate(0.1).gradient(max_distance=1.0)
 
         # Convert grid data to base64 encoded string
         grid_bytes = costmap.grid.astype(np.float32).tobytes()
@@ -236,12 +258,7 @@ class WebsocketVisModule(Module):
                 self.vis_state.update(new_data)
 
         # Broadcast update asynchronously
-        def broadcast():
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(self.sio.emit("state_update", new_data))
-            except Exception as e:
-                logger.error(f"Failed to broadcast state update: {e}")
-
-        self._executor.submit(broadcast)
+        if self._broadcast_loop and not self._broadcast_loop.is_closed():
+            asyncio.run_coroutine_threadsafe(
+                self.sio.emit("state_update", new_data), self._broadcast_loop
+            )

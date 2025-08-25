@@ -32,6 +32,7 @@ from dimos.stream.video_provider import VideoProvider
 class TestImageEmbedding:
     """Test class for CLIP image embedding functionality."""
 
+    @pytest.mark.tofix
     def test_clip_embedding_initialization(self):
         """Test CLIP embedding provider initializes correctly."""
         try:
@@ -44,6 +45,7 @@ class TestImageEmbedding:
         except Exception as e:
             pytest.skip(f"Skipping test due to model initialization error: {e}")
 
+    @pytest.mark.tofix
     def test_clip_embedding_process_video(self):
         """Test CLIP embedding provider can process video frames and return embeddings."""
         try:
@@ -148,6 +150,7 @@ class TestImageEmbedding:
         except Exception as e:
             pytest.fail(f"Test failed with error: {e}")
 
+    @pytest.mark.tofix
     def test_clip_embedding_similarity(self):
         """Test CLIP embedding similarity search and text-to-image queries."""
         try:

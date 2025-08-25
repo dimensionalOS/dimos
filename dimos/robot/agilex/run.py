@@ -31,7 +31,6 @@ from dimos.robot.agilex.piper_arm import PiperArmRobot
 from dimos.agents.claude_agent import ClaudeAgent
 from dimos.skills.manipulation.pick_and_place import PickAndPlace
 from dimos.skills.kill_skill import KillSkill
-from dimos.skills.observe import Observe
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.stream.audio.pipelines import stt, tts
 from dimos.utils.logging_config import setup_logger
@@ -53,7 +52,6 @@ SYSTEM_PROMPT = """You are an intelligent robotic assistant controlling a Piper 
 - **PickAndPlace**: Execute pick and place operations based on object and location descriptions
   - Pick only: "Pick up the red mug"
   - Pick and place: "Move the book to the shelf"
-- **Observe**: Capture and analyze the current camera view
 - **KillSkill**: Stop any currently running skill
 
 ## Guidelines:
@@ -70,7 +68,6 @@ SYSTEM_PROMPT = """You are an intelligent robotic assistant controlling a Piper 
   You: "I'll place the toy on the table." [Execute PickAndPlace with object_query="toy", target_query="on the table"]
 
 - User: "What do you see?"
-  You: "Let me take a look at the current view." [Execute Observe]
 
 Remember: You're here to assist with manipulation tasks. Be helpful, precise, and always prioritize safe operation of the robot."""
 
@@ -109,12 +106,10 @@ def main():
         # Set up skill library
         skills = robot.get_skills()
         skills.add(PickAndPlace)
-        skills.add(Observe)
         skills.add(KillSkill)
 
         # Create skill instances
         skills.create_instance("PickAndPlace", robot=robot)
-        skills.create_instance("Observe", robot=robot)
         skills.create_instance("KillSkill", robot=robot, skill_library=skills)
 
         logger.info(f"Skills registered: {[skill.__name__ for skill in skills.get_class_skills()]}")
