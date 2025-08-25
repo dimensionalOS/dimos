@@ -139,7 +139,7 @@ class ObjectTracking(Module):
             self.color_image.observable(),
             self.depth.observable(),
             buffer_size=2.0,  # 2 second buffer
-            match_tolerance=0.2,  # 200ms tolerance
+            match_tolerance=0.5,  # 500ms tolerance
         )
         self._aligned_frames_subscription = aligned_frames.subscribe(on_aligned_frames)
 

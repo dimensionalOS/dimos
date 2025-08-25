@@ -24,6 +24,7 @@ from typing import List, Optional
 
 from dimos import core
 from dimos.core import In, Module, Out, rpc
+from dimos.msgs.std_msgs import Header
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
@@ -209,7 +210,7 @@ class ConnectionModule(Module):
 
         # Publish camera info and pose synchronized with video
         timestamp = msg.ts if msg.ts else time.time()
-        self._publish_camera_info()
+        self._publish_camera_info(timestamp)
         self._publish_camera_pose(timestamp)
 
     def _publish_tf(self, msg):
@@ -225,7 +226,9 @@ class ConnectionModule(Module):
         )
         self.tf.publish(camera_link)
 
-    def _publish_camera_info(self):
+    def _publish_camera_info(self, timestamp: float):
+        header = Header(timestamp, "camera_link")
+        self.lcm_camera_info.header = header
         self.camera_info.publish(self.lcm_camera_info)
 
     def _publish_camera_pose(self, timestamp: float):
