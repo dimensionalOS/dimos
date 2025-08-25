@@ -291,7 +291,7 @@ class Image(Timestamped):
             ch, cw = int(h * frac), int(w * frac)
             y0 = (h - ch) // 2
             x0 = (w - cw) // 2
-            return x[y0:y0 + ch, x0:x0 + cw]
+            return x[y0 : y0 + ch, x0 : x0 + cw]
 
         def _resize_for_metrics(x: np.ndarray, max_side: int = 640) -> np.ndarray:
             """Resize so max(h,w) <= max_side using area resampling (cheap & anti-aliasing)."""
@@ -349,6 +349,7 @@ class Image(Timestamped):
             Banding score using FFT peak/median ratio (no moving-median loop).
             Returns ~0..30 dB. Uses 90th percentile of row/col projections.
             """
+
             def proj_score(v: np.ndarray) -> float:
                 v = v.astype(np.float32)
                 N = v.size
@@ -365,7 +366,8 @@ class Image(Timestamped):
                 # Drop DC & a few low bins, compare peak vs global median (cheap)
                 low_bins = max(3, int(0.01 * P.size))
                 P = P[low_bins:]
-                if P.size < 8: return 0.0
+                if P.size < 8:
+                    return 0.0
                 baseline = np.median(P) + 1e-12
                 peak = np.percentile(P, 99)
                 return float(10.0 * np.log10(max(peak / baseline, 1.0)))
@@ -377,7 +379,8 @@ class Image(Timestamped):
         def _blockiness8(gray_roi: np.ndarray) -> float:
             """8-px grid edge vs interior edge ratio (JPEG/H.264 blockiness proxy)."""
             dif = np.abs(np.diff(gray_roi, axis=1))
-            if dif.shape[1] == 0: return 1.0
+            if dif.shape[1] == 0:
+                return 1.0
             cols = np.arange(dif.shape[1])
             grid = dif[:, (cols + 1) % 8 == 0]
             interior = dif[:, (cols + 1) % 8 != 0]
@@ -431,18 +434,24 @@ class Image(Timestamped):
         votes = int(step_bad) + int(band_bad) + int(block_bad) if is_textured else 0
 
         p_glitch = 0.0
-        if votes >= 2: p_glitch = 0.45
-        elif votes == 1: p_glitch = 0.15
+        if votes >= 2:
+            p_glitch = 0.45
+        elif votes == 1:
+            p_glitch = 0.15
 
         score = _clip01(sharp_q - 0.25 * p_noise - 0.25 * p_expo - p_glitch)
 
         reasons = []
         print(f"ten_log: {ten_log}")
         print(f"sharp_q: {sharp_q}")
-        if sharp_q < 0.3: reasons.append("blur/low-sharpness")
-        if p_noise > 0.5: reasons.append("grain/SNR")
-        if p_expo > 0.5: reasons.append("exposure/clipping")
-        if votes >= 2: reasons.append("glitch")
+        if sharp_q < 0.3:
+            reasons.append("blur/low-sharpness")
+        if p_noise > 0.5:
+            reasons.append("grain/SNR")
+        if p_expo > 0.5:
+            reasons.append("exposure/clipping")
+        if votes >= 2:
+            reasons.append("glitch")
 
         metrics = {
             "tenengrad_mean": ten,
@@ -460,8 +469,11 @@ class Image(Timestamped):
             "dyn_range": dyn,
         }
 
-        return {"score": score, "reasons": reasons, "metrics": metrics}  # respects existing return shape
-
+        return {
+            "score": score,
+            "reasons": reasons,
+            "metrics": metrics,
+        }  # respects existing return shape
 
     def save(self, filepath: str) -> bool:
         """Save image to file."""
