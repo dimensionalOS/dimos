@@ -53,6 +53,7 @@ from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.robot.unitree_webrtc.depth_module import DepthModule
+from dimos.robot.keyboard_teleop import KeyboardTeleop
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -341,6 +342,7 @@ class UnitreeGo2(Robot):
         self.spatial_memory_module = None
         self.depth_module = None
         self.object_tracker = None
+        self.keyboard_teleop = None
 
         self._setup_directories()
 
@@ -373,6 +375,7 @@ class UnitreeGo2(Robot):
         self._deploy_visualization()
         self._deploy_perception()
         self._deploy_camera()
+        self._deploy_keyboard_teleop()
 
         self._start_modules()
 
@@ -519,6 +522,15 @@ class UnitreeGo2(Robot):
             self.object_tracker.camera_info.connect(self.connection.camera_info)
             logger.info("Object tracker connected to camera module")
 
+    def _deploy_keyboard_teleop(self):
+        """Deploy and configure the keyboard teleoperation module."""
+        self.keyboard_teleop = self.dimos.deploy(KeyboardTeleop)
+
+        # Connect keyboard output to robot movement command
+        self.keyboard_teleop.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
+
+        logger.info("Keyboard teleoperation module deployed and connected")
+
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
         self.connection.start()
@@ -532,6 +544,7 @@ class UnitreeGo2(Robot):
         self.spatial_memory_module.start()
         self.depth_module.start()
         self.object_tracker.start()
+        self.keyboard_teleop.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
