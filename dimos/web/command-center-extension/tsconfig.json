@@ -1,15 +1,16 @@
 {
   "extends": "create-foxglove-extension/tsconfig/tsconfig.json",
-
-  "include": ["./src/**/*"],
+  "include": [
+    "./src/**/*"
+  ],
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist",
-    "lib": ["dom"],
-
+    "lib": [
+      "dom"
+    ],
     "composite": false,
     "declaration": false,
-
     "noFallthroughCasesInSwitch": true,
     "noImplicitAny": true,
     "noImplicitReturns": true,
