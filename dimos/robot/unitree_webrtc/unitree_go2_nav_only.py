@@ -24,7 +24,7 @@ from typing import Optional
 
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.std_msgs import String, Bool
@@ -97,7 +97,7 @@ class FakeRTC:
         )
         return video_store.stream()
 
-    def move(self, vector: Vector3, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0):
         pass
 
     def publish_request(self, topic: str, data: dict):
@@ -108,7 +108,7 @@ class FakeRTC:
 class ConnectionModule(Module):
     """Module that handles robot sensor data and movement commands."""
 
-    movecmd: In[Vector3] = None
+    movecmd: In[Twist] = None
     odom: Out[PoseStamped] = None
     lidar: Out[LidarMessage] = None
     video: Out[Image] = None
@@ -170,9 +170,9 @@ class ConnectionModule(Module):
         return self._odom
 
     @rpc
-    def move(self, vector: Vector3, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0):
         """Send movement command to robot."""
-        self.connection.move(vector, duration)
+        self.connection.move(twist, duration)
 
     @rpc
     def standup(self):
@@ -257,7 +257,7 @@ class UnitreeGo2NavOnly(Robot):
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
         self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
-        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Vector3)
+        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
 
     def _deploy_mapping(self):
         """Deploy and configure the mapping module."""
@@ -291,7 +291,7 @@ class UnitreeGo2NavOnly(Robot):
             "/global_costmap", OccupancyGrid
         )
         self.global_planner.path.transport = core.LCMTransport("/global_path", Path)
-        self.local_planner.cmd_vel.transport = core.LCMTransport("/cmd_vel", Vector3)
+        self.local_planner.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
         self.frontier_explorer.goal_request.transport = core.LCMTransport(
             "/goal_request", PoseStamped
         )
@@ -336,9 +336,9 @@ class UnitreeGo2NavOnly(Robot):
         self.frontier_explorer.start()
         self.websocket_vis.start()
 
-    def move(self, vector: Vector3, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0):
         """Send movement command to robot."""
-        self.connection.move(vector, duration)
+        self.connection.move(twist, duration)
 
     def explore(self) -> bool:
         """Start autonomous frontier exploration.
