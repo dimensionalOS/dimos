@@ -434,22 +434,16 @@ class Image(Timestamped):
         votes = int(step_bad) + int(band_bad) + int(block_bad) if is_textured else 0
 
         p_glitch = 0.0
-        if votes >= 2:
-            p_glitch = 0.45
-        elif votes == 1:
-            p_glitch = 0.15
+        if votes >= 2: p_glitch = 0.45
+        elif votes == 1: p_glitch = 0.15
 
         score = _clip01(sharp_q - 0.25 * p_noise - 0.25 * p_expo - p_glitch)
 
         reasons = []
-        if sharp_q < 0.3:
-            reasons.append("blur/low-sharpness")
-        if p_noise > 0.5:
-            reasons.append("grain/SNR")
-        if p_expo > 0.5:
-            reasons.append("exposure/clipping")
-        if votes >= 2:
-            reasons.append("glitch")
+        if sharp_q < 0.3: reasons.append("blur/low-sharpness")
+        if p_noise > 0.5: reasons.append("grain/SNR")
+        if p_expo > 0.5: reasons.append("exposure/clipping")
+        if votes >= 2: reasons.append("glitch")
 
         metrics = {
             "tenengrad_mean": ten,
