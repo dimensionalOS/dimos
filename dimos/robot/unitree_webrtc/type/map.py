@@ -33,7 +33,6 @@ class Map(Module):
     global_map: Out[LidarMessage] = None
     global_costmap: Out[OccupancyGrid] = None
     local_costmap: Out[OccupancyGrid] = None
-
     pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
 
     def __init__(
@@ -43,6 +42,7 @@ class Map(Module):
         global_publish_interval: Optional[float] = None,
         min_height: float = 0.15,
         max_height: float = 0.6,
+        frame_id: str = "world",
         **kwargs,
     ):
         self.voxel_size = voxel_size
@@ -50,11 +50,13 @@ class Map(Module):
         self.global_publish_interval = global_publish_interval
         self.min_height = min_height
         self.max_height = max_height
+        self.frame_id = frame_id
         super().__init__(**kwargs)
 
     @rpc
     def start(self):
         self.lidar.subscribe(self.add_frame)
+        self.tf.start()
 
         def publish(_):
             self.global_map.publish(self.to_lidar_message())
@@ -87,9 +89,18 @@ class Map(Module):
             ts=time.time(),
         )
 
-    @rpc
     def add_frame(self, frame: LidarMessage) -> "Map":
-        """Voxelise *frame* and splice it into the running map."""
+        # somewhere else you need to publish position of the camera
+        # so self.tf.publish()
+        # check dimos/protocol/test_tf.py
+        # or unitre_go2, search for self.tf.publish()
+        transform = self.tf.get(frame.frame_id, self.frame_id)
+
+        # new transformed lidar frame in world frame_id
+        frame = frame.apply_transform(transform)
+
+        assert frame.frame_id == self.frame_id
+
         new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
         local_costmap = OccupancyGrid.from_pointcloud(
@@ -98,6 +109,7 @@ class Map(Module):
             min_height=0.15,
             max_height=0.6,
         ).gradient(max_distance=0.25)
+
         self.local_costmap.publish(local_costmap)
 
     @property
