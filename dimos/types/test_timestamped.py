@@ -12,11 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from datetime import datetime, timezone
 
 import pytest
+from reactivex import operators as ops
 
-from dimos.types.timestamped import Timestamped, TimestampedCollection, to_datetime, to_ros_stamp
+from dimos.msgs.sensor_msgs import Image
+from dimos.types.timestamped import (
+    Timestamped,
+    TimestampedBufferCollection,
+    TimestampedCollection,
+    align_timestamped,
+    to_datetime,
+    to_ros_stamp,
+)
+from dimos.utils import testing
+from dimos.utils.data import get_data
+from dimos.utils.reactive import backpressure
 
 
 def test_timestamped_dt_method():
@@ -145,19 +158,24 @@ def test_find_closest(collection):
     assert collection.find_closest(3.0).data == "third"
 
     # Between items (closer to left)
-    assert collection.find_closest(1.5).data == "first"
+    assert collection.find_closest(1.5, tolerance=1.0).data == "first"
 
     # Between items (closer to right)
-    assert collection.find_closest(3.5).data == "third"
+    assert collection.find_closest(3.5, tolerance=1.0).data == "third"
 
     # Exactly in the middle (should pick the later one due to >= comparison)
-    assert collection.find_closest(4.0).data == "fifth"  # 4.0 is equidistant from 3.0 and 5.0
+    assert (
+        collection.find_closest(4.0, tolerance=1.0).data == "fifth"
+    )  # 4.0 is equidistant from 3.0 and 5.0
 
     # Before all items
-    assert collection.find_closest(0.0).data == "first"
+    assert collection.find_closest(0.0, tolerance=1.0).data == "first"
 
     # After all items
-    assert collection.find_closest(10.0).data == "seventh"
+    assert collection.find_closest(10.0, tolerance=4.0).data == "seventh"
+
+    # low tolerance, should return None
+    assert collection.find_closest(10.0, tolerance=2.0) is None
 
 
 def test_find_before_after(collection):
@@ -223,4 +241,85 @@ def test_single_item_collection():
     single = TimestampedCollection([SimpleTimestamped(5.0, "only")])
     assert single.duration() == 0.0
     assert single.time_range() == (5.0, 5.0)
-    assert single.find_closest(100.0).data == "only"
+
+
+def test_time_window_collection():
+    # Create a collection with a 2-second window
+    window = TimestampedBufferCollection[SimpleTimestamped](window_duration=2.0)
+
+    # Add messages at different timestamps
+    window.add(SimpleTimestamped(1.0, "msg1"))
+    window.add(SimpleTimestamped(2.0, "msg2"))
+    window.add(SimpleTimestamped(3.0, "msg3"))
+
+    # At this point, all messages should be present (within 2s window)
+    assert len(window) == 3
+
+    # Add a message at t=4.0, should keep messages from t=2.0 onwards
+    window.add(SimpleTimestamped(4.0, "msg4"))
+    assert len(window) == 3  # msg1 should be dropped
+    assert window[0].data == "msg2"  # oldest is now msg2
+    assert window[-1].data == "msg4"  # newest is msg4
+
+    # Add a message at t=5.5, should drop msg2 and msg3
+    window.add(SimpleTimestamped(5.5, "msg5"))
+    assert len(window) == 2  # only msg4 and msg5 remain
+    assert window[0].data == "msg4"
+    assert window[1].data == "msg5"
+
+    # Verify time range
+    assert window.start_ts == 4.0
+    assert window.end_ts == 5.5
+
+
+def test_timestamp_alignment():
+    speed = 5.0
+
+    # ensure that lfs package is downloaded
+    get_data("unitree_office_walk")
+
+    raw_frames = []
+
+    def spy(image):
+        raw_frames.append(image.ts)
+        print(image.ts)
+        return image
+
+    # sensor reply of raw video frames
+    video_raw = (
+        testing.TimedSensorReplay(
+            "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
+        )
+        .stream(speed)
+        .pipe(ops.take(30))
+    )
+
+    processed_frames = []
+
+    def process_video_frame(frame):
+        processed_frames.append(frame.ts)
+        print("PROCESSING", frame.ts)
+        time.sleep(0.5 / speed)
+        return frame
+
+    # fake reply of some 0.5s processor of video frames that drops messages
+    fake_video_processor = backpressure(video_raw.pipe(ops.map(spy))).pipe(
+        ops.map(process_video_frame)
+    )
+
+    aligned_frames = align_timestamped(fake_video_processor, video_raw).pipe(ops.to_list()).run()
+
+    assert len(raw_frames) == 30
+    assert len(processed_frames) > 2
+    assert len(aligned_frames) > 2
+
+    # Due to async processing, the last frame might not be aligned before completion
+    assert len(aligned_frames) >= len(processed_frames) - 1
+
+    for value in aligned_frames:
+        [primary, secondary] = value
+        diff = abs(primary.ts - secondary.ts)
+        print(
+            f"Aligned pair: primary={primary.ts:.6f}, secondary={secondary.ts:.6f}, diff={diff:.6f}s"
+        )
+        assert diff <= 0.05

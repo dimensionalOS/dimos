@@ -3,7 +3,14 @@ requires = ["setuptools>=70", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["dimos"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dimos*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.html", "*.css", "*.js", "*.json", "*.txt", "*.yaml", "*.yml"]
 
 [project]
 name = "dimos"
@@ -37,6 +44,7 @@ dependencies = [
     "rxpy-backpressure @ git+https://github.com/dimensionalOS/rxpy-backpressure.git",
     "asyncio==3.4.3",
     "go2-webrtc-connect @ git+https://github.com/dimensionalOS/go2_webrtc_connect.git",
+    "tensorzero==2025.7.5",
     
     # Web Extensions
     "fastapi>=0.115.6",
@@ -95,7 +103,7 @@ dependencies = [
     "dask[complete]==2025.5.1",
 
     # LCM / DimOS utilities
-    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@ba3445d16be75a7ade6fb2a516b39a3e44319d5c"
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@de4038871a4f166c3007ef6b6bc3ff83642219b2"
 ]
 
 [project.scripts]
@@ -136,11 +144,11 @@ cpu = [
 
 cuda = [
     "pycuda",
-    "onnxruntime-gpu>=1.17.1,<=1.18.1", # Only versions supporting both cuda11 and cuda12
+    "onnxruntime-gpu>=1.17.1", # Only versions supporting both cuda11 and cuda12
     "ctransformers[cuda]==0.2.27",
     "mmengine>=0.10.3",
     "mmcv>=2.1.0",
-    "xformers==0.0.20",
+    "xformers>=0.0.20",
 
     # Detic GPU stack 
     "mss",
@@ -161,6 +169,12 @@ dev = [
     "pytest==8.3.5",
     "pytest-asyncio==0.26.0",
     "textual==3.7.1"
+]
+
+sim = [
+    # Simulation
+    "mujoco>=3.3.4",
+    "playground>=0.0.5",
 ]
 
 [tool.ruff]
@@ -204,11 +218,13 @@ markers = [
     "ros: depend on ros",
     "lcm: tests that run actual LCM bus (can't execute in CI)",
     "module: tests that need to run directly as modules",
-    "gpu: tests that require GPU"
-
+    "gpu: tests that require GPU",
+    "tofix: temporarily disabled test"
 ]
 
 addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 
 

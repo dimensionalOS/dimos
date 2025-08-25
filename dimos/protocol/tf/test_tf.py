@@ -14,11 +14,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import time
+
+import pytest
 
 from dimos.core import TF
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.protocol.tf import MultiTBuffer, TBuffer
+
+
+# from https://foxglove.dev/blog/understanding-ros-transforms
+def test_tf_ros_example():
+    tf = TF()
+
+    base_link_to_arm = Transform(
+        translation=Vector3(1.0, -1.0, 0.0),
+        rotation=Quaternion.from_euler(Vector3(0, 0, math.pi / 6)),
+        frame_id="base_link",
+        child_frame_id="arm",
+        ts=time.time(),
+    )
+
+    arm_to_end = Transform(
+        translation=Vector3(1.0, 1.0, 0.0),
+        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity rotation
+        frame_id="arm",
+        child_frame_id="end_effector",
+        ts=time.time(),
+    )
+
+    tf.publish(base_link_to_arm, arm_to_end)
+    time.sleep(0.2)
+
+    end_effector_global_pose = tf.get("base_link", "end_effector")
+
+    assert end_effector_global_pose.translation.x == pytest.approx(1.366, abs=1e-3)
+    assert end_effector_global_pose.translation.y == pytest.approx(0.366, abs=1e-3)
 
 
 def test_tf_main():

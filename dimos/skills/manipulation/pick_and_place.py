@@ -26,7 +26,7 @@ from typing import Optional, Tuple, Dict, Any
 import numpy as np
 from pydantic import Field
 
-from dimos.skills.manipulation.abstract_manipulation_skill import AbstractManipulationSkill
+from dimos.skills.skills import AbstractRobotSkill
 from dimos.models.qwen.video_query import query_single_frame
 from dimos.utils.logging_config import setup_logger
 
@@ -170,7 +170,7 @@ def parse_qwen_single_point_response(response: str) -> Optional[Tuple[int, int]]
     return None
 
 
-class PickAndPlace(AbstractManipulationSkill):
+class PickAndPlace(AbstractRobotSkill):
     """
     A skill that performs pick and place operations using vision-language guidance.
 

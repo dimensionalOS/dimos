@@ -157,7 +157,7 @@ class TestUnitreeGo2CoreModules:
 
             # Set navigation goal (non-blocking)
             try:
-                navigator.set_goal(target_pose, blocking=False)
+                navigator.set_goal(target_pose)
                 logger.info("Navigation goal set")
             except Exception as e:
                 logger.warning(f"Navigation goal setting failed: {e}")

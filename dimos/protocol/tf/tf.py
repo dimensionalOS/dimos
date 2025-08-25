@@ -93,23 +93,14 @@ class TBuffer(TimestampedCollection[Transform]):
             self._items.pop(0)
 
     def get(
-        self, time_point: Optional[float] = None, time_tolerance: Optional[float] = None
+        self, time_point: Optional[float] = None, time_tolerance: float = 1.0
     ) -> Optional[Transform]:
         """Get transform at specified time or latest if no time given."""
         if time_point is None:
             # Return the latest transform
             return self[-1] if len(self) > 0 else None
 
-        # Find closest transform within tolerance
-        closest = self.find_closest(time_point)
-        if closest is None:
-            return None
-
-        if time_tolerance is not None:
-            if abs(closest.ts - time_point) > time_tolerance:
-                return None
-
-        return closest
+        return self.find_closest(time_point, time_tolerance)
 
     def __str__(self) -> str:
         if not self._items:

@@ -28,8 +28,6 @@ import reactivex.operators as ops
 
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.agents.claude_agent import ClaudeAgent
-from dimos.skills.observe_stream import ObserveStream
-from dimos.skills.observe import Observe
 from dimos.skills.kill_skill import KillSkill
 from dimos.skills.navigation import NavigateWithText, GetPose, NavigateToGoal, Explore
 from dimos.skills.unitree.unitree_speak import UnitreeSpeak
@@ -81,6 +79,7 @@ def main():
     # Create robot instance
     robot = UnitreeGo2(
         ip=os.getenv("ROBOT_IP"),
+        connection_type=os.getenv("CONNECTION_TYPE", "webrtc"),
     )
 
     robot.start()
@@ -91,8 +90,6 @@ def main():
 
         # Set up skill library
         skills = robot.get_skills()
-        # skills.add(ObserveStream)
-        # skills.add(Observe)
         skills.add(KillSkill)
         skills.add(NavigateWithText)
         skills.add(GetPose)
@@ -154,8 +151,6 @@ def main():
         tts_node.consume_text(agent.get_response_observable())
 
         # Create skill instances that need agent reference
-        skills.create_instance("ObserveStream", robot=robot, agent=agent)
-        skills.create_instance("Observe", robot=robot, agent=agent)
 
         logger.info("=" * 60)
         logger.info("Unitree Go2 Agent Ready!")

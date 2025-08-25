@@ -32,6 +32,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, CostValues
 from dimos.utils.logging_config import setup_logger
 from dimos_lcm.std_msgs import Bool
+from dimos.utils.transform_utils import get_distance
 
 logger = setup_logger("dimos.robot.unitree.frontier_exploration")
 
@@ -92,34 +93,40 @@ class WavefrontFrontierExplorer(Module):
     costmap: In[OccupancyGrid] = None
     odometry: In[PoseStamped] = None
     goal_reached: In[Bool] = None
+    explore_cmd: In[Bool] = None
+    stop_explore_cmd: In[Bool] = None
 
     # LCM outputs
     goal_request: Out[PoseStamped] = None
 
     def __init__(
         self,
-        min_frontier_size: int = 5,
+        min_frontier_perimeter: float = 0.5,
         occupancy_threshold: int = 99,
-        min_distance_from_obstacles: float = 0.2,
+        safe_distance: float = 3.0,
+        lookahead_distance: float = 5.0,
+        max_explored_distance: float = 10.0,
         info_gain_threshold: float = 0.03,
-        num_no_gain_attempts: int = 4,
-        goal_timeout: float = 30.0,
+        num_no_gain_attempts: int = 2,
+        goal_timeout: float = 15.0,
         **kwargs,
     ):
         """
         Initialize the frontier explorer.
 
         Args:
-            min_frontier_size: Minimum number of points to consider a valid frontier
+            min_frontier_perimeter: Minimum perimeter in meters to consider a valid frontier
             occupancy_threshold: Cost threshold above which a cell is considered occupied (0-255)
-            min_distance_from_obstacles: Minimum distance frontier must be from obstacles (meters)
+            safe_distance: Safe distance from obstacles for scoring (meters)
             info_gain_threshold: Minimum percentage increase in costmap information required to continue exploration (0.05 = 5%)
             num_no_gain_attempts: Maximum number of consecutive attempts with no information gain
         """
         super().__init__(**kwargs)
-        self.min_frontier_size = min_frontier_size
+        self.min_frontier_perimeter = min_frontier_perimeter
         self.occupancy_threshold = occupancy_threshold
-        self.min_distance_from_obstacles = min_distance_from_obstacles
+        self.safe_distance = safe_distance
+        self.max_explored_distance = max_explored_distance
+        self.lookahead_distance = lookahead_distance
         self.info_gain_threshold = info_gain_threshold
         self.num_no_gain_attempts = num_no_gain_attempts
         self._cache = FrontierCache()
@@ -154,6 +161,12 @@ class WavefrontFrontierExplorer(Module):
         if self.goal_reached.transport is not None:
             self.goal_reached.subscribe(self._on_goal_reached)
 
+        # Subscribe to exploration commands
+        if self.explore_cmd.transport is not None:
+            self.explore_cmd.subscribe(self._on_explore_cmd)
+        if self.stop_explore_cmd.transport is not None:
+            self.stop_explore_cmd.subscribe(self._on_stop_explore_cmd)
+
         logger.info("WavefrontFrontierExplorer started")
 
     @rpc
@@ -174,6 +187,18 @@ class WavefrontFrontierExplorer(Module):
         """Handle goal reached messages."""
         if msg.data:
             self.goal_reached_event.set()
+
+    def _on_explore_cmd(self, msg: Bool):
+        """Handle exploration command messages."""
+        if msg.data:
+            logger.info("Received exploration start command via LCM")
+            self.explore()
+
+    def _on_stop_explore_cmd(self, msg: Bool):
+        """Handle stop exploration command messages."""
+        if msg.data:
+            logger.info("Received exploration stop command via LCM")
+            self.stop_exploration()
 
     def _count_costmap_information(self, costmap: OccupancyGrid) -> int:
         """
@@ -347,7 +372,9 @@ class WavefrontFrontierExplorer(Module):
                     frontier_point.classification |= PointClassification.FrontierClosed
 
                 # Check if we found a large enough frontier
-                if len(new_frontier) >= self.min_frontier_size:
+                # Convert minimum perimeter to minimum number of cells based on resolution
+                min_cells = int(self.min_frontier_perimeter / costmap.resolution)
+                if len(new_frontier) >= min_cells:
                     world_points = []
                     for point in new_frontier:
                         world_pos = costmap.grid_to_world(
@@ -459,7 +486,7 @@ class WavefrontFrontierExplorer(Module):
 
         min_distance = float("inf")
         search_radius = (
-            int(self.min_distance_from_obstacles / costmap.resolution) + 5
+            int(self.safe_distance / costmap.resolution) + 5
         )  # Search a bit beyond minimum
 
         # Search in a square around the frontier point
@@ -483,7 +510,9 @@ class WavefrontFrontierExplorer(Module):
                     distance = np.sqrt(dx**2 + dy**2) * costmap.resolution
                     min_distance = min(min_distance, distance)
 
-        return min_distance if min_distance != float("inf") else float("inf")
+        # If no obstacles found within search radius, return the safe distance
+        # This indicates the frontier is safely away from obstacles
+        return min_distance if min_distance != float("inf") else self.safe_distance
 
     def _compute_comprehensive_frontier_score(
         self, frontier: Vector3, frontier_size: int, robot_pose: Vector3, costmap: OccupancyGrid
@@ -491,29 +520,38 @@ class WavefrontFrontierExplorer(Module):
         """Compute comprehensive score considering multiple criteria."""
 
         # 1. Distance from robot (preference for moderate distances)
-        robot_distance = np.sqrt(
-            (frontier.x - robot_pose.x) ** 2 + (frontier.y - robot_pose.y) ** 2
-        )
+        robot_distance = get_distance(frontier, robot_pose)
 
         # Distance score: prefer moderate distances (not too close, not too far)
-        optimal_distance = 4.0  # meters
-        distance_score = 1.0 / (1.0 + abs(robot_distance - optimal_distance))
+        # Normalized to 0-1 range
+        distance_score = 1.0 / (1.0 + abs(robot_distance - self.lookahead_distance))
 
         # 2. Information gain (frontier size)
-        info_gain_score = frontier_size
+        # Normalize by a reasonable max frontier size
+        max_expected_frontier_size = self.min_frontier_perimeter / costmap.resolution * 10
+        info_gain_score = min(frontier_size / max_expected_frontier_size, 1.0)
 
         # 3. Distance to explored goals (bonus for being far from explored areas)
+        # Normalize by a reasonable max distance (e.g., 10 meters)
         explored_goals_distance = self._compute_distance_to_explored_goals(frontier)
-        explored_goals_score = explored_goals_distance
+        explored_goals_score = min(explored_goals_distance / self.max_explored_distance, 1.0)
 
-        # 4. Distance to obstacles (penalty for being too close)
+        # 4. Distance to obstacles (score based on safety)
+        # 0 = too close to obstacles, 1 = at or beyond safe distance
         obstacles_distance = self._compute_distance_to_obstacles(frontier, costmap)
-        obstacles_score = obstacles_distance
+        if obstacles_distance >= self.safe_distance:
+            obstacles_score = 1.0  # Fully safe
+        else:
+            obstacles_score = obstacles_distance / self.safe_distance  # Linear penalty
 
-        # 5. Direction momentum (if we have a current direction)
+        # 5. Direction momentum (already in 0-1 range from dot product)
         momentum_score = self._compute_direction_momentum_score(frontier, robot_pose)
 
-        # Combine scores with consistent scaling (no arbitrary multipliers)
+        logger.info(
+            f"Distance score: {distance_score:.2f}, Info gain: {info_gain_score:.2f}, Explored goals: {explored_goals_score:.2f}, Obstacles: {obstacles_score:.2f}, Momentum: {momentum_score:.2f}"
+        )
+
+        # Combine scores with consistent scaling
         total_score = (
             0.3 * info_gain_score  # 30% information gain
             + 0.3 * explored_goals_score  # 30% distance from explored goals
@@ -549,10 +587,6 @@ class WavefrontFrontierExplorer(Module):
         valid_frontiers = []
 
         for i, frontier in enumerate(frontier_centroids):
-            obstacle_distance = self._compute_distance_to_obstacles(frontier, costmap)
-            if obstacle_distance < self.min_distance_from_obstacles:
-                continue
-
             # Compute comprehensive score
             frontier_size = frontier_sizes[i] if i < len(frontier_sizes) else 1
             score = self._compute_comprehensive_frontier_score(
@@ -605,7 +639,8 @@ class WavefrontFrontierExplorer(Module):
                         logger.info(
                             f"No information gain for {self.no_gain_counter} consecutive attempts"
                         )
-                        self.reset_exploration_session()
+                        self.no_gain_counter = 0  # Reset counter when stopping due to no gain
+                        self.stop_exploration()
                         return None
                 else:
                     self.no_gain_counter = 0
@@ -690,6 +725,7 @@ class WavefrontFrontierExplorer(Module):
             return False
 
         self.exploration_active = False
+        self.no_gain_counter = 0  # Reset counter when exploration stops
         self.stop_event.set()
 
         if self.exploration_thread and self.exploration_thread.is_alive():
@@ -717,7 +753,8 @@ class WavefrontFrontierExplorer(Module):
             )
 
             # Get exploration goal
-            goal = self.get_exploration_goal(robot_pose, self.latest_costmap)
+            costmap = self.latest_costmap.inflate(0.25)
+            goal = self.get_exploration_goal(robot_pose, costmap)
 
             if goal:
                 # Publish goal to navigator

@@ -324,7 +324,7 @@ def quaternion_to_euler(quaternion: Quaternion, degrees: bool = False) -> Vector
         return Vector3(euler[0], euler[1], euler[2])
 
 
-def get_distance(pose1: Pose, pose2: Pose) -> float:
+def get_distance(pose1: Pose | Vector3, pose2: Pose | Vector3) -> float:
     """
     Calculate Euclidean distance between two poses.
 
@@ -335,18 +335,25 @@ def get_distance(pose1: Pose, pose2: Pose) -> float:
     Returns:
         Euclidean distance between the two poses in meters
     """
-    dx = pose1.position.x - pose2.position.x
-    dy = pose1.position.y - pose2.position.y
-    dz = pose1.position.z - pose2.position.z
+    if hasattr(pose1, "position"):
+        pose1 = pose1.position
+    if hasattr(pose2, "position"):
+        pose2 = pose2.position
+
+    dx = pose1.x - pose2.x
+    dy = pose1.y - pose2.y
+    dz = pose1.z - pose2.z
 
     return np.linalg.norm(np.array([dx, dy, dz]))
 
 
-def retract_distance(target_pose: Pose, distance: float) -> Pose:
+def offset_distance(
+    target_pose: Pose, distance: float, approach_vector: Vector3 = Vector3(0, 0, -1)
+) -> Pose:
     """
     Apply distance offset to target pose along its approach direction.
 
-    This is commonly used in grasping to retract the gripper by a certain distance
+    This is commonly used in grasping to offset the gripper by a certain distance
     along the approach vector before or after grasping.
 
     Args:
@@ -363,7 +370,7 @@ def retract_distance(target_pose: Pose, distance: float) -> Pose:
     # Define the approach vector based on the target pose orientation
     # Assuming the gripper approaches along its local -z axis (common for downward grasps)
     # You can change this to [1, 0, 0] for x-axis or [0, 1, 0] for y-axis based on your gripper
-    approach_vector_local = np.array([0, 0, -1])
+    approach_vector_local = np.array([approach_vector.x, approach_vector.y, approach_vector.z])
 
     # Transform approach vector to world coordinates
     approach_vector_world = rotation_matrix @ approach_vector_local
