@@ -442,8 +442,6 @@ class Image(Timestamped):
         score = _clip01(sharp_q - 0.25 * p_noise - 0.25 * p_expo - p_glitch)
 
         reasons = []
-        print(f"ten_log: {ten_log}")
-        print(f"sharp_q: {sharp_q}")
         if sharp_q < 0.3:
             reasons.append("blur/low-sharpness")
         if p_noise > 0.5:
