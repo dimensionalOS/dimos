@@ -228,8 +228,8 @@ class UnitreeWebRTCConnection(ConnectionInterface):
             },
         )
 
-    @functools.lru_cache(maxsize=None)
-    def video_stream(self) -> Observable[VideoMessage]:
+    @functools.cache
+    def raw_video_stream(self) -> Subject[VideoMessage]:
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
 
@@ -238,7 +238,7 @@ class UnitreeWebRTCConnection(ConnectionInterface):
                 if stop_event.is_set():
                     return
                 frame = await track.recv()
-                subject.on_next(Image.from_numpy(frame.to_ndarray(format="rgb24")))
+                subject.on_next(frame)
 
         self.conn.video.add_track_callback(accept_track)
 
@@ -259,6 +259,14 @@ class UnitreeWebRTCConnection(ConnectionInterface):
             self.loop.call_soon_threadsafe(switch_video_channel_off)
 
         return subject.pipe(ops.finally_action(stop))
+
+    @functools.cache
+    def video_stream(self) -> Observable[VideoMessage]:
+        return backpressure(
+            self.raw_video_stream().pipe(
+                ops.map(lambda frame: Image.from_numpy(frame.to_ndarray(format="rgb24")))
+            )
+        )
 
     def get_video_stream(self, fps: int = 30) -> Observable[VideoMessage]:
         """Get the video stream from the robot's camera.

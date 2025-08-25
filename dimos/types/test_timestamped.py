@@ -298,7 +298,6 @@ def test_timestamp_alignment():
 
     def process_video_frame(frame):
         processed_frames.append(frame.ts)
-        print("PROCESSING", frame.ts)
         time.sleep(0.5 / speed)
         return frame
 
