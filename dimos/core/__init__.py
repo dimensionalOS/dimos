@@ -54,7 +54,7 @@ class RPCClient:
 
         if name in self.rpcs:
             return lambda *args, **kwargs: self.rpc.call_sync(
-                f"{self.remote_name}/{name}", (args, kwargs), timeout=2.0
+                f"{self.remote_name}/{name}", (args, kwargs)
             )
 
         # return super().__getattr__(name)

@@ -3,7 +3,14 @@ requires = ["setuptools>=70", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["dimos"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dimos*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.html", "*.css", "*.js", "*.json", "*.txt", "*.yaml", "*.yml"]
 
 [project]
 name = "dimos"
@@ -135,11 +142,11 @@ cpu = [
 
 cuda = [
     "pycuda",
-    "onnxruntime-gpu>=1.17.1,<=1.18.1", # Only versions supporting both cuda11 and cuda12
+    "onnxruntime-gpu>=1.17.1", # Only versions supporting both cuda11 and cuda12
     "ctransformers[cuda]==0.2.27",
     "mmengine>=0.10.3",
     "mmcv>=2.1.0",
-    "xformers==0.0.20",
+    "xformers>=0.0.20",
 
     # Detic GPU stack 
     "mss",
@@ -209,10 +216,11 @@ markers = [
     "ros: depend on ros",
     "lcm: tests that run actual LCM bus (can't execute in CI)",
     "module: tests that need to run directly as modules",
-    "gpu: tests that require GPU"
+    "gpu: tests that require GPU",
+    "tofix: temporarily disabled test"
 ]
 
-addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module'"
+addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

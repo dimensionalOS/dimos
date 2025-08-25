@@ -76,6 +76,7 @@ class BaseAgent:
         max_history: int = 20,
         rag_n: int = 4,
         rag_threshold: float = 0.45,
+        seed: Optional[int] = None,
         # Legacy compatibility
         dev_name: str = "BaseAgent",
         agent_type: str = "LLM",
@@ -94,6 +95,7 @@ class BaseAgent:
             max_history: Maximum conversation history to keep
             rag_n: Number of RAG results to fetch
             rag_threshold: Minimum similarity for RAG results
+            seed: Random seed for deterministic outputs (if supported by model)
             dev_name: Device/agent name for logging
             agent_type: Type of agent for logging
         """
@@ -105,6 +107,7 @@ class BaseAgent:
         self._max_history = max_history
         self.rag_n = rag_n
         self.rag_threshold = rag_threshold
+        self.seed = seed
         self.dev_name = dev_name
         self.agent_type = agent_type
 
@@ -224,15 +227,22 @@ class BaseAgent:
         logger.debug(f"Tools available: {len(tools) if tools else 0}")
         logger.debug("======================")
 
+        # Prepare inference parameters
+        inference_params = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": False,
+        }
+
+        # Add seed if provided
+        if self.seed is not None:
+            inference_params["seed"] = self.seed
+
         # Make inference call
-        response = await self.gateway.ainference(
-            model=self.model,
-            messages=messages,
-            tools=tools,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stream=False,
-        )
+        response = await self.gateway.ainference(**inference_params)
 
         # Extract response
         message = response["choices"][0]["message"]
@@ -423,13 +433,20 @@ class BaseAgent:
             # Add tool results to messages
             messages.extend(tool_results)
 
+            # Prepare follow-up inference parameters
+            followup_params = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+            }
+
+            # Add seed if provided
+            if self.seed is not None:
+                followup_params["seed"] = self.seed
+
             # Get follow-up response
-            response = await self.gateway.ainference(
-                model=self.model,
-                messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-            )
+            response = await self.gateway.ainference(**followup_params)
 
             # Extract final response
             final_message = response["choices"][0]["message"]

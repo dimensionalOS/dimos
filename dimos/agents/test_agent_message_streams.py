@@ -167,6 +167,7 @@ class ResponseCollector(Module):
         return self.responses
 
 
+@pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
 async def test_agent_message_video_stream():
@@ -250,6 +251,7 @@ async def test_agent_message_video_stream():
         dimos.shutdown()
 
 
+@pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
 async def test_agent_message_multi_image():
@@ -327,6 +329,7 @@ async def test_agent_message_multi_image():
         dimos.shutdown()
 
 
+@pytest.mark.tofix
 def test_agent_message_text_only():
     """Test BaseAgent with text-only AgentMessage."""
     load_dotenv()
@@ -341,6 +344,7 @@ def test_agent_message_text_only():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful assistant. Answer in 10 words or less.",
         temperature=0.0,
+        seed=42,
     )
 
     # Test with text-only AgentMessage

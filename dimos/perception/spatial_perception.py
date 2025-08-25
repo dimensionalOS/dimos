@@ -22,6 +22,7 @@ import os
 from typing import Dict, List, Optional, Any
 
 import numpy as np
+import cv2
 from reactivex import Observable, disposable, just, interval
 from reactivex import operators as ops
 from datetime import datetime
@@ -180,7 +181,9 @@ class SpatialMemory(Module):
         def set_video(image_msg: Image):
             # Convert Image message to numpy array
             if hasattr(image_msg, "data"):
-                self._latest_video_frame = image_msg.data
+                frame = image_msg.data
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                self._latest_video_frame = frame
             else:
                 logger.warning("Received image message without data attribute")
 

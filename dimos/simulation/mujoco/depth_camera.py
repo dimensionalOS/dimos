@@ -18,7 +18,9 @@ import math
 import numpy as np
 import open3d as o3d
 
-RANGE_FINDER_MAX_RANGE = 4
+MAX_RANGE = 3
+MIN_RANGE = 0.2
+MAX_HEIGHT = 1.2
 
 
 def depth_image_to_point_cloud(
@@ -26,7 +28,6 @@ def depth_image_to_point_cloud(
     camera_pos: np.ndarray,
     camera_mat: np.ndarray,
     fov_degrees: float = 120,
-    min_range: float = 0.0,
 ) -> np.ndarray:
     """
     Convert a depth image from a camera to a 3D point cloud using perspective projection.
@@ -68,9 +69,12 @@ def depth_image_to_point_cloud(
     camera_points[:, 1] = -camera_points[:, 1]
     camera_points[:, 2] = -camera_points[:, 2]
 
-    # Filter points based on depth range (note: z is now negative)
-    valid_mask = (camera_points[:, 2] < -min_range) & (
-        camera_points[:, 2] > -RANGE_FINDER_MAX_RANGE
+    # y (index 1) is up here
+    valid_mask = (
+        (np.abs(camera_points[:, 0]) <= MAX_RANGE)
+        & (np.abs(camera_points[:, 1]) <= MAX_HEIGHT)
+        & (np.abs(camera_points[:, 2]) >= MIN_RANGE)
+        & (np.abs(camera_points[:, 2]) <= MAX_RANGE)
     )
     camera_points = camera_points[valid_mask]
 

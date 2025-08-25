@@ -79,6 +79,7 @@ def main():
     # Create robot instance
     robot = UnitreeGo2(
         ip=os.getenv("ROBOT_IP"),
+        connection_type=os.getenv("CONNECTION_TYPE", "webrtc"),
     )
 
     robot.start()

@@ -1,0 +1,109 @@
+# Version control
+.git
+.gitignore
+.github/
+
+# Editor and IDE files
+.vscode
+.idea
+*.swp
+*.swo
+.cursor/
+.cursorignore
+
+# Shell history
+.bash_history
+.zsh_history
+.history
+
+# Python virtual environments
+**/venv/
+**/.venv/
+**/env/
+**/.env/
+**/*-venv/
+**/*_venv/
+**/ENV/
+
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.so
+*.dylib
+
+# Environment file
+.env
+.env.local
+.env.*.local
+
+# Large data files
+data/*
+!data/.lfs/
+
+# Model files (can be downloaded at runtime)
+*.pt
+*.pth
+*.onnx
+*.pb
+*.h5
+*.ckpt
+*.safetensors
+checkpoints/
+assets/model-cache
+
+# Logs
+*.log
+
+# Large media files (not needed for functionality)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.MOV
+
+# Large font files
+*.ttf
+*.otf
+
+# Node modules (for dev tools, not needed in container)
+node_modules/
+package-lock.json
+package.json
+bin/node_modules/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+.python-version
+
+# Exclude all assets subdirectories
+assets/*/*
+!assets/agent/prompt.txt
+!assets/*

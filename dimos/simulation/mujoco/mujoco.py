@@ -32,12 +32,11 @@ from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud
 from dimos.simulation.mujoco.model import load_model
 
-RANGE_FINDER_MAX_RANGE = 4
-RANGE_FINDER_MIN_RANGE = 0.2
 LIDAR_RESOLUTION = 0.05
-VIDEO_FREQUENCY = 30
 DEPTH_CAMERA_FOV = 160
-STEPS_PER_FRAME = 7  # Adjust this number to control physics speed
+STEPS_PER_FRAME = 2
+VIDEO_FPS = 20
+LIDAR_FPS = 4
 
 logger = logging.getLogger(__name__)
 
@@ -96,36 +95,46 @@ class MujocoThread(threading.Thread):
 
         with viewer.launch_passive(self.model, self.data) as m_viewer:
             self._viewer = m_viewer
-            window_size = (320, 240)
+            camera_size = (320, 240)
 
             # Create separate renderers for RGB and depth
             self._rgb_renderer = mujoco.Renderer(
-                self.model, height=window_size[1], width=window_size[0]
+                self.model, height=camera_size[1], width=camera_size[0]
             )
             self._depth_renderer = mujoco.Renderer(
-                self.model, height=window_size[1], width=window_size[0]
+                self.model, height=camera_size[1], width=camera_size[0]
             )
             # Enable depth rendering only for depth renderer
             self._depth_renderer.enable_depth_rendering()
 
             # Create renderers for left and right depth cameras
             self._depth_left_renderer = mujoco.Renderer(
-                self.model, height=window_size[1], width=window_size[0]
+                self.model, height=camera_size[1], width=camera_size[0]
             )
             self._depth_left_renderer.enable_depth_rendering()
 
             self._depth_right_renderer = mujoco.Renderer(
-                self.model, height=window_size[1], width=window_size[0]
+                self.model, height=camera_size[1], width=camera_size[0]
             )
             self._depth_right_renderer.enable_depth_rendering()
 
             scene_option = mujoco.MjvOption()
 
+            # Timing control variables
+            last_video_time = 0
+            last_lidar_time = 0
+            video_interval = 1.0 / VIDEO_FPS
+            lidar_interval = 1.0 / LIDAR_FPS
+
             while m_viewer.is_running() and self._is_running:
-                # Step multiple times per frame to speed up physics
+                step_start = time.time()
+
                 for _ in range(STEPS_PER_FRAME):
                     mujoco.mj_step(self.model, self.data)
 
+                m_viewer.sync()
+
+                # Odometry happens every loop
                 with self.odom_lock:
                     # base position
                     pos = self.data.qpos[0:3]
@@ -133,44 +142,56 @@ class MujocoThread(threading.Thread):
                     quat = self.data.qpos[3:7]  # (w, x, y, z)
                     self.odom_data = (pos.copy(), quat.copy())
 
-                # Render regular camera for video (RGB)
-                self._rgb_renderer.update_scene(
-                    self.data, camera=camera_id, scene_option=scene_option
-                )
-                pixels = self._rgb_renderer.render()
+                current_time = time.time()
 
-                with self.pixels_lock:
-                    self.shared_pixels = pixels.copy()
+                # Video rendering
+                if current_time - last_video_time >= video_interval:
+                    self._rgb_renderer.update_scene(
+                        self.data, camera=camera_id, scene_option=scene_option
+                    )
+                    pixels = self._rgb_renderer.render()
 
-                # Render fisheye camera for depth/lidar data
-                self._depth_renderer.update_scene(
-                    self.data, camera=lidar_camera_id, scene_option=scene_option
-                )
-                # When depth rendering is enabled, render() returns depth as float array in meters
-                depth = self._depth_renderer.render()
+                    with self.pixels_lock:
+                        self.shared_pixels = pixels.copy()
 
-                with self.depth_lock_front:
-                    self.shared_depth_front = depth.copy()
+                    last_video_time = current_time
 
-                # Render left depth camera
-                self._depth_left_renderer.update_scene(
-                    self.data, camera=lidar_left_camera_id, scene_option=scene_option
-                )
-                depth_left = self._depth_left_renderer.render()
+                # Lidar rendering
+                if current_time - last_lidar_time >= lidar_interval:
+                    # Render fisheye camera for depth/lidar data
+                    self._depth_renderer.update_scene(
+                        self.data, camera=lidar_camera_id, scene_option=scene_option
+                    )
+                    # When depth rendering is enabled, render() returns depth as float array in meters
+                    depth = self._depth_renderer.render()
 
-                with self.depth_left_lock:
-                    self.shared_depth_left = depth_left.copy()
+                    with self.depth_lock_front:
+                        self.shared_depth_front = depth.copy()
 
-                # Render right depth camera
-                self._depth_right_renderer.update_scene(
-                    self.data, camera=lidar_right_camera_id, scene_option=scene_option
-                )
-                depth_right = self._depth_right_renderer.render()
+                    # Render left depth camera
+                    self._depth_left_renderer.update_scene(
+                        self.data, camera=lidar_left_camera_id, scene_option=scene_option
+                    )
+                    depth_left = self._depth_left_renderer.render()
 
-                with self.depth_right_lock:
-                    self.shared_depth_right = depth_right.copy()
+                    with self.depth_left_lock:
+                        self.shared_depth_left = depth_left.copy()
 
-                m_viewer.sync()
+                    # Render right depth camera
+                    self._depth_right_renderer.update_scene(
+                        self.data, camera=lidar_right_camera_id, scene_option=scene_option
+                    )
+                    depth_right = self._depth_right_renderer.render()
+
+                    with self.depth_right_lock:
+                        self.shared_depth_right = depth_right.copy()
+
+                    last_lidar_time = current_time
+
+                # Control the simulation speed
+                time_until_next_step = self.model.opt.timestep - (time.time() - step_start)
+                if time_until_next_step > 0:
+                    time.sleep(time_until_next_step)
 
     def _process_depth_camera(self, camera_name: str, depth_data, depth_lock) -> np.ndarray | None:
         """Process a single depth camera and return point cloud points."""
@@ -190,7 +211,6 @@ class MujocoThread(threading.Thread):
                 camera_pos,
                 camera_mat,
                 fov_degrees=DEPTH_CAMERA_FOV,
-                min_range=RANGE_FINDER_MIN_RANGE,
             )
             return points if points.size > 0 else None
 

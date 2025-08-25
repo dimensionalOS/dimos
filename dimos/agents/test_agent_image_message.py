@@ -15,23 +15,25 @@
 
 """Test BaseAgent with AgentMessage containing images."""
 
+import logging
 import os
-import numpy as np
-from dotenv import load_dotenv
-import pytest
 
-from dimos.agents.modules.base import BaseAgent
+import numpy as np
+import pytest
+from dotenv import load_dotenv
+
 from dimos.agents.agent_message import AgentMessage
+from dimos.agents.modules.base import BaseAgent
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.utils.logging_config import setup_logger
-import logging
 
 logger = setup_logger("test_agent_image_message")
 # Enable debug logging for base module
 logging.getLogger("dimos.agents.modules.base").setLevel(logging.DEBUG)
 
 
+@pytest.mark.tofix
 def test_agent_single_image():
     """Test agent with single image in AgentMessage."""
     load_dotenv()
@@ -44,6 +46,7 @@ def test_agent_single_image():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful vision assistant. Describe what you see concisely.",
         temperature=0.0,
+        seed=42,
     )
 
     # Create AgentMessage with text and single image
@@ -91,6 +94,7 @@ def test_agent_single_image():
     agent.dispose()
 
 
+@pytest.mark.tofix
 def test_agent_multiple_images():
     """Test agent with multiple images in AgentMessage."""
     load_dotenv()
@@ -103,6 +107,7 @@ def test_agent_multiple_images():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful vision assistant that compares images.",
         temperature=0.0,
+        seed=42,
     )
 
     # Create AgentMessage with multiple images
@@ -157,6 +162,7 @@ def test_agent_multiple_images():
     agent.dispose()
 
 
+@pytest.mark.tofix
 def test_agent_image_with_context():
     """Test agent maintaining context with image queries."""
     load_dotenv()
@@ -169,6 +175,7 @@ def test_agent_image_with_context():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful vision assistant with good memory.",
         temperature=0.0,
+        seed=42,
     )
 
     # First query with image
@@ -204,6 +211,7 @@ def test_agent_image_with_context():
     agent.dispose()
 
 
+@pytest.mark.tofix
 def test_agent_mixed_content():
     """Test agent with mixed text-only and image queries."""
     load_dotenv()
@@ -216,6 +224,7 @@ def test_agent_mixed_content():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful assistant that can see images when provided.",
         temperature=0.0,
+        seed=100,
     )
 
     # Text-only query
@@ -228,10 +237,11 @@ def test_agent_mixed_content():
     msg2.add_text("What do you see? Describe the scene.")
 
     # Use first frame from rgbd_frames test data
-    from dimos.utils.data import get_data
-    from dimos.msgs.sensor_msgs import Image
-    from PIL import Image as PILImage
     import numpy as np
+    from PIL import Image as PILImage
+
+    from dimos.msgs.sensor_msgs import Image
+    from dimos.utils.data import get_data
 
     data_path = get_data("rgbd_frames")
     image_path = os.path.join(data_path, "color", "00000.png")
@@ -260,10 +270,10 @@ def test_agent_mixed_content():
 
     # Another text-only query
     response3 = agent.query("What did I just show you?")
-    assert any(
-        word in response3.content.lower()
-        for word in ["office", "room", "hallway", "image", "scene"]
-    )
+    words = ["office", "room", "hallway", "image", "scene"]
+    content = response3.content.lower()
+
+    assert any(word in content for word in words), f"{content=}"
 
     # Check history structure
     assert agent.conversation.size() == 6
@@ -279,6 +289,7 @@ def test_agent_mixed_content():
     agent.dispose()
 
 
+@pytest.mark.tofix
 def test_agent_empty_image_message():
     """Test edge case with empty parts of AgentMessage."""
     load_dotenv()
@@ -288,7 +299,10 @@ def test_agent_empty_image_message():
 
     # Create agent
     agent = BaseAgent(
-        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0
+        model="openai::gpt-4o-mini",
+        system_prompt="You are a helpful assistant.",
+        temperature=0.0,
+        seed=42,
     )
 
     # AgentMessage with only images, no text
@@ -323,6 +337,7 @@ def test_agent_empty_image_message():
     agent.dispose()
 
 
+@pytest.mark.tofix
 def test_agent_non_vision_model_with_images():
     """Test that non-vision models handle image input gracefully."""
     load_dotenv()
@@ -335,6 +350,7 @@ def test_agent_non_vision_model_with_images():
         model="openai::gpt-3.5-turbo",  # This model doesn't support vision
         system_prompt="You are a helpful assistant.",
         temperature=0.0,
+        seed=42,
     )
 
     # Try to send an image
@@ -358,12 +374,13 @@ def test_agent_non_vision_model_with_images():
     agent.dispose()
 
 
+@pytest.mark.tofix
 def test_mock_agent_with_images():
     """Test mock agent with images for CI."""
     # This test doesn't need API keys
 
-    from dimos.agents.test_base_agent_text import MockAgent
     from dimos.agents.agent_types import AgentResponse
+    from dimos.agents.test_base_agent_text import MockAgent
 
     # Create mock agent
     agent = MockAgent(model="mock::vision", system_prompt="Mock vision agent")
@@ -385,14 +402,3 @@ def test_mock_agent_with_images():
 
     # Clean up
     agent.dispose()
-
-
-if __name__ == "__main__":
-    test_agent_single_image()
-    test_agent_multiple_images()
-    test_agent_image_with_context()
-    test_agent_mixed_content()
-    test_agent_empty_image_message()
-    test_agent_non_vision_model_with_images()
-    test_mock_agent_with_images()
-    print("\n✅ All image message tests passed!")

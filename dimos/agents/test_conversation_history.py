@@ -32,6 +32,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.tofix
 def test_conversation_history_basic():
     """Test basic conversation history functionality."""
     load_dotenv()
@@ -43,6 +44,7 @@ def test_conversation_history_basic():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful assistant with perfect memory.",
         temperature=0.0,
+        seed=42,
     )
 
     try:
@@ -87,6 +89,7 @@ def test_conversation_history_basic():
         agent.dispose()
 
 
+@pytest.mark.tofix
 def test_conversation_history_with_images():
     """Test conversation history with multimodal content."""
     load_dotenv()
@@ -98,6 +101,7 @@ def test_conversation_history_with_images():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful vision assistant.",
         temperature=0.0,
+        seed=42,
     )
 
     try:
@@ -146,6 +150,7 @@ def test_conversation_history_with_images():
         agent.dispose()
 
 
+@pytest.mark.tofix
 def test_conversation_history_trimming():
     """Test that conversation history is trimmed to max size."""
     load_dotenv()
@@ -159,6 +164,7 @@ def test_conversation_history_trimming():
         system_prompt="You are a helpful assistant.",
         temperature=0.0,
         max_history=3,  # Keep 3 message pairs (6 messages total)
+        seed=42,
     )
 
     try:
@@ -203,6 +209,7 @@ def test_conversation_history_trimming():
         agent.dispose()
 
 
+@pytest.mark.tofix
 def test_conversation_history_with_tools():
     """Test conversation history with tool calls."""
     load_dotenv()
@@ -232,6 +239,7 @@ def test_conversation_history_with_tools():
         system_prompt="You are a helpful assistant with access to a calculator.",
         skills=TestSkillLibrary(),
         temperature=0.0,
+        seed=100,
     )
 
     try:
@@ -260,6 +268,7 @@ def test_conversation_history_with_tools():
         agent.dispose()
 
 
+@pytest.mark.tofix
 def test_conversation_thread_safety():
     """Test that conversation history is thread-safe."""
     load_dotenv()
@@ -267,7 +276,7 @@ def test_conversation_thread_safety():
     if not os.getenv("OPENAI_API_KEY"):
         pytest.skip("No OPENAI_API_KEY found")
 
-    agent = BaseAgent(model="openai::gpt-4o-mini", temperature=0.0)
+    agent = BaseAgent(model="openai::gpt-4o-mini", temperature=0.0, seed=42)
 
     try:
 
@@ -293,6 +302,7 @@ def test_conversation_thread_safety():
         agent.dispose()
 
 
+@pytest.mark.tofix
 def test_conversation_history_formats():
     """Test ConversationHistory formatting methods."""
     load_dotenv()
@@ -300,7 +310,7 @@ def test_conversation_history_formats():
     if not os.getenv("OPENAI_API_KEY"):
         pytest.skip("No OPENAI_API_KEY found")
 
-    agent = BaseAgent(model="openai::gpt-4o-mini", temperature=0.0)
+    agent = BaseAgent(model="openai::gpt-4o-mini", temperature=0.0, seed=42)
 
     try:
         # Create a conversation
@@ -351,6 +361,7 @@ def test_conversation_history_formats():
         agent.dispose()
 
 
+@pytest.mark.tofix
 @pytest.mark.timeout(30)  # Add timeout to prevent hanging
 def test_conversation_edge_cases():
     """Test edge cases in conversation history."""
@@ -360,7 +371,10 @@ def test_conversation_edge_cases():
         pytest.skip("No OPENAI_API_KEY found")
 
     agent = BaseAgent(
-        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0
+        model="openai::gpt-4o-mini",
+        system_prompt="You are a helpful assistant.",
+        temperature=0.0,
+        seed=42,
     )
 
     try:

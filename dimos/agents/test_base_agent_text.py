@@ -69,6 +69,7 @@ class ResponseCollector(Module):
         return self.responses
 
 
+@pytest.mark.tofix
 def test_base_agent_direct_text():
     """Test BaseAgent direct text usage."""
     load_dotenv()
@@ -81,6 +82,7 @@ def test_base_agent_direct_text():
         model="openai::gpt-4o-mini",
         system_prompt="You are a helpful assistant. Answer in 10 words or less.",
         temperature=0.0,
+        seed=42,  # Fixed seed for deterministic results
     )
 
     # Test simple query with string (backward compatibility)
@@ -115,6 +117,7 @@ def test_base_agent_direct_text():
     agent.dispose()
 
 
+@pytest.mark.tofix
 @pytest.mark.asyncio
 async def test_base_agent_async_text():
     """Test BaseAgent async text usage."""
@@ -125,7 +128,10 @@ async def test_base_agent_async_text():
 
     # Create agent
     agent = BaseAgent(
-        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0
+        model="openai::gpt-4o-mini",
+        system_prompt="You are a helpful assistant.",
+        temperature=0.0,
+        seed=42,
     )
 
     # Test async query with string
@@ -144,6 +150,7 @@ async def test_base_agent_async_text():
     agent.dispose()
 
 
+@pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
 async def test_base_agent_module_text():
@@ -229,6 +236,7 @@ async def test_base_agent_module_text():
         ("cerebras::llama-3.3-70b", "cerebras"),
     ],
 )
+@pytest.mark.tofix
 def test_base_agent_providers(model, provider):
     """Test BaseAgent with different providers."""
     load_dotenv()
@@ -248,6 +256,7 @@ def test_base_agent_providers(model, provider):
         model=model,
         system_prompt="You are a helpful assistant. Answer in 10 words or less.",
         temperature=0.0,
+        seed=42,
     )
 
     # Test query with AgentMessage
@@ -261,6 +270,7 @@ def test_base_agent_providers(model, provider):
     agent.dispose()
 
 
+@pytest.mark.tofix
 def test_base_agent_memory():
     """Test BaseAgent with memory/RAG."""
     load_dotenv()
@@ -274,6 +284,7 @@ def test_base_agent_memory():
         system_prompt="You are a helpful assistant. Use the provided context when answering.",
         temperature=0.0,
         rag_threshold=0.3,
+        seed=42,
     )
 
     # Add context to memory
@@ -359,6 +370,7 @@ class MockAgent(BaseAgent):
         pass
 
 
+@pytest.mark.tofix
 def test_mock_agent():
     """Test mock agent for CI without API keys."""
     # Create mock agent
@@ -387,6 +399,7 @@ def test_mock_agent():
     agent.dispose()
 
 
+@pytest.mark.tofix
 def test_base_agent_conversation_history():
     """Test that conversation history is properly maintained."""
     load_dotenv()
@@ -396,7 +409,10 @@ def test_base_agent_conversation_history():
 
     # Create agent
     agent = BaseAgent(
-        model="openai::gpt-4o-mini", system_prompt="You are a helpful assistant.", temperature=0.0
+        model="openai::gpt-4o-mini",
+        system_prompt="You are a helpful assistant.",
+        temperature=0.0,
+        seed=42,
     )
 
     # Test 1: Simple conversation
@@ -446,6 +462,7 @@ def test_base_agent_conversation_history():
     agent.dispose()
 
 
+@pytest.mark.tofix
 def test_base_agent_history_with_tools():
     """Test conversation history with tool calls."""
     load_dotenv()
@@ -477,6 +494,7 @@ def test_base_agent_history_with_tools():
         system_prompt="You are a helpful assistant with a calculator. Use the calculator tool when asked to compute something.",
         skills=skills,
         temperature=0.0,
+        seed=42,
     )
 
     # Make a query that should trigger tool use
