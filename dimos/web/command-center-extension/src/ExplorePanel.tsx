@@ -1,36 +1,40 @@
 import * as React from "react";
 
+import Button from "./Button";
+
 interface ControlPanelProps {
   onStartExplore: () => void;
   onStopExplore: () => void;
 }
 
-export default function ControlPanel({
+export default function ExplorePanel({
   onStartExplore,
   onStopExplore,
 }: ControlPanelProps): React.ReactElement {
   const [exploring, setExploring] = React.useState(false);
 
   return (
-    <div style={{ width: "100%", padding: 5 }}>
+    <div>
       {exploring ? (
-        <button
+        <Button
           onClick={() => {
             onStopExplore();
             setExploring(false);
           }}
+          isActive={true}
         >
           Stop Exploration
-        </button>
+        </Button>
       ) : (
-        <button
+        <Button
           onClick={() => {
             onStartExplore();
             setExploring(true);
           }}
+          isActive={false}
         >
           Start Exploration
-        </button>
+        </Button>
       )}
     </div>
   );

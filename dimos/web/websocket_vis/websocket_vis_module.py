@@ -32,7 +32,7 @@ from starlette.routing import Route
 
 from dimos.core import Module, In, Out, rpc
 from dimos_lcm.std_msgs import Bool
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 
@@ -67,6 +67,7 @@ class WebsocketVisModule(Module):
     click_goal: Out[PoseStamped] = None
     explore_cmd: Out[Bool] = None
     stop_explore_cmd: Out[Bool] = None
+    movecmd: Out[Twist] = None
 
     def __init__(self, port: int = 7779, **kwargs):
         """Initialize the WebSocket visualization module.
@@ -163,6 +164,14 @@ class WebsocketVisModule(Module):
         async def stop_explore(sid):
             logger.info("Stopping exploration")
             self.stop_explore_cmd.publish(Bool(data=True))
+
+        @self.sio.event
+        async def move_command(sid, data):
+            twist = Twist(
+                linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
+                angular=Vector3(data["angular"]["x"], data["angular"]["y"], data["angular"]["z"])
+            )
+            self.movecmd.publish(twist)
 
     def _run_server(self):
         uvicorn.run(
