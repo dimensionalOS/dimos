@@ -18,9 +18,11 @@ from typing import Generator, Optional
 
 import pytest
 
+from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.protocol.skill.type import Reducer, Stream
+from dimos.protocol.skill.type import Output, Reducer, Stream
+from dimos.utils.data import get_data
 
 
 class TestContainer(SkillContainer):
@@ -57,7 +59,7 @@ class TestContainer(SkillContainer):
     def current_time(self, frequency: Optional[float] = 10) -> Generator[str, None, None]:
         """Provides current time."""
         while True:
-            yield str(datetime.datetime.now())
+            yield datetime.datetime.now()
             time.sleep(1 / frequency)
 
     @skill(stream=Stream.passive, reducer=Reducer.latest)
@@ -71,8 +73,12 @@ class TestContainer(SkillContainer):
     @skill()
     def current_date(self, frequency: Optional[float] = 10) -> str:
         """Provides current date."""
-        time.sleep(3)
-        return str(datetime.datetime.now())
+        return datetime.datetime.now()
+
+    @skill(output=Output.image)
+    def take_photo(self) -> str:
+        """Takes a camera photo"""
+        return Image.from_file(get_data("cafe.jpg"))
 
 
 @pytest.mark.asyncio

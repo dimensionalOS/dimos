@@ -106,7 +106,14 @@ class SkillState:
         # like a costmap, path, transform etc could be translatable into strings
         def maybe_encode(something: Any) -> str:
             if getattr(something, "agent_encode", None):
-                something = something.agent_encode()
+                return something.agent_encode()
+
+            # if isinstance(something, dict):
+            #     something = json.dumps(something)
+
+            # if not isinstance(something, str):
+            #     something = str(something)
+
             return something
 
         if self.state == SkillStateEnum.running:

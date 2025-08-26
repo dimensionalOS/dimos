@@ -39,7 +39,7 @@ async def test_agent_init():
     agent.start()
     agent.run_implicit_skill("uptime_seconds")
     agent.query_async(
-        "hi there, please tell me what's your name and current date, and how much is 124181112 + 124124?"
+        "hi there, I have 4 questions for you: Please tell me what's your name and current date, and how much is 124181112 + 124124, and what do you see on the camera?"
     )
 
     await asyncio.sleep(20)
