@@ -99,6 +99,8 @@ class UnitreeCameraModule(Module):
         self._processing_thread: Optional[threading.Thread] = None
         self._stop_processing = threading.Event()
 
+        self._num_depth_image = 0
+
         logger.info(f"UnitreeCameraModule initialized with intrinsics: {camera_intrinsics}")
 
     @rpc
@@ -180,6 +182,7 @@ class UnitreeCameraModule(Module):
         """Process depth estimation using Metric3D."""
         if self._cannot_process_depth:
             self._last_depth = None
+            logger.info("Cannot process depth!")
             return
 
         try:
@@ -187,6 +190,9 @@ class UnitreeCameraModule(Module):
 
             # Generate depth map
             depth_array = self.metric3d.infer_depth(img_array) / self.gt_depth_scale
+            logger.info("Depth hit! Saving")
+            cv2.imwrite(f"/home/ubuntu/depth_images/depth_{self._num_depth_image}.png", depth_array)
+            self._num_depth_image += 1
 
             self._last_depth = depth_array
             logger.debug(f"Generated depth map shape: {depth_array.shape}")
@@ -220,6 +226,8 @@ class UnitreeCameraModule(Module):
                     frame_id=header.frame_id,
                     ts=header.ts,
                 )
+                logger.info("Depth msg hit! Saving")
+                depth_msg.save(f"/home/ubuntu/depth_images/depth_{self._num_depth_image}.png")
                 self.depth_image.publish(depth_msg)
                 logger.debug(f"Published depth image (uint16): shape={depth_uint16.shape}")
 
