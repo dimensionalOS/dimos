@@ -19,7 +19,6 @@ WebSocket Visualization Module for Dimos navigation and mapping.
 """
 
 import asyncio
-import os
 import threading
 from typing import Any, Dict, Optional
 import base64
@@ -30,10 +29,10 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import HTMLResponse
 from starlette.routing import Route
-from starlette.staticfiles import StaticFiles
 
 from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos_lcm.std_msgs import Bool
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 
@@ -66,6 +65,9 @@ class WebsocketVisModule(Module):
 
     # LCM outputs
     click_goal: Out[PoseStamped] = None
+    explore_cmd: Out[Bool] = None
+    stop_explore_cmd: Out[Bool] = None
+    movecmd: Out[Twist] = None
 
     def __init__(self, port: int = 7779, **kwargs):
         """Initialize the WebSocket visualization module.
@@ -82,19 +84,12 @@ class WebsocketVisModule(Module):
         self._broadcast_loop = None
         self._broadcast_thread = None
 
-        # Visualization state
-        self.vis_state = {
-            "draw": {},  # Client expects visualization data under 'draw' key
-            "connected_clients": 0,
-            "status": "running",
-        }
+        self.vis_state = {}
         self.state_lock = threading.Lock()
 
         logger.info(f"WebSocket visualization module initialized on port {port}")
 
     def _start_broadcast_loop(self):
-        """Start the broadcast event loop in a background thread."""
-
         def run_loop():
             self._broadcast_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._broadcast_loop)
@@ -110,18 +105,12 @@ class WebsocketVisModule(Module):
 
     @rpc
     def start(self):
-        """Start the WebSocket server and subscribe to inputs."""
-        # Create the server
         self._create_server()
-
-        # Start the broadcast event loop in a background thread
         self._start_broadcast_loop()
 
-        # Start the server in a background thread
         self.server_thread = threading.Thread(target=self._run_server, daemon=True)
         self.server_thread.start()
 
-        # Subscribe to inputs
         self.robot_pose.subscribe(self._on_robot_pose)
         self.path.subscribe(self._on_path)
         self.global_costmap.subscribe(self._on_global_costmap)
@@ -138,64 +127,53 @@ class WebsocketVisModule(Module):
         logger.info("WebSocket visualization module stopped")
 
     def _create_server(self):
-        """Create the SocketIO server and Starlette app."""
         # Create SocketIO server
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
-        # Create Starlette app
         async def serve_index(request):
-            index_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
-            with open(index_path, "r") as f:
-                content = f.read()
-            return HTMLResponse(content)
+            return HTMLResponse("<html><body>Use the extension.</body></html>")
 
         routes = [Route("/", serve_index)]
         starlette_app = Starlette(routes=routes)
 
-        # Mount static files
-        static_dir = os.path.join(os.path.dirname(__file__), "static")
-        starlette_app.mount("/", StaticFiles(directory=static_dir), name="static")
-
-        # Create ASGI app
         self.app = socketio.ASGIApp(self.sio, starlette_app)
 
         # Register SocketIO event handlers
         @self.sio.event
         async def connect(sid, environ):
-            logger.info(f"Client connected: {sid}")
             with self.state_lock:
-                self.vis_state["connected_clients"] += 1
                 current_state = dict(self.vis_state)
-            # Send current state to new client
             await self.sio.emit("full_state", current_state, room=sid)
 
         @self.sio.event
-        async def disconnect(sid):
-            logger.info(f"Client disconnected: {sid}")
-            with self.state_lock:
-                self.vis_state["connected_clients"] -= 1
+        async def click(sid, position):
+            goal = PoseStamped(
+                position=(position[0], position[1], 0),
+                orientation=(0, 0, 0, 1),  # Default orientation
+                frame_id="world",
+            )
+            self.click_goal.publish(goal)
+            logger.info(f"Click goal published: ({goal.position.x:.2f}, {goal.position.y:.2f})")
 
         @self.sio.event
-        async def message(sid, data):
-            """Handle messages from the client."""
-            msg_type = data.get("type")
+        async def start_explore(sid):
+            logger.info("Starting exploration")
+            self.explore_cmd.publish(Bool(data=True))
 
-            if msg_type == "click":
-                # Convert click to navigation goal
-                position = data.get("position", [])
-                if isinstance(position, list) and len(position) >= 2:
-                    goal = PoseStamped(
-                        position=(position[0], position[1], 0),
-                        orientation=(0, 0, 0, 1),  # Default orientation
-                        frame_id="world",
-                    )
-                    self.click_goal.publish(goal)
-                    logger.info(
-                        f"Click goal published: ({goal.position.x:.2f}, {goal.position.y:.2f})"
-                    )
+        @self.sio.event
+        async def stop_explore(sid):
+            logger.info("Stopping exploration")
+            self.stop_explore_cmd.publish(Bool(data=True))
+
+        @self.sio.event
+        async def move_command(sid, data):
+            twist = Twist(
+                linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
+                angular=Vector3(data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]),
+            )
+            self.movecmd.publish(twist)
 
     def _run_server(self):
-        """Run the uvicorn server."""
         uvicorn.run(
             self.app,
             host="0.0.0.0",
@@ -204,22 +182,20 @@ class WebsocketVisModule(Module):
         )
 
     def _on_robot_pose(self, msg: PoseStamped):
-        """Handle robot pose updates."""
         pose_data = {"type": "vector", "c": [msg.position.x, msg.position.y, msg.position.z]}
-        self._update_state({"draw": {"robot_pos": pose_data}})
+        self.vis_state["robot_pose"] = pose_data
+        self._emit("robot_pose", pose_data)
 
     def _on_path(self, msg: Path):
-        """Handle path updates."""
-        points = []
-        for pose in msg.poses:
-            points.append([pose.position.x, pose.position.y])
+        points = [[pose.position.x, pose.position.y] for pose in msg.poses]
         path_data = {"type": "path", "points": points}
-        self._update_state({"draw": {"path": path_data}})
+        self.vis_state["path"] = path_data
+        self._emit("path", path_data)
 
     def _on_global_costmap(self, msg: OccupancyGrid):
-        """Handle global costmap updates."""
         costmap_data = self._process_costmap(msg)
-        self._update_state({"draw": {"costmap": costmap_data}})
+        self.vis_state["costmap"] = costmap_data
+        self._emit("costmap", costmap_data)
 
     def _process_costmap(self, costmap: OccupancyGrid) -> Dict[str, Any]:
         """Convert OccupancyGrid to visualization format."""
@@ -246,19 +222,6 @@ class WebsocketVisModule(Module):
             "origin_theta": 0,  # Assuming no rotation for now
         }
 
-    def _update_state(self, new_data: Dict[str, Any]):
-        """Update visualization state and broadcast to clients."""
-        with self.state_lock:
-            # If updating draw data, merge it properly
-            if "draw" in new_data:
-                if "draw" not in self.vis_state:
-                    self.vis_state["draw"] = {}
-                self.vis_state["draw"].update(new_data["draw"])
-            else:
-                self.vis_state.update(new_data)
-
-        # Broadcast update asynchronously
+    def _emit(self, event: str, data: Any):
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
-            asyncio.run_coroutine_threadsafe(
-                self.sio.emit("state_update", new_data), self._broadcast_loop
-            )
+            asyncio.run_coroutine_threadsafe(self.sio.emit(event, data), self._broadcast_loop)
