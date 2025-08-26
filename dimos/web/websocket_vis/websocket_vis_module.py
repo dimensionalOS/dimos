@@ -169,7 +169,7 @@ class WebsocketVisModule(Module):
         async def move_command(sid, data):
             twist = Twist(
                 linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
-                angular=Vector3(data["angular"]["x"], data["angular"]["y"], data["angular"]["z"])
+                angular=Vector3(data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]),
             )
             self.movecmd.publish(twist)
 
