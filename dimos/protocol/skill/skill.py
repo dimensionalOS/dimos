@@ -23,6 +23,7 @@ from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.schema import function_to_schema
 from dimos.protocol.skill.type import (
     MsgType,
+    Output,
     Reducer,
     Return,
     SkillConfig,
@@ -57,9 +58,10 @@ from dimos.protocol.skill.type import (
 
 
 def skill(
-    reducer=Reducer.latest,
-    stream=Stream.none,
-    ret=Return.call_agent,
+    reducer: Reducer = Reducer.latest,
+    stream: Stream = Stream.none,
+    ret: Return = Return.call_agent,
+    output: Output = Output.standard,
 ) -> Callable:
     def decorator(f: Callable[..., Any]) -> Any:
         def wrapper(self, *args, **kwargs):
@@ -90,6 +92,7 @@ def skill(
             reducer=reducer,
             stream=stream,
             ret=ret,
+            output=output,
             schema=function_to_schema(f),
         )
 

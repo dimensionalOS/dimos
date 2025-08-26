@@ -14,7 +14,7 @@
 import asyncio
 import json
 from operator import itemgetter
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import (
@@ -27,7 +27,9 @@ from langchain_core.messages import (
 
 from dimos.agents2.spec import AgentSpec
 from dimos.core import rpc
+from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
+from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.protocol.agents2")
@@ -41,19 +43,33 @@ def toolmsg_from_state(state: SkillState) -> ToolMessage:
         # if agent call has been triggered by another skill,
         # and this specific skill didn't finish yet but we need a tool call response
         # we return a message explaining that execution is still ongoing
-        state.content()
+        content=state.content()
         or "Running, you will be called with an update, no need for subsequent tool calls",
         name=state.name,
         tool_call_id=state.call_id,
     )
 
 
-def summary_from_state(state: SkillState) -> Dict[str, Any]:
+class SkillStateSummary(TypedDict):
+    name: str
+    call_id: str
+    state: str
+    data: Any
+
+
+def summary_from_state(state: SkillState, special_data: bool = False) -> SkillStateSummary:
+    content = state.content()
+    if isinstance(content, dict):
+        content = json.dumps(content)
+
+    if not isinstance(content, str):
+        content = str(content)
+
     return {
         "name": state.name,
         "call_id": state.call_id,
         "state": state.state.name,
-        "data": state.content(),
+        "data": state.content() if not special_data else "data will be in a separate message",
     }
 
 
@@ -72,7 +88,11 @@ def snapshot_to_messages(
     tool_msgs: list[ToolMessage] = []
 
     # build a general skill state overview (for longer running skills)
-    state_overview: list[Dict[str, Any]] = []
+    state_overview: list[Dict[str, SkillStateSummary]] = []
+
+    # for special skills that want to return a separate message
+    # (images for example, requires to be a HumanMessage)
+    special_msgs: List[HumanMessage] = []
 
     for skill_state in sorted(
         state.values(),
@@ -82,23 +102,28 @@ def snapshot_to_messages(
             tool_msgs.append(toolmsg_from_state(skill_state))
             continue
 
-        state_overview.append(summary_from_state(skill_state))
+        special_data = skill_state.skill_config.output != Output.standard
+        if special_data:
+            print("special data from skill", skill_state.name, skill_state.content())
+            special_msgs.append(HumanMessage(content=[skill_state.content()]))
+
+        state_overview.append(summary_from_state(skill_state, special_data))
 
     if state_overview:
         state_msg = AIMessage(
             "State Overview:\n" + "\n".join(map(json.dumps, state_overview)),
-            metadata={"state": True},
         )
 
-        return tool_msgs, state_msg
-
-    return tool_msgs, None
+    return {
+        "tool_msgs": tool_msgs if tool_msgs else [],
+        "state_msgs": ([state_msg] if state_msg else []) + special_msgs,
+    }
 
 
 # Agent class job is to glue skill coordinator state to an agent, builds langchain messages
 class Agent(AgentSpec):
     system_message: SystemMessage
-    state_message: Optional[AIMessage] = None
+    state_messages: List[Union[AIMessage, HumanMessage]]
 
     def __init__(
         self,
@@ -107,6 +132,7 @@ class Agent(AgentSpec):
     ):
         AgentSpec.__init__(self, *args, **kwargs)
 
+        self.state_messages = []
         self.coordinator = SkillCoordinator()
         self._history = []
 
@@ -139,11 +165,7 @@ class Agent(AgentSpec):
         self._history.extend(msgs)
 
     def history(self):
-        return (
-            [self.system_message]
-            + self._history
-            + ([self.state_message] if self.state_message else [])
-        )
+        return [self.system_message] + self._history + self.state_messages
 
     # Used by agent to execute tool calls
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> None:
@@ -171,8 +193,8 @@ class Agent(AgentSpec):
                 self._llm = self._llm.bind_tools(tools)
 
                 # publish to /agent topic for observability
-                if self.state_message:
-                    self.publish(self.state_message)
+                for state_msg in self.state_messages:
+                    self.publish(state_msg)
 
                 # history() builds our message history dynamically
                 # ensures we include latest system state, but not old ones.
@@ -202,10 +224,10 @@ class Agent(AgentSpec):
                 # generate tool_msgs and general state update message,
                 # depending on a skill having associated tool call from previous interaction
                 # we will return a tool message, and not a general state message
-                tool_msgs, state_msg = snapshot_to_messages(update, msg.tool_calls)
+                snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)
 
-                self.state_message = state_msg
-                self.append_history(*tool_msgs)
+                self.state_messages = snapshot_msgs.get("state_msgs", [])
+                self.append_history(*snapshot_msgs.get("tool_msgs", []))
 
         except Exception as e:
             logger.error(f"Error in agent loop: {e}")

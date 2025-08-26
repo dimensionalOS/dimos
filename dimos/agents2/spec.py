@@ -187,7 +187,11 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
 
         for message in self.history():
             if isinstance(message, HumanMessage):
-                table.add_row(Text("Human", style="green"), Text(message.content, style="green"))
+                content = message.content
+                if not isinstance(content, str):
+                    content = "<complex data>"
+
+                table.add_row(Text("Human", style="green"), Text(content, style="green"))
             elif isinstance(message, AIMessage):
                 if hasattr(message, "metadata") and message.metadata.get("state"):
                     table.add_row(

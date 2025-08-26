@@ -23,6 +23,12 @@ from dimos.types.timestamped import Timestamped
 # This file defines protocol messages used for communication between skills and agents
 
 
+class Output(Enum):
+    standard = 0
+    separate_message = 1  # e.g., for images, videos, files, etc.
+    image = 2  # this is same as separate_message, but maybe clearer for users
+
+
 class Stream(Enum):
     # no streaming
     none = 0
@@ -49,6 +55,7 @@ class SkillConfig:
     reducer: "ReducerF"
     stream: Stream
     ret: Return
+    output: Output
     schema: dict[str, Any]
     f: Callable | None = None
     autostart: bool = False
