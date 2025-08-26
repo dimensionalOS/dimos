@@ -31,6 +31,12 @@ from dimos_lcm.std_msgs import String
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import Detection2DArray, Detection3DArray
 from dimos.perception.spatial_perception import SpatialMemory
+from dimos.perception.common.utils import (
+    extract_pose_from_detection3d,
+    load_camera_info,
+    load_camera_info_opencv,
+    rectify_image,
+)
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.tf import TF
@@ -45,13 +51,12 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.unitree_webrtc.camera_module import UnitreeCameraModule
+from dimos.robot.unitree_webrtc.depth_module import DepthModule
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.transform_utils import offset_distance
-from dimos.perception.common.utils import extract_pose_from_detection3d
 from dimos.perception.object_tracker import ObjectTracking
 from dimos_lcm.std_msgs import Bool
 from dimos.robot.robot import Robot
@@ -117,23 +122,56 @@ class FakeRTC:
 
 
 class ConnectionModule(Module):
-    """Module that handles robot sensor data and movement commands."""
+    """Module that handles robot sensor data, movement commands, and camera information."""
 
     movecmd: In[Vector3] = None
     odom: Out[PoseStamped] = None
     lidar: Out[LidarMessage] = None
     video: Out[Image] = None
+    camera_info: Out[CameraInfo] = None
+    camera_pose: Out[PoseStamped] = None
     ip: str
     connection_type: str = "webrtc"
 
     _odom: PoseStamped = None
     _lidar: LidarMessage = None
+    _last_image: Image = None
 
-    def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
+    def __init__(
+        self,
+        ip: str = None,
+        connection_type: str = "webrtc",
+        rectify_image: bool = True,
+        *args,
+        **kwargs,
+    ):
         self.ip = ip
         self.connection_type = connection_type
+        self.rectify_image = rectify_image
         self.tf = TF()
         self.connection = None
+
+        # Load camera parameters from YAML
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # Use sim camera parameters for mujoco, real camera for others
+        if connection_type == "mujoco":
+            camera_params_path = os.path.join(base_dir, "params", "sim_camera.yaml")
+        else:
+            camera_params_path = os.path.join(base_dir, "params", "front_camera_720.yaml")
+
+        self.lcm_camera_info = load_camera_info(camera_params_path, frame_id="camera_link")
+
+        # Load OpenCV matrices for rectification if enabled
+        if rectify_image:
+            self.camera_matrix, self.dist_coeffs = load_camera_info_opencv(camera_params_path)
+            self.lcm_camera_info.D = [0.0] * len(
+                self.lcm_camera_info.D
+            )  # zero out distortion coefficients for rectification
+        else:
+            self.camera_matrix = None
+            self.dist_coeffs = None
+
         Module.__init__(self, *args, **kwargs)
 
     @rpc
@@ -155,8 +193,24 @@ class ConnectionModule(Module):
         # Connect sensor streams to outputs
         self.connection.lidar_stream().subscribe(self.lidar.publish)
         self.connection.odom_stream().subscribe(self._publish_tf)
-        self.connection.video_stream().subscribe(self.video.publish)
+        self.connection.video_stream().subscribe(self._on_video)
         self.movecmd.subscribe(self.move)
+
+    def _on_video(self, msg: Image):
+        """Handle incoming video frames and publish synchronized camera data."""
+        # Apply rectification if enabled
+        if self.rectify_image:
+            rectified_msg = rectify_image(msg, self.camera_matrix, self.dist_coeffs)
+            self._last_image = rectified_msg
+            self.video.publish(rectified_msg)
+        else:
+            self._last_image = msg
+            self.video.publish(msg)
+
+        # Publish camera info and pose synchronized with video
+        timestamp = msg.ts if msg.ts else time.time()
+        self._publish_camera_info()
+        self._publish_camera_pose(timestamp)
 
     def _publish_tf(self, msg):
         self._odom = msg
@@ -170,6 +224,34 @@ class ConnectionModule(Module):
             ts=time.time(),
         )
         self.tf.publish(camera_link)
+
+    def _publish_camera_info(self):
+        self.camera_info.publish(self.lcm_camera_info)
+
+    def _publish_camera_pose(self, timestamp: float):
+        """Publish camera pose from TF lookup."""
+        try:
+            # Look up transform from world to camera_link
+            transform = self.tf.get(
+                parent_frame="world",
+                child_frame="camera_link",
+                time_point=timestamp,
+                time_tolerance=1.0,
+            )
+
+            if transform:
+                pose_msg = PoseStamped(
+                    ts=timestamp,
+                    frame_id="camera_link",
+                    position=transform.translation,
+                    orientation=transform.rotation,
+                )
+                self.camera_pose.publish(pose_msg)
+            else:
+                logger.debug("Could not find transform from world to camera_link")
+
+        except Exception as e:
+            logger.error(f"Error publishing camera pose: {e}")
 
     @rpc
     def get_odom(self) -> Optional[PoseStamped]:
@@ -236,9 +318,6 @@ class UnitreeGo2(Robot):
         self.websocket_port = websocket_port
         self.lcm = LCM()
 
-        # Default camera intrinsics
-        self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
-
         # Initialize skill library
         if skill_library is None:
             skill_library = MyUnitreeSkills()
@@ -257,7 +336,7 @@ class UnitreeGo2(Robot):
         self.websocket_vis = None
         self.foxglove_bridge = None
         self.spatial_memory_module = None
-        self.camera_module = None
+        self.depth_module = None
         self.object_tracker = None
 
         self._setup_directories()
@@ -309,6 +388,8 @@ class UnitreeGo2(Robot):
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
         self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Vector3)
+        self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
+        self.connection.camera_pose.transport = core.LCMTransport("/go2/camera_pose", PoseStamped)
 
     def _deploy_mapping(self):
         """Deploy and configure the mapping module."""
@@ -400,7 +481,6 @@ class UnitreeGo2(Robot):
         # Deploy object tracker
         self.object_tracker = self.dimos.deploy(
             ObjectTracking,
-            camera_intrinsics=self.camera_intrinsics,
             frame_id="camera_link",
         )
 
@@ -419,28 +499,21 @@ class UnitreeGo2(Robot):
 
     def _deploy_camera(self):
         """Deploy and configure the camera module."""
-        self.camera_module = self.dimos.deploy(
-            UnitreeCameraModule,
-            camera_intrinsics=self.camera_intrinsics,
-            camera_frame_id="camera_link",
-            base_frame_id="base_link",
-        )
+        gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.5
+        self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
 
         # Set up transports
-        self.camera_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
-        self.camera_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
-        self.camera_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
-        self.camera_module.camera_pose.transport = core.LCMTransport(
-            "/go2/camera_pose", PoseStamped
-        )
+        self.depth_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
+        self.depth_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
+        self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
 
         logger.info("Camera module deployed and connected")
 
         # Connect object tracker inputs after camera module is deployed
         if self.object_tracker:
-            self.object_tracker.color_image.connect(self.camera_module.color_image)
-            self.object_tracker.depth.connect(self.camera_module.depth_image)
-            self.object_tracker.camera_info.connect(self.camera_module.camera_info)
+            self.object_tracker.color_image.connect(self.connection.video)
+            self.object_tracker.depth.connect(self.depth_module.depth_image)
+            self.object_tracker.camera_info.connect(self.connection.camera_info)
             logger.info("Object tracker connected to camera module")
 
     def _start_modules(self):
@@ -454,7 +527,7 @@ class UnitreeGo2(Robot):
         self.websocket_vis.start()
         self.foxglove_bridge.start()
         self.spatial_memory_module.start()
-        self.camera_module.start()
+        self.depth_module.start()
         self.object_tracker.start()
 
         # Initialize skills after connection is established
