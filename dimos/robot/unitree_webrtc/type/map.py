@@ -43,6 +43,7 @@ class Map(Module):
         global_publish_interval: Optional[float] = None,
         min_height: float = 0.15,
         max_height: float = 0.6,
+        frame_id: str = "world",
         **kwargs,
     ):
         self.voxel_size = voxel_size
@@ -50,10 +51,12 @@ class Map(Module):
         self.global_publish_interval = global_publish_interval
         self.min_height = min_height
         self.max_height = max_height
+        self.frame_id = frame_id  # Target frame for map
         super().__init__(**kwargs)
 
     @rpc
     def start(self):
+        self.tf.start()
         self.lidar.subscribe(self.add_frame)
 
         def publish(_):
@@ -89,14 +92,37 @@ class Map(Module):
 
     @rpc
     def add_frame(self, frame: LidarMessage) -> "Map":
-        """Voxelise *frame* and splice it into the running map."""
+        """Transform to world frame if needed, then add to map."""
+        # Transform to world frame if needed
+        if frame.frame_id != self.frame_id:
+            try:
+                tf = self.tf.get(frame.frame_id, self.frame_id)
+                if tf:
+                    frame = frame.transform(tf)  # Clean transform using types
+                else:
+                    # No transform available yet (e.g., ZED still initializing)
+                    # Skip this frame for map accumulation
+                    return
+            except Exception as e:
+                # Log transform errors but don't crash
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.debug(
+                    f"Transform not available from {frame.frame_id} to {self.frame_id}: {e}"
+                )
+                return
+
+        # Rest unchanged - voxelize and splice
         new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
+
+        # Local costmap unchanged
         local_costmap = OccupancyGrid.from_pointcloud(
             frame,
             resolution=self.cost_resolution,
-            min_height=0.15,
-            max_height=0.6,
+            min_height=self.min_height,
+            max_height=self.max_height,
         ).gradient(max_distance=0.25)
         self.local_costmap.publish(local_costmap)
 

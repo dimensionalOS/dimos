@@ -53,11 +53,11 @@ class LidarMessage(PointCloud2):
     raw_msg: Optional[RawLidarMsg]
     # _costmap: Optional[Costmap] = None  # TODO: Fix after costmap migration
 
-    def __init__(self, **kwargs):
+    def __init__(self, frame_id: str = None, **kwargs):
         super().__init__(
             pointcloud=kwargs.get("pointcloud"),
             ts=kwargs.get("ts"),
-            frame_id="world",
+            frame_id=frame_id if frame_id else "world",
         )
 
         self.origin = kwargs.get("origin")
@@ -113,6 +113,20 @@ class LidarMessage(PointCloud2):
     @property
     def o3d_geometry(self):
         return self.pointcloud
+
+    def transform(self, tf_transform) -> "LidarMessage":
+        """Transform LidarMessage to new frame."""
+        # Use parent's transform for pointcloud
+        transformed = super().transform(tf_transform)
+
+        # Return new LidarMessage preserving extra fields
+        return LidarMessage(
+            pointcloud=transformed.pointcloud,
+            frame_id=transformed.frame_id,
+            origin=self.origin,  # Keep original origin
+            resolution=self.resolution,
+            ts=self.ts,
+        )
 
     # TODO: Fix after costmap migration
     # def costmap(self, voxel_size: float = 0.2) -> Costmap:

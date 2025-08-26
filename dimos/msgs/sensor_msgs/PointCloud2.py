@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import copy
 import struct
 import time
 from typing import Optional
@@ -49,6 +50,32 @@ class PointCloud2(Timestamped):
     def as_numpy(self) -> np.ndarray:
         """Get points as numpy array."""
         return np.asarray(self.pointcloud.points)
+
+    def transform(self, tf_transform) -> "PointCloud2":
+        """Transform pointcloud to new frame using Transform.
+
+        Args:
+            tf_transform: Transform from self.frame_id to target frame
+
+        Returns:
+            New PointCloud2 in target frame
+        """
+        from dimos.msgs.geometry_msgs import Transform
+        from dimos.utils.transform_utils import pose_to_matrix
+
+        # Get transformation matrix from Transform
+        T = pose_to_matrix(tf_transform.to_pose())
+
+        # Create new pointcloud and transform it
+        new_pcd = copy.deepcopy(self.pointcloud)
+        new_pcd.transform(T)  # Open3D's transform method
+
+        # Return new PointCloud2 with updated frame
+        return PointCloud2(
+            pointcloud=new_pcd,
+            frame_id=tf_transform.child_frame_id,  # Target frame
+            ts=self.ts,
+        )
 
     def lcm_encode(self, frame_id: Optional[str] = None) -> bytes:
         """Convert to LCM PointCloud2 message."""
