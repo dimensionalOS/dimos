@@ -42,7 +42,6 @@ from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from dimos.robot.keyboard_teleop import KeyboardTeleop
 from dimos.perception.common.utils import (
     load_camera_info,
     load_camera_info_opencv,
@@ -318,7 +317,6 @@ class UnitreeGo2NavOnly(Robot):
         self.navigator = None
         self.frontier_explorer = None
         self.websocket_vis = None
-        self.keyboard_teleop = None
 
     def start(self):
         """Start the robot system with navigation modules only."""
@@ -328,7 +326,6 @@ class UnitreeGo2NavOnly(Robot):
         self._deploy_mapping()
         self._deploy_navigation()
         self._deploy_visualization()
-        self._deploy_keyboard_teleop()
 
         self._start_modules()
 
@@ -417,15 +414,6 @@ class UnitreeGo2NavOnly(Robot):
         self.websocket_vis.path.connect(self.global_planner.path)
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
 
-    def _deploy_keyboard_teleop(self):
-        """Deploy and configure the keyboard teleoperation module."""
-        self.keyboard_teleop = self.dimos.deploy(KeyboardTeleop)
-
-        # Connect keyboard output to robot movement command
-        self.keyboard_teleop.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
-
-        logger.info("Keyboard teleoperation module deployed and connected")
-
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
         self.connection.start()
@@ -435,7 +423,6 @@ class UnitreeGo2NavOnly(Robot):
         self.navigator.start()
         self.frontier_explorer.start()
         self.websocket_vis.start()
-        self.keyboard_teleop.start()
 
     def move(self, twist: Twist, duration: float = 0.0):
         """Send movement command to robot."""
