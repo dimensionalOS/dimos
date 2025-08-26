@@ -8,6 +8,7 @@ import {
   EncodedVector,
   FullStateData,
   Path,
+  TwistCommand,
   Vector,
 } from "./types";
 
@@ -61,6 +62,30 @@ export default class Connection {
 
   stopExplore(): void {
     this.socket.emit("stop_explore");
+  }
+
+  sendMoveCommand(linear: [number, number, number], angular: [number, number, number]): void {
+    const twist: TwistCommand = {
+      linear: {
+        x: linear[0],
+        y: linear[1],
+        z: linear[2],
+      },
+      angular: {
+        x: angular[0],
+        y: angular[1],
+        z: angular[2],
+      },
+    };
+    this.socket.emit("move_command", twist);
+  }
+
+  stopMoveCommand(): void {
+    const twist: TwistCommand = {
+      linear: { x: 0, y: 0, z: 0 },
+      angular: { x: 0, y: 0, z: 0 },
+    };
+    this.socket.emit("move_command", twist);
   }
 
   disconnect(): void {

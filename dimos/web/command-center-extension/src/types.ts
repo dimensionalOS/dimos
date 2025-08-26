@@ -95,6 +95,19 @@ export interface FullStateData {
   path?: EncodedPath;
 }
 
+export interface TwistCommand {
+  linear: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  angular: {
+    x: number;
+    y: number;
+    z: number;
+  };
+}
+
 export interface AppState {
   costmap: Costmap | null;
   robotPose: Vector | null;

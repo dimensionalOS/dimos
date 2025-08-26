@@ -1,7 +1,8 @@
 import * as React from "react";
 
 import Connection from "./Connection";
-import ControlPanel from "./ControlPanel";
+import ExplorePanel from "./ExplorePanel";
+import KeyboardControlPanel from "./KeyboardControlPanel";
 import VisualizerWrapper from "./components/VisualizerWrapper";
 import { AppAction, AppState } from "./types";
 
@@ -52,11 +53,37 @@ export default function App(): React.ReactElement {
     connectionRef.current?.stopExplore();
   }, []);
 
+  const handleSendMoveCommand = React.useCallback(
+    (linear: [number, number, number], angular: [number, number, number]) => {
+      connectionRef.current?.sendMoveCommand(linear, angular);
+    },
+    [],
+  );
+
+  const handleStopMoveCommand = React.useCallback(() => {
+    connectionRef.current?.stopMoveCommand();
+  }, []);
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <VisualizerWrapper data={state} onWorldClick={handleWorldClick} />
-      <div style={{ position: "absolute", bottom: 0, left: 0 }}>
-        <ControlPanel onStartExplore={handleStartExplore} onStopExplore={handleStopExplore} />
+      <div
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          display: "flex",
+          width: "100%",
+          padding: 5,
+          gap: 5,
+          alignItems: "flex-end",
+        }}
+      >
+        <ExplorePanel onStartExplore={handleStartExplore} onStopExplore={handleStopExplore} />
+        <KeyboardControlPanel
+          onSendMoveCommand={handleSendMoveCommand}
+          onStopMoveCommand={handleStopMoveCommand}
+        />
       </div>
     </div>
   );
