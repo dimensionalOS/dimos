@@ -354,7 +354,6 @@ class UnitreeGo2(Robot):
         self.spatial_memory_module = None
         self.pointcloud_to_depth = None
         self.object_tracker = None
-        self.keyboard_teleop = None
 
         self._setup_directories()
 
@@ -387,7 +386,6 @@ class UnitreeGo2(Robot):
         self._deploy_visualization()
         self._deploy_perception()
         self._deploy_camera()
-        self._deploy_keyboard_teleop()
 
         self._start_modules()
 
@@ -559,15 +557,6 @@ class UnitreeGo2(Robot):
             self.object_tracker.camera_info.connect(self.connection.camera_info)
             logger.info("Object tracker connected to pointcloud depth module")
 
-    def _deploy_keyboard_teleop(self):
-        """Deploy and configure the keyboard teleoperation module."""
-        self.keyboard_teleop = self.dimos.deploy(KeyboardTeleop)
-
-        # Connect keyboard output to robot movement command
-        self.keyboard_teleop.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
-
-        logger.info("Keyboard teleoperation module deployed and connected")
-
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
         self.connection.start()
@@ -581,7 +570,6 @@ class UnitreeGo2(Robot):
         self.spatial_memory_module.start()
         self.pointcloud_to_depth.start()
         self.object_tracker.start()
-        self.keyboard_teleop.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:

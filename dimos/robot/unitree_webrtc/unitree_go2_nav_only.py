@@ -324,7 +324,6 @@ class UnitreeGo2NavOnly(Robot):
         self.navigator = None
         self.frontier_explorer = None
         self.websocket_vis = None
-        self.keyboard_teleop = None
 
     def start(self):
         """Start the robot system with navigation modules only."""
