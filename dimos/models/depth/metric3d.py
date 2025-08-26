@@ -16,6 +16,9 @@ import torch
 from PIL import Image
 import cv2
 import numpy as np
+import cupy as cp
+
+from dimos.models.depth.pixel_kalman_filter_2d import PixelKalmanFilter2D, bilateral_filter
 
 # May need to add this back for import to work
 # external_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'external', 'Metric3D'))
@@ -24,7 +27,7 @@ import numpy as np
 
 
 class Metric3D:
-    def __init__(self, camera_intrinsics=None, gt_depth_scale=256.0):
+    def __init__(self, camera_intrinsics=None, gt_depth_scale=256.0, kalman_filter=False):
         # self.conf = get_config("zoedepth", "infer")
         # self.depth_model = build_model(self.conf)
         self.depth_model = torch.hub.load(
@@ -40,6 +43,8 @@ class Metric3D:
         self.gt_depth_scale = gt_depth_scale  # And this
         self.pad_info = None
         self.rgb_origin = None
+
+        self.kalman_filter = PixelKalmanFilter2D((616, 1064), dt=1.0/30.0) if kalman_filter == True else None
 
     """
     Input: Single image in RGB format
@@ -77,7 +82,14 @@ class Metric3D:
         # Convert to PIL format
         depth_image = self.unpad_transform_depth(pred_depth)
 
-        return depth_image.cpu().numpy()
+        # If filter, filter image
+        if self.kalman_filter != None:
+            cp_depth_image = cp.fromDlpack(torch.utils.dlpack.to_dlpack(depth_image))
+            filtered_raw = self.kalman_filter.update(cp_depth_image)
+            filtered_bilateral = bilateral_filter(filtered_raw)
+            return cp.asnumpy(filtered_bilateral)
+        else:
+            return depth_image.cpu().numpy()
 
     def save_depth(self, pred_depth):
         # Save the depth map to a file
