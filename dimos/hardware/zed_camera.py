@@ -39,6 +39,7 @@ from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.std_msgs import Header
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 logger = setup_logger(__name__)
 
@@ -96,7 +97,14 @@ class ZEDCamera(StereoCamera):
         self.image_left = sl.Mat()
         self.image_right = sl.Mat()
         self.depth_map = sl.Mat()
-        self.point_cloud = sl.Mat()
+
+        # Create lower resolution for pointcloud
+        self.pc_resolution = sl.Resolution()
+        self.pc_resolution.width = 720
+        self.pc_resolution.height = 404
+        self.point_cloud = sl.Mat(
+            self.pc_resolution.width, self.pc_resolution.height, sl.MAT_TYPE.F32_C4, sl.MEM.CPU
+        )
         self.confidence_map = sl.Mat()
 
         # Positional tracking
@@ -544,6 +552,7 @@ class ZEDModule(Module):
     depth_image: Out[Image] = None
     camera_info: Out[CameraInfo] = None
     pose: Out[PoseStamped] = None
+    pointcloud_msg: Out[LidarMessage] = None  # Pointcloud output for mapping
 
     def __init__(
         self,
@@ -555,7 +564,7 @@ class ZEDModule(Module):
         enable_imu_fusion: bool = True,
         set_floor_as_origin: bool = True,
         publish_rate: float = 30.0,
-        frame_id: str = "zed_camera",
+        frame_id: str = "camera_link",  # ZED outputs in ROS frame (z-up, x-forward)
         **kwargs,
     ):
         """
@@ -673,28 +682,51 @@ class ZEDModule(Module):
             return
 
         try:
-            # Capture frame with pose
-            left_img, _, depth, pose_data = self.zed_camera.capture_frame_with_pose()
-
-            if left_img is None or depth is None:
+            # Single grab for all data
+            if self.zed_camera.zed.grab(self.zed_camera.runtime_params) != sl.ERROR_CODE.SUCCESS:
                 return
 
-            # Create header
-            header = Header(self.frame_id)
+            # Retrieve all data from the single grab
+            # Get left image
+            self.zed_camera.zed.retrieve_image(self.zed_camera.image_left, sl.VIEW.LEFT)
+            left_img = self.zed_camera.image_left.get_data()[:, :, :3]  # Remove alpha
+
+            # Get depth for visualization (but don't use for pointcloud)
+            self.zed_camera.zed.retrieve_measure(self.zed_camera.depth_map, sl.MEASURE.DEPTH)
+            depth = self.zed_camera.depth_map.get_data()
+
+            # Get pointcloud at lower resolution - EXACTLY like the demo
+            self.zed_camera.zed.retrieve_measure(
+                self.zed_camera.point_cloud,
+                sl.MEASURE.XYZRGBA,
+                sl.MEM.CPU,
+                self.zed_camera.pc_resolution,
+            )
+
+            # Get pose if tracking enabled
+            pose_data = None
+            if self.enable_tracking:
+                pose_data = self.zed_camera.get_pose()
+
+            # Create header with optical frame
+            header = Header(self.frame_id)  # camera_link
             self._sequence += 1
 
-            # Publish color image
+            # Publish all data
             self._publish_color_image(left_img, header)
-
-            # Publish depth image
             self._publish_depth_image(depth, header)
-
-            # Publish camera info periodically
             self._publish_camera_info()
+
+            # Only publish pointcloud if tracking is valid (or tracking disabled)
+            # This prevents pointclouds appearing at world origin when tracking isn't ready
+            if not self.enable_tracking or (pose_data and pose_data.get("valid", False)):
+                # Publish pointcloud (uses already retrieved data)
+                self._publish_pointcloud(header)
 
             # Publish pose if tracking enabled and valid
             if self.enable_tracking and pose_data and pose_data.get("valid", False):
                 self._publish_pose(pose_data, header)
+                self._publish_tf(pose_data, header)
 
         except Exception as e:
             logger.error(f"Error in capture and publish: {e}")
@@ -811,7 +843,7 @@ class ZEDModule(Module):
             logger.error(f"Error publishing camera info: {e}")
 
     def _publish_pose(self, pose_data: Dict[str, Any], header: Header):
-        """Publish camera pose as PoseStamped message and TF transform."""
+        """Publish camera pose as PoseStamped message only (TF handled by _publish_tf)."""
         try:
             position = pose_data.get("position", [0, 0, 0])
             rotation = pose_data.get("rotation", [0, 0, 0, 1])  # quaternion [x,y,z,w]
@@ -820,15 +852,7 @@ class ZEDModule(Module):
             msg = PoseStamped(ts=header.ts, position=position, orientation=rotation)
             self.pose.publish(msg)
 
-            # Publish TF transform
-            camera_tf = Transform(
-                translation=Vector3(position),
-                rotation=Quaternion(rotation),
-                frame_id="zed_world",
-                child_frame_id="zed_camera_link",
-                ts=header.ts,
-            )
-            self.tf.publish(camera_tf)
+            # Note: TF publishing is handled by _publish_tf() to avoid conflicts
 
         except Exception as e:
             logger.error(f"Error publishing pose: {e}")
@@ -846,6 +870,77 @@ class ZEDModule(Module):
         if self.zed_camera and self.enable_tracking:
             return self.zed_camera.get_pose()
         return None
+
+    def _publish_pointcloud(self, header: Header):
+        """Publish pointcloud as LidarMessage for Map module."""
+        try:
+            # Simple approach like the OpenGL example
+            # Get the already retrieved pointcloud (720x404 resolution)
+            point_cloud_data = self.zed_camera.point_cloud.get_data()
+
+            # Flatten to get all points (it's already at low resolution)
+            points = point_cloud_data.reshape(-1, 4)
+            xyz = points[:, :3]
+
+            # Filter out invalid points (NaN/Inf)
+            valid = np.isfinite(xyz).all(axis=1)
+            valid_xyz = xyz[valid]
+
+            if len(valid_xyz) > 0:
+                # Create Open3D pointcloud (no colors for simplicity/performance)
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(valid_xyz)
+
+                # Create LidarMessage
+                lidar_msg = LidarMessage(
+                    pointcloud=pcd,
+                    origin=[0.0, 0.0, 0.0],
+                    resolution=0.05,  # Match Map module voxel_size
+                    ts=header.ts,
+                )
+
+                if self.pointcloud_msg:
+                    self.pointcloud_msg.publish(lidar_msg)
+                    logger.debug(f"Published pointcloud with {len(pcd.points)} points")
+
+        except Exception as e:
+            logger.error(f"Error publishing pointcloud: {e}")
+
+    def _publish_tf(self, pose_data: Dict[str, Any], header: Header):
+        """Publish complete TF chain: world → base_link → camera_link → camera_optical."""
+        try:
+            position = pose_data.get("position", [0, 0, 0])
+            rotation = pose_data.get("rotation", [0, 0, 0, 1])  # quaternion [x,y,z,w]
+
+            # World → base_link (from ZED tracking)
+            # Note: ZED tracking gives camera pose, we need to transform to base_link
+            base_tf = Transform(
+                translation=Vector3(position),
+                rotation=Quaternion(rotation),
+                frame_id="world",
+                child_frame_id="base_link",
+                ts=header.ts,
+            )
+
+            # base_link → camera_link (physical offset - camera mounted 30cm forward)
+            camera_link = Transform(
+                translation=Vector3(0.3, 0.0, 0.1),  # 30cm forward, 10cm up
+                rotation=Quaternion.from_euler(Vector3([0, 0, 0])),
+                frame_id="base_link",
+                child_frame_id="camera_link",
+                ts=header.ts,
+            )
+
+            # No camera_optical transform needed - ZED already outputs in ROS frame
+
+            # Publish transforms
+            self.tf.publish(base_tf)
+            self.tf.publish(camera_link)
+
+            logger.debug("Published TF chain: world → base_link → camera_link")
+
+        except Exception as e:
+            logger.error(f"Error publishing TF: {e}")
 
     def cleanup(self):
         """Clean up resources on module destruction."""

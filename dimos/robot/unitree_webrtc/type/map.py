@@ -44,6 +44,7 @@ class Map(Module):
         min_height: float = 0.15,
         max_height: float = 0.6,
         frame_id: str = "world",
+        max_map_points: int = 100000,  # Limit accumulated map size
         **kwargs,
     ):
         self.voxel_size = voxel_size
@@ -52,14 +53,20 @@ class Map(Module):
         self.min_height = min_height
         self.max_height = max_height
         self.frame_id = frame_id  # Target frame for map
+        self.max_map_points = max_map_points
         super().__init__(**kwargs)
 
     @rpc
     def start(self):
-        self.tf.start()
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"Map.start() called - global_publish_interval={self.global_publish_interval}")
+
         self.lidar.subscribe(self.add_frame)
 
         def publish(_):
+            logger.info(f"Publishing global_map with {len(self.pointcloud.points)} points")
             self.global_map.publish(self.to_lidar_message())
 
             # temporary, not sure if it belogs in mapper
@@ -74,7 +81,12 @@ class Map(Module):
             self.global_costmap.publish(occupancygrid)
 
         if self.global_publish_interval is not None:
+            logger.info(
+                f"Setting up interval publishing every {self.global_publish_interval} seconds"
+            )
             interval(self.global_publish_interval).subscribe(publish)
+        else:
+            logger.warning("No global_publish_interval set - global_map will NOT be published!")
 
     def to_PointCloud2(self) -> PointCloud2:
         return PointCloud2(
@@ -113,9 +125,25 @@ class Map(Module):
                 )
                 return
 
-        # Rest unchanged - voxelize and splice
-        new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
-        self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
+        # Combine old map with new raw pointcloud (no pre-downsampling)
+        # This preserves all detail from the new scan
+        self.pointcloud = self.pointcloud + frame.pointcloud
+
+        # Single voxel downsample of the combined pointcloud
+        # This merges ALL points (old and new) within each voxel into one representative point
+        self.pointcloud = self.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
+
+        # Additional downsampling if still too large (use smaller voxel size)
+        if len(self.pointcloud.points) > self.max_map_points:
+            # Use slightly larger voxel size to reduce point count
+            aggressive_voxel_size = self.voxel_size * 1.2
+            self.pointcloud = self.pointcloud.voxel_down_sample(voxel_size=aggressive_voxel_size)
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"Map downsampled to {len(self.pointcloud.points)} points with voxel size {aggressive_voxel_size:.3f}m"
+            )
 
         # Local costmap unchanged
         local_costmap = OccupancyGrid.from_pointcloud(
