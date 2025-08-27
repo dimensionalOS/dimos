@@ -20,6 +20,7 @@ from enum import Enum
 from typing import Any, List, Optional, Tuple, Union
 
 from langchain.chat_models.base import _SUPPORTED_PROVIDERS
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -43,9 +44,8 @@ logger = setup_logger("dimos.agents.modules.base_agent")
 
 
 # Dynamically create ModelProvider enum from LangChain's supported providers
-Provider = Enum(
-    "Provider", {provider.upper(): provider for provider in _SUPPORTED_PROVIDERS}, type=str
-)
+_providers = {provider.upper(): provider for provider in _SUPPORTED_PROVIDERS}
+Provider = Enum("Provider", _providers, type=str)
 
 
 class Model(str, Enum):
@@ -132,8 +132,11 @@ class Model(str, Enum):
 class AgentConfig(ModuleConfig):
     system_prompt: Optional[str | SystemMessage] = None
     skills: Optional[SkillContainer | list[SkillContainer]] = None
+
+    # we can provide model/provvider enums or instantiated model_instance
     model: Model = Model.GPT_4O
     provider: Provider = Provider.OPENAI
+    model_instance: Optional[BaseChatModel] = None
 
     agent_transport: type[PubSub] = lcm.PickleLCM
     agent_topic: Any = field(default_factory=lambda: lcm.Topic("/agent"))

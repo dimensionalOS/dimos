@@ -37,7 +37,7 @@ from dimos.core import rpc
 from dimos.core.module import get_loop
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
-from dimos.protocol.skill.type import MsgType, Reducer, Return, SkillMsg, Stream
+from dimos.protocol.skill.type import MsgType, Output, Reducer, Return, SkillMsg, Stream
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.protocol.skill.coordinator")
@@ -85,7 +85,12 @@ class SkillState:
         super().__init__()
 
         self.skill_config = skill_config or SkillConfig(
-            name=name, stream=Stream.none, ret=Return.none, reducer=Reducer.all, schema={}
+            name=name,
+            stream=Stream.none,
+            ret=Return.none,
+            reducer=Reducer.all,
+            output=Output.standard,
+            schema={},
         )
 
         self.state = SkillStateEnum.pending
