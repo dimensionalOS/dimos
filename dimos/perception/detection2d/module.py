@@ -231,6 +231,8 @@ class Detect2DModule(Module):
         self.detection_stream().subscribe(blocking_queue.put)
 
         while True:
+            # dealing with a dumb format from detic and yolo
+            # probably needs to be abstracted earlier in the pipeline so it's more convinient to use
             [image, detections] = blocking_queue.get()
 
             detection_dict = {}
