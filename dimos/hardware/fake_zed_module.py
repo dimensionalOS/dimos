@@ -19,10 +19,12 @@ FakeZEDModule - Replays recorded ZED data for testing without hardware.
 
 import functools
 import logging
+import numpy as np
+import open3d as o3d
 
 from dimos.core import Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
@@ -37,14 +39,13 @@ class FakeZEDModule(Module):
     Fake ZED module that replays recorded data instead of real camera.
     """
 
-    # Outputs - same as real ZEDModule
     pointcloud_msg: Out[LidarMessage] = None
     pose: Out[PoseStamped] = None
     color_image: Out[Image] = None
     depth_image: Out[Image] = None
     camera_info: Out[CameraInfo] = None
 
-    def __init__(self, recording_path: str = None, *args, **kwargs):
+    def __init__(self, recording_path: str = None, frame_id: str = "camera_link", *args, **kwargs):
         """
         Initialize FakeZEDModule with recording path.
 
@@ -54,10 +55,10 @@ class FakeZEDModule(Module):
         Module.__init__(self, *args, **kwargs)
 
         self.recording_path = recording_path
+        self.frame_id = frame_id
+        get_data(self.recording_path)
         if not self.recording_path:
-            # Default to test data if no path specified
             self.recording_path = "zed"
-            get_data(self.recording_path)  # Ensure data is downloaded
 
         self._running = False
         self._subscriptions = []
@@ -67,10 +68,31 @@ class FakeZEDModule(Module):
     @functools.cache
     def _get_lidar_stream(self):
         """Get cached lidar stream."""
-        logger.info(f"Loading lidar stream from {self.recording_path}/lidar")
+        logger.info(f"Loading lidar stream from {self.recording_path}/pointcloud")
+
+        def pointcloud_autocast(x):
+            """Convert raw pointcloud data to LidarMessage."""
+            if isinstance(x, np.ndarray):
+                import time
+
+                points = x.reshape(-1, 4)[:, :3]  # Extract XYZ
+                valid = np.isfinite(points).all(axis=1)
+                valid_points = points[valid]
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(valid_points)
+                return LidarMessage(
+                    pointcloud=pcd,
+                    origin=[0, 0, 0],
+                    resolution=0.05,
+                    ts=time.time(),
+                    frame_id=self.frame_id,
+                )
+            elif isinstance(x, LidarMessage):
+                return x
+            return x
+
         lidar_replay = TimedSensorReplay(
-            f"{self.recording_path}/lidar",
-            autocast=lambda x: x,  # Data is already a LidarMessage instance
+            f"{self.recording_path}/pointcloud", autocast=pointcloud_autocast
         )
         return lidar_replay.stream()
 
@@ -78,30 +100,58 @@ class FakeZEDModule(Module):
     def _get_pose_stream(self):
         """Get cached pose stream."""
         logger.info(f"Loading pose stream from {self.recording_path}/pose")
-        pose_replay = TimedSensorReplay(
-            f"{self.recording_path}/pose",
-            autocast=lambda x: x,  # Data is already a PoseStamped instance
-        )
+
+        def pose_autocast(x):
+            """Convert raw pose dict to PoseStamped."""
+            if isinstance(x, dict):
+                import time
+
+                return PoseStamped(
+                    position=x.get("position", [0, 0, 0]),
+                    orientation=x.get("rotation", [0, 0, 0, 1]),
+                    ts=time.time(),
+                )
+            elif isinstance(x, PoseStamped):
+                return x
+            return x
+
+        pose_replay = TimedSensorReplay(f"{self.recording_path}/pose", autocast=pose_autocast)
         return pose_replay.stream()
 
     @functools.cache
     def _get_color_stream(self):
         """Get cached color image stream."""
-        logger.info(f"Loading color image stream from {self.recording_path}/color_image")
-        color_replay = TimedSensorReplay(
-            f"{self.recording_path}/color_image",
-            autocast=lambda x: x,  # Data is already an Image instance
-        )
+        logger.info(f"Loading color image stream from {self.recording_path}/color")
+
+        def image_autocast(x):
+            """Convert raw numpy array to Image."""
+            if isinstance(x, np.ndarray):
+                import cv2
+
+                rgb_data = cv2.cvtColor(x, cv2.COLOR_BGR2RGB)
+                return Image(data=rgb_data, format=ImageFormat.RGB)
+            elif isinstance(x, Image):
+                return x
+            return x
+
+        color_replay = TimedSensorReplay(f"{self.recording_path}/color", autocast=image_autocast)
         return color_replay.stream()
 
     @functools.cache
     def _get_depth_stream(self):
         """Get cached depth image stream."""
-        logger.info(f"Loading depth image stream from {self.recording_path}/depth_image")
-        depth_replay = TimedSensorReplay(
-            f"{self.recording_path}/depth_image",
-            autocast=lambda x: x,  # Data is already an Image instance
-        )
+        logger.info(f"Loading depth image stream from {self.recording_path}/depth")
+
+        def depth_autocast(x):
+            """Convert raw numpy array to depth Image."""
+            if isinstance(x, np.ndarray):
+                # Depth images are float32
+                return Image(data=x, format=ImageFormat.DEPTH)
+            elif isinstance(x, Image):
+                return x
+            return x
+
+        depth_replay = TimedSensorReplay(f"{self.recording_path}/depth", autocast=depth_autocast)
         return depth_replay.stream()
 
     @functools.cache
