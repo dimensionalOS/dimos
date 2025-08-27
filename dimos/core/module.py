@@ -30,6 +30,8 @@ from dimos.core.core import T, rpc
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable
+from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
+from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.tf import LCMTF, TFSpec
 
 
@@ -59,7 +61,7 @@ class ModuleConfig:
     tf_transport: type[TFSpec] = LCMTF
 
 
-class ModuleBase(Configurable[ModuleConfig]):
+class ModuleBase(Configurable[ModuleConfig], SkillContainer):
     _rpc: Optional[RPCSpec] = None
     _tf: Optional[TFSpec] = None
     _loop: asyncio.AbstractEventLoop = None

@@ -17,8 +17,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from dimos.core import rpc
-from dimos.protocol.service import Configurable
+# from dimos.core.core import rpc
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.schema import function_to_schema
 from dimos.protocol.skill.type import (
@@ -55,6 +54,11 @@ from dimos.protocol.skill.type import (
 #        Reducer.latest: only the latest value is returned to the agent
 #        Reducer.average: assumes the skill emits a number,
 #                         the average of all values is returned to the agent
+
+
+def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:
+    fn.__rpc__ = True  # type: ignore[attr-defined]
+    return fn
 
 
 def skill(
@@ -133,12 +137,15 @@ def threaded(f: Callable[..., Any]) -> Callable[..., None]:
 #   for this you'll need to override the `skills` method to return a dynamic set of skills
 #   SkillCoordinator will call this method to get the skills available upon every request to
 #   the agent
-#
-class SkillContainer(Configurable[SkillContainerConfig]):
-    default_config = SkillContainerConfig
+
+
+class SkillContainer:
+    skill_transport_class: type[SkillCommsSpec] = LCMSkillComms
     _skill_transport: Optional[SkillCommsSpec] = None
 
-    dynamic_skills = False
+    @rpc
+    def dynamic_skills(self):
+        return False
 
     def __str__(self) -> str:
         return f"SkillContainer({self.__class__.__name__})"
@@ -211,5 +218,5 @@ class SkillContainer(Configurable[SkillContainerConfig]):
     @property
     def skill_transport(self) -> SkillCommsSpec:
         if self._skill_transport is None:
-            self._skill_transport = self.config.skill_transport()
+            self._skill_transport = self.skill_transport_class()
         return self._skill_transport

@@ -17,7 +17,8 @@ import asyncio
 import pytest
 
 from dimos.agents2.agent import Agent
-from dimos.protocol.skill.test_coordinator import TestContainer
+from dimos.core import start
+from dimos.protocol.skill.test_coordinator import SkillContainerTest
 
 
 @pytest.mark.tool
@@ -27,14 +28,13 @@ async def test_agent_init():
         "Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
     )
 
-    ## Uncomment the following lines to use a real module system
-    # from dimos.core import start
-    # dimos = start(2)
-    # testcontainer = dimos.deploy(TestContainer)
-    # agent = dimos.deploy(Agent, system_prompt=system_prompt)
-
-    testcontainer = TestContainer()
+    # # Uncomment the following lines to use a real module system
+    dimos = start(2)
+    testcontainer = dimos.deploy(SkillContainerTest)
     agent = Agent(system_prompt=system_prompt)
+
+    # testcontainer = TestContainer()
+    # agent = Agent(system_prompt=system_prompt)
     agent.register_skills(testcontainer)
     agent.start()
     agent.run_implicit_skill("uptime_seconds")

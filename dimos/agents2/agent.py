@@ -164,7 +164,6 @@ class Agent(AgentSpec):
     def stop(self):
         self.coordinator.stop()
 
-    @rpc
     def clear_history(self):
         self._history.clear()
 
@@ -245,14 +244,12 @@ class Agent(AgentSpec):
 
             traceback.print_exc()
 
-    @rpc
     def query_async(self, query: str):
         return asyncio.ensure_future(self.agent_loop(query), loop=self._loop)
 
     def query(self, query: str):
         return asyncio.run_coroutine_threadsafe(self.agent_loop(query), self._loop).result()
 
-    @rpc
     def register_skills(self, container):
         return self.coordinator.register_skills(container)
 

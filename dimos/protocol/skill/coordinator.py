@@ -275,12 +275,15 @@ class SkillStateDict(dict[str, SkillState]):
         return capture.get().strip()
 
 
+from dimos.core.module import Module
+
+
 # This class is responsible for managing the lifecycle of skills,
 # handling skill calls, and coordinating communication between the agent and skills.
 #
 # It aggregates skills from static and dynamic containers, manages skill states,
 # and decides when to notify the agent about updates.
-class SkillCoordinator(SkillContainer):
+class SkillCoordinator(Module):
     default_config = SkillCoordinatorConfig
     empty: bool = True
 
@@ -323,7 +326,7 @@ class SkillCoordinator(SkillContainer):
 
         ret = []
         for name, skill_config in self.skills().items():
-            # print(f"Tool {name} config: {skill_config}, {skill_config.f}")
+            print(f"Tool {name} config: {skill_config}, {skill_config.f}")
             ret.append(langchain_tool(skill_config.f))
 
         return ret
@@ -475,7 +478,7 @@ class SkillCoordinator(SkillContainer):
     # .skills() method
     def register_skills(self, container: SkillContainer):
         self.empty = False
-        if not container.dynamic_skills:
+        if not container.dynamic_skills():
             logger.info(f"Registering static skill container, {container}")
             self._static_containers.append(container)
             for name, skill_config in container.skills().items():

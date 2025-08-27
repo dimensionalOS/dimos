@@ -18,14 +18,15 @@ from typing import Generator, Optional
 
 import pytest
 
+from dimos.core import Module
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.coordinator import SkillCoordinator
-from dimos.protocol.skill.skill import SkillContainer, skill
+from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.utils.data import get_data
 
 
-class TestContainer(SkillContainer):
+class SkillContainerTest(Module):
     @skill()
     def add(self, x: int, y: int) -> int:
         """adds x and y."""
@@ -78,13 +79,16 @@ class TestContainer(SkillContainer):
     @skill(output=Output.image)
     def take_photo(self) -> str:
         """Takes a camera photo"""
-        return Image.from_file(get_data("cafe.jpg"))
+        print("Taking photo...")
+        img = Image.from_file(get_data("cafe.jpg"))
+        print("Photo taken.")
+        return img
 
 
 @pytest.mark.asyncio
 async def test_coordinator_parallel_calls():
     skillCoordinator = SkillCoordinator()
-    skillCoordinator.register_skills(TestContainer())
+    skillCoordinator.register_skills(SkillContainerTest())
 
     skillCoordinator.start()
     skillCoordinator.call_skill("test-call-0", "delayadd", {"args": [1, 2]})
@@ -119,7 +123,7 @@ async def test_coordinator_parallel_calls():
 @pytest.mark.asyncio
 async def test_coordinator_generator():
     skillCoordinator = SkillCoordinator()
-    skillCoordinator.register_skills(TestContainer())
+    skillCoordinator.register_skills(SkillContainerTest())
     skillCoordinator.start()
 
     # here we call a skill that generates a sequence of messages

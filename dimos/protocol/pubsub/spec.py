@@ -132,7 +132,14 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT], ABC):
 
 class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT]):
     def encode(self, msg: MsgT, *_: TopicT) -> bytes:
-        return pickle.dumps(msg)
+        try:
+            return pickle.dumps(msg)
+        except Exception as e:
+            print("Pickle encoding error:", e)
+            import traceback
+
+            traceback.print_exc()
+            print("Tried to pickle:", msg)
 
     def decode(self, msg: bytes, _: TopicT) -> MsgT:
         return pickle.loads(msg)
