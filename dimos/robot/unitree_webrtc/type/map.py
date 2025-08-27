@@ -26,10 +26,14 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.msgs.geometry_msgs import PoseStamped
+from collections import deque
+
 
 
 class Map(Module):
     lidar: In[LidarMessage] = None
+    odom: In[PoseStamped] = None  # New input for odometry messages
     global_map: Out[LidarMessage] = None
     global_costmap: Out[OccupancyGrid] = None
     local_costmap: Out[OccupancyGrid] = None
@@ -45,6 +49,9 @@ class Map(Module):
         max_height: float = 0.6,
         frame_id: str = "world",
         max_map_points: int = 100000,  # Limit accumulated map size
+        max_odom_history: int = 1000,  # Maximum odometry messages to store
+        time_tolerance: float = 0.1,  # Maximum time difference for synchronization (seconds)
+
         **kwargs,
     ):
         self.voxel_size = voxel_size
@@ -54,6 +61,10 @@ class Map(Module):
         self.max_height = max_height
         self.frame_id = frame_id  # Target frame for map
         self.max_map_points = max_map_points
+        self.max_odom_history = max_odom_history
+        self.time_tolerance = time_tolerance
+        self.odom_history = deque(maxlen=max_odom_history)  # Buffer for odometry messages
+
         super().__init__(**kwargs)
 
     @rpc
@@ -62,6 +73,11 @@ class Map(Module):
 
         logger = logging.getLogger(__name__)
         logger.info(f"Map.start() called - global_publish_interval={self.global_publish_interval}")
+        # Subscribe to odometry messages to build history
+        if self.odom:
+            self.odom.subscribe(self.store_odom)
+            logger.info("Subscribed to odometry messages for timestamp synchronization")
+
 
         self.lidar.subscribe(self.add_frame)
 
@@ -88,6 +104,33 @@ class Map(Module):
         else:
             logger.warning("No global_publish_interval set - global_map will NOT be published!")
 
+    @rpc
+    def store_odom(self, odom: PoseStamped):
+        """Store odometry message in history buffer."""
+        self.odom_history.append(odom)
+    
+    def find_closest_odom(self, target_ts: float) -> Optional[PoseStamped]:
+        """Find the odometry message closest in time to the target timestamp."""
+        if not self.odom_history:
+            return None
+        
+        # Find the closest odometry message
+        closest_odom = None
+        min_time_diff = float('inf')
+        
+        for odom in self.odom_history:
+            time_diff = abs(odom.ts - target_ts)
+            if time_diff < min_time_diff:
+                min_time_diff = time_diff
+                closest_odom = odom
+        
+        # Check if the closest is within tolerance
+        if min_time_diff <= self.time_tolerance:
+            return closest_odom
+        else:
+            return None
+
+
     def to_PointCloud2(self) -> PointCloud2:
         return PointCloud2(
             pointcloud=self.pointcloud,
@@ -105,24 +148,41 @@ class Map(Module):
     @rpc
     def add_frame(self, frame: LidarMessage) -> "Map":
         """Transform to world frame if needed, then add to map."""
+        import logging
+
+        logger = logging.getLogger(__name__)
         # Transform to world frame if needed
         if frame.frame_id != self.frame_id:
-            try:
-                tf = self.tf.get(frame.frame_id, self.frame_id)
-                if tf:
-                    frame = frame.transform(tf)  # Clean transform using types
-                else:
-                    # No transform available yet (e.g., ZED still initializing)
-                    # Skip this frame for map accumulation
+            # Try to find synchronized odometry transform
+            closest_odom = self.find_closest_odom(frame.ts)
+            
+            if closest_odom:
+                # Use the synchronized odometry transform
+                try:
+                    from dimos.msgs.geometry_msgs import Transform
+                    # Create transform from the synchronized pose
+                    tf = Transform.from_pose(closest_odom.frame_id, closest_odom)
+                    frame = frame.transform(tf)
+                    logger.debug(
+                        f"Using synchronized transform (time diff: {abs(closest_odom.ts - frame.ts):.3f}s)"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to apply synchronized transform: {e}")
                     return
-            except Exception as e:
-                # Log transform errors but don't crash
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.debug(
-                    f"Transform not available from {frame.frame_id} to {self.frame_id}: {e}"
+            else:
+                # No close odometry message found, print warning
+                logger.warning(
+                    f"No odometry message found within {self.time_tolerance}s of lidar timestamp {frame.ts}. "
+                    f"Skipping this frame for global map accumulation."
                 )
+                # Still publish local costmap even without global map update
+                local_costmap = OccupancyGrid.from_pointcloud(
+                    frame,
+                    resolution=self.cost_resolution,
+                    min_height=self.min_height,
+                    max_height=self.max_height,
+                ).gradient(max_distance=0.25)
+                self.local_costmap.publish(local_costmap)
                 return
 
         # Combine old map with new raw pointcloud (no pre-downsampling)
@@ -138,9 +198,6 @@ class Map(Module):
             # Use slightly larger voxel size to reduce point count
             aggressive_voxel_size = self.voxel_size * 1.2
             self.pointcloud = self.pointcloud.voxel_down_sample(voxel_size=aggressive_voxel_size)
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.info(
                 f"Map downsampled to {len(self.pointcloud.points)} points with voxel size {aggressive_voxel_size:.3f}m"
             )
