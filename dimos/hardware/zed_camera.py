@@ -565,6 +565,7 @@ class ZEDModule(Module):
         set_floor_as_origin: bool = True,
         publish_rate: float = 30.0,
         frame_id: str = "camera_link",  # ZED outputs in ROS frame (z-up, x-forward)
+        recording_path: str = None,
         **kwargs,
     ):
         """
@@ -580,6 +581,7 @@ class ZEDModule(Module):
             set_floor_as_origin: Set floor as origin for tracking
             publish_rate: Rate to publish messages (Hz)
             frame_id: TF frame ID for messages
+            recording_path: Path to save recorded data
         """
         super().__init__(**kwargs)
 
@@ -590,6 +592,7 @@ class ZEDModule(Module):
         self.set_floor_as_origin = set_floor_as_origin
         self.publish_rate = publish_rate
         self.frame_id = frame_id
+        self.recording_path = recording_path
 
         # Convert string parameters to ZED enums
         self.resolution = getattr(sl.RESOLUTION, resolution, sl.RESOLUTION.HD720)
@@ -603,6 +606,20 @@ class ZEDModule(Module):
 
         # Initialize TF publisher
         self.tf = TF()
+
+        # Initialize storage for recording if path provided
+        self.storages = None
+        if self.recording_path:
+            from dimos.utils.testing import TimedSensorStorage
+
+            self.storages = {
+                "pointcloud": TimedSensorStorage(f"{self.recording_path}/pointcloud"),
+                "color": TimedSensorStorage(f"{self.recording_path}/color"),
+                "depth": TimedSensorStorage(f"{self.recording_path}/depth"),
+                "pose": TimedSensorStorage(f"{self.recording_path}/pose"),
+                "camera_info": TimedSensorStorage(f"{self.recording_path}/camera_info"),
+            }
+            logger.info(f"Recording enabled - saving to {self.recording_path}")
 
         logger.info(f"ZEDModule initialized for camera {camera_id}")
 
@@ -691,10 +708,19 @@ class ZEDModule(Module):
             self.zed_camera.zed.retrieve_image(self.zed_camera.image_left, sl.VIEW.LEFT)
             left_img = self.zed_camera.image_left.get_data()[:, :, :3]  # Remove alpha
 
+            # Save raw color data if recording
+            if self.storages:
+                self.storages["color"].save_one(left_img)
+
             # Get depth for visualization (but don't use for pointcloud)
             self.zed_camera.zed.retrieve_measure(self.zed_camera.depth_map, sl.MEASURE.DEPTH)
             depth = self.zed_camera.depth_map.get_data()
 
+            # Save raw depth data if recording
+            if self.storages:
+                self.storages["depth"].save_one(depth)
+
+            # TODO: move to capture_pointcloud() method in ZEDCamera
             # Get pointcloud at lower resolution - EXACTLY like the demo
             self.zed_camera.zed.retrieve_measure(
                 self.zed_camera.point_cloud,
@@ -703,10 +729,19 @@ class ZEDModule(Module):
                 self.zed_camera.pc_resolution,
             )
 
+            # Save raw pointcloud data if recording
+            if self.storages:
+                point_cloud_data = self.zed_camera.point_cloud.get_data()
+                self.storages["pointcloud"].save_one(point_cloud_data)
+
             # Get pose if tracking enabled
             pose_data = None
             if self.enable_tracking:
                 pose_data = self.zed_camera.get_pose()
+
+                # Save raw pose data if recording
+                if self.storages and pose_data:
+                    self.storages["pose"].save_one(pose_data)
 
             # Create header with optical frame
             header = Header(self.frame_id)  # camera_link
@@ -774,6 +809,10 @@ class ZEDModule(Module):
             info = self.zed_camera.get_camera_info()
             if not info:
                 return
+
+            # Save raw camera info if recording
+            if self.storages:
+                self.storages["camera_info"].save_one(info)
 
             # Get calibration parameters
             left_cam = info.get("left_cam", {})
