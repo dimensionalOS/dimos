@@ -155,6 +155,9 @@ class Map(Module):
         if frame.frame_id != self.frame_id:
             # Try to find synchronized odometry transform
             closest_odom = self.find_closest_odom(frame.ts)
+            print("human readable frame ts:", time.ctime(frame.ts), "closest odom ts:", time.ctime(closest_odom.ts) if closest_odom else 'None')
+            print('diff', abs(closest_odom.ts - frame.ts) if closest_odom else 'N/A')
+            print('------')
             
             if closest_odom:
                 # Use the synchronized odometry transform
