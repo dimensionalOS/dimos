@@ -207,6 +207,9 @@ class StereoMapper:
             logger.debug("Invalid pose position, skipping TF publish")
             return
 
+        if not msg.frame_id or msg.frame_id == "":
+            msg.frame_id = "world"
+
         # Publish world -> base_link transform from ZED pose
         # The ZED gives us the camera pose in world, but we treat it as base_link for simplicity
         self.tf.publish(Transform.from_pose("base_link", msg))
@@ -279,6 +282,8 @@ class StereoMapper:
             global_publish_interval=2.5,
             min_height=0.15,
             max_height=1.5,
+            frame_id="world",
+            max_map_points=100000,
         )
 
         # Configure transports - same topics as UnitreeGo2

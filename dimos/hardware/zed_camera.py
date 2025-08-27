@@ -849,7 +849,7 @@ class ZEDModule(Module):
             rotation = pose_data.get("rotation", [0, 0, 0, 1])  # quaternion [x,y,z,w]
 
             # Create PoseStamped message
-            msg = PoseStamped(ts=header.ts, position=position, orientation=rotation)
+            msg = PoseStamped(ts=header.ts, position=position, orientation=rotation, frame_id='world')
             self.pose.publish(msg)
 
             # Note: TF publishing is handled by _publish_tf() to avoid conflicts
@@ -897,6 +897,7 @@ class ZEDModule(Module):
                     origin=[0.0, 0.0, 0.0],
                     resolution=0.05,  # Match Map module voxel_size
                     ts=header.ts,
+                    frame_id="camera_link",
                 )
 
                 if self.pointcloud_msg:
