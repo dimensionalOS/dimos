@@ -94,6 +94,9 @@ def snapshot_to_messages(
     # (images for example, requires to be a HumanMessage)
     special_msgs: List[HumanMessage] = []
 
+    # Initialize state_msg
+    state_msg = None
+
     for skill_state in sorted(
         state.values(),
         key=lambda skill_state: skill_state.duration(),
@@ -144,7 +147,14 @@ class Agent(AgentSpec):
                 self.system_message = self.config.system_prompt
 
         self.publish(self.system_message)
-        self._llm = init_chat_model(model_provider=self.config.provider, model=self.config.model)
+
+        # Use provided model instance if available, otherwise initialize from config
+        if self.config.model_instance:
+            self._llm = self.config.model_instance
+        else:
+            self._llm = init_chat_model(
+                model_provider=self.config.provider, model=self.config.model
+            )
 
     @rpc
     def start(self):

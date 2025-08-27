@@ -125,6 +125,7 @@ async def test_coordinator_generator():
     # here we call a skill that generates a sequence of messages
     skillCoordinator.call_skill("test-gen-0", "counter", {"args": [10]})
     skillCoordinator.call_skill("test-gen-1", "counter_passive_sum", {"args": [5]})
+    skillCoordinator.call_skill("test-gen-2", "take_photo", {"args": []})
 
     # periodically agent is stopping it's thinking cycle and asks for updates
     while await skillCoordinator.wait_for_updates(2):
@@ -133,4 +134,5 @@ async def test_coordinator_generator():
         print(agent_update)
         await asyncio.sleep(0.125)
 
-    print("Skill lifecycle finished")
+    print("coordinator loop finished")
+    print(skillCoordinator)
