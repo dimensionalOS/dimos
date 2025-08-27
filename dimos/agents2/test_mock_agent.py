@@ -24,46 +24,47 @@ from dimos.agents2.testing import MockModel
 from dimos.core import start
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 
-# async def test_tool_call():
-#     """Test agent initialization and tool call execution."""
-#     # Create a fake model that will respond with tool calls
-#     fake_model = MockModel(
-#         responses=[
-#             AIMessage(
-#                 content="I'll add those numbers for you.",
-#                 tool_calls=[
-#                     {
-#                         "name": "add",
-#                         "args": {"args": [], "kwargs": {"x": 5, "y": 3}},
-#                         "id": "tool_call_1",
-#                     }
-#                 ],
-#             ),
-#             AIMessage(content="The result of adding 5 and 3 is 8."),
-#         ]
-#     )
 
-#     # Create agent with the fake model
-#     agent = Agent(
-#         model_instance=fake_model,
-#         system_prompt="You are a helpful robot assistant with math skills.",
-#     )
+async def test_tool_call():
+    """Test agent initialization and tool call execution."""
+    # Create a fake model that will respond with tool calls
+    fake_model = MockModel(
+        responses=[
+            AIMessage(
+                content="I'll add those numbers for you.",
+                tool_calls=[
+                    {
+                        "name": "add",
+                        "args": {"args": [], "kwargs": {"x": 5, "y": 3}},
+                        "id": "tool_call_1",
+                    }
+                ],
+            ),
+            AIMessage(content="The result of adding 5 and 3 is 8."),
+        ]
+    )
 
-#     # Register skills with coordinator
-#     skills = SkillContainerTest()
-#     agent.coordinator.register_skills(skills)
-#     agent.start()
-#     # Query the agent
-#     await agent.query_async("Please add 5 and 3")
+    # Create agent with the fake model
+    agent = Agent(
+        model_instance=fake_model,
+        system_prompt="You are a helpful robot assistant with math skills.",
+    )
 
-#     # Check that tools were bound
-#     assert fake_model.tools is not None
-#     assert len(fake_model.tools) > 0
+    # Register skills with coordinator
+    skills = SkillContainerTest()
+    agent.coordinator.register_skills(skills)
+    agent.start()
+    # Query the agent
+    await agent.query_async("Please add 5 and 3")
 
-#     # Verify the model was called and history updated
-#     assert len(agent._history) > 0
+    # Check that tools were bound
+    assert fake_model.tools is not None
+    assert len(fake_model.tools) > 0
 
-#     agent.stop()
+    # Verify the model was called and history updated
+    assert len(agent._history) > 0
+
+    agent.stop()
 
 
 async def test_image_tool_call():
@@ -76,8 +77,6 @@ async def test_image_tool_call():
                 content="I'll take a photo for you.",
                 tool_calls=[
                     {
-                        # "name": "add",
-                        # "args": {"args": [], "kwargs": {"x": 5, "y": 3}},
                         "name": "take_photo",
                         "args": {"args": [], "kwargs": {}},
                         "id": "tool_call_image_1",
