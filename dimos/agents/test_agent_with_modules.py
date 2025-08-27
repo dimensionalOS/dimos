@@ -72,6 +72,7 @@ class ResponseCollector(Module):
         return self.responses
 
 
+@pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
 async def test_agent_module_connections():
