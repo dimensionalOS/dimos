@@ -112,6 +112,8 @@ def snapshot_to_messages(
         special_data = skill_state.skill_config.output != Output.standard
         if special_data:
             content = skill_state.content()
+            if not content:
+                continue
             special_msgs.append(HumanMessage(content=[content]))
 
         if skill_state.call_id in tool_call_ids:
