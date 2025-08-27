@@ -43,7 +43,6 @@ from dimos.utils.logging_config import setup_logger
 import numpy as np
 from dimos.hardware.zed_camera import ZEDModule
 from dimos.hardware.fake_zed_module import FakeZEDModule
-from dimos.utils.testing import TimedSensorStorage
 
 logger = setup_logger(__name__, level=logging.INFO)
 
@@ -121,7 +120,9 @@ class StereoMapper:
         if self.replay_path:
             # Deploy fake ZED module for replay
             logger.info(f"Deploying FakeZEDModule for replay from: {self.replay_path}")
-            self.zed_module = self.dimos.deploy(FakeZEDModule, recording_path=self.replay_path)
+            self.zed_module = self.dimos.deploy(
+                FakeZEDModule, recording_path=self.replay_path, frame_id="camera_link"
+            )
         else:
             # Deploy real ZED module
             logger.info("Deploying ZED camera module...")
@@ -136,6 +137,7 @@ class StereoMapper:
                 set_floor_as_origin=True,
                 publish_rate=10.0,
                 frame_id="camera_link",
+                recording_path=self.record_path if self.record_path else None,
                 # Filtering parameters - match Unitree specs
                 filter_voxel_size=0.05,  # Initial downsampling to reduce lag
                 filter_max_distance=5.0,  # Slightly larger than Unitree for better coverage
@@ -162,10 +164,6 @@ class StereoMapper:
         # Subscribe to lidar messages to log metadata
         # self.zed_module.pointcloud_msg.subscribe(self._log_lidar_metadata)
         logger.info("✓ ZED camera module deployed and configured")
-
-        # Set up recording if requested (not in replay mode)
-        if self.record_path and not self.replay_path:
-            self._setup_recording()
 
     def _log_lidar_metadata(self, msg: LidarMessage):
         """Log lidar metadata - exactly like UnitreeGo2's ConnectionModule."""
@@ -223,50 +221,6 @@ class StereoMapper:
         self.tf.publish(camera_link)
 
         # No need for camera_optical transform - ZED already outputs in ROS frame
-
-    def _setup_recording(self):
-        """Set up recording for ZED sensor streams."""
-        logger.info(f"Setting up recording to {self.record_path}")
-
-        # Create storage instances for each stream
-        # TimedSensorStorage automatically saves with timestamps
-        self.storages = {
-            "lidar": TimedSensorStorage(f"{self.record_path}/lidar"),
-            "pose": TimedSensorStorage(f"{self.record_path}/pose"),
-            "color_image": TimedSensorStorage(f"{self.record_path}/color_image"),
-            "depth_image": TimedSensorStorage(f"{self.record_path}/depth_image"),
-            "camera_info": TimedSensorStorage(f"{self.record_path}/camera_info"),
-        }
-
-        # Record lidar pointcloud
-        self.zed_module.pointcloud_msg.transport.subscribe(
-            lambda msg: self.storages["lidar"].save_one(msg)
-        )
-        logger.info("  Recording /lidar stream")
-
-        # Record pose/odometry
-        self.zed_module.pose.transport.subscribe(lambda msg: self.storages["pose"].save_one(msg))
-        logger.info("  Recording /odom stream")
-
-        # Record color image
-        self.zed_module.color_image.transport.subscribe(
-            lambda msg: self.storages["color_image"].save_one(msg)
-        )
-        logger.info("  Recording /zed/color_image stream")
-
-        # Record depth image
-        self.zed_module.depth_image.transport.subscribe(
-            lambda msg: self.storages["depth_image"].save_one(msg)
-        )
-        logger.info("  Recording /zed/depth_image stream")
-
-        # Record camera info
-        self.zed_module.camera_info.transport.subscribe(
-            lambda msg: self.storages["camera_info"].save_one(msg)
-        )
-        logger.info("  Recording /zed/camera_info stream")
-
-        logger.info(f"✓ Recording setup complete - saving to {self.record_path}")
 
     def _deploy_mapping(self):
         """Deploy and configure the mapping module - exactly like UnitreeGo2."""
