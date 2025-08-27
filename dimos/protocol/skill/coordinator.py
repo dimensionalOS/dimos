@@ -312,7 +312,7 @@ class SkillCoordinator(Module):
 
         ret = []
         for name, skill_config in self.skills().items():
-            print(f"Tool {name} config: {skill_config}, {skill_config.f}")
+            # print(f"Tool {name} config: {skill_config}, {skill_config.f}")
             ret.append(langchain_tool(skill_config.f))
 
         return ret
@@ -411,6 +411,17 @@ class SkillCoordinator(Module):
                     )
                     print(error_traceback)
                     to_delete.append(call_id)
+
+                elif (
+                    skill_run.state == SkillStateEnum.running
+                    and skill_run.reduced_stream_msg is not None
+                ):
+                    # preserve ret as a copy
+                    ret[call_id] = copy(skill_run)
+                    logger.debug(
+                        f"Resetting accumulator for skill {skill_run.name} (call_id={call_id})"
+                    )
+                    skill_run.reduced_stream_msg = None
 
             for call_id in to_delete:
                 logger.debug(f"Call {call_id} finished, removing from state")

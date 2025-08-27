@@ -192,7 +192,7 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
             if isinstance(message, HumanMessage):
                 content = message.content
                 if not isinstance(content, str):
-                    content = "<complex data>"
+                    content = "<Image>"
 
                 table.add_row(Text("Human", style="green"), Text(content, style="green"))
             elif isinstance(message, AIMessage):

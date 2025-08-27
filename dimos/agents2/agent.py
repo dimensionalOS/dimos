@@ -39,11 +39,16 @@ SYSTEM_MSG_APPEND = "\nYour message history will always be appended with a Syste
 
 
 def toolmsg_from_state(state: SkillState) -> ToolMessage:
+    if state.skill_config.output != Output.standard:
+        content = "Special output, see separate message"
+    else:
+        content = state.content()
+
     return ToolMessage(
         # if agent call has been triggered by another skill,
         # and this specific skill didn't finish yet but we need a tool call response
         # we return a message explaining that execution is still ongoing
-        content=state.content()
+        content=content
         or "Running, you will be called with an update, no need for subsequent tool calls",
         name=state.name,
         tool_call_id=state.call_id,
@@ -103,12 +108,14 @@ def snapshot_to_messages(
     ):
         if skill_state.call_id in tool_call_ids:
             tool_msgs.append(toolmsg_from_state(skill_state))
-            continue
 
         special_data = skill_state.skill_config.output != Output.standard
         if special_data:
-            print("special data from skill", skill_state.name, skill_state.content())
-            special_msgs.append(HumanMessage(content=[skill_state.content()]))
+            content = skill_state.content()
+            special_msgs.append(HumanMessage(content=[content]))
+
+        if skill_state.call_id in tool_call_ids:
+            continue
 
         state_overview.append(summary_from_state(skill_state, special_data))
 
@@ -235,6 +242,7 @@ class Agent(AgentSpec):
                 # we will return a tool message, and not a general state message
                 snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)
 
+                print("SNAPSHOT", snapshot_msgs)
                 self.state_messages = snapshot_msgs.get("state_msgs", [])
                 self.append_history(*snapshot_msgs.get("tool_msgs", []))
 

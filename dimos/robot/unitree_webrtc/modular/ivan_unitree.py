@@ -17,11 +17,11 @@ import os
 import time
 from typing import Optional
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.std_msgs import Bool, String
 
 from dimos.core import LCMTransport, start
+from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image

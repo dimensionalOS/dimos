@@ -30,6 +30,7 @@ class SkillContainerTest(Module):
     @skill()
     def add(self, x: int, y: int) -> int:
         """adds x and y."""
+        time.sleep(2)
         return x + y
 
     @skill()
