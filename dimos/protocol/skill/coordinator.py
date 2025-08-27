@@ -107,32 +107,18 @@ class SkillState:
             return 0.0
 
     def content(self) -> dict[str, Any] | str | int | float | None:
-        # any tool output can be a custom type that knows how to encode itself
-        # like a costmap, path, transform etc could be translatable into strings
-        def maybe_encode(something: Any) -> str:
-            if getattr(something, "agent_encode", None):
-                return something.agent_encode()
-
-            # if isinstance(something, dict):
-            #     something = json.dumps(something)
-
-            # if not isinstance(something, str):
-            #     something = str(something)
-
-            return something
-
         if self.state == SkillStateEnum.running:
             if self.reduced_stream_msg:
-                return maybe_encode(self.reduced_stream_msg.content)
+                return self.reduced_stream_msg.content
 
         if self.state == SkillStateEnum.completed:
             if self.reduced_stream_msg:  # are we a streaming skill?
-                return maybe_encode(self.reduced_stream_msg.content)
-            return maybe_encode(self.ret_msg.content)
+                return self.reduced_stream_msg.content
+            return self.ret_msg.content
 
         if self.state == SkillStateEnum.error:
             if self.reduced_stream_msg:
-                (maybe_encode(self.reduced_stream_msg.content) + "\n" + self.error_msg.content)
+                (self.reduced_stream_msg.content + "\n" + self.error_msg.content)
             else:
                 return self.error_msg.content
 

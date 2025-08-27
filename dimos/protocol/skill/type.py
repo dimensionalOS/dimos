@@ -96,6 +96,11 @@ class MsgType(Enum):
 M = TypeVar("M", bound="MsgType")
 
 
+def maybe_encode(something: Any) -> str:
+    if getattr(something, "agent_encode", None):
+        return something.agent_encode()
+
+
 class SkillMsg(Timestamped, Generic[M]):
     ts: float
     type: M
@@ -113,7 +118,10 @@ class SkillMsg(Timestamped, Generic[M]):
         self.ts = time.time()
         self.call_id = call_id
         self.skill_name = skill_name
-        self.content = content
+        # any tool output can be a custom type that knows how to encode itself
+        # like a costmap, path, transform etc could be translatable into strings
+
+        self.content = maybe_encode(content)
         self.type = type
 
     def __repr__(self):
