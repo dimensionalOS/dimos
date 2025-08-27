@@ -139,7 +139,7 @@ class AgentConfig(ModuleConfig):
     agent_topic: Any = field(default_factory=lambda: lcm.Topic("/agent"))
 
 
-type AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]
+AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]
 
 
 class AgentSpec(Service[AgentConfig], Module, ABC):
