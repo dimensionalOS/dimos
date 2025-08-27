@@ -32,7 +32,6 @@ from reactivex.subject import Subject
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Pose, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
-from dimos.robot.connection_interface import ConnectionInterface
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -41,7 +40,7 @@ from dimos.utils.reactive import backpressure, callback_to_observable
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
 
-class UnitreeWebRTCConnection(ConnectionInterface):
+class UnitreeWebRTCConnection:
     def __init__(self, ip: str, mode: str = "ai"):
         self.ip = ip
         self.mode = mode

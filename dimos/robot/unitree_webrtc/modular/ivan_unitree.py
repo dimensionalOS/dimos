@@ -105,7 +105,7 @@ class UnitreeGo2:
         ip: str,
         connection_type: Optional[str] = "webrtc",
     ):
-        dimos = start(10)
+        dimos = start(3)
 
         foxglove_bridge = dimos.deploy(FoxgloveBridge)
         foxglove_bridge.start()

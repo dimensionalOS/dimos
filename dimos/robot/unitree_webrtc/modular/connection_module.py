@@ -56,8 +56,15 @@ originalwidth, originalheight = (1280, 720)
 get_data("unitree_office_walk")
 
 
-class FakeRTC:
+class FakeRTC(UnitreeWebRTCConnection):
+    # we don't want UnitreeWebRTCConnection to init
+    def __init__(self, *args, **kwargs):
+        pass
+
     def connect(self):
+        pass
+
+    def start(self):
         pass
 
     def standup(self):
@@ -67,22 +74,27 @@ class FakeRTC:
         print("liedown suppressed")
 
     @functools.cache
-    def lidar_stream(self):
+    def raw_lidar_stream(self):
         print("lidar stream start")
-        lidar_store = TimedSensorReplay("unitree_office_walk/lidar", autocast=LidarMessage.from_msg)
+        lidar_store = TimedSensorReplay("unitree_office_walk/lidar")
         return lidar_store.stream()
 
     @functools.cache
-    def odom_stream(self):
+    def raw_odom_stream(self):
         print("odom stream start")
-        odom_store = TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+        odom_store = TimedSensorReplay("unitree_office_walk/odom")
         return odom_store.stream()
 
+    # we don't have raw video stream in the data set
     @functools.cache
-    def video_stream(self):
+    def raw_video_stream(self):
         print("video stream start")
         video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
         return video_store.stream()
+
+    @functools.cache
+    def video_stream(self):
+        return self.raw_video_stream()
 
     def move(self, vector: Vector3, duration: float = 0.0):
         pass
@@ -112,13 +124,13 @@ class ConnectionModule(Module):
         from dimos.utils.testing import TimedSensorStorage
 
         lidar_store = TimedSensorStorage(f"{recording_name}/lidar")
-        lidar_store.save_stream(self.connection.raw_lidar_stream())
+        lidar_store.save_stream(self.connection.raw_lidar_stream()).subscribe(lambda x: x)
 
         odom_store = TimedSensorStorage(f"{recording_name}/odom")
-        odom_store.save_stream(self.connection.raw_odom_stream())
+        odom_store.save_stream(self.connection.raw_odom_stream()).subscribe(lambda x: x)
 
         video_store = TimedSensorStorage(f"{recording_name}/video")
-        video_store.save_stream(self.connection.raw_video_stream())
+        video_store.save_stream(self.connection.raw_video_stream()).subscribe(lambda x: x)
 
     @rpc
     def start(self):
@@ -141,8 +153,9 @@ class ConnectionModule(Module):
 
         # Connect sensor streams to outputs
         self.connection.lidar_stream().subscribe(self.lidar.publish)
-        self.connection.odom_stream().subscribe(self._publish_tf)
-        self.connection.odom_stream().subscribe(self.odom.publish)
+        self.connection.odom_stream().subscribe(
+            lambda odom: self._publish_tf(odom) and self.odom.publish(odom)
+        )
 
         def attach_frame_id(image: Image) -> Image:
             image.frame_id = "camera_optical"
