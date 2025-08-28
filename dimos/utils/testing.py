@@ -34,6 +34,7 @@ from reactivex import timer as rx_timer
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
+from dimos.types.timestamped import Timestamped, TimestampedCollection
 from dimos.utils.data import _get_data_dir, get_data
 
 T = TypeVar("T")
@@ -70,6 +71,12 @@ class SensorReplay(Generic[T]):
             if self.autocast:
                 return self.autocast(data)
             return data
+
+    def first(self) -> Optional[Union[T, Any]]:
+        try:
+            return next(self.iterate())
+        except StopIteration:
+            return None
 
     def iterate(self, loop: bool = False) -> Iterator[Union[T, Any]]:
         pattern = os.path.join(self.root_dir, "*")
@@ -181,6 +188,70 @@ class TimedSensorReplay(SensorReplay[T]):
                 return (data[0], self.autocast(data[1]))
             return data
 
+    def find_closest(
+        self, timestamp: float, tolerance: Optional[float] = None
+    ) -> Optional[Union[T, Any]]:
+        """Find the frame closest to the given timestamp.
+
+        Args:
+            timestamp: The target timestamp to search for
+            tolerance: Optional maximum time difference allowed
+
+        Returns:
+            The data frame closest to the timestamp, or None if no match within tolerance
+        """
+        closest_data = None
+        closest_diff = float("inf")
+
+        # Check frames before and after the timestamp
+        for ts, data in self.iterate_ts():
+            diff = abs(ts - timestamp)
+
+            if diff < closest_diff:
+                closest_diff = diff
+                closest_data = data
+            elif diff > closest_diff:
+                # We're moving away from the target, can stop
+                break
+
+        if tolerance is not None and closest_diff > tolerance:
+            return None
+
+        return closest_data
+
+    def find_closest_seek(
+        self, relative_seconds: float, tolerance: Optional[float] = None
+    ) -> Optional[Union[T, Any]]:
+        """Find the frame closest to a time relative to the start.
+
+        Args:
+            relative_seconds: Seconds from the start of the dataset
+            tolerance: Optional maximum time difference allowed
+
+        Returns:
+            The data frame closest to the relative timestamp, or None if no match within tolerance
+        """
+        # Get the first timestamp
+        first_ts = self.first_timestamp()
+        if first_ts is None:
+            return None
+
+        # Calculate absolute timestamp and use find_closest
+        target_timestamp = first_ts + relative_seconds
+        return self.find_closest(target_timestamp, tolerance)
+
+    def first_timestamp(self) -> Optional[float]:
+        """Get the timestamp of the first item in the dataset.
+
+        Returns:
+            The first timestamp, or None if dataset is empty
+        """
+        try:
+            ts, _ = next(self.iterate_ts())
+            return ts
+        except StopIteration:
+            return None
+
     def iterate(self, loop: bool = False) -> Iterator[Union[T, Any]]:
         return (x[1] for x in super().iterate(loop=loop))
 
@@ -191,10 +262,10 @@ class TimedSensorReplay(SensorReplay[T]):
         from_timestamp: Optional[float] = None,
         loop: bool = False,
     ) -> Iterator[Union[Tuple[float, T], Any]]:
+        first_ts = None
         if (seek is not None) or (duration is not None):
-            try:
-                first_ts, first_data = next(super().iterate())
-            except StopIteration:
+            first_ts = self.first_timestamp()
+            if first_ts is None:
                 return
 
         if seek is not None:

@@ -201,3 +201,72 @@ def test_duration_with_loop():
         prev_ts = ts
 
     assert loop_count >= 2  # Verify we actually looped
+
+
+def test_first_methods():
+    """Test first() and first_timestamp() methods"""
+    # Test SensorReplay.first()
+    lidar_replay = testing.SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
+    first_msg = lidar_replay.first()
+    assert first_msg is not None
+    assert isinstance(first_msg, LidarMessage)
+
+    # Verify it's the same type as first item from iterate()
+    first_from_iterate = next(lidar_replay.iterate())
+    assert type(first_msg) == type(first_from_iterate)
+    assert first_msg.ts == first_from_iterate.ts  # Compare timestamps
+
+    # Test TimedSensorReplay.first_timestamp()
+    odom_store = testing.TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    first_ts = odom_store.first_timestamp()
+    assert first_ts is not None
+    assert isinstance(first_ts, float)
+
+    # Verify it matches the timestamp from iterate_ts
+    ts_from_iterate, _ = next(odom_store.iterate_ts())
+    assert first_ts == ts_from_iterate
+
+    # Test that first() returns just the data
+    first_data = odom_store.first()
+    assert first_data is not None
+    assert isinstance(first_data, Odometry)
+
+
+def test_find_closest():
+    """Test find_closest method in TimedSensorReplay"""
+    odom_store = testing.TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+
+    # Get some reference timestamps
+    timestamps = []
+    for ts, msg in odom_store.iterate_ts():
+        timestamps.append(ts)
+        if len(timestamps) >= 10:
+            break
+
+    # Test exact match
+    target_ts = timestamps[5]
+    result = odom_store.find_closest(target_ts)
+    assert result is not None
+    assert isinstance(result, Odometry)
+
+    # Test between timestamps
+    mid_ts = (timestamps[3] + timestamps[4]) / 2
+    result = odom_store.find_closest(mid_ts)
+    assert result is not None
+
+    # Test with tolerance
+    far_future = timestamps[-1] + 100.0
+    result = odom_store.find_closest(far_future, tolerance=1.0)
+    assert result is None  # Too far away
+
+    result = odom_store.find_closest(timestamps[0] - 0.001, tolerance=0.01)
+    assert result is not None  # Within tolerance
+
+    # Test find_closest_seek
+    result = odom_store.find_closest_seek(0.5)  # 0.5 seconds from start
+    assert result is not None
+    assert isinstance(result, Odometry)
+
+    # Test with negative seek (before start)
+    result = odom_store.find_closest_seek(-1.0)
+    assert result is not None  # Should still return closest (first frame)

@@ -35,6 +35,7 @@ from reactivex import operators as ops
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
+from dimos.perception.detection2d.detic import Detic2DDetector
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.types.timestamped import to_ros_stamp
 
@@ -197,6 +198,7 @@ class Detect2DModule(Module):
         if detector:
             self._detectorClass = detector
         super().__init__(*args, **kwargs)
+        self.detector = self._initDetector()
 
     def detect(self, image: Image) -> Detections:
         return [image, better_detection_format(self.detector.process_image(image.to_opencv()))]
@@ -204,7 +206,6 @@ class Detect2DModule(Module):
     @rpc
     def start(self):
         # from dimos.activate_cuda import _init_cuda
-        self.detector = self._initDetector()
         detection_stream = self.image.observable().pipe(ops.map(self.detect))
 
         detection_stream.pipe(ops.map(build_imageannotations)).subscribe(self.annotations.publish)
