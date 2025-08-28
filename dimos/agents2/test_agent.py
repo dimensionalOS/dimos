@@ -29,12 +29,12 @@ async def test_agent_init():
     )
 
     # # Uncomment the following lines to use a real module system
-    dimos = start(2)
-    testcontainer = dimos.deploy(SkillContainerTest)
-    agent = Agent(system_prompt=system_prompt)
-
-    # testcontainer = TestContainer()
+    # dimos = start(2)
+    # testcontainer = dimos.deploy(SkillContainerTest)
     # agent = Agent(system_prompt=system_prompt)
+
+    testcontainer = SkillContainerTest()
+    agent = Agent(system_prompt=system_prompt)
     agent.register_skills(testcontainer)
     agent.start()
     agent.run_implicit_skill("uptime_seconds")
