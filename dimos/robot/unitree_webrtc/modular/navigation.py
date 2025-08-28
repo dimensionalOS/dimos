@@ -82,3 +82,5 @@ def deploy_navigation(dimos, connection):
     local_planner.start()
     navigator.start()
     websocket_vis.start()
+
+    return mapper
