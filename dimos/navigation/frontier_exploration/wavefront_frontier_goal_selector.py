@@ -31,7 +31,7 @@ from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, CostValues
 from dimos.utils.logging_config import setup_logger
-from dimos_lcm.std_msgs import Bool
+from dimos_lcm.std_msgs import Bool, String
 from dimos.utils.transform_utils import get_distance
 
 logger = setup_logger("dimos.robot.unitree.frontier_exploration")
@@ -95,6 +95,7 @@ class WavefrontFrontierExplorer(Module):
     goal_reached: In[Bool] = None
     explore_cmd: In[Bool] = None
     stop_explore_cmd: In[Bool] = None
+    navigator_state: In[String] = None
 
     # LCM outputs
     goal_request: Out[PoseStamped] = None
@@ -148,6 +149,11 @@ class WavefrontFrontierExplorer(Module):
         self.exploration_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
 
+        # Track current goal and navigator state
+        self.current_exploration_goal: Optional[Vector3] = None
+        self.last_navigator_state: Optional[str] = None
+        self.goal_was_published = False
+
         logger.info("WavefrontFrontierExplorer module initialized")
 
     @rpc
@@ -166,6 +172,10 @@ class WavefrontFrontierExplorer(Module):
             self.explore_cmd.subscribe(self._on_explore_cmd)
         if self.stop_explore_cmd.transport is not None:
             self.stop_explore_cmd.subscribe(self._on_stop_explore_cmd)
+
+        # Subscribe to navigator state
+        if self.navigator_state.transport is not None:
+            self.navigator_state.subscribe(self._on_navigator_state)
 
         logger.info("WavefrontFrontierExplorer started")
 
@@ -199,6 +209,35 @@ class WavefrontFrontierExplorer(Module):
         if msg.data:
             logger.info("Received exploration stop command via LCM")
             self.stop_exploration()
+
+    def _on_navigator_state(self, msg: String):
+        """Handle navigator state messages to detect failed goals."""
+        current_state = msg.data
+
+        # Check if navigator went from following_path to idle while we had published a goal
+        # Need to check if this is a failure (goal not reached) vs success (goal reached)
+        if (
+            self.last_navigator_state == "following_path"
+            and current_state == "idle"
+            and self.goal_was_published
+            and self.current_exploration_goal is not None
+        ):
+            # If goal_reached_event is already set, this was a successful navigation
+            # Otherwise, it's a failure (navigator stopped without reaching goal)
+            if not self.goal_reached_event.is_set():
+                logger.warning(
+                    f"Goal failed to reach: ({self.current_exploration_goal.x:.2f}, {self.current_exploration_goal.y:.2f})"
+                )
+                # Don't add failed goal to explored_goals list
+                # Just clear it so we can try a different frontier
+                self.current_exploration_goal = None
+                self.goal_was_published = False
+
+                # Set the goal reached event to continue exploration with next frontier
+                self.goal_reached_event.set()
+            # else: Goal was successfully reached, normal transition to idle
+
+        self.last_navigator_state = current_state
 
     def _count_costmap_information(self, costmap: OccupancyGrid) -> int:
         """
@@ -554,9 +593,9 @@ class WavefrontFrontierExplorer(Module):
         # Combine scores with consistent scaling
         total_score = (
             0.3 * info_gain_score  # 30% information gain
-            + 0.3 * explored_goals_score  # 30% distance from explored goals
-            + 0.2 * distance_score  # 20% distance optimization
-            + 0.15 * obstacles_score  # 15% distance from obstacles
+            + 0.25 * explored_goals_score  # 25% distance from explored goals
+            + 0.05 * distance_score  # 5% distance optimization
+            + 0.35 * obstacles_score  # 35% distance from obstacles
             + 0.05 * momentum_score  # 5% direction momentum
         )
 
@@ -659,9 +698,9 @@ class WavefrontFrontierExplorer(Module):
         if frontiers:
             self._update_exploration_direction(robot_pose, frontiers[0])
 
-            # Store the selected goal as explored
+            # Store the selected goal but don't mark as explored yet
+            # It will only be marked as explored if successfully reached
             selected_goal = frontiers[0]
-            self.mark_explored_goal(selected_goal)
 
             # Store current costmap for next comparison
             self.last_costmap = costmap
@@ -673,8 +712,9 @@ class WavefrontFrontierExplorer(Module):
         return None
 
     def mark_explored_goal(self, goal: Vector3):
-        """Mark a goal as explored."""
+        """Mark a goal as explored (only called when goal is reached successfully)."""
         self.explored_goals.append(goal)
+        logger.info(f"Successfully explored goal: ({goal.x:.2f}, {goal.y:.2f})")
 
     def reset_exploration_session(self):
         """
@@ -688,6 +728,9 @@ class WavefrontFrontierExplorer(Module):
         self.last_costmap = None  # Clear last costmap comparison
         self.no_gain_counter = 0  # Reset no-gain attempt counter
         self._cache.clear()  # Clear frontier point cache
+        self.current_exploration_goal = None  # Clear current goal
+        self.goal_was_published = False  # Reset goal published flag
+        self.last_navigator_state = None  # Reset navigator state
 
         logger.info("Exploration session reset - all state variables cleared")
 
@@ -726,6 +769,8 @@ class WavefrontFrontierExplorer(Module):
 
         self.exploration_active = False
         self.no_gain_counter = 0  # Reset counter when exploration stops
+        self.current_exploration_goal = None  # Clear current goal
+        self.goal_was_published = False  # Reset goal published flag
         self.stop_event.set()
 
         if self.exploration_thread and self.exploration_thread.is_alive():
@@ -757,6 +802,10 @@ class WavefrontFrontierExplorer(Module):
             goal = self.get_exploration_goal(robot_pose, costmap)
 
             if goal:
+                # Store current goal and set flag
+                self.current_exploration_goal = goal
+                self.goal_was_published = True
+
                 # Publish goal to navigator
                 goal_msg = PoseStamped()
                 goal_msg.position.x = goal.x
@@ -780,9 +829,25 @@ class WavefrontFrontierExplorer(Module):
                 goal_reached = self.goal_reached_event.wait(timeout=self.goal_timeout)
 
                 if goal_reached:
-                    logger.info("Goal reached, finding next frontier")
+                    # Check if it was actually reached or failed (based on navigator state)
+                    if self.current_exploration_goal is not None:
+                        # Goal was successfully reached
+                        logger.info("Goal reached successfully, marking as explored")
+                        self.mark_explored_goal(goal)
+                        self.current_exploration_goal = None
+                    else:
+                        # Goal failed (cleared by navigator state handler)
+                        logger.info(
+                            "Goal failed to reach, finding next frontier without marking as explored"
+                        )
                 else:
-                    logger.warning("Goal timeout after 30 seconds, finding next frontier anyway")
+                    logger.warning(
+                        f"Goal timeout after {self.goal_timeout} seconds, finding next frontier anyway"
+                    )
+                    # Don't mark timed-out goals as explored
+                    self.current_exploration_goal = None
+
+                self.goal_was_published = False
             else:
                 consecutive_failures += 1
 

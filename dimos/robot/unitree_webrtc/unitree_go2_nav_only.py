@@ -398,6 +398,9 @@ class UnitreeGo2NavOnly(Robot):
         self.frontier_explorer.stop_explore_cmd.transport = core.LCMTransport(
             "/stop_explore_cmd", Bool
         )
+        self.frontier_explorer.navigator_state.transport = core.LCMTransport(
+            "/navigation_state", String
+        )
 
         self.global_planner.target.connect(self.navigator.goal)
 
@@ -414,6 +417,7 @@ class UnitreeGo2NavOnly(Robot):
 
         self.frontier_explorer.costmap.connect(self.mapper.global_costmap)
         self.frontier_explorer.odometry.connect(self.connection.odom)
+        self.frontier_explorer.navigator_state.connect(self.navigator.navigation_state)
 
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
