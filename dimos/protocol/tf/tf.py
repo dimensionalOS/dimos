@@ -80,13 +80,12 @@ class TBuffer(TimestampedCollection[Transform]):
 
     def add(self, transform: Transform) -> None:
         super().add(transform)
-        self._prune_old_transforms()
+        self._prune_old_transforms(transform.ts)
 
-    def _prune_old_transforms(self) -> None:
+    def _prune_old_transforms(self, current_time) -> None:
         if not self._items:
             return
 
-        current_time = time.time()
         cutoff_time = current_time - self.buffer_size
 
         while self._items and self._items[0].ts < cutoff_time:

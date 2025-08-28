@@ -14,7 +14,10 @@
 
 import pickle
 
+from dimos_lcm.sensor_msgs import CameraInfo
+
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.std_msgs import Header
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 
@@ -22,81 +25,62 @@ image_resize_factor = 1
 originalwidth, originalheight = (1280, 720)
 
 
-def broadcast(
-    timestamp: float,
-    lidar_frame: LidarMessage,
-    video_frame: Image,
-    odom_frame: Odometry,
-    detections,
-    annotations,
-):
-    from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
-    from dimos_lcm.sensor_msgs import CameraInfo
+def camera_info() -> CameraInfo:
+    fx, fy, cx, cy = list(
+        map(
+            lambda x: int(x / image_resize_factor),
+            [819.553492, 820.646595, 625.284099, 336.808987],
+        )
+    )
+    width, height = tuple(
+        map(
+            lambda x: int(x / image_resize_factor),
+            [originalwidth, originalheight],
+        )
+    )
 
-    from dimos.core import LCMTransport
-    from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-    from dimos.msgs.std_msgs import Header
+    # Camera matrix K (3x3)
+    K = [fx, 0, cx, 0, fy, cy, 0, 0, 1]
+
+    # No distortion coefficients for now
+    D = [0.0, 0.0, 0.0, 0.0, 0.0]
+
+    # Identity rotation matrix
+    R = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+
+    # Projection matrix P (3x4)
+    P = [fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1, 0]
+
+    base_msg = {
+        "D_length": len(D),
+        "height": height,
+        "width": width,
+        "distortion_model": "plumb_bob",
+        "D": D,
+        "K": K,
+        "R": R,
+        "P": P,
+        "binning_x": 0,
+        "binning_y": 0,
+    }
+
+    return CameraInfo(
+        **base_msg,
+        header=Header("camera_optical"),
+    )
+
+
+def transform_chain(odom_frame: Odometry) -> list:
+    from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
     from dimos.protocol.tf import TF
 
-    def camera_info() -> CameraInfo:
-        fx, fy, cx, cy = list(
-            map(
-                lambda x: int(x / image_resize_factor),
-                [819.553492, 820.646595, 625.284099, 336.808987],
-            )
-        )
-        width, height = tuple(
-            map(
-                lambda x: int(x / image_resize_factor),
-                [originalwidth, originalheight],
-            )
-        )
-
-        # Camera matrix K (3x3)
-        K = [fx, 0, cx, 0, fy, cy, 0, 0, 1]
-
-        # No distortion coefficients for now
-        D = [0.0, 0.0, 0.0, 0.0, 0.0]
-
-        # Identity rotation matrix
-        R = [1, 0, 0, 0, 1, 0, 0, 0, 1]
-
-        # Projection matrix P (3x4)
-        P = [fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1, 0]
-
-        base_msg = {
-            "D_length": len(D),
-            "height": height,
-            "width": width,
-            "distortion_model": "plumb_bob",
-            "D": D,
-            "K": K,
-            "R": R,
-            "P": P,
-            "binning_x": 0,
-            "binning_y": 0,
-        }
-
-        return CameraInfo(
-            **base_msg,
-            header=Header("camera_optical"),
-        )
-
-    lidar_transport = LCMTransport("/lidar", LidarMessage)
-    odom_transport = LCMTransport("/odom", PoseStamped)
-    video_transport = LCMTransport("/image", Image)
-    camera_info_transport = LCMTransport("/camera_info", CameraInfo)
-
-    lidar_transport.broadcast(None, lidar_frame)
-    video_transport.broadcast(None, video_frame)
-    odom_transport.broadcast(None, odom_frame)
-    camera_info_transport.broadcast(None, camera_info())
+    print("TS IS", odom_frame.ts)
     camera_link = Transform(
         translation=Vector3(0.3, 0.0, 0.0),
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
         frame_id="base_link",
         child_frame_id="camera_link",
-        ts=timestamp,
+        ts=odom_frame.ts,
     )
 
     camera_optical = Transform(
@@ -113,6 +97,34 @@ def broadcast(
         camera_link,
         camera_optical,
     )
+
+    return tf
+
+
+def broadcast(
+    timestamp: float,
+    lidar_frame: LidarMessage,
+    video_frame: Image,
+    odom_frame: Odometry,
+    detections,
+    annotations,
+):
+    from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
+
+    from dimos.core import LCMTransport
+    from dimos.msgs.geometry_msgs import PoseStamped
+
+    lidar_transport = LCMTransport("/lidar", LidarMessage)
+    odom_transport = LCMTransport("/odom", PoseStamped)
+    video_transport = LCMTransport("/image", Image)
+    camera_info_transport = LCMTransport("/camera_info", CameraInfo)
+
+    lidar_transport.broadcast(None, lidar_frame)
+    video_transport.broadcast(None, video_frame)
+    odom_transport.broadcast(None, odom_frame)
+    camera_info_transport.broadcast(None, camera_info())
+
+    transform_chain(odom_frame)
 
     print(lidar_frame)
     print(video_frame)
@@ -163,8 +175,6 @@ def main():
     except FileNotFoundError:
         print("Processing data and creating pickle file...")
         data = process_data()
-
-    print("LOADED")
     broadcast(*data)
 
 
