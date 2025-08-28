@@ -15,24 +15,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import functools
 import logging
+import os
 import time
 import warnings
+from typing import Optional
 
 import reactivex as rx
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core import In, LCMTransport, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
+from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs import Header
+from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
@@ -47,19 +49,27 @@ logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 logging.getLogger("root").setLevel(logging.WARNING)
 
+
 # Suppress warnings
 warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
 image_resize_factor = 1
 originalwidth, originalheight = (1280, 720)
-get_data("unitree_office_walk")
 
 
 class FakeRTC(UnitreeWebRTCConnection):
     # we don't want UnitreeWebRTCConnection to init
-    def __init__(self, *args, **kwargs):
-        pass
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        get_data("unitree_office_walk")
+        self.replay_config = {
+            "loop": kwargs.get("loop"),
+            "seek": kwargs.get("seek"),
+            "duration": kwargs.get("duration"),
+        }
 
     def connect(self):
         pass
@@ -77,20 +87,20 @@ class FakeRTC(UnitreeWebRTCConnection):
     def raw_lidar_stream(self):
         print("lidar stream start")
         lidar_store = TimedSensorReplay("unitree_office_walk/lidar")
-        return lidar_store.stream()
+        return lidar_store.stream(**self.replay_config)
 
     @functools.cache
     def raw_odom_stream(self):
         print("odom stream start")
         odom_store = TimedSensorReplay("unitree_office_walk/odom")
-        return odom_store.stream()
+        return odom_store.stream(**self.replay_config)
 
     # we don't have raw video stream in the data set
     @functools.cache
     def raw_video_stream(self):
         print("video stream start")
         video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
-        return video_store.stream()
+        return video_store.stream(**self.replay_config)
 
     @functools.cache
     def video_stream(self):
@@ -105,18 +115,17 @@ class FakeRTC(UnitreeWebRTCConnection):
 
 
 class ConnectionModule(Module):
-    ip: str
-    connection_type: str = "webrtc"
     camera_info: Out[CameraInfo] = None
     odom: Out[PoseStamped] = None
     lidar: Out[LidarMessage] = None
     video: Out[Image] = None
     movecmd: In[Vector3] = None
 
-    def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
-        self.ip = ip
+    connection = None
+
+    def __init__(self, connection_type: str = "webrtc", *args, **kwargs):
+        self.connection_config = kwargs
         self.connection_type = connection_type
-        self.connection = None
         Module.__init__(self, *args, **kwargs)
 
     @rpc
@@ -137,13 +146,13 @@ class ConnectionModule(Module):
         """Start the connection and subscribe to sensor streams."""
         match self.connection_type:
             case "webrtc":
-                self.connection = UnitreeWebRTCConnection(self.ip)
+                self.connection = UnitreeWebRTCConnection(**self.connection_config)
             case "fake":
-                self.connection = FakeRTC()
+                self.connection = FakeRTC(**self.connection_config)
             case "mujoco":
                 from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
-                self.connection = MujocoConnection()
+                self.connection = MujocoConnection(**self.connection_config)
                 self.connection.start()
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
@@ -255,3 +264,24 @@ class ConnectionModule(Module):
                 )
             )
         )
+
+
+def deploy_connection(dimos, **kwargs):
+    foxglove_bridge = dimos.deploy(FoxgloveBridge)
+    foxglove_bridge.start()
+
+    connection = dimos.deploy(
+        ConnectionModule,
+        ip=os.getenv("ROBOT_IP"),
+        connection_type=os.getenv("CONNECTION_TYPE", "fake"),
+        **kwargs,
+    )
+
+    connection.lidar.transport = LCMTransport("/lidar", LidarMessage)
+    connection.odom.transport = LCMTransport("/odom", PoseStamped)
+    connection.video.transport = LCMTransport("/image", Image)
+    connection.movecmd.transport = LCMTransport("/cmd_vel", Vector3)
+    connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
+    connection.start()
+
+    return connection

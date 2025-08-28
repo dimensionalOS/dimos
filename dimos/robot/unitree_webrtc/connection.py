@@ -32,6 +32,7 @@ from reactivex.subject import Subject
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Pose, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.robot.connection_interface import ConnectionInterface
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -40,8 +41,8 @@ from dimos.utils.reactive import backpressure, callback_to_observable
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
 
-class UnitreeWebRTCConnection:
-    def __init__(self, ip: str, mode: str = "ai"):
+class UnitreeWebRTCConnection(ConnectionInterface):
+    def __init__(self, ip: str, mode: str = "ai", **kwargs):
         self.ip = ip
         self.mode = mode
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
@@ -227,8 +228,8 @@ class UnitreeWebRTCConnection:
             },
         )
 
-    @functools.cache
-    def raw_video_stream(self) -> Subject[VideoMessage]:
+    @functools.lru_cache(maxsize=None)
+    def video_stream(self) -> Observable[VideoMessage]:
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
 
@@ -237,7 +238,7 @@ class UnitreeWebRTCConnection:
                 if stop_event.is_set():
                     return
                 frame = await track.recv()
-                subject.on_next(frame)
+                subject.on_next(Image.from_numpy(frame.to_ndarray(format="rgb24")))
 
         self.conn.video.add_track_callback(accept_track)
 
@@ -258,14 +259,6 @@ class UnitreeWebRTCConnection:
             self.loop.call_soon_threadsafe(switch_video_channel_off)
 
         return subject.pipe(ops.finally_action(stop))
-
-    @functools.cache
-    def video_stream(self) -> Observable[VideoMessage]:
-        return backpressure(
-            self.raw_video_stream().pipe(
-                ops.map(lambda frame: Image.from_numpy(frame.to_ndarray(format="rgb24")))
-            )
-        )
 
     def get_video_stream(self, fps: int = 30) -> Observable[VideoMessage]:
         """Get the video stream from the robot's camera.
