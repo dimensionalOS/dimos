@@ -24,16 +24,6 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 
 
-def create_pointcloud2_from_numpy(points, frame_id, timestamp):
-    """Create PointCloud2 from numpy array of shape (N, 3)."""
-    import open3d as o3d
-
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points)
-    pc2 = PointCloud2(pointcloud=pcd, ts=timestamp, frame_id=frame_id)
-    return pc2
-
-
 def project_points_to_camera(
     points_3d: np.ndarray,
     camera_matrix: np.ndarray,
@@ -69,16 +59,14 @@ def project_points_to_camera(
     from dimos.core import LCMTransport
 
     # First broadcast the original world frame points
-    world_pointcloud = create_pointcloud2_from_numpy(
-        points_3d, frame_id="world", timestamp=timestamp
-    )
+    world_pointcloud = PointCloud2.from_numpy(points_3d, frame_id="world", timestamp=timestamp)
     world_transport = LCMTransport("/debug_world_points", PointCloud2)
     world_transport.broadcast(None, world_pointcloud)
     print(f"Published world frame pointcloud with {points_3d.shape[0]} points")
 
     # Then broadcast the transformed camera optical frame points
     camera_points_3d = points_camera[:, :3]
-    camera_pointcloud = create_pointcloud2_from_numpy(
+    camera_pointcloud = PointCloud2.from_numpy(
         camera_points_3d, frame_id="camera_optical", timestamp=timestamp
     )
     debug_transport = LCMTransport("/debug_camera_optical_points", PointCloud2)
@@ -208,7 +196,7 @@ def filter_points_in_detections(
 
         # Create PointCloud2 message for this detection
         if detection_points.shape[0] > 0:
-            detection_pointcloud = create_pointcloud2_from_numpy(
+            detection_pointcloud = PointCloud2.from_numpy(
                 detection_points,
                 frame_id=pointcloud.frame_id,  # Keep original frame
                 timestamp=pointcloud.ts,
@@ -273,22 +261,10 @@ def main():
     # Get camera info using detect.py's camera_info function
     cam_info = camera_info()
     tf = transform_chain(odom_frame)
-    from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
-
-    # Manually receive the transforms to ensure they're in the buffer
-
-    # Get the transform from lidar frame to camera optical frame
-    # Lidar is in "world" frame, we need to transform to "camera_optical"
-    # Transform chain: world -> base_link -> camera_link -> camera_optical
 
     # Get individual transforms (no timestamp needed, will use latest)
-    world_to_optical_transform = tf.get("world", "camera_optical")
+    world_to_optical_transform = tf.get("camera_optical", "world")
     print("world to camera_optical transform:", world_to_optical_transform)
-
-    # IMPORTANT: The transform from tf.get() represents the camera_optical frame in world coordinates
-    # To transform POINTS from world to camera_optical, we need the INVERSE transform!
-    world_to_optical_inverse = world_to_optical_transform.inverse()
-    print("INVERSE transform for points:", world_to_optical_inverse)
 
     # Debug: Also get and print intermediate transforms
     world_to_base = tf.get("world", "base_link")
@@ -298,7 +274,7 @@ def main():
     print(f"base->camera: {base_to_camera}")
     print(f"camera->optical: {camera_to_optical}")
 
-    extrinsics = transform_to_matrix(world_to_optical_inverse)
+    extrinsics = transform_to_matrix(world_to_optical_transform)
 
     # Extract detection list from the detection tuple
     # detections is a tuple: [image, detection_list]
@@ -321,7 +297,6 @@ def main():
 
     # Publish filtered point clouds for each detection
     from dimos.core import LCMTransport
-    from dimos.msgs.std_msgs import Header
 
     valid_pointclouds = []
     for i, (detection, pc) in enumerate(zip(detection_list, filtered_pointclouds)):
@@ -344,8 +319,16 @@ def main():
     # Also create a combined point cloud with all filtered points
     if valid_pointclouds:
         # Combine all point arrays
+        print(f"Valid pointclouds to combine: {len(valid_pointclouds)}")
+        for i, pc in enumerate(valid_pointclouds):
+            print(f"  Pointcloud {i}: {pc.as_numpy().shape[0]} points")
+
         all_points = np.vstack([pc.as_numpy() for pc in valid_pointclouds])
-        combined_pointcloud = create_pointcloud2_from_numpy(
+        print(f"Combined points shape: {all_points.shape}")
+        print(f"Sample combined points (first 5):")
+        print(all_points[:5])
+
+        combined_pointcloud = PointCloud2.from_numpy(
             all_points, frame_id=lidar_pointcloud.frame_id, timestamp=timestamp
         )
         combined_transport = LCMTransport("/filtered_points_combined", PointCloud2)

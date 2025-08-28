@@ -38,12 +38,30 @@ class PointCloud2(Timestamped):
     def __init__(
         self,
         pointcloud: o3d.geometry.PointCloud = None,
-        frame_id: str = "",
+        frame_id: str = "world",
         ts: Optional[float] = None,
     ):
         self.ts = ts if ts is not None else time.time()
         self.pointcloud = pointcloud if pointcloud is not None else o3d.geometry.PointCloud()
         self.frame_id = frame_id
+
+    @classmethod
+    def from_numpy(
+        cls, points: np.ndarray, frame_id: str = "world", timestamp: Optional[float] = None
+    ) -> PointCloud2:
+        """Create PointCloud2 from numpy array of shape (N, 3).
+
+        Args:
+            points: Nx3 numpy array of 3D points
+            frame_id: Frame ID for the point cloud
+            timestamp: Timestamp for the point cloud (defaults to current time)
+
+        Returns:
+            PointCloud2 instance
+        """
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        return cls(pointcloud=pcd, ts=timestamp, frame_id=frame_id)
 
     # TODO what's the usual storage here? is it already numpy?
     def as_numpy(self) -> np.ndarray:
