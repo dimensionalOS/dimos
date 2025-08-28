@@ -378,7 +378,7 @@ class UnitreeGo2(Robot):
 
     def start(self):
         """Start the robot system with all modules."""
-        self.dimos = core.start(8)
+        self.dimos = core.start(10)
 
         self._deploy_connection()
         self._deploy_mapping()

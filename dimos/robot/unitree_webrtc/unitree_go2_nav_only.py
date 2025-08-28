@@ -54,7 +54,6 @@ logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2_nav_only", level=l
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
 logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
-logging.getLogger("websockets.server").setLevel(logging.ERROR)
 logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 logging.getLogger("root").setLevel(logging.WARNING)
@@ -307,9 +306,10 @@ class UnitreeGo2NavOnly(Robot):
         """
         super().__init__()
         self.ip = ip
-        self.connection_type = connection_type or "webrtc"
-        if ip is None and self.connection_type == "webrtc":
+        if ip is None and connection_type == "webrtc":
             self.connection_type = "fake"  # Auto-enable playback if no IP provided
+        else:
+            self.connection_type = connection_type or "webrtc"
         self.websocket_port = websocket_port
         self.lcm = LCM()
 
@@ -324,6 +324,7 @@ class UnitreeGo2NavOnly(Robot):
         self.navigator = None
         self.frontier_explorer = None
         self.websocket_vis = None
+        self.foxglove_bridge = None
 
     def start(self):
         """Start the robot system with navigation modules only."""
