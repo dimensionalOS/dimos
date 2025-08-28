@@ -31,6 +31,7 @@ from dimos import core
 from dimos.hardware.zed_filtered_module import FilteredZEDModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map  # Use regular Map, not LimitedMap
+from dimos.robot.unitree_webrtc.type.passthrough_map import PassthroughMap
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
 from dimos.msgs.sensor_msgs import Image
@@ -54,7 +55,11 @@ class StereoMapper:
     """
 
     def __init__(
-        self, websocket_port: int = 7779, record_path: str = None, replay_path: str = None
+        self,
+        websocket_port: int = 7779,
+        record_path: str = None,
+        replay_path: str = None,
+        use_spatial_mapping: bool = True,  # Enable ZED spatial mapping by default
     ):
         """
         Initialize StereoMapper with ZED camera.
@@ -67,6 +72,7 @@ class StereoMapper:
         self.websocket_port = websocket_port
         self.record_path = record_path
         self.replay_path = replay_path
+        self.use_spatial_mapping = use_spatial_mapping
         self.lcm = LCM()
         self.tf = None  # Initialize TF later to avoid conflicts
 
@@ -107,7 +113,8 @@ class StereoMapper:
         logger.info("  /lidar - Pointcloud from ZED (as LidarMessage)")
         logger.info("  /odom - Camera pose from ZED visual odometry")
         logger.info("  /zed/color_image - RGB camera feed")
-        logger.info("  /global_map - Accumulated map")
+        map_desc = "ZED spatial map (full world)" if self.use_spatial_mapping else "Accumulated map"
+        logger.info(f"  /global_map - {map_desc}")
         logger.info("  /global_costmap - Navigation costmap")
         logger.info("  /local_costmap - Local costmap")
         logger.info("")
@@ -124,7 +131,7 @@ class StereoMapper:
             self.zed_module = self.dimos.deploy(FakeZEDModule, recording_path=self.replay_path)
         else:
             # Deploy real ZED module
-            logger.info("Deploying ZED camera module...")
+            logger.info("Deploying ZED camera module with spatial mapping...")
             self.zed_module = self.dimos.deploy(
                 FilteredZEDModule,
                 camera_id=0,
@@ -134,10 +141,13 @@ class StereoMapper:
                 enable_tracking=True,  # Enable visual odometry
                 enable_imu_fusion=True,
                 set_floor_as_origin=True,
+                enable_spatial_mapping=self.use_spatial_mapping,  # Enable ZED SDK spatial mapping!
+                mapping_resolution="MEDIUM",  # Spatial mapping resolution
+                mapping_range="MEDIUM",  # Spatial mapping range
                 publish_rate=10.0,
                 frame_id="camera_link",
                 # Filtering parameters - match Unitree specs
-                filter_voxel_size=0.05,  # Initial downsampling to reduce lag
+                filter_voxel_size=0.05,  # Downsample to 5cm voxels as required
                 filter_max_distance=5.0,  # Slightly larger than Unitree for better coverage
                 filter_min_distance=0.1,
                 filter_min_z=-1.0,  # Allow more ground points
@@ -272,19 +282,32 @@ class StereoMapper:
         logger.info(f"✓ Recording setup complete - saving to {self.record_path}")
 
     def _deploy_mapping(self):
-        """Deploy and configure the mapping module - exactly like UnitreeGo2."""
+        """Deploy and configure the mapping module."""
         logger.info("Deploying mapping module...")
 
-        # Use regular Map class with same parameters as UnitreeGo2
-        self.mapper = self.dimos.deploy(
-            Map,
-            voxel_size=0.05,  # VERY SPARSE - 30cm voxels for testing (was 0.05)
-            global_publish_interval=2.5,
-            min_height=0.15,
-            max_height=1.5,
-            frame_id="world",
-            max_map_points=100000,
-        )
+        if self.use_spatial_mapping:
+            # Use PassthroughMap for ZED spatial mapping (no accumulation needed)
+            logger.info("Using PassthroughMap for ZED spatial mapping (no accumulation)")
+            self.mapper = self.dimos.deploy(
+                PassthroughMap,
+                voxel_size=0.05,  # Match ZED downsampling
+                global_publish_interval=2.5,
+                min_height=0.15,
+                max_height=1.5,
+                frame_id="world",
+            )
+        else:
+            # Use regular Map class for traditional accumulation
+            logger.info("Using regular Map for pointcloud accumulation")
+            self.mapper = self.dimos.deploy(
+                Map,
+                voxel_size=0.05,
+                global_publish_interval=2.5,
+                min_height=0.15,
+                max_height=1.5,
+                frame_id="world",
+                max_map_points=100000,
+            )
 
         # Configure transports - same topics as UnitreeGo2
         self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
@@ -295,7 +318,8 @@ class StereoMapper:
         self.mapper.lidar.connect(self.zed_module.pointcloud_msg)
         self.mapper.odom.connect(self.zed_module.pose)
 
-        logger.info("✓ Mapping module deployed and connected to ZED")
+        mode = "spatial mapping" if self.use_spatial_mapping else "accumulation"
+        logger.info(f"✓ Mapping module deployed in {mode} mode and connected to ZED")
 
     def _deploy_visualization(self):
         """Deploy visualization (Foxglove bridge)."""
@@ -361,6 +385,11 @@ def main():
     parser.add_argument(
         "--replay", type=str, help="Path to recorded data to replay instead of using real camera"
     )
+    parser.add_argument(
+        "--no-spatial-mapping",
+        action="store_true",
+        help="Disable ZED spatial mapping and use traditional accumulation instead",
+    )
     args = parser.parse_args()
 
     # Configure LCM
@@ -368,7 +397,10 @@ def main():
 
     # Create and start mapper
     mapper = StereoMapper(
-        websocket_port=args.port, record_path=args.record, replay_path=args.replay
+        websocket_port=args.port,
+        record_path=args.record,
+        replay_path=args.replay,
+        use_spatial_mapping=not args.no_spatial_mapping,  # Use spatial mapping by default
     )
     mapper.start()
 

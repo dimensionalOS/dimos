@@ -50,8 +50,8 @@ class ZEDCamera(StereoCamera):
     def __init__(
         self,
         camera_id: int = 0,
-        resolution: sl.RESOLUTION = sl.RESOLUTION.HD720,
-        depth_mode: sl.DEPTH_MODE = sl.DEPTH_MODE.NEURAL,
+        resolution=None,  # Will default to HD720 if None
+        depth_mode=None,  # Will default to NEURAL if None
         fps: int = 30,
         **kwargs,
     ):
@@ -70,8 +70,9 @@ class ZEDCamera(StereoCamera):
         super().__init__(**kwargs)
 
         self.camera_id = camera_id
-        self.resolution = resolution
-        self.depth_mode = depth_mode
+        # Set default resolution and depth_mode if not provided
+        self.resolution = resolution if resolution is not None else sl.RESOLUTION.HD720
+        self.depth_mode = depth_mode if depth_mode is not None else sl.DEPTH_MODE.NEURAL
         self.fps = fps
 
         # Initialize ZED camera
@@ -113,6 +114,13 @@ class ZEDCamera(StereoCamera):
         self.camera_pose = sl.Pose()
         self.sensors_data = sl.SensorsData()
 
+        # Spatial mapping
+        self.mapping_enabled = False
+        self.spatial_mapping_params = sl.SpatialMappingParameters()
+        self.fused_pointcloud = sl.FusedPointCloud()  # For spatial mapping output
+        self.last_spatial_map_request = 0  # Time of last spatial map request
+        self.spatial_map_request_interval = 0.5  # Request every 500ms
+
         self.is_opened = False
 
     def open(self) -> bool:
@@ -144,7 +152,7 @@ class ZEDCamera(StereoCamera):
         enable_pose_smoothing: bool = True,
         enable_imu_fusion: bool = True,
         set_floor_as_origin: bool = False,
-        initial_world_transform: Optional[sl.Transform] = None,
+        initial_world_transform=None,  # Optional[sl.Transform]
     ) -> bool:
         """
         Enable positional tracking on the ZED camera.
@@ -194,8 +202,131 @@ class ZEDCamera(StereoCamera):
             self.tracking_enabled = False
             logger.info("Positional tracking disabled")
 
+    def enable_spatial_mapping(
+        self,
+        resolution=None,  # sl.MAPPING_RESOLUTION
+        mapping_range=None,  # sl.MAPPING_RANGE
+        max_memory_usage: int = 2048,
+        save_texture: bool = False,
+        use_chunk_only: bool = True,
+        reverse_vertex_order: bool = False,
+    ) -> bool:
+        """
+        Enable spatial mapping on the ZED camera.
+
+        Args:
+            resolution: Mapping resolution
+            mapping_range: Mapping range
+            max_memory_usage: Maximum memory usage in MB
+            save_texture: Save texture information
+            use_chunk_only: Use chunk-based updates
+            reverse_vertex_order: Reverse vertex order
+
+        Returns:
+            True if spatial mapping enabled successfully
+        """
+        if not self.is_opened:
+            logger.error("ZED camera not opened")
+            return False
+
+        if not self.tracking_enabled:
+            logger.error("Positional tracking must be enabled before spatial mapping")
+            return False
+
+        try:
+            # Configure spatial mapping parameters
+            if resolution is None:
+                resolution = sl.MAPPING_RESOLUTION.MEDIUM
+            if mapping_range is None:
+                mapping_range = sl.MAPPING_RANGE.MEDIUM
+            self.spatial_mapping_params.resolution_meter = (
+                sl.SpatialMappingParameters().get_resolution_preset(resolution)
+            )
+            self.spatial_mapping_params.mapping_range_meter = (
+                sl.SpatialMappingParameters().get_range_preset(mapping_range)
+            )
+            self.spatial_mapping_params.max_memory_usage = max_memory_usage
+            self.spatial_mapping_params.save_texture = save_texture
+            self.spatial_mapping_params.use_chunk_only = use_chunk_only
+            self.spatial_mapping_params.reverse_vertex_order = reverse_vertex_order
+            self.spatial_mapping_params.map_type = sl.SPATIAL_MAP_TYPE.FUSED_POINT_CLOUD
+
+            # Enable spatial mapping
+            err = self.zed.enable_spatial_mapping(self.spatial_mapping_params)
+            if err != sl.ERROR_CODE.SUCCESS:
+                logger.error(f"Failed to enable spatial mapping: {err}")
+                return False
+
+            self.mapping_enabled = True
+            self.fused_pointcloud.clear()  # Clear any existing data
+            logger.info("Spatial mapping enabled successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error enabling spatial mapping: {e}")
+            return False
+
+    def disable_spatial_mapping(self):
+        """Disable spatial mapping."""
+        if self.mapping_enabled:
+            self.zed.disable_spatial_mapping()
+            self.mapping_enabled = False
+            logger.info("Spatial mapping disabled")
+
+    def get_spatial_map(self) -> Optional[o3d.geometry.PointCloud]:
+        """
+        Get the current spatial map as a point cloud.
+
+        Returns:
+            Open3D point cloud of the spatial map or None if not available
+        """
+        if not self.mapping_enabled:
+            logger.error("Spatial mapping not enabled")
+            return None
+
+        try:
+            current_time = time.time()
+
+            # Check if enough time has passed since last request
+            if current_time - self.last_spatial_map_request > self.spatial_map_request_interval:
+                # Request spatial map update
+                self.zed.request_spatial_map_async()
+                self.last_spatial_map_request = current_time
+
+            # Check if spatial map is ready
+            if self.zed.get_spatial_map_request_status_async() == sl.ERROR_CODE.SUCCESS:
+                # Retrieve the spatial map
+                self.zed.retrieve_spatial_map_async(self.fused_pointcloud)
+
+                # Extract the whole spatial map (accumulated world map)
+                self.zed.extract_whole_spatial_map(self.fused_pointcloud)
+
+                # Convert to Open3D point cloud
+                vertices = self.fused_pointcloud.vertices
+                if len(vertices) > 0:
+                    # Convert vertices to numpy array
+                    points = np.array(vertices, dtype=np.float32).reshape(-1, 4)[:, :3]  # XYZ only
+
+                    # Filter out invalid points
+                    valid = np.isfinite(points).all(axis=1)
+                    valid_points = points[valid]
+
+                    # Create Open3D point cloud
+                    pcd = o3d.geometry.PointCloud()
+                    if len(valid_points) > 0:
+                        pcd.points = o3d.utility.Vector3dVector(valid_points)
+
+                    return pcd
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error getting spatial map: {e}")
+            return None
+
     def get_pose(
-        self, reference_frame: sl.REFERENCE_FRAME = sl.REFERENCE_FRAME.WORLD
+        self,
+        reference_frame=None,  # sl.REFERENCE_FRAME
     ) -> Optional[Dict[str, Any]]:
         """
         Get the current camera pose.
@@ -218,6 +349,8 @@ class ZEDCamera(StereoCamera):
 
         try:
             # Get current pose
+            if reference_frame is None:
+                reference_frame = sl.REFERENCE_FRAME.WORLD
             tracking_state = self.zed.get_position(self.camera_pose, reference_frame)
 
             if tracking_state == sl.POSITIONAL_TRACKING_STATE.OK:
@@ -426,6 +559,10 @@ class ZEDCamera(StereoCamera):
     def close(self):
         """Close the ZED camera."""
         if self.is_opened:
+            # Disable spatial mapping if enabled
+            if self.mapping_enabled:
+                self.disable_spatial_mapping()
+
             # Disable tracking if enabled
             if self.tracking_enabled:
                 self.disable_positional_tracking()
@@ -563,6 +700,9 @@ class ZEDModule(Module):
         enable_tracking: bool = True,
         enable_imu_fusion: bool = True,
         set_floor_as_origin: bool = True,
+        enable_spatial_mapping: bool = False,  # Enable ZED SDK spatial mapping
+        mapping_resolution: str = "MEDIUM",  # Spatial mapping resolution
+        mapping_range: str = "MEDIUM",  # Spatial mapping range
         publish_rate: float = 30.0,
         frame_id: str = "camera_link",  # ZED outputs in ROS frame (z-up, x-forward)
         **kwargs,
@@ -588,12 +728,17 @@ class ZEDModule(Module):
         self.enable_tracking = enable_tracking
         self.enable_imu_fusion = enable_imu_fusion
         self.set_floor_as_origin = set_floor_as_origin
+        self.enable_spatial_mapping = enable_spatial_mapping
         self.publish_rate = publish_rate
         self.frame_id = frame_id
 
         # Convert string parameters to ZED enums
         self.resolution = getattr(sl.RESOLUTION, resolution, sl.RESOLUTION.HD720)
         self.depth_mode = getattr(sl.DEPTH_MODE, depth_mode, sl.DEPTH_MODE.NEURAL)
+        self.mapping_resolution = getattr(
+            sl.MAPPING_RESOLUTION, mapping_resolution, sl.MAPPING_RESOLUTION.MEDIUM
+        )
+        self.mapping_range = getattr(sl.MAPPING_RANGE, mapping_range, sl.MAPPING_RANGE.MEDIUM)
 
         # Internal state
         self.zed_camera = None
@@ -638,6 +783,20 @@ class ZEDModule(Module):
                 if not success:
                     logger.warning("Failed to enable positional tracking")
                     self.enable_tracking = False
+                else:
+                    # Enable spatial mapping if tracking succeeded and mapping requested
+                    if self.enable_spatial_mapping:
+                        success = self.zed_camera.enable_spatial_mapping(
+                            resolution=self.mapping_resolution,
+                            mapping_range=self.mapping_range,
+                            max_memory_usage=2048,
+                            save_texture=False,
+                            use_chunk_only=True,
+                            reverse_vertex_order=False,
+                        )
+                        if not success:
+                            logger.warning("Failed to enable spatial mapping")
+                            self.enable_spatial_mapping = False
 
             # Publish camera info once at startup
             self._publish_camera_info()
@@ -849,7 +1008,9 @@ class ZEDModule(Module):
             rotation = pose_data.get("rotation", [0, 0, 0, 1])  # quaternion [x,y,z,w]
 
             # Create PoseStamped message
-            msg = PoseStamped(ts=header.ts, position=position, orientation=rotation, frame_id='world')
+            msg = PoseStamped(
+                ts=header.ts, position=position, orientation=rotation, frame_id="world"
+            )
             self.pose.publish(msg)
 
             # Note: TF publishing is handled by _publish_tf() to avoid conflicts
@@ -874,35 +1035,59 @@ class ZEDModule(Module):
     def _publish_pointcloud(self, header: Header):
         """Publish pointcloud as LidarMessage for Map module."""
         try:
-            # Simple approach like the OpenGL example
-            # Get the already retrieved pointcloud (720x404 resolution)
-            point_cloud_data = self.zed_camera.point_cloud.get_data()
+            pcd = None
 
-            # Flatten to get all points (it's already at low resolution)
-            points = point_cloud_data.reshape(-1, 4)
-            xyz = points[:, :3]
+            # If spatial mapping is enabled, use the full world map
+            if self.enable_spatial_mapping and self.zed_camera.mapping_enabled:
+                # Get the spatial map (full accumulated world map)
+                pcd = self.zed_camera.get_spatial_map()
 
-            # Filter out invalid points (NaN/Inf)
-            valid = np.isfinite(xyz).all(axis=1)
-            valid_xyz = xyz[valid]
+                if pcd is not None and len(pcd.points) > 0:
+                    # Downsample to 0.05m voxels as required
+                    pcd = pcd.voxel_down_sample(voxel_size=0.05)
 
-            if len(valid_xyz) > 0:
-                # Create Open3D pointcloud (no colors for simplicity/performance)
-                pcd = o3d.geometry.PointCloud()
-                pcd.points = o3d.utility.Vector3dVector(valid_xyz)
+                    # The spatial map is already in world frame
+                    frame_id = "world"
+                    logger.debug(
+                        f"Got spatial map with {len(pcd.points)} points after downsampling"
+                    )
+                else:
+                    # No spatial map available yet, skip
+                    return
+            else:
+                # Fall back to regular pointcloud (current frame only)
+                # Get the already retrieved pointcloud (720x404 resolution)
+                point_cloud_data = self.zed_camera.point_cloud.get_data()
 
+                # Flatten to get all points (it's already at low resolution)
+                points = point_cloud_data.reshape(-1, 4)
+                xyz = points[:, :3]
+
+                # Filter out invalid points (NaN/Inf)
+                valid = np.isfinite(xyz).all(axis=1)
+                valid_xyz = xyz[valid]
+
+                if len(valid_xyz) > 0:
+                    # Create Open3D pointcloud (no colors for simplicity/performance)
+                    pcd = o3d.geometry.PointCloud()
+                    pcd.points = o3d.utility.Vector3dVector(valid_xyz)
+                    frame_id = "camera_link"
+
+            if pcd is not None and len(pcd.points) > 0:
                 # Create LidarMessage
                 lidar_msg = LidarMessage(
                     pointcloud=pcd,
                     origin=[0.0, 0.0, 0.0],
                     resolution=0.05,  # Match Map module voxel_size
                     ts=header.ts,
-                    frame_id="camera_link",
+                    frame_id=frame_id,
                 )
 
                 if self.pointcloud_msg:
                     self.pointcloud_msg.publish(lidar_msg)
-                    logger.debug(f"Published pointcloud with {len(pcd.points)} points")
+                    logger.debug(
+                        f"Published pointcloud with {len(pcd.points)} points from {frame_id} frame"
+                    )
 
         except Exception as e:
             logger.error(f"Error publishing pointcloud: {e}")

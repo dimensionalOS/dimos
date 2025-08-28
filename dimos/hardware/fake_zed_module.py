@@ -19,6 +19,11 @@ FakeZEDModule - Replays recorded ZED data for testing without hardware.
 
 import functools
 import logging
+import os
+import time
+import numpy as np
+import open3d as o3d
+from reactivex import interval
 
 from dimos.core import Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
@@ -61,8 +66,60 @@ class FakeZEDModule(Module):
 
         self._running = False
         self._subscriptions = []
+        self._world_map_pointcloud = None  # Cache the world map pointcloud
+        self._world_map_interval = None  # Interval for publishing world map
 
         logger.info(f"FakeZEDModule initialized with recording: {self.recording_path}")
+
+    def _load_world_map_pointcloud(self):
+        """Load the pre-recorded world map from mesh.obj file."""
+        mesh_path = "/home/p/pro/dimensional/mesh.obj"
+
+        if not os.path.exists(mesh_path):
+            logger.warning(f"World map mesh not found at {mesh_path}, using fallback")
+            return None
+
+        logger.info(f"Loading world map from {mesh_path}")
+
+        try:
+            points = []
+            with open(mesh_path) as f:
+                for line in f:
+                    if line.startswith("v "):  # vertex line
+                        parts = line.strip().split()
+                        if len(parts) >= 4:
+                            _, x, y, z = parts[:4]
+                            # Note: flipping z and y as specified
+                            points.append([float(x), float(z), float(y)])
+
+            if not points:
+                logger.warning("No vertices found in mesh file")
+                return None
+
+            # Create Open3D pointcloud
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(points)
+
+            # Downsample to 0.05m voxels as required
+            pcd = pcd.voxel_down_sample(voxel_size=0.05)
+
+            # Convert to LidarMessage format (world frame, full map)
+            points_array = np.asarray(pcd.points)
+
+            # Create LidarMessage with world frame
+            lidar_msg = LidarMessage()
+            lidar_msg.pointcloud = pcd
+            lidar_msg.origin = [0.0, 0.0, 0.0]  # World origin
+            lidar_msg.resolution = 0.05  # 5cm voxels
+            lidar_msg.frame_id = "world"  # Mark as world frame (spatial map)
+            lidar_msg.ts = time.time()
+
+            logger.info(f"Loaded world map with {len(points_array)} points after downsampling")
+            return lidar_msg
+
+        except Exception as e:
+            logger.error(f"Failed to load world map: {e}")
+            return None
 
     @functools.cache
     def _get_lidar_stream(self):
@@ -123,16 +180,35 @@ class FakeZEDModule(Module):
 
         self._running = True
 
-        # Subscribe to all streams and publish
-        try:
-            # Lidar/pointcloud stream
-            sub = self._get_lidar_stream().subscribe(
-                lambda msg: self.pointcloud_msg.publish(msg) if self._running else None
-            )
+        # Load the world map pointcloud
+        self._world_map_pointcloud = self._load_world_map_pointcloud()
+
+        if self._world_map_pointcloud:
+            # Publish world map at regular intervals (simulating ZED spatial mapping)
+            # Publish at 2Hz to simulate realistic spatial mapping rate
+            def publish_world_map(_):
+                if self._running and self._world_map_pointcloud:
+                    # Update timestamp for each publish
+                    self._world_map_pointcloud.ts = time.time()
+                    self.pointcloud_msg.publish(self._world_map_pointcloud)
+                    logger.debug(
+                        f"Published world map with {len(self._world_map_pointcloud.pointcloud.points)} points"
+                    )
+
+            sub = interval(0.5).subscribe(publish_world_map)  # 2Hz
             self._subscriptions.append(sub)
-            logger.info("Started lidar replay stream")
-        except Exception as e:
-            logger.warning(f"Lidar stream not available: {e}")
+            logger.info("Started world map publishing at 2Hz")
+        else:
+            # Fall back to regular lidar stream if world map not available
+            try:
+                # Lidar/pointcloud stream
+                sub = self._get_lidar_stream().subscribe(
+                    lambda msg: self.pointcloud_msg.publish(msg) if self._running else None
+                )
+                self._subscriptions.append(sub)
+                logger.info("Started lidar replay stream (fallback)")
+            except Exception as e:
+                logger.warning(f"Lidar stream not available: {e}")
 
         try:
             # Pose stream
