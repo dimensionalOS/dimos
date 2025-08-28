@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import functools
+import time
 from typing import Any, Callable, List, Optional, Tuple
 
+import numpy as np
 from dimos_lcm.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
@@ -21,6 +23,7 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     TextAnnotation,
 )
 from dimos_lcm.foxglove_msgs.Point2 import Point2
+from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D,
@@ -33,10 +36,11 @@ from dimos_lcm.vision_msgs import (
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
 from dimos.perception.detection2d.detic import Detic2DDetector
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
+from dimos.protocol.tf.tf import TF
 from dimos.types.timestamped import to_ros_stamp
 
 
@@ -195,16 +199,16 @@ class Detect2DModule(Module):
     _initDetector = Yolo2DDetector
 
     def __init__(self, *args, detector=Optional[Callable[[Any], Any]], **kwargs):
+        super().__init__(*args, **kwargs)
         if detector:
             self._detectorClass = detector
-        super().__init__(*args, **kwargs)
         self.detector = self._initDetector()
 
     def detect(self, image: Image) -> Detections:
         return [image, better_detection_format(self.detector.process_image(image.to_opencv()))]
 
-    @rpc
-    def start(self):
+    @functools.cache
+    def detection_stream(self):
         # from dimos.activate_cuda import _init_cuda
         detection_stream = self.image.observable().pipe(ops.map(self.detect))
 
@@ -213,5 +217,212 @@ class Detect2DModule(Module):
             ops.filter(lambda x: len(x) != 0), ops.map(build_detection2d_array)
         ).subscribe(self.detections.publish)
 
+        return detection_stream
+
+    @rpc
+    def start(self):
+        self.detection_stream()
+
     @rpc
     def stop(self): ...
+
+
+class DetectionPointcloud(Module):
+    camera_info: In[CameraInfo] = None
+    pointcloud: In[PointCloud2] = None
+    filtered_pointcloud: Out[PointCloud2] = None
+    image: In[Image] = None
+    detections: Out[Detection2DArrayFix] = None
+    annotations: Out[ImageAnnotations] = None
+
+    # _initDetector = Detic2DDetector
+    _initDetector = Yolo2DDetector
+
+    def __init__(self, *args, detector=Optional[Callable[[Any], Any]], **kwargs):
+        super().__init__(*args, **kwargs)
+        if detector:
+            self._detectorClass = detector
+        self.detector = self._initDetector()
+
+    def detect(self, image: Image) -> Detections:
+        return [image, better_detection_format(self.detector.process_image(image.to_opencv()))]
+
+    @functools.cache
+    def detection_stream(self):
+        # from dimos.activate_cuda import _init_cuda
+        detection_stream = self.image.observable().pipe(ops.map(self.detect))
+
+        detection_stream.pipe(ops.map(build_imageannotations)).subscribe(self.annotations.publish)
+        detection_stream.pipe(
+            ops.filter(lambda x: len(x) != 0), ops.map(build_detection2d_array)
+        ).subscribe(self.detections.publish)
+
+        return detection_stream
+
+    def project_points_to_camera(
+        self,
+        points_3d: np.ndarray,
+        camera_matrix: np.ndarray,
+        extrinsics: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Project 3D points to 2D camera coordinates."""
+        # Transform points from world to camera_optical frame
+        points_homogeneous = np.hstack([points_3d, np.ones((points_3d.shape[0], 1))])
+        points_camera = (extrinsics @ points_homogeneous.T).T
+
+        # Filter out points behind the camera
+        valid_mask = points_camera[:, 2] > 0
+        points_camera = points_camera[valid_mask]
+
+        # Project to 2D
+        points_2d_homogeneous = (camera_matrix @ points_camera[:, :3].T).T
+        points_2d = points_2d_homogeneous[:, :2] / points_2d_homogeneous[:, 2:3]
+
+        return points_2d, valid_mask
+
+    def transform_to_matrix(self, transform) -> np.ndarray:
+        """Convert a Transform object to a 4x4 transformation matrix."""
+        # Build rotation matrix from quaternion
+        q = transform.rotation
+        x, y, z, w = q.x, q.y, q.z, q.w
+
+        R = np.array(
+            [
+                [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+            ]
+        )
+
+        # Build 4x4 transformation matrix
+        T = np.eye(4)
+        T[:3, :3] = R
+        T[:3, 3] = [transform.translation.x, transform.translation.y, transform.translation.z]
+
+        return T
+
+    def filter_points_in_detections(
+        self,
+        pointcloud: PointCloud2,
+        image: Image,
+        camera_info: CameraInfo,
+        detection_list: List[Detection],
+        world_to_camera_transform: np.ndarray,
+    ) -> List[PointCloud2]:
+        """Filter lidar points that fall within detection bounding boxes."""
+        # Extract camera parameters
+        fx, fy, cx = camera_info.K[0], camera_info.K[4], camera_info.K[2]
+        cy = camera_info.K[5]
+        image_width = camera_info.width
+        image_height = camera_info.height
+
+        camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
+
+        # Convert pointcloud to numpy array
+        lidar_points = pointcloud.as_numpy()
+
+        # Project all points to camera frame
+        points_2d_all, valid_mask = self.project_points_to_camera(
+            lidar_points, camera_matrix, world_to_camera_transform
+        )
+        valid_3d_points = lidar_points[valid_mask]
+        points_2d = points_2d_all.copy()
+
+        # Filter points within image bounds
+        in_image_mask = (
+            (points_2d[:, 0] >= 0)
+            & (points_2d[:, 0] < image_width)
+            & (points_2d[:, 1] >= 0)
+            & (points_2d[:, 1] < image_height)
+        )
+        points_2d = points_2d[in_image_mask]
+        valid_3d_points = valid_3d_points[in_image_mask]
+
+        filtered_pointclouds = []
+
+        for detection in detection_list:
+            # Detection format: [bbox, track_id, class_id, confidence, names]
+            bbox, track_id, class_id, confidence, names = detection
+            x_min, y_min, x_max, y_max = bbox
+
+            # Find points within this detection box (with small margin)
+            margin = 5  # pixels
+            in_box_mask = (
+                (points_2d[:, 0] >= x_min - margin)
+                & (points_2d[:, 0] <= x_max + margin)
+                & (points_2d[:, 1] >= y_min - margin)
+                & (points_2d[:, 1] <= y_max + margin)
+            )
+
+            detection_points = valid_3d_points[in_box_mask]
+
+            # Create PointCloud2 message for this detection
+            if detection_points.shape[0] > 0:
+                detection_pointcloud = PointCloud2.from_numpy(
+                    detection_points,
+                    frame_id=pointcloud.frame_id,
+                    timestamp=pointcloud.ts,
+                )
+                filtered_pointclouds.append(detection_pointcloud)
+            else:
+                filtered_pointclouds.append(None)
+
+        return filtered_pointclouds
+
+    def combine_pointclouds(self, pointcloud_list: List[PointCloud2]) -> PointCloud2:
+        """Combine multiple pointclouds into a single one."""
+        # Filter out None values
+        valid_pointclouds = [pc for pc in pointcloud_list if pc is not None]
+
+        if not valid_pointclouds:
+            # Return empty pointcloud if no valid pointclouds
+            return PointCloud2.from_numpy(
+                np.array([]).reshape(0, 3), frame_id="world", timestamp=time.time()
+            )
+
+        # Combine all point arrays
+        all_points = np.vstack([pc.as_numpy() for pc in valid_pointclouds])
+
+        # Use frame_id and timestamp from first pointcloud
+        combined_pointcloud = PointCloud2.from_numpy(
+            all_points,
+            frame_id=valid_pointclouds[0].frame_id,
+            timestamp=valid_pointclouds[0].ts,
+        )
+
+        return combined_pointcloud
+
+    def process_frame(self, data):
+        """Process a single frame with image, pointcloud, camera info and detections."""
+        detections, pointcloud, camera_info = data
+
+        # Get transform
+        world_to_optical_transform = self.tf.get("camera_optical", "world")
+        if world_to_optical_transform is None:
+            return None
+
+        extrinsics = self.transform_to_matrix(world_to_optical_transform)
+
+        # Filter pointcloud based on detections
+        image = detections[0]  # Extract image from detection tuple
+        detection_list = detections[1]  # Extract detection list from tuple
+        filtered_pcs = self.filter_points_in_detections(
+            pointcloud, image, camera_info, detection_list, extrinsics
+        )
+
+        # Combine all filtered pointclouds into one
+        combined_pc = self.combine_pointclouds(filtered_pcs)
+
+        return combined_pc
+
+    @rpc
+    def start(self):
+        # Combine detection stream with pointcloud and camera_info
+        combined_stream = self.detection_stream().pipe(
+            ops.with_latest_from(self.pointcloud.observable(), self.camera_info.observable()),
+            ops.map(self.process_frame),
+            ops.filter(lambda x: x is not None),
+        )
+
+        # Output combined filtered pointcloud
+        combined_stream.subscribe(self.filtered_pointcloud.publish)

@@ -266,14 +266,6 @@ def main():
     world_to_optical_transform = tf.get("camera_optical", "world")
     print("world to camera_optical transform:", world_to_optical_transform)
 
-    # Debug: Also get and print intermediate transforms
-    world_to_base = tf.get("world", "base_link")
-    base_to_camera = tf.get("base_link", "camera_link")
-    camera_to_optical = tf.get("camera_link", "camera_optical")
-    print(f"world->base: {world_to_base}")
-    print(f"base->camera: {base_to_camera}")
-    print(f"camera->optical: {camera_to_optical}")
-
     extrinsics = transform_to_matrix(world_to_optical_transform)
 
     # Extract detection list from the detection tuple

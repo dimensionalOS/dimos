@@ -16,9 +16,12 @@ import logging
 import time
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
+from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos.core import LCMTransport, start
-from dimos.perception.detection2d import Detect2DModule, Detection2DArrayFix
+from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.perception.detection2d import Detection2DArrayFix, DetectionPointcloud
+from dimos.perception.detection2d.module import DetectionPointcloud
 from dimos.protocol.pubsub import lcm
 from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
 from dimos.utils.logging_config import setup_logger
@@ -29,13 +32,19 @@ logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.IN
 def detection_unitree():
     dimos = start(6)
 
-    connection = deploy_connection(dimos, seek=11, duration=3, loop=True)
-    # navigation = deploy_navigation(dimos, connection)
+    connection = deploy_connection(dimos, loop=False, speed=0.2)
+    mapper = deploy_navigation(dimos, connection)
 
-    detection = dimos.deploy(Detect2DModule)
+    detection = dimos.deploy(DetectionPointcloud)
+
     detection.image.connect(connection.video)
+    detection.camera_info.connect(connection.camera_info)
+    detection.pointcloud.connect(mapper.global_map)
+
     detection.detections.transport = LCMTransport("/detections", Detection2DArrayFix)
     detection.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
+    detection.filtered_pointcloud.transport = LCMTransport("/filtered_pointcloud", PointCloud2)
+
     detection.start()
 
     try:
@@ -43,7 +52,7 @@ def detection_unitree():
             time.sleep(1)
     except KeyboardInterrupt:
         connection.stop()
-        # navigation.stop()
+        mapper.stop()
         detection.stop()
         logger.info("Shutting down...")
 
