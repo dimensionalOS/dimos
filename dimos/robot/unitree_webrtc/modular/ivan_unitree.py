@@ -29,7 +29,7 @@ logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.IN
 def detection_unitree():
     dimos = start(6)
 
-    connection = deploy_connection(dimos, seek=8.5, duration=5, loop=True)
+    connection = deploy_connection(dimos, seek=12, duration=2, loop=True)
     # navigation = deploy_navigation(dimos, connection)
 
     detection = dimos.deploy(Detect2DModule)

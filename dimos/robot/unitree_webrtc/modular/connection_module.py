@@ -29,8 +29,7 @@ from reactivex.observable import Observable
 
 from dimos.core import In, LCMTransport, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
 from dimos.msgs.std_msgs import Header
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
@@ -173,10 +172,11 @@ class ConnectionModule(Module):
                 int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
             )
 
-        # sharpness_window(
-        #    10, self.connection.video_stream().pipe(ops.map(attach_frame_id))
-        # ).subscribe(image_pub)
-        self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
+        sharpness_window(
+            5, self.connection.video_stream().pipe(ops.map(attach_frame_id))
+        ).subscribe(image_pub)
+
+        # self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
         self.camera_info_stream().subscribe(self.camera_info.publish)
         self.movecmd.subscribe(self.connection.move)
 
