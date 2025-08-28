@@ -26,7 +26,7 @@ import open3d as o3d
 from mujoco import viewer
 
 
-from dimos.msgs.geometry_msgs import Quaternion, Vector3
+from dimos.msgs.geometry_msgs import Quaternion, Twist, Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud
@@ -275,12 +275,14 @@ class MujocoThread(threading.Thread):
             self._command = np.zeros(3, dtype=np.float32)
         self._stop_timer = None
 
-    def move(self, vector: Vector3, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0):
         if self._stop_timer:
             self._stop_timer.cancel()
 
         with self._command_lock:
-            self._command = np.array([vector.x, vector.y, vector.z], dtype=np.float32)
+            self._command = np.array(
+                [twist.linear.x, twist.linear.y, twist.angular.z], dtype=np.float32
+            )
 
         if duration > 0:
             self._stop_timer = threading.Timer(duration, self._stop_move)
