@@ -30,7 +30,6 @@ from dimos.msgs.geometry_msgs import PoseStamped
 from collections import deque
 
 
-
 class Map(Module):
     lidar: In[LidarMessage] = None
     odom: In[PoseStamped] = None  # New input for odometry messages
@@ -51,7 +50,6 @@ class Map(Module):
         max_map_points: int = 100000,  # Limit accumulated map size
         max_odom_history: int = 1000,  # Maximum odometry messages to store
         time_tolerance: float = 0.1,  # Maximum time difference for synchronization (seconds)
-
         **kwargs,
     ):
         self.voxel_size = voxel_size
@@ -77,7 +75,6 @@ class Map(Module):
         if self.odom:
             self.odom.subscribe(self.store_odom)
             logger.info("Subscribed to odometry messages for timestamp synchronization")
-
 
         self.lidar.subscribe(self.add_frame)
 
@@ -108,28 +105,27 @@ class Map(Module):
     def store_odom(self, odom: PoseStamped):
         """Store odometry message in history buffer."""
         self.odom_history.append(odom)
-    
+
     def find_closest_odom(self, target_ts: float) -> Optional[PoseStamped]:
         """Find the odometry message closest in time to the target timestamp."""
         if not self.odom_history:
             return None
-        
+
         # Find the closest odometry message
         closest_odom = None
-        min_time_diff = float('inf')
-        
+        min_time_diff = float("inf")
+
         for odom in self.odom_history:
             time_diff = abs(odom.ts - target_ts)
             if time_diff < min_time_diff:
                 min_time_diff = time_diff
                 closest_odom = odom
-        
+
         # Check if the closest is within tolerance
         if min_time_diff <= self.time_tolerance:
             return closest_odom
         else:
             return None
-
 
     def to_PointCloud2(self) -> PointCloud2:
         return PointCloud2(
@@ -155,14 +151,20 @@ class Map(Module):
         if frame.frame_id != self.frame_id:
             # Try to find synchronized odometry transform
             closest_odom = self.find_closest_odom(frame.ts)
-            print("human readable frame ts:", time.ctime(frame.ts), "closest odom ts:", time.ctime(closest_odom.ts) if closest_odom else 'None')
-            print('diff', abs(closest_odom.ts - frame.ts) if closest_odom else 'N/A')
-            print('------')
-            
+            print(
+                "human readable frame ts:",
+                time.ctime(frame.ts),
+                "closest odom ts:",
+                time.ctime(closest_odom.ts) if closest_odom else "None",
+            )
+            print("diff", abs(closest_odom.ts - frame.ts) if closest_odom else "N/A")
+            print("------")
+
             if closest_odom:
                 # Use the synchronized odometry transform
                 try:
                     from dimos.msgs.geometry_msgs import Transform
+
                     # Create transform from the synchronized pose
                     tf = Transform.from_pose(closest_odom.frame_id, closest_odom)
                     frame = frame.transform(tf)
