@@ -793,7 +793,7 @@ class ZEDModule(Module):
                                 tracking_initialized = True
                                 break
                             elif tracking_state == sl.POSITIONAL_TRACKING_STATE.SEARCHING:
-                                logger.debug(f"Frame {i + 1}: Still searching for tracking...")
+                                logger.info(f"Frame {i + 1}: Still searching for tracking...")
                         time.sleep(0.1)
 
                     if not tracking_initialized:
@@ -869,17 +869,17 @@ class ZEDModule(Module):
             self.zed_camera.zed.retrieve_image(self.zed_camera.image_left, sl.VIEW.LEFT)
             left_img = self.zed_camera.image_left.get_data()[:, :, :3]  # Remove alpha
 
-            # Get depth for visualization (but don't use for pointcloud)
-            self.zed_camera.zed.retrieve_measure(self.zed_camera.depth_map, sl.MEASURE.DEPTH)
-            depth = self.zed_camera.depth_map.get_data()
+            # # Get depth for visualization (but don't use for pointcloud)
+            # self.zed_camera.zed.retrieve_measure(self.zed_camera.depth_map, sl.MEASURE.DEPTH)
+            # depth = self.zed_camera.depth_map.get_data()
 
-            # Get pointcloud at lower resolution - EXACTLY like the demo
-            self.zed_camera.zed.retrieve_measure(
-                self.zed_camera.point_cloud,
-                sl.MEASURE.XYZRGBA,
-                sl.MEM.CPU,
-                self.zed_camera.pc_resolution,
-            )
+            # # Get pointcloud at lower resolution - EXACTLY like the demo
+            # self.zed_camera.zed.retrieve_measure(
+            #     self.zed_camera.point_cloud,
+            #     sl.MEASURE.XYZRGBA,
+            #     sl.MEM.CPU,
+            #     self.zed_camera.pc_resolution,
+            # )
 
             # Get pose if tracking enabled
             pose_data = None
@@ -892,14 +892,18 @@ class ZEDModule(Module):
 
             # Publish all data
             self._publish_color_image(left_img, header)
-            self._publish_depth_image(depth, header)
+            # self._publish_depth_image(depth, header)
             self._publish_camera_info()
 
             # Only publish pointcloud if tracking is valid (or tracking disabled)
             # This prevents pointclouds appearing at world origin when tracking isn't ready
+            logger.info("Checking if can publish pointcloud...")
             if not self.enable_tracking or (pose_data and pose_data.get("valid", False)):
                 # Publish pointcloud (uses already retrieved data)
+                logger.info("Publishing pointcloud...")
                 self._publish_pointcloud(header)
+            else:
+                logger.info("Skipping pointcloud publish")
 
             # Publish pose if tracking enabled and valid
             if self.enable_tracking and pose_data and pose_data.get("valid", False):
@@ -1053,13 +1057,17 @@ class ZEDModule(Module):
 
     def _publish_pointcloud(self, header: Header):
         """Publish pointcloud as LidarMessage for Map module."""
+        logger.info("_publish_pointcloud called")
         try:
             pcd = None
 
             # If spatial mapping is enabled, use the full world map
             if self.enable_spatial_mapping and self.zed_camera.mapping_enabled:
+                logger.info("Spatial mapping enabled, getting spatial map...")
                 # Get the spatial map (full accumulated world map)
                 pcd = self.zed_camera.get_spatial_map()
+
+                logger.info("pcd", pcd)
 
                 if pcd is not None and len(pcd.points) > 0:
                     # Downsample to 0.05m voxels as required
@@ -1067,32 +1075,35 @@ class ZEDModule(Module):
 
                     # The spatial map is already in world frame
                     frame_id = "world"
-                    logger.debug(
+                    logger.info(
                         f"Got spatial map with {len(pcd.points)} points after downsampling"
                     )
                 else:
                     # No spatial map available yet, skip
+                    logger.info("No spatial map available yet, skipping pointcloud publish")
                     return
             else:
-                # Fall back to regular pointcloud (current frame only)
-                # Get the already retrieved pointcloud (720x404 resolution)
-                point_cloud_data = self.zed_camera.point_cloud.get_data()
+                logger.info("Spatial mapping not enabled")
+                # # Fall back to regular pointcloud (current frame only)
+                # # Get the already retrieved pointcloud (720x404 resolution)
+                # point_cloud_data = self.zed_camera.point_cloud.get_data()
 
-                # Flatten to get all points (it's already at low resolution)
-                points = point_cloud_data.reshape(-1, 4)
-                xyz = points[:, :3]
+                # # Flatten to get all points (it's already at low resolution)
+                # points = point_cloud_data.reshape(-1, 4)
+                # xyz = points[:, :3]
 
-                # Filter out invalid points (NaN/Inf)
-                valid = np.isfinite(xyz).all(axis=1)
-                valid_xyz = xyz[valid]
+                # # Filter out invalid points (NaN/Inf)
+                # valid = np.isfinite(xyz).all(axis=1)
+                # valid_xyz = xyz[valid]
 
-                if len(valid_xyz) > 0:
-                    # Create Open3D pointcloud (no colors for simplicity/performance)
-                    pcd = o3d.geometry.PointCloud()
-                    pcd.points = o3d.utility.Vector3dVector(valid_xyz)
-                    frame_id = "camera_link"
+                # if len(valid_xyz) > 0:
+                #     # Create Open3D pointcloud (no colors for simplicity/performance)
+                #     pcd = o3d.geometry.PointCloud()
+                #     pcd.points = o3d.utility.Vector3dVector(valid_xyz)
+                #     frame_id = "camera_link"
 
             if pcd is not None and len(pcd.points) > 0:
+                logger.info(f"Creating LidarMessage with {len(pcd.points)} points")
                 # Create LidarMessage
                 lidar_msg = LidarMessage(
                     pointcloud=pcd,
@@ -1104,9 +1115,13 @@ class ZEDModule(Module):
 
                 if self.pointcloud_msg:
                     self.pointcloud_msg.publish(lidar_msg)
-                    logger.debug(
+                    logger.info(
                         f"Published pointcloud with {len(pcd.points)} points from {frame_id} frame"
                     )
+                else:
+                    logger.warning("No subscribers for pointcloud message")
+            else:
+                logger.info("No pointcloud data to publish")
 
         except Exception as e:
             logger.error(f"Error publishing pointcloud: {e}")

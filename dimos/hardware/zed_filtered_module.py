@@ -64,10 +64,12 @@ class FilteredZEDModule(ZEDModule):
 
             # If spatial mapping is enabled, use the full world map
             if self.enable_spatial_mapping and self.zed_camera.mapping_enabled:
+                logger.info("Spatial mapping enabled, getting spatial map...")
                 # Get the spatial map (full accumulated world map)
                 pcd = self.zed_camera.get_spatial_map()
 
                 if pcd is not None and len(pcd.points) > 0:
+                    logger.info(f"Got spatial map with {len(pcd.points)}")
                     original_points = len(pcd.points)
 
                     # Downsample to target voxel size
@@ -88,55 +90,57 @@ class FilteredZEDModule(ZEDModule):
                             f"in {elapsed_ms:.1f}ms"
                         )
                 else:
-                    # No spatial map available yet, skip
+                    logger.info("No spatial map available yet, skipping pointcloud publish")
                     return
             else:
-                # Fall back to regular pointcloud (current frame only)
-                # Get the pointcloud data from ZED
-                point_cloud_data = self.zed_camera.point_cloud.get_data()
+                logger.info("Spatial mapping not enabled")
+                # # Fall back to regular pointcloud (current frame only)
+                # # Get the pointcloud data from ZED
+                # point_cloud_data = self.zed_camera.point_cloud.get_data()
 
-                # Extract XYZ only - skip color processing entirely for performance
-                points = point_cloud_data.reshape(-1, 4)[:, :3]  # Only XYZ, ignore RGBA
+                # # Extract XYZ only - skip color processing entirely for performance
+                # points = point_cloud_data.reshape(-1, 4)[:, :3]  # Only XYZ, ignore RGBA
 
-                # Only remove invalid points (NaN/Inf)
-                valid = np.isfinite(points).all(axis=1)
-                points = points[valid]
+                # # Only remove invalid points (NaN/Inf)
+                # valid = np.isfinite(points).all(axis=1)
+                # points = points[valid]
 
-                if len(points) == 0:
-                    return
+                # if len(points) == 0:
+                #     return
 
-                original_points = len(points)
+                # original_points = len(points)
 
-                # Create Open3D pointcloud directly - NO FILTERING
-                pcd = o3d.geometry.PointCloud()
-                pcd.points = o3d.utility.Vector3dVector(points)
+                # # Create Open3D pointcloud directly - NO FILTERING
+                # pcd = o3d.geometry.PointCloud()
+                # pcd.points = o3d.utility.Vector3dVector(points)
 
-                # Only apply voxel downsampling to reduce point count
-                if self.voxel_size > 0:
-                    pcd = pcd.voxel_down_sample(self.voxel_size)
+                # # Only apply voxel downsampling to reduce point count
+                # if self.voxel_size > 0:
+                #     pcd = pcd.voxel_down_sample(self.voxel_size)
 
-                # Log performance metrics
-                filtered_points = len(pcd.points)
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                # # Log performance metrics
+                # filtered_points = len(pcd.points)
+                # elapsed_ms = (time.perf_counter() - start_time) * 1000
 
-                self.filter_frame_count += 1
-                if self.filter_frame_count % 30 == 0:  # Log every 30 frames
-                    logger.info(
-                        f"[CURRENT FRAME] {original_points:,} → {filtered_points:,} points "
-                        f"(voxel downsample {self.voxel_size}m) "
-                        f"in {elapsed_ms:.1f}ms"
-                    )
+                # self.filter_frame_count += 1
+                # if self.filter_frame_count % 30 == 0:  # Log every 30 frames
+                #     logger.info(
+                #         f"[CURRENT FRAME] {original_points:,} → {filtered_points:,} points "
+                #         f"(voxel downsample {self.voxel_size}m) "
+                #         f"in {elapsed_ms:.1f}ms"
+                #     )
 
-                    if filtered_points > 0:
-                        points_arr = np.asarray(pcd.points)
-                        logger.info(
-                            f"  Bounds: X:[{points_arr[:, 0].min():.2f},{points_arr[:, 0].max():.2f}] "
-                            f"Y:[{points_arr[:, 1].min():.2f},{points_arr[:, 1].max():.2f}] "
-                            f"Z:[{points_arr[:, 2].min():.2f},{points_arr[:, 2].max():.2f}]"
-                        )
+                #     if filtered_points > 0:
+                #         points_arr = np.asarray(pcd.points)
+                #         logger.info(
+                #             f"  Bounds: X:[{points_arr[:, 0].min():.2f},{points_arr[:, 0].max():.2f}] "
+                #             f"Y:[{points_arr[:, 1].min():.2f},{points_arr[:, 1].max():.2f}] "
+                #             f"Z:[{points_arr[:, 2].min():.2f},{points_arr[:, 2].max():.2f}]"
+                #         )
 
             # Create LidarMessage with filtered pointcloud
             if pcd is not None and len(pcd.points) > 0:
+                logger.info(f"Creating LidarMessage with {len(pcd.points)} points")
                 lidar_msg = LidarMessage(
                     pointcloud=pcd,
                     origin=[0.0, 0.0, 0.0],
@@ -144,9 +148,13 @@ class FilteredZEDModule(ZEDModule):
                     ts=time.time(),
                     frame_id=frame_id,
                 )
-
+                logger.info(
+                    f"Published pointcloud with {len(pcd.points)} points from {frame_id} frame"
+                )
                 # Publish filtered pointcloud
                 self.pointcloud_msg.publish(lidar_msg)
+            else:
+                logger.info("No pointcloud data to publish")
 
         except Exception as e:
             logger.error(f"Error in optimized pointcloud publishing: {e}")
