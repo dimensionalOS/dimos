@@ -116,7 +116,16 @@ class ZEDCamera(StereoCamera):
 
         # Spatial mapping
         self.mapping_enabled = False
-        self.spatial_mapping_params = sl.SpatialMappingParameters()
+        self.spatial_mapping_params = sl.SpatialMappingParameters(
+            resolution = sl.MAPPING_RESOLUTION.MEDIUM,
+            mapping_range =  sl.MAPPING_RANGE.MEDIUM,
+            max_memory_usage = 2048,
+            save_texture = False,
+            use_chunk_only = True,
+            reverse_vertex_order = False,
+            map_type = sl.SPATIAL_MAP_TYPE.FUSED_POINT_CLOUD
+        )
+
         self.fused_pointcloud = sl.FusedPointCloud()  # For spatial mapping output
         self.last_spatial_map_request = 0  # Time of last spatial map request
         self.spatial_map_request_interval = 0.5  # Request every 500ms
@@ -234,23 +243,6 @@ class ZEDCamera(StereoCamera):
             return False
 
         try:
-            # Configure spatial mapping parameters
-            if resolution is None:
-                resolution = sl.MAPPING_RESOLUTION.MEDIUM
-            if mapping_range is None:
-                mapping_range = sl.MAPPING_RANGE.MEDIUM
-            self.spatial_mapping_params.resolution_meter = (
-                sl.SpatialMappingParameters().get_resolution_preset(resolution)
-            )
-            self.spatial_mapping_params.mapping_range_meter = (
-                sl.SpatialMappingParameters().get_range_preset(mapping_range)
-            )
-            self.spatial_mapping_params.max_memory_usage = max_memory_usage
-            self.spatial_mapping_params.save_texture = save_texture
-            self.spatial_mapping_params.use_chunk_only = use_chunk_only
-            self.spatial_mapping_params.reverse_vertex_order = reverse_vertex_order
-            self.spatial_mapping_params.map_type = sl.SPATIAL_MAP_TYPE.FUSED_POINT_CLOUD
-
             # Enable spatial mapping
             err = self.zed.enable_spatial_mapping(self.spatial_mapping_params)
             if err != sl.ERROR_CODE.SUCCESS:
