@@ -117,13 +117,13 @@ class ZEDCamera(StereoCamera):
         # Spatial mapping
         self.mapping_enabled = False
         self.spatial_mapping_params = sl.SpatialMappingParameters(
-            resolution = sl.MAPPING_RESOLUTION.MEDIUM,
-            mapping_range =  sl.MAPPING_RANGE.MEDIUM,
-            max_memory_usage = 2048,
-            save_texture = False,
-            use_chunk_only = True,
-            reverse_vertex_order = False,
-            map_type = sl.SPATIAL_MAP_TYPE.FUSED_POINT_CLOUD
+            resolution=sl.MAPPING_RESOLUTION.MEDIUM,
+            mapping_range=sl.MAPPING_RANGE.MEDIUM,
+            max_memory_usage=2048,
+            save_texture=False,
+            use_chunk_only=True,
+            reverse_vertex_order=False,
+            map_type=sl.SPATIAL_MAP_TYPE.FUSED_POINT_CLOUD,
         )
 
         self.fused_pointcloud = sl.FusedPointCloud()  # For spatial mapping output
