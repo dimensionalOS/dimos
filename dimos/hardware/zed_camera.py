@@ -779,19 +779,28 @@ class ZEDModule(Module):
                     logger.info("Waiting for positional tracking to initialize...")
                     tracking_initialized = False
                     for i in range(30):  # Try for up to 3 seconds
-                        if self.zed_camera.zed.grab(self.zed_camera.runtime_params) == sl.ERROR_CODE.SUCCESS:
-                            tracking_state = self.zed_camera.zed.get_position(self.zed_camera.camera_pose, sl.REFERENCE_FRAME.WORLD)
+                        if (
+                            self.zed_camera.zed.grab(self.zed_camera.runtime_params)
+                            == sl.ERROR_CODE.SUCCESS
+                        ):
+                            tracking_state = self.zed_camera.zed.get_position(
+                                self.zed_camera.camera_pose, sl.REFERENCE_FRAME.WORLD
+                            )
                             if tracking_state == sl.POSITIONAL_TRACKING_STATE.OK:
-                                logger.info(f"Tracking initialized successfully after {i+1} frames")
+                                logger.info(
+                                    f"Tracking initialized successfully after {i + 1} frames"
+                                )
                                 tracking_initialized = True
                                 break
                             elif tracking_state == sl.POSITIONAL_TRACKING_STATE.SEARCHING:
-                                logger.debug(f"Frame {i+1}: Still searching for tracking...")
+                                logger.debug(f"Frame {i + 1}: Still searching for tracking...")
                         time.sleep(0.1)
-                    
+
                     if not tracking_initialized:
-                        logger.warning("Tracking failed to initialize properly, continuing anyway...")
-                    
+                        logger.warning(
+                            "Tracking failed to initialize properly, continuing anyway..."
+                        )
+
                     # Enable spatial mapping if tracking succeeded and mapping requested
                     if self.enable_spatial_mapping:
                         success = self.zed_camera.enable_spatial_mapping(
