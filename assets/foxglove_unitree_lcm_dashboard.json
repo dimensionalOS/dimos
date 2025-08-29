@@ -230,7 +230,7 @@
         "poseEstimateThetaDeviation": 0.26179939
       },
       "imageMode": {
-        "imageTopic": "/video",
+        "imageTopic": "/go2/color_image",
         "colorMode": "gradient"
       },
       "foxglovePanelTitle": "/video"
