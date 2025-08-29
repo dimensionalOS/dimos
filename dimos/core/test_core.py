@@ -90,7 +90,7 @@ def test_classmethods():
     # Check that we have the expected RPC methods
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
-    assert len(class_rpcs) == 3
+    assert len(class_rpcs) == 5
 
     # Check that the values are callable
     assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
