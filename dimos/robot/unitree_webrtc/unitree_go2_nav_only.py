@@ -22,30 +22,30 @@ import time
 import warnings
 from typing import Optional
 
+from dimos_lcm.std_msgs import Bool, String
+
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
-from dimos_lcm.std_msgs import String, Bool
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
+from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
+from dimos.navigation.global_planner import AstarPlanner
+from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.protocol.tf import TF
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos.navigation.global_planner import AstarPlanner
-from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
-from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
+from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.robot.robot import Robot
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
+from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
-from dimos.robot.robot import Robot
-from dimos.types.robot_capabilities import RobotCapability
-
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2_nav_only", level=logging.INFO)
 
@@ -239,7 +239,9 @@ class UnitreeGo2NavOnly(Robot):
         self._deploy_connection()
         self._deploy_mapping()
         self._deploy_navigation()
-        self._deploy_visualization()
+
+        foxglove_bridge = self.dimos.deploy(FoxgloveBridge)
+        foxglove_bridge.start()
 
         self._start_modules()
 
@@ -317,15 +319,6 @@ class UnitreeGo2NavOnly(Robot):
         self.frontier_explorer.costmap.connect(self.mapper.global_costmap)
         self.frontier_explorer.odometry.connect(self.connection.odom)
 
-    def _deploy_visualization(self):
-        """Deploy and configure visualization modules."""
-        self.websocket_vis = self.dimos.deploy(WebsocketVisModule, port=self.websocket_port)
-        self.websocket_vis.click_goal.transport = core.LCMTransport("/goal_request", PoseStamped)
-
-        self.websocket_vis.robot_pose.connect(self.connection.odom)
-        self.websocket_vis.path.connect(self.global_planner.path)
-        self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
-
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
         self.connection.start()
@@ -334,7 +327,6 @@ class UnitreeGo2NavOnly(Robot):
         self.local_planner.start()
         self.navigator.start()
         self.frontier_explorer.start()
-        self.websocket_vis.start()
 
     def move(self, vector: Vector3, duration: float = 0.0):
         """Send movement command to robot."""
