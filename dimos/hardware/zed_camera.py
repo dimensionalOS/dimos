@@ -1075,9 +1075,7 @@ class ZEDModule(Module):
 
                     # The spatial map is already in world frame
                     frame_id = "world"
-                    logger.info(
-                        f"Got spatial map with {len(pcd.points)} points after downsampling"
-                    )
+                    logger.info(f"Got spatial map with {len(pcd.points)} points after downsampling")
                 else:
                     # No spatial map available yet, skip
                     logger.info("No spatial map available yet, skipping pointcloud publish")
