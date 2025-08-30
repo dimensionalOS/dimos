@@ -127,6 +127,8 @@ class UnitreeG1(Robot):
         ip: str,
         output_dir: str = None,
         skill_library: Optional[SkillLibrary] = None,
+        recording_path: str = None,
+        replay_path: str = None,
     ):
         """Initialize the G1 robot.
 
@@ -134,10 +136,14 @@ class UnitreeG1(Robot):
             ip: Robot IP address
             output_dir: Directory for saving outputs
             skill_library: Skill library instance
+            recording_path: Path to save recordings (if recording)
+            replay_path: Path to replay recordings from (if replaying)
         """
         super().__init__()
         self.ip = ip
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
+        self.recording_path = recording_path
+        self.replay_path = replay_path
         self.lcm = LCM()
 
         # Initialize skill library with G1 robot type
@@ -186,22 +192,36 @@ class UnitreeG1(Robot):
         self.connection.movecmd.transport = core.LCMTransport("/g1/cmd_vel", Twist)
 
     def _deploy_camera(self):
-        """Deploy and configure the ZED camera module."""
-        logger.info("Deploying ZED camera module...")
-        self.zed_camera = self.dimos.deploy(
-            ZEDModule,
-            camera_id=0,
-            resolution="HD720",
-            depth_mode="NEURAL",
-            fps=30,
-            enable_tracking=True,  # Enable for G1 pose estimation
-            enable_imu_fusion=True,
-            set_floor_as_origin=True,
-            publish_rate=30.0,
-            frame_id="zed_camera",
-        )
+        """Deploy and configure the ZED camera module (real or fake based on replay_path)."""
 
-        # Configure ZED LCM transports
+        if self.replay_path:
+            # Use FakeZEDModule for replay
+            from dimos.hardware.fake_zed_module import FakeZEDModule
+
+            logger.info(f"Deploying FakeZEDModule for replay from: {self.replay_path}")
+            self.zed_camera = self.dimos.deploy(
+                FakeZEDModule,
+                recording_path=self.replay_path,
+                frame_id="zed_camera",
+            )
+        else:
+            # Use real ZEDModule (with optional recording)
+            logger.info("Deploying ZED camera module...")
+            self.zed_camera = self.dimos.deploy(
+                ZEDModule,
+                camera_id=0,
+                resolution="HD720",
+                depth_mode="NEURAL",
+                fps=30,
+                enable_tracking=True,  # Enable for G1 pose estimation
+                enable_imu_fusion=True,
+                set_floor_as_origin=True,
+                publish_rate=30.0,
+                frame_id="zed_camera",
+                recording_path=self.recording_path,  # Pass recording path if provided
+            )
+
+        # Configure ZED LCM transports (same for both real and fake)
         self.zed_camera.color_image.transport = core.LCMTransport("/zed/color_image", Image)
         self.zed_camera.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
         self.zed_camera.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)

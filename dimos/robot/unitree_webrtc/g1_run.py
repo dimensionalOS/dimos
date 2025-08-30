@@ -21,6 +21,7 @@ Provides interaction capabilities with natural language interface and ZED vision
 import os
 import sys
 import time
+import argparse
 from dotenv import load_dotenv
 
 import reactivex as rx
@@ -48,6 +49,12 @@ SYSTEM_PROMPT_PATH = os.path.join(
 
 def main():
     """Main entry point."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Unitree G1 Robot with Claude Agent")
+    parser.add_argument("--replay", type=str, help="Path to recording to replay")
+    parser.add_argument("--record", type=str, help="Path to save recording")
+    args = parser.parse_args()
+
     print("\n" + "=" * 60)
     print("Unitree G1 Humanoid Robot with Claude Agent")
     print("=" * 60)
@@ -57,7 +64,26 @@ def main():
     print("  - WebRTC communication for robot control")
     print("  - Claude AI for natural language understanding")
     print("  - Web interface with text and voice input")
+
+    if args.replay:
+        print(f"\nREPLAY MODE: Replaying from {args.replay}")
+    elif args.record:
+        print(f"\nRECORDING MODE: Recording to {args.record}")
+
     print("\nStarting system...\n")
+
+    # Check for API key
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        print("WARNING: ANTHROPIC_API_KEY not found in environment")
+        print("Please set your API key in .env file or environment")
+        sys.exit(1)
+
+    # Check for robot IP (not needed in replay mode)
+    robot_ip = os.getenv("ROBOT_IP")
+    if not robot_ip and not args.replay:
+        print("ERROR: ROBOT_IP not found in environment")
+        print("Please set the robot IP address in .env file")
+        sys.exit(1)
 
     # Load system prompt
     try:
@@ -69,8 +95,12 @@ def main():
 
     logger.info("Starting Unitree G1 Robot with Agent")
 
-    # Create robot instance
-    robot = UnitreeG1(ip=os.getenv("ROBOT_IP"))
+    # Create robot instance with recording/replay support
+    robot = UnitreeG1(
+        ip=robot_ip or "0.0.0.0",  # Dummy IP for replay mode
+        recording_path=args.record,
+        replay_path=args.replay,
+    )
     robot.start()
     time.sleep(3)
 
