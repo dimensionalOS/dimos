@@ -24,17 +24,18 @@ import numpy as np
 import cv2
 
 from dimos.core import Module, In, Out, rpc
-from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.geometry_msgs import Twist, Vector3, Pose, Quaternion
+from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.geometry_msgs import Twist, Vector3, Pose, Quaternion, Transform
 from dimos_lcm.vision_msgs import Detection3DArray, Detection2DArray
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.std_msgs import String
 
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.manipulation.visual_servoing.pbvs import PBVSController
+from dimos.manipulation.visual_servoing.utils import match_detection_by_id
 from dimos.perception.common.utils import find_clicked_detection
 from dimos.protocol.tf import TF
-from dimos.utils.transform_utils import pose_to_matrix, get_distance
+from dimos.utils.transform_utils import get_distance
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.manipulation.visual_servoing.mobile_base_pbvs")
@@ -83,7 +84,7 @@ class MobileBasePBVS(Module):
         target_tolerance: float = 0.2,  # 20cm tolerance
         min_confidence: float = 0.5,
         camera_frame_id: str = "camera_link",
-        base_frame_id: str = "base_link",
+        track_frame_id: str = "world",
         tracking_loss_timeout: float = 2.0,
         **kwargs,
     ):
@@ -101,7 +102,8 @@ class MobileBasePBVS(Module):
 
         # Frame IDs
         self.camera_frame_id = camera_frame_id
-        self.base_frame_id = base_frame_id
+        self.track_frame_id = track_frame_id
+        self.target_frame_id = "target"
 
         # Initialize components
         self.tf = TF()
@@ -130,14 +132,23 @@ class MobileBasePBVS(Module):
 
         # Detection parameters
         self.min_confidence = min_confidence
-        self.max_detection_distance = 3.0  # Maximum detection distance in meters
+        self.max_detection_distance = 5.0  # Maximum detection distance in meters
 
-        logger.info(f"Initialized MobileBasePBVS with target_distance={target_distance}m")
+        logger.info(f"Initialized MobileBasePBVS")
 
     @rpc
-    def start(self, target_x: int = None, target_y: int = None) -> Dict[str, Any]:
+    def start(self):
+        """Start the module and subscribe to input streams."""
+        # Subscribe to input streams
+        self.rgb_image.subscribe(self._on_rgb_image)
+        self.depth_image.subscribe(self._on_depth_image)
+        self.camera_info.subscribe(self._on_camera_info)
+        logger.info("Mobile base PBVS module started")
+
+    @rpc
+    def track(self, target_x: int = None, target_y: int = None) -> Dict[str, Any]:
         """
-        Start tracking and following an object.
+        Start tracking and following an object at given coordinates.
 
         Args:
             target_x: X coordinate of target object in image
@@ -170,7 +181,7 @@ class MobileBasePBVS(Module):
         return {"status": "success", "message": "Tracking started"}
 
     @rpc
-    def stop(self) -> Dict[str, Any]:
+    def stop_track(self) -> Dict[str, Any]:
         """Stop tracking and servoing."""
         if not self.is_tracking:
             return {"status": "warning", "message": "Not currently tracking"}
@@ -200,11 +211,11 @@ class MobileBasePBVS(Module):
 
     def _on_rgb_image(self, msg: Image):
         """Handle RGB image messages."""
-        self.latest_rgb = msg.data
+        self.latest_rgb = msg
 
     def _on_depth_image(self, msg: Image):
         """Handle depth image messages."""
-        self.latest_depth = msg.data
+        self.latest_depth = msg
 
     def _on_camera_info(self, msg: CameraInfo):
         """Handle camera info messages."""
@@ -258,11 +269,15 @@ class MobileBasePBVS(Module):
                         time_since_detection = time.time() - self.last_detection_time
                         if time_since_detection > self.tracking_loss_timeout:
                             logger.warning("Lost tracking - timeout exceeded")
-                            self.stop()
+                            # Don't call stop_track() from within the thread - just reset state and exit
+                            self._reset_tracking_state()
                             break
 
                 # Compute and send velocity commands
                 self._compute_and_send_commands()
+
+                # Publish target TF
+                self._publish_target_tf()
 
                 # Publish visualization
                 self._publish_visualization()
@@ -275,6 +290,21 @@ class MobileBasePBVS(Module):
 
         logger.info("Tracking loop ended")
 
+    def _reset_tracking_state(self):
+        """Reset tracking state without thread operations."""
+        # Stop robot
+        self._send_zero_velocity()
+
+        # Clear state
+        self.is_tracking = False
+        self.target_object = None
+        self.last_detection_time = None
+        self.controller.clear_state()
+
+        # Publish state
+        if self.tracking_state:
+            self.tracking_state.publish(String(data="stopped"))
+
     def _process_frame(self):
         """Process current frame to get detections."""
         if not all([self.latest_rgb is not None, self.latest_depth is not None, self.detector]):
@@ -283,17 +313,21 @@ class MobileBasePBVS(Module):
         try:
             # Get camera to base transform
             transform = self.tf.get(
-                parent_frame=self.base_frame_id,
+                parent_frame=self.track_frame_id,
                 child_frame=self.camera_frame_id,
                 time_point=self.latest_rgb.ts,
                 time_tolerance=0.2,
             )
 
-            transform_matrix = pose_to_matrix(transform.to_pose()) if transform else None
+            # Process frame with numpy arrays
+            # Detection3DProcessor will convert from optical to robot frame internally
+            if self.latest_depth.format == ImageFormat.DEPTH16:
+                depth_data = self.latest_depth.data.astype(np.float32) / 1000.0
+            else:
+                depth_data = self.latest_depth.data
 
-            # Process frame
             detections_3d, detections_2d = self.detector.process_frame(
-                self.latest_rgb, self.latest_depth, transform_matrix
+                self.latest_rgb.data, depth_data, transform
             )
 
             self.last_detections_3d = detections_3d
@@ -325,7 +359,7 @@ class MobileBasePBVS(Module):
             distance = get_distance(self.target_object.bbox.center, detection.bbox.center)
 
             # Update best match if within tracking threshold
-            if distance < min_distance and distance < 0.3:  # 30cm tracking threshold
+            if distance < min_distance and distance < 0.2:  # 30cm tracking threshold
                 min_distance = distance
                 best_match = detection
 
@@ -380,48 +414,75 @@ class MobileBasePBVS(Module):
             return
 
         try:
-            viz = self.latest_rgb.copy()
+            viz = self.latest_rgb.data.copy()
 
             # Draw target if tracking
-            if self.target_object and self.last_detections_2d:
-                # Find corresponding 2D detection
-                for det_2d in self.last_detections_2d.detections:
-                    if det_2d.id == self.target_object.id and det_2d.bbox:
-                        # Draw bounding box
-                        bbox = det_2d.bbox
-                        x = int(bbox.center.position.x - bbox.size_x / 2)
-                        y = int(bbox.center.position.y - bbox.size_y / 2)
-                        w = int(bbox.size_x)
-                        h = int(bbox.size_y)
+            if self.target_object and self.last_detections_2d and self.last_detections_3d:
+                # Use match_detection_by_id to find corresponding 2D detection
+                det_2d = match_detection_by_id(
+                    self.target_object,
+                    self.last_detections_3d.detections,
+                    self.last_detections_2d.detections,
+                )
 
-                        cv2.rectangle(viz, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                if det_2d and det_2d.bbox:
+                    # Draw bounding box
+                    bbox = det_2d.bbox
+                    x = int(bbox.center.position.x - bbox.size_x / 2)
+                    y = int(bbox.center.position.y - bbox.size_y / 2)
+                    w = int(bbox.size_x)
+                    h = int(bbox.size_y)
 
-                        # Add tracking info
-                        pos = self.target_object.bbox.center.position
-                        text = f"Tracking: ({pos.x:.2f}, {pos.y:.2f}, {pos.z:.2f})"
-                        cv2.putText(
-                            viz, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1
-                        )
-                        break
+                    cv2.rectangle(viz, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+                    # Add tracking info
+                    pos = self.target_object.bbox.center.position
+                    text = f"Tracking: ({pos.x:.2f}, {pos.y:.2f}, {pos.z:.2f})"
+                    cv2.putText(
+                        viz, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1
+                    )
 
             # Publish visualization
-            if self.viz_image:
-                viz_rgb = cv2.cvtColor(viz, cv2.COLOR_BGR2RGB) if viz.shape[2] == 3 else viz
-                self.viz_image.publish(Image.from_numpy(viz_rgb))
+            if self.viz_image and viz is not None:
+                self.viz_image.publish(Image.from_numpy(viz))
 
         except Exception as e:
             logger.error(f"Error publishing visualization: {e}")
 
-    @rpc
-    def module_start(self):
-        """Start the module."""
-        self.rgb_image.subscribe(self._on_rgb_image)
-        self.depth_image.subscribe(self._on_depth_image)
-        self.camera_info.subscribe(self._on_camera_info)
-        logger.info("Mobile base PBVS module started")
+    def _publish_target_tf(self):
+        """Publish TF transform for the tracked target."""
+        if not self.target_object or not self.is_tracking:
+            return
+
+        try:
+            # Get target position in base frame
+            target_pos = self.target_object.bbox.center.position
+
+            # Create transform from base to target (following object_tracker.py pattern)
+            target_tf = Transform(
+                translation=Vector3(target_pos.x, target_pos.y, target_pos.z),
+                rotation=Quaternion(0, 0, 0, 1),  # Identity rotation
+                frame_id=self.track_frame_id,  # Parent frame
+                child_frame_id=self.target_frame_id,  # Child frame
+                ts=time.time(),
+            )
+
+            # Publish transform
+            self.tf.publish(target_tf)
+
+        except Exception as e:
+            logger.error(f"Error publishing target TF: {e}")
 
     @rpc
-    def module_stop(self):
-        """Stop the module."""
-        self.stop()
-        logger.info("Mobile base PBVS module stopped")
+    def cleanup(self):
+        """Clean up resources and stop tracking."""
+        # Stop any active tracking
+        if self.is_tracking:
+            self.stop_track()
+
+        # Stop tracking thread if running
+        if self.tracking_thread and self.tracking_thread.is_alive():
+            self.stop_event.set()
+            self.tracking_thread.join(timeout=2.0)
+
+        logger.info("Mobile base PBVS module cleaned up")

@@ -26,7 +26,7 @@ from dimos.perception.pointcloud.utils import extract_centroids_from_masks
 from dimos.perception.detection2d.utils import calculate_object_size_from_bbox
 from dimos.perception.common.utils import bbox2d_to_corners
 
-from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion, Transform
 from dimos.msgs.std_msgs import Header
 from dimos_lcm.vision_msgs import (
     Detection3D,
@@ -43,8 +43,8 @@ from dimos_lcm.vision_msgs import (
 from dimos.manipulation.visual_servoing.utils import (
     estimate_object_depth,
     visualize_detections_3d,
-    transform_pose,
 )
+from dimos.utils.transform_utils import apply_transform
 
 logger = setup_logger("dimos.manipulation.visual_servoing.detection3d")
 
@@ -94,7 +94,7 @@ class Detection3DProcessor:
         )
 
     def process_frame(
-        self, rgb_image: np.ndarray, depth_image: np.ndarray, transform: Optional[np.ndarray] = None
+        self, rgb_image: np.ndarray, depth_image: np.ndarray, transform: Optional[Transform] = None
     ) -> Tuple[Detection3DArray, Detection2DArray]:
         """
         Process a single RGB-D frame to extract 3D object detections.
@@ -102,7 +102,7 @@ class Detection3DProcessor:
         Args:
             rgb_image: RGB image (H, W, 3)
             depth_image: Depth image (H, W) in meters
-            transform: Optional 4x4 transformation matrix to transform objects from camera frame to desired frame
+            transform: Optional Transform object to transform objects from camera frame to desired frame
 
         Returns:
             Tuple of (Detection3DArray, Detection2DArray) with 3D and 2D information
@@ -114,10 +114,13 @@ class Detection3DProcessor:
         # Run Sam segmentation with tracking
         masks, bboxes, track_ids, probs, names = self.detector.process_image(bgr_image)
 
+        # Create header with transform timestamp if available
+        header = Header(transform.ts, transform.child_frame_id) if transform else Header()
+
         if not masks or len(masks) == 0:
             return Detection3DArray(
-                detections_length=0, header=Header(), detections=[]
-            ), Detection2DArray(detections_length=0, header=Header(), detections=[])
+                detections_length=0, header=header, detections=[]
+            ), Detection2DArray(detections_length=0, header=header, detections=[])
 
         # Convert CUDA tensors to numpy arrays if needed
         numpy_masks = []
@@ -166,16 +169,15 @@ class Detection3DProcessor:
             if min(size_x, size_y, size_z) > self.max_object_size:
                 continue
 
-            # Transform to desired frame if transform matrix is provided
+            # Transform to desired frame if transform is provided
             if transform is not None:
-                # Get orientation as euler angles, default to no rotation if not available
-                obj_cam_orientation = pose.get(
-                    "rotation", np.array([0.0, 0.0, 0.0])
-                )  # Default to no rotation
-                transformed_pose = transform_pose(
-                    obj_cam_pos, obj_cam_orientation, transform, to_robot=True
+                # Create pose in camera frame
+                camera_pose = Pose(
+                    position=Vector3(obj_cam_pos[0], obj_cam_pos[1], obj_cam_pos[2]),
+                    orientation=Quaternion(0.0, 0.0, 0.0, 1.0),  # Default orientation
                 )
-                center_pose = transformed_pose
+                # Apply transform to get pose in desired frame
+                center_pose = apply_transform(camera_pose, transform)
             else:
                 # If no transform, use camera coordinates
                 center_pose = Pose(
@@ -186,7 +188,7 @@ class Detection3DProcessor:
             # Create Detection3D object
             detection = Detection3D(
                 results_length=1,
-                header=Header(),  # Empty header
+                header=header,  # Use header with transform timestamp
                 results=[
                     ObjectHypothesisWithPose(
                         hypothesis=ObjectHypothesis(class_id=name, score=float(prob))
@@ -207,7 +209,7 @@ class Detection3DProcessor:
 
             detection_2d = Detection2D(
                 results_length=1,
-                header=Header(),
+                header=header,
                 results=[
                     ObjectHypothesisWithPose(
                         hypothesis=ObjectHypothesis(class_id=name, score=float(prob))
@@ -225,10 +227,10 @@ class Detection3DProcessor:
         # Create and return both arrays
         return (
             Detection3DArray(
-                detections_length=len(detections_3d), header=Header(), detections=detections_3d
+                detections_length=len(detections_3d), header=header, detections=detections_3d
             ),
             Detection2DArray(
-                detections_length=len(detections_2d), header=Header(), detections=detections_2d
+                detections_length=len(detections_2d), header=header, detections=detections_2d
             ),
         )
 

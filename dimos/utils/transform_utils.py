@@ -16,7 +16,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 import open3d as o3d
 
-from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion, Transform
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Vector3, Quaternion, Transform
 from dimos.msgs.sensor_msgs import PointCloud2
 
 
@@ -81,7 +81,7 @@ def matrix_to_pose(T: np.ndarray) -> Pose:
     return Pose(pos, orientation)
 
 
-def apply_transform(pose: Pose, transform: np.ndarray | Transform) -> Pose:
+def apply_transform(pose: Pose | PoseStamped, transform: np.ndarray | Transform) -> Pose:
     """
     Apply a transformation matrix to a pose.
 
@@ -93,7 +93,7 @@ def apply_transform(pose: Pose, transform: np.ndarray | Transform) -> Pose:
         Transformed pose
     """
     if isinstance(transform, Transform):
-        if transform.child_frame_id != pose.frame_id:
+        if isinstance(pose, PoseStamped) and transform.child_frame_id != pose.frame_id:
             raise ValueError(
                 f"Transform frame_id {transform.frame_id} does not match pose frame_id {pose.frame_id}"
             )

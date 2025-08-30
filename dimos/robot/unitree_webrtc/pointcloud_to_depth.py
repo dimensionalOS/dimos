@@ -48,7 +48,7 @@ class PointCloudToDepth(Module):
         - /go2/camera_info: Camera calibration information (CameraInfo)
 
     Publishes:
-        - /go2/lidar_depth: Depth image generated from lidar pointcloud (Image/DEPTH16)
+        - /go2/depth_image: Depth image generated from lidar pointcloud (Image/DEPTH16)
         - /pointcloud_camera: Transformed pointcloud in camera frame (PointCloud2)
         - /pointcloud_2d_overlay: RGB image with projected pointcloud overlay (Image/RGB)
     """

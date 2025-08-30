@@ -80,6 +80,7 @@ def main():
     robot = UnitreeGo2(
         ip=os.getenv("ROBOT_IP"),
         connection_type=os.getenv("CONNECTION_TYPE", "webrtc"),
+        use_metric3d_depth=os.getenv("USE_METRIC3D_DEPTH", "false").lower() == "true",
     )
 
     robot.start()

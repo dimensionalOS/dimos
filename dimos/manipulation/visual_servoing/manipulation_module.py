@@ -35,7 +35,6 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.std_msgs import String
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.protocol.tf import TF
-from dimos.utils.transform_utils import pose_to_matrix, create_transform_from_6dof
 from dimos.manipulation.visual_servoing.pbvs import PBVS
 from dimos.perception.common.utils import find_clicked_detection
 from dimos.manipulation.visual_servoing.utils import (
@@ -45,6 +44,7 @@ from dimos.manipulation.visual_servoing.utils import (
     select_points_from_depth,
     transform_points_3d,
 )
+from dimos.utils.transform_utils import pose_to_matrix
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.manipulation.visual_servoing.manipulation_module")
@@ -322,13 +322,9 @@ class ManipulationModule(Module):
                 time_tolerance=1.0,
             )
 
-            transform_matrix = None
-            if transform:
-                transform_matrix = pose_to_matrix(transform.to_pose())
-
-            # Process frame with detector
+            # Process frame with detector, passing Transform object directly
             detection3d_array, detection2d_array = self.detector.process_frame(
-                self.latest_rgb, self.latest_depth, transform_matrix
+                self.latest_rgb, self.latest_depth, transform
             )
 
             # Publish detections
