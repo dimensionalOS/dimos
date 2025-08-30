@@ -38,7 +38,7 @@ class FilteredZEDModule(ZEDModule):
 
     def __init__(self, *args, **kwargs):
         # Filtering parameters - more aggressive for performance
-        self.voxel_size = kwargs.pop("filter_voxel_size", 0.08)
+        self.voxel_size = kwargs.pop("filter_voxel_size", 0.5)
         self.max_distance = kwargs.pop("filter_max_distance", 3.0)
         self.min_distance = kwargs.pop("filter_min_distance", 0.1)
         self.min_z = kwargs.pop("filter_min_z", -0.5)
@@ -175,7 +175,7 @@ def test_filtered_module():
             publish_rate=10.0,
             frame_id="camera_link",
             # Filtering parameters
-            filter_voxel_size=0.05,
+            filter_voxel_size=0.5,
             filter_max_distance=4.0,
             filter_target_points=22600,
         )

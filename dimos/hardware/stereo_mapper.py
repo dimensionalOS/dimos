@@ -147,7 +147,7 @@ class StereoMapper:
                 publish_rate=10.0,
                 frame_id="camera_link",
                 # Filtering parameters - match Unitree specs
-                filter_voxel_size=0.05,  # Downsample to 5cm voxels as required
+                filter_voxel_size=0.5,  # Downsample to 5cm voxels as required
                 filter_max_distance=5.0,  # Slightly larger than Unitree for better coverage
                 filter_min_distance=0.1,
                 filter_min_z=-1.0,  # Allow more ground points
@@ -290,7 +290,7 @@ class StereoMapper:
             logger.info("Using PassthroughMap for ZED spatial mapping (no accumulation)")
             self.mapper = self.dimos.deploy(
                 PassthroughMap,
-                voxel_size=0.05,  # Match ZED downsampling
+                voxel_size=0.5,  # Match ZED downsampling
                 global_publish_interval=2.5,
                 min_height=0.15,
                 max_height=1.5,
@@ -301,7 +301,7 @@ class StereoMapper:
             logger.info("Using regular Map for pointcloud accumulation")
             self.mapper = self.dimos.deploy(
                 Map,
-                voxel_size=0.05,
+                voxel_size=0.5,
                 global_publish_interval=2.5,
                 min_height=0.15,
                 max_height=1.5,

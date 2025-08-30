@@ -1104,8 +1104,8 @@ class ZEDModule(Module):
                 pcd = self.zed_camera.get_spatial_map()
 
                 if pcd is not None and len(pcd.points) > 0:
-                    # Downsample to 0.05m voxels as required
-                    pcd = pcd.voxel_down_sample(voxel_size=0.05)
+                    # Downsample to 0.5m voxels as required
+                    pcd = pcd.voxel_down_sample(voxel_size=0.5)
 
                     # The spatial map is already in world frame
                     frame_id = "world"
@@ -1139,7 +1139,7 @@ class ZEDModule(Module):
                 lidar_msg = LidarMessage(
                     pointcloud=pcd,
                     origin=[0.0, 0.0, 0.0],
-                    resolution=0.05,  # Match Map module voxel_size
+                    resolution=0.5,  # Match Map module voxel_size
                     ts=header.ts,
                     frame_id=frame_id,
                 )
