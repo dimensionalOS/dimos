@@ -100,6 +100,27 @@ class Quaternion(LCMQuaternion):
         """Numpy array representation of the quaternion (x, y, z, w)."""
         return np.array([self.x, self.y, self.z, self.w])
 
+    def calculate_change(self, other: Quaternion) -> float:
+        """Calculate the angular difference in radians between this and another quaternion."""
+        if not isinstance(other, Quaternion):
+            raise TypeError("Can only calculate change with another Quaternion")
+
+        # Compute the relative rotation quaternion
+        relative_quat = self * other.inverse()
+        relative_quat = relative_quat.normalize()
+
+        # The angle of rotation is given by: angle = 2 * acos(w)
+        angle = 2 * np.arccos(np.clip(relative_quat.w, -1.0, 1.0))
+
+        # Normalize angle to [0, pi]
+        if angle > np.pi:
+            angle = 2 * np.pi - angle
+
+        return angle
+
+    def velocity(self) -> Vector3:
+        return self.euler
+
     @property
     def euler(self) -> Vector3:
         return self.to_euler()

@@ -21,8 +21,8 @@ from reactivex import operators as ops
 from dimos.msgs.sensor_msgs import Image
 from dimos.types.timestamped import (
     Timestamped,
-    TimestampedBufferCollection,
-    TimestampedCollection,
+    TSBufferCollection,
+    TSCollection,
     align_timestamped,
     to_datetime,
     to_ros_stamp,
@@ -124,11 +124,11 @@ def sample_items():
 
 @pytest.fixture
 def collection(sample_items):
-    return TimestampedCollection(sample_items)
+    return TSCollection(sample_items)
 
 
 def test_empty_collection():
-    collection = TimestampedCollection()
+    collection = TSCollection()
     assert len(collection) == 0
     assert collection.duration() == 0.0
     assert collection.time_range() is None
@@ -136,7 +136,7 @@ def test_empty_collection():
 
 
 def test_add_items():
-    collection = TimestampedCollection()
+    collection = TSCollection()
     item1 = SimpleTimestamped(2.0, "two")
     item2 = SimpleTimestamped(1.0, "one")
 
@@ -186,13 +186,13 @@ def test_find_before_after(collection):
 
 
 def test_merge_collections():
-    collection1 = TimestampedCollection(
+    collection1 = TSCollection(
         [
             SimpleTimestamped(1.0, "a"),
             SimpleTimestamped(3.0, "c"),
         ]
     )
-    collection2 = TimestampedCollection(
+    collection2 = TSCollection(
         [
             SimpleTimestamped(2.0, "b"),
             SimpleTimestamped(4.0, "d"),
@@ -233,14 +233,14 @@ def test_iteration(collection):
 
 
 def test_single_item_collection():
-    single = TimestampedCollection([SimpleTimestamped(5.0, "only")])
+    single = TSCollection([SimpleTimestamped(5.0, "only")])
     assert single.duration() == 0.0
     assert single.time_range() == (5.0, 5.0)
 
 
 def test_time_window_collection():
     # Create a collection with a 2-second window
-    window = TimestampedBufferCollection[SimpleTimestamped](window_duration=2.0)
+    window = TSBufferCollection[SimpleTimestamped](window_duration=2.0)
 
     # Add messages at different timestamps
     window.add(SimpleTimestamped(1.0, "msg1"))

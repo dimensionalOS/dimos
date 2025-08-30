@@ -207,6 +207,18 @@ class Vector3(LCMVector3):
         """Compute the Euclidean length (magnitude) of the vector."""
         return float(np.sqrt(self.x * self.x + self.y * self.y + self.z * self.z))
 
+    def velocity(self) -> float:
+        """Alias for length()."""
+        return self.length()
+
+    def magnitude(self) -> float:
+        """Alias for length()."""
+        return self.length()
+
+    def calculate_change(self, other: Vector3) -> float:
+        self_diff = self - other
+        return self_diff.magnitude()
+
     def length_squared(self) -> float:
         """Compute the squared length of the vector (faster than length())."""
         return float(self.x * self.x + self.y * self.y + self.z * self.z)

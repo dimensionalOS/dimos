@@ -26,7 +26,7 @@ from dimos.msgs.tf2_msgs import TFMessage
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.lcmservice import Service
-from dimos.types.timestamped import TimestampedCollection
+from dimos.types.timestamped import TSCollection
 
 CONFIG = TypeVar("CONFIG")
 
@@ -73,7 +73,7 @@ TopicT = TypeVar("TopicT")
 
 
 # stores a single transform
-class TBuffer(TimestampedCollection[Transform]):
+class TBuffer(TSCollection[Transform]):
     def __init__(self, buffer_size: float = 10.0):
         super().__init__()
         self.buffer_size = buffer_size

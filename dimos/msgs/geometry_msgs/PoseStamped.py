@@ -76,6 +76,13 @@ class PoseStamped(Pose, Timestamped):
             ],  # noqa: E501,
         )
 
+    def magnitude(self) -> float:
+        return self.position.magnitude() + self.orientation.magnitude()
+
+    def calculate_change(self, other_frame: PoseStamped) -> float:
+        difference = other_frame.find_transform(self)
+        return difference.magnitude()
+
     def __str__(self) -> str:
         return (
             f"PoseStamped(pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}], "

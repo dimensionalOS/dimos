@@ -18,6 +18,7 @@
 
 import functools
 import logging
+import pickle
 import time
 import warnings
 
@@ -28,9 +29,10 @@ from reactivex.observable import Observable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_window
 from dimos.msgs.std_msgs import Header
-from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree_webrtc.connection import SerializableVideoFrame, UnitreeWebRTCConnection
+from dimos.robot.unitree_webrtc.modular.frame_alignment import FrameAlignment
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.data import get_data
@@ -51,7 +53,7 @@ logging.getLogger("root").setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
-image_resize_factor = 1
+image_resize_factor = 4
 originalwidth, originalheight = (1280, 720)
 get_data("unitree_raw_webrtc_replay")
 
@@ -88,10 +90,16 @@ class FakeRTC(UnitreeWebRTCConnection):
     # we don't have raw video stream in the data set
     @functools.cache
     def raw_video_stream(self):
+        def maybe_cast_avframe(frame) -> Image:
+            if isinstance(frame, SerializableVideoFrame):
+                image = Image.from_numpy(frame.to_ndarray(), ImageFormat.BGR, ts=frame.time)
+                return image
+
+            return Image.from_numpy(frame)
+
         print("video stream start")
         video_store = TimedSensorReplay(
-            "unitree_raw_webrtc_replay/video",
-            autocast=lambda f: Image.from_numpy(f.to_ndarray() if hasattr(f, "to_ndarray") else f),
+            "unitree_raw_webrtc_replay/video", autocast=maybe_cast_avframe
         )
         return video_store.stream()
 
@@ -113,6 +121,7 @@ class ConnectionModule(Module):
     camera_info: Out[CameraInfo] = None
     odom: Out[PoseStamped] = None
     lidar: Out[LidarMessage] = None
+    change: Out[Vector3] = None
     video: Out[Image] = None
     movecmd: In[Vector3] = None
 
@@ -151,26 +160,36 @@ class ConnectionModule(Module):
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
-        def image_pub(img):
-            self.video.publish(img)
+        def odom_pub(odom):
+            self._publish_tf(odom)
+            self.odom.publish(odom)
 
         # Connect sensor streams to outputs
         self.connection.lidar_stream().subscribe(self.lidar.publish)
-        self.connection.odom_stream().subscribe(
-            lambda odom: self._publish_tf(odom) and self.odom.publish(odom)
-        )
+        self.connection.odom_stream().subscribe(odom_pub)
 
         def attach_frame_id(image: Image) -> Image:
             image.frame_id = "camera_optical"
-
             return image.resize(
                 int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
             )
 
+        frame_alignment = FrameAlignment()
+        frame_alignment.add_stream("video", self.connection.video_stream())
+        frame_alignment.add_stream("odom", self.connection.odom_stream())
+        frame_alignment.start()
+        frame_alignment.get_magnitude_stream(
+            "video",
+        ).pipe(ops.map(lambda x: Vector3([x, 0.0, 0.0]))).subscribe(self.change.publish)
+
+        # emit change vector @ 10hz
+        # rx.interval(0.03).pipe(ops.map(lambda _: change)).subscribe(self.change.publish)
+
         # sharpness_window(
-        #    10, self.connection.video_stream().pipe(ops.map(attach_frame_id))
+        #    1, self.connection.video_stream().pipe(ops.map(attach_frame_id))
         # ).subscribe(image_pub)
-        self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
+
+        self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(self.video.publish)
         self.camera_info_stream().subscribe(self.camera_info.publish)
         self.movecmd.subscribe(self.connection.move)
 

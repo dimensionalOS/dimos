@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import numpy as np
+import cv2
 import pytest
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_window
@@ -126,3 +127,73 @@ def test_sharpness_sliding_window_foxglove():
     ).subscribe(pub_sharp)
 
     time.sleep(120)
+
+
+def test_calculate_change(img: Image):
+    """Test calculate_change method with shifted images."""
+    # Test 1: Same image should have zero change
+    change = img.calculate_change(img)
+    assert abs(change) < 1e-6, f"Expected near-zero change for identical images, got {change}"
+
+    # Test 2: Shift image horizontally by a few pixels
+    shift_x, shift_y = 5, 0
+    M = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
+    shifted_data = cv2.warpAffine(img.data, M, (img.width, img.height))
+    shifted_img = Image(data=shifted_data, format=img.format, frame_id=img.frame_id, ts=img.ts)
+
+    change_horizontal = img.calculate_change(shifted_img)
+    assert change_horizontal > 0, (
+        f"Expected positive change for shifted image, got {change_horizontal}"
+    )
+    print(f"Horizontal shift ({shift_x}px): change = {change_horizontal:.4f}")
+
+    # Test 3: Shift image vertically
+    shift_x, shift_y = 0, 5
+    M = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
+    shifted_data = cv2.warpAffine(img.data, M, (img.width, img.height))
+    shifted_img = Image(data=shifted_data, format=img.format, frame_id=img.frame_id, ts=img.ts)
+
+    change_vertical = img.calculate_change(shifted_img)
+    assert change_vertical > 0, f"Expected positive change for shifted image, got {change_vertical}"
+    print(f"Vertical shift ({shift_y}px): change = {change_vertical:.4f}")
+
+    # Test 4: Diagonal shift
+    shift_x, shift_y = 3, 3
+    M = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
+    shifted_data = cv2.warpAffine(img.data, M, (img.width, img.height))
+    shifted_img = Image(data=shifted_data, format=img.format, frame_id=img.frame_id, ts=img.ts)
+
+    change_diagonal = img.calculate_change(shifted_img)
+    assert change_diagonal > 0, f"Expected positive change for shifted image, got {change_diagonal}"
+    print(f"Diagonal shift ({shift_x}, {shift_y}px): change = {change_diagonal:.4f}")
+
+    # Test 5: Larger shift should produce larger change
+    shift_x, shift_y = 20, 0
+    M = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
+    shifted_data = cv2.warpAffine(img.data, M, (img.width, img.height))
+    shifted_img = Image(data=shifted_data, format=img.format, frame_id=img.frame_id, ts=img.ts)
+
+    change_large = img.calculate_change(shifted_img)
+    assert change_large > change_horizontal, (
+        f"Expected larger change for larger shift, got {change_large} vs {change_horizontal}"
+    )
+    print(f"Large shift ({shift_x}px): change = {change_large:.4f}")
+
+    # Test 6: Blurred image (simulating motion blur or focus change)
+    blurred_data = cv2.GaussianBlur(img.data, (15, 15), 5)
+    blurred_img = Image(data=blurred_data, format=img.format, frame_id=img.frame_id, ts=img.ts)
+
+    change_blur = img.calculate_change(blurred_img)
+    assert change_blur > 0, f"Expected positive change for blurred image, got {change_blur}"
+    print(f"Blur: change = {change_blur:.4f}")
+
+    # Test 7: Brightness change (should be relatively small due to gradient-based comparison)
+    bright_data = cv2.convertScaleAbs(img.data, alpha=1.2, beta=20)
+    bright_img = Image(data=bright_data, format=img.format, frame_id=img.frame_id, ts=img.ts)
+
+    change_brightness = img.calculate_change(bright_img)
+    print(f"Brightness change: change = {change_brightness:.4f}")
+    # Gradient-based comparison should suppress lighting changes
+    assert change_brightness < change_large, (
+        "Gradient-based comparison should suppress lighting changes"
+    )

@@ -116,15 +116,16 @@ class UnitreeGo2:
         connection.video.transport = LCMTransport("/image", Image)
         connection.movecmd.transport = LCMTransport("/cmd_vel", Vector3)
         connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
+        connection.change.transport = LCMTransport("/change", Vector3)
         connection.start()
 
         # connection.record("unitree_raw_webrtc_replay")
 
-        detection = dimos.deploy(Detect2DModule)
-        detection.image.connect(connection.video)
-        detection.detections.transport = LCMTransport("/detections", Detection2DArrayFix)
-        detection.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
-        detection.start()
+        # detection = dimos.deploy(Detect2DModule)
+        # detection.image.connect(connection.video)
+        # detection.detections.transport = LCMTransport("/detections", Detection2DArrayFix)
+        # detection.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
+        # detection.start()
 
         # deploy_navigation(dimos, connection)
 

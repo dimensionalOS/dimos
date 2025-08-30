@@ -49,6 +49,12 @@ class Transform(Timestamped):
         self.translation = translation if translation is not None else Vector3()
         self.rotation = rotation if rotation is not None else Quaternion()
 
+    def magnitude(self) -> float:
+        # we are associating radians/sec with meters/sec here
+        linear_speed = self.translation.magnitude()
+        angular_speed = self.rotation.velocity().magnitude()
+        return linear_speed + angular_speed
+
     def __repr__(self) -> str:
         return f"Transform(translation={self.translation!r}, rotation={self.rotation!r})"
 

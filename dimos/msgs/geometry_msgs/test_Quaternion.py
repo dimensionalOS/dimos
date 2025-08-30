@@ -385,3 +385,39 @@ def test_quaternion_multiplication_type_error():
 
     with pytest.raises(TypeError, match="Cannot multiply Quaternion with"):
         q * [1, 2, 3, 4]
+
+
+def test_quaternion_velocity():
+    """Test angular velocity calculation between quaternions."""
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+    # Test 1: No rotation - angular velocity should be zero
+    q1 = Quaternion(0, 0, 0, 1)
+    q2 = Quaternion(0, 0, 0, 1)
+    omega = q1.velocity(q2, dt=1.0)
+    assert np.isclose(omega.x, 0, atol=1e-10)
+    assert np.isclose(omega.y, 0, atol=1e-10)
+    assert np.isclose(omega.z, 0, atol=1e-10)
+
+    # Test 2: 90 degree rotation around Z axis in 1 second
+    # Should give angular velocity of π/2 rad/s around Z
+    angle = np.pi / 2
+    q1 = Quaternion(0, 0, 0, 1)  # Identity
+    q2 = Quaternion(0, 0, np.sin(angle / 2), np.cos(angle / 2))  # 90° around Z
+    omega = q1.velocity(q2, dt=1.0)
+    assert np.isclose(omega.x, 0, atol=1e-10)
+    assert np.isclose(omega.y, 0, atol=1e-10)
+    assert np.isclose(omega.z, np.pi / 2, atol=1e-10)
+
+    # Test 3: Same rotation but in 0.5 seconds - velocity should double
+    omega_fast = q1.velocity(q2, dt=0.5)
+    assert np.isclose(omega_fast.z, np.pi, atol=1e-10)
+
+    # Test 4: 180 degree rotation around X axis
+    angle = np.pi
+    q1 = Quaternion(0, 0, 0, 1)
+    q2 = Quaternion(np.sin(angle / 2), 0, 0, np.cos(angle / 2))
+    omega = q1.velocity(q2, dt=1.0)
+    assert np.isclose(omega.x, np.pi, atol=1e-10)
+    assert np.isclose(omega.y, 0, atol=1e-10)
+    assert np.isclose(omega.z, 0, atol=1e-10)

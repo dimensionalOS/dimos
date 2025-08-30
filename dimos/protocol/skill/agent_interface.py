@@ -21,7 +21,7 @@ from typing import Any, Callable, Optional
 from dimos.protocol.skill.comms import AgentMsg, LCMSkillComms, MsgType, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
 from dimos.protocol.skill.types import Reducer, Return, Stream
-from dimos.types.timestamped import TimestampedCollection
+from dimos.types.timestamped import TSCollection
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.protocol.skill.agent_interface")
@@ -40,7 +40,7 @@ class SkillStateEnum(Enum):
 
 
 # TODO pending timeout, running timeout, etc.
-class SkillState(TimestampedCollection):
+class SkillState(TSCollection):
     name: str
     state: SkillStateEnum
     skill_config: SkillConfig

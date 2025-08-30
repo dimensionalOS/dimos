@@ -26,9 +26,9 @@ from sortedcontainers import SortedKeyList
 # aditional functionality will come to this class soon
 
 
-# class RosStamp(TypedDict):
-#     sec: int
-#     nanosec: int
+class RosTsDict(TypedDict):
+    sec: int
+    nanosec: int
 
 
 TimeLike = Union[int, float, datetime, ROSTime]
@@ -43,6 +43,14 @@ def to_timestamp(ts: TimeLike) -> float:
     if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
         return ts["sec"] + ts["nanosec"] / 1e9
     raise TypeError("unsupported timestamp type")
+
+
+def from_ros_stamp(ros_ts: ROSTime) -> float:
+    return ros_ts["sec"] + ros_ts["nanosec"] / 1e9
+
+
+def from_ros_stamp_dict(ros_ts_dict: RosTsDict) -> float:
+    return ros_ts_dict["sec"] + ros_ts_dict["nanosec"] / 1e9
 
 
 def to_ros_stamp(ts: TimeLike) -> ROSTime:
@@ -95,7 +103,7 @@ class Timestamped:
 T = TypeVar("T", bound=Timestamped)
 
 
-class TimestampedCollection(Generic[T]):
+class TSCollection(Generic[T]):
     """A collection of timestamped objects with efficient time-based operations."""
 
     def __init__(self, items: Optional[Iterable[T]] = None):
@@ -151,9 +159,9 @@ class TimestampedCollection(Generic[T]):
         idx = self._items.bisect_key_right(timestamp)
         return self._items[idx] if idx < len(self._items) else None
 
-    def merge(self, other: "TimestampedCollection[T]") -> "TimestampedCollection[T]":
+    def merge(self, other: "TSCollection[T]") -> "TSCollection[T]":
         """Merge two timestamped collections into a new one."""
-        result = TimestampedCollection[T]()
+        result = TSCollection[T]()
         result._items = SortedKeyList(self._items + other._items, key=lambda x: x.ts)
         return result
 
@@ -169,11 +177,11 @@ class TimestampedCollection(Generic[T]):
             return None
         return (self._items[0].ts, self._items[-1].ts)
 
-    def slice_by_time(self, start: float, end: float) -> "TimestampedCollection[T]":
+    def slice_by_time(self, start: float, end: float) -> "TSCollection[T]":
         """Get a subset of items within the given time range."""
         start_idx = self._items.bisect_key_left(start)
         end_idx = self._items.bisect_key_right(end)
-        return TimestampedCollection(self._items[start_idx:end_idx])
+        return TSCollection(self._items[start_idx:end_idx])
 
     @property
     def start_ts(self) -> Optional[float]:
@@ -199,7 +207,7 @@ PRIMARY = TypeVar("PRIMARY", bound=Timestamped)
 SECONDARY = TypeVar("SECONDARY", bound=Timestamped)
 
 
-class TimestampedBufferCollection(TimestampedCollection[T]):
+class TSBufferCollection(TSCollection[T]):
     """A timestamped collection that maintains a sliding time window, dropping old messages."""
 
     def __init__(self, window_duration: float, items: Optional[Iterable[T]] = None):
@@ -239,9 +247,7 @@ def align_timestamped(
     from reactivex import create
 
     def subscribe(observer, scheduler=None):
-        secondary_collection: TimestampedBufferCollection[SECONDARY] = TimestampedBufferCollection(
-            buffer_size
-        )
+        secondary_collection: TSBufferCollection[SECONDARY] = TSBufferCollection(buffer_size)
         # Subscribe to secondary to populate the buffer
         secondary_sub = secondary_observable.subscribe(secondary_collection.add)
 

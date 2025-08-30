@@ -29,7 +29,7 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.types.timestamped import Timestamped, TimestampedBufferCollection
+from dimos.types.timestamped import Timestamped, TSBufferCollection
 
 
 class ImageFormat(Enum):
@@ -69,6 +69,39 @@ class Image(Timestamped):
         # Ensure data is contiguous for efficient operations
         if not self.data.flags["C_CONTIGUOUS"]:
             self.data = np.ascontiguousarray(self.data)
+
+    def calculate_change(self, other_frame: "Image") -> float:
+        # Downsampled frame diff (SAD over gradients)
+        # Convert to gray, downsample hard (e.g., 96×54), light Gaussian blur.
+        # Compute Sobel gradients (|∇I|). This suppresses lighting flicker.
+
+        # Convert both frames to grayscale
+        gray1 = self.to_grayscale()
+        gray2 = other_frame.to_grayscale()
+
+        # Downsample to small size for efficient computation
+        small_width, small_height = 96, 54
+        gray1_small = cv2.resize(gray1.data, (small_width, small_height))
+        gray2_small = cv2.resize(gray2.data, (small_width, small_height))
+
+        # Apply light Gaussian blur to reduce noise
+        gray1_blur = cv2.GaussianBlur(gray1_small, (3, 3), 0.5)
+        gray2_blur = cv2.GaussianBlur(gray2_small, (3, 3), 0.5)
+
+        # Compute Sobel gradients
+        grad1_x = cv2.Sobel(gray1_blur, cv2.CV_32F, 1, 0, ksize=3)
+        grad1_y = cv2.Sobel(gray1_blur, cv2.CV_32F, 0, 1, ksize=3)
+        grad2_x = cv2.Sobel(gray2_blur, cv2.CV_32F, 1, 0, ksize=3)
+        grad2_y = cv2.Sobel(gray2_blur, cv2.CV_32F, 0, 1, ksize=3)
+
+        # Compute gradient magnitudes
+        mag1 = cv2.magnitude(grad1_x, grad1_y)
+        mag2 = cv2.magnitude(grad2_x, grad2_y)
+
+        # Calculate Sum of Absolute Differences (SAD)
+        sad = np.mean(np.abs(mag1 - mag2))
+
+        return float(sad)
 
     @property
     def height(self) -> int:
@@ -498,7 +531,7 @@ class Image(Timestamped):
 
 
 def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
-    window = TimestampedBufferCollection(1.0 / target_frequency)
+    window = TSBufferCollection(1.0 / target_frequency)
     source.subscribe(window.add)
 
     thread_scheduler = ThreadPoolScheduler(max_workers=1)

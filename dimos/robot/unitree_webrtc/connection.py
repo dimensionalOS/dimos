@@ -14,6 +14,7 @@
 
 import asyncio
 import functools
+import pickle
 import threading
 import time
 from dataclasses import dataclass
