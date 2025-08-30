@@ -168,6 +168,9 @@ class ZedCameraThread(threading.Thread):
 
     def _send_pymesh(self):
         print("sending pymesh")
+        status = self.pymesh.save(f"mesh_gen_dimos_{time.time()}.obj")
+        print("saved mesh", status)
+
         vertices = self.pymesh.vertices
         if len(vertices) > 0:
             print("have points")
