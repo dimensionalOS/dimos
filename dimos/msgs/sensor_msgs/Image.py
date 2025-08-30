@@ -15,17 +15,22 @@
 import base64
 import time
 from dataclasses import dataclass, field
+from datetime import timedelta
 from enum import Enum
 from typing import Literal, Optional, Tuple, TypedDict
 
 import cv2
 import numpy as np
+import reactivex as rx
 
 # Import LCM types
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
+from reactivex import operators as ops
+from reactivex.observable import Observable
+from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.types.timestamped import Timestamped
+from dimos.types.timestamped import Timestamped, TimestampedBufferCollection
 
 
 class ImageFormat(Enum):
@@ -289,6 +294,40 @@ class Image(Timestamped):
             ts=self.ts,
         )
 
+    def sharpness(self) -> float:
+        """
+        Compute the Tenengrad focus measure for an image.
+        Returns a normalized value between 0 and 1, where 1 is sharpest.
+
+        Uses adaptive normalization based on image statistics for better
+        discrimination across different image types.
+        """
+        grayscale = self.to_grayscale()
+        # Sobel gradient computation in x and y directions
+        sx = cv2.Sobel(grayscale.data, cv2.CV_32F, 1, 0, ksize=5)
+        sy = cv2.Sobel(grayscale.data, cv2.CV_32F, 0, 1, ksize=5)
+
+        # Compute gradient magnitude
+        magnitude = cv2.magnitude(sx, sy)
+
+        mean_mag = magnitude.mean()
+
+        # Use log-scale normalization for better discrimination
+        # This maps typical values more evenly across the 0-1 range:
+        # - Blurry images (mean ~50-150): 0.15-0.35
+        # - Medium sharp (mean ~150-500): 0.35-0.65
+        # - Sharp images (mean ~500-2000): 0.65-0.85
+        # - Very sharp (mean >2000): 0.85-1.0
+
+        if mean_mag <= 0:
+            return 0.0
+
+        # Log scale with offset to handle the full range
+        # log10(50) ≈ 1.7, log10(5000) ≈ 3.7
+        normalized = (np.log10(mean_mag + 1) - 1.7) / 2.0
+
+        return np.clip(normalized, 0.0, 1.0)
+
     def save(self, filepath: str) -> bool:
         """Save image to file."""
         # Convert to OpenCV format for saving
@@ -475,3 +514,42 @@ class Image(Timestamped):
     def __len__(self) -> int:
         """Return total number of pixels."""
         return self.height * self.width
+
+    def agent_encode(self) -> str:
+        """Encode image to base64 JPEG format for agent processing.
+
+        Returns:
+            Base64 encoded JPEG string suitable for LLM/agent consumption.
+        """
+        bgr_image = self.to_bgr()
+
+        # Encode as JPEG
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 95]  # 95% quality
+        success, buffer = cv2.imencode(".jpg", bgr_image.data, encode_param)
+
+        if not success:
+            raise ValueError("Failed to encode image as JPEG")
+
+        # Convert to base64
+        import base64
+
+        jpeg_bytes = buffer.tobytes()
+        base64_str = base64.b64encode(jpeg_bytes).decode("utf-8")
+
+        return base64_str
+
+
+def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
+    window = TimestampedBufferCollection(1.0 / target_frequency)
+    source.subscribe(window.add)
+
+    thread_scheduler = ThreadPoolScheduler(max_workers=1)
+
+    def find_best(*argv):
+        if not window._items:
+            return None
+        return max(window._items, key=lambda x: x.sharpness())
+
+    return rx.interval(1.0 / target_frequency).pipe(
+        ops.observe_on(thread_scheduler), ops.map(find_best)
+    )
