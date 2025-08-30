@@ -28,9 +28,8 @@ sys.path.append(
 )
 
 from dimos import core
-from dimos.hardware.zed_filtered_module import FilteredZEDModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.map import Map  # Use regular Map, not LimitedMap
+from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.passthrough_map import PassthroughMap
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
@@ -42,7 +41,7 @@ from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.logging_config import setup_logger
 import numpy as np
-from dimos.hardware.zed_camera import ZEDModule
+from dimos.hardware.zed_module import ZEDModule
 from dimos.hardware.fake_zed_module import FakeZEDModule
 from dimos.utils.testing import TimedSensorStorage
 
@@ -133,7 +132,7 @@ class StereoMapper:
             # Deploy real ZED module
             logger.info("Deploying ZED camera module with spatial mapping...")
             self.zed_module = self.dimos.deploy(
-                FilteredZEDModule,
+                ZEDModule,
                 camera_id=0,
                 resolution="HD720",
                 depth_mode="NEURAL",
@@ -146,7 +145,6 @@ class StereoMapper:
                 mapping_range="MEDIUM",  # Spatial mapping range
                 publish_rate=10.0,
                 frame_id="camera_link",
-                # Filtering parameters - match Unitree specs
                 filter_voxel_size=0.5,  # Downsample to 5cm voxels as required
                 filter_max_distance=5.0,  # Slightly larger than Unitree for better coverage
                 filter_min_distance=0.1,
