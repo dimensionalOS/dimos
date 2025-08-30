@@ -23,6 +23,7 @@ import os
 import struct
 import threading
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
@@ -79,7 +80,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             "capacity",
             "cp",
             "last_local_payload",
-            "last_local_seq",
+            "suppress_counts",
         )
 
         def __init__(self, channel, capacity: int, cp_mod):
@@ -94,7 +95,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             # TODO: implement an initializer variable for is_cuda once CUDA IPC is in
             self.cp = cp_mod
             self.last_local_payload: Optional[bytes] = None
-            self.last_local_seq: Optional[int] = None
+            self.suppress_counts = defaultdict(int)
 
     # ----- init / lifecycle -------------------------------------------------
 
@@ -142,35 +143,37 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         logger.info("SharedMemory PubSub stopped.")
 
     # ----- PubSub API (bytes on the wire) ----------------------------------
-
+    
     def publish(self, topic: str, message: bytes) -> None:
         if not isinstance(message, (bytes, bytearray, memoryview)):
             raise TypeError(f"publish expects bytes-like, got {type(message)!r}")
 
         st = self._ensure_topic(topic)
-        payload = memoryview(message)
-        L = len(payload)
+
+        # Normalize once
+        payload_bytes = bytes(message)
+        L = len(payload_bytes)
         if L > st.capacity:
             raise ValueError(f"Payload too large: {L} > capacity {st.capacity}")
 
-        # Build host frame [len:4] + payload
-        host = np.zeros(st.shape, dtype=st.dtype)
-        host[:4] = np.frombuffer(struct.pack("<I", L), dtype=np.uint8)
-        if L:
-            host[4 : 4 + L] = np.frombuffer(payload, dtype=np.uint8)
+        # Mark this payload to suppress its single echo (handles back-to-back publishes)
+        st.suppress_counts[payload_bytes] += 1
 
-        # Publish to channel
-        st.channel.publish(host)
-
-        # Synchronous local delivery
-        payload_bytes = bytes(payload)
+        # Synchronous local delivery first (zero extra copies)
         for cb in list(st.subs):
             try:
                 cb(payload_bytes, topic)
             except Exception:
                 pass
 
-        st.last_local_seq = st.last_seq + 1
+        # Build host frame [len:4] + payload and publish
+        host = np.zeros(st.shape, dtype=st.dtype)
+        host[:4] = np.frombuffer(struct.pack("<I", L), dtype=np.uint8)
+        if L:
+            host[4 : 4 + L] = np.frombuffer(memoryview(payload_bytes), dtype=np.uint8)
+
+        st.channel.publish(host)
+
 
     def subscribe(self, topic: str, callback: Callable[[bytes, str], Any]) -> Callable[[], None]:
         """Subscribe a callback(message: bytes, topic). Returns unsubscribe."""
@@ -269,12 +272,17 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
                 L = struct.unpack("<I", host[:4].tobytes())[0]
                 if L == 0 or L < 0 or L > st.capacity:
                     continue
+
                 payload = host[4 : 4 + L].tobytes()
 
-                # 🔴 Suppress echo of our own synchronous publish
-                if getattr(st, "last_local_seq", None) == seq:
-                    st.last_local_seq = None
-                    continue
+                # Drop exactly the number of local echoes we created
+                cnt = st.suppress_counts.get(payload, 0)
+                if cnt > 0:
+                    if cnt == 1:
+                        del st.suppress_counts[payload]
+                    else:
+                        st.suppress_counts[payload] = cnt - 1
+                    continue  # suppressed
 
             except Exception:
                 continue
