@@ -16,7 +16,8 @@ import asyncio
 import functools
 import threading
 import time
-from typing import Literal, TypeAlias
+from dataclasses import dataclass
+from typing import Literal, Optional, TypeAlias
 
 import numpy as np
 from aiortc import MediaStreamTrack
@@ -32,7 +33,6 @@ from reactivex.subject import Subject
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Pose, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
-from dimos.robot.connection_interface import ConnectionInterface
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -41,7 +41,35 @@ from dimos.utils.reactive import backpressure, callback_to_observable
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
 
-class UnitreeWebRTCConnection(ConnectionInterface):
+@dataclass
+class SerializableVideoFrame:
+    """Pickleable wrapper for av.VideoFrame with all metadata"""
+
+    data: np.ndarray
+    pts: Optional[int] = None
+    time: Optional[float] = None
+    dts: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    format: Optional[str] = None
+
+    @classmethod
+    def from_av_frame(cls, frame):
+        return cls(
+            data=frame.to_ndarray(format="rgb24"),
+            pts=frame.pts,
+            time=frame.time,
+            dts=frame.dts,
+            width=frame.width,
+            height=frame.height,
+            format=frame.format.name if hasattr(frame, "format") and frame.format else None,
+        )
+
+    def to_ndarray(self, format=None):
+        return self.data
+
+
+class UnitreeWebRTCConnection:
     def __init__(self, ip: str, mode: str = "ai"):
         self.ip = ip
         self.mode = mode
@@ -225,8 +253,8 @@ class UnitreeWebRTCConnection(ConnectionInterface):
             },
         )
 
-    @functools.lru_cache(maxsize=None)
-    def video_stream(self) -> Observable[VideoMessage]:
+    @functools.cache
+    def raw_video_stream(self) -> Subject[VideoMessage]:
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
 
@@ -235,7 +263,8 @@ class UnitreeWebRTCConnection(ConnectionInterface):
                 if stop_event.is_set():
                     return
                 frame = await track.recv()
-                subject.on_next(Image.from_numpy(frame.to_ndarray(format="rgb24")))
+                serializable_frame = SerializableVideoFrame.from_av_frame(frame)
+                subject.on_next(serializable_frame)
 
         self.conn.video.add_track_callback(accept_track)
 
@@ -245,7 +274,7 @@ class UnitreeWebRTCConnection(ConnectionInterface):
 
         self.loop.call_soon_threadsafe(switch_video_channel)
 
-        def stop(cb):
+        def stop():
             stop_event.set()  # Signal the loop to stop
             self.conn.video.track_callbacks.remove(accept_track)
 
@@ -256,6 +285,14 @@ class UnitreeWebRTCConnection(ConnectionInterface):
             self.loop.call_soon_threadsafe(switch_video_channel_off)
 
         return subject.pipe(ops.finally_action(stop))
+
+    @functools.cache
+    def video_stream(self) -> Observable[VideoMessage]:
+        return backpressure(
+            self.raw_video_stream().pipe(
+                ops.map(lambda frame: Image.from_numpy(frame.to_ndarray(format="rgb24")))
+            )
+        )
 
     def get_video_stream(self, fps: int = 30) -> Observable[VideoMessage]:
         """Get the video stream from the robot's camera.
