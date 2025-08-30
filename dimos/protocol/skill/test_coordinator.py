@@ -92,7 +92,7 @@ async def test_coordinator_parallel_calls():
     skillCoordinator.register_skills(SkillContainerTest())
 
     skillCoordinator.start()
-    skillCoordinator.call_skill("test-call-0", "delayadd", {"args": [1, 2]})
+    skillCoordinator.call_skill("test-call-0", "add", {"args": [0, 2]})
 
     time.sleep(0.1)
 
@@ -102,8 +102,9 @@ async def test_coordinator_parallel_calls():
 
         skillstates = skillCoordinator.generate_snapshot()
 
-        tool_msg = skillstates[f"test-call-{cnt}"].agent_encode()
-        tool_msg.content == cnt + 1
+        skill_id = f"test-call-{cnt}"
+        tool_msg = skillstates[skill_id].agent_encode()
+        assert tool_msg.content == cnt + 2
 
         cnt += 1
         if cnt < 5:
@@ -119,6 +120,8 @@ async def test_coordinator_parallel_calls():
             )
 
         time.sleep(0.1 * cnt)
+
+    skillCoordinator.stop()
 
 
 @pytest.mark.asyncio
@@ -141,3 +144,4 @@ async def test_coordinator_generator():
 
     print("coordinator loop finished")
     print(skillCoordinator)
+    skillCoordinator.stop()
