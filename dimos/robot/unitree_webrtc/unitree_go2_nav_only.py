@@ -146,7 +146,7 @@ class ConnectionModule(Module):
         else:
             camera_params_path = os.path.join(base_dir, "params", "front_camera_720.yaml")
 
-        self.lcm_camera_info = load_camera_info(camera_params_path, frame_id="camera_link")
+        self.lcm_camera_info = load_camera_info(camera_params_path, frame_id="camera_link_optical")
 
         # Load OpenCV matrices for rectification if enabled
         if rectify_image:
@@ -202,6 +202,8 @@ class ConnectionModule(Module):
         self._odom = msg
         self.odom.publish(msg)
         self.tf.publish(Transform.from_pose("base_link", msg))
+
+        # Publish camera_link (physical mount frame)
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -211,18 +213,28 @@ class ConnectionModule(Module):
         )
         self.tf.publish(camera_link)
 
+        # Publish camera_link_optical (ROS optical frame convention)
+        camera_optical = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.5, -0.5, 0.5, -0.5),
+            frame_id="camera_link",
+            child_frame_id="camera_link_optical",
+            ts=time.time(),
+        )
+        self.tf.publish(camera_optical)
+
     def _publish_camera_info(self, timestamp: float):
-        header = Header(timestamp, "camera_link")
+        header = Header(timestamp, "camera_link_optical")
         self.lcm_camera_info.header = header
         self.camera_info.publish(self.lcm_camera_info)
 
     def _publish_camera_pose(self, timestamp: float):
         """Publish camera pose from TF lookup."""
         try:
-            # Look up transform from world to camera_link
+            # Look up transform from world to camera_link_optical
             transform = self.tf.get(
                 parent_frame="world",
-                child_frame="camera_link",
+                child_frame="camera_link_optical",
                 time_point=timestamp,
                 time_tolerance=1.0,
             )
@@ -230,13 +242,13 @@ class ConnectionModule(Module):
             if transform:
                 pose_msg = PoseStamped(
                     ts=timestamp,
-                    frame_id="camera_link",
+                    frame_id="camera_link_optical",
                     position=transform.translation,
                     orientation=transform.rotation,
                 )
                 self.camera_pose.publish(pose_msg)
             else:
-                logger.debug("Could not find transform from world to camera_link")
+                logger.debug("Could not find transform from world to camera_link_optical")
 
         except Exception as e:
             logger.error(f"Error publishing camera pose: {e}")

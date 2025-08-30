@@ -27,7 +27,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos_lcm.std_msgs import String
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import Detection2DArray, Detection3DArray
@@ -52,7 +52,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.unitree_webrtc.depth_module import DepthModule
+from dimos.robot.unitree_webrtc.pointcloud_to_depth import PointCloudToDepth
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -161,7 +161,7 @@ class ConnectionModule(Module):
         else:
             camera_params_path = os.path.join(base_dir, "params", "front_camera_720.yaml")
 
-        self.lcm_camera_info = load_camera_info(camera_params_path, frame_id="camera_link")
+        self.lcm_camera_info = load_camera_info(camera_params_path, frame_id="camera_link_optical")
 
         # Load OpenCV matrices for rectification if enabled
         if rectify_image:
@@ -217,6 +217,8 @@ class ConnectionModule(Module):
         self._odom = msg
         self.odom.publish(msg)
         self.tf.publish(Transform.from_pose("base_link", msg))
+
+        # Publish camera_link (physical mount frame)
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -226,18 +228,28 @@ class ConnectionModule(Module):
         )
         self.tf.publish(camera_link)
 
+        # Publish camera_link_optical (ROS optical frame convention)
+        camera_optical = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.5, -0.5, 0.5, -0.5),
+            frame_id="camera_link",
+            child_frame_id="camera_link_optical",
+            ts=time.time(),
+        )
+        self.tf.publish(camera_optical)
+
     def _publish_camera_info(self, timestamp: float):
-        header = Header(timestamp, "camera_link")
+        header = Header(timestamp, "camera_link_optical")
         self.lcm_camera_info.header = header
         self.camera_info.publish(self.lcm_camera_info)
 
     def _publish_camera_pose(self, timestamp: float):
         """Publish camera pose from TF lookup."""
         try:
-            # Look up transform from world to camera_link
+            # Look up transform from world to camera_link_optical
             transform = self.tf.get(
                 parent_frame="world",
-                child_frame="camera_link",
+                child_frame="camera_link_optical",
                 time_point=timestamp,
                 time_tolerance=1.0,
             )
@@ -245,13 +257,13 @@ class ConnectionModule(Module):
             if transform:
                 pose_msg = PoseStamped(
                     ts=timestamp,
-                    frame_id="camera_link",
+                    frame_id="camera_link_optical",
                     position=transform.translation,
                     orientation=transform.rotation,
                 )
                 self.camera_pose.publish(pose_msg)
             else:
-                logger.debug("Could not find transform from world to camera_link")
+                logger.debug("Could not find transform from world to camera_link_optical")
 
         except Exception as e:
             logger.error(f"Error publishing camera pose: {e}")
@@ -339,7 +351,7 @@ class UnitreeGo2(Robot):
         self.websocket_vis = None
         self.foxglove_bridge = None
         self.spatial_memory_module = None
-        self.depth_module = None
+        self.pointcloud_to_depth = None
         self.object_tracker = None
 
         self._setup_directories()
@@ -504,23 +516,45 @@ class UnitreeGo2(Robot):
         logger.info("Object tracker module deployed")
 
     def _deploy_camera(self):
-        """Deploy and configure the camera module."""
-        gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.5
-        self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
+        """Deploy and configure the pointcloud to depth module."""
+        # Deploy PointCloudToDepth module for lidar-based depth
+        self.pointcloud_to_depth = self.dimos.deploy(
+            PointCloudToDepth, max_depth=10.0, min_depth=0.1
+        )
 
-        # Set up transports
-        self.depth_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
-        self.depth_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
-        self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
+        # Set up input transports
+        self.pointcloud_to_depth.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
+        self.pointcloud_to_depth.color_image.transport = core.LCMTransport(
+            "/go2/color_image", Image
+        )
+        self.pointcloud_to_depth.camera_info.transport = core.LCMTransport(
+            "/go2/camera_info", CameraInfo
+        )
 
-        logger.info("Camera module deployed and connected")
+        # Set up output transports
+        self.pointcloud_to_depth.depth_image.transport = core.LCMTransport(
+            "/go2/lidar_depth", Image
+        )
+        self.pointcloud_to_depth.pointcloud_camera.transport = core.LCMTransport(
+            "/pointcloud_camera", PointCloud2
+        )
+        self.pointcloud_to_depth.pointcloud_overlay.transport = core.LCMTransport(
+            "/pointcloud_2d_overlay", Image
+        )
 
-        # Connect object tracker inputs after camera module is deployed
+        # Connect inputs to source modules
+        self.pointcloud_to_depth.lidar.connect(self.connection.lidar)
+        self.pointcloud_to_depth.color_image.connect(self.connection.video)
+        self.pointcloud_to_depth.camera_info.connect(self.connection.camera_info)
+
+        logger.info("PointCloudToDepth module deployed and connected")
+
+        # Connect object tracker inputs after pointcloud module is deployed
         if self.object_tracker:
             self.object_tracker.color_image.connect(self.connection.video)
-            self.object_tracker.depth.connect(self.depth_module.depth_image)
+            self.object_tracker.depth.connect(self.pointcloud_to_depth.depth_image)
             self.object_tracker.camera_info.connect(self.connection.camera_info)
-            logger.info("Object tracker connected to camera module")
+            logger.info("Object tracker connected to pointcloud depth module")
 
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
@@ -533,7 +567,7 @@ class UnitreeGo2(Robot):
         self.websocket_vis.start()
         self.foxglove_bridge.start()
         self.spatial_memory_module.start()
-        self.depth_module.start()
+        self.pointcloud_to_depth.start()
         self.object_tracker.start()
 
         # Initialize skills after connection is established

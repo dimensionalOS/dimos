@@ -555,8 +555,9 @@ class ZEDModule(Module):
         enable_imu_fusion: bool = True,
         set_floor_as_origin: bool = True,
         publish_rate: float = 30.0,
-        frame_id: str = "zed_camera",
         recording_path: str = None,
+        frame_id: str = "zed_camera_link",
+        optical_frame_id: str = "zed_camera_link_optical",
         **kwargs,
     ):
         """
@@ -571,8 +572,9 @@ class ZEDModule(Module):
             enable_imu_fusion: Enable IMU fusion for tracking
             set_floor_as_origin: Set floor as origin for tracking
             publish_rate: Rate to publish messages (Hz)
-            frame_id: TF frame ID for messages
             recording_path: Path to save recorded data
+            frame_id: TF frame ID for camera physical frame
+            optical_frame_id: TF frame ID for camera optical frame
         """
         super().__init__(**kwargs)
 
@@ -584,6 +586,7 @@ class ZEDModule(Module):
         self.publish_rate = publish_rate
         self.frame_id = frame_id
         self.recording_path = recording_path
+        self.optical_frame_id = optical_frame_id
 
         # Convert string parameters to ZED enums
         self.resolution = getattr(sl.RESOLUTION, resolution, sl.RESOLUTION.HD720)
@@ -707,8 +710,8 @@ class ZEDModule(Module):
             if self.storages and pose_data:
                 self.storages["pose"].save_one(pose_data)
 
-            # Create header
-            header = Header(self.frame_id)
+            # Create header using optical frame for image data
+            header = Header(self.optical_frame_id)
             self._sequence += 1
 
             # Publish color image
@@ -779,8 +782,8 @@ class ZEDModule(Module):
             left_cam = info.get("left_cam", {})
             resolution = info.get("resolution", {})
 
-            # Create CameraInfo message
-            header = Header(self.frame_id)
+            # Create CameraInfo message with optical frame
+            header = Header(self.optical_frame_id)
 
             # Create camera matrix K (3x3)
             K = [
@@ -852,15 +855,26 @@ class ZEDModule(Module):
             msg = PoseStamped(ts=header.ts, position=position, orientation=rotation)
             self.pose.publish(msg)
 
-            # Publish TF transform
+            # Publish TF transforms
+            # First publish camera_link (physical mount frame)
             camera_tf = Transform(
                 translation=Vector3(position),
                 rotation=Quaternion(rotation),
                 frame_id="zed_world",
-                child_frame_id="zed_camera_link",
+                child_frame_id=self.frame_id,
                 ts=header.ts,
             )
             self.tf.publish(camera_tf)
+
+            # Then publish camera_link_optical (ROS optical frame convention)
+            camera_optical = Transform(
+                translation=Vector3(0.0, 0.0, 0.0),
+                rotation=Quaternion(0.5, -0.5, 0.5, -0.5),
+                frame_id=self.frame_id,
+                child_frame_id=self.optical_frame_id,
+                ts=header.ts,
+            )
+            self.tf.publish(camera_optical)
 
         except Exception as e:
             logger.error(f"Error publishing pose: {e}")

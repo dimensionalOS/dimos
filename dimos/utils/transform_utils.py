@@ -13,9 +13,11 @@
 # limitations under the License.
 
 import numpy as np
-from typing import Tuple
 from scipy.spatial.transform import Rotation as R
+import open3d as o3d
+
 from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion, Transform
+from dimos.msgs.sensor_msgs import PointCloud2
 
 
 def normalize_angle(angle: float) -> float:
@@ -284,6 +286,87 @@ def compose_transforms(*transforms: np.ndarray) -> np.ndarray:
     for T in transforms:
         result = result @ T
     return result
+
+
+def transform_pointcloud(pointcloud: PointCloud2, transform: Transform) -> PointCloud2:
+    """
+    Transform a PointCloud2 message from one frame to another using a vectorized approach.
+
+    Args:
+        pointcloud: PointCloud2 or LidarMessage with o3d PointCloud
+        transform: Transform message with translation and rotation
+
+    Returns:
+        Transformed PointCloud2 message
+    """
+
+    # Get the Open3D pointcloud
+    if hasattr(pointcloud, "o3d_geometry"):
+        pcd = pointcloud.o3d_geometry
+    elif hasattr(pointcloud, "pointcloud"):
+        pcd = pointcloud.pointcloud
+    else:
+        raise ValueError("Input must have o3d_geometry or pointcloud attribute")
+
+    # Get points as numpy array
+    points = np.asarray(pcd.points)
+
+    if len(points) == 0:
+        # Return empty pointcloud with updated frame
+        new_pcd = o3d.geometry.PointCloud()
+        return PointCloud2(
+            pointcloud=new_pcd,
+            ts=pointcloud.ts if hasattr(pointcloud, "ts") else None,
+            frame_id=transform.child_frame_id,
+        )
+
+    # Create transformation matrix from Transform
+    T = np.eye(4)
+
+    # Set translation
+    T[0, 3] = transform.translation.x
+    T[1, 3] = transform.translation.y
+    T[2, 3] = transform.translation.z
+
+    # Set rotation using quaternion
+    quat = [transform.rotation.x, transform.rotation.y, transform.rotation.z, transform.rotation.w]
+    rotation = R.from_quat(quat)
+    T[:3, :3] = rotation.as_matrix()
+
+    # Vectorized transformation: add homogeneous coordinate
+    points_homo = np.hstack([points, np.ones((len(points), 1))])
+
+    # Apply transformation (vectorized)
+    transformed_points_homo = (T @ points_homo.T).T
+
+    # Extract 3D coordinates
+    transformed_points = transformed_points_homo[:, :3]
+
+    # Create new pointcloud
+    new_pcd = o3d.geometry.PointCloud()
+    new_pcd.points = o3d.utility.Vector3dVector(transformed_points)
+
+    # Copy colors if they exist
+    if pcd.has_colors():
+        new_pcd.colors = pcd.colors
+
+    # Copy normals if they exist
+    if pcd.has_normals():
+        # Transform normals (rotation only, no translation)
+        normals = np.asarray(pcd.normals)
+        transformed_normals = (T[:3, :3] @ normals.T).T
+        # Renormalize
+        transformed_normals = transformed_normals / np.linalg.norm(
+            transformed_normals, axis=1, keepdims=True
+        )
+        new_pcd.normals = o3d.utility.Vector3dVector(transformed_normals)
+
+    # Return as PointCloud2
+    return PointCloud2(
+        pointcloud=new_pcd,
+        ts=pointcloud.ts if hasattr(pointcloud, "ts") else None,
+        frame_id=transform.child_frame_id,
+    )
 
 
 def euler_to_quaternion(euler_angles: Vector3, degrees: bool = False) -> Quaternion:
