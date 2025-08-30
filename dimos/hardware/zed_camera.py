@@ -794,10 +794,9 @@ class ZEDModule(Module):
 
             logger.info(f"ZED module started, publishing at {self.publish_rate} Hz")
 
-            # Schedule spatial mapping to be enabled after 3 seconds (one time only)
+            # Schedule spatial mapping to be enabled after 1 second (one time only)
             if self.enable_tracking and self.enable_spatial_mapping:
-                logger.info("Scheduling spatial mapping enablement in 3 seconds...")
-                self._spatial_mapping_timer = timer(3.0).subscribe(
+                self._spatial_mapping_timer = timer(1.0).subscribe(
                     lambda _: self._enable_spatial_mapping_once()
                 )
 
@@ -821,8 +820,8 @@ class ZEDModule(Module):
                 logger.warning(
                     f"[SPATIAL_MAPPING_INIT] Tracking not ready (state: {tracking_state}), scheduling retry in 2 seconds..."
                 )
-                # Retry in 2 seconds
-                timer(2.0).subscribe(lambda _: self._enable_spatial_mapping_once())
+                # Retry in 1 second
+                timer(1.0).subscribe(lambda _: self._enable_spatial_mapping_once())
                 return
 
             # Mark tracking as initialized BEFORE enabling spatial mapping
