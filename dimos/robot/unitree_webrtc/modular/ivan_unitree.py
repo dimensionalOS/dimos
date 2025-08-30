@@ -118,7 +118,7 @@ class UnitreeGo2:
         connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
         connection.start()
 
-        connection.record("TESTRECORDING")
+        # connection.record("unitree_raw_webrtc_replay")
 
         detection = dimos.deploy(Detect2DModule)
         detection.image.connect(connection.video)

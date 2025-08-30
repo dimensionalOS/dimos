@@ -24,7 +24,7 @@ from typing import List
 
 from reactivex import Observable
 
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 
@@ -169,9 +169,9 @@ class MujocoConnection:
 
         return Observable(on_subscribe)
 
-    def move(self, vector: Vector3, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0):
         if not self._is_cleaned_up:
-            self.mujoco_thread.move(vector, duration)
+            self.mujoco_thread.move(twist, duration)
 
     def stop(self):
         """Stop the MuJoCo connection gracefully."""
