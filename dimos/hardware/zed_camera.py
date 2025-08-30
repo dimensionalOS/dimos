@@ -292,6 +292,7 @@ class ZEDCamera(StereoCamera):
 
                 # Extract the whole spatial map (accumulated world map)
                 self.zed.extract_whole_spatial_map(self.fused_pointcloud)
+                self.fused_pointcloud.update_from_chunklist()
 
                 # Convert to Open3D point cloud
                 vertices = self.fused_pointcloud.vertices
@@ -721,6 +722,7 @@ class ZEDModule(Module):
         self.enable_imu_fusion = enable_imu_fusion
         self.set_floor_as_origin = set_floor_as_origin
         self.enable_spatial_mapping = enable_spatial_mapping
+        self._spatial_mapping_enabled = False
         self.publish_rate = publish_rate
         self.frame_id = frame_id
 
