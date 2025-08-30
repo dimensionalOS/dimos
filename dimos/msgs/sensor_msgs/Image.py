@@ -343,6 +343,22 @@ class Image(Timestamped):
             **kwargs,
         )
 
+    def as_memoryview(self) -> memoryview:
+        """
+        Return a memoryview of the image data for CPU shared memory transport.
+        """
+        if isinstance(self.data, (bytes, bytearray)):
+            return memoryview(self.data)
+        elif isinstance(self.data, np.ndarray):
+            return memoryview(self.data.tobytes())
+        else:
+            raise TypeError(f"Unsupported data type {type(self.data)}")
+    
+    @classmethod
+    def from_memoryview(cls, mem: memoryview, width: int, height: int, format: "ImageFormat"):
+        """Reconstruct an Image from a CPU memoryview (SharedMemory buffer)."""
+        return cls(bytes(mem), width=width, height=height, format=format)
+
     def _get_row_step(self) -> int:
         """Calculate row step (bytes per row)."""
         bytes_per_pixel = self._get_bytes_per_pixel()
