@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from OpenGL.GLUT import *
@@ -57,28 +71,32 @@ void main() {
 }
 """
 
+
 class Shader:
     def __init__(self, _vs, _fs):
-
         self.program_id = glCreateProgram()
         vertex_id = self.compile(GL_VERTEX_SHADER, _vs)
         fragment_id = self.compile(GL_FRAGMENT_SHADER, _fs)
 
         glAttachShader(self.program_id, vertex_id)
         glAttachShader(self.program_id, fragment_id)
-        glBindAttribLocation( self.program_id, 0, "in_vertex")
-        glBindAttribLocation( self.program_id, 1, "in_texCoord")
+        glBindAttribLocation(self.program_id, 0, "in_vertex")
+        glBindAttribLocation(self.program_id, 1, "in_texCoord")
         glLinkProgram(self.program_id)
 
         if glGetProgramiv(self.program_id, GL_LINK_STATUS) != GL_TRUE:
             info = glGetProgramInfoLog(self.program_id)
-            if (self.program_id is not None) and (self.program_id > 0) and glIsProgram(self.program_id):
+            if (
+                (self.program_id is not None)
+                and (self.program_id > 0)
+                and glIsProgram(self.program_id)
+            ):
                 glDeleteProgram(self.program_id)
             if (vertex_id is not None) and (vertex_id > 0) and glIsShader(vertex_id):
                 glDeleteShader(vertex_id)
             if (fragment_id is not None) and (fragment_id > 0) and glIsShader(fragment_id):
                 glDeleteShader(fragment_id)
-            raise RuntimeError('Error linking program: %s' % (info))
+            raise RuntimeError("Error linking program: %s" % (info))
         if (vertex_id is not None) and (vertex_id > 0) and glIsShader(vertex_id):
             glDeleteShader(vertex_id)
         if (fragment_id is not None) and (fragment_id > 0) and glIsShader(fragment_id):
@@ -97,7 +115,7 @@ class Shader:
                 info = glGetShaderInfoLog(shader_id)
                 if (shader_id is not None) and (shader_id > 0) and glIsShader(shader_id):
                     glDeleteShader(shader_id)
-                raise RuntimeError('Shader compilation failed: %s' % (info))
+                raise RuntimeError("Shader compilation failed: %s" % (info))
             return shader_id
         except:
             if (shader_id is not None) and (shader_id > 0) and glIsShader(shader_id):
@@ -106,6 +124,7 @@ class Shader:
 
     def get_program_id(self):
         return self.program_id
+
 
 IMAGE_FRAGMENT_SHADER = """
 #version 330 core
@@ -131,10 +150,12 @@ void main() {
 }
 """
 
+
 class ImageHandler:
     """
     Class that manages the image stream to render with OpenGL
     """
+
     def __init__(self):
         self.tex_id = 0
         self.image_tex = 0
@@ -145,21 +166,22 @@ class ImageHandler:
         if self.image_tex:
             self.image_tex = 0
 
-    def initialize(self, _res):    
+    def initialize(self, _res):
         self.shader_image = Shader(IMAGE_VERTEX_SHADER, IMAGE_FRAGMENT_SHADER)
-        self.tex_id = glGetUniformLocation( self.shader_image.get_program_id(), "texImage")
+        self.tex_id = glGetUniformLocation(self.shader_image.get_program_id(), "texImage")
 
-        g_quad_vertex_buffer_data = np.array([-1, -1, 0,
-                                                1, -1, 0,
-                                                -1, 1, 0,
-                                                -1, 1, 0,
-                                                1, -1, 0,
-                                                1, 1, 0], np.float32)
+        g_quad_vertex_buffer_data = np.array(
+            [-1, -1, 0, 1, -1, 0, -1, 1, 0, -1, 1, 0, 1, -1, 0, 1, 1, 0], np.float32
+        )
 
         self.quad_vb = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, self.quad_vb)
-        glBufferData(GL_ARRAY_BUFFER, g_quad_vertex_buffer_data.nbytes,
-                     g_quad_vertex_buffer_data, GL_STATIC_DRAW)
+        glBufferData(
+            GL_ARRAY_BUFFER,
+            g_quad_vertex_buffer_data.nbytes,
+            g_quad_vertex_buffer_data,
+            GL_STATIC_DRAW,
+        )
         glBindBuffer(GL_ARRAY_BUFFER, 0)
 
         # Create and populate the texture
@@ -167,25 +189,37 @@ class ImageHandler:
 
         # Generate a texture name
         self.image_tex = glGenTextures(1)
-        
+
         # Select the created texture
         glBindTexture(GL_TEXTURE_2D, self.image_tex)
-        
+
         # Set the texture minification and magnification filters
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-        
+
         # Fill the texture with an image
         # None means reserve texture memory, but texels are undefined
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, _res.width, _res.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, None)
-        
+        glTexImage2D(
+            GL_TEXTURE_2D, 0, GL_RGBA, _res.width, _res.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, None
+        )
+
         # Unbind the texture
-        glBindTexture(GL_TEXTURE_2D, 0)   
+        glBindTexture(GL_TEXTURE_2D, 0)
 
     def push_new_image(self, _zed_mat):
         glBindTexture(GL_TEXTURE_2D, self.image_tex)
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, _zed_mat.get_width(), _zed_mat.get_height(), GL_RGBA, GL_UNSIGNED_BYTE,  ctypes.c_void_p(_zed_mat.get_pointer()))
-        glBindTexture(GL_TEXTURE_2D, 0)            
+        glTexSubImage2D(
+            GL_TEXTURE_2D,
+            0,
+            0,
+            0,
+            _zed_mat.get_width(),
+            _zed_mat.get_height(),
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            ctypes.c_void_p(_zed_mat.get_pointer()),
+        )
+        glBindTexture(GL_TEXTURE_2D, 0)
 
     def draw(self):
         glUseProgram(self.shader_image.get_program_id())
@@ -202,13 +236,15 @@ class ImageHandler:
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, ctypes.c_void_p(0))
         glDrawArrays(GL_TRIANGLES, 0, 6)
         glDisableVertexAttribArray(0)
-        glBindTexture(GL_TEXTURE_2D, 0)            
+        glBindTexture(GL_TEXTURE_2D, 0)
         glUseProgram(0)
+
 
 class GLViewer:
     """
     Class that manages the rendering in OpenGL
     """
+
     def __init__(self):
         self.available = False
         self.mutex = Lock()
@@ -219,32 +255,31 @@ class GLViewer:
         self.projection = sl.Matrix4f()
         self.projection.set_identity()
         self.znear = 0.5
-        self.zfar = 100.
+        self.zfar = 100.0
         self.image_handler = ImageHandler()
         self.sub_maps = []
         self.pose = sl.Transform().set_identity()
         self.tracking_state = sl.POSITIONAL_TRACKING_STATE.OFF
         self.mapping_state = sl.SPATIAL_MAPPING_STATE.NOT_ENABLED
 
-    def init(self, _params, _mesh, _create_mesh): 
+    def init(self, _params, _mesh, _create_mesh):
         glutInit()
         wnd_w = glutGet(GLUT_SCREEN_WIDTH)
         wnd_h = glutGet(GLUT_SCREEN_HEIGHT)
-        width = wnd_w*0.9
-        height = wnd_h*0.9
-     
+        width = wnd_w * 0.9
+        height = wnd_h * 0.9
+
         if width > _params.image_size.width and height > _params.image_size.height:
             width = _params.image_size.width
             height = _params.image_size.height
 
         glutInitWindowSize(int(width), int(height))
-        glutInitWindowPosition(0, 0) # The window opens at the upper left corner of the screen
+        glutInitWindowPosition(0, 0)  # The window opens at the upper left corner of the screen
         glutInitDisplayMode(GLUT_DOUBLE | GLUT_SRGB)
         glutCreateWindow(b"ZED Spatial Mapping")
         glViewport(0, 0, int(width), int(height))
 
-        glutSetOption(GLUT_ACTION_ON_WINDOW_CLOSE,
-                      GLUT_ACTION_CONTINUE_EXECUTION)
+        glutSetOption(GLUT_ACTION_ON_WINDOW_CLOSE, GLUT_ACTION_CONTINUE_EXECUTION)
 
         glEnable(GL_LINE_SMOOTH)
         glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
@@ -254,8 +289,8 @@ class GLViewer:
 
         self.init_mesh(_mesh, _create_mesh)
 
-        # Compile and create the shader 
-        if(self.draw_mesh):
+        # Compile and create the shader
+        if self.draw_mesh:
             self.shader_image = Shader(MESH_VERTEX_SHADER, FRAGMENT_SHADER)
         else:
             self.shader_image = Shader(FPC_VERTEX_SHADER, FRAGMENT_SHADER)
@@ -265,13 +300,13 @@ class GLViewer:
         # Create the rendering camera
         self.set_render_camera_projection(_params)
 
-        glLineWidth(1.)
-        glPointSize(4.)
+        glLineWidth(1.0)
+        glPointSize(4.0)
 
         # Register the drawing function with GLUT
         glutDisplayFunc(self.draw_callback)
         # Register the function called when nothing happens
-        glutIdleFunc(self.idle)   
+        glutIdleFunc(self.idle)
 
         glutKeyboardUpFunc(self.keyReleasedCallback)
 
@@ -282,8 +317,8 @@ class GLViewer:
         self.available = True
 
         # Set color for wireframe
-        self.vertices_color = [0.12,0.53,0.84] 
-        
+        self.vertices_color = [0.12, 0.53, 0.84]
+
         # Ready to start
         self.chunks_pushed = True
 
@@ -296,13 +331,13 @@ class GLViewer:
         fov_y = (_params.v_fov + 0.5) * M_PI / 180
         fov_x = (_params.h_fov + 0.5) * M_PI / 180
 
-        self.projection[(0,0)] = 1. / math.tan(fov_x * .5)
-        self.projection[(1,1)] = 1. / math.tan(fov_y * .5)
-        self.projection[(2,2)] = -(self.zfar + self.znear) / (self.zfar - self.znear)
-        self.projection[(3,2)] = -1.
-        self.projection[(2,3)] = -(2. * self.zfar * self.znear) / (self.zfar - self.znear)
-        self.projection[(3,3)] = 0.
-    
+        self.projection[(0, 0)] = 1.0 / math.tan(fov_x * 0.5)
+        self.projection[(1, 1)] = 1.0 / math.tan(fov_y * 0.5)
+        self.projection[(2, 2)] = -(self.zfar + self.znear) / (self.zfar - self.znear)
+        self.projection[(3, 2)] = -1.0
+        self.projection[(2, 3)] = -(2.0 * self.zfar * self.znear) / (self.zfar - self.znear)
+        self.projection[(3, 3)] = 0.0
+
     def print_GL(self, _x, _y, _string):
         glRasterPos(_x, _y)
         for i in range(len(_string)):
@@ -313,8 +348,11 @@ class GLViewer:
             glutMainLoopEvent()
         return self.available
 
-    def render_object(self, _object_data):      # _object_data of type sl.ObjectData
-        if _object_data.tracking_state == sl.OBJECT_TRACKING_STATE.OK or _object_data.tracking_state == sl.OBJECT_TRACKING_STATE.OFF:
+    def render_object(self, _object_data):  # _object_data of type sl.ObjectData
+        if (
+            _object_data.tracking_state == sl.OBJECT_TRACKING_STATE.OK
+            or _object_data.tracking_state == sl.OBJECT_TRACKING_STATE.OFF
+        ):
             return True
         else:
             return False
@@ -322,7 +360,7 @@ class GLViewer:
     def update_chunks(self):
         self.new_chunks = True
         self.chunks_pushed = False
-    
+
     def chunks_updated(self):
         return self.chunks_pushed
 
@@ -330,7 +368,7 @@ class GLViewer:
         self.ask_clear = True
         self.new_chunks = True
 
-    def update_view(self, _image, _pose, _tracking_state, _mapping_state):     
+    def update_view(self, _image, _pose, _tracking_state, _mapping_state):
         self.mutex.acquire()
         if self.available:
             # update image
@@ -347,20 +385,20 @@ class GLViewer:
         if self.available:
             glutPostRedisplay()
 
-    def exit(self):      
+    def exit(self):
         if self.available:
             self.available = False
             self.image_handler.close()
 
-    def close_func(self): 
+    def close_func(self):
         if self.available:
             self.available = False
-            self.image_handler.close()      
+            self.image_handler.close()
 
     def keyReleasedCallback(self, key, x, y):
-        if ord(key) == 113 or ord(key) == 27:   # 'q' key
+        if ord(key) == 113 or ord(key) == 27:  # 'q' key
             self.close_func()
-        if  ord(key) == 32:                     # space bar
+        if ord(key) == 32:  # space bar
             self.change_state = True
 
     def draw_callback(self):
@@ -372,7 +410,7 @@ class GLViewer:
             self.update()
             self.draw()
             self.print_text()
-            self.mutex.release()  
+            self.mutex.release()
 
             glutSwapBuffers()
             glutPostRedisplay()
@@ -383,13 +421,13 @@ class GLViewer:
             if self.ask_clear:
                 self.sub_maps = []
                 self.ask_clear = False
-            
+
             nb_c = len(self.mesh.chunks)
 
-            if nb_c > len(self.sub_maps): 
-                for n in range(len(self.sub_maps),nb_c):
+            if nb_c > len(self.sub_maps):
+                for n in range(len(self.sub_maps), nb_c):
                     self.sub_maps.append(SubMapObj())
-            
+
             # For both Mesh and FPC
             for m in range(len(self.sub_maps)):
                 if (m < nb_c) and self.mesh.chunks[m].has_been_updated:
@@ -397,11 +435,11 @@ class GLViewer:
                         self.sub_maps[m].update_mesh(self.mesh.chunks[m])
                     else:
                         self.sub_maps[m].update_fpc(self.mesh.chunks[m])
-                        
+
             self.new_chunks = False
             self.chunks_pushed = True
 
-    def draw(self):  
+    def draw(self):
         if self.available:
             self.image_handler.draw()
 
@@ -415,11 +453,15 @@ class GLViewer:
                 tmp.inverse()
                 proj = (self.projection * tmp).m
                 vpMat = proj.flatten()
-                
+
                 glUseProgram(self.shader_image.get_program_id())
                 glUniformMatrix4fv(self.shader_MVP, 1, GL_TRUE, (GLfloat * len(vpMat))(*vpMat))
-                glUniform3fv(self.shader_color_loc, 1, (GLfloat * len(self.vertices_color))(*self.vertices_color))
-        
+                glUniform3fv(
+                    self.shader_color_loc,
+                    1,
+                    (GLfloat * len(self.vertices_color))(*self.vertices_color),
+                )
+
                 for m in range(len(self.sub_maps)):
                     self.sub_maps[m].draw(self.draw_mesh)
 
@@ -442,7 +484,10 @@ class GLViewer:
 
             # Display spatial mapping state
             if self.tracking_state == sl.POSITIONAL_TRACKING_STATE.OK:
-                if self.mapping_state == sl.SPATIAL_MAPPING_STATE.OK or self.mapping_state == sl.SPATIAL_MAPPING_STATE.INITIALIZING:
+                if (
+                    self.mapping_state == sl.SPATIAL_MAPPING_STATE.OK
+                    or self.mapping_state == sl.SPATIAL_MAPPING_STATE.INITIALIZING
+                ):
                     glColor3f(0.25, 0.99, 0.25)
                 elif self.mapping_state == sl.SPATIAL_MAPPING_STATE.NOT_ENABLED:
                     glColor3f(0.55, 0.65, 0.55)
@@ -455,62 +500,85 @@ class GLViewer:
                     state_str = positional_tracking_state_str + str(self.tracking_state)
                 else:
                     glColor3f(0.55, 0.65, 0.55)
-                    state_str = spatial_mapping_state_str + str(sl.SPATIAL_MAPPING_STATE.NOT_ENABLED)
+                    state_str = spatial_mapping_state_str + str(
+                        sl.SPATIAL_MAPPING_STATE.NOT_ENABLED
+                    )
             self.print_GL(-0.99, 0.83, state_str)
+
 
 class SubMapObj:
     def __init__(self):
         self.current_fc = 0
         self.vboID = None
-        self.index = []         # For FPC only
+        self.index = []  # For FPC only
         self.vert = []
         self.tri = []
 
-    def update_mesh(self, _chunk): 
-        if(self.vboID is None):
+    def update_mesh(self, _chunk):
+        if self.vboID is None:
             self.vboID = glGenBuffers(2)
 
         if len(_chunk.vertices):
-            self.vert = _chunk.vertices.flatten()      # transform _chunk.vertices into 1D array 
+            self.vert = _chunk.vertices.flatten()  # transform _chunk.vertices into 1D array
             glBindBuffer(GL_ARRAY_BUFFER, self.vboID[0])
-            glBufferData(GL_ARRAY_BUFFER, len(self.vert) * self.vert.itemsize, (GLfloat * len(self.vert))(*self.vert), GL_DYNAMIC_DRAW)
-        
+            glBufferData(
+                GL_ARRAY_BUFFER,
+                len(self.vert) * self.vert.itemsize,
+                (GLfloat * len(self.vert))(*self.vert),
+                GL_DYNAMIC_DRAW,
+            )
+
         if len(_chunk.triangles):
-            self.tri = _chunk.triangles.flatten()      # transform _chunk.triangles into 1D array 
+            self.tri = _chunk.triangles.flatten()  # transform _chunk.triangles into 1D array
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.vboID[1])
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, len(self.tri) * self.tri.itemsize , (GLuint * len(self.tri))(*self.tri), GL_DYNAMIC_DRAW)
+            glBufferData(
+                GL_ELEMENT_ARRAY_BUFFER,
+                len(self.tri) * self.tri.itemsize,
+                (GLuint * len(self.tri))(*self.tri),
+                GL_DYNAMIC_DRAW,
+            )
             self.current_fc = len(self.tri)
 
-    def update_fpc(self, _chunk): 
-        if(self.vboID is None):
+    def update_fpc(self, _chunk):
+        if self.vboID is None:
             self.vboID = glGenBuffers(2)
 
         if len(_chunk.vertices):
-            self.vert = _chunk.vertices.flatten()      # transform _chunk.vertices into 1D array 
+            self.vert = _chunk.vertices.flatten()  # transform _chunk.vertices into 1D array
             glBindBuffer(GL_ARRAY_BUFFER, self.vboID[0])
-            glBufferData(GL_ARRAY_BUFFER, len(self.vert) * self.vert.itemsize, (GLfloat * len(self.vert))(*self.vert), GL_DYNAMIC_DRAW)
+            glBufferData(
+                GL_ARRAY_BUFFER,
+                len(self.vert) * self.vert.itemsize,
+                (GLfloat * len(self.vert))(*self.vert),
+                GL_DYNAMIC_DRAW,
+            )
 
             for i in range(len(_chunk.vertices)):
                 self.index.append(i)
-            
+
             index_np = np.array(self.index)
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.vboID[1])
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, len(index_np) * index_np.itemsize, (GLuint * len(index_np))(*index_np), GL_DYNAMIC_DRAW)
+            glBufferData(
+                GL_ELEMENT_ARRAY_BUFFER,
+                len(index_np) * index_np.itemsize,
+                (GLuint * len(index_np))(*index_np),
+                GL_DYNAMIC_DRAW,
+            )
             self.current_fc = len(index_np)
 
-    def draw(self, _draw_mesh): 
+    def draw(self, _draw_mesh):
         if self.current_fc:
             glEnableVertexAttribArray(0)
             glBindBuffer(GL_ARRAY_BUFFER, self.vboID[0])
             if _draw_mesh == True:
-                glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,None)
+                glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
             else:
-                glVertexAttribPointer(0,4,GL_FLOAT,GL_FALSE,0,None)
+                glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, None)
 
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.vboID[1])
             if len(self.index) > 0:
-                glDrawElements(GL_POINTS, self.current_fc, GL_UNSIGNED_INT, None)      
+                glDrawElements(GL_POINTS, self.current_fc, GL_UNSIGNED_INT, None)
             else:
-                glDrawElements(GL_TRIANGLES, self.current_fc, GL_UNSIGNED_INT, None)      
+                glDrawElements(GL_TRIANGLES, self.current_fc, GL_UNSIGNED_INT, None)
 
             glDisableVertexAttribArray(0)
