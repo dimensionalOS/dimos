@@ -86,12 +86,14 @@ except (ConnectionError, ImportError):
 
 from dimos.protocol.pubsub.shmpubsub import SharedMemory, PickleSharedMemory
 
+
 @contextmanager
 def shared_memory_cpu_context():
     shared_mem_pubsub = PickleSharedMemory(prefer="cpu")
     shared_mem_pubsub.start()
     yield shared_mem_pubsub
     shared_mem_pubsub.stop()
+
 
 testdata.append(
     (
@@ -100,6 +102,7 @@ testdata.append(
         [b"shared_mem_value1", b"shared_mem_value2", b"shared_mem_value3"],
     )
 )
+
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
 def test_store(pubsub_context, topic, values):
