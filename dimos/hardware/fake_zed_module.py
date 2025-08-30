@@ -73,7 +73,7 @@ class FakeZEDModule(Module):
 
     def _load_world_map_pointcloud(self):
         """Load the pre-recorded world map from mesh.obj file."""
-        mesh_path = "/home/p/pro/dimensional/mesh.obj"
+        mesh_path = "../mesh.obj"
 
         if not os.path.exists(mesh_path):
             logger.warning(f"World map mesh not found at {mesh_path}, using fallback")

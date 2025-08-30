@@ -140,7 +140,6 @@ class StereoMapper:
                 enable_tracking=True,  # Enable visual odometry
                 enable_imu_fusion=True,
                 set_floor_as_origin=True,
-                enable_spatial_mapping=self.use_spatial_mapping,  # Enable ZED SDK spatial mapping!
                 mapping_resolution="MEDIUM",  # Spatial mapping resolution
                 mapping_range="MEDIUM",  # Spatial mapping range
                 publish_rate=10.0,

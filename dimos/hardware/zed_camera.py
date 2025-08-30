@@ -35,8 +35,8 @@ class ZEDCamera(StereoCamera):
     def __init__(
         self,
         camera_id: int = 0,
-        resolution=None,  # Will default to HD720 if None
-        depth_mode=None,  # Will default to NEURAL if None
+        resolution=None,
+        depth_mode=None,
         fps: int = 30,
         **kwargs,
     ):
@@ -63,8 +63,8 @@ class ZEDCamera(StereoCamera):
         # Initialize ZED camera
         self.zed = sl.Camera()
         self.init_params = sl.InitParameters()
-        self.init_params.camera_resolution = resolution
-        self.init_params.depth_mode = depth_mode
+        self.init_params.camera_resolution = self.resolution
+        self.init_params.depth_mode = self.depth_mode
         self.init_params.coordinate_system = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
         self.init_params.coordinate_units = sl.UNIT.METER
         self.init_params.camera_fps = fps
@@ -112,8 +112,6 @@ class ZEDCamera(StereoCamera):
         )
 
         self.fused_pointcloud = sl.FusedPointCloud()  # For spatial mapping output
-        self.last_spatial_map_request = 0.0  # Time of last spatial map request
-        self.spatial_map_request_interval = 0.5  # Request every 500ms
 
         self.is_opened = False
 

@@ -13,14 +13,11 @@
 # limitations under the License.
 
 import time
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import open3d as o3d
-import reactivex.operators as ops
 from reactivex import interval
-from reactivex.observable import Observable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.nav_msgs import OccupancyGrid

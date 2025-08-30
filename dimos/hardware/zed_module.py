@@ -47,7 +47,7 @@ logger = setup_logger(__name__)
 class SpatialMapPublishThread(threading.Thread):
     """Thread to periodically request and publish spatial map from ZED camera."""
 
-    def __init__(self, zed_module, zed_camera=None, publish_interval=0.5, voxel_size=0.5):
+    def __init__(self, zed_module, zed_camera=None, publish_interval=1.0, voxel_size=0.5):
         super().__init__()
         self.daemon = True
         self.zed_module = zed_module
@@ -57,6 +57,7 @@ class SpatialMapPublishThread(threading.Thread):
         self.last_pointcloud = None
         self.last_capture_time = 0.0
         self.capture_lock = threading.Lock()
+        self.voxel_size = voxel_size
 
     def run(self):
         logger.info(f"SpatialMapPublishThread started with {self.publish_interval}s interval")
@@ -130,7 +131,7 @@ class SpatialMapPublishThread(threading.Thread):
                         if len(valid_points) > 0:
                             pcd.points = o3d.utility.Vector3dVector(valid_points)
 
-                            pcd = pcd.voxel_down_sample(voxel_size=0.5)
+                            pcd = pcd.voxel_down_sample(voxel_size=self.voxel_size)
                             return pcd
                     break
 
@@ -152,7 +153,7 @@ class SpatialMapPublishThread(threading.Thread):
             lidar_msg = LidarMessage(
                 pointcloud=pcd,
                 origin=[0.0, 0.0, 0.0],
-                resolution=0.5,  # Match Map module voxel_size
+                resolution=self.voxel_size,  # Match Map module voxel_size
                 ts=header.ts,
                 frame_id="world",
             )
@@ -201,7 +202,6 @@ class ZEDModule(Module):
         enable_tracking: bool = True,
         enable_imu_fusion: bool = True,
         set_floor_as_origin: bool = True,
-        enable_spatial_mapping: bool = False,  # Enable ZED SDK spatial mapping
         mapping_resolution: str = "MEDIUM",  # Spatial mapping resolution
         mapping_range: str = "MEDIUM",  # Spatial mapping range
         publish_rate: float = 30.0,
@@ -236,7 +236,6 @@ class ZEDModule(Module):
         self.enable_tracking = enable_tracking
         self.enable_imu_fusion = enable_imu_fusion
         self.set_floor_as_origin = set_floor_as_origin
-        self.enable_spatial_mapping = enable_spatial_mapping
         self.spatial_mapping_enabled = False
         self.publish_rate = publish_rate
         self.frame_id = frame_id
@@ -319,11 +318,11 @@ class ZEDModule(Module):
             logger.info(f"ZED module started, publishing at {self.publish_rate} Hz")
 
             # Initialize and start the spatial map publish thread
-            if self.enable_tracking and self.enable_spatial_mapping:
+            if self.enable_tracking:
                 self.spatial_map_publish_thread = SpatialMapPublishThread(
                     self,
                     zed_camera=self.zed_camera,
-                    publish_interval=0.5,
+                    publish_interval=1.0,
                     voxel_size=self.filter_voxel_size,
                 )
 
@@ -362,14 +361,7 @@ class ZEDModule(Module):
                 f"[SPATIAL_MAPPING_INIT] Tracking is OK (state: {tracking_state}), enabling spatial mapping..."
             )
 
-            success = self.zed_camera.enable_spatial_mapping(
-                resolution=self.mapping_resolution,
-                mapping_range=self.mapping_range,
-                max_memory_usage=512,  # Already reduced to avoid memory issues
-                save_texture=False,
-                use_chunk_only=True,
-                reverse_vertex_order=False,
-            )
+            success = self.zed_camera.enable_spatial_mapping()
 
             if success:
                 logger.info("[SPATIAL_MAPPING_INIT] Spatial mapping enabled successfully")
@@ -404,11 +396,9 @@ class ZEDModule(Module):
                         self.spatial_map_publish_thread.start()
             else:
                 logger.error("[SPATIAL_MAPPING_INIT] Failed to enable spatial mapping")
-                self.enable_spatial_mapping = False
 
         except Exception as e:
             logger.error(f"Error enabling spatial mapping: {e}")
-            self.enable_spatial_mapping = False
 
     @rpc
     def stop(self):
