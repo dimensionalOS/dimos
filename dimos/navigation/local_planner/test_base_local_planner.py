@@ -76,9 +76,9 @@ class TestHolonomicLocalPlanner:
 
         # Should move along +X
         assert vel is not None
-        assert vel.x > 0.9  # Close to v_max
-        assert abs(vel.y) < 0.1  # Near zero
-        assert abs(vel.z) < 0.1  # Small angular velocity when aligned with path
+        assert vel.linear.x > 0.9  # Close to v_max
+        assert abs(vel.linear.y) < 0.1  # Near zero
+        assert abs(vel.angular.z) < 0.1  # Small angular velocity when aligned with path
 
     def test_obstacle_gradient_repulsion(self, planner):
         """Test that obstacle gradients create repulsive forces."""
@@ -110,7 +110,7 @@ class TestHolonomicLocalPlanner:
 
         # Should have positive Y component (pushed north by gradient)
         assert vel is not None
-        assert vel.y > 0.1  # Repulsion pushes north
+        assert vel.linear.y > 0.1  # Repulsion pushes north
 
     def test_lowpass_filter(self):
         """Test that low-pass filter smooths velocity commands."""
@@ -146,7 +146,7 @@ class TestHolonomicLocalPlanner:
         assert vel1 is not None
 
         # Store first velocity
-        first_vx = vel1.x
+        first_vx = vel1.linear.x
 
         # Second call - should be filtered
         vel2 = planner.compute_velocity()
@@ -156,8 +156,8 @@ class TestHolonomicLocalPlanner:
         # v2 = 0.5 * v_raw + 0.5 * v1
         # The filtering effect should be visible
         # v2 should be between v1 and the raw velocity
-        assert vel2.x != first_vx  # Should be different due to filtering
-        assert 0 < vel2.x <= planner.v_max  # Should still be positive and within limits
+        assert vel2.linear.x != first_vx  # Should be different due to filtering
+        assert 0 < vel2.linear.x <= planner.v_max  # Should still be positive and within limits
 
     def test_no_path(self, planner, empty_costmap):
         """Test that planner returns None when no path is available."""
@@ -221,8 +221,8 @@ class TestHolonomicLocalPlanner:
 
         # Should have near-zero velocity
         assert vel is not None
-        assert abs(vel.x) < 0.1
-        assert abs(vel.y) < 0.1
+        assert abs(vel.linear.x) < 0.1
+        assert abs(vel.linear.y) < 0.1
 
     def test_velocity_saturation(self, planner, empty_costmap):
         """Test that velocities are capped at v_max."""
@@ -247,8 +247,9 @@ class TestHolonomicLocalPlanner:
 
         # Velocity should be saturated at v_max
         assert vel is not None
-        assert abs(vel.x) <= planner.v_max + 0.01  # Small tolerance
-        assert abs(vel.y) <= planner.v_max + 0.01
+        assert abs(vel.linear.x) <= planner.v_max + 0.01  # Small tolerance
+        assert abs(vel.linear.y) <= planner.v_max + 0.01
+        assert abs(vel.angular.z) <= planner.v_max + 0.01
 
     def test_lookahead_interpolation(self, planner, empty_costmap):
         """Test that lookahead point is correctly interpolated on path."""
@@ -274,8 +275,8 @@ class TestHolonomicLocalPlanner:
 
         # Should move forward along path
         assert vel is not None
-        assert vel.x > 0.5  # Moving forward
-        assert abs(vel.y) < 0.1  # Staying on path
+        assert vel.linear.x > 0.5  # Moving forward
+        assert abs(vel.linear.y) < 0.1  # Staying on path
 
     def test_curved_path_following(self, planner, empty_costmap):
         """Test following a curved path."""
@@ -303,10 +304,10 @@ class TestHolonomicLocalPlanner:
         # Should have both X and Y components for curved motion
         assert vel is not None
         # Test general behavior: should be moving (not exact values)
-        assert vel.x > 0  # Moving forward (any positive value)
-        assert vel.y > 0  # Turning left (any positive value)
+        assert vel.linear.x > 0  # Moving forward (any positive value)
+        assert vel.linear.y > 0  # Turning left (any positive value)
         # Ensure we have meaningful movement, not just noise
-        total_linear = np.sqrt(vel.x**2 + vel.y**2)
+        total_linear = np.sqrt(vel.linear.x**2 + vel.linear.y**2)
         assert total_linear > 0.1  # Some reasonable movement
 
     def test_robot_frame_transformation(self, empty_costmap):
@@ -346,11 +347,11 @@ class TestHolonomicLocalPlanner:
         assert vel is not None
         # Test relative magnitudes and signs rather than exact values
         # Path is to the right, so Y velocity should be negative
-        assert vel.y < 0  # Should move right (negative Y in robot frame)
+        assert vel.linear.y < 0  # Should move right (negative Y in robot frame)
         # Should turn to align with path
-        assert vel.z < 0  # Should turn right (negative angular velocity)
+        assert vel.angular.z < 0  # Should turn right (negative angular velocity)
         # X velocity should be relatively small compared to Y
-        assert abs(vel.x) < abs(vel.y)  # Lateral movement dominates
+        assert abs(vel.linear.x) < abs(vel.linear.y)  # Lateral movement dominates
 
     def test_angular_velocity_computation(self, empty_costmap):
         """Test that angular velocity is computed to align with path."""
@@ -386,11 +387,13 @@ class TestHolonomicLocalPlanner:
         # Should have positive angular velocity to turn left
         assert vel is not None
         # Test general behavior without exact thresholds
-        assert vel.x > 0  # Moving forward (any positive value)
-        assert vel.y > 0  # Moving left (holonomic, any positive value)
-        assert vel.z > 0  # Turning left (positive angular velocity)
+        assert vel.linear.x > 0  # Moving forward (any positive value)
+        assert vel.linear.y > 0  # Moving left (holonomic, any positive value)
+        assert vel.angular.z > 0  # Turning left (positive angular velocity)
         # Verify the robot is actually moving with reasonable speed
-        total_linear = np.sqrt(vel.x**2 + vel.y**2)
+        total_linear = np.sqrt(vel.linear.x**2 + vel.linear.y**2)
         assert total_linear > 0.1  # Some meaningful movement
         # Since path is diagonal, X and Y should be similar magnitude
-        assert abs(vel.x - vel.y) < max(vel.x, vel.y) * 0.5  # Within 50% of each other
+        assert (
+            abs(vel.linear.x - vel.linear.y) < max(vel.linear.x, vel.linear.y) * 0.5
+        )  # Within 50% of each other

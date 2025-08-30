@@ -26,7 +26,7 @@ else:
 
 from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
 from dimos.types.constants import Colors
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs import Twist, Vector3
 from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD
 
 # Module-level constant for Unitree WebRTC control definitions
@@ -262,7 +262,10 @@ class MyUnitreeSkills(SkillLibrary):
         duration: float = Field(default=0.0, description="How long to move (seconds).")
 
         def __call__(self):
-            self._robot.move(Vector3(self.x, self.y, self.yaw), duration=self.duration)
+            self._robot.move(
+                Twist(linear=Vector3(self.x, self.y, 0.0), angular=Vector3(0.0, 0.0, self.yaw)),
+                duration=self.duration,
+            )
             return f"started moving with velocity={self.x}, {self.y}, {self.yaw} for {self.duration} seconds"
 
     class Wait(AbstractSkill):

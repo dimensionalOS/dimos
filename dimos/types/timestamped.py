@@ -12,24 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import bisect
 from datetime import datetime, timezone
 from typing import Generic, Iterable, Optional, Tuple, TypedDict, TypeVar, Union
 
+from dimos_lcm.builtin_interfaces import Time as ROSTime
+
+# from dimos_lcm.std_msgs import Time as ROSTime
 from reactivex.observable import Observable
-from sortedcontainers import SortedList
+from sortedcontainers import SortedKeyList
 
 # any class that carries a timestamp should inherit from this
 # this allows us to work with timeseries in consistent way, allign messages, replay etc
 # aditional functionality will come to this class soon
 
 
-class RosStamp(TypedDict):
-    sec: int
-    nanosec: int
+# class RosStamp(TypedDict):
+#     sec: int
+#     nanosec: int
 
 
-TimeLike = Union[int, float, datetime, RosStamp]
+TimeLike = Union[int, float, datetime, ROSTime]
 
 
 def to_timestamp(ts: TimeLike) -> float:
@@ -43,7 +45,7 @@ def to_timestamp(ts: TimeLike) -> float:
     raise TypeError("unsupported timestamp type")
 
 
-def to_ros_stamp(ts: TimeLike) -> RosStamp:
+def to_ros_stamp(ts: TimeLike) -> ROSTime:
     """Convert TimeLike to a ROS-style timestamp dictionary."""
     if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
         return ts
@@ -51,7 +53,7 @@ def to_ros_stamp(ts: TimeLike) -> RosStamp:
     timestamp = to_timestamp(ts)
     sec = int(timestamp)
     nanosec = int((timestamp - sec) * 1_000_000_000)
-    return {"sec": sec, "nanosec": nanosec}
+    return ROSTime(sec=sec, nanosec=nanosec)
 
 
 def to_datetime(ts: TimeLike, tz=None) -> datetime:
@@ -97,7 +99,7 @@ class TimestampedCollection(Generic[T]):
     """A collection of timestamped objects with efficient time-based operations."""
 
     def __init__(self, items: Optional[Iterable[T]] = None):
-        self._items = SortedList(items or [], key=lambda x: x.ts)
+        self._items = SortedKeyList(items or [], key=lambda x: x.ts)
 
     def add(self, item: T) -> None:
         """Add a timestamped item to the collection."""
@@ -109,8 +111,7 @@ class TimestampedCollection(Generic[T]):
             return None
 
         # Use binary search to find insertion point
-        timestamps = [item.ts for item in self._items]
-        idx = bisect.bisect_left(timestamps, timestamp)
+        idx = self._items.bisect_key_left(timestamp)
 
         # Check exact match
         if idx < len(self._items) and self._items[idx].ts == timestamp:
@@ -142,20 +143,18 @@ class TimestampedCollection(Generic[T]):
 
     def find_before(self, timestamp: float) -> Optional[T]:
         """Find the last item before the given timestamp."""
-        timestamps = [item.ts for item in self._items]
-        idx = bisect.bisect_left(timestamps, timestamp)
+        idx = self._items.bisect_key_left(timestamp)
         return self._items[idx - 1] if idx > 0 else None
 
     def find_after(self, timestamp: float) -> Optional[T]:
         """Find the first item after the given timestamp."""
-        timestamps = [item.ts for item in self._items]
-        idx = bisect.bisect_right(timestamps, timestamp)
+        idx = self._items.bisect_key_right(timestamp)
         return self._items[idx] if idx < len(self._items) else None
 
     def merge(self, other: "TimestampedCollection[T]") -> "TimestampedCollection[T]":
         """Merge two timestamped collections into a new one."""
         result = TimestampedCollection[T]()
-        result._items = SortedList(self._items + other._items, key=lambda x: x.ts)
+        result._items = SortedKeyList(self._items + other._items, key=lambda x: x.ts)
         return result
 
     def duration(self) -> float:
@@ -172,9 +171,8 @@ class TimestampedCollection(Generic[T]):
 
     def slice_by_time(self, start: float, end: float) -> "TimestampedCollection[T]":
         """Get a subset of items within the given time range."""
-        timestamps = [item.ts for item in self._items]
-        start_idx = bisect.bisect_left(timestamps, start)
-        end_idx = bisect.bisect_right(timestamps, end)
+        start_idx = self._items.bisect_key_left(start)
+        end_idx = self._items.bisect_key_right(end)
         return TimestampedCollection(self._items[start_idx:end_idx])
 
     @property
@@ -225,13 +223,11 @@ class TimestampedBufferCollection(TimestampedCollection[T]):
         cutoff_ts = current_ts - self.window_duration
 
         # Find the index of the first item that should be kept
-        timestamps = [item.ts for item in self._items]
-        keep_idx = bisect.bisect_left(timestamps, cutoff_ts)
+        keep_idx = self._items.bisect_key_left(cutoff_ts)
 
         # Remove old items
         if keep_idx > 0:
-            # Create new SortedList with items to keep
-            self._items = SortedList(self._items[keep_idx:], key=lambda x: x.ts)
+            del self._items[:keep_idx]
 
 
 def align_timestamped(
