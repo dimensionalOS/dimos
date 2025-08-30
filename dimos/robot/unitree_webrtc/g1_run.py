@@ -101,9 +101,7 @@ def main():
         # Create web interface
         try:
             web_interface = RobotWebInterface(
-                port=5555, 
-                text_streams=text_streams, 
-                audio_subject=audio_subject
+                port=5555, text_streams=text_streams, audio_subject=audio_subject
             )
             logger.info("Web interface created successfully")
         except Exception as e:
@@ -142,6 +140,7 @@ def main():
     except Exception as e:
         logger.error(f"Error running robot: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         logger.info("Shutting down...")

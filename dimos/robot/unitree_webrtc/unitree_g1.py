@@ -52,67 +52,67 @@ logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 class G1ConnectionModule(Module):
     """Simplified connection module for G1 - uses WebRTC for control, no video."""
-    
+
     movecmd: In[Twist] = None
     odom: Out[PoseStamped] = None
     ip: str
     connection_type: str = "webrtc"
-    
+
     _odom: PoseStamped = None
-    
+
     def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
         self.ip = ip
         self.connection_type = connection_type
         self.tf = TF()
         self.connection = None
         Module.__init__(self, *args, **kwargs)
-    
+
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
         # Use the exact same UnitreeWebRTCConnection as Go2
         self.connection = UnitreeWebRTCConnection(self.ip)
-        
+
         # Subscribe only to odometry (no video/lidar for G1)
         self.connection.odom_stream().subscribe(self._publish_tf)
         self.movecmd.subscribe(self.move)
-    
+
     def _publish_tf(self, msg):
         """Publish odometry and TF transforms."""
         self._odom = msg
         self.odom.publish(msg)
         self.tf.publish(Transform.from_pose("base_link", msg))
-        
+
         # Publish ZED camera transform relative to robot base
         zed_transform = Transform(
             translation=Vector3(0.0, 0.0, 1.5),  # ZED mounted at ~1.5m height on G1
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="base_link", 
+            frame_id="base_link",
             child_frame_id="zed_camera",
             ts=time.time(),
         )
         self.tf.publish(zed_transform)
-    
+
     @rpc
     def get_odom(self) -> Optional[PoseStamped]:
         """Get the robot's odometry."""
         return self._odom
-    
+
     @rpc
     def move(self, twist: Twist, duration: float = 0.0):
         """Send movement command to robot."""
         self.connection.move(twist, duration)
-    
+
     @rpc
     def standup(self):
         """Make the robot stand up."""
         return self.connection.standup()
-    
+
     @rpc
     def liedown(self):
         """Make the robot lie down."""
         return self.connection.liedown()
-    
+
     @rpc
     def publish_request(self, topic: str, data: dict):
         """Forward WebRTC publish requests to connection."""
@@ -121,7 +121,7 @@ class G1ConnectionModule(Module):
 
 class UnitreeG1(Robot):
     """Unitree G1 humanoid robot with ZED camera for vision."""
-    
+
     def __init__(
         self,
         ip: str,
@@ -129,7 +129,7 @@ class UnitreeG1(Robot):
         skill_library: Optional[SkillLibrary] = None,
     ):
         """Initialize the G1 robot.
-        
+
         Args:
             ip: Robot IP address
             output_dir: Directory for saving outputs
@@ -139,51 +139,52 @@ class UnitreeG1(Robot):
         self.ip = ip
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.lcm = LCM()
-        
+
         # Initialize skill library with G1 robot type
         if skill_library is None:
             from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
+
             skill_library = MyUnitreeSkills(robot_type="g1")
         self.skill_library = skill_library
-        
+
         # Set robot capabilities
         self.capabilities = [RobotCapability.LOCOMOTION, RobotCapability.VISION]
-        
+
         # Module references
         self.dimos = None
         self.connection = None
         self.zed_camera = None
         self.foxglove_bridge = None
-        
+
         self._setup_directories()
-    
+
     def _setup_directories(self):
         """Setup output directories."""
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
-    
+
     def start(self):
         """Start the robot system with all modules."""
         self.dimos = core.start(2)  # 2 workers for connection and ZED modules
-        
+
         self._deploy_connection()
         self._deploy_camera()
         self._deploy_visualization()
         self._start_modules()
-        
+
         self.lcm.start()
-        
+
         logger.info("UnitreeG1 initialized and started")
         logger.info("ZED camera module deployed for vision")
-    
+
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
         self.connection = self.dimos.deploy(G1ConnectionModule, self.ip)
-        
+
         # Configure LCM transports
         self.connection.odom.transport = core.LCMTransport("/g1/odom", PoseStamped)
         self.connection.movecmd.transport = core.LCMTransport("/g1/cmd_vel", Twist)
-    
+
     def _deploy_camera(self):
         """Deploy and configure the ZED camera module."""
         logger.info("Deploying ZED camera module...")
@@ -199,53 +200,54 @@ class UnitreeG1(Robot):
             publish_rate=30.0,
             frame_id="zed_camera",
         )
-        
+
         # Configure ZED LCM transports
         self.zed_camera.color_image.transport = core.LCMTransport("/zed/color_image", Image)
         self.zed_camera.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
         self.zed_camera.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
         self.zed_camera.pose.transport = core.LCMTransport("/zed/pose", PoseStamped)
-        
+
         logger.info("ZED camera module configured")
-    
+
     def _deploy_visualization(self):
         """Deploy visualization tools."""
         self.foxglove_bridge = FoxgloveBridge()
-    
+
     def _start_modules(self):
         """Start all deployed modules."""
         self.connection.start()
         self.zed_camera.start()
         self.foxglove_bridge.start()
-        
+
         # Initialize skills after connection is established
         if self.skill_library is not None:
             for skill in self.skill_library:
-                if hasattr(skill, '__name__'):
+                if hasattr(skill, "__name__"):
                     self.skill_library.create_instance(skill.__name__, robot=self)
             if isinstance(self.skill_library, MyUnitreeSkills):
                 self.skill_library._robot = self
                 self.skill_library.init()
                 self.skill_library.initialize_skills()
-    
+
     def get_single_rgb_frame(self, timeout: float = 2.0) -> Image:
         """Get a single RGB frame from the ZED camera."""
         from dimos.protocol.pubsub.lcmpubsub import Topic
+
         topic = Topic("/zed/color_image", Image)
         return self.lcm.wait_for_message(topic, timeout=timeout)
-    
+
     def move(self, twist: Twist, duration: float = 0.0):
         """Send movement command to robot."""
         self.connection.move(twist, duration)
-    
+
     def get_odom(self) -> PoseStamped:
         """Get the robot's odometry."""
         return self.connection.get_odom()
-    
+
     def standup(self):
         """Make the robot stand up."""
         return self.connection.standup()
-    
+
     def liedown(self):
         """Make the robot lie down."""
         return self.connection.liedown()
@@ -255,19 +257,19 @@ def main():
     """Main entry point for testing."""
     import os
     from dotenv import load_dotenv
-    
+
     load_dotenv()
-    
+
     ip = os.getenv("ROBOT_IP")
     if not ip:
         logger.error("ROBOT_IP not set in environment")
         return
-    
+
     pubsub.lcm.autoconf()
-    
+
     robot = UnitreeG1(ip=ip)
     robot.start()
-    
+
     try:
         logger.info("G1 robot running. Press Ctrl+C to stop.")
         while True:
