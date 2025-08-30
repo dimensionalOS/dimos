@@ -168,8 +168,9 @@ class ZedCameraThread(threading.Thread):
 
     def _send_pymesh(self):
         print("sending pymesh")
-        status = self.pymesh.save(f"mesh_gen_dimos_{time.time()}.obj")
-        print("saved mesh", status)
+        # status = self.pymesh.save(f"mesh_gen_dimos_{time.time()}.obj")
+        # print("saved mesh", status)
+        self.pymesh.update_from_chunklist()
 
         vertices = self.pymesh.vertices
         if len(vertices) > 0:
