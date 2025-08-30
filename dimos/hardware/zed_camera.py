@@ -117,9 +117,9 @@ class ZEDCamera(StereoCamera):
         # Spatial mapping
         self.mapping_enabled = False
         self.spatial_mapping_params = sl.SpatialMappingParameters(
-            resolution=sl.MAPPING_RESOLUTION.MEDIUM,
+            resolution=sl.MAPPING_RESOLUTION.LOW,
             mapping_range=sl.MAPPING_RANGE.MEDIUM,
-            max_memory_usage=2048,
+            max_memory_usage=4096,
             save_texture=False,
             use_chunk_only=True,
             reverse_vertex_order=False,
