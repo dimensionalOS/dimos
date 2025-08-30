@@ -19,7 +19,7 @@ from typing import Optional, Tuple, Dict, Any
 import logging
 import time
 import threading
-from reactivex import interval
+from reactivex import interval, timer
 from reactivex import operators as ops
 
 try:
@@ -764,7 +764,7 @@ class ZEDModule(Module):
                 logger.error("Failed to open ZED camera")
                 return
 
-            # Enable tracking if requested
+            # Enable positional tracking if requested
             if self.enable_tracking:
                 success = self.zed_camera.enable_positional_tracking(
                     enable_imu_fusion=self.enable_imu_fusion,
@@ -776,63 +776,104 @@ class ZEDModule(Module):
                     logger.warning("Failed to enable positional tracking")
                     self.enable_tracking = False
                 else:
-                    logger.info("Waiting for positional tracking to initialize...")
-                    tracking_initialized = False
-                    for i in range(30):  # Try for up to 3 seconds
-                        if (
-                            self.zed_camera.zed.grab(self.zed_camera.runtime_params)
-                            == sl.ERROR_CODE.SUCCESS
-                        ):
-                            tracking_state = self.zed_camera.zed.get_position(
-                                self.zed_camera.camera_pose, sl.REFERENCE_FRAME.WORLD
-                            )
-                            if tracking_state == sl.POSITIONAL_TRACKING_STATE.OK:
-                                logger.info(
-                                    f"Tracking initialized successfully after {i + 1} frames"
-                                )
-                                tracking_initialized = True
-                                break
-                            elif tracking_state == sl.POSITIONAL_TRACKING_STATE.SEARCHING:
-                                logger.debug(f"Frame {i + 1}: Still searching for tracking...")
-                        time.sleep(0.1)
+                    logger.info("Positional tracking enabled")
 
-                    if not tracking_initialized:
-                        logger.warning(
-                            "Tracking failed to initialize properly, continuing anyway..."
-                        )
-
-                    # Enable spatial mapping if tracking succeeded and mapping requested
-                    if self.enable_spatial_mapping:
-                        success = self.zed_camera.enable_spatial_mapping(
-                            resolution=self.mapping_resolution,
-                            mapping_range=self.mapping_range,
-                            max_memory_usage=2048,
-                            save_texture=False,
-                            use_chunk_only=True,
-                            reverse_vertex_order=False,
-                        )
-                        if not success:
-                            logger.warning("Failed to enable spatial mapping")
-                            self.enable_spatial_mapping = False
-                        else:
-                            logger.info("Spatial mapping enabled successfully")
+            # Start running immediately
+            self._running = True
 
             # Publish camera info once at startup
             self._publish_camera_info()
 
             # Start periodic frame capture and publishing
-            self._running = True
             publish_interval = 1.0 / self.publish_rate
-
             self._subscription = interval(publish_interval).subscribe(
                 lambda _: self._capture_and_publish()
             )
 
             logger.info(f"ZED module started, publishing at {self.publish_rate} Hz")
 
+            # Schedule spatial mapping to be enabled after 3 seconds (one time only)
+            if self.enable_tracking and self.enable_spatial_mapping:
+                logger.info("Scheduling spatial mapping enablement in 3 seconds...")
+                self._spatial_mapping_timer = timer(3.0).subscribe(
+                    lambda _: self._enable_spatial_mapping_once()
+                )
+
         except Exception as e:
             logger.error(f"Error starting ZED module: {e}")
             self._running = False
+
+    def _enable_spatial_mapping_once(self):
+        """Enable spatial mapping once tracking is ready."""
+        try:
+            if self._spatial_mapping_enabled:
+                logger.debug("Spatial mapping already enabled")
+                return
+
+            # Check if tracking is ready
+            pose_data = self.zed_camera.get_pose()
+            tracking_state = pose_data.get("tracking_state", "UNKNOWN") if pose_data else "NO_POSE"
+            logger.info(f"[SPATIAL_MAPPING_INIT] Checking tracking state: {tracking_state}")
+
+            if not pose_data or not pose_data.get("valid", False):
+                logger.warning(
+                    f"[SPATIAL_MAPPING_INIT] Tracking not ready (state: {tracking_state}), scheduling retry in 2 seconds..."
+                )
+                # Retry in 2 seconds
+                timer(2.0).subscribe(lambda _: self._enable_spatial_mapping_once())
+                return
+
+            # Mark tracking as initialized BEFORE enabling spatial mapping
+            self._tracking_initialized = True
+            logger.info(
+                f"[SPATIAL_MAPPING_INIT] Tracking is OK (state: {tracking_state}), enabling spatial mapping..."
+            )
+
+            success = self.zed_camera.enable_spatial_mapping(
+                resolution=self.mapping_resolution,
+                mapping_range=self.mapping_range,
+                max_memory_usage=512,  # Already reduced to avoid memory issues
+                save_texture=False,
+                use_chunk_only=True,
+                reverse_vertex_order=False,
+            )
+
+            if success:
+                logger.info("[SPATIAL_MAPPING_INIT] Spatial mapping enabled successfully")
+                self._spatial_mapping_enabled = True
+                self._mapping_initialized = True
+
+                # Check tracking state AFTER enabling spatial mapping
+                pose_after = self.zed_camera.get_pose()
+                state_after = (
+                    pose_after.get("tracking_state", "UNKNOWN") if pose_after else "NO_POSE"
+                )
+                logger.info(f"[SPATIAL_MAPPING_INIT] Tracking state after enabling: {state_after}")
+
+                if not pose_after or not pose_after.get("valid", False):
+                    logger.error(
+                        f"[SPATIAL_MAPPING_INIT] Tracking lost after enabling spatial mapping! State: {state_after}"
+                    )
+                    # Try to recover by disabling spatial mapping
+                    logger.warning(
+                        "[SPATIAL_MAPPING_INIT] Disabling spatial mapping to recover tracking..."
+                    )
+                    self.zed_camera.disable_spatial_mapping()
+                    self._spatial_mapping_enabled = False
+                    self._mapping_initialized = False
+                else:
+                    # Start publishing world map at 2Hz (like FakeZEDModule)
+                    logger.info("[SPATIAL_MAPPING_INIT] Starting world map publishing at 2Hz")
+                    self._spatial_map_timer = interval(0.5).subscribe(
+                        lambda _: self._publish_world_map()
+                    )
+            else:
+                logger.error("[SPATIAL_MAPPING_INIT] Failed to enable spatial mapping")
+                self.enable_spatial_mapping = False
+
+        except Exception as e:
+            logger.error(f"Error enabling spatial mapping: {e}")
+            self.enable_spatial_mapping = False
 
     @rpc
     def stop(self):
