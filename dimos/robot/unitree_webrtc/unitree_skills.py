@@ -212,7 +212,7 @@ class MyUnitreeSkills(SkillLibrary):
 
     def __init__(self, robot: Optional[Robot] = None, robot_type: str = "go2"):
         """Initialize Unitree skills library.
-        
+
         Args:
             robot: Optional robot instance
             robot_type: Type of robot ("go2" or "g1"), defaults to "go2"
@@ -220,7 +220,7 @@ class MyUnitreeSkills(SkillLibrary):
         super().__init__()
         self._robot: Robot = None
         self.robot_type = robot_type.lower()
-        
+
         if self.robot_type not in ["go2", "g1"]:
             raise ValueError(f"Unsupported robot type: {robot_type}. Must be 'go2' or 'g1'")
 
@@ -258,34 +258,32 @@ class MyUnitreeSkills(SkillLibrary):
 
             def __call__(self):
                 super().__call__()
-                
+
                 # For Go2: Simple api_id based call
-                if hasattr(self, '_app_id'):
+                if hasattr(self, "_app_id"):
                     string = f"{Colors.GREEN_PRINT_COLOR}Executing Go2 skill: {self.__class__.__name__} with api_id={self._app_id}{Colors.RESET_COLOR}"
                     print(string)
                     result = self._robot.connection.publish_request(
-                        RTC_TOPIC["SPORT_MOD"], 
-                        {"api_id": self._app_id}
+                        RTC_TOPIC["SPORT_MOD"], {"api_id": self._app_id}
                     )
                     return f"{self.__class__.__name__} executed successfully"
-                
+
                 # For G1: Fixed api_id with parameter data
-                elif hasattr(self, '_data_value'):
+                elif hasattr(self, "_data_value"):
                     string = f"{Colors.GREEN_PRINT_COLOR}Executing G1 skill: {self.__class__.__name__} with data={self._data_value}{Colors.RESET_COLOR}"
                     print(string)
                     result = self._robot.connection.publish_request(
                         self._topic,
-                        {
-                            "api_id": self._api_id,
-                            "parameter": {"data": self._data_value}
-                        }
+                        {"api_id": self._api_id, "parameter": {"data": self._data_value}},
                     )
                     return f"{self.__class__.__name__} executed successfully"
                 else:
-                    raise RuntimeError(f"Skill {self.__class__.__name__} missing required attributes")
+                    raise RuntimeError(
+                        f"Skill {self.__class__.__name__} missing required attributes"
+                    )
 
         skills_classes = []
-        
+
         if self.robot_type == "g1":
             # Create G1 arm skills
             for name, data_value, description in G1_ARM_CONTROLS:
@@ -296,11 +294,11 @@ class MyUnitreeSkills(SkillLibrary):
                         "__doc__": description,
                         "_topic": "rt/api/arm/request",
                         "_api_id": 7106,
-                        "_data_value": data_value
-                    }
+                        "_data_value": data_value,
+                    },
                 )
                 skills_classes.append(skill_class)
-            
+
             # Create G1 mode skills
             for name, data_value, description in G1_MODE_CONTROLS:
                 skill_class = type(
@@ -310,8 +308,8 @@ class MyUnitreeSkills(SkillLibrary):
                         "__doc__": description,
                         "_topic": "rt/api/sport/request",
                         "_api_id": 7101,
-                        "_data_value": data_value
-                    }
+                        "_data_value": data_value,
+                    },
                 )
                 skills_classes.append(skill_class)
         else:
@@ -319,9 +317,7 @@ class MyUnitreeSkills(SkillLibrary):
             for name, app_id, description in UNITREE_WEBRTC_CONTROLS:
                 if name not in ["Reverse", "Spin"]:  # Exclude reverse and spin skills
                     skill_class = type(
-                        name,
-                        (BaseUnitreeSkill,),
-                        {"__doc__": description, "_app_id": app_id}
+                        name, (BaseUnitreeSkill,), {"__doc__": description, "_app_id": app_id}
                     )
                     skills_classes.append(skill_class)
 
