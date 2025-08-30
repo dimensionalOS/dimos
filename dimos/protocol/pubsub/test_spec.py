@@ -93,6 +93,7 @@ try:
         shared_mem_pubsub.start()
         yield shared_mem_pubsub
         shared_mem_pubsub.stop()
+
     testdata.append(
         (
             shared_memory_cpu_context,

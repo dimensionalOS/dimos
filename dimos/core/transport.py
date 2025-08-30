@@ -106,9 +106,10 @@ class LCMTransport(PubSubTransport[T]):
             self._started = True
         return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
 
+
 class pSHMTransport(PubSubTransport[T]):
     _started: bool = False
-    
+
     def __init__(self, topic: str, **kwargs):
         super().__init__(topic)
         self.shm = PickleSharedMemory(**kwargs)

@@ -353,7 +353,7 @@ class Image(Timestamped):
             return memoryview(self.data.tobytes())
         else:
             raise TypeError(f"Unsupported data type {type(self.data)}")
-    
+
     @classmethod
     def from_memoryview(cls, mem: memoryview, width: int, height: int, format: "ImageFormat"):
         """Reconstruct an Image from a CPU memoryview (SharedMemory buffer)."""

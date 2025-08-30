@@ -251,9 +251,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             logger.info("SharedMemory using CPU backend")
 
             # TODO: CUDA needs to be specified in this once we enable it
-            st = SharedMemoryPubSubBase._TopicState(
-                ch, int(self.config.default_capacity), cp_mod
-            )
+            st = SharedMemoryPubSubBase._TopicState(ch, int(self.config.default_capacity), cp_mod)
             self._topics[topic] = st
             return st
 
@@ -289,8 +287,9 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
 
 # --------------------------------------------------------------------------------------
-# Encoders + concrete PubSub classes 
+# Encoders + concrete PubSub classes
 # --------------------------------------------------------------------------------------
+
 
 class SharedMemoryBytesEncoderMixin(PubSubEncoderMixin[str, bytes]):
     """Identity encoder for raw bytes."""
@@ -320,4 +319,3 @@ class PickleSharedMemory(
     """SharedMemory pubsub that transports arbitrary Python objects via pickle."""
 
     ...
-

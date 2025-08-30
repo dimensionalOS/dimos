@@ -46,6 +46,7 @@ def _sanitize_shm_name(name: str) -> str:
     #  Python's SharedMemory expects names like 'psm_abc', without leading '/'
     return name.lstrip("/") if isinstance(name, str) else name
 
+
 # ---------------------------
 # 1) Abstract interface
 # ---------------------------
@@ -258,6 +259,7 @@ class CPU_IPC_Factory:
         assert desc.get("kind") == "cpu", "Descriptor kind mismatch"
         return CpuShmChannel.attach(desc)
 
+
 # ---------------------------
 # 4) Runtime selector
 # ---------------------------
@@ -269,4 +271,3 @@ def make_frame_channel(
     """Choose CUDA IPC if available (or requested), otherwise CPU SHM."""
     # TODO: Implement the CUDA version of creating this factory
     return CPU_IPC_Factory.create(shape, dtype=dtype)
-
