@@ -89,7 +89,7 @@ class StereoMapper:
         logger.info("Starting StereoMapper system...")
 
         # Start Dimos
-        self.dimos = core.start(4)
+        self.dimos = core.start(1, memory_limit="32GiB")
 
         # Initialize TF after Dimos is started
         self.tf = TF()
