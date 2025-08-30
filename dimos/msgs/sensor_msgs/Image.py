@@ -515,7 +515,6 @@ class Image(Timestamped):
         """Return total number of pixels."""
         return self.height * self.width
 
-
     def agent_encode(self) -> str:
         """Encode image to base64 JPEG format for agent processing.
 
@@ -554,4 +553,3 @@ def sharpness_window(target_frequency: float, source: Observable[Image]) -> Obse
     return rx.interval(1.0 / target_frequency).pipe(
         ops.observe_on(thread_scheduler), ops.map(find_best)
     )
-
