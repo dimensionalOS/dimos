@@ -115,6 +115,9 @@ class ZedCameraThread(threading.Thread):
             tracking_state = zed.get_position(pose)
             print('tracking_state', tracking_state)
 
+            if tracking_state != sl.POSITIONAL_TRACKING_STATE.OK:
+                continue
+
             if not mapping_activated:
                 print('turning mapping on')
 
