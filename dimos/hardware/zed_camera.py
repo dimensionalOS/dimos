@@ -867,7 +867,7 @@ class ZEDModule(Module):
                     # Start publishing world map at 2Hz (like FakeZEDModule)
                     logger.info("[SPATIAL_MAPPING_INIT] Starting world map publishing at 2Hz")
                     self._spatial_map_timer = interval(0.5).subscribe(
-                        lambda _: self._publish_pointcloud()
+                        lambda _: self._publish_pointcloud(Header("world"))
                     )
             else:
                 logger.error("[SPATIAL_MAPPING_INIT] Failed to enable spatial mapping")
