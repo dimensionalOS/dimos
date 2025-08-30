@@ -14,6 +14,7 @@
 
 import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -114,12 +115,14 @@ class SkillContainerConfig:
     skill_transport: type[SkillCommsSpec] = LCMSkillComms
 
 
+_skill_thread_pool = ThreadPoolExecutor(max_workers=50, thread_name_prefix="skill_worker")
+
+
 def threaded(f: Callable[..., Any]) -> Callable[..., None]:
-    """Decorator to run a function in a separate thread."""
+    """Decorator to run a function in a thread pool."""
 
     def wrapper(self, *args, **kwargs):
-        thread = threading.Thread(target=f, args=(self, *args), kwargs=kwargs)
-        thread.start()
+        _skill_thread_pool.submit(f, self, *args, **kwargs)
         return None
 
     return wrapper
