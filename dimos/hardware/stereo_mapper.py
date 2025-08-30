@@ -316,7 +316,6 @@ class StereoMapper:
 
         # Connect lidar input - connect directly to ZED module's pointcloud output
         self.mapper.lidar.connect(self.zed_module.pointcloud_msg)
-        self.mapper.odom.connect(self.zed_module.pose)
 
         mode = "spatial mapping" if self.use_spatial_mapping else "accumulation"
         logger.info(f"✓ Mapping module deployed in {mode} mode and connected to ZED")
