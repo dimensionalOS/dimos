@@ -18,7 +18,7 @@ import pytest
 
 from dimos import core
 from dimos.core import Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3, Quaternion
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.protocol import pubsub
@@ -39,7 +39,7 @@ pubsub.lcm.autoconf()
 class MovementControlModule(Module):
     """Simple module to send movement commands for testing."""
 
-    movecmd: Out[Vector3] = None
+    movecmd: Out[Twist] = None
 
     def __init__(self):
         super().__init__()
@@ -48,7 +48,7 @@ class MovementControlModule(Module):
     @rpc
     def send_move_command(self, x: float, y: float, yaw: float):
         """Send a movement command."""
-        cmd = Vector3(x, y, yaw)
+        cmd = Twist(linear=Vector3(x, y, 0.0), angular=Vector3(0.0, 0.0, yaw))
         self.movecmd.publish(cmd)
         self.commands_sent.append(cmd)
         logger.info(f"Sent move command: x={x}, y={y}, yaw={yaw}")
@@ -102,7 +102,7 @@ class TestUnitreeGo2CoreModules:
             navigator.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
             navigator.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)
             global_planner.path.transport = core.LCMTransport("/global_path", Path)
-            local_planner.cmd_vel.transport = core.LCMTransport("/cmd_vel", Vector3)
+            local_planner.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
 
             # Configure navigation connections
             global_planner.target.connect(navigator.goal)
@@ -118,7 +118,7 @@ class TestUnitreeGo2CoreModules:
 
             # Deploy movement control module for testing
             movement = dimos.deploy(MovementControlModule)
-            movement.movecmd.transport = core.LCMTransport("/test_move", Vector3)
+            movement.movecmd.transport = core.LCMTransport("/test_move", Twist)
             connection.movecmd.connect(movement.movecmd)
 
             # Start all modules

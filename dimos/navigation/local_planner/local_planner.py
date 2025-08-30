@@ -25,7 +25,7 @@ from abc import abstractmethod
 from typing import Optional
 
 from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import Vector3, PoseStamped
+from dimos.msgs.geometry_msgs import Twist, Vector3, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance, quaternion_to_euler, normalize_angle
@@ -52,7 +52,7 @@ class BaseLocalPlanner(Module):
     path: In[Path] = None
 
     # LCM outputs
-    cmd_vel: Out[Vector3] = None
+    cmd_vel: Out[Twist] = None
 
     def __init__(
         self,
@@ -122,7 +122,7 @@ class BaseLocalPlanner(Module):
         while not self.stop_planning.is_set():
             if self.is_goal_reached():
                 self.stop_planning.set()
-                stop_cmd = Vector3(0, 0, 0)
+                stop_cmd = Twist()
                 self.cmd_vel.publish(stop_cmd)
                 break
 
@@ -139,13 +139,13 @@ class BaseLocalPlanner(Module):
             self.cmd_vel.publish(cmd_vel)
 
     @abstractmethod
-    def compute_velocity(self) -> Optional[Vector3]:
+    def compute_velocity(self) -> Optional[Twist]:
         """
         Compute velocity commands based on current costmap, odometry, and path.
         Must be implemented by derived classes.
 
         Returns:
-            Vector3 message with velocity commands x, y, theta, or None if no command
+            Twist message with linear and angular velocity commands, or None if no command
         """
         pass
 
@@ -196,7 +196,7 @@ class BaseLocalPlanner(Module):
             self.stop_planning.set()
             self.planning_thread.join(timeout=1.0)
             self.planning_thread = None
-        stop_cmd = Vector3(0, 0, 0)
+        stop_cmd = Twist()
         self.cmd_vel.publish(stop_cmd)
 
         logger.info("Local planner stopped")

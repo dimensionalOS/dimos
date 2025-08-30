@@ -53,7 +53,7 @@ warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
 image_resize_factor = 1
 originalwidth, originalheight = (1280, 720)
-get_data("unitree_office_walk")
+get_data("unitree_raw_webrtc_replay")
 
 
 class FakeRTC(UnitreeWebRTCConnection):
@@ -76,20 +76,23 @@ class FakeRTC(UnitreeWebRTCConnection):
     @functools.cache
     def raw_lidar_stream(self):
         print("lidar stream start")
-        lidar_store = TimedSensorReplay("unitree_office_walk/lidar")
+        lidar_store = TimedSensorReplay("unitree_raw_webrtc_replay/lidar")
         return lidar_store.stream()
 
     @functools.cache
     def raw_odom_stream(self):
         print("odom stream start")
-        odom_store = TimedSensorReplay("unitree_office_walk/odom")
+        odom_store = TimedSensorReplay("unitree_raw_webrtc_replay/odom")
         return odom_store.stream()
 
     # we don't have raw video stream in the data set
     @functools.cache
     def raw_video_stream(self):
         print("video stream start")
-        video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
+        video_store = TimedSensorReplay(
+            "unitree_raw_webrtc_replay/video",
+            autocast=lambda f: Image.from_numpy(f.to_ndarray() if hasattr(f, "to_ndarray") else f),
+        )
         return video_store.stream()
 
     @functools.cache

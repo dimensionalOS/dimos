@@ -16,7 +16,8 @@ import asyncio
 import functools
 import threading
 import time
-from typing import Literal, TypeAlias
+from dataclasses import dataclass
+from typing import Literal, Optional, TypeAlias
 
 import numpy as np
 from aiortc import MediaStreamTrack
@@ -30,7 +31,7 @@ from reactivex.observable import Observable
 from reactivex.subject import Subject
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import Pose, Transform, Vector3
+from dimos.msgs.geometry_msgs import Pose, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
@@ -38,6 +39,34 @@ from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.reactive import backpressure, callback_to_observable
 
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
+
+
+@dataclass
+class SerializableVideoFrame:
+    """Pickleable wrapper for av.VideoFrame with all metadata"""
+
+    data: np.ndarray
+    pts: Optional[int] = None
+    time: Optional[float] = None
+    dts: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    format: Optional[str] = None
+
+    @classmethod
+    def from_av_frame(cls, frame):
+        return cls(
+            data=frame.to_ndarray(format="rgb24"),
+            pts=frame.pts,
+            time=frame.time,
+            dts=frame.dts,
+            width=frame.width,
+            height=frame.height,
+            format=frame.format.name if hasattr(frame, "format") and frame.format else None,
+        )
+
+    def to_ndarray(self, format=None):
+        return self.data
 
 
 class UnitreeWebRTCConnection:
@@ -79,20 +108,17 @@ class UnitreeWebRTCConnection:
         self.thread.start()
         self.connection_ready.wait()
 
-    def move(self, velocity: Vector3, duration: float = 0.0) -> bool:
-        """Send movement command to the robot using velocity commands.
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:
+        """Send movement command to the robot using Twist commands.
 
         Args:
-            velocity: Velocity vector [x, y, yaw] where:
-                     x: Forward/backward velocity (m/s)
-                     y: Left/right velocity (m/s)
-                     yaw: Rotational velocity (rad/s)
+            twist: Twist message with linear and angular velocities
             duration: How long to move (seconds). If 0, command is continuous
 
         Returns:
             bool: True if command was sent successfully
         """
-        x, y, yaw = velocity.x, velocity.y, velocity.z
+        x, y, yaw = twist.linear.x, twist.linear.y, twist.angular.z
 
         # WebRTC coordinate mapping:
         # x - Positive right, negative left
@@ -237,7 +263,8 @@ class UnitreeWebRTCConnection:
                 if stop_event.is_set():
                     return
                 frame = await track.recv()
-                subject.on_next(frame)
+                serializable_frame = SerializableVideoFrame.from_av_frame(frame)
+                subject.on_next(serializable_frame)
 
         self.conn.video.add_track_callback(accept_track)
 
@@ -247,7 +274,7 @@ class UnitreeWebRTCConnection:
 
         self.loop.call_soon_threadsafe(switch_video_channel)
 
-        def stop(cb):
+        def stop():
             stop_event.set()  # Signal the loop to stop
             self.conn.video.track_callbacks.remove(accept_track)
 
@@ -296,7 +323,7 @@ class UnitreeWebRTCConnection:
         Returns:
             bool: True if stop command was sent successfully
         """
-        return self.move(Vector3(0.0, 0.0, 0.0))
+        return self.move(Twist())
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""
