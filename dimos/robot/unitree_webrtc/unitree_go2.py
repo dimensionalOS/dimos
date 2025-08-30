@@ -203,6 +203,7 @@ class ConnectionModule(Module):
         if self.rectify_image:
             rectified_msg = rectify_image(msg, self.camera_matrix, self.dist_coeffs)
             self._last_image = rectified_msg
+            rectified_msg.frame_id = "camera_link_optical"
             self.video.publish(rectified_msg)
         else:
             self._last_image = msg
