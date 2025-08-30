@@ -37,7 +37,7 @@ class FakeZEDModule(Module):
     """
     Fake ZED module that replays recorded data instead of real camera.
     """
-    
+
     # Define LCM outputs (same as ZEDModule)
     color_image: Out[Image] = None
     depth_image: Out[Image] = None
@@ -53,22 +53,22 @@ class FakeZEDModule(Module):
             frame_id: TF frame ID for messages
         """
         super().__init__(**kwargs)
-        
+
         self.recording_path = recording_path
         self.frame_id = frame_id
         self._running = False
         self._subscriptions = []
-        
+
         # Initialize TF publisher
         self.tf = TF()
-        
+
         logger.info(f"FakeZEDModule initialized with recording: {self.recording_path}")
 
     @functools.cache
     def _get_color_stream(self):
         """Get cached color image stream."""
         logger.info(f"Loading color image stream from {self.recording_path}/color")
-        
+
         def image_autocast(x):
             """Convert raw numpy array to Image."""
             if isinstance(x, np.ndarray):
@@ -76,7 +76,7 @@ class FakeZEDModule(Module):
             elif isinstance(x, Image):
                 return x
             return x
-        
+
         color_replay = TimedSensorReplay(f"{self.recording_path}/color", autocast=image_autocast)
         return color_replay.stream()
 
@@ -84,7 +84,7 @@ class FakeZEDModule(Module):
     def _get_depth_stream(self):
         """Get cached depth image stream."""
         logger.info(f"Loading depth image stream from {self.recording_path}/depth")
-        
+
         def depth_autocast(x):
             """Convert raw numpy array to depth Image."""
             if isinstance(x, np.ndarray):
@@ -93,7 +93,7 @@ class FakeZEDModule(Module):
             elif isinstance(x, Image):
                 return x
             return x
-        
+
         depth_replay = TimedSensorReplay(f"{self.recording_path}/depth", autocast=depth_autocast)
         return depth_replay.stream()
 
@@ -101,12 +101,12 @@ class FakeZEDModule(Module):
     def _get_pose_stream(self):
         """Get cached pose stream."""
         logger.info(f"Loading pose stream from {self.recording_path}/pose")
-        
+
         def pose_autocast(x):
             """Convert raw pose dict to PoseStamped."""
             if isinstance(x, dict):
                 import time
-                
+
                 return PoseStamped(
                     position=x.get("position", [0, 0, 0]),
                     orientation=x.get("rotation", [0, 0, 0, 1]),
@@ -115,7 +115,7 @@ class FakeZEDModule(Module):
             elif isinstance(x, PoseStamped):
                 return x
             return x
-        
+
         pose_replay = TimedSensorReplay(f"{self.recording_path}/pose", autocast=pose_autocast)
         return pose_replay.stream()
 
@@ -123,24 +123,30 @@ class FakeZEDModule(Module):
     def _get_camera_info_stream(self):
         """Get cached camera info stream."""
         logger.info(f"Loading camera info stream from {self.recording_path}/camera_info")
-        
+
         def camera_info_autocast(x):
             """Convert raw camera info dict to CameraInfo message."""
             if isinstance(x, dict):
                 # Extract calibration parameters
                 left_cam = x.get("left_cam", {})
                 resolution = x.get("resolution", {})
-                
+
                 # Create CameraInfo message
                 header = Header(self.frame_id)
-                
+
                 # Create camera matrix K (3x3)
                 K = [
-                    left_cam.get("fx", 0), 0, left_cam.get("cx", 0),
-                    0, left_cam.get("fy", 0), left_cam.get("cy", 0),
-                    0, 0, 1
+                    left_cam.get("fx", 0),
+                    0,
+                    left_cam.get("cx", 0),
+                    0,
+                    left_cam.get("fy", 0),
+                    left_cam.get("cy", 0),
+                    0,
+                    0,
+                    1,
                 ]
-                
+
                 # Distortion coefficients
                 D = [
                     left_cam.get("k1", 0),
@@ -149,17 +155,26 @@ class FakeZEDModule(Module):
                     left_cam.get("p2", 0),
                     left_cam.get("k3", 0),
                 ]
-                
+
                 # Identity rotation matrix
                 R = [1, 0, 0, 0, 1, 0, 0, 0, 1]
-                
+
                 # Projection matrix P (3x4)
                 P = [
-                    left_cam.get("fx", 0), 0, left_cam.get("cx", 0), 0,
-                    0, left_cam.get("fy", 0), left_cam.get("cy", 0), 0,
-                    0, 0, 1, 0
+                    left_cam.get("fx", 0),
+                    0,
+                    left_cam.get("cx", 0),
+                    0,
+                    0,
+                    left_cam.get("fy", 0),
+                    left_cam.get("cy", 0),
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
                 ]
-                
+
                 return CameraInfo(
                     D_length=len(D),
                     header=header,
@@ -176,8 +191,10 @@ class FakeZEDModule(Module):
             elif isinstance(x, CameraInfo):
                 return x
             return x
-        
-        info_replay = TimedSensorReplay(f"{self.recording_path}/camera_info", autocast=camera_info_autocast)
+
+        info_replay = TimedSensorReplay(
+            f"{self.recording_path}/camera_info", autocast=camera_info_autocast
+        )
         return info_replay.stream()
 
     @rpc
@@ -186,11 +203,11 @@ class FakeZEDModule(Module):
         if self._running:
             logger.warning("FakeZEDModule already running")
             return
-        
+
         logger.info("Starting FakeZEDModule replay...")
-        
+
         self._running = True
-        
+
         # Subscribe to all streams and publish
         try:
             # Color image stream
@@ -201,7 +218,7 @@ class FakeZEDModule(Module):
             logger.info("Started color image replay stream")
         except Exception as e:
             logger.warning(f"Color image stream not available: {e}")
-        
+
         try:
             # Depth image stream
             sub = self._get_depth_stream().subscribe(
@@ -211,7 +228,7 @@ class FakeZEDModule(Module):
             logger.info("Started depth image replay stream")
         except Exception as e:
             logger.warning(f"Depth image stream not available: {e}")
-        
+
         try:
             # Pose stream
             sub = self._get_pose_stream().subscribe(
@@ -221,7 +238,7 @@ class FakeZEDModule(Module):
             logger.info("Started pose replay stream")
         except Exception as e:
             logger.warning(f"Pose stream not available: {e}")
-        
+
         try:
             # Camera info stream
             sub = self._get_camera_info_stream().subscribe(
@@ -231,18 +248,18 @@ class FakeZEDModule(Module):
             logger.info("Started camera info replay stream")
         except Exception as e:
             logger.warning(f"Camera info stream not available: {e}")
-        
+
         logger.info("FakeZEDModule replay started")
 
     def _publish_pose(self, msg):
         """Publish pose and TF transform."""
         if msg:
             self.pose.publish(msg)
-            
+
             # Publish TF transform from world to camera
             from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
             import time
-            
+
             transform = Transform(
                 translation=Vector3(*msg.position),
                 rotation=Quaternion(*msg.orientation),
@@ -257,14 +274,14 @@ class FakeZEDModule(Module):
         """Stop replaying data."""
         if not self._running:
             return
-        
+
         self._running = False
-        
+
         # Dispose of all subscriptions
         for sub in self._subscriptions:
             if sub:
                 sub.dispose()
-        
+
         self._subscriptions = []
-        
+
         logger.info("FakeZEDModule stopped")
