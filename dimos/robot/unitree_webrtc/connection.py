@@ -31,7 +31,7 @@ from reactivex.observable import Observable
 from reactivex.subject import Subject
 
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import Pose, Transform, Vector3
+from dimos.msgs.geometry_msgs import Pose, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
@@ -108,20 +108,17 @@ class UnitreeWebRTCConnection:
         self.thread.start()
         self.connection_ready.wait()
 
-    def move(self, velocity: Vector3, duration: float = 0.0) -> bool:
-        """Send movement command to the robot using velocity commands.
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:
+        """Send movement command to the robot using Twist commands.
 
         Args:
-            velocity: Velocity vector [x, y, yaw] where:
-                     x: Forward/backward velocity (m/s)
-                     y: Left/right velocity (m/s)
-                     yaw: Rotational velocity (rad/s)
+            twist: Twist message with linear and angular velocities
             duration: How long to move (seconds). If 0, command is continuous
 
         Returns:
             bool: True if command was sent successfully
         """
-        x, y, yaw = velocity.x, velocity.y, velocity.z
+        x, y, yaw = twist.linear.x, twist.linear.y, twist.angular.z
 
         # WebRTC coordinate mapping:
         # x - Positive right, negative left
@@ -326,7 +323,7 @@ class UnitreeWebRTCConnection:
         Returns:
             bool: True if stop command was sent successfully
         """
-        return self.move(Vector3(0.0, 0.0, 0.0))
+        return self.move(Twist())
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""

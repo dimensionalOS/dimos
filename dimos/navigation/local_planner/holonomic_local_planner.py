@@ -22,7 +22,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.navigation.local_planner import BaseLocalPlanner
 from dimos.utils.transform_utils import quaternion_to_euler, normalize_angle, get_distance
 
@@ -73,12 +73,12 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         # Previous velocity for filtering (vx, vy, vtheta)
         self.v_prev = np.array([0.0, 0.0, 0.0])
 
-    def compute_velocity(self) -> Optional[Vector3]:
+    def compute_velocity(self) -> Optional[Twist]:
         """
         Compute velocity commands using GLAP algorithm.
 
         Returns:
-            Vector3 with x, y velocities in robot frame and z as angular velocity
+            Twist with linear and angular velocities in robot frame
         """
         if self.latest_odom is None or self.latest_path is None or self.latest_costmap is None:
             return None
@@ -151,7 +151,10 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         v_filtered = self.alpha * v_raw + (1 - self.alpha) * self.v_prev
         self.v_prev = v_filtered
 
-        return Vector3(v_filtered[0], v_filtered[1], v_filtered[2])
+        return Twist(
+            linear=Vector3(v_filtered[0], v_filtered[1], 0.0),
+            angular=Vector3(0.0, 0.0, v_filtered[2]),
+        )
 
     def _compute_path_following(self, pose: np.ndarray, path: np.ndarray) -> np.ndarray:
         """
