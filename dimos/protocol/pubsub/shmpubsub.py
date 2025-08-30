@@ -143,7 +143,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         logger.info("SharedMemory PubSub stopped.")
 
     # ----- PubSub API (bytes on the wire) ----------------------------------
-    
+
     def publish(self, topic: str, message: bytes) -> None:
         if not isinstance(message, (bytes, bytearray, memoryview)):
             raise TypeError(f"publish expects bytes-like, got {type(message)!r}")
@@ -173,7 +173,6 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             host[4 : 4 + L] = np.frombuffer(memoryview(payload_bytes), dtype=np.uint8)
 
         st.channel.publish(host)
-
 
     def subscribe(self, topic: str, callback: Callable[[bytes, str], Any]) -> Callable[[], None]:
         """Subscribe a callback(message: bytes, topic). Returns unsubscribe."""
