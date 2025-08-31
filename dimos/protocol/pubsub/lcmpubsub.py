@@ -14,23 +14,15 @@
 
 from __future__ import annotations
 
-import pickle
-import subprocess
-import sys
 import threading
-import traceback
-from dataclasses import dataclass
-from typing import Any, Callable, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Optional
 
 import lcm
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
-from dimos.protocol.service.lcmservice import LCMConfig, LCMService, Topic, autoconf, check_system
-from dimos.protocol.service.spec import Service
-
 
 # Import LCMMsg from lcmservice to avoid duplication
-from dimos.protocol.service.lcmservice import LCMMsg
+from dimos.protocol.service.lcmservice import LCMConfig, LCMMsg, LCMService, Topic, autoconf
 
 
 class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
