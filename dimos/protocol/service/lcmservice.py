@@ -18,11 +18,9 @@ import os
 import subprocess
 import sys
 import threading
-import traceback
-import weakref
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, Callable, Optional, Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 from weakref import WeakSet
 
 import lcm
@@ -87,7 +85,7 @@ def check_buffers() -> tuple[list[str], Optional[int]]:
         current_max = int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
         if not current_max or current_max < 2097152:
             commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
-    except:
+    except Exception:
         commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
 
     try:
@@ -97,7 +95,7 @@ def check_buffers() -> tuple[list[str], Optional[int]]:
         )
         if not current_default or current_default < 2097152:
             commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
-    except:
+    except Exception:
         commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
 
     return commands_needed, current_max
@@ -192,7 +190,6 @@ class LCMConfig(ConfigBase):
     ttl: int = 0
     url: Optional[str] = None
     autoconf: bool = True
-    lcm: Optional[lcm.LCM] = None
 
 
 @runtime_checkable
@@ -245,7 +242,12 @@ class LCMShim:
 
         with cls._lock:
             if url_key not in cls._instances:
+                logger.debug(f"Creating new LCMShim for URL: {url_key or 'default'}")
                 cls._instances[url_key] = cls(url)
+            else:
+                logger.debug(
+                    f"Reusing existing LCMShim for URL: {url_key or 'default'}, running={cls._instances[url_key]._running}"
+                )
             return cls._instances[url_key]
 
     def register_service(self, service: "LCMService") -> None:
@@ -257,10 +259,15 @@ class LCMShim:
 
     def unregister_service(self, service: "LCMService") -> None:
         """Unregister a service. Stops loop if no services remain."""
+        should_stop = False
         with self._lock:
             self._services.discard(service)
             if not self._services and self._running:
-                self._stop_loop()
+                should_stop = True
+
+        # Call _stop_loop outside of lock context to avoid deadlock
+        if should_stop:
+            self._stop_loop()
 
     def _start_loop(self) -> None:
         """Start the shared handle_timeout loop."""
@@ -280,14 +287,15 @@ class LCMShim:
         self._running = False
         self._stop_event.set()
 
-        if self._thread:
+        if self._thread and self._thread != threading.current_thread():
             self._thread.join(timeout=1.0)
             self._thread = None
 
-        # Remove from global instances
+        # Remove this shim instance from the global registry
         url_key = self.url or ""
-        if url_key in self._instances:
-            del self._instances[url_key]
+        with LCMShim._lock:
+            if url_key in LCMShim._instances and LCMShim._instances[url_key] is self:
+                del LCMShim._instances[url_key]
 
     def _loop(self) -> None:
         """Shared LCM message handling loop."""
@@ -301,32 +309,25 @@ class LCMShim:
             # Check if we still have services
             with self._lock:
                 if not self._services:
-                    self._stop_loop()
                     break
+
+        # Cleanup after loop exits
+        # Don't hold lock while modifying class variables to avoid deadlock
+        self._running = False
 
 
 class LCMService(Service[LCMConfig]):
     default_config = LCMConfig
     l: lcm.LCM
-    _shim: Optional[LCMShim]
-    _stop_event: Optional[threading.Event]
-    _thread: Optional[threading.Thread]
+    _shim: LCMShim
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
-        self._stop_event = None
-        self._thread = None
-
-        if self.config.lcm:
-            # If a custom LCM instance is provided, use it directly without shim
-            self.l = self.config.lcm
-            self._shim = None
-        else:
-            # Use the shim for shared LCM instance management
-            self._shim = LCMShim.get_instance(self.config.url)
-            self.l = self._shim.lcm
-            self._shim.register_service(self)
+        # Always use the shim for shared LCM instance management
+        self._shim = LCMShim.get_instance(self.config.url)
+        self.l = self._shim.lcm
+        self._shim.register_service(self)
 
     def start(self):
         if self.config.autoconf:
@@ -336,41 +337,13 @@ class LCMService(Service[LCMConfig]):
                 check_system()
             except Exception as e:
                 print(f"Error checking system configuration: {e}")
-
-        # Shim handles the loop if we're using it
-        # Otherwise, we need our own loop for custom LCM instances
-        if not self._shim and self.config.lcm:
-            self._start_own_loop()
-
-    def _start_own_loop(self):
-        """Start our own loop for custom LCM instances."""
-        self._stop_event = threading.Event()
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
-
-    def _loop(self) -> None:
-        """LCM message handling loop for custom LCM instances."""
-        while not self._stop_event.is_set():
-            try:
-                self.l.handle_timeout(50)
-            except Exception as e:
-                stack_trace = traceback.format_exc()
-                print(f"Error in LCM handling: {e}\n{stack_trace}")
-                if self._stop_event.is_set():
-                    break
+        # Shim handles the loop
 
     def stop(self):
         """Stop the service."""
-        if self._shim:
-            # Unregister from shim - it will stop loop if no services remain
-            self._shim.unregister_service(self)
-        elif hasattr(self, "_stop_event"):
-            # Stop our own loop for custom LCM instances
-            self._stop_event.set()
-            if hasattr(self, "_thread") and self._thread is not None:
-                self._thread.join()
+        # Unregister from shim - it will stop loop if no services remain
+        self._shim.unregister_service(self)
 
     def __del__(self):
         """Ensure cleanup on garbage collection."""
-        if self._shim:
-            self._shim.unregister_service(self)
+        self._shim.unregister_service(self)

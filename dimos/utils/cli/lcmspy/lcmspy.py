@@ -131,7 +131,7 @@ class LCMSpy(LCMService, Topic):
         super().__init__(**kwargs)
         Topic.__init__(self, name="total", history_window=self.config.topic_history_window)
         self.topic = {}
-        self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+        # Use the LCM instance from the parent LCMService (via shim)
 
     def start(self):
         super().start()

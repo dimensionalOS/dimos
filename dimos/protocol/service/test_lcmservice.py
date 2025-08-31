@@ -35,7 +35,7 @@ def get_sudo_prefix() -> str:
 
 def test_check_multicast_all_configured():
     """Test check_multicast when system is properly configured."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
         # Mock successful checks with realistic output format
         mock_run.side_effect = [
             type(
@@ -55,7 +55,7 @@ def test_check_multicast_all_configured():
 
 def test_check_multicast_missing_multicast_flag():
     """Test check_multicast when loopback interface lacks multicast."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
         # Mock interface without MULTICAST flag (realistic current system state)
         mock_run.side_effect = [
             type(
@@ -76,7 +76,7 @@ def test_check_multicast_missing_multicast_flag():
 
 def test_check_multicast_missing_route():
     """Test check_multicast when multicast route is missing."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
         # Mock missing route - interface has multicast but no route
         mock_run.side_effect = [
             type(
@@ -97,7 +97,7 @@ def test_check_multicast_missing_route():
 
 def test_check_multicast_all_missing():
     """Test check_multicast when both multicast flag and route are missing (current system state)."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
         # Mock both missing - matches actual current system state
         mock_run.side_effect = [
             type(
@@ -122,7 +122,7 @@ def test_check_multicast_all_missing():
 
 def test_check_multicast_subprocess_exception():
     """Test check_multicast when subprocess calls fail."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
         # Mock subprocess exceptions
         mock_run.side_effect = Exception("Command failed")
 
@@ -137,7 +137,7 @@ def test_check_multicast_subprocess_exception():
 
 def test_check_buffers_all_configured():
     """Test check_buffers when system is properly configured."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
         # Mock sufficient buffer sizes
         mock_run.side_effect = [
             type("MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0})(),
@@ -153,7 +153,7 @@ def test_check_buffers_all_configured():
 
 def test_check_buffers_low_max_buffer():
     """Test check_buffers when rmem_max is too low."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
         # Mock low rmem_max
         mock_run.side_effect = [
             type("MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0})(),
@@ -170,7 +170,7 @@ def test_check_buffers_low_max_buffer():
 
 def test_check_buffers_low_default_buffer():
     """Test check_buffers when rmem_default is too low."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
         # Mock low rmem_default
         mock_run.side_effect = [
             type("MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0})(),
@@ -187,7 +187,7 @@ def test_check_buffers_low_default_buffer():
 
 def test_check_buffers_both_low():
     """Test check_buffers when both buffer sizes are too low."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
         # Mock both low
         mock_run.side_effect = [
             type("MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0})(),
@@ -208,7 +208,7 @@ def test_check_buffers_both_low():
 
 def test_check_buffers_subprocess_exception():
     """Test check_buffers when subprocess calls fail."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
         # Mock subprocess exceptions
         mock_run.side_effect = Exception("Command failed")
 
@@ -224,7 +224,7 @@ def test_check_buffers_subprocess_exception():
 
 def test_check_buffers_parsing_error():
     """Test check_buffers when output parsing fails."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
         # Mock malformed output
         mock_run.side_effect = [
             type("MockResult", (), {"stdout": "invalid output", "returncode": 0})(),
@@ -243,7 +243,7 @@ def test_check_buffers_parsing_error():
 
 def test_check_buffers_dev_container():
     """Test check_buffers in dev container where sysctl fails."""
-    with patch("dimos.protocol.pubsub.lcmpubsub.subprocess.run") as mock_run:
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
         # Mock dev container behavior - sysctl returns non-zero
         mock_run.side_effect = [
             type(

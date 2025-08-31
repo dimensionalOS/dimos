@@ -359,7 +359,14 @@ class SkillCoordinator(Module):
         should_notify = self._skill_state[msg.call_id].handle_msg(msg)
 
         if should_notify:
-            self._loop.call_soon_threadsafe(self._updates_available.set)
+            try:
+                self._loop.call_soon_threadsafe(self._updates_available.set)
+            except RuntimeError as e:
+                if "Event loop is closed" in str(e):
+                    # Event loop has been closed, ignore the update
+                    pass
+                else:
+                    raise
 
     def has_active_skills(self) -> bool:
         # check if dict is empty

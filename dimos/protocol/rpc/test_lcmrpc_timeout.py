@@ -18,7 +18,7 @@ import time
 import pytest
 
 from dimos.protocol.rpc.lcmrpc import LCMRPC
-from dimos.protocol.service.lcmservice import autoconf
+from dimos.protocol.service.lcmservice import LCMShim, autoconf
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -28,11 +28,22 @@ def setup_lcm_autoconf():
     yield
 
 
+@pytest.fixture(autouse=True)
+def cleanup_lcm_shim():
+    """Clean up LCM shim instances between tests"""
+    yield
+    # Force cleanup of all shim instances
+
+    LCMShim._instances.clear()
+
+
 @pytest.fixture
 def lcm_server():
     """Fixture that provides started LCMRPC server"""
     server = LCMRPC()
     server.start()
+    # Ensure the shim is running
+    assert server._shim._running, "Server shim should be running"
 
     yield server
 
@@ -44,6 +55,8 @@ def lcm_client():
     """Fixture that provides started LCMRPC client"""
     client = LCMRPC()
     client.start()
+    # Ensure the shim is running
+    assert client._shim._running, "Client shim should be running"
 
     yield client
 
@@ -107,6 +120,7 @@ def test_lcmrpc_callback_with_timeout(lcm_server, lcm_client):
     """Test that callback-based RPC calls handle timeouts properly"""
     server = lcm_server
     client = lcm_client
+
     # Track if the function was called
     function_called = threading.Event()
 

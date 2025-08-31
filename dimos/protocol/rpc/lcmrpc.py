@@ -16,13 +16,12 @@ from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
 from dimos.protocol.rpc.pubsubrpc import PassThroughPubSubRPC
 from dimos.protocol.service.lcmservice import LCMConfig
 
-
-class LCMRPCConfig(LCMConfig):
-    url: str = "udpm://239.255.76.67:7669?ttl=0"
+# class LCMRPCConfig(LCMConfig):
+#    url: str = "udpm://239.255.76.67:7669?ttl=0"
 
 
 class LCMRPC(PassThroughPubSubRPC, PickleLCM):
-    default_config = LCMRPCConfig
+    #    default_config = LCMRPCConfig
 
     def topicgen(self, name: str, req_or_res: bool) -> Topic:
         return Topic(topic=f"/rpc/{name}/{'res' if req_or_res else 'req'}")
