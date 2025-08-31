@@ -25,7 +25,7 @@ import cv2
 
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.msgs.geometry_msgs import Twist, Vector3, Pose, Quaternion, Transform
+from dimos.msgs.geometry_msgs import Twist, Vector3, Pose, Quaternion, Transform, PoseStamped
 from dimos_lcm.vision_msgs import Detection3DArray, Detection2DArray
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.std_msgs import String
@@ -35,7 +35,12 @@ from dimos.manipulation.visual_servoing.pbvs import PBVSController
 from dimos.manipulation.visual_servoing.utils import match_detection_by_id
 from dimos.perception.common.utils import find_clicked_detection
 from dimos.protocol.tf import TF
-from dimos.utils.transform_utils import get_distance
+from dimos.utils.transform_utils import (
+    get_distance,
+    yaw_towards_point,
+    euler_to_quaternion,
+    offset_distance,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.manipulation.visual_servoing.mobile_base_pbvs")
@@ -66,6 +71,7 @@ class MobileBasePBVS(Module):
     rgb_image: In[Image] = None
     depth_image: In[Image] = None
     camera_info: In[CameraInfo] = None
+    odom: In[PoseStamped] = None
 
     # LCM outputs
     viz_image: Out[Image] = None
@@ -84,6 +90,7 @@ class MobileBasePBVS(Module):
         target_tolerance: float = 0.2,  # 20cm tolerance
         min_confidence: float = 0.5,
         camera_frame_id: str = "camera_link",
+        base_frame_id: str = "base_link",
         track_frame_id: str = "world",
         tracking_loss_timeout: float = 2.0,
         **kwargs,
@@ -103,6 +110,7 @@ class MobileBasePBVS(Module):
         # Frame IDs
         self.camera_frame_id = camera_frame_id
         self.track_frame_id = track_frame_id
+        self.base_frame_id = base_frame_id
         self.target_frame_id = "target"
 
         # Initialize components
@@ -126,6 +134,7 @@ class MobileBasePBVS(Module):
         # Sensor data
         self.latest_rgb = None
         self.latest_depth = None
+        self.latest_odom = None
         self.camera_intrinsics = None
         self.last_detections_3d = None
         self.last_detections_2d = None
@@ -143,6 +152,7 @@ class MobileBasePBVS(Module):
         self.rgb_image.subscribe(self._on_rgb_image)
         self.depth_image.subscribe(self._on_depth_image)
         self.camera_info.subscribe(self._on_camera_info)
+        self.odom.subscribe(self._on_odom)
         logger.info("Mobile base PBVS module started")
 
     @rpc
@@ -226,8 +236,13 @@ class MobileBasePBVS(Module):
                 camera_intrinsics=self.camera_intrinsics,
                 min_confidence=self.min_confidence,
                 max_depth=self.max_detection_distance,
+                max_object_size=5.0,
             )
             logger.info("Initialized detector with new camera intrinsics")
+
+    def _on_odom(self, msg: PoseStamped):
+        """Handle odometry messages."""
+        self.latest_odom = msg
 
     def _select_target(self, x: int, y: int) -> bool:
         """Select target object at given coordinates."""
@@ -273,11 +288,11 @@ class MobileBasePBVS(Module):
                             self._reset_tracking_state()
                             break
 
-                # Compute and send velocity commands
-                self._compute_and_send_commands()
-
                 # Publish target TF
                 self._publish_target_tf()
+
+                # Compute and send velocity commands
+                self._compute_and_send_commands()
 
                 # Publish visualization
                 self._publish_visualization()
@@ -359,7 +374,7 @@ class MobileBasePBVS(Module):
             distance = get_distance(self.target_object.bbox.center, detection.bbox.center)
 
             # Update best match if within tracking threshold
-            if distance < min_distance and distance < 0.2:  # 30cm tracking threshold
+            if distance < min_distance and distance < 0.3:  # 30cm tracking threshold
                 min_distance = distance
                 best_match = detection
 
@@ -372,41 +387,44 @@ class MobileBasePBVS(Module):
 
     def _compute_and_send_commands(self):
         """Compute and send velocity commands to mobile base."""
-        if not self.target_object or not self.is_tracking:
+        if not self.target_object or not self.is_tracking or self.latest_odom is None:
             self._send_zero_velocity()
             return
 
-        # Create virtual end-effector pose at robot base
+        # Use robot origin as end-effector pose
         ee_pose = Pose(position=Vector3(0, 0, 0), orientation=Quaternion(0, 0, 0, 1))
 
-        # Create target pose at desired distance
-        target_pos = self.target_object.bbox.center.position
-        target_direction = np.array([target_pos.x, target_pos.y, 0])  # Project to XY plane
-        target_norm = np.linalg.norm(target_direction)
+        try:
+            target_transform_in_base_frame = self.tf.get(
+                parent_frame=self.base_frame_id,
+                child_frame=self.target_frame_id,
+                time_point=self.latest_odom.ts,
+                time_tolerance=0.5,
+            )
+        except Exception as e:
+            logger.error(f"Error getting target pose: {e}")
+            return
 
-        if target_norm > 0:
-            target_direction = target_direction / target_norm * self.target_distance
-
-        target_pose = Pose(
-            position=Vector3(target_direction[0], target_direction[1], 0),
-            orientation=Quaternion(0, 0, 0, 1),
+        # Use target object position as target pose
+        target_pose = target_transform_in_base_frame.to_pose()
+        retracted_pose = offset_distance(
+            target_pose, self.target_distance, approach_vector=Vector3(-1, 0, 0)
         )
-
         # Compute control commands
-        linear_vel, angular_vel, _ = self.controller.compute_control(ee_pose, target_pose)
+        linear_vel, angular_vel, _ = self.controller.compute_control(ee_pose, retracted_pose)
 
         if linear_vel and angular_vel:
             # Convert to mobile base commands (only use x linear and z angular)
-            twist = Twist(linear=Vector3(linear_vel.x, 0, 0), angular=Vector3(0, 0, angular_vel.z))
-
-            if self.cmd_vel:
-                self.cmd_vel.publish(twist)
+            twist = Twist(
+                linear=Vector3(linear_vel.x, linear_vel.y, 0), angular=Vector3(0, 0, angular_vel.z)
+            )
+            print(f"Linear velocity: {linear_vel}, Angular velocity: {angular_vel}")
+            self.cmd_vel.publish(twist)
 
     def _send_zero_velocity(self):
         """Send zero velocity command to stop robot."""
-        if self.cmd_vel:
-            twist = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0))
-            self.cmd_vel.publish(twist)
+        twist = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0))
+        self.cmd_vel.publish(twist)
 
     def _publish_visualization(self):
         """Publish visualization image with tracking overlay."""
@@ -455,13 +473,16 @@ class MobileBasePBVS(Module):
             return
 
         try:
-            # Get target position in base frame
-            target_pos = self.target_object.bbox.center.position
-
-            # Create transform from base to target (following object_tracker.py pattern)
+            # Calculate target orientation: facing towards the object from robot position
+            target_yaw = yaw_towards_point(
+                self.target_object.bbox.center.position, self.latest_odom.position
+            )
+            target_euler = Vector3(0.0, 0.0, target_yaw)  # Only yaw, no roll/pitch
+            target_orientation = euler_to_quaternion(target_euler)
+            self.target_object.bbox.center.orientation = target_orientation
             target_tf = Transform(
-                translation=Vector3(target_pos.x, target_pos.y, target_pos.z),
-                rotation=Quaternion(0, 0, 0, 1),  # Identity rotation
+                translation=self.target_object.bbox.center.position,
+                rotation=self.target_object.bbox.center.orientation,
                 frame_id=self.track_frame_id,  # Parent frame
                 child_frame_id=self.target_frame_id,  # Child frame
                 ts=time.time(),
