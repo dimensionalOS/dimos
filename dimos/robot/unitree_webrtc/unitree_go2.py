@@ -42,6 +42,7 @@ from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.utils.monitoring import UtilizationModule
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
@@ -341,6 +342,7 @@ class UnitreeGo2(Robot):
         self.spatial_memory_module = None
         self.depth_module = None
         self.object_tracker = None
+        self.utilization_module = None
 
         self._setup_directories()
 
@@ -380,6 +382,10 @@ class UnitreeGo2(Robot):
 
         logger.info("UnitreeGo2 initialized and started")
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
+
+    def stop(self):
+        # this.utilization_module.stop()
+        pass
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
@@ -490,6 +496,8 @@ class UnitreeGo2(Robot):
             frame_id="camera_link",
         )
 
+        self.utilization_module = self.dimos.deploy(UtilizationModule)
+
         # Set up transports
         self.object_tracker.detection2darray.transport = core.LCMTransport(
             "/go2/detection2d", Detection2DArray
@@ -535,6 +543,7 @@ class UnitreeGo2(Robot):
         self.spatial_memory_module.start()
         self.depth_module.start()
         self.object_tracker.start()
+        self.utilization_module.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
