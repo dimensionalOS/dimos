@@ -17,7 +17,6 @@
 import time
 from abc import abstractmethod
 from collections import deque
-from dataclasses import dataclass, field
 from functools import reduce
 from typing import Optional, TypeVar, Union
 
@@ -26,14 +25,14 @@ from dimos.msgs.tf2_msgs import TFMessage
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.lcmservice import Service
+from dimos.protocol.service.spec import ConfigBase
 from dimos.types.timestamped import TimestampedCollection
 
 CONFIG = TypeVar("CONFIG")
 
 
 # generic configuration for transform service
-@dataclass
-class TFConfig:
+class TFConfig(ConfigBase):
     buffer_size: float = 10.0  # seconds
     rate_limit: float = 10.0  # Hz
 
@@ -266,7 +265,6 @@ class MultiTBuffer:
         return "\n".join(lines)
 
 
-@dataclass
 class PubSubTFConfig(TFConfig):
     topic: Optional[Topic] = None  # Required field but needs default for dataclass inheritance
     pubsub: Union[type[PubSub], PubSub, None] = None
@@ -329,11 +327,15 @@ class PubSubTF(MultiTBuffer, TFSpec):
         self.receive_tfmessage(msg)
 
 
-@dataclass
 class LCMPubsubConfig(PubSubTFConfig):
-    topic: Topic = field(default_factory=lambda: Topic("/tf", TFMessage))
+    topic: Topic = None  # Will be set in __init__
     pubsub: Union[type[PubSub], PubSub, None] = LCM
     autostart: bool = True
+
+    def __init__(self, **kwargs):
+        if "topic" not in kwargs:
+            kwargs["topic"] = Topic("/tf", TFMessage)
+        super().__init__(**kwargs)
 
 
 class LCMTF(PubSubTF):

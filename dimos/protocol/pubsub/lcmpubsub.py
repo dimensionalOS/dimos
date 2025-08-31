@@ -25,33 +25,12 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 import lcm
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
-from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf, check_system
+from dimos.protocol.service.lcmservice import LCMConfig, LCMService, Topic, autoconf, check_system
 from dimos.protocol.service.spec import Service
 
 
-@runtime_checkable
-class LCMMsg(Protocol):
-    msg_name: str
-
-    @classmethod
-    def lcm_decode(cls, data: bytes) -> "LCMMsg":
-        """Decode bytes into an LCM message instance."""
-        ...
-
-    def lcm_encode(self) -> bytes:
-        """Encode this message instance into bytes."""
-        ...
-
-
-@dataclass
-class Topic:
-    topic: str = ""
-    lcm_type: Optional[type[LCMMsg]] = None
-
-    def __str__(self) -> str:
-        if self.lcm_type is None:
-            return self.topic
-        return f"{self.topic}#{self.lcm_type.msg_name}"
+# Import LCMMsg from lcmservice to avoid duplication
+from dimos.protocol.service.lcmservice import LCMMsg
 
 
 class LCMPubSubBase(LCMService, PubSub[Topic, Any]):

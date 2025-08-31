@@ -16,7 +16,6 @@ import asyncio
 import json
 import time
 from copy import copy
-from dataclasses import dataclass
 from enum import Enum
 from typing import Any, List, Literal, Optional, Union
 
@@ -33,6 +32,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from dimos.protocol.service.spec import ConfigBase
+
 from dimos.core import rpc
 from dimos.core.module import get_loop
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
@@ -43,8 +44,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger("dimos.protocol.skill.coordinator")
 
 
-@dataclass
-class SkillCoordinatorConfig:
+class SkillCoordinatorConfig(ConfigBase):
     skill_transport: type[SkillCommsSpec] = LCMSkillComms
 
 

@@ -14,12 +14,12 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass
 from typing import Callable, Generic, Optional, TypeVar, Union
 
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service import Service
+from dimos.protocol.service.spec import ConfigBase
 from dimos.protocol.skill.type import SkillMsg
 
 # defines a protocol for communication between skills and agents
@@ -44,8 +44,7 @@ MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")
 
 
-@dataclass
-class PubSubCommsConfig(Generic[TopicT, MsgT]):
+class PubSubCommsConfig(ConfigBase, Generic[TopicT, MsgT]):
     topic: Optional[TopicT] = None
     pubsub: Union[type[PubSub[TopicT, MsgT]], PubSub[TopicT, MsgT], None] = None
     autostart: bool = True
@@ -82,7 +81,6 @@ class PubSubComms(Service[PubSubCommsConfig], SkillCommsSpec):
         self.pubsub.subscribe(self.config.topic, lambda msg, topic: cb(msg))
 
 
-@dataclass
 class LCMCommsConfig(PubSubCommsConfig[str, SkillMsg]):
     topic: str = "/skill"
     pubsub: Union[type[PubSub], PubSub, None] = PickleLCM

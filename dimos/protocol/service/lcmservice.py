@@ -25,7 +25,7 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 import lcm
 
-from dimos.protocol.service.spec import Service
+from dimos.protocol.service.spec import ConfigBase, Service
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.protocol.service.lcmservice")
@@ -186,10 +186,9 @@ def autoconf() -> None:
     logger.info("System configuration completed.")
 
 
-@dataclass
-class LCMConfig:
+class LCMConfig(ConfigBase):
     ttl: int = 0
-    url: str | None = None
+    url: Optional[str] = None
     autoconf: bool = True
     lcm: Optional[lcm.LCM] = None
 
@@ -228,6 +227,7 @@ class LCMService(Service[LCMConfig]):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
+        print("LCMSERVICE INIT", self.config.url)
         # we support passing an existing LCM instance
         if self.config.lcm:
             self.l = self.config.lcm

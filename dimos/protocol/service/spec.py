@@ -13,10 +13,28 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import Generic, Type, TypeVar
+from typing import Any, Dict, Generic, Type, TypeVar
 
 # Generic type for service configuration
 ConfigT = TypeVar("ConfigT")
+
+
+class ConfigBase:
+    """Base class for configuration that supports inheritance and field overrides."""
+
+    def __init__(self, **kwargs):
+        # Get all class attributes that aren't methods or special attributes
+        for key, value in self.__class__.__dict__.items():
+            if not key.startswith("_") and not callable(value):
+                setattr(self, key, value)
+
+        # Override with any provided kwargs
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+    def __repr__(self):
+        attrs = {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+        return f"{self.__class__.__name__}({', '.join(f'{k}={v!r}' for k, v in attrs.items())})"
 
 
 class Configurable(Generic[ConfigT]):

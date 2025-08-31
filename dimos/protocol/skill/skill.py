@@ -15,10 +15,10 @@
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 # from dimos.core.core import rpc
+from dimos.protocol.service.spec import ConfigBase
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.schema import function_to_schema
 from dimos.protocol.skill.type import (
@@ -110,8 +110,7 @@ def skill(
     return decorator
 
 
-@dataclass
-class SkillContainerConfig:
+class SkillContainerConfig(ConfigBase):
     skill_transport: type[SkillCommsSpec] = LCMSkillComms
 
 

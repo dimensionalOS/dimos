@@ -15,7 +15,6 @@
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
 from enum import Enum
 
 import lcm
@@ -118,7 +117,6 @@ class Topic:
         return f"topic({self.name})"
 
 
-@dataclass
 class LCMSpyConfig(LCMConfig):
     topic_history_window: float = 60.0
 
@@ -168,7 +166,6 @@ class GraphTopic(Topic):
         self.bandwidth_history.append(kbps)
 
 
-@dataclass
 class GraphLCMSpyConfig(LCMSpyConfig):
     graph_log_window: float = 1.0
 

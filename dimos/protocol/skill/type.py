@@ -14,10 +14,10 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Generic, Literal, Optional, TypeVar
 
+from dimos.protocol.service.spec import ConfigBase
 from dimos.types.timestamped import Timestamped
 
 # This file defines protocol messages used for communication between skills and agents
@@ -49,15 +49,14 @@ class Return(Enum):
     callback = 3  # TODO: this is a work in progress, not implemented yet
 
 
-@dataclass
-class SkillConfig:
+class SkillConfig(ConfigBase):
     name: str
     reducer: "ReducerF"
     stream: Stream
     ret: Return
     output: Output
     schema: dict[str, Any]
-    f: Callable | None = None
+    f: Optional[Callable] = None
     autostart: bool = False
 
     def bind(self, f: Callable) -> "SkillConfig":

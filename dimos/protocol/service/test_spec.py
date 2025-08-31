@@ -14,15 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
-
 from typing_extensions import TypedDict
 
-from dimos.protocol.service.spec import Service
+from dimos.protocol.service.spec import ConfigBase, Service
 
 
-@dataclass
-class DatabaseConfig:
+class DatabaseConfig(ConfigBase):
     host: str = "localhost"
     port: int = 5432
     database_name: str = "test_db"
@@ -87,7 +84,6 @@ def test_complete_configuration_override():
 
 
 def test_service_subclassing():
-    @dataclass
     class ExtraConfig(DatabaseConfig):
         extra_param: str = "default_value"
 

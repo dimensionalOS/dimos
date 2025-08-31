@@ -16,21 +16,24 @@ import json
 import threading
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List
 
 import redis
 
 from dimos.protocol.pubsub.spec import PubSub
-from dimos.protocol.service.spec import Service
+from dimos.protocol.service.spec import ConfigBase, Service
 
 
-@dataclass
-class RedisConfig:
+class RedisConfig(ConfigBase):
     host: str = "localhost"
     port: int = 6379
     db: int = 0
-    kwargs: Dict[str, Any] = field(default_factory=dict)
+    kwargs: Dict[str, Any] = None
+
+    def __init__(self, **kwargs_dict):
+        if "kwargs" not in kwargs_dict:
+            kwargs_dict["kwargs"] = {}
+        super().__init__(**kwargs_dict)
 
 
 class Redis(PubSub[str, Any], Service[RedisConfig]):
