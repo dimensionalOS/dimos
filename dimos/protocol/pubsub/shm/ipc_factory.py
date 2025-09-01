@@ -116,26 +116,48 @@ def _safe_unlink(name):
 # 2) CPU shared-memory backend
 # ---------------------------
 
-
 class CpuShmChannel(FrameChannel):
-    def __init__(self, shape, dtype=np.uint8):
+    def __init__(self, shape, dtype=np.uint8, *, data_name=None, ctrl_name=None):
         self._shape = tuple(shape)
         self._dtype = np.dtype(dtype)
         self._nbytes = int(self._dtype.itemsize * np.prod(self._shape))
 
-        # Create two buffers back-to-back + tiny control block
-        self._shm_data = SharedMemory(create=True, size=2 * self._nbytes)
-        self._shm_ctrl = SharedMemory(create=True, size=24)
-        self._ctrl = np.ndarray((3,), dtype=np.int64, buffer=self._shm_ctrl.buf)
-        self._ctrl[:] = 0
+        def _create_or_open(name, size):
+            try:
+                shm = SharedMemory(create=True, size=size, name=name)
+                owner = True
+            except FileExistsError:
+                shm = SharedMemory(name=name)   # attach existing
+                owner = False
+            return shm, owner
 
-        # Owner-only finalizers (in case close() isn’t called)
-        self._finalizer_data = (
-            weakref.finalize(self, _safe_unlink, self._shm_data.name) if _UNLINK_ON_GC else None
-        )
-        self._finalizer_ctrl = (
-            weakref.finalize(self, _safe_unlink, self._shm_ctrl.name) if _UNLINK_ON_GC else None
-        )
+        if data_name is None or ctrl_name is None:
+            # fallback: random names (old behavior)
+            self._shm_data = SharedMemory(create=True, size=2 * self._nbytes)
+            self._shm_ctrl = SharedMemory(create=True, size=24)
+            self._is_owner = True
+        else:
+            self._shm_data, own_d = _create_or_open(data_name, 2 * self._nbytes)
+            self._shm_ctrl, own_c = _create_or_open(ctrl_name, 24)
+            self._is_owner = own_d and own_c
+
+        self._ctrl = np.ndarray((3,), dtype=np.int64, buffer=self._shm_ctrl.buf)
+        if self._is_owner:
+            self._ctrl[:] = 0  # initialize only once
+
+        # only owners set unlink finalizers (beware cross-process timing)
+        self._finalizer_data = weakref.finalize(self, _safe_unlink, self._shm_data.name) if (_UNLINK_ON_GC and self._is_owner) else None
+        self._finalizer_ctrl = weakref.finalize(self, _safe_unlink, self._shm_ctrl.name) if (_UNLINK_ON_GC and self._is_owner) else None
+
+    def descriptor(self):
+        return {
+            "kind": "cpu",
+            "shape": self._shape,
+            "dtype": self._dtype.str,
+            "nbytes": self._nbytes,
+            "data_name": self._shm_data.name,
+            "ctrl_name": self._shm_ctrl.name,
+        }
 
     @property
     def device(self):

@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import struct
 import threading
@@ -30,7 +31,7 @@ from typing import Any, Callable, Dict, Optional
 import numpy as np
 
 from dimos.protocol.pubsub.spec import PubSub, PubSubEncoderMixin, PickleEncoderMixin
-from dimos.protocol.pubsub.shm.ipc_factory import CPU_IPC_Factory
+from dimos.protocol.pubsub.shm.ipc_factory import CpuShmChannel, CPU_IPC_Factory
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.protocol.pubsub.sharedmemory")
@@ -154,6 +155,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         payload_bytes = bytes(message)
         L = len(payload_bytes)
         if L > st.capacity:
+            logger.error(f"Payload too large: {L} > capacity {st.capacity}")
             raise ValueError(f"Payload too large: {L} > capacity {st.capacity}")
 
         # Mark this payload to suppress its single echo (handles back-to-back publishes)
@@ -164,6 +166,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             try:
                 cb(payload_bytes, topic)
             except Exception:
+                logger.warn(f"Payload couldn't be pushed to topic: {topic}")
                 pass
 
         # Build host frame [len:4] + payload and publish
@@ -232,7 +235,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         st.capacity = new_cap
         st.shape = new_shape
         st.dtype = np.uint8
-        st.last_seq = 0
+        st.last_seq = -1
         return desc
 
     # ----- Internals --------------------------------------------------------
@@ -240,20 +243,17 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
     def _ensure_topic(self, topic: str) -> _TopicState:
         with self._lock:
             st = self._topics.get(topic)
-            if st is not None:
-                return st
+            if st is not None: return st
+            cap = int(self.config.default_capacity)
+            
+            def _names_for_topic(topic: str, capacity: int) -> tuple[str, str]:
+                # Python’s SharedMemory requires names without a leading '/'
+                h = hashlib.blake2b(f"{topic}:{capacity}".encode(), digest_size=12).hexdigest()
+                return f"psm_{h}_data", f"psm_{h}_ctrl"
 
-            prefer = (os.getenv("DIMOS_IPC_BACKEND") or self.config.prefer or "auto").lower()
-            shape = (int(self.config.default_capacity) + 4,)
-            dtype = np.uint8
-
-            cp_mod = None
-            # TODO: implement the CUDA version of this
-            ch = CPU_IPC_Factory.create(shape, dtype=dtype)
-            logger.info("SharedMemory using CPU backend")
-
-            # TODO: CUDA needs to be specified in this once we enable it
-            st = SharedMemoryPubSubBase._TopicState(ch, int(self.config.default_capacity), cp_mod)
+            data_name, ctrl_name = _names_for_topic(topic, cap)
+            ch = CpuShmChannel((cap + 4,), np.uint8, data_name=data_name, ctrl_name=ctrl_name)
+            st = SharedMemoryPubSubBase._TopicState(ch, cap, None)
             self._topics[topic] = st
             return st
 
