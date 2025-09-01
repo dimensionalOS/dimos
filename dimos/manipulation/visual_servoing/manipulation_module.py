@@ -651,7 +651,8 @@ class ManipulationModule(Module):
             self.reset_to_idle()
             return False
 
-        if is_target_reached(target_pose, ee_pose, self.pbvs.target_tolerance):
+        _, target_reached = is_target_reached(target_pose, ee_pose, self.pbvs.target_tolerance)
+        if target_reached:
             self.waiting_for_reach = False
             self.waiting_start_time = None
             self.stuck_count = 0
@@ -721,10 +722,8 @@ class ManipulationModule(Module):
             return
         dynamic_pitch = self.calculate_dynamic_grasp_pitch(self.pbvs.current_target.bbox.center)
 
-        _, _, _, has_target, target_pose = self.pbvs.compute_control(
-            ee_pose, self.pregrasp_distance, dynamic_pitch
-        )
-        if target_pose and has_target:
+        target_pose = self.pbvs.compute_control(ee_pose, self.pregrasp_distance, dynamic_pitch)
+        if target_pose:
             # Validate target pose is within workspace
             if not self.check_within_workspace(target_pose):
                 self.task_failed = True
@@ -770,11 +769,9 @@ class ManipulationModule(Module):
             ee_pose = self._get_ee_pose()
             if not ee_pose:
                 return
-            _, _, _, has_target, target_pose = self.pbvs.compute_control(
-                ee_pose, grasp_distance, dynamic_pitch
-            )
+            target_pose = self.pbvs.compute_control(ee_pose, grasp_distance, dynamic_pitch)
 
-            if target_pose and has_target:
+            if target_pose:
                 # Validate grasp pose is within workspace
                 if not self.check_within_workspace(target_pose):
                     self.task_failed = True

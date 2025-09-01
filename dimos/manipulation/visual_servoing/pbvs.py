@@ -18,10 +18,10 @@ Supports both eye-in-hand and eye-to-hand configurations.
 """
 
 import numpy as np
-from typing import Optional, Tuple, List
+from typing import Optional, Union
 from collections import deque
 from scipy.spatial.transform import Rotation as R
-from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion, Twist
 from dimos_lcm.vision_msgs import Detection3D, Detection3DArray
 from dimos.utils.logging_config import setup_logger
 from dimos.manipulation.visual_servoing.utils import (
@@ -213,25 +213,23 @@ class PBVS:
         ee_pose: Pose,
         grasp_distance: float = 0.15,
         grasp_pitch_degrees: float = 45.0,
-    ) -> Tuple[Optional[Vector3], Optional[Vector3], bool, bool, Optional[Pose]]:
+    ) -> Optional[Union[Twist, Pose]]:
         """
         Compute PBVS control with position and orientation servoing.
 
         Args:
             ee_pose: Current end-effector pose
             grasp_distance: Distance to maintain from target (meters)
+            grasp_pitch_degrees: Grasp pitch angle in degrees
 
         Returns:
-            Tuple of (velocity_command, angular_velocity_command, target_reached, has_target, target_pose)
-            - velocity_command: Linear velocity vector or None if no target (None in direct_ee_control mode)
-            - angular_velocity_command: Angular velocity vector or None if no target (None in direct_ee_control mode)
-            - target_reached: True if within target tolerance
-            - has_target: True if currently tracking a target
-            - target_pose: Target EE pose (only in direct_ee_control mode, otherwise None)
+            - If direct_ee_control=True: Target Pose for end-effector
+            - If direct_ee_control=False: Twist command with velocities
+            - Returns None if no target
         """
         # Check if we have a target
         if not self.current_target:
-            return None, None, False, False, None
+            return None
 
         # Update target grasp pose with provided distance and pitch
         self.target_grasp_pose = update_target_grasp_pose(
@@ -240,35 +238,19 @@ class PBVS:
 
         if self.target_grasp_pose is None:
             logger.warning("Failed to compute grasp pose")
-            return None, None, False, False, None
+            return None
 
-        # Compute errors for visualization before checking if reached (in case pose gets cleared)
-        if self.direct_ee_control and self.target_grasp_pose:
-            self.last_position_error = Vector3(
-                self.target_grasp_pose.position.x - ee_pose.position.x,
-                self.target_grasp_pose.position.y - ee_pose.position.y,
-                self.target_grasp_pose.position.z - ee_pose.position.z,
-            )
+        self.last_position_error, self.last_target_reached = is_target_reached(
+            self.target_grasp_pose, ee_pose, self.target_tolerance
+        )
 
-        # Check if target reached using our separate function
-        target_reached = is_target_reached(self.target_grasp_pose, ee_pose, self.target_tolerance)
-
-        # Return appropriate values based on control mode
         if self.direct_ee_control:
-            # Direct control mode
-            if self.target_grasp_pose:
-                self.last_target_reached = target_reached
-                # Return has_target=True since we have a target
-                return None, None, target_reached, True, self.target_grasp_pose
-            else:
-                return None, None, False, True, None
+            # Direct control mode - return target pose
+            return self.target_grasp_pose
         else:
             # Velocity control mode - use controller
-            velocity_cmd, angular_velocity_cmd, controller_reached = (
-                self.controller.compute_control(ee_pose, self.target_grasp_pose)
-            )
-            # Return has_target=True since we have a target, regardless of tracking status
-            return velocity_cmd, angular_velocity_cmd, target_reached, True, None
+            twist_cmd = self.controller.compute_control(ee_pose, self.target_grasp_pose)
+            return twist_cmd
 
     def create_status_overlay(
         self,
@@ -350,9 +332,7 @@ class PBVSController:
         self.last_angular_velocity_cmd = None
         self.last_target_reached = False
 
-    def compute_control(
-        self, ee_pose: Pose, grasp_pose: Pose
-    ) -> Tuple[Optional[Vector3], Optional[Vector3], bool]:
+    def compute_control(self, ee_pose: Pose, grasp_pose: Pose) -> Optional[Twist]:
         """
         Compute PBVS control with position and orientation servoing.
 
@@ -361,10 +341,7 @@ class PBVSController:
             grasp_pose: Target grasp pose
 
         Returns:
-            Tuple of (velocity_command, angular_velocity_command, target_reached)
-            - velocity_command: Linear velocity vector
-            - angular_velocity_command: Angular velocity vector
-            - target_reached: True if within target tolerance
+            Twist message with linear and angular velocities
         """
         # Calculate position error (target - EE position)
         error = Vector3(
@@ -396,12 +373,10 @@ class PBVSController:
         # Compute angular velocity for orientation control
         angular_velocity_cmd = self._compute_angular_velocity(grasp_pose.orientation, ee_pose)
 
-        # Check if target reached
-        error_magnitude = np.linalg.norm([error.x, error.y, error.z])
-        target_reached = bool(error_magnitude < self.target_tolerance)
-        self.last_target_reached = target_reached
+        # Create Twist message
+        twist_cmd = Twist(linear=velocity_cmd, angular=angular_velocity_cmd)
 
-        return velocity_cmd, angular_velocity_cmd, target_reached
+        return twist_cmd
 
     def _compute_angular_velocity(self, target_rot: Quaternion, current_pose: Pose) -> Vector3:
         """

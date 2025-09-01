@@ -266,7 +266,9 @@ def update_target_grasp_pose(
         return updated_pose
 
 
-def is_target_reached(target_pose: Pose, current_pose: Pose, tolerance: float = 0.01) -> bool:
+def is_target_reached(
+    target_pose: Pose, current_pose: Pose, tolerance: float = 0.01
+) -> Tuple[float, bool]:
     """
     Check if the target pose has been reached within tolerance.
 
@@ -276,11 +278,14 @@ def is_target_reached(target_pose: Pose, current_pose: Pose, tolerance: float = 
         tolerance: Distance threshold for considering target reached (meters, default 0.01 = 1cm)
 
     Returns:
-        True if target is reached within tolerance, False otherwise
+        Tuple of (error_magnitude, target_reached):
+            - error_magnitude: Distance to target in meters
+            - target_reached: True if target is reached within tolerance
     """
     # Calculate position error using distance utility
     error_magnitude = get_distance(target_pose, current_pose)
-    return error_magnitude < tolerance
+    target_reached = error_magnitude < tolerance
+    return error_magnitude, target_reached
 
 
 @dataclass

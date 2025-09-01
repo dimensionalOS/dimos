@@ -32,7 +32,7 @@ from dimos_lcm.std_msgs import String
 
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.manipulation.visual_servoing.pbvs import PBVSController
-from dimos.manipulation.visual_servoing.utils import match_detection_by_id
+from dimos.manipulation.visual_servoing.utils import match_detection_by_id, is_target_reached
 from dimos.perception.common.utils import find_clicked_detection
 from dimos.protocol.tf import TF
 from dimos.utils.transform_utils import (
@@ -130,6 +130,7 @@ class MobileBasePBVS(Module):
         self.last_detection_time = None
         self.tracking_thread = None
         self.stop_event = threading.Event()
+        self.last_error_magnitude = None
 
         # Sensor data
         self.latest_rgb = None
@@ -206,6 +207,16 @@ class MobileBasePBVS(Module):
 
         # Stop robot
         self._send_zero_velocity()
+
+        # Publish zero transform for target
+        target_tf = Transform(
+            translation=Vector3(0, 0, 0),
+            rotation=Quaternion(0, 0, 0, 1),
+            frame_id=self.track_frame_id,
+            child_frame_id=self.base_frame_id,
+            ts=time.time(),
+        )
+        self.tf.publish(target_tf)
 
         # Clear state
         self.target_object = None
@@ -334,6 +345,10 @@ class MobileBasePBVS(Module):
                 time_tolerance=0.2,
             )
 
+            if not transform:
+                logger.warning("No transform available")
+                return
+
             # Process frame with numpy arrays
             # Detection3DProcessor will convert from optical to robot frame internally
             if self.latest_depth.format == ImageFormat.DEPTH16:
@@ -387,10 +402,6 @@ class MobileBasePBVS(Module):
 
     def _compute_and_send_commands(self):
         """Compute and send velocity commands to mobile base."""
-        if not self.target_object or not self.is_tracking or self.latest_odom is None:
-            self._send_zero_velocity()
-            return
-
         # Use robot origin as end-effector pose
         ee_pose = Pose(position=Vector3(0, 0, 0), orientation=Quaternion(0, 0, 0, 1))
 
@@ -410,16 +421,28 @@ class MobileBasePBVS(Module):
         retracted_pose = offset_distance(
             target_pose, self.target_distance, approach_vector=Vector3(-1, 0, 0)
         )
-        # Compute control commands
-        linear_vel, angular_vel, _ = self.controller.compute_control(ee_pose, retracted_pose)
 
-        if linear_vel and angular_vel:
-            # Convert to mobile base commands (only use x linear and z angular)
-            twist = Twist(
-                linear=Vector3(linear_vel.x, linear_vel.y, 0), angular=Vector3(0, 0, angular_vel.z)
-            )
-            print(f"Linear velocity: {linear_vel}, Angular velocity: {angular_vel}")
-            self.cmd_vel.publish(twist)
+        # Check if target reached first
+        error_magnitude, target_reached = is_target_reached(
+            retracted_pose, ee_pose, self.target_tolerance
+        )
+        self.last_error_magnitude = error_magnitude
+
+        if target_reached:
+            logger.info(f"Target reached! Error magnitude: {error_magnitude:.3f}m")
+            # Signal to stop tracking instead of calling stop_track from within thread
+            self.stop_event.set()
+            self._send_zero_velocity()
+            return
+
+        # Compute control commands only if not reached
+        twist_cmd = self.controller.compute_control(ee_pose, retracted_pose)
+
+        mobile_twist = Twist(
+            linear=Vector3(twist_cmd.linear.x, twist_cmd.linear.y, 0),
+            angular=Vector3(0, 0, twist_cmd.angular.z),
+        )
+        self.cmd_vel.publish(mobile_twist)
 
     def _send_zero_velocity(self):
         """Send zero velocity command to stop robot."""
@@ -459,6 +482,27 @@ class MobileBasePBVS(Module):
                     cv2.putText(
                         viz, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1
                     )
+
+                    # Add error magnitude overlay
+                    if self.last_error_magnitude is not None:
+                        error_text = f"Error: {self.last_error_magnitude:.3f}m"
+                        # Color based on error magnitude (green->yellow->red)
+                        if self.last_error_magnitude < self.target_tolerance:
+                            color = (0, 255, 0)  # Green - reached
+                        elif self.last_error_magnitude < self.target_tolerance * 2:
+                            color = (0, 255, 255)  # Yellow - close
+                        else:
+                            color = (0, 0, 255)  # Red - far
+
+                        cv2.putText(
+                            viz,
+                            error_text,
+                            (x, y + h + 20),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            color,
+                            2,
+                        )
 
             # Publish visualization
             if self.viz_image and viz is not None:

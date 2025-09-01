@@ -170,7 +170,6 @@ def main():
             ip=ip,
             websocket_port=7779,
             connection_type=connection_type,
-            use_metric3d_depth=os.getenv("USE_METRIC3D_DEPTH", "false").lower() == "true",
         )
         robot.start()
         time.sleep(3)  # Wait for robot to initialize
@@ -181,8 +180,8 @@ def main():
         logger.info("Deploying Mobile Base PBVS module...")
         pbvs_module = robot.dimos.deploy(
             MobileBasePBVS,
-            position_gain=0.3,
-            rotation_gain=0.05,
+            position_gain=0.5,
+            rotation_gain=0.2,
             max_linear_velocity=0.6,
             max_angular_velocity=0.8,
             target_distance=1.2,
@@ -267,12 +266,11 @@ def main():
                 break
             elif key == ord("s"):
                 # Stop tracking
-                if pbvs_module and viz_handler.tracking_active:
-                    result = pbvs_module.stop_track()
-                    logger.info(f"Stopped tracking: {result['message']}")
-                    viz_handler.tracking_active = False
-                    viz_handler.click_point = None
-                    viz_handler.latest_viz = None  # Clear viz to force RGB display
+                result = pbvs_module.stop_track()
+                logger.info(f"Stopped tracking: {result['message']}")
+                viz_handler.tracking_active = False
+                viz_handler.click_point = None
+                viz_handler.latest_viz = None  # Clear viz to force RGB display
 
             time.sleep(0.03)  # ~30 FPS
 
