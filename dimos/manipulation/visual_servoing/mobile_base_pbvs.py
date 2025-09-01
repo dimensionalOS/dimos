@@ -218,19 +218,11 @@ class MobileBasePBVS(Module):
         # Stop robot
         self._send_zero_velocity()
 
-        # Publish zero transform for target
-        target_tf = Transform(
-            translation=Vector3(0, 0, 0),
-            rotation=Quaternion(0, 0, 0, 1),
-            frame_id=self.track_frame_id,
-            child_frame_id=self.base_frame_id,
-            ts=time.time(),
-        )
-        self.tf.publish(target_tf)
-
         # Clear state
         self.target_object = None
         self.last_detection_time = None
+        self.last_detections_2d = None
+        self.last_detections_3d = None
         self.controller.clear_state()
 
         # Publish state
@@ -264,12 +256,16 @@ class MobileBasePBVS(Module):
 
     def _select_target(self, x: int, y: int) -> bool:
         """Select target object at given coordinates."""
+        # Always process a fresh frame for selection
+        self._process_frame()
+
+        # Give it a second try if first attempt failed
         if not self.last_detections_2d or not self.last_detections_3d:
-            # Process one frame to get detections
+            time.sleep(0.1)  # Wait briefly for new sensor data
             self._process_frame()
 
         if not self.last_detections_2d or not self.last_detections_3d:
-            logger.warning("No detections available")
+            logger.warning("No detections available after processing frame")
             return False
 
         # Find clicked detection
@@ -332,6 +328,8 @@ class MobileBasePBVS(Module):
         self.is_tracking = False
         self.target_object = None
         self.last_detection_time = None
+        self.last_detections_2d = None
+        self.last_detections_3d = None
         self.controller.clear_state()
 
         # Publish state
@@ -417,8 +415,11 @@ class MobileBasePBVS(Module):
                 parent_frame=self.base_frame_id,
                 child_frame=self.target_frame_id,
                 time_point=self.latest_odom.ts,
-                time_tolerance=0.5,
+                time_tolerance=3.0,
             )
+            if not target_transform_in_base_frame:
+                logger.warning("No transform available for target in base frame")
+                return
         except Exception as e:
             logger.error(f"Error getting target pose: {e}")
             return
