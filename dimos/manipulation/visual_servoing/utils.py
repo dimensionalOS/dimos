@@ -399,6 +399,15 @@ def find_best_object_match(
             target_obj, candidate, distance_weight, size_weight
         )
 
+        # Check for ID match first
+        if target_obj.id and candidate.id == target_obj.id:
+            return ObjectMatchResult(
+                matched_object=candidate,
+                confidence=1.0,  # Perfect confidence for ID match
+                distance=distance,
+                size_similarity=size_sim,
+                is_valid_match=True,
+            )
         # Check validity constraints
         is_valid = distance <= max_distance and size_sim >= min_size_similarity
 

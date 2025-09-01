@@ -32,7 +32,11 @@ from dimos_lcm.std_msgs import String
 
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.manipulation.visual_servoing.pbvs import PBVSController
-from dimos.manipulation.visual_servoing.utils import match_detection_by_id, is_target_reached
+from dimos.manipulation.visual_servoing.utils import (
+    match_detection_by_id,
+    is_target_reached,
+    find_best_object_match,
+)
 from dimos.perception.common.utils import find_clicked_detection
 from dimos.protocol.tf import TF
 from dimos.utils.transform_utils import (
@@ -199,12 +203,18 @@ class MobileBasePBVS(Module):
 
         # Stop tracking
         self.stop_event.set()
-        self.is_tracking = False
 
         # Wait for thread to finish
         if self.tracking_thread and self.tracking_thread.is_alive():
             self.tracking_thread.join(timeout=2.0)
 
+        self.stop()
+
+        logger.info("Stopped tracking")
+        return {"status": "success", "message": "Tracking stopped"}
+
+    def stop(self):
+        self.is_tracking = False
         # Stop robot
         self._send_zero_velocity()
 
@@ -226,9 +236,6 @@ class MobileBasePBVS(Module):
         # Publish state
         if self.tracking_state:
             self.tracking_state.publish(String(data="stopped"))
-
-        logger.info("Stopped tracking")
-        return {"status": "success", "message": "Tracking stopped"}
 
     def _on_rgb_image(self, msg: Image):
         """Handle RGB image messages."""
@@ -295,8 +302,8 @@ class MobileBasePBVS(Module):
                         time_since_detection = time.time() - self.last_detection_time
                         if time_since_detection > self.tracking_loss_timeout:
                             logger.warning("Lost tracking - timeout exceeded")
-                            # Don't call stop_track() from within the thread - just reset state and exit
-                            self._reset_tracking_state()
+                            self.stop_event.set()
+                            self.stop()
                             break
 
                 # Publish target TF
@@ -377,27 +384,27 @@ class MobileBasePBVS(Module):
         if not self.target_object or not self.last_detections_3d:
             return False
 
-        # Find best matching detection
-        best_match = None
-        min_distance = float("inf")
+        # Use find_best_object_match for robust tracking
+        match_result = find_best_object_match(
+            target_obj=self.target_object,
+            candidates=self.last_detections_3d.detections,
+            max_distance=0.3,  # 30cm tracking threshold
+            min_size_similarity=0.4,  # Lower threshold for tracking
+        )
 
-        for detection in self.last_detections_3d.detections:
-            if not detection.bbox or not detection.bbox.center:
-                continue
-
-            # Calculate distance between current and target positions
-            distance = get_distance(self.target_object.bbox.center, detection.bbox.center)
-
-            # Update best match if within tracking threshold
-            if distance < min_distance and distance < 0.3:  # 30cm tracking threshold
-                min_distance = distance
-                best_match = detection
-
-        if best_match:
-            self.target_object = best_match
+        if match_result.is_valid_match:
+            self.target_object = match_result.matched_object
             self.last_detection_time = time.time()
+            logger.debug(
+                f"Tracking updated: distance={match_result.distance:.3f}m, "
+                f"confidence={match_result.confidence:.3f}"
+            )
             return True
 
+        logger.debug(
+            f"Tracking lost: distance={match_result.distance:.3f}m, "
+            f"confidence={match_result.confidence:.3f}"
+        )
         return False
 
     def _compute_and_send_commands(self):
@@ -432,7 +439,7 @@ class MobileBasePBVS(Module):
             logger.info(f"Target reached! Error magnitude: {error_magnitude:.3f}m")
             # Signal to stop tracking instead of calling stop_track from within thread
             self.stop_event.set()
-            self._send_zero_velocity()
+            self.stop()
             return
 
         # Compute control commands only if not reached

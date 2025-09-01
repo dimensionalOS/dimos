@@ -64,6 +64,7 @@ class VisualizationHandler:
         # Subscribe to topics
         self.rgb_topic = Topic("/go2/color_image", Image)
         self.viz_topic = Topic("/mobile_pbvs/viz", Image)
+        self.state_topic = Topic("/mobile_pbvs/state", String)
 
     def start(self):
         """Start the visualization handler."""
@@ -72,6 +73,7 @@ class VisualizationHandler:
         # Subscribe to image topics
         self.lcm.subscribe(self.rgb_topic, self._on_rgb_image)
         self.lcm.subscribe(self.viz_topic, self._on_viz_image)
+        self.lcm.subscribe(self.state_topic, self._on_tracking_state)
 
         logger.info("Visualization handler started")
 
@@ -89,6 +91,17 @@ class VisualizationHandler:
         except Exception as e:
             logger.error(f"Error processing viz image: {e}")
 
+    def _on_tracking_state(self, msg: String, _: str):
+        """Handle tracking state messages."""
+        try:
+            state = msg.data
+            self.tracking_active = state == "tracking"
+            if state == "stopped":
+                self.click_point = None
+                self.latest_viz = None  # Clear viz to force RGB display
+        except Exception as e:
+            logger.error(f"Error processing tracking state: {e}")
+
     def mouse_callback(self, event, x, y, _, param):
         """Handle mouse events for target selection."""
         pbvs_module = param.get("pbvs")
@@ -102,7 +115,6 @@ class VisualizationHandler:
                 result = pbvs_module.track(target_x=x, target_y=y)
                 if result["status"] == "success":
                     logger.info(f"Started tracking: {result['message']}")
-                    self.tracking_active = True
                 else:
                     logger.error(f"Failed to start tracking: {result['message']}")
 
@@ -268,9 +280,6 @@ def main():
                 # Stop tracking
                 result = pbvs_module.stop_track()
                 logger.info(f"Stopped tracking: {result['message']}")
-                viz_handler.tracking_active = False
-                viz_handler.click_point = None
-                viz_handler.latest_viz = None  # Clear viz to force RGB display
 
             time.sleep(0.03)  # ~30 FPS
 
