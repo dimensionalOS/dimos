@@ -182,6 +182,10 @@ def main():
             ip=ip,
             websocket_port=7779,
             connection_type=connection_type,
+            enable_spatial_memory=False,
+            enable_lidar_mapping=False,
+            enable_navigation=False,
+            enable_mono_depth=True,
         )
         robot.start()
         time.sleep(3)  # Wait for robot to initialize

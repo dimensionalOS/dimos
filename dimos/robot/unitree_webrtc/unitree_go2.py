@@ -142,12 +142,14 @@ class ConnectionModule(Module):
         ip: str = None,
         connection_type: str = "webrtc",
         rectify_image: bool = True,
+        enable_lidar: bool = True,
         *args,
         **kwargs,
     ):
         self.ip = ip
         self.connection_type = connection_type
         self.rectify_image = rectify_image
+        self.enable_lidar = enable_lidar
         self.tf = TF()
         self.connection = None
 
@@ -191,7 +193,8 @@ class ConnectionModule(Module):
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
         # Connect sensor streams to outputs
-        self.connection.lidar_stream().subscribe(self.lidar.publish)
+        if self.enable_lidar:
+            self.connection.lidar_stream().subscribe(self.lidar.publish)
         self.connection.odom_stream().subscribe(self._publish_tf)
         self.connection.video_stream().subscribe(self._on_video)
         self.movecmd.subscribe(self.move)
@@ -287,6 +290,10 @@ class UnitreeGo2(Robot):
         websocket_port: int = 7779,
         skill_library: Optional[SkillLibrary] = None,
         connection_type: Optional[str] = "webrtc",
+        enable_spatial_memory: bool = True,
+        enable_lidar_mapping: bool = True,
+        enable_navigation: bool = True,
+        enable_mono_depth: bool = True,
     ):
         """Initialize the robot system.
 
@@ -296,6 +303,10 @@ class UnitreeGo2(Robot):
             websocket_port: Port for web visualization
             skill_library: Skill library instance
             connection_type: webrtc, fake, or mujoco
+            enable_spatial_memory: Enable spatial memory module (default: True)
+            enable_lidar_mapping: Enable lidar and mapping modules (default: True)
+            enable_navigation: Enable navigation modules (default: True)
+            enable_mono_depth: Enable monocular depth estimation (default: True)
         """
         super().__init__()
         self.ip = ip
@@ -305,6 +316,12 @@ class UnitreeGo2(Robot):
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.websocket_port = websocket_port
         self.lcm = LCM()
+
+        # Feature flags
+        self.enable_spatial_memory = enable_spatial_memory
+        self.enable_lidar_mapping = enable_lidar_mapping
+        self.enable_navigation = enable_navigation
+        self.enable_mono_depth = enable_mono_depth
 
         # Initialize skill library
         if skill_library is None:
@@ -353,17 +370,31 @@ class UnitreeGo2(Robot):
         self.dimos = core.start(8)
 
         self._deploy_connection()
-        self._deploy_mapping()
-        self._deploy_navigation()
+
+        if self.enable_lidar_mapping:
+            self._deploy_mapping()
+
+        if self.enable_navigation:
+            self._deploy_navigation()
+
         self._deploy_visualization()
-        self._deploy_perception()
-        self._deploy_camera()
+
+        if self.enable_spatial_memory:
+            self._deploy_perception()
+
+        if self.enable_mono_depth:
+            self._deploy_camera()
 
         self._start_modules()
 
         self.lcm.start()
 
         logger.info("UnitreeGo2 initialized and started")
+        logger.info(
+            f"Enabled features: spatial_memory={self.enable_spatial_memory}, "
+            f"lidar_mapping={self.enable_lidar_mapping}, navigation={self.enable_navigation}, "
+            f"mono_depth={self.enable_mono_depth}"
+        )
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
 
     def _deploy_connection(self):
@@ -372,7 +403,10 @@ class UnitreeGo2(Robot):
             ConnectionModule, self.ip, connection_type=self.connection_type
         )
 
-        self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
+        # Only configure lidar transport if enabled
+        if self.enable_lidar_mapping:
+            self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
+
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
         self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
@@ -393,6 +427,13 @@ class UnitreeGo2(Robot):
 
     def _deploy_navigation(self):
         """Deploy and configure navigation modules."""
+        # Navigation requires mapping for costmaps
+        if not self.enable_lidar_mapping:
+            logger.warning(
+                "Navigation disabled because lidar_mapping is disabled (required for costmaps)"
+            )
+            return
+
         self.global_planner = self.dimos.deploy(AstarPlanner)
         self.local_planner = self.dimos.deploy(HolonomicLocalPlanner)
         self.navigator = self.dimos.deploy(
@@ -449,8 +490,14 @@ class UnitreeGo2(Robot):
         self.websocket_vis.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
 
         self.websocket_vis.robot_pose.connect(self.connection.odom)
-        self.websocket_vis.path.connect(self.global_planner.path)
-        self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
+
+        # Connect to navigation outputs if available
+        if self.enable_navigation and self.global_planner:
+            self.websocket_vis.path.connect(self.global_planner.path)
+
+        # Connect to mapper outputs if available
+        if self.enable_lidar_mapping and self.mapper:
+            self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
 
         self.foxglove_bridge = FoxgloveBridge()
 
@@ -470,24 +517,27 @@ class UnitreeGo2(Robot):
 
         logger.info("Spatial memory module deployed and connected")
 
-        # Deploy object tracker
-        self.object_tracker = self.dimos.deploy(
-            ObjectTracking,
-            frame_id="camera_link",
-        )
+        # Deploy object tracker (requires depth module)
+        if self.enable_mono_depth:
+            self.object_tracker = self.dimos.deploy(
+                ObjectTracking,
+                frame_id="camera_link",
+            )
 
-        # Set up transports
-        self.object_tracker.detection2darray.transport = core.LCMTransport(
-            "/go2/detection2d", Detection2DArray
-        )
-        self.object_tracker.detection3darray.transport = core.LCMTransport(
-            "/go2/detection3d", Detection3DArray
-        )
-        self.object_tracker.tracked_overlay.transport = core.LCMTransport(
-            "/go2/tracked_overlay", Image
-        )
+            # Set up transports
+            self.object_tracker.detection2darray.transport = core.LCMTransport(
+                "/go2/detection2d", Detection2DArray
+            )
+            self.object_tracker.detection3darray.transport = core.LCMTransport(
+                "/go2/detection3d", Detection3DArray
+            )
+            self.object_tracker.tracked_overlay.transport = core.LCMTransport(
+                "/go2/tracked_overlay", Image
+            )
 
-        logger.info("Object tracker module deployed")
+            logger.info("Object tracker module deployed")
+        else:
+            logger.info("Object tracker not deployed (requires mono_depth)")
 
     def _deploy_camera(self):
         """Deploy and configure the depth module."""
@@ -518,16 +568,32 @@ class UnitreeGo2(Robot):
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
         self.connection.start()
-        self.mapper.start()
-        self.global_planner.start()
-        self.local_planner.start()
-        self.navigator.start()
-        self.frontier_explorer.start()
-        self.websocket_vis.start()
-        self.foxglove_bridge.start()
-        self.spatial_memory_module.start()
-        self.depth_module.start()
-        self.object_tracker.start()
+
+        if self.enable_lidar_mapping and self.mapper:
+            self.mapper.start()
+
+        if self.enable_navigation:
+            if self.global_planner:
+                self.global_planner.start()
+            if self.local_planner:
+                self.local_planner.start()
+            if self.navigator:
+                self.navigator.start()
+            if self.frontier_explorer:
+                self.frontier_explorer.start()
+
+        if self.websocket_vis:
+            self.websocket_vis.start()
+        if self.foxglove_bridge:
+            self.foxglove_bridge.start()
+
+        if self.enable_spatial_memory and self.spatial_memory_module:
+            self.spatial_memory_module.start()
+
+        if self.enable_mono_depth and self.depth_module:
+            self.depth_module.start()
+            if self.object_tracker:
+                self.object_tracker.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
