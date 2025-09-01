@@ -116,6 +116,7 @@ def _safe_unlink(name):
 # 2) CPU shared-memory backend
 # ---------------------------
 
+
 class CpuShmChannel(FrameChannel):
     def __init__(self, shape, dtype=np.uint8, *, data_name=None, ctrl_name=None):
         self._shape = tuple(shape)
@@ -127,7 +128,7 @@ class CpuShmChannel(FrameChannel):
                 shm = SharedMemory(create=True, size=size, name=name)
                 owner = True
             except FileExistsError:
-                shm = SharedMemory(name=name)   # attach existing
+                shm = SharedMemory(name=name)  # attach existing
                 owner = False
             return shm, owner
 
@@ -146,8 +147,16 @@ class CpuShmChannel(FrameChannel):
             self._ctrl[:] = 0  # initialize only once
 
         # only owners set unlink finalizers (beware cross-process timing)
-        self._finalizer_data = weakref.finalize(self, _safe_unlink, self._shm_data.name) if (_UNLINK_ON_GC and self._is_owner) else None
-        self._finalizer_ctrl = weakref.finalize(self, _safe_unlink, self._shm_ctrl.name) if (_UNLINK_ON_GC and self._is_owner) else None
+        self._finalizer_data = (
+            weakref.finalize(self, _safe_unlink, self._shm_data.name)
+            if (_UNLINK_ON_GC and self._is_owner)
+            else None
+        )
+        self._finalizer_ctrl = (
+            weakref.finalize(self, _safe_unlink, self._shm_ctrl.name)
+            if (_UNLINK_ON_GC and self._is_owner)
+            else None
+        )
 
     def descriptor(self):
         return {

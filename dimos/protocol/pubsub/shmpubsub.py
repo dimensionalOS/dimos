@@ -243,9 +243,10 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
     def _ensure_topic(self, topic: str) -> _TopicState:
         with self._lock:
             st = self._topics.get(topic)
-            if st is not None: return st
+            if st is not None:
+                return st
             cap = int(self.config.default_capacity)
-            
+
             def _names_for_topic(topic: str, capacity: int) -> tuple[str, str]:
                 # Python’s SharedMemory requires names without a leading '/'
                 h = hashlib.blake2b(f"{topic}:{capacity}".encode(), digest_size=12).hexdigest()
