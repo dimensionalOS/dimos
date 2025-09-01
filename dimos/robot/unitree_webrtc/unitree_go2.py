@@ -27,7 +27,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.std_msgs import String
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import Detection2DArray, Detection3DArray
@@ -52,7 +52,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.unitree_webrtc.pointcloud_to_depth import PointCloudToDepth
+from dimos.robot.unitree_webrtc.depth_module import DepthModule
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -352,7 +352,7 @@ class UnitreeGo2(Robot):
         self.websocket_vis = None
         self.foxglove_bridge = None
         self.spatial_memory_module = None
-        self.pointcloud_to_depth = None
+        self.depth_module = None
         self.object_tracker = None
 
         self._setup_directories()
@@ -517,45 +517,29 @@ class UnitreeGo2(Robot):
         logger.info("Object tracker module deployed")
 
     def _deploy_camera(self):
-        """Deploy and configure the pointcloud to depth module."""
-        # Deploy PointCloudToDepth module for lidar-based depth
-        self.pointcloud_to_depth = self.dimos.deploy(
-            PointCloudToDepth, max_depth=10.0, min_depth=0.1
-        )
+        """Deploy and configure the depth module."""
+        # Deploy DepthModule for monocular depth estimation
+        self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=1.0)
 
         # Set up input transports
-        self.pointcloud_to_depth.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
-        self.pointcloud_to_depth.color_image.transport = core.LCMTransport(
-            "/go2/color_image", Image
-        )
-        self.pointcloud_to_depth.camera_info.transport = core.LCMTransport(
-            "/go2/camera_info", CameraInfo
-        )
+        self.depth_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
+        self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
 
-        # Set up output transports
-        self.pointcloud_to_depth.depth_image.transport = core.LCMTransport(
-            "/go2/lidar_depth", Image
-        )
-        self.pointcloud_to_depth.pointcloud_camera.transport = core.LCMTransport(
-            "/pointcloud_camera", PointCloud2
-        )
-        self.pointcloud_to_depth.pointcloud_overlay.transport = core.LCMTransport(
-            "/pointcloud_2d_overlay", Image
-        )
+        # Set up output transport
+        self.depth_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
 
         # Connect inputs to source modules
-        self.pointcloud_to_depth.lidar.connect(self.connection.lidar)
-        self.pointcloud_to_depth.color_image.connect(self.connection.video)
-        self.pointcloud_to_depth.camera_info.connect(self.connection.camera_info)
+        self.depth_module.color_image.connect(self.connection.video)
+        self.depth_module.camera_info.connect(self.connection.camera_info)
 
-        logger.info("PointCloudToDepth module deployed and connected")
+        logger.info("DepthModule deployed and connected for monocular depth estimation")
 
-        # Connect object tracker inputs after pointcloud module is deployed
+        # Connect object tracker inputs after depth module is deployed
         if self.object_tracker:
             self.object_tracker.color_image.connect(self.connection.video)
-            self.object_tracker.depth.connect(self.pointcloud_to_depth.depth_image)
+            self.object_tracker.depth.connect(self.depth_module.depth_image)
             self.object_tracker.camera_info.connect(self.connection.camera_info)
-            logger.info("Object tracker connected to pointcloud depth module")
+            logger.info("Object tracker connected to depth module")
 
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
@@ -568,7 +552,7 @@ class UnitreeGo2(Robot):
         self.websocket_vis.start()
         self.foxglove_bridge.start()
         self.spatial_memory_module.start()
-        self.pointcloud_to_depth.start()
+        self.depth_module.start()
         self.object_tracker.start()
 
         # Initialize skills after connection is established
