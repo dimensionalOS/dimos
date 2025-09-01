@@ -114,7 +114,6 @@ class ConnectionModule(Module):
     lidar: Out[LidarMessage] = None
     video: Out[Image] = None
     camera_info: Out[CameraInfo] = None
-    camera_pose: Out[PoseStamped] = None
     ip: str
     connection_type: str = "webrtc"
 
@@ -195,7 +194,6 @@ class ConnectionModule(Module):
         # Publish camera info and pose synchronized with video
         timestamp = msg.ts if msg.ts else time.time()
         self._publish_camera_info(timestamp)
-        self._publish_camera_pose(timestamp)
 
     def _publish_tf(self, msg):
         self._odom = msg
@@ -226,31 +224,6 @@ class ConnectionModule(Module):
         header = Header(timestamp, "camera_link_optical")
         self.lcm_camera_info.header = header
         self.camera_info.publish(self.lcm_camera_info)
-
-    def _publish_camera_pose(self, timestamp: float):
-        """Publish camera pose from TF lookup."""
-        try:
-            # Look up transform from world to camera_link_optical
-            transform = self.tf.get(
-                parent_frame="world",
-                child_frame="camera_link_optical",
-                time_point=timestamp,
-                time_tolerance=1.0,
-            )
-
-            if transform:
-                pose_msg = PoseStamped(
-                    ts=timestamp,
-                    frame_id="camera_link_optical",
-                    position=transform.translation,
-                    orientation=transform.rotation,
-                )
-                self.camera_pose.publish(pose_msg)
-            else:
-                logger.debug("Could not find transform from world to camera_link_optical")
-
-        except Exception as e:
-            logger.error(f"Error publishing camera pose: {e}")
 
     @rpc
     def get_odom(self) -> Optional[PoseStamped]:
@@ -355,7 +328,6 @@ class UnitreeGo2NavOnly(Robot):
         self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
         self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
-        self.connection.camera_pose.transport = core.LCMTransport("/go2/camera_pose", PoseStamped)
 
     def _deploy_mapping(self):
         """Deploy and configure the mapping module."""
