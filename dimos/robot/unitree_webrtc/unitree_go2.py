@@ -27,7 +27,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.std_msgs import String
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import Detection2DArray, Detection3DArray
@@ -52,7 +52,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.unitree_webrtc.pointcloud_to_depth import PointCloudToDepth
+from dimos.robot.unitree_webrtc.depth_module import DepthModule
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -315,7 +315,6 @@ class UnitreeGo2(Robot):
         websocket_port: int = 7779,
         skill_library: Optional[SkillLibrary] = None,
         connection_type: Optional[str] = "webrtc",
-        use_metric3d_depth: bool = False,
     ):
         """Initialize the robot system.
 
@@ -325,7 +324,6 @@ class UnitreeGo2(Robot):
             websocket_port: Port for web visualization
             skill_library: Skill library instance
             connection_type: webrtc, fake, or mujoco
-            use_metric3d_depth: If True, use Metric3D depth module instead of pointcloud-based depth
         """
         super().__init__()
         self.ip = ip
@@ -334,7 +332,6 @@ class UnitreeGo2(Robot):
             self.connection_type = "fake"  # Auto-enable playback if no IP provided
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.websocket_port = websocket_port
-        self.use_metric3d_depth = use_metric3d_depth
         self.lcm = LCM()
 
         # Initialize skill library
@@ -355,7 +352,6 @@ class UnitreeGo2(Robot):
         self.websocket_vis = None
         self.foxglove_bridge = None
         self.spatial_memory_module = None
-        self.pointcloud_to_depth = None
         self.depth_module = None
         self.object_tracker = None
 
@@ -382,7 +378,7 @@ class UnitreeGo2(Robot):
 
     def start(self):
         """Start the robot system with all modules."""
-        self.dimos = core.start(10)
+        self.dimos = core.start(8)
 
         self._deploy_connection()
         self._deploy_mapping()
@@ -525,75 +521,29 @@ class UnitreeGo2(Robot):
         logger.info("Object tracker module deployed")
 
     def _deploy_camera(self):
-        """Deploy and configure the depth module (either Metric3D or pointcloud-based)."""
-        if self.use_metric3d_depth:
-            # Import and deploy Metric3D depth module
-            from dimos.robot.unitree_webrtc.depth_module import DepthModule
+        """Deploy and configure the depth module."""
+        # Deploy DepthModule for monocular depth estimation
+        self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=1.0)
 
-            self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=1.5)
+        # Set up input transports
+        self.depth_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
+        self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
 
-            # Set up input transports
-            self.depth_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
-            self.depth_module.camera_info.transport = core.LCMTransport(
-                "/go2/camera_info", CameraInfo
-            )
+        # Set up output transport
+        self.depth_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
 
-            # Set up output transport
-            self.depth_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
+        # Connect inputs to source modules
+        self.depth_module.color_image.connect(self.connection.video)
+        self.depth_module.camera_info.connect(self.connection.camera_info)
 
-            # Connect inputs to source modules
-            self.depth_module.color_image.connect(self.connection.video)
-            self.depth_module.camera_info.connect(self.connection.camera_info)
-
-            logger.info("Metric3D DepthModule deployed and connected")
-
-            # Store depth output reference for object tracker
-            depth_output = self.depth_module.depth_image
-
-        else:
-            # Deploy PointCloudToDepth module for lidar-based depth
-            self.pointcloud_to_depth = self.dimos.deploy(
-                PointCloudToDepth, max_depth=10.0, min_depth=0.1
-            )
-
-            # Set up input transports
-            self.pointcloud_to_depth.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
-            self.pointcloud_to_depth.color_image.transport = core.LCMTransport(
-                "/go2/color_image", Image
-            )
-            self.pointcloud_to_depth.camera_info.transport = core.LCMTransport(
-                "/go2/camera_info", CameraInfo
-            )
-
-            # Set up output transports
-            self.pointcloud_to_depth.depth_image.transport = core.LCMTransport(
-                "/go2/depth_image", Image
-            )
-            self.pointcloud_to_depth.pointcloud_camera.transport = core.LCMTransport(
-                "/pointcloud_camera", PointCloud2
-            )
-            self.pointcloud_to_depth.pointcloud_overlay.transport = core.LCMTransport(
-                "/pointcloud_2d_overlay", Image
-            )
-
-            # Connect inputs to source modules
-            self.pointcloud_to_depth.lidar.connect(self.connection.lidar)
-            self.pointcloud_to_depth.color_image.connect(self.connection.video)
-            self.pointcloud_to_depth.camera_info.connect(self.connection.camera_info)
-
-            logger.info("PointCloudToDepth module deployed and connected")
-
-            # Store depth output reference for object tracker
-            depth_output = self.pointcloud_to_depth.depth_image
+        logger.info("DepthModule deployed and connected for monocular depth estimation")
 
         # Connect object tracker inputs after depth module is deployed
         if self.object_tracker:
             self.object_tracker.color_image.connect(self.connection.video)
-            self.object_tracker.depth.connect(depth_output)
+            self.object_tracker.depth.connect(self.depth_module.depth_image)
             self.object_tracker.camera_info.connect(self.connection.camera_info)
-            logger.info(
-                f"Object tracker connected to {'Metric3D' if self.use_metric3d_depth else 'pointcloud'} depth module"
-            )
+            logger.info("Object tracker connected to depth module")
 
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
@@ -606,13 +556,7 @@ class UnitreeGo2(Robot):
         self.websocket_vis.start()
         self.foxglove_bridge.start()
         self.spatial_memory_module.start()
-
-        # Start the appropriate depth module
-        if self.use_metric3d_depth:
-            self.depth_module.start()
-        else:
-            self.pointcloud_to_depth.start()
-
+        self.depth_module.start()
         self.object_tracker.start()
 
         # Initialize skills after connection is established
@@ -731,7 +675,7 @@ class UnitreeGo2(Robot):
         while time.time() - start_time < timeout:
             if self.navigator.get_state() == NavigatorState.IDLE and goal_set:
                 logger.info("Waiting for goal result")
-                time.sleep(1.5)
+                time.sleep(1.0)
                 if not self.navigator.is_goal_reached():
                     logger.info("Goal cancelled, object tracking failed")
                     return False
@@ -770,16 +714,10 @@ def main():
     """Main entry point."""
     ip = os.getenv("ROBOT_IP")
     connection_type = os.getenv("CONNECTION_TYPE", "webrtc")
-    use_metric3d_depth = os.getenv("USE_METRIC3D_DEPTH", "false").lower() == "true"
 
     pubsub.lcm.autoconf()
 
-    robot = UnitreeGo2(
-        ip=ip,
-        websocket_port=7779,
-        connection_type=connection_type,
-        use_metric3d_depth=use_metric3d_depth,
-    )
+    robot = UnitreeGo2(ip=ip, websocket_port=7779, connection_type=connection_type)
     robot.start()
 
     try:
