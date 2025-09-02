@@ -34,7 +34,6 @@ from dimos.utils.logging_config import setup_logger
 from dimos.protocol.tf import TF
 from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
 
-# Import LCM message types
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.msgs.geometry_msgs import PoseStamped
@@ -54,9 +53,6 @@ class SpatialMapPublishThread(threading.Thread):
         self.zed_camera = zed_camera
         self.publish_interval = publish_interval
         self._stop_event = threading.Event()
-        self.last_pointcloud = None
-        self.last_capture_time = 0.0
-        self.capture_lock = threading.Lock()
         self.voxel_size = voxel_size
 
     def run(self):
@@ -65,31 +61,18 @@ class SpatialMapPublishThread(threading.Thread):
         while not self._stop_event.is_set():
             start_time = time.time()
 
-            try:
-                # Only process if camera is available and mapping is enabled
-                if (
-                    self.zed_camera
-                    and self.zed_module.spatial_mapping_enabled
-                    and self.zed_camera.mapping_enabled
-                ):
-                    # Capture pointcloud (spatial map)
+            # Only process if camera is available and mapping is enabled
+            if (
+                self.zed_camera
+                and self.zed_module.spatial_mapping_enabled
+                and self.zed_camera.mapping_enabled
+            ):
+                try:
                     pcd = self._capture_spatial_map()
-
                     if pcd is not None and len(pcd.points) > 0:
-                        # Store the captured pointcloud
-                        with self.capture_lock:
-                            self.last_pointcloud = pcd
-                            self.last_capture_time = time.time()
-
-                        # Publish the pointcloud
                         self._publish_spatial_map(pcd)
-
-                        logger.debug(
-                            f"Captured and published spatial map with {len(pcd.points)} points"
-                        )
-
-            except Exception as e:
-                logger.error(f"Error in spatial map thread: {e}")
+                except Exception as e:
+                    logger.error(f"Error in spatial map thread: {e}")
 
             # Calculate processing time and adjust sleep
             processing_time = time.time() - start_time
@@ -102,74 +85,59 @@ class SpatialMapPublishThread(threading.Thread):
         logger.info("SpatialMapPublishThread stopped")
 
     def _capture_spatial_map(self):
-        """Capture the spatial map from ZED camera."""
-        try:
-            self.zed_camera.zed.request_spatial_map_async()
+        logger.info("Requesting new spatial map from ZED camera...")
+        self.zed_camera.zed.request_spatial_map_async()
+        mapping_state = self.zed_camera.zed.get_spatial_mapping_state()
+        logger.info(f"Mapping state: {mapping_state}")
 
-            max_wait = 5  # seconds
-            wait_start = time.time()
+        # Poll until the spatial map is ready or timeout.
+        max_wait = 5  # seconds
+        wait_start = time.time()
+        while (time.time() - wait_start) < max_wait:
+            request_status = self.zed_camera.zed.get_spatial_map_request_status_async()
+            if request_status == sl.ERROR_CODE.SUCCESS:
+                break
+            time.sleep(0.1)
 
-            while (time.time() - wait_start) < max_wait:
-                if (
-                    self.zed_camera.zed.get_spatial_map_request_status_async()
-                    == sl.ERROR_CODE.SUCCESS
-                ):
-                    self.zed_camera.zed.retrieve_spatial_map_async(self.zed_camera.fused_pointcloud)
-                    self.zed_camera.zed.extract_whole_spatial_map(self.zed_camera.fused_pointcloud)
-                    self.zed_camera.fused_pointcloud.update_from_chunklist()
-
-                    vertices = self.zed_camera.fused_pointcloud.vertices
-                    if len(vertices) > 0:
-                        points = np.array(vertices, dtype=np.float32).reshape(-1, 4)[
-                            :, :3
-                        ]  # XYZ only
-
-                        valid = np.isfinite(points).all(axis=1)
-                        valid_points = points[valid]
-
-                        pcd = o3d.geometry.PointCloud()
-                        if len(valid_points) > 0:
-                            pcd.points = o3d.utility.Vector3dVector(valid_points)
-
-                            pcd = pcd.voxel_down_sample(voxel_size=self.voxel_size)
-                            return pcd
-                    break
-
-                time.sleep(0.01)
-
+        if request_status != sl.ERROR_CODE.SUCCESS:
             return None
 
-        except Exception as e:
-            logger.error(f"Error capturing spatial map: {e}")
+        self.zed_camera.zed.retrieve_spatial_map_async(self.zed_camera.fused_pointcloud)
+        self.zed_camera.zed.extract_whole_spatial_map(self.zed_camera.fused_pointcloud)
+        self.zed_camera.fused_pointcloud.update_from_chunklist()
+        vertices = self.zed_camera.fused_pointcloud.vertices
+        logger.info(f"Retrieved {len(vertices)} raw points from spatial map")
+
+        if not len(vertices):
             return None
+
+        points = np.array(vertices, dtype=np.float32).reshape(-1, 4)[:, :3]  # XYZ only
+        valid = np.isfinite(points).all(axis=1)
+        valid_points = points[valid]
+        logger.info(f"{len(valid_points)} valid points after filtering")
+
+        if not len(valid_points):
+            return None
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(valid_points)
+        pcd = pcd.voxel_down_sample(voxel_size=self.voxel_size)
+        logger.info(f"Downsampled to {len(pcd.points)} points.")
+        return pcd
 
     def _publish_spatial_map(self, pcd):
-        """Publish the spatial map as a LidarMessage."""
-        try:
-            # Create header with world frame (spatial map is in world coordinates)
-            header = Header("world")
+        header = Header("world")
 
-            # Create LidarMessage
-            lidar_msg = LidarMessage(
-                pointcloud=pcd,
-                origin=[0.0, 0.0, 0.0],
-                resolution=self.voxel_size,  # Match Map module voxel_size
-                ts=header.ts,
-                frame_id="world",
-            )
+        lidar_msg = LidarMessage(
+            pointcloud=pcd,
+            origin=[0.0, 0.0, 0.0],
+            resolution=self.voxel_size,
+            ts=header.ts,
+            frame_id="world",
+        )
 
-            # Publish if output is available
-            if self.zed_module.pointcloud_msg:
-                self.zed_module.pointcloud_msg.publish(lidar_msg)
-                logger.debug(f"Published spatial map with {len(pcd.points)} points")
-
-        except Exception as e:
-            logger.error(f"Error publishing spatial map: {e}")
-
-    def get_latest_pointcloud(self):
-        """Get the latest captured pointcloud (thread-safe)."""
-        with self.capture_lock:
-            return self.last_pointcloud, self.last_capture_time
+        if self.zed_module.pointcloud_msg:
+            self.zed_module.pointcloud_msg.publish(lidar_msg)
 
     def stop(self):
         self._stop_event.set()
@@ -312,7 +280,7 @@ class ZEDModule(Module):
                 self.spatial_map_publish_thread = SpatialMapPublishThread(
                     self,
                     zed_camera=self.zed_camera,
-                    publish_interval=1.0,
+                    publish_interval=5.0,
                     voxel_size=self.filter_voxel_size,
                 )
 
