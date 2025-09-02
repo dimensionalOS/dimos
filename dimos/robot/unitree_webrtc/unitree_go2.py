@@ -542,7 +542,7 @@ class UnitreeGo2(Robot):
     def _deploy_camera(self):
         """Deploy and configure the depth module."""
         # Deploy DepthModule for monocular depth estimation
-        gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.5
+        gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.8
         self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
 
         # Set up input transports

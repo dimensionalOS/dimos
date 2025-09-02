@@ -37,6 +37,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.reactive import backpressure, callback_to_observable
+from dimos.utils.common import map_value
 
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
 
@@ -72,8 +73,9 @@ class SerializableVideoFrame:
 class UnitreeWebRTCConnection:
     def __init__(self, ip: str, mode: str = "ai"):
         self.ip = ip
-        self.mode = mode
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
+        self.in_pose_mode = False
+        self.low_velocity_start_time = None
         self.connect()
 
     def connect(self):
@@ -87,10 +89,6 @@ class UnitreeWebRTCConnection:
             await self.conn.datachannel.disableTrafficSaving(True)
 
             self.conn.datachannel.set_decoder(decoder_type="native")
-
-            await self.conn.datachannel.pub_sub.publish_request_new(
-                RTC_TOPIC["MOTION_SWITCHER"], {"api_id": 1002, "parameter": {"name": self.mode}}
-            )
 
             self.connected_event.set()
             self.connection_ready.set()
@@ -119,16 +117,67 @@ class UnitreeWebRTCConnection:
             bool: True if command was sent successfully
         """
         x, y, yaw = twist.linear.x, twist.linear.y, twist.angular.z
+        z, pitch = twist.linear.z, twist.angular.y
+
+        # Check if we need pose mode (low velocities but z or pitch control requested)
+        velocity_threshold = 0.02
+        is_low_velocity = (
+            abs(x) < velocity_threshold
+            and abs(y) < velocity_threshold
+            and abs(yaw) < velocity_threshold
+        )
+        pose_control = abs(z) > 0.0 or abs(pitch) > 0.0
+        low_velocity_duration_threshold = 0.5  # seconds
+
+        # Track low velocity duration
+        if is_low_velocity and pose_control:
+            if self.low_velocity_start_time is None:
+                self.low_velocity_start_time = time.time()
+            low_velocity_duration = time.time() - self.low_velocity_start_time
+        else:
+            self.low_velocity_start_time = None
+            low_velocity_duration = 0
+
+        # Enter pose mode after sustained low velocity
+        if (
+            is_low_velocity
+            and pose_control
+            and not self.in_pose_mode
+            and low_velocity_duration >= low_velocity_duration_threshold
+        ):
+            self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["Pose"]})
+            self.in_pose_mode = True
+            time.sleep(0.1)
+        # Exit pose mode if we have movement commands
+        elif not is_low_velocity and self.in_pose_mode:
+            self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["RecoveryStand"]})
+            self.in_pose_mode = False
+            self.low_velocity_start_time = None
+            time.sleep(0.1)
 
         # WebRTC coordinate mapping:
         # x - Positive right, negative left
         # y - positive forward, negative backwards
         # yaw - Positive rotate right, negative rotate left
+        # In pose mode: lx - linear z (body height), ry - angular y (pitch)
         async def async_move():
-            self.conn.datachannel.pub_sub.publish_without_callback(
-                RTC_TOPIC["WIRELESS_CONTROLLER"],
-                data={"lx": y, "ly": x, "rx": -yaw, "ry": 0},
-            )
+            if self.in_pose_mode:
+                # In pose mode, map z and pitch to controller range
+                # Map z from (-0.15, 0.15) to (-1.0, 1.0)
+                mapped_z = map_value(z, -0.15, 0.15, -1.0, 1.0, clamp=True)
+                # Map pitch from (-0.5, 0.5) to (-1.0, 1.0)
+                mapped_pitch = map_value(pitch, -0.5, 0.5, -1.0, 1.0, clamp=True)
+
+                self.conn.datachannel.pub_sub.publish_without_callback(
+                    RTC_TOPIC["WIRELESS_CONTROLLER"],
+                    data={"lx": 0, "ly": mapped_z, "rx": 0, "ry": mapped_pitch},
+                )
+            else:
+                # Normal walking mode
+                self.conn.datachannel.pub_sub.publish_without_callback(
+                    RTC_TOPIC["WIRELESS_CONTROLLER"],
+                    data={"lx": y, "ly": x, "rx": -yaw, "ry": 0},
+                )
 
         async def async_move_duration():
             """Send movement commands continuously for the specified duration."""
@@ -214,31 +263,16 @@ class UnitreeWebRTCConnection:
     def lowstate_stream(self) -> Subject[LowStateMsg]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
-    def standup_ai(self):
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
-
-    def standup_normal(self):
+    @rpc
+    def standup(self):
         self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]})
         time.sleep(0.5)
         self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["RecoveryStand"]})
         return True
 
     @rpc
-    def standup(self):
-        if self.mode == "ai":
-            return self.standup_ai()
-        else:
-            return self.standup_normal()
-
-    @rpc
     def liedown(self):
         return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
-
-    async def handstand(self):
-        return self.publish_request(
-            RTC_TOPIC["SPORT_MOD"],
-            {"api_id": SPORT_CMD["Standup"], "parameter": {"data": True}},
-        )
 
     @rpc
     def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 60) -> bool:
@@ -323,6 +357,12 @@ class UnitreeWebRTCConnection:
         Returns:
             bool: True if stop command was sent successfully
         """
+        # Exit pose mode if active
+        if self.in_pose_mode:
+            self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["RecoveryStand"]})
+            self.in_pose_mode = False
+            self.low_velocity_start_time = None
+            time.sleep(0.1)
         return self.move(Twist())
 
     def disconnect(self) -> None:

@@ -56,62 +56,6 @@ def match_detection_by_id(
     return None
 
 
-def transform_pose(
-    obj_pos: np.ndarray,
-    obj_orientation: np.ndarray,
-    transform_matrix: np.ndarray,
-    to_optical: bool = False,
-    to_robot: bool = False,
-) -> Pose:
-    """
-    Transform object pose with optional frame convention conversion.
-
-    Args:
-        obj_pos: Object position [x, y, z]
-        obj_orientation: Object orientation [roll, pitch, yaw] in radians
-        transform_matrix: 4x4 transformation matrix from camera frame to desired frame
-        to_optical: If True, input is in robot frame → convert result to optical frame
-        to_robot: If True, input is in optical frame → convert to robot frame first
-
-    Returns:
-        Object pose in desired frame as Pose
-    """
-    # Convert euler angles to quaternion using utility function
-    euler_vector = Vector3(obj_orientation[0], obj_orientation[1], obj_orientation[2])
-    obj_orientation_quat = euler_to_quaternion(euler_vector)
-
-    input_pose = Pose(
-        position=Vector3(obj_pos[0], obj_pos[1], obj_pos[2]), orientation=obj_orientation_quat
-    )
-
-    # Apply input frame conversion based on flags
-    if to_robot:
-        # Input is in optical frame → convert to robot frame first
-        pose_for_transform = optical_to_robot_frame(input_pose)
-    else:
-        # Default or to_optical: use input pose as-is
-        pose_for_transform = input_pose
-
-    # Create transformation matrix from pose (relative to camera)
-    T_camera_object = pose_to_matrix(pose_for_transform)
-
-    # Use compose_transforms to combine transformations
-    T_desired_object = compose_transforms(transform_matrix, T_camera_object)
-
-    # Convert back to pose
-    result_pose = matrix_to_pose(T_desired_object)
-
-    # Apply output frame conversion based on flags
-    if to_optical:
-        # Input was robot frame → convert result to optical frame
-        desired_pose = robot_to_optical_frame(result_pose)
-    else:
-        # Default or to_robot: use result as-is
-        desired_pose = result_pose
-
-    return desired_pose
-
-
 def transform_points_3d(
     points_3d: np.ndarray,
     transform_matrix: np.ndarray,

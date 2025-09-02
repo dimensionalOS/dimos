@@ -24,7 +24,8 @@ from dimos.stream.audio.text.node_stdout import TextPrinterNode
 
 def stt():
     # Create microphone source, recorder, and audio output
-    mic = SounddeviceAudioSource()
+    # Use 48000 Hz sample rate which is supported by most audio devices
+    mic = SounddeviceAudioSource(sample_rate=48000)
     normalizer = AudioNormalizer()
     recorder = KeyRecorder(always_subscribe=True)
     whisper_node = WhisperNode()  # Assign to global variable
@@ -46,7 +47,8 @@ def tts():
     agent_text_printer = TextPrinterNode(prefix="AGENT: ")
     agent_text_printer.consume_text(tts_node.emit_text())
 
-    response_output = SounddeviceAudioOutput(sample_rate=24000)
+    # Use 48000 Hz sample rate which is supported by most audio devices
+    response_output = SounddeviceAudioOutput(sample_rate=48000)
     response_output.consume_audio(tts_node.emit_audio())
 
     return tts_node
