@@ -74,6 +74,7 @@ class StereoMapper:
         self.use_spatial_mapping = use_spatial_mapping
         self.lcm = LCM()
         self.tf = None  # Initialize TF later to avoid conflicts
+        self.voxel_size = 0.1
 
         self.dimos = None
         self.zed_module = None
@@ -140,13 +141,9 @@ class StereoMapper:
                 enable_tracking=True,  # Enable visual odometry
                 enable_imu_fusion=True,
                 set_floor_as_origin=True,
-                mapping_resolution="MEDIUM",  # Spatial mapping resolution
-                mapping_range="MEDIUM",  # Spatial mapping range
                 publish_rate=10.0,
                 frame_id="camera_link",
-                filter_voxel_size=0.5,  # Downsample to 5cm voxels as required
-                filter_max_distance=5.0,  # Slightly larger than Unitree for better coverage
-                filter_min_distance=0.1,
+                filter_voxel_size=self.voxel_size,
                 filter_min_z=-1.0,  # Allow more ground points
                 filter_max_z=2.0,  # Allow ceiling/higher objects
                 filter_ground_threshold=-0.45,  # Not used anymore but kept for compatibility
@@ -287,18 +284,17 @@ class StereoMapper:
             logger.info("Using PassthroughMap for ZED spatial mapping (no accumulation)")
             self.mapper = self.dimos.deploy(
                 PassthroughMap,
-                voxel_size=0.5,  # Match ZED downsampling
+                voxel_size=self.voxel_size,
                 global_publish_interval=2.5,
                 min_height=0.15,
                 max_height=1.5,
-                frame_id="world",
             )
         else:
             # Use regular Map class for traditional accumulation
             logger.info("Using regular Map for pointcloud accumulation")
             self.mapper = self.dimos.deploy(
                 Map,
-                voxel_size=0.5,
+                voxel_size=self.voxel_size,
                 global_publish_interval=2.5,
                 min_height=0.15,
                 max_height=1.5,

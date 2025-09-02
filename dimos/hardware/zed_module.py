@@ -47,7 +47,7 @@ logger = setup_logger(__name__)
 class SpatialMapPublishThread(threading.Thread):
     """Thread to periodically request and publish spatial map from ZED camera."""
 
-    def __init__(self, zed_module, zed_camera=None, publish_interval=1.0, voxel_size=0.5):
+    def __init__(self, zed_module, zed_camera=None, publish_interval=1.0, voxel_size=0.1):
         super().__init__()
         self.daemon = True
         self.zed_module = zed_module
@@ -202,13 +202,9 @@ class ZEDModule(Module):
         enable_tracking: bool = True,
         enable_imu_fusion: bool = True,
         set_floor_as_origin: bool = True,
-        mapping_resolution: str = "MEDIUM",  # Spatial mapping resolution
-        mapping_range: str = "MEDIUM",  # Spatial mapping range
         publish_rate: float = 30.0,
         frame_id: str = "camera_link",  # ZED outputs in ROS frame (z-up, x-forward)
-        filter_voxel_size: float = 0.5,
-        filter_max_distance: float = 5.0,
-        filter_min_distance: float = 0.1,
+        filter_voxel_size: float = 0.1,
         filter_min_z: float = -1.0,
         filter_max_z: float = 2.0,
         filter_ground_threshold: float = -0.45,
@@ -241,8 +237,6 @@ class ZEDModule(Module):
         self.frame_id = frame_id
 
         self.filter_voxel_size = filter_voxel_size
-        self.filter_max_distance = filter_max_distance
-        self.filter_min_distance = filter_min_distance
         self.filter_min_z = filter_min_z
         self.filter_max_z = filter_max_z
         self.filter_ground_threshold = filter_ground_threshold
@@ -251,10 +245,6 @@ class ZEDModule(Module):
         # Convert string parameters to ZED enums
         self.resolution = getattr(sl.RESOLUTION, resolution, sl.RESOLUTION.HD720)
         self.depth_mode = getattr(sl.DEPTH_MODE, depth_mode, sl.DEPTH_MODE.NEURAL)
-        self.mapping_resolution = getattr(
-            sl.MAPPING_RESOLUTION, mapping_resolution, sl.MAPPING_RESOLUTION.MEDIUM
-        )
-        self.mapping_range = getattr(sl.MAPPING_RANGE, mapping_range, sl.MAPPING_RANGE.MEDIUM)
 
         # Internal state
         self.zed_camera = None
