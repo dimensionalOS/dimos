@@ -102,14 +102,14 @@ class ZEDCamera(StereoCamera):
         # Spatial mapping
         self.mapping_enabled = False
         self.spatial_mapping_params = sl.SpatialMappingParameters(
-            resolution_meter=0.1,
-            range_meter=5.0,  # depth of mapping to integrate
             max_memory_usage=4096,
             save_texture=False,
             use_chunk_only=True,
             reverse_vertex_order=False,
             map_type=sl.SPATIAL_MAP_TYPE.FUSED_POINT_CLOUD,
         )
+        self.spatial_mapping_params.resolution_meter = 0.1
+        self.spatial_mapping_params.range_meter = 5.0  # depth of mapping to integrate
 
         self.fused_pointcloud = sl.FusedPointCloud()  # For spatial mapping output
 
