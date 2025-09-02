@@ -20,6 +20,7 @@ Uses PBVS controller to compute velocity commands for mobile base control.
 import time
 import threading
 from typing import Dict, Any
+from collections import deque
 import numpy as np
 import cv2
 
@@ -37,7 +38,7 @@ from dimos.manipulation.visual_servoing.utils import (
     is_target_reached,
     find_best_object_match,
 )
-from dimos.perception.common.utils import find_clicked_detection
+from dimos.perception.common.utils import find_clicked_detection, avg_detection3d
 from dimos.protocol.tf import TF
 from dimos.utils.transform_utils import (
     get_distance,
@@ -131,10 +132,16 @@ class MobileBasePBVS(Module):
         # Tracking state
         self.is_tracking = False
         self.target_object = None
+        self.target_object_history = deque(maxlen=4)  # Keep last 4 target positions
         self.last_detection_time = None
         self.tracking_thread = None
         self.stop_event = threading.Event()
         self.last_error_magnitude = None
+
+        # Detection thread
+        self.detection_thread = None
+        self.stop_detection = threading.Event()
+        self.detection_lock = threading.Lock()
 
         # Sensor data
         self.latest_rgb = None
@@ -182,6 +189,11 @@ class MobileBasePBVS(Module):
         if not self._select_target(target_x, target_y):
             return {"status": "error", "message": "No object found at coordinates"}
 
+        # Start detection thread
+        self.stop_detection.clear()
+        self.detection_thread = threading.Thread(target=self._detection_loop, daemon=True)
+        self.detection_thread.start()
+
         # Start tracking thread
         self.stop_event.clear()
         self.is_tracking = True
@@ -218,8 +230,13 @@ class MobileBasePBVS(Module):
         # Stop robot
         self._send_zero_velocity()
 
+        # Stop detection thread
+        if self.detection_thread and self.detection_thread.is_alive():
+            self.stop_detection.set()
+
         # Clear state
         self.target_object = None
+        self.target_object_history.clear()
         self.last_detection_time = None
         self.last_detections_2d = None
         self.last_detections_3d = None
@@ -275,6 +292,9 @@ class MobileBasePBVS(Module):
 
         if clicked_3d and clicked_3d.bbox and clicked_3d.bbox.center:
             self.target_object = clicked_3d
+            # Initialize history with the first detection
+            self.target_object_history.clear()
+            self.target_object_history.append(clicked_3d)
             self.last_detection_time = time.time()
             pos = clicked_3d.bbox.center.position
             logger.info(f"Selected target at ({pos.x:.2f}, {pos.y:.2f}, {pos.z:.2f})")
@@ -282,16 +302,26 @@ class MobileBasePBVS(Module):
 
         return False
 
+    def _detection_loop(self):
+        """Detection loop running in separate thread."""
+        logger.info("Detection loop started")
+
+        while not self.stop_detection.is_set():
+            try:
+                self._process_frame()
+                time.sleep(0.05)  # 20Hz detection rate
+            except Exception as e:
+                logger.error(f"Error in detection loop: {e}")
+
+        logger.info("Detection loop ended")
+
     def _tracking_loop(self):
         """Main tracking loop running in separate thread."""
         logger.info("Tracking loop started")
 
         while not self.stop_event.is_set():
             try:
-                # Process current frame
-                self._process_frame()
-
-                # Update tracking
+                # Update tracking (detection is done in separate thread)
                 if not self._update_tracking():
                     # Check for tracking loss timeout
                     if self.last_detection_time:
@@ -302,13 +332,8 @@ class MobileBasePBVS(Module):
                             self.stop()
                             break
 
-                # Publish target TF
                 self._publish_target_tf()
-
-                # Compute and send velocity commands
                 self._compute_and_send_commands()
-
-                # Publish visualization
                 self._publish_visualization()
 
                 time.sleep(0.05)  # 20Hz control loop
@@ -327,6 +352,7 @@ class MobileBasePBVS(Module):
         # Clear state
         self.is_tracking = False
         self.target_object = None
+        self.target_object_history.clear()
         self.last_detection_time = None
         self.last_detections_2d = None
         self.last_detections_3d = None
@@ -365,8 +391,10 @@ class MobileBasePBVS(Module):
                 self.latest_rgb.data, depth_data, transform
             )
 
-            self.last_detections_3d = detections_3d
-            self.last_detections_2d = detections_2d
+            # Thread-safe update of detections
+            with self.detection_lock:
+                self.last_detections_3d = detections_3d
+                self.last_detections_2d = detections_2d
 
             # Publish detections
             if self.detection3d_array:
@@ -379,19 +407,34 @@ class MobileBasePBVS(Module):
 
     def _update_tracking(self) -> bool:
         """Update tracking of target object."""
-        if not self.target_object or not self.last_detections_3d:
+        if not self.target_object:
             return False
+
+        # Thread-safe read of detections
+        with self.detection_lock:
+            if not self.last_detections_3d:
+                return False
+            detections_3d_copy = self.last_detections_3d
+
+        # Use averaged target position for more stable matching
+        averaged_target = (
+            avg_detection3d(list(self.target_object_history))
+            if self.target_object_history
+            else self.target_object
+        )
 
         # Use find_best_object_match for robust tracking
         match_result = find_best_object_match(
-            target_obj=self.target_object,
-            candidates=self.last_detections_3d.detections,
-            max_distance=0.3,  # 30cm tracking threshold
-            min_size_similarity=0.4,  # Lower threshold for tracking
+            target_obj=averaged_target,
+            candidates=detections_3d_copy.detections,
+            max_distance=0.2,  # 20cm tracking threshold
+            min_size_similarity=0.6,  # Lower threshold for tracking
         )
 
         if match_result.is_valid_match:
             self.target_object = match_result.matched_object
+            # Add to history for averaging
+            self.target_object_history.append(match_result.matched_object)
             self.last_detection_time = time.time()
             logger.debug(
                 f"Tracking updated: distance={match_result.distance:.3f}m, "
@@ -430,9 +473,12 @@ class MobileBasePBVS(Module):
             target_pose, self.target_distance, approach_vector=Vector3(-1, 0, 0)
         )
 
-        # Check if target reached first
+        # Check if target reached first (position tolerance only for mobile base)
         error_magnitude, target_reached = is_target_reached(
-            retracted_pose, ee_pose, self.target_tolerance
+            retracted_pose,
+            ee_pose,
+            position_tolerance=self.target_tolerance,
+            orientation_tolerance=0.15,
         )
         self.last_error_magnitude = error_magnitude
 
@@ -466,51 +512,57 @@ class MobileBasePBVS(Module):
             viz = self.latest_rgb.data.copy()
 
             # Draw target if tracking
-            if self.target_object and self.last_detections_2d and self.last_detections_3d:
-                # Use match_detection_by_id to find corresponding 2D detection
-                det_2d = match_detection_by_id(
-                    self.target_object,
-                    self.last_detections_3d.detections,
-                    self.last_detections_2d.detections,
-                )
+            if self.target_object:
+                # Thread-safe read of detections
+                with self.detection_lock:
+                    detections_2d_copy = self.last_detections_2d
+                    detections_3d_copy = self.last_detections_3d
 
-                if det_2d and det_2d.bbox:
-                    # Draw bounding box
-                    bbox = det_2d.bbox
-                    x = int(bbox.center.position.x - bbox.size_x / 2)
-                    y = int(bbox.center.position.y - bbox.size_y / 2)
-                    w = int(bbox.size_x)
-                    h = int(bbox.size_y)
-
-                    cv2.rectangle(viz, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-                    # Add tracking info
-                    pos = self.target_object.bbox.center.position
-                    text = f"Tracking: ({pos.x:.2f}, {pos.y:.2f}, {pos.z:.2f})"
-                    cv2.putText(
-                        viz, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1
+                if detections_2d_copy and detections_3d_copy:
+                    # Use match_detection_by_id to find corresponding 2D detection
+                    det_2d = match_detection_by_id(
+                        self.target_object,
+                        detections_3d_copy.detections,
+                        detections_2d_copy.detections,
                     )
 
-                    # Add error magnitude overlay
-                    if self.last_error_magnitude is not None:
-                        error_text = f"Error: {self.last_error_magnitude:.3f}m"
-                        # Color based on error magnitude (green->yellow->red)
-                        if self.last_error_magnitude < self.target_tolerance:
-                            color = (0, 255, 0)  # Green - reached
-                        elif self.last_error_magnitude < self.target_tolerance * 2:
-                            color = (0, 255, 255)  # Yellow - close
-                        else:
-                            color = (0, 0, 255)  # Red - far
+                    if det_2d and det_2d.bbox:
+                        # Draw bounding box
+                        bbox = det_2d.bbox
+                        x = int(bbox.center.position.x - bbox.size_x / 2)
+                        y = int(bbox.center.position.y - bbox.size_y / 2)
+                        w = int(bbox.size_x)
+                        h = int(bbox.size_y)
 
+                        cv2.rectangle(viz, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+                        # Add tracking info
+                        pos = self.target_object.bbox.center.position
+                        text = f"Tracking: ({pos.x:.2f}, {pos.y:.2f}, {pos.z:.2f})"
                         cv2.putText(
-                            viz,
-                            error_text,
-                            (x, y + h + 20),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.6,
-                            color,
-                            2,
+                            viz, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1
                         )
+
+                        # Add error magnitude overlay
+                        if self.last_error_magnitude is not None:
+                            error_text = f"Error: {self.last_error_magnitude:.3f}m"
+                            # Color based on error magnitude (green->yellow->red)
+                            if self.last_error_magnitude < self.target_tolerance:
+                                color = (0, 255, 0)  # Green - reached
+                            elif self.last_error_magnitude < self.target_tolerance * 2:
+                                color = (0, 255, 255)  # Yellow - close
+                            else:
+                                color = (0, 0, 255)  # Red - far
+
+                            cv2.putText(
+                                viz,
+                                error_text,
+                                (x, y + h + 20),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.6,
+                                color,
+                                2,
+                            )
 
             # Publish visualization
             if self.viz_image and viz is not None:
@@ -557,5 +609,10 @@ class MobileBasePBVS(Module):
         if self.tracking_thread and self.tracking_thread.is_alive():
             self.stop_event.set()
             self.tracking_thread.join(timeout=2.0)
+
+        # Stop detection thread if running
+        if self.detection_thread and self.detection_thread.is_alive():
+            self.stop_detection.set()
+            self.detection_thread.join(timeout=2.0)
 
         logger.info("Mobile base PBVS module cleaned up")

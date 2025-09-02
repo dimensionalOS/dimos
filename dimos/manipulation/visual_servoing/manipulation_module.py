@@ -651,7 +651,9 @@ class ManipulationModule(Module):
             self.reset_to_idle()
             return False
 
-        _, target_reached = is_target_reached(target_pose, ee_pose, self.pbvs.target_tolerance)
+        _, target_reached = is_target_reached(
+            target_pose, ee_pose, position_tolerance=self.pbvs.target_tolerance
+        )
         if target_reached:
             self.waiting_for_reach = False
             self.waiting_start_time = None

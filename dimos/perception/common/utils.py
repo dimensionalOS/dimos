@@ -745,3 +745,64 @@ def extract_pose_from_detection3d(detection3d: Detection3D):
 
     pose = Pose(position=position, orientation=orientation)
     return pose
+
+
+def avg_detection3d(detections: List[Detection3D]) -> Detection3D:
+    """Average multiple Detection3D objects into a single one.
+
+    Args:
+        detections: List of Detection3D objects to average
+
+    Returns:
+        Averaged Detection3D object with mean position, orientation, size, and confidence
+    """
+    from copy import deepcopy
+    from scipy.spatial.transform import Rotation
+
+    # Use first detection as template
+    avg_det = deepcopy(detections[0])
+
+    # Extract data from all detections
+    positions = np.array(
+        [
+            [d.bbox.center.position.x, d.bbox.center.position.y, d.bbox.center.position.z]
+            for d in detections
+        ]
+    )
+    sizes = np.array([[d.bbox.size.x, d.bbox.size.y, d.bbox.size.z] for d in detections])
+
+    # Extract quaternions for averaging
+    quaternions = np.array(
+        [
+            [
+                d.bbox.center.orientation.x,
+                d.bbox.center.orientation.y,
+                d.bbox.center.orientation.z,
+                d.bbox.center.orientation.w,
+            ]
+            for d in detections
+        ]
+    )
+
+    # Average confidence scores if available
+    confidences = [d.results[0].hypothesis.score for d in detections if d.results_length > 0]
+
+    # Compute averages
+    avg_pos = np.mean(positions, axis=0)
+    avg_size = np.mean(sizes, axis=0)
+
+    # Average quaternions using scipy (handles proper quaternion averaging)
+    rotations = Rotation.from_quat(quaternions)
+    avg_rotation = rotations.mean()
+    avg_quat = avg_rotation.as_quat()  # Returns [x, y, z, w]
+
+    # Update averaged detection
+    avg_det.bbox.center.position = Vector3(avg_pos[0], avg_pos[1], avg_pos[2])
+    avg_det.bbox.size = Vector3(avg_size[0], avg_size[1], avg_size[2])
+    avg_det.bbox.center.orientation = Quaternion(avg_quat[0], avg_quat[1], avg_quat[2], avg_quat[3])
+
+    # Update confidence if available
+    if confidences and avg_det.results_length > 0:
+        avg_det.results[0].hypothesis.score = np.mean(confidences)
+
+    return avg_det

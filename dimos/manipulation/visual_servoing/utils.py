@@ -12,26 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
-from typing import Dict, Any, Optional, List, Tuple, Union
-from dataclasses import dataclass
-
-from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
-from dimos_lcm.vision_msgs import Detection3D, Detection2D
 import cv2
-from dimos.perception.detection2d.utils import plot_results
+import numpy as np
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.perception.common.utils import project_2d_points_to_3d
+from dimos.perception.detection2d.utils import plot_results
 from dimos.utils.transform_utils import (
-    optical_to_robot_frame,
-    robot_to_optical_frame,
-    pose_to_matrix,
-    matrix_to_pose,
-    euler_to_quaternion,
     compose_transforms,
-    yaw_towards_point,
+    euler_to_quaternion,
     get_distance,
+    matrix_to_pose,
+    normalize_angle,
     offset_distance,
+    optical_to_robot_frame,
+    pose_to_matrix,
+    quaternion_to_euler,
+    robot_to_optical_frame,
+    yaw_towards_point,
 )
+from dimos_lcm.vision_msgs import Detection2D, Detection3D
 
 
 def match_detection_by_id(
@@ -267,7 +269,10 @@ def update_target_grasp_pose(
 
 
 def is_target_reached(
-    target_pose: Pose, current_pose: Pose, tolerance: float = 0.01
+    target_pose: Pose,
+    current_pose: Pose,
+    position_tolerance: float = 0.01,
+    orientation_tolerance: float = 0.2,
 ) -> Tuple[float, bool]:
     """
     Check if the target pose has been reached within tolerance.
@@ -275,16 +280,30 @@ def is_target_reached(
     Args:
         target_pose: Target pose to reach
         current_pose: Current pose (e.g., end-effector pose)
-        tolerance: Distance threshold for considering target reached (meters, default 0.01 = 1cm)
+        position_tolerance: Distance threshold for considering target reached (meters, default 0.01 = 1cm)
+        orientation_tolerance: Orientation threshold for considering target reached (radians, default 0.2)
 
     Returns:
         Tuple of (error_magnitude, target_reached):
             - error_magnitude: Distance to target in meters
-            - target_reached: True if target is reached within tolerance
+            - target_reached: True if both position and orientation are within tolerance
     """
     # Calculate position error using distance utility
     error_magnitude = get_distance(target_pose, current_pose)
-    target_reached = error_magnitude < tolerance
+
+    # Check position tolerance
+    if error_magnitude >= position_tolerance:
+        return error_magnitude, False
+
+    # Check orientation tolerance
+    current_euler = quaternion_to_euler(current_pose.orientation)
+    target_euler = quaternion_to_euler(target_pose.orientation)
+
+    # Calculate yaw difference and normalize to [-pi, pi]
+    yaw_error = normalize_angle(target_euler.z - current_euler.z)
+
+    # Both position and orientation must be within tolerance
+    target_reached = error_magnitude < position_tolerance and abs(yaw_error) < orientation_tolerance
     return error_magnitude, target_reached
 
 

@@ -241,7 +241,7 @@ class PBVS:
             return None
 
         self.last_position_error, self.last_target_reached = is_target_reached(
-            self.target_grasp_pose, ee_pose, self.target_tolerance
+            self.target_grasp_pose, ee_pose, position_tolerance=self.target_tolerance
         )
 
         if self.direct_ee_control:
