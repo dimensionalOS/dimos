@@ -285,7 +285,7 @@ class StereoMapper:
             self.mapper = self.dimos.deploy(
                 PassthroughMap,
                 voxel_size=self.voxel_size,
-                global_publish_interval=2.5,
+                global_publish_interval=5,
                 min_height=0.15,
                 max_height=1.5,
             )

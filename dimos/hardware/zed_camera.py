@@ -104,7 +104,6 @@ class ZEDCamera(StereoCamera):
         self.spatial_mapping_params = sl.SpatialMappingParameters(
             resultion_meter=0.1,
             range_meter=5.0,  # depth of mapping to integrate
-            mapping_range=sl.MAPPING_RANGE.MEDIUM,
             max_memory_usage=4096,
             save_texture=False,
             use_chunk_only=True,
