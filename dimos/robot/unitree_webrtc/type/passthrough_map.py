@@ -65,7 +65,7 @@ class PassthroughMap(Module):
         # Publish global map periodically
         def publish(_):
             if self.latest_world_map is not None:
-                n_points = len(self.latest_world_map.points)
+                n_points = len(self.latest_world_map.pointcloud.points)
                 logger.info(
                     f"Publishing global_map from ZED spatial mapping with {n_points} points"
                 )
