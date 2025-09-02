@@ -155,10 +155,10 @@ class StereoMapper:
         # These are the main topics that UnitreeGo2 uses
         self.zed_module.pointcloud_msg.transport = core.LCMTransport("/lidar", LidarMessage)
         self.zed_module.pose.transport = core.LCMTransport("/odom", PoseStamped)
-        self.zed_module.color_image.transport = core.LCMTransport("/zed/color_image", Image)
+        # self.zed_module.color_image.transport = core.LCMTransport("/zed/color_image", Image)
 
         # Additional ZED-specific topics for debugging
-        self.zed_module.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
+        # self.zed_module.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
         self.zed_module.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
 
         # Subscribe to pose messages to publish TF transforms

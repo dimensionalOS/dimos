@@ -396,20 +396,20 @@ class ZEDModule(Module):
 
             # Retrieve all data from the single grab
             # Get left image
-            self.zed_camera.zed.retrieve_image(self.zed_camera.image_left, sl.VIEW.LEFT)
-            left_img = self.zed_camera.image_left.get_data()[:, :, :3]  # Remove alpha
+            # self.zed_camera.zed.retrieve_image(self.zed_camera.image_left, sl.VIEW.LEFT)
+            # left_img = self.zed_camera.image_left.get_data()[:, :, :3]  # Remove alpha
 
             # Get depth for visualization (but don't use for pointcloud)
-            self.zed_camera.zed.retrieve_measure(self.zed_camera.depth_map, sl.MEASURE.DEPTH)
-            depth = self.zed_camera.depth_map.get_data()
+            # self.zed_camera.zed.retrieve_measure(self.zed_camera.depth_map, sl.MEASURE.DEPTH)
+            # depth = self.zed_camera.depth_map.get_data()
 
             # Get pointcloud at lower resolution - EXACTLY like the demo
-            self.zed_camera.zed.retrieve_measure(
-                self.zed_camera.point_cloud,
-                sl.MEASURE.XYZRGBA,
-                sl.MEM.CPU,
-                self.zed_camera.pc_resolution,
-            )
+            # self.zed_camera.zed.retrieve_measure(
+            #     self.zed_camera.point_cloud,
+            #     sl.MEASURE.XYZRGBA,
+            #     sl.MEM.CPU,
+            #     self.zed_camera.pc_resolution,
+            # )
 
             # Get pose if tracking enabled
             pose_data = None
@@ -421,8 +421,8 @@ class ZEDModule(Module):
             self._sequence += 1
 
             # Publish all data
-            self._publish_color_image(left_img, header)
-            self._publish_depth_image(depth, header)
+            # self._publish_color_image(left_img, header)
+            # self._publish_depth_image(depth, header)
             self._publish_camera_info()
 
             # Publish pose if tracking enabled and valid
