@@ -41,6 +41,7 @@ class ZedCameraThread(threading.Thread):
         self.pymesh = None
         self._publish_pointcloud_cb = publish_pointcloud
         self._publish_pose_cb = publish_pose
+        self.voxel_size = 0.1
 
     def stop_publishing(self):
         self._stop_event.set()
@@ -108,7 +109,6 @@ class ZedCameraThread(threading.Thread):
 
             zed.retrieve_image(image, sl.VIEW.LEFT)
             tracking_state = zed.get_position(pose)
-            print("tracking_state", tracking_state)
 
             if tracking_state != sl.POSITIONAL_TRACKING_STATE.OK:
                 print("tracking not ok", tracking_state)
@@ -132,7 +132,10 @@ class ZedCameraThread(threading.Thread):
 
             if mapping_activated:
                 mapping_state = zed.get_spatial_mapping_state()
-                print("mapping_state", mapping_state)
+                if mapping_state != sl.SPATIAL_MAPPING_STATE.OK:
+                    print("mapping not ok", mapping_state)
+                    continue
+
                 duration = time.time() - last_call
 
                 if duration < 5:
@@ -143,9 +146,8 @@ class ZedCameraThread(threading.Thread):
                 last_call = time.time()
 
                 if zed.get_spatial_map_request_status_async() == sl.ERROR_CODE.SUCCESS:
-                    print("received spatial map")
-                    zed.retrieve_spatial_map_async(self.pymesh)
-                    zed.extract_whole_spatial_map(self.pymesh)
+                    print("retreive_spatial_map_async", zed.retrieve_spatial_map_async(self.pymesh))
+                    print("extract_whole_spatial_map", zed.extract_whole_spatial_map(self.pymesh))
                     self._send_pymesh()
                 else:
                     print("spatial map not received yet")
