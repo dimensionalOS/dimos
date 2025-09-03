@@ -144,7 +144,7 @@ class StereoMapper:
         # self.zed_module.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
 
         # Subscribe to pose messages to publish TF transforms
-        # self.zed_module.pose.subscribe(self._publish_tf)
+        self.zed_module.pose.subscribe(self._publish_tf)
         # Subscribe to lidar messages to log metadata
         logger.info("✓ ZED camera module deployed and configured")
 

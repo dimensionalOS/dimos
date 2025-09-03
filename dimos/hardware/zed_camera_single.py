@@ -13,14 +13,10 @@
 # limitations under the License.
 
 import numpy as np
-import cv2
 import open3d as o3d
-from typing import Optional, Tuple, Dict, Any
 import logging
 import time
 import threading
-from reactivex import interval
-from reactivex import operators as ops
 
 try:
     import pyzed.sl as sl
@@ -28,37 +24,33 @@ except ImportError:
     sl = None
     logging.warning("ZED SDK not found. Please install pyzed to use ZED camera functionality.")
 
-from dimos.hardware.stereo_camera import StereoCamera
 from dimos.core import Module, Out, rpc
 from dimos.utils.logging_config import setup_logger
-from dimos.protocol.tf import TF
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
-
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.std_msgs import Header
+
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 logger = setup_logger(__name__)
 
 
 class ZedCameraThread(threading.Thread):
-    def __init__(self, publish_pointcloud):
+    def __init__(self, publish_pointcloud, publish_pose):
         super().__init__(daemon=True)
         self._stop_event = threading.Event()
         self.pymesh = None
         self._publish_pointcloud_cb = publish_pointcloud
+        self._publish_pose_cb = publish_pose
 
     def stop_publishing(self):
         self._stop_event.set()
 
     def run(self):
         init = sl.InitParameters()
-        init.depth_mode = sl.DEPTH_MODE.NEURAL
+        init.depth_mode = sl.DEPTH_MODE.NEURAL_PLUS
         init.coordinate_units = sl.UNIT.METER
         init.coordinate_system = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
-        init.depth_maximum_distance = 8.0
+        init.depth_maximum_distance = 10.0
 
         zed = sl.Camera()
 
@@ -78,14 +70,15 @@ class ZedCameraThread(threading.Thread):
             return
 
         spatial_mapping_parameters = sl.SpatialMappingParameters(
-            resolution=sl.MAPPING_RESOLUTION.MEDIUM,
-            mapping_range=sl.MAPPING_RANGE.MEDIUM,
-            max_memory_usage=2048,
+            max_memory_usage=4096,
             save_texture=False,
             use_chunk_only=True,
             reverse_vertex_order=False,
             map_type=sl.SPATIAL_MAP_TYPE.FUSED_POINT_CLOUD,
         )
+        spatial_mapping_parameters.resolution_meter = 0.1
+        spatial_mapping_parameters.range_meter = 10.0
+
         self.pymesh = sl.FusedPointCloud()
 
         tracking_state = sl.POSITIONAL_TRACKING_STATE.OFF
@@ -105,19 +98,23 @@ class ZedCameraThread(threading.Thread):
         while True:
             if self._stop_event.is_set():
                 break
-            time.sleep(0.02)
+            time.sleep(0.05)
 
-            if zed.grab(runtime_parameters) > sl.ERROR_CODE.SUCCESS:
+            grab_status = zed.grab(runtime_parameters)
+
+            if grab_status != sl.ERROR_CODE.SUCCESS:
+                print(f"Grab: {repr(grab_status)}")
                 continue
-
-            print("grabbed")
 
             zed.retrieve_image(image, sl.VIEW.LEFT)
             tracking_state = zed.get_position(pose)
             print("tracking_state", tracking_state)
 
             if tracking_state != sl.POSITIONAL_TRACKING_STATE.OK:
+                print("tracking not ok", tracking_state)
                 continue
+
+            self._publish_pose_cb(pose)
 
             if not mapping_activated:
                 print("turning mapping on")
@@ -125,11 +122,6 @@ class ZedCameraThread(threading.Thread):
                 init_pose = sl.Transform()
                 zed.reset_positional_tracking(init_pose)
 
-                spatial_mapping_parameters.resolution_meter = (
-                    sl.SpatialMappingParameters().get_resolution_preset(
-                        sl.MAPPING_RESOLUTION.MEDIUM
-                    )
-                )
                 zed.enable_spatial_mapping(spatial_mapping_parameters)
 
                 self.pymesh.clear()
@@ -142,10 +134,13 @@ class ZedCameraThread(threading.Thread):
                 mapping_state = zed.get_spatial_mapping_state()
                 print("mapping_state", mapping_state)
                 duration = time.time() - last_call
-                if duration > 0.5:
-                    print("requested spatial map")
-                    zed.request_spatial_map_async()
-                    last_call = time.time()
+
+                if duration < 5:
+                    continue
+
+                print("requested spatial map")
+                zed.request_spatial_map_async()
+                last_call = time.time()
 
                 if zed.get_spatial_map_request_status_async() == sl.ERROR_CODE.SUCCESS:
                     print("received spatial map")
@@ -168,20 +163,18 @@ class ZedCameraThread(threading.Thread):
 
     def _send_pymesh(self):
         print("sending pymesh")
-        # status = self.pymesh.save(f"mesh_gen_dimos_{time.time()}.obj")
-        # print("saved mesh", status)
         self.pymesh.update_from_chunklist()
 
         vertices = self.pymesh.vertices
         if len(vertices) > 0:
-            print("have points")
+            print("points", len(vertices))
             points = np.array(vertices, dtype=np.float32).reshape(-1, 4)[:, :3]  # XYZ only
             valid = np.isfinite(points).all(axis=1)
             valid_points = points[valid]
             pcd = o3d.geometry.PointCloud()
             if len(valid_points) > 0:
-                print("have valid points")
                 pcd.points = o3d.utility.Vector3dVector(valid_points)
+                pcd = pcd.voxel_down_sample(voxel_size=self.voxel_size)
                 self._publish_pointcloud_cb(pcd)
             else:
                 print("no valid points")
@@ -191,10 +184,13 @@ class ZedCameraThread(threading.Thread):
 
 class ZedModuleSingle(Module):
     pointcloud_msg: Out[LidarMessage] = None
+    pose: Out[PoseStamped] = None
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._zed_camera_thread = ZedCameraThread(publish_pointcloud=self._publish_pointcloud)
+        self._zed_camera_thread = ZedCameraThread(
+            publish_pointcloud=self._publish_pointcloud, publish_pose=self._publish_pose
+        )
         logger.info("ZEDModuleSingle initialized")
 
     @rpc
@@ -209,12 +205,22 @@ class ZedModuleSingle(Module):
     def cleanup(self):
         self.stop()
 
+    def _publish_pose(self, pose: sl.Pose):
+        header = Header("camera_link")
+        msg = PoseStamped(
+            ts=header.ts,
+            position=pose.get_translation().get().tolist(),
+            orientation=pose.get_orientation().get().tolist(),
+            frame_id="world",
+        )
+        self.pose.publish(msg)
+
     def _publish_pointcloud(self, pcd: o3d.geometry.PointCloud):
         if self.pointcloud_msg is not None and pcd is not None and len(pcd.points) > 0:
             lidar_msg = LidarMessage(
                 pointcloud=pcd,
                 origin=[0.0, 0.0, 0.0],
-                resolution=0.05,
+                resolution=0.1,
                 ts=time.time(),
                 frame_id="world",
             )
