@@ -207,7 +207,7 @@ class ZedModuleSingle(Module):
 
     def _publish_pose(self, pose: sl.Pose):
         header = Header("camera_link")
-        position = (pose.get_translation().get().tolist(),)
+        position = pose.get_translation().get().tolist()
         rotation = pose.get_orientation().get().tolist()
 
         msg = PoseStamped(
