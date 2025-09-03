@@ -28,7 +28,7 @@ from dimos.core import Module, Out, rpc
 from dimos.utils.logging_config import setup_logger
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.std_msgs import Header
-
+from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 logger = setup_logger(__name__)
@@ -207,13 +207,38 @@ class ZedModuleSingle(Module):
 
     def _publish_pose(self, pose: sl.Pose):
         header = Header("camera_link")
+        position = (pose.get_translation().get().tolist(),)
+        rotation = pose.get_orientation().get().tolist()
+
         msg = PoseStamped(
             ts=header.ts,
-            position=pose.get_translation().get().tolist(),
-            orientation=pose.get_orientation().get().tolist(),
+            position=position,
+            orientation=rotation,
             frame_id="world",
         )
+
         self.pose.publish(msg)
+
+        # World → base_link (from ZED tracking)
+        # Note: ZED tracking gives camera pose, we need to transform to base_link
+        base_tf = Transform(
+            translation=Vector3(position),
+            rotation=Quaternion(rotation),
+            frame_id="world",
+            child_frame_id="base_link",
+            ts=header.ts,
+        )
+
+        # base_link → camera_link (physical offset - camera mounted 30cm forward)
+        camera_link = Transform(
+            translation=Vector3(0.3, 0.0, 0.1),  # 30cm forward, 10cm up
+            rotation=Quaternion.from_euler(Vector3([0, 0, 0])),
+            frame_id="base_link",
+            child_frame_id="camera_link",
+            ts=header.ts,
+        )
+        self.tf.publish(base_tf)
+        self.tf.publish(camera_link)
 
     def _publish_pointcloud(self, pcd: o3d.geometry.PointCloud):
         if self.pointcloud_msg is not None and pcd is not None and len(pcd.points) > 0:
