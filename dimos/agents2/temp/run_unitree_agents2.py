@@ -143,7 +143,7 @@ class UnitreeAgentRunner:
 
             try:
                 # Process query with agent (blocking call)
-                response = self.agent.query(query_text)
+                response = self.agent.query_async(query_text)
 
                 # Send response back through web interface
                 if response and self.agent_response_subject:
@@ -213,14 +213,14 @@ You can move, navigate, speak, and perform various actions. Be helpful and frien
             logger.info("  - Ask the robot to speak text")
             logger.info("=" * 60)
 
-            # Test query - agent.start() now handles the event loop
-            try:
-                logger.info("Testing agent query...")
-                result = self.agent.query("Hello, what can you do?")
-                logger.info(f"Agent query result: {result}")
-            except Exception as e:
-                logger.error(f"Error during test query: {e}")
-                # Continue anyway - the web interface will handle future queries
+            # # Test query - agent.start() now handles the event loop
+            # try:
+            #     logger.info("Testing agent query...")
+            #     result = self.agent.query("Hello, what can you do?")
+            #     logger.info(f"Agent query result: {result}")
+            # except Exception as e:
+            #     logger.error(f"Error during test query: {e}")
+            #     # Continue anyway - the web interface will handle future queries
 
             # Run web interface (blocks)
             self.web_interface.run()

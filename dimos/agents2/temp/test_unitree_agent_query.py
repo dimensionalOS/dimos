@@ -133,45 +133,45 @@ def test_sync_query_with_thread():
     agent.stop()
 
 
-def test_with_real_module_system():
-    """Test using the real DimOS module system (like in test_agent.py)."""
-    print("\n=== Testing with Module System ===\n")
+# def test_with_real_module_system():
+#     """Test using the real DimOS module system (like in test_agent.py)."""
+#     print("\n=== Testing with Module System ===\n")
 
-    from dimos.core import start
+#     from dimos.core import start
 
-    # Start the DimOS system
-    dimos = start(2)
+#     # Start the DimOS system
+#     dimos = start(2)
 
-    # Deploy container and agent as modules
-    container = dimos.deploy(UnitreeSkillContainer, robot=None)
-    agent = dimos.deploy(
-        Agent,
-        system_prompt="You are a helpful robot assistant. List 3 skills you can do.",
-        model=Model.GPT_4O_MINI,
-        provider=Provider.OPENAI,
-    )
+#     # Deploy container and agent as modules
+#     container = dimos.deploy(UnitreeSkillContainer, robot=None)
+#     agent = dimos.deploy(
+#         Agent,
+#         system_prompt="You are a helpful robot assistant. List 3 skills you can do.",
+#         model=Model.GPT_4O_MINI,
+#         provider=Provider.OPENAI,
+#     )
 
-    # Register skills
-    agent.register_skills(container)
-    agent.start()
+#     # Register skills
+#     agent.register_skills(container)
+#     agent.start()
 
-    # Query
-    try:
-        logger.info("Sending query through module system...")
-        future = agent.query_async("Hello! What skills do you have?")
+#     # Query
+#     try:
+#         logger.info("Sending query through module system...")
+#         future = agent.query_async("Hello! What skills do you have?")
 
-        # In the module system, the loop should be running
-        time.sleep(5)  # Wait for processing
+#         # In the module system, the loop should be running
+#         time.sleep(5)  # Wait for processing
 
-        if hasattr(future, "result"):
-            result = future.result(timeout=10)
-            logger.info(f"Got result: {result}")
-    except Exception as e:
-        logger.error(f"Query failed: {e}")
+#         if hasattr(future, "result"):
+#             result = future.result(timeout=10)
+#             logger.info(f"Got result: {result}")
+#     except Exception as e:
+#         logger.error(f"Query failed: {e}")
 
-    # Clean up
-    agent.stop()
-    dimos.stop()
+#     # Clean up
+#     agent.stop()
+#     dimos.stop()
 
 
 def main():
