@@ -201,7 +201,7 @@ def main():
             max_linear_velocity=0.6,
             max_angular_velocity=0.8,
             target_distance=1.0,
-            target_tolerance=0.2,
+            target_tolerance=0.3,
             min_confidence=0.5,
             camera_frame_id="camera_link_optical",
             track_frame_id="world",

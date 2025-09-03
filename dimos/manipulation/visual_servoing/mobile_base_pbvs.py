@@ -91,6 +91,8 @@ class MobileBasePBVS(Module):
         rotation_gain: float = 0.5,
         max_linear_velocity: float = 0.6,  # m/s
         max_angular_velocity: float = 0.8,  # rad/s
+        deadband_velocity: float = 0.2,  # Minimum linear velocity to overcome deadband
+        deadband_angular_velocity: float = 0.2,  # Minimum angular velocity to overcome deadband
         target_distance: float = 1.2,  # Target distance to maintain from object
         target_tolerance: float = 0.2,  # 20cm tolerance
         min_confidence: float = 0.5,
@@ -108,6 +110,8 @@ class MobileBasePBVS(Module):
         self.rotation_gain = rotation_gain
         self.max_linear_velocity = max_linear_velocity
         self.max_angular_velocity = max_angular_velocity
+        self.deadband_velocity = deadband_velocity
+        self.deadband_angular_velocity = deadband_angular_velocity
         self.target_distance = target_distance
         self.target_tolerance = target_tolerance
         self.tracking_loss_timeout = tracking_loss_timeout
@@ -428,7 +432,7 @@ class MobileBasePBVS(Module):
             target_obj=averaged_target,
             candidates=detections_3d_copy.detections,
             max_distance=0.2,  # 20cm tracking threshold
-            min_size_similarity=0.6,  # Lower threshold for tracking
+            min_size_similarity=0.75,  # Lower threshold for tracking
         )
 
         if match_result.is_valid_match:
@@ -492,9 +496,26 @@ class MobileBasePBVS(Module):
         # Compute control commands only if not reached
         twist_cmd = self.controller.compute_control(ee_pose, retracted_pose)
 
+        # Apply deadband compensation
+        linear_x = twist_cmd.linear.x
+        linear_y = twist_cmd.linear.y
+        angular_z = twist_cmd.angular.z
+
+        # Apply deadband to linear velocities
+        if abs(linear_x) > 0 and abs(linear_x) < self.deadband_velocity:
+            linear_x = self.deadband_velocity if linear_x > 0 else -self.deadband_velocity
+        if abs(linear_y) > 0 and abs(linear_y) < self.deadband_velocity:
+            linear_y = self.deadband_velocity if linear_y > 0 else -self.deadband_velocity
+
+        # Apply deadband to angular velocity
+        if abs(angular_z) > 0 and abs(angular_z) < self.deadband_angular_velocity:
+            angular_z = (
+                self.deadband_angular_velocity if angular_z > 0 else -self.deadband_angular_velocity
+            )
+
         mobile_twist = Twist(
-            linear=Vector3(twist_cmd.linear.x, twist_cmd.linear.y, 0),
-            angular=Vector3(0, 0, twist_cmd.angular.z),
+            linear=Vector3(linear_x, linear_y, 0),
+            angular=Vector3(0, 0, angular_z),
         )
         self.cmd_vel.publish(mobile_twist)
 
@@ -518,7 +539,27 @@ class MobileBasePBVS(Module):
                     detections_2d_copy = self.last_detections_2d
                     detections_3d_copy = self.last_detections_3d
 
-                if detections_2d_copy and detections_3d_copy:
+                # Check if detections match the current image timestamp
+                image_ts = self.latest_rgb.ts if self.latest_rgb.ts else 0
+
+                # Convert Time objects to float timestamps
+                detections_ts_2d = (
+                    detections_2d_copy.header.stamp.sec
+                    + detections_2d_copy.header.stamp.nsec * 1e-9
+                )
+                detections_ts_3d = (
+                    detections_3d_copy.header.stamp.sec
+                    + detections_3d_copy.header.stamp.nsec * 1e-9
+                )
+
+                # Only draw if timestamps are reasonably close (within 100ms)
+                timestamp_tolerance = 0.5  # seconds
+                timestamps_match = (
+                    abs(image_ts - detections_ts_2d) < timestamp_tolerance
+                    and abs(image_ts - detections_ts_3d) < timestamp_tolerance
+                )
+
+                if detections_2d_copy and detections_3d_copy and timestamps_match:
                     # Use match_detection_by_id to find corresponding 2D detection
                     det_2d = match_detection_by_id(
                         self.target_object,
