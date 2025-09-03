@@ -41,7 +41,7 @@ class ZedCameraThread(threading.Thread):
         self.pymesh = None
         self._publish_pointcloud_cb = publish_pointcloud
         self._publish_pose_cb = publish_pose
-        self.voxel_size = 0.5
+        self.voxel_size = 0.1
         self.zed = None
         self.pose_lock = threading.Lock()
         self.latest_pose = None
