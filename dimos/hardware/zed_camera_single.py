@@ -43,10 +43,9 @@ class ZedCameraThread(threading.Thread):
         self._publish_pose_cb = publish_pose
         self.voxel_size = 0.1
         self.zed = None
-        self.pose_lock = threading.Lock()
-        self.latest_pose = None
         self.pose_thread = None
         self.check_interval = 0.02
+        self.runtime_parameters = sl.RuntimeParameters()
 
     def stop_publishing(self):
         self._stop_event.set()
@@ -54,11 +53,20 @@ class ZedCameraThread(threading.Thread):
             self.pose_thread.join(timeout=1.0)
 
     def _pose_publisher_thread(self):
+        pose = sl.Pose()
+
         while not self._stop_event.is_set():
-            with self.pose_lock:
-                if self.latest_pose is not None:
-                    self._publish_pose_cb(self.latest_pose)
             time.sleep(self.check_interval)
+
+            grab_status = self.zed.grab(self.runtime_parameters)
+            if grab_status != sl.ERROR_CODE.SUCCESS:
+                continue
+
+            tracking_state = self.zed.get_position(pose)
+            if tracking_state != sl.POSITIONAL_TRACKING_STATE.OK:
+                continue
+
+            self._publish_pose_cb(pose)
 
     def run(self):
         init = sl.InitParameters()
@@ -102,9 +110,8 @@ class ZedCameraThread(threading.Thread):
         tracking_state = sl.POSITIONAL_TRACKING_STATE.OFF
         mapping_state = sl.SPATIAL_MAPPING_STATE.NOT_ENABLED
 
-        runtime_parameters = sl.RuntimeParameters()
         # Exclude points with confidence level > 35. 0 is the highest confidence, 100 the lowest. 50 is the default.
-        runtime_parameters.confidence_threshold = 35
+        self.runtime_parameters.confidence_threshold = 35
 
         mapping_activated = False
 
@@ -122,7 +129,7 @@ class ZedCameraThread(threading.Thread):
                 break
             time.sleep(self.check_interval)
 
-            grab_status = self.zed.grab(runtime_parameters)
+            grab_status = self.zed.grab(self.runtime_parameters)
 
             if grab_status != sl.ERROR_CODE.SUCCESS:
                 print(f"Grab: {repr(grab_status)}")
@@ -134,9 +141,6 @@ class ZedCameraThread(threading.Thread):
             if tracking_state != sl.POSITIONAL_TRACKING_STATE.OK:
                 print("tracking not ok", tracking_state)
                 continue
-
-            with self.pose_lock:
-                self.latest_pose = sl.Pose(pose)
 
             if not mapping_activated:
                 print("turning mapping on")
