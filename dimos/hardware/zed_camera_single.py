@@ -78,12 +78,12 @@ class ZedCameraThread(threading.Thread):
             save_texture=False,
             use_chunk_only=True,
             reverse_vertex_order=False,
-            map_type=sl.SPATIAL_MAP_TYPE.FUSED_POINT_CLOUD,
+            map_type=sl.SPATIAL_MAP_TYPE.MESH,
         )
         spatial_mapping_parameters.resolution_meter = 0.1
         spatial_mapping_parameters.range_meter = 10.0
 
-        self.pymesh = sl.FusedPointCloud()
+        self.pymesh = sl.Mesh()
 
         tracking_state = sl.POSITIONAL_TRACKING_STATE.OFF
         mapping_state = sl.SPATIAL_MAPPING_STATE.NOT_ENABLED
@@ -151,6 +151,9 @@ class ZedCameraThread(threading.Thread):
                 if zed.get_spatial_map_request_status_async() == sl.ERROR_CODE.SUCCESS:
                     print("retreive_spatial_map_async", zed.retrieve_spatial_map_async(self.pymesh))
                     print("extract_whole_spatial_map", zed.extract_whole_spatial_map(self.pymesh))
+                    filter_params = sl.MeshFilterParameters()
+                    filter_params.set(sl.MESH_FILTER.MEDIUM)
+                    self.pymesh.filter(filter_params, True)
                     self._send_pymesh()
                 else:
                     print("spatial map not received yet")
@@ -167,7 +170,7 @@ class ZedCameraThread(threading.Thread):
         point_cloud.free()
 
     def _send_pymesh(self):
-        self.pymesh.update_from_chunklist()
+        self.pymesh.update_mesh_from_chunklist()
 
         vertices = self.pymesh.vertices
         if len(vertices) > 0:
