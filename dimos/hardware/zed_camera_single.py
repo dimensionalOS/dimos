@@ -175,7 +175,7 @@ class ZedCameraThread(threading.Thread):
         vertices = self.pymesh.vertices
         if len(vertices) > 0:
             print("points", len(vertices))
-            points = np.array(vertices, dtype=np.float32).reshape(-1, 4)[:, :3]  # XYZ only
+            points = np.array(vertices, dtype=np.float32).reshape(-1, 3)  # XYZ format
             valid = np.isfinite(points).all(axis=1)
             valid_points = points[valid]
             pcd = o3d.geometry.PointCloud()
