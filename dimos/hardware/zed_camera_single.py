@@ -41,7 +41,7 @@ class ZedCameraThread(threading.Thread):
         self.pymesh = None
         self._publish_pointcloud_cb = publish_pointcloud
         self._publish_pose_cb = publish_pose
-        self.voxel_size = 0.1
+        self.voxel_size = 0.5
 
     def stop_publishing(self):
         self._stop_event.set()
@@ -103,7 +103,7 @@ class ZedCameraThread(threading.Thread):
         while True:
             if self._stop_event.is_set():
                 break
-            time.sleep(0.05)
+            time.sleep(0.02)
 
             grab_status = zed.grab(runtime_parameters)
 
