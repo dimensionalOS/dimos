@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
-
 import pytest
 
 from dimos.agents2.agent import Agent
@@ -28,18 +26,26 @@ async def test_agent_init():
         "Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
     )
 
-    # # Uncomment the following lines to use a real module system
-    # dimos = start(2)
-    # testcontainer = dimos.deploy(SkillContainerTest)
+    # # Uncomment the following lines to use a dimos module system
+    dimos = start(2)
+    testcontainer = dimos.deploy(SkillContainerTest)
+    agent = Agent(system_prompt=system_prompt)
+
+    ## uncomment the following lines to run agents in a main loop without a module system
+    # testcontainer = SkillContainerTest()
     # agent = Agent(system_prompt=system_prompt)
 
-    testcontainer = SkillContainerTest()
-    agent = Agent(system_prompt=system_prompt)
     agent.register_skills(testcontainer)
     agent.start()
+
     agent.run_implicit_skill("uptime_seconds")
-    agent.query_async(
+
+    await agent.query_async(
         "hi there, I have 4 questions for you: Please tell me what's your name and current date, and how much is 124181112 + 124124, and what do you see on the camera?"
     )
 
-    await asyncio.sleep(20)
+    print("Agent loop finished")
+
+    agent.stop()
+    testcontainer.stop()
+    dimos.stop()

@@ -96,7 +96,8 @@ def skill(
             name=f.__name__,
             reducer=reducer,
             stream=stream,
-            ret=ret,
+            # if stream is passive, ret must be passive too
+            ret=ret.passive if stream == Stream.passive else ret,
             output=output,
             schema=function_to_schema(f),
         )
@@ -115,14 +116,15 @@ class SkillContainerConfig:
     skill_transport: type[SkillCommsSpec] = LCMSkillComms
 
 
-_skill_thread_pool = ThreadPoolExecutor(max_workers=50, thread_name_prefix="skill_worker")
-
-
 def threaded(f: Callable[..., Any]) -> Callable[..., None]:
     """Decorator to run a function in a thread pool."""
 
     def wrapper(self, *args, **kwargs):
-        _skill_thread_pool.submit(f, self, *args, **kwargs)
+        if self._skill_thread_pool is None:
+            self._skill_thread_pool = ThreadPoolExecutor(
+                max_workers=50, thread_name_prefix="skill_worker"
+            )
+        self._skill_thread_pool.submit(f, self, *args, **kwargs)
         return None
 
     return wrapper
@@ -144,6 +146,7 @@ def threaded(f: Callable[..., Any]) -> Callable[..., None]:
 
 class SkillContainer:
     skill_transport_class: type[SkillCommsSpec] = LCMSkillComms
+    _skill_thread_pool: Optional[ThreadPoolExecutor] = None
     _skill_transport: Optional[SkillCommsSpec] = None
 
     @rpc
@@ -152,6 +155,15 @@ class SkillContainer:
 
     def __str__(self) -> str:
         return f"SkillContainer({self.__class__.__name__})"
+
+    def stop(self):
+        if self._skill_transport:
+            self._skill_transport.stop()
+            self._skill_transport = None
+
+        if self._skill_thread_pool:
+            self._skill_thread_pool.shutdown(wait=True)
+            self._skill_thread_pool = None
 
     # TODO: figure out standard args/kwargs passing format,
     # use same interface as skill coordinator call_skill method

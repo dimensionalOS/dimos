@@ -362,6 +362,17 @@ class SkillCoordinator(Module):
             self._loop.call_soon_threadsafe(self._updates_available.set)
 
     def has_active_skills(self) -> bool:
+        if not self.has_passive_skills():
+            return False
+        for skill_run in self._skill_state.values():
+            # check if this skill will notify agent
+            if skill_run.skill_config.ret == Return.call_agent:
+                return True
+            if skill_run.skill_config.stream == Stream.call_agent:
+                return True
+        return False
+
+    def has_passive_skills(self) -> bool:
         # check if dict is empty
         if self._skill_state == {}:
             return False

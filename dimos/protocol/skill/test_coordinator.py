@@ -119,7 +119,7 @@ async def test_coordinator_parallel_calls():
                 {"args": [cnt, 2]},
             )
 
-        time.sleep(0.1 * cnt)
+        await asyncio.sleep(0.1 * cnt)
 
     skillCoordinator.stop()
 

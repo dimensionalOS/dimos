@@ -62,6 +62,7 @@ async def test_tool_call():
     skills = SkillContainerTest()
     agent.coordinator.register_skills(skills)
     agent.start()
+
     # Query the agent
     await agent.query_async("Please add 5 and 3")
 
@@ -178,7 +179,9 @@ async def test_tool_call_implicit_detections():
 
     agent.run_implicit_skill("get_detections")
 
-    print("waiting 8.5 seconds for some detections before quering agent")
+    print(
+        "Robot replay pipeline is running in the background.\nWaiting 8.5 seconds for some detections before quering agent"
+    )
     time.sleep(8.5)
 
     # Query the agent

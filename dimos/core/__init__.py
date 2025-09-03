@@ -147,6 +147,7 @@ def patchdask(dask_client: Client):
 
     dask_client.deploy = deploy
     dask_client.check_worker_memory = check_worker_memory
+    dask_client.stop = lambda: dask_client.shutdown()
     return dask_client
 
 

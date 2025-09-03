@@ -244,7 +244,6 @@ class Agent(AgentSpec):
                 # we will return a tool message, and not a general state message
                 snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)
 
-                print("SNAPSHOT", snapshot_msgs)
                 self.state_messages = snapshot_msgs.get("state_msgs", [])
                 self.append_history(*snapshot_msgs.get("tool_msgs", []))
 
@@ -254,11 +253,11 @@ class Agent(AgentSpec):
 
             traceback.print_exc()
 
-    def query_async(self, query: str):
+    def query(self, query: str):
         return asyncio.ensure_future(self.agent_loop(query), loop=self._loop)
 
-    def query(self, query: str):
-        return asyncio.run_coroutine_threadsafe(self.agent_loop(query), self._loop).result()
+    def query_async(self, query: str):
+        return self.agent_loop(query)
 
     def register_skills(self, container):
         return self.coordinator.register_skills(container)
