@@ -42,9 +42,23 @@ class ZedCameraThread(threading.Thread):
         self._publish_pointcloud_cb = publish_pointcloud
         self._publish_pose_cb = publish_pose
         self.voxel_size = 0.5
+        self.zed = None
+        self.pose_lock = threading.Lock()
+        self.latest_pose = None
+        self.pose_thread = None
+        self.check_interval = 0.02
 
     def stop_publishing(self):
         self._stop_event.set()
+        if self.pose_thread:
+            self.pose_thread.join(timeout=1.0)
+
+    def _pose_publisher_thread(self):
+        while not self._stop_event.is_set():
+            with self.pose_lock:
+                if self.latest_pose is not None:
+                    self._publish_pose_cb(self.latest_pose)
+            time.sleep(self.check_interval)
 
     def run(self):
         init = sl.InitParameters()
@@ -53,14 +67,14 @@ class ZedCameraThread(threading.Thread):
         init.coordinate_system = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
         init.depth_maximum_distance = 10.0
 
-        zed = sl.Camera()
+        self.zed = sl.Camera()
 
-        status = zed.open(init)
+        status = self.zed.open(init)
         if status != sl.ERROR_CODE.SUCCESS:
             print("Camera Open : " + repr(status) + ".")
             return
 
-        zed.get_camera_information()
+        self.zed.get_camera_information()
         pose = sl.Pose()
 
         positional_tracking_parameters = sl.PositionalTrackingParameters()
@@ -68,7 +82,7 @@ class ZedCameraThread(threading.Thread):
         positional_tracking_parameters.enable_pose_smoothing = True
         positional_tracking_parameters.enable_imu_fusion = True
         positional_tracking_parameters.set_floor_as_origin = True
-        returned_state = zed.enable_positional_tracking(positional_tracking_parameters)
+        returned_state = self.zed.enable_positional_tracking(positional_tracking_parameters)
         if returned_state != sl.ERROR_CODE.SUCCESS:
             print("Enable Positional Tracking : " + repr(returned_state) + ".")
             return
@@ -100,33 +114,37 @@ class ZedCameraThread(threading.Thread):
 
         last_call = time.time()
 
+        self.pose_thread = threading.Thread(target=self._pose_publisher_thread, daemon=True)
+        self.pose_thread.start()
+
         while True:
             if self._stop_event.is_set():
                 break
-            time.sleep(0.02)
+            time.sleep(self.check_interval)
 
-            grab_status = zed.grab(runtime_parameters)
+            grab_status = self.zed.grab(runtime_parameters)
 
             if grab_status != sl.ERROR_CODE.SUCCESS:
                 print(f"Grab: {repr(grab_status)}")
                 continue
 
-            zed.retrieve_image(image, sl.VIEW.LEFT)
-            tracking_state = zed.get_position(pose)
+            self.zed.retrieve_image(image, sl.VIEW.LEFT)
+            tracking_state = self.zed.get_position(pose)
 
             if tracking_state != sl.POSITIONAL_TRACKING_STATE.OK:
                 print("tracking not ok", tracking_state)
                 continue
 
-            self._publish_pose_cb(pose)
+            with self.pose_lock:
+                self.latest_pose = sl.Pose(pose)
 
             if not mapping_activated:
                 print("turning mapping on")
 
                 init_pose = sl.Transform()
-                zed.reset_positional_tracking(init_pose)
+                self.zed.reset_positional_tracking(init_pose)
 
-                zed.enable_spatial_mapping(spatial_mapping_parameters)
+                self.zed.enable_spatial_mapping(spatial_mapping_parameters)
 
                 self.pymesh.clear()
 
@@ -135,7 +153,7 @@ class ZedCameraThread(threading.Thread):
                 mapping_activated = True
 
             if mapping_activated:
-                mapping_state = zed.get_spatial_mapping_state()
+                mapping_state = self.zed.get_spatial_mapping_state()
                 if mapping_state != sl.SPATIAL_MAPPING_STATE.OK:
                     print("mapping not ok", mapping_state)
                     continue
@@ -145,12 +163,17 @@ class ZedCameraThread(threading.Thread):
                 if duration < 5:
                     continue
 
-                zed.request_spatial_map_async()
+                self.zed.request_spatial_map_async()
                 last_call = time.time()
 
-                if zed.get_spatial_map_request_status_async() == sl.ERROR_CODE.SUCCESS:
-                    print("retreive_spatial_map_async", zed.retrieve_spatial_map_async(self.pymesh))
-                    print("extract_whole_spatial_map", zed.extract_whole_spatial_map(self.pymesh))
+                if self.zed.get_spatial_map_request_status_async() == sl.ERROR_CODE.SUCCESS:
+                    print(
+                        "retreive_spatial_map_async",
+                        self.zed.retrieve_spatial_map_async(self.pymesh),
+                    )
+                    print(
+                        "extract_whole_spatial_map", self.zed.extract_whole_spatial_map(self.pymesh)
+                    )
                     filter_params = sl.MeshFilterParameters()
                     filter_params.set(sl.MESH_FILTER.MEDIUM)
                     self.pymesh.filter(filter_params, True)
@@ -163,9 +186,9 @@ class ZedCameraThread(threading.Thread):
         mapping_activated = False
         image.free(memory_type=sl.MEM.CPU)
         self.pymesh.clear()
-        zed.disable_spatial_mapping()
-        zed.disable_positional_tracking()
-        zed.close()
+        self.zed.disable_spatial_mapping()
+        self.zed.disable_positional_tracking()
+        self.zed.close()
         image.free()
         point_cloud.free()
 
