@@ -241,6 +241,3 @@ class Detect2DModule(Module):
                 detection_dict[name] = f"{confidence:.3f}"
 
             yield detection_dict
-
-    @rpc
-    def stop(self): ...
