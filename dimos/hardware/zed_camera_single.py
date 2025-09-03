@@ -64,6 +64,9 @@ class ZedCameraThread(threading.Thread):
         pose = sl.Pose()
 
         positional_tracking_parameters = sl.PositionalTrackingParameters()
+        positional_tracking_parameters.enable_area_memory = True
+        positional_tracking_parameters.enable_pose_smoothing = True
+        positional_tracking_parameters.enable_imu_fusion = True
         positional_tracking_parameters.set_floor_as_origin = True
         returned_state = zed.enable_positional_tracking(positional_tracking_parameters)
         if returned_state != sl.ERROR_CODE.SUCCESS:
