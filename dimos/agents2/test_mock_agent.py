@@ -201,5 +201,10 @@ async def test_tool_call_implicit_detections():
         for msg in agent._history
         if isinstance(msg, HumanMessage) and msg.content and isinstance(msg.content, list)
     ]
-    assert len(human_messages_with_images) >= 0  # May have image messages
+    assert len(human_messages_with_images) >= 0
+
     agent.stop()
+    test_skill_module.stop()
+    robot_connection.stop()
+    detect2d.stop()
+    dimos.stop()
