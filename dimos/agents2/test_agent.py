@@ -52,6 +52,8 @@ async def test_agent_init():
     # it all runs in parallel, and agent might get called once or twice depending on timing of skill responses)
     await agent.query_async("tell me what you see on the camera?")
 
+    # you can run skillspy and agentspy in parallel with this test for a better observation of what's happening
+
     print("Agent loop finished")
 
     agent.stop()
