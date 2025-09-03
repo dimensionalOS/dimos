@@ -86,7 +86,8 @@ class ZedCameraThread(threading.Thread):
         mapping_state = sl.SPATIAL_MAPPING_STATE.NOT_ENABLED
 
         runtime_parameters = sl.RuntimeParameters()
-        runtime_parameters.confidence_threshold = 50
+        # Exclude points with confidence level > 35. 0 is the highest confidence, 100 the lowest. 50 is the default.
+        runtime_parameters.confidence_threshold = 35
 
         mapping_activated = False
 
@@ -141,7 +142,6 @@ class ZedCameraThread(threading.Thread):
                 if duration < 5:
                     continue
 
-                print("requested spatial map")
                 zed.request_spatial_map_async()
                 last_call = time.time()
 
@@ -164,7 +164,6 @@ class ZedCameraThread(threading.Thread):
         point_cloud.free()
 
     def _send_pymesh(self):
-        print("sending pymesh")
         self.pymesh.update_from_chunklist()
 
         vertices = self.pymesh.vertices
@@ -177,6 +176,7 @@ class ZedCameraThread(threading.Thread):
             if len(valid_points) > 0:
                 pcd.points = o3d.utility.Vector3dVector(valid_points)
                 pcd = pcd.voxel_down_sample(voxel_size=self.voxel_size)
+                print(f"downsampled to {len(pcd.points)} points")
                 self._publish_pointcloud_cb(pcd)
             else:
                 print("no valid points")
