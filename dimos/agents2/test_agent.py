@@ -44,8 +44,12 @@ async def test_agent_init():
         "hi there, please tell me what's your name and current date, and how much is 124181112 + 124124?"
     )
 
+    # agent loop is considered finished once no active skills remain,
+    # agent will stop it's loop if passive streams are active
     print("Agent loop finished, asking about camera")
 
+    # we query again (this shows subsequent querying, but we could have asked for camera image in the original query,
+    # it all runs in parallel, and agent might get called once or twice depending on timing of skill responses)
     await agent.query_async("tell me what you see on the camera?")
 
     print("Agent loop finished")
