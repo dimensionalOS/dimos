@@ -146,9 +146,6 @@ class ZedCameraThread(threading.Thread):
             if not mapping_activated:
                 print("turning mapping on")
 
-                init_pose = sl.Transform()
-                self.zed.reset_positional_tracking(init_pose)
-
                 self.zed.enable_spatial_mapping(spatial_mapping_parameters)
 
                 self.pymesh.clear()
