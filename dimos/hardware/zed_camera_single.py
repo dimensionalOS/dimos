@@ -35,13 +35,13 @@ logger = setup_logger(__name__)
 
 
 class ZedCameraThread(threading.Thread):
-    def __init__(self, publish_pointcloud, publish_pose):
+    def __init__(self, publish_pointcloud, publish_pose, voxel_size):
         super().__init__(daemon=True)
         self._stop_event = threading.Event()
         self.pymesh = None
         self._publish_pointcloud_cb = publish_pointcloud
         self._publish_pose_cb = publish_pose
-        self.voxel_size = 0.1
+        self.voxel_size = voxel_size
         self.zed = None
         self.pose_thread = None
         self.check_interval = 0.02
@@ -102,7 +102,7 @@ class ZedCameraThread(threading.Thread):
             reverse_vertex_order=False,
             map_type=sl.SPATIAL_MAP_TYPE.MESH,
         )
-        spatial_mapping_parameters.resolution_meter = 0.1
+        spatial_mapping_parameters.resolution_meter = 0.05
         spatial_mapping_parameters.range_meter = 10.0
 
         self.pymesh = sl.Mesh()
@@ -112,6 +112,7 @@ class ZedCameraThread(threading.Thread):
 
         # Exclude points with confidence level > 35. 0 is the highest confidence, 100 the lowest. 50 is the default.
         self.runtime_parameters.confidence_threshold = 35
+        self.runtime_parameters.enable_fill_mode = True
 
         mapping_activated = False
 
@@ -223,8 +224,11 @@ class ZedModuleSingle(Module):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.voxel_size = 0.1
         self._zed_camera_thread = ZedCameraThread(
-            publish_pointcloud=self._publish_pointcloud, publish_pose=self._publish_pose
+            publish_pointcloud=self._publish_pointcloud,
+            publish_pose=self._publish_pose,
+            voxel_size=self.voxel_size,
         )
         logger.info("ZEDModuleSingle initialized")
 
@@ -280,7 +284,7 @@ class ZedModuleSingle(Module):
             lidar_msg = LidarMessage(
                 pointcloud=pcd,
                 origin=[0.0, 0.0, 0.0],
-                resolution=0.1,
+                resolution=self.voxel_size,
                 ts=time.time(),
                 frame_id="world",
             )
