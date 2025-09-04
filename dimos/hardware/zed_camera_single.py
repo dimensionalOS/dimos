@@ -203,6 +203,11 @@ class ZedCameraThread(threading.Thread):
             points = np.array(vertices, dtype=np.float32).reshape(-1, 3)  # XYZ format
             valid = np.isfinite(points).all(axis=1)
             valid_points = points[valid]
+
+            # Filter out points with Z > 2.0m
+            z_filter = valid_points[:, 2] <= 2.0
+            valid_points = valid_points[z_filter]
+
             pcd = o3d.geometry.PointCloud()
             if len(valid_points) > 0:
                 pcd.points = o3d.utility.Vector3dVector(valid_points)
