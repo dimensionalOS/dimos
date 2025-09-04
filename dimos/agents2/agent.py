@@ -201,6 +201,7 @@ class Agent(AgentSpec):
         self.coordinator.call_skill(False, skill_name, {"args": args, "kwargs": kwargs})
 
     async def agent_loop(self, seed_query: str = ""):
+        self.state_messages = []
         self.append_history(HumanMessage(seed_query))
 
         try:
