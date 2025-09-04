@@ -52,9 +52,11 @@ dependencies = [
     "uvicorn>=0.34.0",
     
     # Agents
-    "langchain-chroma>=0.1.4",
-    "langchain-openai>=0.2.14",
     "langchain==0.3.27",
+    "langchain-chroma==0.2.5",
+    "langchain-core==0.3.72",
+    "langchain-openai==0.3.28",
+    "langchain-text-splitters==0.3.9",  
     
     # Class Extraction
     "pydantic",
