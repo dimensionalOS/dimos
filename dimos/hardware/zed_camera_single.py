@@ -46,6 +46,7 @@ class ZedCameraThread(threading.Thread):
         self.pose_thread = None
         self.check_interval = 0.02
         self.runtime_parameters = sl.RuntimeParameters()
+        self.pointcloud_publish_interval = 2.0
 
     def stop_publishing(self):
         self._stop_event.set()
@@ -162,7 +163,7 @@ class ZedCameraThread(threading.Thread):
 
                 duration = time.time() - last_call
 
-                if duration < 5:
+                if duration < self.pointcloud_publish_interval:
                     continue
 
                 self.zed.request_spatial_map_async()
