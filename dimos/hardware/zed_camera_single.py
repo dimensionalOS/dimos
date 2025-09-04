@@ -46,7 +46,7 @@ class ZedCameraThread(threading.Thread):
         self.pose_thread = None
         self.check_interval = 0.02
         self.runtime_parameters = sl.RuntimeParameters()
-        self.pointcloud_publish_interval = 2.0
+        self.pointcloud_publish_interval = 3.0
 
     def stop_publishing(self):
         self._stop_event.set()
@@ -103,7 +103,7 @@ class ZedCameraThread(threading.Thread):
             reverse_vertex_order=False,
             map_type=sl.SPATIAL_MAP_TYPE.MESH,
         )
-        spatial_mapping_parameters.resolution_meter = 0.05
+        spatial_mapping_parameters.resolution_meter = 0.08
         spatial_mapping_parameters.range_meter = 10.0
 
         self.pymesh = sl.Mesh()
@@ -170,16 +170,14 @@ class ZedCameraThread(threading.Thread):
                 last_call = time.time()
 
                 if self.zed.get_spatial_map_request_status_async() == sl.ERROR_CODE.SUCCESS:
-                    print(
-                        "retreive_spatial_map_async",
-                        self.zed.retrieve_spatial_map_async(self.pymesh),
-                    )
-                    print(
-                        "extract_whole_spatial_map", self.zed.extract_whole_spatial_map(self.pymesh)
-                    )
+                    mesh_update_time = time.time()
+                    self.zed.retrieve_spatial_map_async(self.pymesh)
+                    self.zed.extract_whole_spatial_map(self.pymesh)
                     filter_params = sl.MeshFilterParameters()
                     filter_params.set(sl.MESH_FILTER.MEDIUM)
                     self.pymesh.filter(filter_params, True)
+                    self.pymesh.update_mesh_from_chunklist()
+                    print(f"spatial map updated in {time.time() - mesh_update_time:.4f}s")
                     self._send_pymesh()
                 else:
                     print("spatial map not received yet")
@@ -196,11 +194,10 @@ class ZedCameraThread(threading.Thread):
         point_cloud.free()
 
     def _send_pymesh(self):
-        self.pymesh.update_mesh_from_chunklist()
-
         vertices = self.pymesh.vertices
         if len(vertices) > 0:
             print("points", len(vertices))
+            filter_time = time.time()
             points = np.array(vertices, dtype=np.float32).reshape(-1, 3)  # XYZ format
             valid = np.isfinite(points).all(axis=1)
             valid_points = points[valid]
@@ -213,7 +210,9 @@ class ZedCameraThread(threading.Thread):
             if len(valid_points) > 0:
                 pcd.points = o3d.utility.Vector3dVector(valid_points)
                 pcd = pcd.voxel_down_sample(voxel_size=self.voxel_size)
-                print(f"downsampled to {len(pcd.points)} points")
+                print(
+                    f"downsampled to {len(pcd.points)} points, filter time {time.time() - filter_time:.4f}s"
+                )
                 self._publish_pointcloud_cb(pcd)
             else:
                 print("no valid points")
