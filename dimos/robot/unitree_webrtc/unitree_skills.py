@@ -29,7 +29,7 @@ from dimos.types.constants import Colors
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD
 
-# Module-level constant for Unitree WebRTC control definitions
+# Module-level constant for Unitree Go2 WebRTC control definitions
 UNITREE_WEBRTC_CONTROLS: List[Tuple[str, int, str]] = [
     ("Damp", 1001, "Lowers the robot to the ground fully."),
     (
@@ -178,17 +178,53 @@ UNITREE_WEBRTC_CONTROLS: List[Tuple[str, int, str]] = [
     ("Backflip", 1044, "Executes a backflip, a complex and dynamic maneuver."),
 ]
 
+# Module-level constants for Unitree G1 WebRTC control definitions
+# G1 Arm Actions - all use api_id 7106 on topic "rt/api/arm/request"
+G1_ARM_CONTROLS: List[Tuple[str, int, str]] = [
+    ("Handshake", 27, "Perform a handshake gesture with the right hand."),
+    ("HighFive", 18, "Give a high five with the right hand."),
+    ("Hug", 19, "Perform a hugging gesture with both arms."),
+    ("HighWave", 26, "Wave with the hand raised high."),
+    ("Clap", 17, "Clap hands together."),
+    ("FaceWave", 25, "Wave near the face level."),
+    ("LeftKiss", 12, "Blow a kiss with the left hand."),
+    ("ArmHeart", 20, "Make a heart shape with both arms overhead."),
+    ("RightHeart", 21, "Make a heart gesture with the right hand."),
+    ("HandsUp", 15, "Raise both hands up in the air."),
+    ("XRay", 24, "Hold arms in an X-ray pose position."),
+    ("RightHandUp", 23, "Raise only the right hand up."),
+    ("Reject", 22, "Make a rejection or 'no' gesture."),
+    ("CancelAction", 99, "Cancel any current arm action and return hands to neutral position."),
+]
+
+# G1 Movement Modes - all use api_id 7101 on topic "rt/api/sport/request"
+G1_MODE_CONTROLS: List[Tuple[str, int, str]] = [
+    ("WalkMode", 500, "Switch to normal walking mode."),
+    ("WalkControlWaist", 501, "Switch to walking mode with waist control."),
+    ("RunMode", 801, "Switch to running mode."),
+]
+
 # region MyUnitreeSkills
 
 
 class MyUnitreeSkills(SkillLibrary):
     """My Unitree Skills for WebRTC interface."""
 
-    def __init__(self, robot: Optional[Robot] = None):
+    def __init__(self, robot: Optional[Robot] = None, robot_type: str = "go2"):
+        """Initialize Unitree skills library.
+
+        Args:
+            robot: Optional robot instance
+            robot_type: Type of robot ("go2" or "g1"), defaults to "go2"
+        """
         super().__init__()
         self._robot: Robot = None
+        self.robot_type = robot_type.lower()
 
-        # Add dynamic skills to this class
+        if self.robot_type not in ["go2", "g1"]:
+            raise ValueError(f"Unsupported robot type: {robot_type}. Must be 'go2' or 'g1'")
+
+        # Add dynamic skills to this class based on robot type
         dynamic_skills = self.create_skills_live()
         self.register_skills(dynamic_skills)
 
@@ -221,33 +257,69 @@ class MyUnitreeSkills(SkillLibrary):
             """Base skill for dynamic skill creation."""
 
             def __call__(self):
-                string = f"{Colors.GREEN_PRINT_COLOR}This is a base skill, created for the specific skill: {self._app_id}{Colors.RESET_COLOR}"
-                print(string)
                 super().__call__()
-                if self._app_id is None:
-                    raise RuntimeError(
-                        f"{Colors.RED_PRINT_COLOR}"
-                        f"No App ID provided to {self.__class__.__name__} Skill"
-                        f"{Colors.RESET_COLOR}"
-                    )
-                else:
-                    # Use WebRTC publish_request interface through the robot's connection module
+
+                # For Go2: Simple api_id based call
+                if hasattr(self, "_app_id"):
+                    string = f"{Colors.GREEN_PRINT_COLOR}Executing Go2 skill: {self.__class__.__name__} with api_id={self._app_id}{Colors.RESET_COLOR}"
+                    print(string)
                     result = self._robot.connection.publish_request(
                         RTC_TOPIC["SPORT_MOD"], {"api_id": self._app_id}
                     )
-                    string = f"{Colors.GREEN_PRINT_COLOR}{self.__class__.__name__} was successful: id={self._app_id}{Colors.RESET_COLOR}"
+                    return f"{self.__class__.__name__} executed successfully"
+
+                # For G1: Fixed api_id with parameter data
+                elif hasattr(self, "_data_value"):
+                    string = f"{Colors.GREEN_PRINT_COLOR}Executing G1 skill: {self.__class__.__name__} with data={self._data_value}{Colors.RESET_COLOR}"
                     print(string)
-                    return string
+                    result = self._robot.connection.publish_request(
+                        self._topic,
+                        {"api_id": self._api_id, "parameter": {"data": self._data_value}},
+                    )
+                    return f"{self.__class__.__name__} executed successfully"
+                else:
+                    raise RuntimeError(
+                        f"Skill {self.__class__.__name__} missing required attributes"
+                    )
 
         skills_classes = []
-        for name, app_id, description in UNITREE_WEBRTC_CONTROLS:
-            if name not in ["Reverse", "Spin"]:  # Exclude reverse and spin skills
+
+        if self.robot_type == "g1":
+            # Create G1 arm skills
+            for name, data_value, description in G1_ARM_CONTROLS:
                 skill_class = type(
-                    name,  # Name of the class
-                    (BaseUnitreeSkill,),  # Base classes
-                    {"__doc__": description, "_app_id": app_id},
+                    name,
+                    (BaseUnitreeSkill,),
+                    {
+                        "__doc__": description,
+                        "_topic": "rt/api/arm/request",
+                        "_api_id": 7106,
+                        "_data_value": data_value,
+                    },
                 )
                 skills_classes.append(skill_class)
+
+            # Create G1 mode skills
+            for name, data_value, description in G1_MODE_CONTROLS:
+                skill_class = type(
+                    name,
+                    (BaseUnitreeSkill,),
+                    {
+                        "__doc__": description,
+                        "_topic": "rt/api/sport/request",
+                        "_api_id": 7101,
+                        "_data_value": data_value,
+                    },
+                )
+                skills_classes.append(skill_class)
+        else:
+            # Go2 skills (existing code)
+            for name, app_id, description in UNITREE_WEBRTC_CONTROLS:
+                if name not in ["Reverse", "Spin"]:  # Exclude reverse and spin skills
+                    skill_class = type(
+                        name, (BaseUnitreeSkill,), {"__doc__": description, "_app_id": app_id}
+                    )
+                    skills_classes.append(skill_class)
 
         return skills_classes
 

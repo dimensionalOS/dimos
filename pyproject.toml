@@ -175,6 +175,15 @@ sim = [
     "playground>=0.0.5",
 ]
 
+jetson-jp6-cuda126 = [
+    # Jetson Jetpack 6.2 with CUDA 12.6 specific wheels
+    # Note: Alternative torch wheel from docs: https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch/torch-2.5.0a0+872d972e41.nv24.08.17622132-cp310-cp310-linux_aarch64.whl
+    "torch @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/564/4d4458f1ba159/torch-2.8.0-cp310-cp310-linux_aarch64.whl",
+    "torchvision @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/1c0/3de08a69e9554/torchvision-0.23.0-cp310-cp310-linux_aarch64.whl",
+    "onnxruntime-gpu @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/4eb/e6a8902dc7708/onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl",
+    "xformers @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/731/15133b0ebb2b3/xformers-0.0.33+ac00641.d20250830-cp39-abi3-linux_aarch64.whl",
+]
+
 [tool.ruff]
 line-length = 100
 exclude = [
