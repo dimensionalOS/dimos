@@ -115,8 +115,6 @@ class ZedCameraThread(threading.Thread):
         self.runtime_parameters.confidence_threshold = 35
         self.runtime_parameters.enable_fill_mode = True
 
-        mapping_activated = False
-
         image = sl.Mat()
         point_cloud = sl.Mat()
         pose = sl.Pose()
@@ -144,47 +142,35 @@ class ZedCameraThread(threading.Thread):
                 print("tracking not ok", tracking_state)
                 continue
 
-            if not mapping_activated:
-                print("turning mapping on")
+            self.zed.enable_spatial_mapping(spatial_mapping_parameters)
+            self.pymesh.clear()
+            last_call = time.time()
 
-                self.zed.enable_spatial_mapping(spatial_mapping_parameters)
+        while True:
+            if self._stop_event.is_set():
+                break
+            time.sleep(self.check_interval)
 
-                self.pymesh.clear()
+            mapping_state = self.zed.get_spatial_mapping_state()
+            if mapping_state != sl.SPATIAL_MAPPING_STATE.OK:
+                print("mapping not ok", mapping_state)
+                continue
 
-                last_call = time.time()
+            duration = time.time() - last_call
 
-                mapping_activated = True
+            if duration < self.pointcloud_publish_interval:
+                continue
 
-            if mapping_activated:
-                mapping_state = self.zed.get_spatial_mapping_state()
-                if mapping_state != sl.SPATIAL_MAPPING_STATE.OK:
-                    print("mapping not ok", mapping_state)
-                    continue
+            self.zed.request_spatial_map_async()
+            last_call = time.time()
 
-                duration = time.time() - last_call
-
-                if duration < self.pointcloud_publish_interval:
-                    continue
-
-                self.zed.request_spatial_map_async()
-                last_call = time.time()
-
-                if self.zed.get_spatial_map_request_status_async() == sl.ERROR_CODE.SUCCESS:
-                    mesh_update_time = time.time()
-                    self.zed.retrieve_spatial_map_async(self.pymesh)
-                    self.zed.extract_whole_spatial_map(self.pymesh)
-                    filter_params = sl.MeshFilterParameters()
-                    filter_params.set(sl.MESH_FILTER.MEDIUM)
-                    self.pymesh.filter(filter_params, True)
-                    self.pymesh.update_mesh_from_chunklist()
-                    print(f"spatial map updated in {time.time() - mesh_update_time:.4f}s")
-                    self._send_pymesh()
-                else:
-                    print("spatial map not received yet")
+            if self.zed.get_spatial_map_request_status_async() == sl.ERROR_CODE.SUCCESS:
+                self.zed.retrieve_spatial_map_async(self.pymesh)
+                self.pymesh.update_mesh_from_chunklist()
+                self._send_pymesh()
 
         # Turn everything off.
         mapping_state = sl.SPATIAL_MAPPING_STATE.NOT_ENABLED
-        mapping_activated = False
         image.free(memory_type=sl.MEM.CPU)
         self.pymesh.clear()
         self.zed.disable_spatial_mapping()
@@ -195,29 +181,27 @@ class ZedCameraThread(threading.Thread):
 
     def _send_pymesh(self):
         vertices = self.pymesh.vertices
-        if len(vertices) > 0:
-            print("points", len(vertices))
-            filter_time = time.time()
-            points = np.array(vertices, dtype=np.float32).reshape(-1, 3)  # XYZ format
-            valid = np.isfinite(points).all(axis=1)
-            valid_points = points[valid]
+        if not len(vertices):
+            print("no vertices in pymesh")
+            return
 
-            # Filter out points with Z > 2.0m
-            z_filter = valid_points[:, 2] <= 2.0
-            valid_points = valid_points[z_filter]
+        points = np.array(vertices, dtype=np.float32).reshape(-1, 3)  # XYZ format
+        valid = np.isfinite(points).all(axis=1)
+        valid_points = points[valid]
 
-            pcd = o3d.geometry.PointCloud()
-            if len(valid_points) > 0:
-                pcd.points = o3d.utility.Vector3dVector(valid_points)
-                pcd = pcd.voxel_down_sample(voxel_size=self.voxel_size)
-                print(
-                    f"downsampled to {len(pcd.points)} points, filter time {time.time() - filter_time:.4f}s"
-                )
-                self._publish_pointcloud_cb(pcd)
-            else:
-                print("no valid points")
-        else:
-            print("no points in pymesh")
+        # Filter out points with Z > 2.0m
+        z_filter = valid_points[:, 2] <= 2.0
+        valid_points = valid_points[z_filter]
+
+        if not len(valid_points):
+            print("no valid points")
+            return
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(valid_points)
+        pcd = pcd.voxel_down_sample(voxel_size=self.voxel_size)
+        print(f"downsampled {len(vertices)} to {len(pcd.points)} points")
+        self._publish_pointcloud_cb(pcd)
 
 
 class ZedModuleSingle(Module):
