@@ -12,38 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-import threading
-import time
-from typing import Any, Callable, Dict, Optional, Tuple
-
-import cv2
-import numpy as np
-import open3d as o3d
-from reactivex import interval
-from reactivex import operators as ops
-
-try:
-    import pyzed.sl as sl
-except ImportError:
-    sl = None
-    logging.warning("ZED SDK not found. Please install pyzed to use ZED camera functionality.")
-
 from abc import abstractmethod, abstractproperty
-from typing import Protocol, TypeVar
+from typing import Any, Callable, Protocol, TypeVar
 
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex.observable import Observable
 
 from dimos.core import Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image, ImageFormat, PointCloud2
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.protocol.service.spec import Service
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorStorage
 
 
+# we insist on cameras to take a frame_id_prefix argument in their config
+# so that multiple cameras can be instantiated without frame conflicts
 class CameraConfig(Protocol):
     frame_id_prefix: str
 
@@ -53,7 +37,9 @@ CameraConfigT = TypeVar("CameraConfigT", bound=CameraConfig)
 logger = setup_logger(__name__)
 
 
-class StereoCamera(Service[CameraConfigT]):
+# StereoCamera interface, for cameras that provide standard
+# color, depth, pointcloud, and pose messages
+class StereoCameraHardware(Service[CameraConfigT]):
     @abstractmethod
     def pose_stream(self) -> Observable[PoseStamped]:
         pass
@@ -75,27 +61,32 @@ class StereoCamera(Service[CameraConfigT]):
         pass
 
 
-class MappingStereoCamera(StereoCamera[CameraConfigT]):
+# MappingStereoCamera interface, for cameras that also provide a global map stream
+# (e.g. ZED with Spatial Mapping)
+class MappingStereoCameraHardware(StereoCameraHardware[CameraConfigT]):
     @abstractmethod
     def global_map_stream(self) -> Observable[PointCloud2]:
         pass
 
 
-class StereoCameraModule(Module):
+# StereoCameraModule - standard dimos module for any StereoCamera implementation
+# Handles TF publishing and optional recording of streams
+#
+# Optionally standard dimos mapper can consume the pointcloud stream
+class StereoCamera(Module):
     color_image: Out[Image] = None
     depth_image: Out[Image] = None
-    pointcloud: Out[LidarMessage] = None
+    pointcloud: Out[PointCloud2] = None
 
     def __init__(
         self,
-        camera: Callable[[CameraConfigT], StereoCamera[CameraConfigT]],
+        camera: Callable[[CameraConfigT], StereoCameraHardware[CameraConfigT]],
         frame_id_prefix: str = "stereo_",
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.frame_id_prefix = frame_id_prefix
-
-        self.storages = None
+        self.camera_config: CameraConfigT = CameraConfigT(frame_id_prefix=frame_id_prefix, **kwargs)
         if self.recording_path:
             logger.info(f"Recording enabled - saving to {self.recording_path}")
 
@@ -106,24 +97,29 @@ class StereoCameraModule(Module):
     def camera_info(self) -> CameraInfo:
         return self.connection.camera_info
 
+    def _maybe_store(self, name: str, observable: Observable[Any]):
+        if not self.recording_path:
+            return observable
+
+        store = TimedSensorStorage(f"{self.recording_path}/{name}")
+        return store.save_stream(observable)
+
     @rpc
     def start(self):
         if self.connection is not None:
             raise RuntimeError("Camera already started")
-        self.connection = self.camera()
+
+        self.connection = self.camera(**self.camera_config)
         self.connection.start()
 
-        def maybe_store(name: str, observable: Observable[Any]):
-            if not self.recording_path:
-                return observable
-
-            store = TimedSensorStorage(f"{self.recording_path}/{name}")
-            return store.save_stream(observable)
-
-        maybe_store("pose", self.connection.pose_stream()).subscribe(self._publish_tf)
-        maybe_store("color", self.connection.color_stream()).subscribe(self.color_image.publish)
-        maybe_store("depth", self.connection.depth_stream()).subscribe(self.depth_image.publish)
-        maybe_store("pointcloud", self.connection.pointcloud_stream()).subscribe(
+        self.maybe_store("pose", self.connection.pose_stream()).subscribe(self._publish_tf)
+        self.maybe_store("color", self.connection.color_stream()).subscribe(
+            self.color_image.publish
+        )
+        self.maybe_store("depth", self.connection.depth_stream()).subscribe(
+            self.depth_image.publish
+        )
+        self.maybe_store("pointcloud", self.connection.pointcloud_stream()).subscribe(
             self.pointcloud.publish
         )
 
@@ -149,3 +145,15 @@ class StereoCameraModule(Module):
     def cleanup(self):
         """Clean up resources on module destruction."""
         self.stop()
+
+
+class MappingStereoCamera(StereoCamera):
+    global_map: Out[PointCloud2] = None
+
+    @rpc
+    def start(self):
+        super().start()
+
+        self.maybe_store("global_map", self.connection.global_map_stream()).subscribe(
+            self.global_map.publish
+        )
