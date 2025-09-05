@@ -753,7 +753,15 @@ def main():
 
     pubsub.lcm.autoconf()
 
-    robot = UnitreeGo2(ip=ip, websocket_port=7779, connection_type=connection_type)
+    robot = UnitreeGo2(
+        ip=ip,
+        websocket_port=7779,
+        connection_type=connection_type,
+        enable_spatial_memory=False,
+        enable_lidar_mapping=False,
+        enable_navigation=False,
+        enable_mono_depth=False,
+    )
     robot.start()
 
     try:

@@ -20,6 +20,8 @@ Processes RGB-D data directly to reduce latency and publishes detection arrays.
 
 import cv2
 import time
+import threading
+from copy import deepcopy
 from typing import Optional, Any, Dict
 from enum import Enum
 from collections import deque
@@ -28,7 +30,7 @@ import numpy as np
 
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.msgs.geometry_msgs import Vector3, Pose, Quaternion, Transform
+from dimos.msgs.geometry_msgs import Vector3, Pose, Quaternion, Transform, Twist
 from dimos_lcm.vision_msgs import Detection3DArray, Detection2DArray
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.std_msgs import String
@@ -43,7 +45,7 @@ from dimos.manipulation.visual_servoing.utils import (
     select_points_from_depth,
     transform_points_3d,
 )
-from dimos.utils.transform_utils import pose_to_matrix
+from dimos.utils.transform_utils import pose_to_matrix, apply_transform
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.manipulation.visual_servoing.manipulation_module")
@@ -53,6 +55,7 @@ class GraspStage(Enum):
     """Enum for different grasp stages."""
 
     IDLE = "idle"
+    POSE = "pose"  # Mobile base positioning stage
     PRE_GRASP = "pre_grasp"
     GRASP = "grasp"
     CLOSE_AND_RETRACT = "close_and_retract"
@@ -109,6 +112,7 @@ class ManipulationModule(Module):
     depth_image: In[Image] = None
     camera_info: In[CameraInfo] = None
 
+    cmd_vel: Out[Twist] = None
     viz_image: Out[Image] = None
     grasp_state: Out[String] = None
     detection3d_array: Out[Detection3DArray] = None
@@ -123,8 +127,9 @@ class ManipulationModule(Module):
         max_object_size: float = 0.15,
         camera_frame_id: str = "camera_link",
         base_frame_id: str = "base_link",
-        track_frame_id: str = "base_link",
+        track_frame_id: str = "world",
         reach_timeout: float = 10.0,
+        enable_mobile_base: bool = False,
         **kwargs,
     ):
         """
@@ -138,8 +143,9 @@ class ManipulationModule(Module):
             max_object_size: Maximum object size to consider valid
             camera_frame_id: TF frame ID for camera
             base_frame_id: TF frame ID for robot base
-            track_frame_id: TF frame ID for tracking frame
+            track_frame_id: TF frame ID for tracking frame (world for mobile base)
             reach_timeout: Timeout for reaching poses
+            enable_mobile_base: Enable mobile base control for pose adjustment
         """
         super().__init__(**kwargs)
 
@@ -202,12 +208,26 @@ class ManipulationModule(Module):
         self.place_pose = None
         self.retract_pose = None
 
+        self.enable_mobile_base = enable_mobile_base
+        self.pose_adjusted = False
+        self.cmd_height = 0.0  # Height command for mobile base
+        self.cmd_pitch = 0.0  # Pitch command for mobile base
+        self.pose_publisher_thread = None
+        self.pose_publisher_stop = threading.Event()
+
     @rpc
     def start(self):
         """Start the manipulation module."""
         self.rgb_image.subscribe(lambda msg: setattr(self, "latest_rgb", msg.data))
         self.depth_image.subscribe(lambda msg: self._process_depth(msg))
         self.camera_info.subscribe(lambda msg: self._setup_detector(msg))
+
+        if self.enable_mobile_base and self.cmd_vel:
+            self.pose_publisher_stop.clear()
+            self.pose_publisher_thread = threading.Thread(
+                target=self._pose_publisher_loop, daemon=True
+            )
+            self.pose_publisher_thread.start()
 
         self.arm.goto_observe()
         logger.info("Manipulation module started")
@@ -216,6 +236,12 @@ class ManipulationModule(Module):
     def stop(self):
         """Stop the manipulation module."""
         self.task_running = False
+
+        if self.pose_publisher_thread:
+            self.pose_publisher_stop.set()
+            self.pose_publisher_thread.join(timeout=1.0)
+            self.pose_publisher_thread = None
+
         self.reset_to_idle()
         logger.info("Manipulation module stopped")
 
@@ -276,11 +302,18 @@ class ManipulationModule(Module):
         except Exception as e:
             logger.error(f"Error processing detections: {e}")
 
+    def _pose_publisher_loop(self):
+        """Continuously publish pose commands to maintain mobile base position."""
+        while not self.pose_publisher_stop.is_set():
+            if self.cmd_vel and (self.cmd_height != 0.0 or self.cmd_pitch != 0.0):
+                pose_cmd = Twist(
+                    linear=Vector3(0, 0, self.cmd_height), angular=Vector3(0, self.cmd_pitch, 0)
+                )
+                self.cmd_vel.publish(pose_cmd)
+            time.sleep(0.1)
+
     @rpc
     def get_single_rgb_frame(self) -> Optional[np.ndarray]:
-        """
-        get the latest rgb frame from the camera
-        """
         return self.latest_rgb
 
     @rpc
@@ -387,7 +420,7 @@ class ManipulationModule(Module):
                 place_position = np.mean(points_3d_world, axis=0)
                 self.place_target_position = place_position
                 logger.info(
-                    f"Place target: ({place_position[0]:.3f}, {place_position[1]:.3f}, {place_position[2]:.3f})"
+                    f"Place target in world frame: ({place_position[0]:.3f}, {place_position[1]:.3f}, {place_position[2]:.3f})"
                 )
             else:
                 logger.warning("No transform available for place location")
@@ -495,8 +528,38 @@ class ManipulationModule(Module):
 
             time.sleep(0.05)
         logger.error(f"Failed to reach target pose within {timeout}s")
+
+        if self.grasp_stage == GraspStage.RETRACT:
+            return True
+
         self.task_failed = True
         return False
+
+    def _get_target_in_base_frame(self):
+        """Get the tracked target transformed to base_link frame for grasp generation."""
+        if not self.pbvs or not self.pbvs.current_target:
+            return None
+
+        if self.track_frame_id == self.base_frame_id:
+            return self.pbvs.current_target
+
+        base_to_target = self.tf.get(
+            parent_frame=self.base_frame_id,
+            child_frame="tracked_object",
+            time_point=None,
+            time_tolerance=0.2,
+        )
+
+        if not base_to_target:
+            logger.warning("Cannot transform tracked object to base frame")
+            return None
+
+        target_in_base = deepcopy(self.pbvs.current_target)
+        target_pose = base_to_target.to_pose()
+        target_in_base.bbox.center.position = target_pose.position
+        target_in_base.bbox.center.orientation = target_pose.orientation
+
+        return target_in_base
 
     def _update_tracking(self, detection_3d_array: Optional[Detection3DArray]) -> bool:
         """Update tracking with new detections."""
@@ -517,7 +580,7 @@ class ManipulationModule(Module):
                     Transform(
                         translation=self.last_valid_target.bbox.center.position,
                         rotation=self.last_valid_target.bbox.center.orientation,
-                        frame_id=self.base_frame_id,
+                        frame_id=self.track_frame_id,
                         child_frame_id="tracked_object",
                         ts=time.time(),
                     )
@@ -535,20 +598,72 @@ class ManipulationModule(Module):
         self.waiting_start_time = None
         self.pick_success = None
         self.final_pregrasp_pose = None
+        self.cmd_height = 0.0
+        self.cmd_pitch = 0.0
+        self.pose_adjusted = False
         self.overall_success = None
         self.place_pose = None
         self.retract_pose = None
         self.place_target_position = None
         self.target_object_height = None
         self.reached_poses.clear()  # Clear pose history
+        self.pose_adjusted = False
+
+        if self.enable_mobile_base and self.cmd_vel:
+            stop_cmd = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0))
+            self.cmd_vel.publish(stop_cmd)
 
         # Return arm to observe position
         self.arm.goto_observe()
 
+    def execute_pose(self):
+        """Adjust mobile base height and pitch to optimize for grasping, continuously sending commands."""
+        if not self.enable_mobile_base or not self.cmd_vel:
+            # Skip directly to pre-grasp if mobile base control not enabled
+            self.set_grasp_stage(GraspStage.PRE_GRASP)
+            return
+
+        if not self.pbvs or not self.pbvs.current_target:
+            return
+
+        base_to_target = self.tf.get(
+            parent_frame=self.base_frame_id,
+            child_frame="tracked_object",
+            time_point=None,
+            time_tolerance=0.2,
+        )
+
+        if not base_to_target:
+            logger.warning("Cannot get tracked_object transform in base_link frame")
+            return
+
+        target_pose = base_to_target.to_pose()
+        target_height = target_pose.position.z
+
+        self.cmd_height = target_height
+
+        if target_height < 0:
+            self.cmd_pitch = -target_height * 0.8
+        else:
+            self.cmd_pitch = 0.0
+
+        if not self.pose_adjusted:
+            self.pose_adjusted = True
+            logger.info(
+                f"Adjusting mobile base pose: height={target_height:.3f}m, pitch={self.cmd_pitch:.3f}rad"
+            )
+
+            time.sleep(2.0)
+
+            logger.info("Mobile base pose adjustment complete, transitioning to PRE_GRASP")
+            self.set_grasp_stage(GraspStage.PRE_GRASP)
+
     def execute_pre_grasp(self):
         """Execute pre-grasp stage: visual servoing to pre-grasp position."""
+
         if self.waiting_for_reach:
             if self._wait_for_reach():
+                time.sleep(0.5)
                 self.reached_poses.append(self.current_executed_pose)
                 self.waiting_for_reach = False
             return
@@ -572,8 +687,18 @@ class ManipulationModule(Module):
             return
         ee_pose = ee_transform.to_pose()
 
-        dynamic_pitch = self.calculate_dynamic_grasp_pitch(self.pbvs.current_target.bbox.center)
+        target_in_base = self._get_target_in_base_frame()
+        if not target_in_base:
+            logger.warning("Cannot get target in base frame for grasp")
+            return
+
+        original_target = self.pbvs.current_target
+        self.pbvs.current_target = target_in_base
+
+        dynamic_pitch = self.calculate_dynamic_grasp_pitch(target_in_base.bbox.center)
         target_pose = self.pbvs.compute_control(ee_pose, self.pregrasp_distance, dynamic_pitch)
+
+        self.pbvs.current_target = original_target
 
         if not target_pose:
             return
@@ -607,7 +732,12 @@ class ManipulationModule(Module):
         if not self.last_valid_target:
             return
 
-        dynamic_pitch = self.calculate_dynamic_grasp_pitch(self.last_valid_target.bbox.center)
+        target_in_base = self._get_target_in_base_frame()
+        if not target_in_base:
+            logger.warning("Cannot get target in base frame for final grasp")
+            return
+
+        dynamic_pitch = self.calculate_dynamic_grasp_pitch(target_in_base.bbox.center)
         normalized_pitch = dynamic_pitch / 90.0
         grasp_distance = -self.grasp_distance_range + (
             2 * self.grasp_distance_range * normalized_pitch
@@ -624,14 +754,19 @@ class ManipulationModule(Module):
             return
         ee_pose = ee_transform.to_pose()
 
+        original_target = self.pbvs.current_target
+        self.pbvs.current_target = target_in_base
+
         target_pose = self.pbvs.compute_control(ee_pose, grasp_distance, dynamic_pitch)
+
+        self.pbvs.current_target = original_target
         if target_pose:
             if not self.check_within_workspace(target_pose):
                 logger.error("Grasp pose outside workspace")
                 self.task_failed = True
                 return
 
-            object_width = self.last_valid_target.bbox.size.x
+            object_width = target_in_base.bbox.size.x
             gripper_opening = max(
                 0.005, min(object_width + self.grasp_width_offset, self.gripper_max_opening)
             )
@@ -729,11 +864,6 @@ class ManipulationModule(Module):
         if not clicked_3d or not self.pbvs:
             return False
 
-        if not self.check_within_workspace(clicked_3d.bbox.center):
-            logger.error("Target outside workspace")
-            self.task_failed = True
-            return False
-
         self.pbvs.set_target(clicked_3d)
 
         if clicked_3d.bbox and clicked_3d.bbox.size:
@@ -742,7 +872,13 @@ class ManipulationModule(Module):
         position = clicked_3d.bbox.center.position
         logger.info(f"Target selected: pos=({position.x:.3f}, {position.y:.3f}, {position.z:.3f})")
 
-        self.set_grasp_stage(GraspStage.PRE_GRASP)
+        self._update_tracking(self.last_detection_3d_array)
+
+        if self.enable_mobile_base:
+            self.set_grasp_stage(GraspStage.POSE)
+            self.pose_adjusted = False
+        else:
+            self.set_grasp_stage(GraspStage.PRE_GRASP)
         self.waiting_for_reach = False
         self.current_executed_pose = None
         return True
@@ -760,11 +896,14 @@ class ManipulationModule(Module):
                 self.target_click = None
 
         if self.last_detection_3d_array and self.grasp_stage in [
+            GraspStage.POSE,  # Also track during pose adjustment
             GraspStage.PRE_GRASP,
             GraspStage.GRASP,
         ]:
             self._update_tracking(self.last_detection_3d_array)
-        if self.grasp_stage == GraspStage.PRE_GRASP:
+        if self.grasp_stage == GraspStage.POSE:
+            self.execute_pose()
+        elif self.grasp_stage == GraspStage.PRE_GRASP:
             self.execute_pre_grasp()
         elif self.grasp_stage == GraspStage.GRASP:
             self.execute_grasp()
@@ -817,15 +956,42 @@ class ManipulationModule(Module):
         if self.place_target_position is None:
             return None
 
-        place_pos = self.place_target_position.copy()
+        # Place position is stored in world frame
+        place_pos_world = self.place_target_position.copy()
         if self.target_object_height is not None:
             z_offset = self.target_object_height / 2.0
-            place_pos[2] += z_offset + 0.1
+            place_pos_world[2] += z_offset + 0.1
 
-        place_center_pose = Pose(
-            position=Vector3(place_pos[0], place_pos[1], place_pos[2]),
+        place_pose_world = Pose(
+            position=Vector3(place_pos_world[0], place_pos_world[1], place_pos_world[2]),
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         )
+        # Transform from world to base frame if needed
+        if self.track_frame_id != self.base_frame_id:
+            # Create a transform for the place target in world frame
+            place_transform = Transform(
+                translation=place_pose_world.position,
+                rotation=place_pose_world.orientation,
+                frame_id=self.track_frame_id,
+                child_frame_id="place_target",
+                ts=time.time(),
+            )
+            self.tf.publish(place_transform)
+
+            # Get the place target in base frame
+            place_in_base = self.tf.get(
+                parent_frame=self.base_frame_id,
+                child_frame="place_target",
+                time_point=None,
+                time_tolerance=0.2,
+            )
+            if not place_in_base:
+                logger.warning("Cannot transform place target to base frame")
+                return None
+
+            place_center_pose = place_in_base.to_pose()
+        else:
+            place_center_pose = place_pose_world
 
         # Get end-effector pose
         ee_transform = self.tf.get(

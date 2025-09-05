@@ -326,7 +326,7 @@ async def run_piper_arm_with_viz():
     logger.info("Starting Piper Arm Robot")
 
     # Create robot instance
-    robot = PiperArmRobot()
+    robot = PiperArmRobot(enable_mobile_base_control=True)
     global_robot = robot  # Set global for signal handler
 
     try:

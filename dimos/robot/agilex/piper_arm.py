@@ -33,6 +33,7 @@ from dimos.robot.robot import Robot
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import Detection3DArray, Detection2DArray
 from dimos_lcm.std_msgs import String
+from dimos_lcm.geometry_msgs import Twist
 
 logger = setup_logger("dimos.robot.agilex.piper_arm")
 
@@ -40,13 +41,18 @@ logger = setup_logger("dimos.robot.agilex.piper_arm")
 class PiperArmRobot(Robot):
     """Piper Arm robot with ZED camera, detection, and manipulation capabilities."""
 
-    def __init__(self, robot_capabilities: Optional[List[RobotCapability]] = None):
+    def __init__(
+        self,
+        robot_capabilities: Optional[List[RobotCapability]] = None,
+        enable_mobile_base_control: bool = False,
+    ):
         super().__init__()
         self.dimos = None
         self.stereo_camera = None
         self.piper_arm = None
         self.manipulation_interface = None
         self.skill_library = SkillLibrary()
+        self.enable_mobile_base_control = enable_mobile_base_control
 
         # Initialize capabilities
         self.capabilities = robot_capabilities or [
@@ -99,6 +105,8 @@ class PiperArmRobot(Robot):
 
         # Deploy manipulation module with integrated detection
         logger.info("Deploying manipulation module with integrated detection...")
+        # Use world frame for tracking if mobile base is enabled
+        track_frame = "world" if self.enable_mobile_base_control else "base_link"
         self.manipulation_interface = self.dimos.deploy(
             ManipulationModule,
             piper_arm_module=self.piper_arm,  # Pass the arm module reference
@@ -107,8 +115,9 @@ class PiperArmRobot(Robot):
             max_object_size=0.15,
             camera_frame_id="zed_camera_link_optical",  # Use ZED optical frame
             base_frame_id="base_link",
-            track_frame_id="base_link",  # Track frame - using base_link as reference
+            track_frame_id=track_frame,  # Use world frame if mobile base enabled
             reach_timeout=10.0,  # Simple timeout for reaching poses
+            enable_mobile_base=self.enable_mobile_base_control,  # Pass mobile base flag
         )
 
         # Connect manipulation inputs
@@ -129,6 +138,11 @@ class PiperArmRobot(Robot):
         self.manipulation_interface.detection2d_array.transport = core.LCMTransport(
             "/detection/2d_array", Detection2DArray
         )
+
+        # Configure cmd_vel output if mobile base is enabled
+        if self.enable_mobile_base_control:
+            self.manipulation_interface.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
+            logger.info("Mobile base control enabled - publishing to /cmd_vel")
 
         # Print module info
         logger.info("Modules configured:")
