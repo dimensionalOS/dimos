@@ -45,31 +45,66 @@ class RPCClient(Protocol):
 
     # we expect to crash if we don't get a return value after 10 seconds
     # but callers can override this timeout for extra long functions
-    def call_sync(self, name: str, arguments: Args, rpc_timeout: Optional[float] = 3.0) -> Any:
-        event = threading.Event()
+    def call_sync(
+        self, name: str, arguments: Args, rpc_timeout: Optional[float] = 2.0, max_retries: int = 3
+    ) -> Any:
+        last_error = None
+        for attempt in range(max_retries):
+            event = threading.Event()
 
-        def receive_value(val):
-            event.result = val  # attach to event
-            event.set()
+            def receive_value(val):
+                event.result = val  # attach to event
+                event.set()
 
-        self.call(name, arguments, receive_value)
-        if not event.wait(rpc_timeout):
-            raise TimeoutError(f"RPC call to '{name}' timed out after {rpc_timeout} seconds")
-        return event.result
-
-    async def call_async(self, name: str, arguments: Args) -> Any:
-        loop = asyncio.get_event_loop()
-        future = loop.create_future()
-
-        def receive_value(val):
             try:
-                loop.call_soon_threadsafe(future.set_result, val)
+                self.call(name, arguments, receive_value)
+                if event.wait(rpc_timeout):
+                    # Got a response, return it (whether success or failure)
+                    return event.result
+
+                # Timeout occurred, retry if we have attempts left
+                last_error = TimeoutError(
+                    f"RPC call to '{name}' timed out after {rpc_timeout} seconds (attempt {attempt + 1}/{max_retries})"
+                )
+                if attempt < max_retries - 1:
+                    time.sleep(0.5)  # Brief delay before retry
             except Exception as e:
-                loop.call_soon_threadsafe(future.set_exception, e)
+                # Non-timeout exception, don't retry
+                raise e
 
-        self.call(name, arguments, receive_value)
+        raise last_error
 
-        return await future
+    async def call_async(
+        self, name: str, arguments: Args, rpc_timeout: Optional[float] = 3.0, max_retries: int = 3
+    ) -> Any:
+        last_error = None
+        for attempt in range(max_retries):
+            loop = asyncio.get_event_loop()
+            future = loop.create_future()
+
+            def receive_value(val):
+                try:
+                    loop.call_soon_threadsafe(future.set_result, val)
+                except Exception as e:
+                    loop.call_soon_threadsafe(future.set_exception, e)
+
+            self.call(name, arguments, receive_value)
+
+            try:
+                # Got a response, return it (whether success or failure)
+                return await asyncio.wait_for(future, timeout=rpc_timeout)
+            except asyncio.TimeoutError:
+                # Timeout occurred, retry if we have attempts left
+                last_error = TimeoutError(
+                    f"RPC call to '{name}' timed out after {rpc_timeout} seconds (attempt {attempt + 1}/{max_retries})"
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.1)  # Brief delay before retry
+            except Exception as e:
+                # Non-timeout exception, don't retry
+                raise e
+
+        raise last_error
 
 
 class RPCServer(Protocol):

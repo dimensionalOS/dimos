@@ -322,8 +322,20 @@ class PubSubTF(MultiTBuffer, TFSpec):
         child_frame: str,
         time_point: Optional[float] = None,
         time_tolerance: Optional[float] = None,
+        max_retries: int = 3,
+        retry_delay: float = 0.1,
     ) -> Optional[Transform]:
-        return super().get(parent_frame, child_frame, time_point, time_tolerance)
+        last_result = None
+        for attempt in range(max_retries):
+            result = super().get(parent_frame, child_frame, time_point, time_tolerance)
+            if result is not None:
+                return result
+
+            last_result = result
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)  # Brief delay before retry
+
+        return last_result
 
     def receive_msg(self, msg: TFMessage, topic: Topic) -> None:
         self.receive_tfmessage(msg)
