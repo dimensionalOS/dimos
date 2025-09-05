@@ -138,13 +138,12 @@ class ZedCameraThread(threading.Thread):
             self.zed.retrieve_image(image, sl.VIEW.LEFT)
             tracking_state = self.zed.get_position(pose)
 
-            if tracking_state != sl.POSITIONAL_TRACKING_STATE.OK:
-                print("tracking not ok", tracking_state)
-                continue
+            if tracking_state == sl.POSITIONAL_TRACKING_STATE.OK:
+                break
 
-            self.zed.enable_spatial_mapping(spatial_mapping_parameters)
-            self.pymesh.clear()
-            last_call = time.time()
+        self.zed.enable_spatial_mapping(spatial_mapping_parameters)
+        self.pymesh.clear()
+        last_call = time.time()
 
         while True:
             if self._stop_event.is_set():
