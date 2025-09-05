@@ -47,26 +47,21 @@ def test_to_ros_stamp():
     # Test with float timestamp
     ts_float = 1234567890.123456789
     result = to_ros_stamp(ts_float)
-    assert result["sec"] == 1234567890
+    assert result.sec == 1234567890
     # Float precision limitation - check within reasonable range
-    assert abs(result["nanosec"] - 123456789) < 1000
+    assert abs(result.nanosec - 123456789) < 1000
 
     # Test with integer timestamp
     ts_int = 1234567890
     result = to_ros_stamp(ts_int)
-    assert result["sec"] == 1234567890
-    assert result["nanosec"] == 0
+    assert result.sec == 1234567890
+    assert result.nanosec == 0
 
     # Test with datetime object
     dt = datetime(2009, 2, 13, 23, 31, 30, 123456, tzinfo=timezone.utc)
     result = to_ros_stamp(dt)
-    assert result["sec"] == 1234567890
-    assert abs(result["nanosec"] - 123456000) < 1000  # Allow small rounding error
-
-    # Test with RosStamp (passthrough)
-    ros_stamp = {"sec": 1234567890, "nanosec": 123456789}
-    result = to_ros_stamp(ros_stamp)
-    assert result is ros_stamp  # Should be the exact same object
+    assert result.sec == 1234567890
+    assert abs(result.nanosec - 123456000) < 1000  # Allow small rounding error
 
 
 def test_to_datetime():
@@ -298,7 +293,6 @@ def test_timestamp_alignment():
 
     def process_video_frame(frame):
         processed_frames.append(frame.ts)
-        print("PROCESSING", frame.ts)
         time.sleep(0.5 / speed)
         return frame
 
