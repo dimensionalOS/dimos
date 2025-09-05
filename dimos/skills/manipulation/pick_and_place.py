@@ -375,17 +375,22 @@ class PickAndPlace(AbstractRobotSkill):
         # Execute pick (and optionally place) using the robot's interface
         try:
             if place_point:
-                # Pick and place (blocking call)
+                # Pick and place (blocking call with extended timeout)
                 result = self._robot.pick_and_place(
                     pick_x=pick_point[0],
                     pick_y=pick_point[1],
                     place_x=place_point[0],
                     place_y=place_point[1],
+                    rpc_timeout=60.0,  # 60 second timeout for long operations
                 )
             else:
-                # Pick only (blocking call)
+                # Pick only (blocking call with extended timeout)
                 result = self._robot.pick_and_place(
-                    pick_x=pick_point[0], pick_y=pick_point[1], place_x=None, place_y=None
+                    pick_x=pick_point[0],
+                    pick_y=pick_point[1],
+                    place_x=None,
+                    place_y=None,
+                    rpc_timeout=60.0,  # 60 second timeout for long operations
                 )
 
             # Handle the new dict response format

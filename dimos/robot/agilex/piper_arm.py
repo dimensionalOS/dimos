@@ -152,7 +152,12 @@ class PiperArmRobot(Robot):
         logger.info("PiperArmRobot initialized and started with modular architecture")
 
     def pick_and_place(
-        self, pick_x: int, pick_y: int, place_x: Optional[int] = None, place_y: Optional[int] = None
+        self,
+        pick_x: int,
+        pick_y: int,
+        place_x: Optional[int] = None,
+        place_y: Optional[int] = None,
+        rpc_timeout: float = 60.0,
     ) -> Dict[str, Any]:
         """Execute pick and place task (blocking).
 
@@ -161,12 +166,18 @@ class PiperArmRobot(Robot):
             pick_y: Y coordinate for pick location
             place_x: X coordinate for place location (optional)
             place_y: Y coordinate for place location (optional)
+            rpc_timeout: RPC timeout in seconds (default 60.0 for long-running operations)
 
         Returns:
             Dict with success status and details
         """
         if self.manipulation_interface:
-            return self.manipulation_interface.pick_and_place(pick_x, pick_y, place_x, place_y)
+            return self.manipulation_interface.rpc.call_sync(
+                f"{self.manipulation_interface.remote_name}/pick_and_place",
+                ([pick_x, pick_y, place_x, place_y], {}),
+                rpc_timeout=rpc_timeout,
+                max_retries=1,  # Don't retry for long operations
+            )
         else:
             logger.error("Manipulation module not initialized")
             return {"success": False, "error": "Manipulation module not initialized"}
