@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import functools
-from typing import Any, Callable, List, Optional, Tuple
+import queue
+from typing import Any, Callable, Generator, List, Optional, Tuple
 
-from dimos_lcm.foxglove_msgs.Color import Color
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
+from dimos_lcm.foxglove_msgs import (
     PointsAnnotation,
     TextAnnotation,
 )
+from dimos_lcm.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.Point2 import Point2
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
@@ -31,11 +31,15 @@ from dimos_lcm.vision_msgs import (
     Pose2D,
 )
 from reactivex import operators as ops
+from reactivex.observable import Observable
 
 from dimos.core import In, Module, Out, rpc
+from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
+from dimos.protocol.skill.skill import skill
+from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.types.timestamped import to_ros_stamp
 
 
@@ -203,14 +207,37 @@ class Detect2DModule(Module):
 
     @rpc
     def start(self):
-        # from dimos.activate_cuda import _init_cuda
         self.detector = self._initDetector()
-        detection_stream = self.image.observable().pipe(ops.map(self.detect))
+        self.detection2d_stream().subscribe(self.detections.publish)
+        self.annotation_stream().subscribe(self.annotations.publish)
 
-        detection_stream.pipe(ops.map(build_imageannotations)).subscribe(self.annotations.publish)
-        detection_stream.pipe(
-            ops.filter(lambda x: len(x) != 0), ops.map(build_detection2d_array)
-        ).subscribe(self.detections.publish)
+    @functools.cache
+    def detection2d_stream(self) -> Observable[Detection2DArrayFix]:
+        return self.image.observable().pipe(ops.map(self.detect), ops.map(build_detection2d_array))
 
-    @rpc
-    def stop(self): ...
+    @functools.cache
+    def annotation_stream(self) -> Observable[ImageAnnotations]:
+        return self.image.observable().pipe(ops.map(self.detect), ops.map(build_imageannotations))
+
+    @functools.cache
+    def detection_stream(self) -> Observable[ImageDetections]:
+        return self.image.observable().pipe(ops.map(self.detect))
+
+    @skill(stream=Stream.passive, reducer=Reducer.accumulate_dict)
+    def get_detections(self) -> Generator[ImageAnnotations, None, None]:
+        """Provides latest image detections"""
+
+        blocking_queue = queue.Queue()
+        self.detection_stream().subscribe(blocking_queue.put)
+
+        while True:
+            # dealing with a dumb format from detic and yolo
+            # probably needs to be abstracted earlier in the pipeline so it's more convinient to use
+            [image, detections] = blocking_queue.get()
+
+            detection_dict = {}
+            for detection in detections:
+                [bbox, track_id, class_id, confidence, name] = detection
+                detection_dict[name] = f"{confidence:.3f}"
+
+            yield detection_dict

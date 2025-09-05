@@ -19,18 +19,16 @@ from typing import Generic, Type, TypeVar
 ConfigT = TypeVar("ConfigT")
 
 
-class Service(ABC, Generic[ConfigT]):
+class Configurable(Generic[ConfigT]):
     default_config: Type[ConfigT]
 
     def __init__(self, **kwargs) -> None:
         self.config: ConfigT = self.default_config(**kwargs)
 
+
+class Service(Configurable[ConfigT], ABC):
     @abstractmethod
-    def start(self) -> None:
-        """Start the service."""
-        ...
+    def start(self) -> None: ...
 
     @abstractmethod
-    def stop(self) -> None:
-        """Stop the service."""
-        ...
+    def stop(self) -> None: ...

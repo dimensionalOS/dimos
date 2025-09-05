@@ -14,348 +14,218 @@
 
 from __future__ import annotations
 
-import asyncio
-import logging
-import threading
 import time
-from typing import Callable, Dict, Optional
+from collections import deque
+from dataclasses import dataclass
+from typing import Any, Deque, Dict, List, Optional, Union
 
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from rich.console import Console
+from rich.table import Table
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, ScrollableContainer
 from textual.reactive import reactive
-from textual.widgets import DataTable, Footer, Header, RichLog
+from textual.widgets import Footer, RichLog
 
-from dimos.protocol.skill.agent_interface import AgentInterface, SkillState, SkillStateEnum
-from dimos.protocol.skill.comms import AgentMsg, LCMSkillComms
-from dimos.protocol.skill.types import MsgType
+from dimos.protocol.pubsub import lcm
+from dimos.protocol.pubsub.lcmpubsub import PickleLCM
+from dimos.utils.logging_config import setup_logger
+
+# Type alias for all message types we might receive
+AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]
 
 
-class AgentSpy:
-    """Spy on agent skill executions via LCM messages."""
+@dataclass
+class MessageEntry:
+    """Store a single message with metadata."""
 
-    def __init__(self):
-        self.agent_interface = AgentInterface()
-        self.message_callbacks: list[Callable[[Dict[str, SkillState]], None]] = []
-        self._lock = threading.Lock()
-        self._latest_state: Dict[str, SkillState] = {}
+    timestamp: float
+    message: AnyMessage
+
+    def __post_init__(self):
+        """Initialize timestamp if not provided."""
+        if self.timestamp is None:
+            self.timestamp = time.time()
+
+
+class AgentMessageMonitor:
+    """Monitor agent messages published via LCM."""
+
+    def __init__(self, topic: str = "/agent", max_messages: int = 1000):
+        self.topic = topic
+        self.max_messages = max_messages
+        self.messages: Deque[MessageEntry] = deque(maxlen=max_messages)
+        self.transport = PickleLCM()
+        self.transport.start()
+        self.callbacks: List[callable] = []
+        pass
 
     def start(self):
-        """Start spying on agent messages."""
-        # Start the agent interface
-        self.agent_interface.start()
-
-        # Subscribe to the agent interface's comms
-        self.agent_interface.agent_comms.subscribe(self._handle_message)
+        """Start monitoring messages."""
+        self.transport.subscribe(self.topic, self._handle_message)
 
     def stop(self):
-        """Stop spying."""
-        self.agent_interface.stop()
+        """Stop monitoring."""
+        # PickleLCM doesn't have explicit stop method
+        pass
 
-    def _handle_message(self, msg: AgentMsg):
-        """Handle incoming agent messages."""
+    def _handle_message(self, msg: Any, topic: str):
+        """Handle incoming messages."""
+        # Check if it's one of the message types we care about
+        if isinstance(msg, (SystemMessage, ToolMessage, AIMessage, HumanMessage)):
+            entry = MessageEntry(timestamp=time.time(), message=msg)
+            self.messages.append(entry)
 
-        # Small delay to ensure agent_interface has processed the message
-        def delayed_update():
-            time.sleep(0.1)
-            with self._lock:
-                self._latest_state = self.agent_interface.state_snapshot(clear=False)
-                for callback in self.message_callbacks:
-                    callback(self._latest_state)
+            # Notify callbacks
+            for callback in self.callbacks:
+                callback(entry)
+        else:
+            pass
 
-        # Run in separate thread to not block LCM
-        threading.Thread(target=delayed_update, daemon=True).start()
+    def subscribe(self, callback: callable):
+        """Subscribe to new messages."""
+        self.callbacks.append(callback)
 
-    def subscribe(self, callback: Callable[[Dict[str, SkillState]], None]):
-        """Subscribe to state updates."""
-        self.message_callbacks.append(callback)
-
-    def get_state(self) -> Dict[str, SkillState]:
-        """Get current state snapshot."""
-        with self._lock:
-            return self._latest_state.copy()
-
-
-def state_color(state: SkillStateEnum) -> str:
-    """Get color for skill state."""
-    if state == SkillStateEnum.pending:
-        return "yellow"
-    elif state == SkillStateEnum.running:
-        return "green"
-    elif state == SkillStateEnum.returned:
-        return "cyan"
-    elif state == SkillStateEnum.error:
-        return "red"
-    return "white"
+    def get_messages(self) -> List[MessageEntry]:
+        """Get all stored messages."""
+        return list(self.messages)
 
 
-def format_duration(duration: float) -> str:
-    """Format duration in human readable format."""
-    if duration < 1:
-        return f"{duration * 1000:.0f}ms"
-    elif duration < 60:
-        return f"{duration:.1f}s"
-    elif duration < 3600:
-        return f"{duration / 60:.1f}m"
+def format_timestamp(timestamp: float) -> str:
+    """Format timestamp as HH:MM:SS.mmm."""
+    return (
+        time.strftime("%H:%M:%S", time.localtime(timestamp)) + f".{int((timestamp % 1) * 1000):03d}"
+    )
+
+
+def get_message_type_and_style(msg: AnyMessage) -> tuple[str, str]:
+    """Get message type name and style color."""
+    if isinstance(msg, HumanMessage):
+        return "Human ", "green"
+    elif isinstance(msg, AIMessage):
+        if hasattr(msg, "metadata") and msg.metadata.get("state"):
+            return "State ", "blue"
+        return "Agent ", "yellow"
+    elif isinstance(msg, ToolMessage):
+        return "Tool  ", "red"
+    elif isinstance(msg, SystemMessage):
+        return "System", "red"
     else:
-        return f"{duration / 3600:.1f}h"
+        return "Unkn  ", "white"
 
 
-class AgentSpyLogFilter(logging.Filter):
-    """Filter to suppress specific log messages in agentspy."""
-
-    def filter(self, record):
-        # Suppress the "Skill state not found" warning as it's expected in agentspy
-        if (
-            record.levelname == "WARNING"
-            and "Skill state for" in record.getMessage()
-            and "not found" in record.getMessage()
-        ):
-            return False
-        return True
-
-
-class TextualLogHandler(logging.Handler):
-    """Custom log handler that sends logs to a Textual RichLog widget."""
-
-    def __init__(self, log_widget: RichLog):
-        super().__init__()
-        self.log_widget = log_widget
-        # Add filter to suppress expected warnings
-        self.addFilter(AgentSpyLogFilter())
-
-    def emit(self, record):
-        """Emit a log record to the RichLog widget."""
-        try:
-            msg = self.format(record)
-            # Color based on level
-            if record.levelno >= logging.ERROR:
-                style = "bold red"
-            elif record.levelno >= logging.WARNING:
-                style = "yellow"
-            elif record.levelno >= logging.INFO:
-                style = "green"
-            else:
-                style = "dim"
-
-            self.log_widget.write(Text(msg, style=style))
-        except Exception:
-            self.handleError(record)
+def format_message_content(msg: AnyMessage) -> str:
+    """Format message content for display."""
+    if isinstance(msg, ToolMessage):
+        return f"{msg.name}() -> {msg.content}"
+    elif isinstance(msg, AIMessage) and msg.tool_calls:
+        # Include tool calls in content
+        tool_info = []
+        for tc in msg.tool_calls:
+            args_str = str(tc.get("args", {}))
+            tool_info.append(f"{tc.get('name')}({args_str})")
+        content = msg.content or ""
+        if content and tool_info:
+            return f"{content}\n[Tool Calls: {', '.join(tool_info)}]"
+        elif tool_info:
+            return f"[Tool Calls: {', '.join(tool_info)}]"
+        return content
+    else:
+        return str(msg.content) if hasattr(msg, "content") else str(msg)
 
 
 class AgentSpyApp(App):
-    """A real-time CLI dashboard for agent skill monitoring using Textual."""
+    """TUI application for monitoring agent messages."""
 
     CSS = """
     Screen {
         layout: vertical;
-    }
-    Vertical {
-        height: 100%;
-    }
-    DataTable {
-        height: 70%;
-        border: none;
         background: black;
     }
+
     RichLog {
-        height: 30%;
+        height: 1fr;
         border: none;
         background: black;
-        border-top: solid $primary;
+        padding: 0 1;
+    }
+
+    Footer {
+        dock: bottom;
+        height: 1;
     }
     """
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
-        Binding("c", "clear", "Clear History"),
-        Binding("l", "toggle_logs", "Toggle Logs"),
-        Binding("ctrl+c", "quit", "Quit", show=False),
+        Binding("c", "clear", "Clear"),
+        Binding("ctrl+c", "quit", show=False),
     ]
-
-    show_logs = reactive(True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.spy = AgentSpy()
-        self.table: Optional[DataTable] = None
-        self.log_view: Optional[RichLog] = None
-        self.skill_history: list[tuple[str, SkillState, float]] = []  # (name, state, start_time)
-        self.log_handler: Optional[TextualLogHandler] = None
+        self.monitor = AgentMessageMonitor()
+        self.message_log: Optional[RichLog] = None
 
     def compose(self) -> ComposeResult:
-        self.table = DataTable(zebra_stripes=False, cursor_type=None)
-        self.table.add_column("Skill Name")
-        self.table.add_column("State")
-        self.table.add_column("Duration")
-        self.table.add_column("Start Time")
-        self.table.add_column("Messages")
-        self.table.add_column("Details")
-
-        self.log_view = RichLog(markup=True, wrap=True)
-
-        with Vertical():
-            yield self.table
-            yield self.log_view
-
+        """Compose the UI."""
+        self.message_log = RichLog(wrap=True, highlight=True, markup=True)
+        yield self.message_log
         yield Footer()
 
     def on_mount(self):
-        """Start the spy when app mounts."""
+        """Start monitoring when app mounts."""
         self.theme = "flexoki"
 
-        # Remove ALL existing handlers from ALL loggers to prevent console output
-        # This is needed because setup_logger creates loggers with propagate=False
-        for name in logging.root.manager.loggerDict:
-            logger = logging.getLogger(name)
-            logger.handlers.clear()
-            logger.propagate = True
+        # Subscribe to new messages
+        self.monitor.subscribe(self.on_new_message)
+        self.monitor.start()
 
-        # Clear root logger handlers too
-        logging.root.handlers.clear()
-
-        # Set up custom log handler to show logs in the UI
-        if self.log_view:
-            self.log_handler = TextualLogHandler(self.log_view)
-
-            # Custom formatter that shortens the logger name
-            class ShortNameFormatter(logging.Formatter):
-                def format(self, record):
-                    # Remove the common prefix from logger names
-                    if record.name.startswith("dimos.protocol.skill."):
-                        record.name = record.name.replace("dimos.protocol.skill.", "")
-                    return super().format(record)
-
-            self.log_handler.setFormatter(
-                ShortNameFormatter(
-                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
-                )
-            )
-            # Add handler to root logger
-            root_logger = logging.getLogger()
-            root_logger.addHandler(self.log_handler)
-            root_logger.setLevel(logging.INFO)
-
-        # Set initial visibility
-        if not self.show_logs:
-            self.log_view.visible = False
-            self.table.styles.height = "100%"
-
-        self.spy.subscribe(self.update_state)
-        self.spy.start()
-
-        # Also set up periodic refresh to update durations
-        self.set_interval(0.5, self.refresh_table)
+        # Write existing messages to the log
+        for entry in self.monitor.get_messages():
+            self.on_new_message(entry)
 
     def on_unmount(self):
-        """Stop the spy when app unmounts."""
-        self.spy.stop()
-        # Remove log handler to prevent errors on shutdown
-        if self.log_handler:
-            root_logger = logging.getLogger()
-            root_logger.removeHandler(self.log_handler)
+        """Stop monitoring when app unmounts."""
+        self.monitor.stop()
 
-    def update_state(self, state: Dict[str, SkillState]):
-        """Update state from spy callback."""
-        # Update history with current state
-        current_time = time.time()
+    def on_new_message(self, entry: MessageEntry):
+        """Handle new messages."""
+        if self.message_log:
+            msg = entry.message
+            msg_type, style = get_message_type_and_style(msg)
+            content = format_message_content(msg)
 
-        # Add new skills or update existing ones
-        for skill_name, skill_state in state.items():
-            # Find if skill already in history
-            found = False
-            for i, (name, old_state, start_time) in enumerate(self.skill_history):
-                if name == skill_name:
-                    # Update existing entry
-                    self.skill_history[i] = (skill_name, skill_state, start_time)
-                    found = True
-                    break
-
-            if not found:
-                # Add new entry with current time as start
-                start_time = current_time
-                if len(skill_state) > 0:
-                    # Use first message timestamp if available
-                    start_time = skill_state._items[0].ts
-                self.skill_history.append((skill_name, skill_state, start_time))
-
-        # Schedule UI update
-        self.call_from_thread(self.refresh_table)
-
-    def refresh_table(self):
-        """Refresh the table display."""
-        if not self.table:
-            return
-
-        # Clear table
-        self.table.clear(columns=False)
-
-        # Sort by start time (newest first)
-        sorted_history = sorted(self.skill_history, key=lambda x: x[2], reverse=True)
-
-        # Get terminal height and calculate how many rows we can show
-        height = self.size.height - 6  # Account for header, footer, column headers
-        max_rows = max(1, height)
-
-        # Show only top N entries
-        for skill_name, skill_state, start_time in sorted_history[:max_rows]:
-            # Calculate how long ago it started
-            time_ago = time.time() - start_time
-            start_str = format_duration(time_ago) + " ago"
-
-            # Duration
-            duration_str = format_duration(skill_state.duration())
-
-            # Message count
-            msg_count = len(skill_state)
-
-            # Details based on state and last message
-            details = ""
-            if skill_state.state == SkillStateEnum.error and msg_count > 0:
-                # Show error message
-                last_msg = skill_state._items[-1]
-                if last_msg.type == MsgType.error:
-                    details = str(last_msg.content)[:40]
-            elif skill_state.state == SkillStateEnum.returned and msg_count > 0:
-                # Show return value
-                last_msg = skill_state._items[-1]
-                if last_msg.type == MsgType.ret:
-                    details = f"→ {str(last_msg.content)[:37]}"
-            elif skill_state.state == SkillStateEnum.running:
-                # Show progress indicator
-                details = "⋯ " + "▸" * min(int(time_ago), 20)
-
-            # Add row with colored state
-            self.table.add_row(
-                Text(skill_name, style="white"),
-                Text(skill_state.state.name, style=state_color(skill_state.state)),
-                Text(duration_str, style="dim"),
-                Text(start_str, style="dim"),
-                Text(str(msg_count), style="dim"),
-                Text(details, style="dim white"),
+            # Format the message for the log
+            timestamp = format_timestamp(entry.timestamp)
+            self.message_log.write(
+                f"[dim white]{timestamp}[/dim white] | "
+                f"[bold {style}]{msg_type}[/bold {style}] | "
+                f"[{style}]{content}[/{style}]"
             )
 
-    def action_clear(self):
-        """Clear the skill history."""
-        self.skill_history.clear()
-        self.refresh_table()
+    def refresh_display(self):
+        """Refresh the message display."""
+        # Not needed anymore as messages are written directly to the log
 
-    def action_toggle_logs(self):
-        """Toggle the log view visibility."""
-        self.show_logs = not self.show_logs
-        if self.show_logs:
-            self.table.styles.height = "70%"
-        else:
-            self.table.styles.height = "100%"
-        self.log_view.visible = self.show_logs
+    def action_clear(self):
+        """Clear message history."""
+        self.monitor.messages.clear()
+        if self.message_log:
+            self.message_log.clear()
 
 
 def main():
-    """Main entry point for agentspy CLI."""
+    """Main entry point for agentspy."""
     import sys
 
-    # Check if running in web mode
     if len(sys.argv) > 1 and sys.argv[1] == "web":
         import os
 

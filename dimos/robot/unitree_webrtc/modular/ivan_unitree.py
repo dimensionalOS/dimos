@@ -17,12 +17,12 @@ import os
 import time
 from typing import Optional
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.std_msgs import Bool, String
 
 from dimos.core import LCMTransport, start
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
+from dimos.msgs.foxglove_msgs import ImageAnnotations
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
@@ -39,6 +39,26 @@ from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
+
+
+def deploy_foxglove(dimos, connection, mapper, global_planner):
+    """Deploy and configure visualization modules."""
+    websocket_vis = dimos.deploy(WebsocketVisModule, port=7779)
+    websocket_vis.click_goal.transport = LCMTransport("/goal_request", PoseStamped)
+    websocket_vis.explore_cmd.transport = LCMTransport("/explore_cmd", Bool)
+    websocket_vis.stop_explore_cmd.transport = LCMTransport("/stop_explore_cmd", Bool)
+    websocket_vis.movecmd.transport = LCMTransport("/cmd_vel", Twist)
+
+    websocket_vis.robot_pose.connect(connection.odom)
+    websocket_vis.path.connect(global_planner.path)
+    websocket_vis.global_costmap.connect(mapper.global_costmap)
+
+    connection.movecmd.connect(websocket_vis.movecmd)
+    foxglove_bridge = FoxgloveBridge()
+
+    websocket_vis.start()
+    foxglove_bridge.start()
+    return websocket_vis, foxglove_bridge
 
 
 def deploy_navigation(dimos, connection):
@@ -64,7 +84,7 @@ def deploy_navigation(dimos, connection):
     navigator.navigation_state.transport = LCMTransport("/navigation_state", String)
     navigator.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
     global_planner.path.transport = LCMTransport("/global_path", Path)
-    local_planner.cmd_vel.transport = LCMTransport("/cmd_vel", Vector3)
+    local_planner.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
     frontier_explorer.goal_request.transport = LCMTransport("/goal_request", PoseStamped)
     frontier_explorer.goal_reached.transport = LCMTransport("/goal_reached", Bool)
     frontier_explorer.explore_cmd.transport = LCMTransport("/explore_cmd", Bool)
@@ -85,18 +105,12 @@ def deploy_navigation(dimos, connection):
 
     frontier_explorer.costmap.connect(mapper.global_costmap)
     frontier_explorer.odometry.connect(connection.odom)
-    websocket_vis = dimos.deploy(WebsocketVisModule, port=7779)
-    websocket_vis.click_goal.transport = LCMTransport("/goal_request", PoseStamped)
-
-    websocket_vis.robot_pose.connect(connection.odom)
-    websocket_vis.path.connect(global_planner.path)
-    websocket_vis.global_costmap.connect(mapper.global_costmap)
-
     mapper.start()
     global_planner.start()
     local_planner.start()
     navigator.start()
-    websocket_vis.start()
+
+    return mapper, global_planner
 
 
 class UnitreeGo2:
@@ -107,14 +121,11 @@ class UnitreeGo2:
     ):
         dimos = start(3)
 
-        foxglove_bridge = dimos.deploy(FoxgloveBridge)
-        foxglove_bridge.start()
-
         connection = dimos.deploy(ConnectionModule, ip, connection_type)
         connection.lidar.transport = LCMTransport("/lidar", LidarMessage)
         connection.odom.transport = LCMTransport("/odom", PoseStamped)
         connection.video.transport = LCMTransport("/image", Image)
-        connection.movecmd.transport = LCMTransport("/cmd_vel", Vector3)
+        connection.movecmd.transport = LCMTransport("/cmd_vel", Twist)
         connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
         connection.start()
 
@@ -126,7 +137,8 @@ class UnitreeGo2:
         detection.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
         detection.start()
 
-        # deploy_navigation(dimos, connection)
+        mapper, global_planner = deploy_navigation(dimos, connection)
+        deploy_foxglove(dimos, connection, mapper, global_planner)
 
     def stop(): ...
 

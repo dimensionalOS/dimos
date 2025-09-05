@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple, TypedDict
 
 import cv2
 import numpy as np
@@ -43,6 +44,15 @@ class ImageFormat(Enum):
     GRAY16 = "GRAY16"  # 16-bit Grayscale
     DEPTH = "DEPTH"  # 32-bit Float Depth
     DEPTH16 = "DEPTH16"  # 16-bit Integer Depth (millimeters)
+
+
+class AgentImageMessage(TypedDict):
+    """Type definition for agent-compatible image representation."""
+
+    type: Literal["image"]
+    source_type: Literal["base64"]
+    mime_type: Literal["image/jpeg", "image/png"]
+    data: str  # Base64 encoded image data
 
 
 @dataclass
@@ -324,6 +334,38 @@ class Image(Timestamped):
         cv_image = self.to_opencv()
         return cv2.imwrite(filepath, cv_image)
 
+    def to_base64(self, max_width: int = 640, max_height: int = 480) -> str:
+        """Encode image to base64 JPEG format for agent processing.
+
+        Args:
+            max_width: Maximum width for resizing (default 640)
+            max_height: Maximum height for resizing (default 480)
+
+        Returns:
+            Base64 encoded JPEG string suitable for LLM/agent consumption.
+        """
+        bgr_image = self.to_bgr()
+
+        # Encode as JPEG
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]  # 80% quality
+        success, buffer = cv2.imencode(".jpg", bgr_image.data, encode_param)
+
+        if not success:
+            raise ValueError("Failed to encode image as JPEG")
+
+        # Convert to base64
+
+        jpeg_bytes = buffer.tobytes()
+        base64_str = base64.b64encode(jpeg_bytes).decode("utf-8")
+
+        return base64_str
+
+    def agent_encode(self) -> AgentImageMessage:
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{self.to_base64()}"},
+        }
+
     def lcm_encode(self, frame_id: Optional[str] = None) -> LCMImage:
         """Convert to LCM Image message."""
         msg = LCMImage()
@@ -472,29 +514,6 @@ class Image(Timestamped):
     def __len__(self) -> int:
         """Return total number of pixels."""
         return self.height * self.width
-
-    def agent_encode(self) -> str:
-        """Encode image to base64 JPEG format for agent processing.
-
-        Returns:
-            Base64 encoded JPEG string suitable for LLM/agent consumption.
-        """
-        bgr_image = self.to_bgr()
-
-        # Encode as JPEG
-        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 95]  # 95% quality
-        success, buffer = cv2.imencode(".jpg", bgr_image.data, encode_param)
-
-        if not success:
-            raise ValueError("Failed to encode image as JPEG")
-
-        # Convert to base64
-        import base64
-
-        jpeg_bytes = buffer.tobytes()
-        base64_str = base64.b64encode(jpeg_bytes).decode("utf-8")
-
-        return base64_str
 
 
 def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:

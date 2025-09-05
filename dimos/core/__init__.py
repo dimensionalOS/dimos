@@ -53,9 +53,19 @@ class RPCClient:
             raise AttributeError(f"{name} is not found.")
 
         if name in self.rpcs:
-            return lambda *args, **kwargs: self.rpc.call_sync(
-                f"{self.remote_name}/{name}", (args, kwargs)
-            )
+            # Get the original method to preserve its docstring
+            original_method = getattr(self.actor_class, name, None)
+
+            def rpc_call(*args, **kwargs):
+                return self.rpc.call_sync(f"{self.remote_name}/{name}", (args, kwargs))
+
+            # Copy docstring and other attributes from original method
+            if original_method:
+                rpc_call.__doc__ = original_method.__doc__
+                rpc_call.__name__ = original_method.__name__
+                rpc_call.__qualname__ = f"{self.__class__.__name__}.{original_method.__name__}"
+
+            return rpc_call
 
         # return super().__getattr__(name)
         # Try to avoid recursion by directly accessing attributes that are known
@@ -137,6 +147,7 @@ def patchdask(dask_client: Client):
 
     dask_client.deploy = deploy
     dask_client.check_worker_memory = check_worker_memory
+    dask_client.stop = lambda: dask_client.shutdown()
     return dask_client
 
 

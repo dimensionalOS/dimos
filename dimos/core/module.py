@@ -11,13 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import asyncio
 import inspect
-from enum import Enum
+from dataclasses import dataclass
 from typing import (
     Any,
     Callable,
     Optional,
-    TypeVar,
     get_args,
     get_origin,
     get_type_hints,
@@ -29,44 +29,74 @@ from dimos.core import colors
 from dimos.core.core import T, rpc
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
+from dimos.protocol.service import Configurable
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
+from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.tf import LCMTF, TFSpec
 
 
-class CommsSpec:
-    rpc: type[RPCSpec]
-    agent: type[SkillCommsSpec]
-    tf: type[TFSpec]
+def get_loop() -> asyncio.AbstractEventLoop:
+    try:
+        # here we attempt to figure out if we are running on a dask worker
+        # if so we use the dask worker _loop as ours,
+        # and we register our RPC server
+        worker = get_worker()
+        if worker.loop:
+            return worker.loop
+
+    except ValueError:
+        ...
+
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
 
 
-class LCMComms(CommsSpec):
-    rpc = LCMRPC
-    agent = LCMSkillComms
-    tf = LCMTF
+@dataclass
+class ModuleConfig:
+    rpc_transport: type[RPCSpec] = LCMRPC
+    tf_transport: type[TFSpec] = LCMTF
 
 
-class ModuleBase:
-    comms: CommsSpec = LCMComms
+class ModuleBase(Configurable[ModuleConfig], SkillContainer):
     _rpc: Optional[RPCSpec] = None
-    _agent: Optional[SkillCommsSpec] = None
     _tf: Optional[TFSpec] = None
+    _loop: asyncio.AbstractEventLoop = None
+
+    default_config = ModuleConfig
 
     def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._loop = get_loop()
         # we can completely override comms protocols if we want
-        if kwargs.get("comms", None) is not None:
-            self.comms = kwargs["comms"]
         try:
-            get_worker()
-            self.rpc = self.comms.rpc()
+            # here we attempt to figure out if we are running on a dask worker
+            # if so we use the dask worker _loop as ours,
+            # and we register our RPC server
+            worker = get_worker()
+            self._loop = worker.loop if worker else None
+            self.rpc = self.config.rpc_transport()
             self.rpc.serve_module_rpc(self)
             self.rpc.start()
         except ValueError:
-            return
+            ...
+
+        # assuming we are not running on a dask worker,
+        # it's our job to determine or create the event loop
+        if not self._loop:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._loop)
 
     @property
     def tf(self):
         if self._tf is None:
-            self._tf = self.comms.tf()
+            self._tf = self.config.tf_transport()
         return self._tf
 
     @tf.setter
