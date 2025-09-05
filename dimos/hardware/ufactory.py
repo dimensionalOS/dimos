@@ -95,9 +95,12 @@ class UFactory7DOFArm:
         # xArm API expects mm and degrees
         x, y, z = 500, 0, 200  # mm
         roll, pitch, yaw = 0, 120, 0  # degrees
-        logger.debug(f"Going to observe position: x={x}, y={y}, z={z}, roll={roll}, pitch={pitch}, yaw={yaw}")
-        code = self.arm.set_position(x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, 
-                                    speed=100, is_radian=False, wait=True)
+        logger.debug(
+            f"Going to observe position: x={x}, y={y}, z={z}, roll={roll}, pitch={pitch}, yaw={yaw}"
+        )
+        code = self.arm.set_position(
+            x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, speed=100, is_radian=False, wait=True
+        )
         if code != 0:
             logger.error(f"Failed to go to observe position, code: {code}")
 
@@ -135,9 +138,17 @@ class UFactory7DOFArm:
         pose_mm = [x * 1000, y * 1000, z * 1000, r, p, y_]
         logger.debug(f"Commanding EE pose: {pose_mm}")
         # Use set_position with proper parameters (positions in mm, angles in degrees)
-        code = self.arm.set_position(x=pose_mm[0], y=pose_mm[1], z=pose_mm[2], 
-                                    roll=pose_mm[3], pitch=pose_mm[4], yaw=pose_mm[5], 
-                                    speed=100, is_radian=False, wait=True)
+        code = self.arm.set_position(
+            x=pose_mm[0],
+            y=pose_mm[1],
+            z=pose_mm[2],
+            roll=pose_mm[3],
+            pitch=pose_mm[4],
+            yaw=pose_mm[5],
+            speed=100,
+            is_radian=False,
+            wait=True,
+        )
         if code != 0:
             logger.error(f"Failed to set position, code: {code}")
 
@@ -188,11 +199,11 @@ class UFactory7DOFArm:
         # Convert from meters to gripper units
         gripper_pos = int(position * 8500)  # 0.1m = 850 units
         gripper_pos = max(0, min(850, gripper_pos))  # Clamp to valid range
-        
+
         # xArm speed parameter (1-5000, higher = faster)
         speed = int(effort * 5000)  # Convert effort to speed
         speed = max(1, min(5000, speed))
-        
+
         code = self.arm.set_gripper_position(gripper_pos, wait=True, speed=speed)
         if code != 0:
             logger.error(f"Failed to command gripper, code: {code}")
@@ -205,7 +216,7 @@ class UFactory7DOFArm:
         code = self.arm.set_gripper_mode(0)  # 0 = location/position mode
         if code != 0:
             logger.error(f"Failed to set gripper mode, code: {code}")
-        
+
         # Enable the gripper
         code = self.arm.set_gripper_enable(True)
         if code != 0:
@@ -242,18 +253,18 @@ class UFactory7DOFArm:
         if gripper_data[0] != 0:
             logger.error(f"Failed to get gripper position, code: {gripper_data[0]}")
             return 0.0, 0.0
-            
+
         gripper_pos = gripper_data[1]
         # Convert gripper position from units (0-850) to meters
         position_meters = gripper_pos / 8500.0  # 850 units = 0.1m
-        
+
         # Try to get gripper current (if available)
         try:
             # xArm may not have direct current reading, use position as proxy
             current_amperes = 0.0  # Fallback since xArm doesn't provide current directly
         except:
             current_amperes = 0.0
-            
+
         return position_meters, current_amperes
 
     def gripper_object_detected(self, commanded_effort: float = 0.25) -> bool:
@@ -274,9 +285,13 @@ class UFactory7DOFArm:
         object_present = position_meters > 0.005
 
         if object_present:
-            logger.info(f"Object detected in gripper (position: {position_meters:.3f} m, current: {current_amperes:.3f} A)")
+            logger.info(
+                f"Object detected in gripper (position: {position_meters:.3f} m, current: {current_amperes:.3f} A)"
+            )
         else:
-            logger.info(f"No object detected (position: {position_meters:.3f} m, current: {current_amperes:.3f} A)")
+            logger.info(
+                f"No object detected (position: {position_meters:.3f} m, current: {current_amperes:.3f} A)"
+            )
 
         return object_present
 
