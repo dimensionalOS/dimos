@@ -59,18 +59,14 @@ def match_detection_by_id(
 def transform_points_3d(
     points_3d: np.ndarray,
     transform_matrix: np.ndarray,
-    to_optical: bool = False,
-    to_robot: bool = False,
 ) -> np.ndarray:
     """
-    Transform 3D points with optional frame convention conversion.
+    Transform 3D points using a transformation matrix.
     Applies the same transformation pipeline as transform_pose but for multiple points.
 
     Args:
         points_3d: Nx3 array of 3D points [x, y, z]
         transform_matrix: 4x4 transformation matrix from camera frame to desired frame
-        to_optical: If True, input is in robot frame → convert result to optical frame
-        to_robot: If True, input is in optical frame → convert to robot frame first
 
     Returns:
         Nx3 array of transformed 3D points in desired frame
@@ -90,16 +86,8 @@ def transform_points_3d(
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
         )
 
-        # Apply input frame conversion based on flags
-        if to_robot:
-            # Input is in optical frame → convert to robot frame first
-            pose_for_transform = optical_to_robot_frame(input_point_pose)
-        else:
-            # Default or to_optical: use input pose as-is
-            pose_for_transform = input_point_pose
-
         # Create transformation matrix from point pose (relative to camera)
-        T_camera_point = pose_to_matrix(pose_for_transform)
+        T_camera_point = pose_to_matrix(input_point_pose)
 
         # Use compose_transforms to combine transformations
         T_desired_point = compose_transforms(transform_matrix, T_camera_point)
@@ -107,18 +95,10 @@ def transform_points_3d(
         # Convert back to pose
         result_pose = matrix_to_pose(T_desired_point)
 
-        # Apply output frame conversion based on flags
-        if to_optical:
-            # Input was robot frame → convert result to optical frame
-            desired_pose = robot_to_optical_frame(result_pose)
-        else:
-            # Default or to_robot: use result as-is
-            desired_pose = result_pose
-
         transformed_point = [
-            desired_pose.position.x,
-            desired_pose.position.y,
-            desired_pose.position.z,
+            result_pose.position.x,
+            result_pose.position.y,
+            result_pose.position.z,
         ]
         transformed_points.append(transformed_point)
 

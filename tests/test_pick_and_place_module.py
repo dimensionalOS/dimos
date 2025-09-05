@@ -23,11 +23,12 @@ import sys
 import asyncio
 import threading
 import time
+import signal
 import numpy as np
-from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
 
 try:
-    import pyzed.sl as sl
+    import pyzed.sl
 except ImportError:
     print("Error: ZED SDK not installed.")
     sys.exit(1)
@@ -42,69 +43,49 @@ from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 logger = setup_logger("dimos.tests.test_pick_and_place_module")
 
 # Global for mouse events
-mouse_click = None
 camera_mouse_click = None
 current_window = None
 pick_location = None  # Store pick location
 place_location = None  # Store place location
-place_mode = False  # Track if we're in place selection mode
+task_in_progress = False  # Track if task is running
 
 
 def mouse_callback(event, x, y, _flags, param):
-    global mouse_click, camera_mouse_click
-    window_name = param
+    global camera_mouse_click
     if event == cv2.EVENT_LBUTTONDOWN:
-        if window_name == "Camera Feed":
-            camera_mouse_click = (x, y)
-        else:
-            mouse_click = (x, y)
+        camera_mouse_click = (x, y)
 
 
-class VisualizationNode:
-    """Node that subscribes to visualization images and handles user input."""
+class CameraVisualizationNode:
+    """Node that subscribes to camera images and handles user input."""
 
     def __init__(self, robot: PiperArmRobot):
         self.lcm = LCM()
-        self.latest_viz = None
         self.latest_camera = None
         self._running = False
         self.robot = robot
+        self.executor = ThreadPoolExecutor(max_workers=1)  # For running blocking tasks
 
-        # Subscribe to visualization topic
-        self.viz_topic = Topic("/manipulation/viz", Image)
+        # Subscribe to camera topic
         self.camera_topic = Topic("/zed/color_image", Image)
 
     def start(self):
-        """Start the visualization node."""
+        """Start the camera visualization node."""
         self._running = True
         self.lcm.start()
 
-        # Subscribe to visualization topic
-        self.lcm.subscribe(self.viz_topic, self._on_viz_image)
         # Subscribe to camera topic for point selection
         self.lcm.subscribe(self.camera_topic, self._on_camera_image)
 
-        logger.info("Visualization node started")
+        logger.info("Camera visualization node started")
 
     def stop(self):
-        """Stop the visualization node."""
+        """Stop the camera visualization node."""
         self._running = False
+        self.executor.shutdown(wait=False)
         cv2.destroyAllWindows()
 
-    def _on_viz_image(self, msg: Image, topic: str):
-        """Handle visualization image messages."""
-        try:
-            # Convert LCM message to numpy array
-            data = np.frombuffer(msg.data, dtype=np.uint8)
-            if msg.encoding == "rgb8":
-                image = data.reshape((msg.height, msg.width, 3))
-                # Convert RGB to BGR for OpenCV
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-                self.latest_viz = image
-        except Exception as e:
-            logger.error(f"Error processing viz image: {e}")
-
-    def _on_camera_image(self, msg: Image, topic: str):
+    def _on_camera_image(self, msg: Image, _topic: str):
         """Handle camera image messages."""
         try:
             # Convert LCM message to numpy array
@@ -119,20 +100,17 @@ class VisualizationNode:
 
     def run_visualization(self):
         """Run the visualization loop with user interaction."""
-        global mouse_click, camera_mouse_click, pick_location, place_location, place_mode
+        global camera_mouse_click, pick_location, place_location, task_in_progress
 
-        # Setup windows
-        cv2.namedWindow("Pick and Place")
-        cv2.setMouseCallback("Pick and Place", mouse_callback, "Pick and Place")
-
+        # Setup window - only camera feed
         cv2.namedWindow("Camera Feed")
         cv2.setMouseCallback("Camera Feed", mouse_callback, "Camera Feed")
 
         print("=== Piper Arm Robot - Pick and Place ===")
-        print("Control mode: Module-based with LCM communication")
+        print("Control mode: Simplified module-based with blocking operations")
         print("\nPICK AND PLACE WORKFLOW:")
         print("1. Click on an object to select PICK location")
-        print("2. Click again to select PLACE location (auto pick & place)")
+        print("2. Click again to select PLACE location (blocking pick & place)")
         print("3. OR press 'p' after first click for pick-only task")
         print("\nCONTROLS:")
         print("  'p' - Execute pick-only task (after selecting pick location)")
@@ -141,7 +119,8 @@ class VisualizationNode:
         print("  's' - SOFT STOP (emergency stop)")
         print("  'g' - RELEASE GRIPPER (open gripper)")
         print("  'SPACE' - EXECUTE target pose (manual override)")
-        print("\nNOTE: Click on objects in the Camera Feed window!")
+        print("\nNOTE: Tasks are blocking - wait for completion before new commands")
+        print("      Click on objects in the Camera Feed window!")
 
         while self._running:
             # Show camera feed with status overlay
@@ -150,31 +129,38 @@ class VisualizationNode:
 
                 # Add status text
                 status_text = ""
-                if pick_location is None:
+                if task_in_progress:
+                    status_text = "Task in progress, please wait..."
+                    color = (255, 165, 0)  # Orange
+                elif pick_location is None:
                     status_text = "Click to select PICK location"
                     color = (0, 255, 0)
                 elif place_location is None:
                     status_text = "Click to select PLACE location (or press 'p' for pick-only)"
                     color = (0, 255, 255)
                 else:
-                    status_text = "Executing pick and place..."
+                    status_text = "Ready to execute pick and place"
                     color = (255, 0, 255)
 
                 cv2.putText(
                     display_image, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2
                 )
 
+                # Make local copies to avoid race conditions
+                local_pick = pick_location
+                local_place = place_location
+
                 # Draw pick location marker if set
-                if pick_location is not None:
+                if local_pick is not None:
                     # Simple circle marker
-                    cv2.circle(display_image, pick_location, 10, (0, 255, 0), 2)
-                    cv2.circle(display_image, pick_location, 2, (0, 255, 0), -1)
+                    cv2.circle(display_image, local_pick, 10, (0, 255, 0), 2)
+                    cv2.circle(display_image, local_pick, 2, (0, 255, 0), -1)
 
                     # Simple label
                     cv2.putText(
                         display_image,
                         "PICK",
-                        (pick_location[0] + 15, pick_location[1] + 5),
+                        (local_pick[0] + 15, local_pick[1] + 5),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,
                         (0, 255, 0),
@@ -182,16 +168,16 @@ class VisualizationNode:
                     )
 
                 # Draw place location marker if set
-                if place_location is not None:
+                if local_place is not None:
                     # Simple circle marker
-                    cv2.circle(display_image, place_location, 10, (0, 255, 255), 2)
-                    cv2.circle(display_image, place_location, 2, (0, 255, 255), -1)
+                    cv2.circle(display_image, local_place, 10, (0, 255, 255), 2)
+                    cv2.circle(display_image, local_place, 2, (0, 255, 255), -1)
 
                     # Simple label
                     cv2.putText(
                         display_image,
                         "PLACE",
-                        (place_location[0] + 15, place_location[1] + 5),
+                        (local_place[0] + 15, local_place[1] + 5),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,
                         (0, 255, 255),
@@ -199,11 +185,11 @@ class VisualizationNode:
                     )
 
                     # Draw simple arrow between pick and place
-                    if pick_location is not None:
+                    if local_pick is not None:
                         cv2.arrowedLine(
                             display_image,
-                            pick_location,
-                            place_location,
+                            local_pick,
+                            local_place,
                             (255, 255, 0),
                             2,
                             tipLength=0.05,
@@ -211,9 +197,7 @@ class VisualizationNode:
 
                 cv2.imshow("Camera Feed", display_image)
 
-            # Show visualization if available
-            if self.latest_viz is not None:
-                cv2.imshow("Pick and Place", self.latest_viz)
+            # Removed visualization window - only showing camera feed
 
             # Handle keyboard input
             key = cv2.waitKey(1) & 0xFF
@@ -226,26 +210,43 @@ class VisualizationNode:
                     # Reset everything
                     pick_location = None
                     place_location = None
-                    place_mode = False
+                    task_in_progress = False
                     logger.info("Reset pick and place selections")
                     # Also send reset to robot
                     action = self.robot.handle_keyboard_command("r")
                     if action:
                         logger.info(f"Action: {action}")
                 elif key == ord("p"):
-                    # Execute pick-only task if pick location is set
-                    if pick_location is not None:
+                    # Execute pick-only task if pick location is set and not busy
+                    if task_in_progress:
+                        logger.warning("Task already in progress")
+                    elif pick_location is not None:
                         logger.info(f"Executing pick-only task at {pick_location}")
-                        result = self.robot.pick_and_place(
-                            pick_location[0],
-                            pick_location[1],
-                            None,  # No place location
-                            None,
-                        )
-                        logger.info(f"Pick task started: {result}")
-                        # Clear selection after sending
-                        pick_location = None
-                        place_location = None
+                        task_in_progress = True
+
+                        # Execute in separate thread to keep UI responsive
+                        def execute_pick():
+                            global task_in_progress, pick_location, place_location
+                            try:
+                                result = self.robot.pick_and_place(
+                                    pick_location[0],
+                                    pick_location[1],
+                                    None,  # No place location
+                                    None,
+                                )
+                                if result["success"]:
+                                    logger.info(f"Pick task completed: {result['message']}")
+                                else:
+                                    logger.error(
+                                        f"Pick task failed: {result.get('error', 'Unknown error')}"
+                                    )
+                            finally:
+                                # Clear selection after task
+                                pick_location = None
+                                place_location = None
+                                task_in_progress = False
+
+                        self.executor.submit(execute_pick)
                     else:
                         logger.warning("Please select a pick location first!")
                 else:
@@ -258,7 +259,7 @@ class VisualizationNode:
                         logger.info(f"Action: {action}")
 
             # Handle mouse clicks
-            if camera_mouse_click:
+            if camera_mouse_click and not task_in_progress:
                 x, y = camera_mouse_click
 
                 if pick_location is None:
@@ -271,50 +272,62 @@ class VisualizationNode:
                     logger.info(f"Place location set at ({x}, {y})")
                     logger.info(f"Executing pick at {pick_location} and place at ({x}, {y})")
 
-                    # Start pick and place task with both locations
-                    result = self.robot.pick_and_place(pick_location[0], pick_location[1], x, y)
-                    logger.info(f"Pick and place task started: {result}")
+                    # Execute in separate thread to keep UI responsive
+                    task_in_progress = True
 
-                    # Clear all points after sending mission
-                    pick_location = None
-                    place_location = None
+                    def execute_pick_and_place(pick_x, pick_y, place_x, place_y):
+                        global task_in_progress, pick_location, place_location
+                        try:
+                            result = self.robot.pick_and_place(pick_x, pick_y, place_x, place_y)
+                            if result["success"]:
+                                logger.info(f"Pick and place completed: {result['message']}")
+                            else:
+                                logger.error(
+                                    f"Pick and place failed: {result.get('error', 'Unknown error')}"
+                                )
+                        finally:
+                            # Clear all points after task
+                            pick_location = None
+                            place_location = None
+                            task_in_progress = False
+
+                    self.executor.submit(
+                        execute_pick_and_place, pick_location[0], pick_location[1], x, y
+                    )
 
                 camera_mouse_click = None
 
-            # Handle mouse click from Pick and Place window (if viz is running)
-            elif mouse_click and self.latest_viz is not None:
-                # Similar logic for viz window clicks
-                x, y = mouse_click
-
-                if pick_location is None:
-                    # First click - set pick location
-                    pick_location = (x, y)
-                    logger.info(f"Pick location set at ({x}, {y}) from viz window")
-                elif place_location is None:
-                    # Second click - set place location and execute
-                    place_location = (x, y)
-                    logger.info(f"Place location set at ({x}, {y}) from viz window")
-                    logger.info(f"Executing pick at {pick_location} and place at ({x}, {y})")
-
-                    # Start pick and place task with both locations
-                    result = self.robot.pick_and_place(pick_location[0], pick_location[1], x, y)
-                    logger.info(f"Pick and place task started: {result}")
-
-                    # Clear all points after sending mission
-                    pick_location = None
-                    place_location = None
-
-                mouse_click = None
+            # Removed viz window mouse handling
 
             time.sleep(0.03)  # ~30 FPS
 
 
+# Global robot instance for signal handler
+global_robot = None
+
+
+def signal_handler(_signum, _frame):
+    """Handle Ctrl+C gracefully."""
+    global global_robot
+    logger.info("\nSIGINT received, shutting down gracefully...")
+    if global_robot and hasattr(global_robot, "piper_arm"):
+        try:
+            logger.info("Resetting arm to zero position...")
+            global_robot.piper_arm.reset_to_zero()
+            time.sleep(2)
+        except Exception as e:
+            logger.warning(f"Failed to reset arm: {e}")
+    sys.exit(0)
+
+
 async def run_piper_arm_with_viz():
     """Run the Piper Arm robot with visualization."""
+    global global_robot
     logger.info("Starting Piper Arm Robot")
 
     # Create robot instance
     robot = PiperArmRobot()
+    global_robot = robot  # Set global for signal handler
 
     try:
         # Start the robot
@@ -323,8 +336,8 @@ async def run_piper_arm_with_viz():
         # Give modules time to fully initialize
         await asyncio.sleep(2)
 
-        # Create and start visualization node
-        viz_node = VisualizationNode(robot)
+        # Create and start camera visualization node
+        viz_node = CameraVisualizationNode(robot)
         viz_node.start()
 
         # Run visualization in separate thread
@@ -346,10 +359,25 @@ async def run_piper_arm_with_viz():
 
     finally:
         # Clean up
+        logger.info("Cleaning up...")
+
+        # Reset arm to zero position before stopping
+        try:
+            if robot.piper_arm:
+                logger.info("Resetting arm to zero position...")
+                robot.piper_arm.reset_to_zero()
+                time.sleep(2)  # Give it time to reach zero position
+                robot.piper_arm.stop()
+        except Exception as e:
+            logger.warning(f"Failed to reset arm: {e}")
+
         robot.stop()
         logger.info("Robot stopped")
 
 
 if __name__ == "__main__":
+    # Set up signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+
     # Run the robot
     asyncio.run(run_piper_arm_with_viz())

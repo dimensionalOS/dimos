@@ -721,7 +721,7 @@ class ZEDModule(Module):
             self._publish_depth_image(depth, header)
 
             # Publish camera info periodically
-            self._publish_camera_info()
+            self._publish_camera_info(header)
 
             # Publish pose if tracking enabled and valid
             if self.enable_tracking and pose_data and pose_data.get("valid", False):
@@ -767,8 +767,12 @@ class ZEDModule(Module):
         except Exception as e:
             logger.error(f"Error publishing depth image: {e}")
 
-    def _publish_camera_info(self):
-        """Publish camera calibration information."""
+    def _publish_camera_info(self, header: Optional[Header] = None):
+        """Publish camera calibration information.
+
+        Args:
+            header: Optional header to use for synchronized timestamps
+        """
         try:
             info = self.zed_camera.get_camera_info()
             if not info:
@@ -782,8 +786,9 @@ class ZEDModule(Module):
             left_cam = info.get("left_cam", {})
             resolution = info.get("resolution", {})
 
-            # Create CameraInfo message with optical frame
-            header = Header(self.optical_frame_id)
+            # Use provided header or create new one
+            if header is None:
+                header = Header(self.optical_frame_id)
 
             # Create camera matrix K (3x3)
             K = [
@@ -842,6 +847,15 @@ class ZEDModule(Module):
 
             self.camera_info.publish(msg)
 
+            camera_optical = Transform(
+                translation=Vector3(0.0, 0.0, 0.0),
+                rotation=Quaternion(0.5, -0.5, 0.5, -0.5),
+                frame_id=self.frame_id,
+                child_frame_id=self.optical_frame_id,
+                ts=header.ts,
+            )
+            self.tf.publish(camera_optical)
+
         except Exception as e:
             logger.error(f"Error publishing camera info: {e}")
 
@@ -865,16 +879,6 @@ class ZEDModule(Module):
                 ts=header.ts,
             )
             self.tf.publish(camera_tf)
-
-            # Then publish camera_link_optical (ROS optical frame convention)
-            camera_optical = Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.5, -0.5, 0.5, -0.5),
-                frame_id=self.frame_id,
-                child_frame_id=self.optical_frame_id,
-                ts=header.ts,
-            )
-            self.tf.publish(camera_optical)
 
         except Exception as e:
             logger.error(f"Error publishing pose: {e}")

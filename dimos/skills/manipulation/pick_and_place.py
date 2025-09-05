@@ -375,7 +375,7 @@ class PickAndPlace(AbstractRobotSkill):
         # Execute pick (and optionally place) using the robot's interface
         try:
             if place_point:
-                # Pick and place
+                # Pick and place (blocking call)
                 result = self._robot.pick_and_place(
                     pick_x=pick_point[0],
                     pick_y=pick_point[1],
@@ -383,12 +383,13 @@ class PickAndPlace(AbstractRobotSkill):
                     place_y=place_point[1],
                 )
             else:
-                # Pick only
+                # Pick only (blocking call)
                 result = self._robot.pick_and_place(
                     pick_x=pick_point[0], pick_y=pick_point[1], place_x=None, place_y=None
                 )
 
-            if result:
+            # Handle the new dict response format
+            if result and result.get("success"):
                 if self.target_query:
                     message = (
                         f"Successfully picked {self.object_query} and placed it {self.target_query}"
@@ -405,12 +406,16 @@ class PickAndPlace(AbstractRobotSkill):
                     "message": message,
                 }
             else:
+                # Extract error from result if available
+                error_msg = (
+                    result.get("error", "Unknown error") if result else "No response from robot"
+                )
                 operation = "Pick and place" if self.target_query else "Pick"
                 return {
                     "success": False,
                     "pick_point": pick_point,
                     "place_point": place_point,
-                    "error": f"{operation} operation failed",
+                    "error": f"{operation} operation failed: {error_msg}",
                 }
 
         except Exception as e:

@@ -14,7 +14,7 @@
 
 import asyncio
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from dimos import core
 from dimos.hardware.zed_camera import ZEDModule
@@ -71,15 +71,17 @@ class PiperArmRobot(Robot):
             resolution="HD720",
             depth_mode="NEURAL",
             fps=30,
-            enable_tracking=False,  # We don't need tracking for manipulation
+            enable_tracking=False,  # Disable tracking - using piper_arm transforms
             publish_rate=30.0,
-            frame_id="zed_camera",
+            frame_id="zed_camera_link",
+            optical_frame_id="zed_camera_link_optical",
         )
 
         # Configure ZED LCM transports
         self.stereo_camera.color_image.transport = core.LCMTransport("/zed/color_image", Image)
         self.stereo_camera.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
         self.stereo_camera.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
+        self.stereo_camera.pose.transport = core.LCMTransport("/zed/pose", PoseStamped)
 
         # Deploy Piper Arm module
         logger.info("Deploying Piper Arm module...")
@@ -88,7 +90,7 @@ class PiperArmRobot(Robot):
             publish_rate=30.0,
             base_frame_id="base_link",
             ee_frame_id="ee_link",
-            camera_frame_id="camera_link",
+            camera_frame_id="zed_camera_link",
             ee_to_camera_6dof=[-0.065, 0.03, -0.095, 0.0, -1.57, 0.0],  # EE to camera transform
         )
 
@@ -100,11 +102,13 @@ class PiperArmRobot(Robot):
         self.manipulation_interface = self.dimos.deploy(
             ManipulationModule,
             piper_arm_module=self.piper_arm,  # Pass the arm module reference
-            min_confidence=0.6,
+            min_confidence=0.3,
             max_depth=1.0,
             max_object_size=0.15,
-            camera_frame_id="camera_link",
+            camera_frame_id="zed_camera_link_optical",  # Use ZED optical frame
             base_frame_id="base_link",
+            track_frame_id="base_link",  # Track frame - using base_link as reference
+            reach_timeout=10.0,  # Simple timeout for reaching poses
         )
 
         # Connect manipulation inputs
@@ -149,8 +153,8 @@ class PiperArmRobot(Robot):
 
     def pick_and_place(
         self, pick_x: int, pick_y: int, place_x: Optional[int] = None, place_y: Optional[int] = None
-    ):
-        """Execute pick and place task.
+    ) -> Dict[str, Any]:
+        """Execute pick and place task (blocking).
 
         Args:
             pick_x: X coordinate for pick location
@@ -159,13 +163,13 @@ class PiperArmRobot(Robot):
             place_y: Y coordinate for place location (optional)
 
         Returns:
-            Result of the pick and place operation
+            Dict with success status and details
         """
         if self.manipulation_interface:
             return self.manipulation_interface.pick_and_place(pick_x, pick_y, place_x, place_y)
         else:
             logger.error("Manipulation module not initialized")
-            return False
+            return {"success": False, "error": "Manipulation module not initialized"}
 
     def handle_keyboard_command(self, key: str):
         """Pass keyboard commands to manipulation module.
