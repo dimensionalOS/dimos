@@ -20,6 +20,7 @@ Uses PBVS controller to compute velocity commands for mobile base control.
 import time
 import threading
 from typing import Dict, Any
+from enum import Enum
 from collections import deque
 import numpy as np
 import cv2
@@ -49,6 +50,14 @@ from dimos.utils.transform_utils import (
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.manipulation.visual_servoing.mobile_base_pbvs")
+
+
+class ServoingState(Enum):
+    """Visual servoing state machine states."""
+
+    IDLE = "idle"
+    TRACKING = "tracking"
+    REACHED = "reached"
 
 
 class MobileBasePBVS(Module):
@@ -91,9 +100,9 @@ class MobileBasePBVS(Module):
         rotation_gain: float = 0.5,
         max_linear_velocity: float = 0.6,  # m/s
         max_angular_velocity: float = 0.8,  # rad/s
-        deadband_velocity: float = 0.2,  # Minimum linear velocity to overcome deadband
-        deadband_angular_velocity: float = 0.2,  # Minimum angular velocity to overcome deadband
-        target_distance: float = 1.2,  # Target distance to maintain from object
+        deadband_velocity_x: float = 0.2,  # Minimum linear X velocity to overcome deadband
+        deadband_velocity_y: float = 0.2,  # Minimum linear Y velocity to overcome deadband
+        deadband_angular_velocity: float = 0.15,  # Minimum angular velocity to overcome deadband
         target_tolerance: float = 0.2,  # 20cm tolerance
         min_confidence: float = 0.5,
         camera_frame_id: str = "camera_link",
@@ -110,9 +119,10 @@ class MobileBasePBVS(Module):
         self.rotation_gain = rotation_gain
         self.max_linear_velocity = max_linear_velocity
         self.max_angular_velocity = max_angular_velocity
-        self.deadband_velocity = deadband_velocity
+        self.deadband_velocity_x = deadband_velocity_x
+        self.deadband_velocity_y = deadband_velocity_y
         self.deadband_angular_velocity = deadband_angular_velocity
-        self.target_distance = target_distance
+        self.target_distance = 1.0
         self.target_tolerance = target_tolerance
         self.tracking_loss_timeout = tracking_loss_timeout
 
@@ -134,7 +144,8 @@ class MobileBasePBVS(Module):
         )
 
         # Tracking state
-        self.is_tracking = False
+        self.state = ServoingState.IDLE
+        self.state_lock = threading.Lock()
         self.target_object = None
         self.target_object_history = deque(maxlen=4)  # Keep last 4 target positions
         self.last_detection_time = None
@@ -172,7 +183,9 @@ class MobileBasePBVS(Module):
         logger.info("Mobile base PBVS module started")
 
     @rpc
-    def track(self, target_x: int = None, target_y: int = None) -> Dict[str, Any]:
+    def track(
+        self, target_x: int = None, target_y: int = None, target_distance: float = 1.0
+    ) -> Dict[str, Any]:
         """
         Start tracking and following an object at given coordinates.
 
@@ -183,8 +196,9 @@ class MobileBasePBVS(Module):
         Returns:
             Dict with status and message
         """
-        if self.is_tracking:
-            return {"status": "error", "message": "Already tracking"}
+        with self.state_lock:
+            if self.state != ServoingState.IDLE:
+                return {"status": "error", "message": "Already tracking"}
 
         if target_x is None or target_y is None:
             return {"status": "error", "message": "Target coordinates required"}
@@ -193,6 +207,8 @@ class MobileBasePBVS(Module):
         if not self._select_target(target_x, target_y):
             return {"status": "error", "message": "No object found at coordinates"}
 
+        self.target_distance = target_distance
+
         # Start detection thread
         self.stop_detection.clear()
         self.detection_thread = threading.Thread(target=self._detection_loop, daemon=True)
@@ -200,13 +216,14 @@ class MobileBasePBVS(Module):
 
         # Start tracking thread
         self.stop_event.clear()
-        self.is_tracking = True
+        with self.state_lock:
+            self.state = ServoingState.TRACKING
         self.tracking_thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self.tracking_thread.start()
 
         # Publish state
         if self.tracking_state:
-            self.tracking_state.publish(String(data="tracking"))
+            self.tracking_state.publish(String(data=self.state.value))
 
         logger.info(f"Started tracking object at ({target_x}, {target_y})")
         return {"status": "success", "message": "Tracking started"}
@@ -214,8 +231,9 @@ class MobileBasePBVS(Module):
     @rpc
     def stop_track(self) -> Dict[str, Any]:
         """Stop tracking and servoing."""
-        if not self.is_tracking:
-            return {"status": "warning", "message": "Not currently tracking"}
+        with self.state_lock:
+            if self.state == ServoingState.IDLE:
+                return {"status": "warning", "message": "Not currently tracking"}
 
         # Stop tracking
         self.stop_event.set()
@@ -229,8 +247,20 @@ class MobileBasePBVS(Module):
         logger.info("Stopped tracking")
         return {"status": "success", "message": "Tracking stopped"}
 
+    @rpc
+    def get_state(self) -> str:
+        """Get the current state of the visual servoing.
+
+        Returns:
+            Current state as string: 'idle', 'tracking', or 'reached'
+        """
+        with self.state_lock:
+            return self.state.value
+
     def stop(self):
-        self.is_tracking = False
+        with self.state_lock:
+            self.state = ServoingState.IDLE
+
         # Stop robot
         self._send_zero_velocity()
 
@@ -248,7 +278,7 @@ class MobileBasePBVS(Module):
 
         # Publish state
         if self.tracking_state:
-            self.tracking_state.publish(String(data="stopped"))
+            self.tracking_state.publish(String(data=self.state.value))
 
     def _on_rgb_image(self, msg: Image):
         """Handle RGB image messages."""
@@ -354,7 +384,8 @@ class MobileBasePBVS(Module):
         self._send_zero_velocity()
 
         # Clear state
-        self.is_tracking = False
+        with self.state_lock:
+            self.state = ServoingState.IDLE
         self.target_object = None
         self.target_object_history.clear()
         self.last_detection_time = None
@@ -364,7 +395,7 @@ class MobileBasePBVS(Module):
 
         # Publish state
         if self.tracking_state:
-            self.tracking_state.publish(String(data="stopped"))
+            self.tracking_state.publish(String(data=self.state.value))
 
     def _process_frame(self):
         """Process current frame to get detections."""
@@ -487,11 +518,25 @@ class MobileBasePBVS(Module):
         self.last_error_magnitude = error_magnitude
 
         if target_reached:
-            logger.info(f"Target reached! Error magnitude: {error_magnitude:.3f}m")
-            # Signal to stop tracking instead of calling stop_track from within thread
-            self.stop_event.set()
-            self.stop()
+            with self.state_lock:
+                if self.state != ServoingState.REACHED:
+                    self.state = ServoingState.REACHED
+                    logger.info(f"Target reached! Error magnitude: {error_magnitude:.3f}m")
+                    # Publish reached state
+                    if self.tracking_state:
+                        self.tracking_state.publish(String(data=self.state.value))
+            # Send zero velocity while at target
+            self._send_zero_velocity()
             return
+        else:
+            # Reset if we move away from target
+            with self.state_lock:
+                if self.state == ServoingState.REACHED:
+                    logger.info("Moved away from target, resuming tracking")
+                    self.state = ServoingState.TRACKING
+                    # Publish tracking state again
+                    if self.tracking_state:
+                        self.tracking_state.publish(String(data=self.state.value))
 
         # Compute control commands only if not reached
         twist_cmd = self.controller.compute_control(ee_pose, retracted_pose)
@@ -502,10 +547,10 @@ class MobileBasePBVS(Module):
         angular_z = twist_cmd.angular.z
 
         # Apply deadband to linear velocities
-        if abs(linear_x) > 0 and abs(linear_x) < self.deadband_velocity:
-            linear_x = self.deadband_velocity if linear_x > 0 else -self.deadband_velocity
-        if abs(linear_y) > 0 and abs(linear_y) < self.deadband_velocity:
-            linear_y = self.deadband_velocity if linear_y > 0 else -self.deadband_velocity
+        if abs(linear_x) > 0 and abs(linear_x) < self.deadband_velocity_x:
+            linear_x = self.deadband_velocity_x if linear_x > 0 else -self.deadband_velocity_x
+        if abs(linear_y) > 0 and abs(linear_y) < self.deadband_velocity_y:
+            linear_y = self.deadband_velocity_y if linear_y > 0 else -self.deadband_velocity_y
 
         # Apply deadband to angular velocity
         if abs(angular_z) > 0 and abs(angular_z) < self.deadband_angular_velocity:
@@ -614,8 +659,9 @@ class MobileBasePBVS(Module):
 
     def _publish_target_tf(self):
         """Publish TF transform for the tracked target."""
-        if not self.target_object or not self.is_tracking:
-            return
+        with self.state_lock:
+            if not self.target_object or self.state == ServoingState.IDLE:
+                return
 
         try:
             # Calculate target orientation: facing towards the object from robot position
@@ -643,8 +689,9 @@ class MobileBasePBVS(Module):
     def cleanup(self):
         """Clean up resources and stop tracking."""
         # Stop any active tracking
-        if self.is_tracking:
-            self.stop_track()
+        with self.state_lock:
+            if self.state != ServoingState.IDLE:
+                self.stop_track()
 
         # Stop tracking thread if running
         if self.tracking_thread and self.tracking_thread.is_alive():

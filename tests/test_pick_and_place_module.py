@@ -20,7 +20,6 @@ Subscribes to visualization images and handles mouse/keyboard input.
 
 import cv2
 import sys
-import asyncio
 import threading
 import time
 import signal
@@ -320,7 +319,7 @@ def signal_handler(_signum, _frame):
     sys.exit(0)
 
 
-async def run_piper_arm_with_viz():
+def run_piper_arm_with_viz():
     """Run the Piper Arm robot with visualization."""
     global global_robot
     logger.info("Starting Piper Arm Robot")
@@ -331,10 +330,10 @@ async def run_piper_arm_with_viz():
 
     try:
         # Start the robot
-        await robot.start()
+        robot.start()
 
         # Give modules time to fully initialize
-        await asyncio.sleep(2)
+        time.sleep(2)
 
         # Create and start camera visualization node
         viz_node = CameraVisualizationNode(robot)
@@ -346,7 +345,7 @@ async def run_piper_arm_with_viz():
 
         # Keep running until visualization stops
         while viz_node._running:
-            await asyncio.sleep(0.1)
+            time.sleep(0.1)
 
         # Stop visualization
         viz_node.stop()
@@ -380,4 +379,4 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
 
     # Run the robot
-    asyncio.run(run_piper_arm_with_viz())
+    run_piper_arm_with_viz()

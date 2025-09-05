@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 import logging
+import time
 from typing import Optional, List, Dict, Any
 
 from dimos import core
@@ -60,7 +60,7 @@ class PiperArmRobot(Robot):
             RobotCapability.MANIPULATION,
         ]
 
-    async def start(self):
+    def start(self):
         """Start the robot modules."""
         # Start Dimos
         self.dimos = core.start(4)  # Need 4 workers for ZED, Piper, Detection, and Manipulation
@@ -161,7 +161,7 @@ class PiperArmRobot(Robot):
         self.manipulation_interface.start()
 
         # Give modules time to initialize
-        await asyncio.sleep(2)
+        time.sleep(2)
 
         logger.info("PiperArmRobot initialized and started with modular architecture")
 
@@ -221,6 +221,10 @@ class PiperArmRobot(Robot):
                 self.manipulation_interface.cleanup()
 
             if self.piper_arm:
+                self.piper_arm.goto_zero()
+                time.sleep(1.5)
+                self.piper_arm.disable()
+                time.sleep(0.5)
                 self.piper_arm.stop()
 
             if self.stereo_camera:
@@ -235,21 +239,19 @@ class PiperArmRobot(Robot):
         logger.info("PiperArmRobot stopped")
 
 
-async def run_piper_arm():
-    """Run the Piper Arm robot."""
-    robot = PiperArmRobot()
+def main():
+    """Main entry point."""
+    robot = PiperArmRobot(enable_mobile_base_control=True)
+    robot.start()
 
-    await robot.start()
-
-    # Keep the robot running
     try:
         while True:
-            await asyncio.sleep(1)
+            time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received")
+        logger.info("Shutting down...")
     finally:
-        await robot.stop()
+        robot.stop()
 
 
 if __name__ == "__main__":
-    asyncio.run(run_piper_arm())
+    main()

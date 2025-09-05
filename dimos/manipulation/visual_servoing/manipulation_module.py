@@ -529,7 +529,7 @@ class ManipulationModule(Module):
             time.sleep(0.05)
         logger.error(f"Failed to reach target pose within {timeout}s")
 
-        if self.grasp_stage == GraspStage.RETRACT:
+        if self.grasp_stage == GraspStage.RETRACT or self.grasp_stage == GraspStage.PLACE:
             return True
 
         self.task_failed = True
