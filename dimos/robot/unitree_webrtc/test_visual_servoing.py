@@ -192,15 +192,27 @@ def main():
 
         logger.info("Robot initialized successfully")
 
-        # Deploy Mobile Base PBVS module
-        logger.info("Deploying Mobile Base PBVS module...")
+        # Deploy Mobile Base PBVS module with PID controllers
+        logger.info("Deploying Mobile Base PBVS module with PID control...")
         pbvs_module = robot.dimos.deploy(
             MobileBasePBVS,
-            position_gain=0.5,
-            rotation_gain=0.3,
+            # PID parameters for linear X (forward/backward)
+            linear_x_kp=0.6,
+            linear_x_ki=0.05,
+            linear_x_kd=0.1,
+            # PID parameters for linear Y (left/right)
+            linear_y_kp=0.5,
+            linear_y_ki=0.02,
+            linear_y_kd=0.1,
+            # PID parameters for angular Z (rotation)
+            angular_z_kp=0.5,
+            angular_z_ki=0.02,
+            angular_z_kd=0.08,
+            # Control parameters
+            control_frequency=20.0,
+            # Velocity limits
             max_linear_velocity=0.6,
             max_angular_velocity=0.8,
-            target_distance=1.0,
             target_tolerance=0.3,
             min_confidence=0.5,
             camera_frame_id="camera_link_optical",

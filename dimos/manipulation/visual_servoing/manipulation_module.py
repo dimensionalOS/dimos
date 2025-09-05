@@ -176,7 +176,7 @@ class ManipulationModule(Module):
         self.gripper_max_opening = 0.07
 
         self.workspace_min_radius = 0.2
-        self.workspace_max_radius = 0.8
+        self.workspace_max_radius = 0.75
         self.min_grasp_pitch_degrees = 5.0
         self.max_grasp_pitch_degrees = 60.0
 

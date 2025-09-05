@@ -110,15 +110,6 @@ class PIDController:
         else:
             return output
 
-    def _apply_deadband_compensation(self, error):
-        """
-        Apply deadband compensation to the error.
-
-        This maintains the original error value, as the deadband compensation
-        will be applied to the output, not the error.
-        """
-        return error
-
 
 # ----------------------------
 # Visual Servoing Controller Class

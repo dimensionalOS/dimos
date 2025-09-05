@@ -87,18 +87,26 @@ class PiperTree(Robot):
         self.lcm = LCM()
         self.lcm.start()
 
-        # Deploy Mobile Base PBVS module using ZED camera
-        logger.info("Deploying Mobile Base PBVS module with ZED camera...")
+        # Deploy Mobile Base PBVS module using ZED camera with PID controllers
+        logger.info("Deploying Mobile Base PBVS module with ZED camera and PID control...")
         self.mobile_base_servoing = self.dimos.deploy(
             MobileBasePBVS,
-            position_gain=0.6,
-            rotation_gain=0.5,
+            # PID parameters for linear X (forward/backward)
+            linear_x_kp=0.6,
+            linear_x_ki=0.2,
+            linear_x_kd=0.05,
+            # PID parameters for linear Y (left/right)
+            linear_y_kp=0.5,
+            linear_y_ki=0.08,
+            linear_y_kd=0.1,
+            # PID parameters for angular Z (rotation)
+            angular_z_kp=0.5,
+            angular_z_ki=0.08,
+            angular_z_kd=0.1,
+            # Velocity limits
             max_linear_velocity=0.6,
             max_angular_velocity=0.5,
-            deadband_velocity_x=0.2,
-            deadband_velocity_y=0.1,
-            deadband_angular_velocity=0.1,
-            target_tolerance=0.25,
+            target_tolerance=0.10,
             min_confidence=0.5,
             camera_frame_id="zed_camera_link_optical",
             track_frame_id="world",
@@ -379,8 +387,6 @@ class PiperTree(Robot):
 
 def main():
     """Example usage of PiperTree robot."""
-    import os
-
     # Create and start PiperTree robot
     robot = PiperTree()
     robot.start()

@@ -24,6 +24,7 @@ from scipy.spatial.transform import Rotation as R
 from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion, Twist
 from dimos_lcm.vision_msgs import Detection3D, Detection3DArray
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.simple_controller import PIDController
 from dimos.manipulation.visual_servoing.utils import (
     update_target_grasp_pose,
     find_best_object_match,
@@ -50,8 +51,19 @@ class PBVS:
 
     def __init__(
         self,
-        position_gain: float = 0.5,
-        rotation_gain: float = 0.3,
+        # PID parameters for all 6 DOF
+        linear_x_kp: float = 0.5,
+        linear_x_ki: float = 0.0,
+        linear_x_kd: float = 0.1,
+        linear_y_kp: float = 0.5,
+        linear_y_ki: float = 0.0,
+        linear_y_kd: float = 0.1,
+        angular_z_kp: float = 0.3,
+        angular_z_ki: float = 0.0,
+        angular_z_kd: float = 0.05,
+        # Control parameters
+        control_frequency: float = 20.0,  # Hz
+        # Velocity limits
         max_velocity: float = 0.1,  # m/s
         max_angular_velocity: float = 0.5,  # rad/s
         target_tolerance: float = 0.01,  # 1cm
@@ -75,8 +87,16 @@ class PBVS:
         # Initialize low-level controller only if not in direct control mode
         if not direct_ee_control:
             self.controller = PBVSController(
-                position_gain=position_gain,
-                rotation_gain=rotation_gain,
+                linear_x_kp=linear_x_kp,
+                linear_x_ki=linear_x_ki,
+                linear_x_kd=linear_x_kd,
+                linear_y_kp=linear_y_kp,
+                linear_y_ki=linear_y_ki,
+                linear_y_kd=linear_y_kd,
+                angular_z_kp=angular_z_kp,
+                angular_z_ki=angular_z_ki,
+                angular_z_kd=angular_z_kd,
+                control_frequency=control_frequency,
                 max_velocity=max_velocity,
                 max_angular_velocity=max_angular_velocity,
                 target_tolerance=target_tolerance,
@@ -105,7 +125,7 @@ class PBVS:
         self.last_target_reached = False
 
         logger.info(
-            f"Initialized PBVS system with controller gains: pos={position_gain}, rot={rotation_gain}, "
+            f"Initialized PBVS system with 6-DOF PID control, "
             f"tracking_thresholds: distance={max_tracking_distance_threshold}m, size={min_size_similarity:.2f}"
         )
 
@@ -279,38 +299,114 @@ class PBVS:
 
 class PBVSController:
     """
-    Low-level Position-Based Visual Servoing controller.
+    Low-level Position-Based Visual Servoing controller with PID control.
     Pure control logic that computes velocity commands from poses.
 
     Handles:
     - Position and orientation error computation
-    - Velocity command generation with gain control
+    - Velocity command generation with PID control
     - Target reached detection
     """
 
     def __init__(
         self,
-        position_gain: float = 0.5,
-        rotation_gain: float = 0.3,
+        # Linear PID parameters
+        linear_x_kp: float = 0.5,
+        linear_x_ki: float = 0.0,
+        linear_x_kd: float = 0.1,
+        linear_y_kp: float = 0.5,
+        linear_y_ki: float = 0.0,
+        linear_y_kd: float = 0.1,
+        linear_z_kp: float = 0.0,
+        linear_z_ki: float = 0.0,
+        linear_z_kd: float = 0.0,
+        # Angular PID parameters (all 3 DOF)
+        angular_x_kp: float = 0.0,
+        angular_x_ki: float = 0.0,
+        angular_x_kd: float = 0.0,
+        angular_y_kp: float = 0.0,
+        angular_y_ki: float = 0.0,
+        angular_y_kd: float = 0.0,
+        angular_z_kp: float = 0.3,
+        angular_z_ki: float = 0.0,
+        angular_z_kd: float = 0.05,
+        # Control parameters
+        control_frequency: float = 20.0,  # Hz
+        # Velocity limits
         max_velocity: float = 0.1,  # m/s
         max_angular_velocity: float = 0.5,  # rad/s
         target_tolerance: float = 0.01,  # 1cm
     ):
         """
-        Initialize PBVS controller.
+        Initialize PBVS controller with 6-DOF PID control.
 
         Args:
-            position_gain: Proportional gain for position control
-            rotation_gain: Proportional gain for rotation control
+            linear_x_kp: Proportional gain for linear X control
+            linear_x_ki: Integral gain for linear X control
+            linear_x_kd: Derivative gain for linear X control
+            linear_y_kp: Proportional gain for linear Y control
+            linear_y_ki: Integral gain for linear Y control
+            linear_y_kd: Derivative gain for linear Y control
+            linear_z_kp: Proportional gain for linear Z control
+            linear_z_ki: Integral gain for linear Z control
+            linear_z_kd: Derivative gain for linear Z control
+            angular_x_kp: Proportional gain for angular X (roll) control
+            angular_x_ki: Integral gain for angular X control
+            angular_x_kd: Derivative gain for angular X control
+            angular_y_kp: Proportional gain for angular Y (pitch) control
+            angular_y_ki: Integral gain for angular Y control
+            angular_y_kd: Derivative gain for angular Y control
+            angular_z_kp: Proportional gain for angular Z (yaw) control
+            angular_z_ki: Integral gain for angular Z control
+            angular_z_kd: Derivative gain for angular Z control
+            control_frequency: Control loop frequency in Hz
             max_velocity: Maximum linear velocity command magnitude (m/s)
             max_angular_velocity: Maximum angular velocity command magnitude (rad/s)
             target_tolerance: Distance threshold for considering target reached (m)
         """
-        self.position_gain = position_gain
-        self.rotation_gain = rotation_gain
+        self.control_frequency = control_frequency
+        self.control_period = 1.0 / control_frequency
         self.max_velocity = max_velocity
         self.max_angular_velocity = max_angular_velocity
         self.target_tolerance = target_tolerance
+
+        # Create PID controllers for all 6 DOF using existing SimpleController PIDController
+        self.pid_linear_x = PIDController(
+            kp=linear_x_kp,
+            ki=linear_x_ki,
+            kd=linear_x_kd,
+            output_limits=(-max_velocity, max_velocity),
+        )
+        self.pid_linear_y = PIDController(
+            kp=linear_y_kp,
+            ki=linear_y_ki,
+            kd=linear_y_kd,
+            output_limits=(-max_velocity, max_velocity),
+        )
+        self.pid_linear_z = PIDController(
+            kp=linear_z_kp,
+            ki=linear_z_ki,
+            kd=linear_z_kd,
+            output_limits=(-max_velocity, max_velocity),
+        )
+        self.pid_angular_x = PIDController(
+            kp=angular_x_kp,
+            ki=angular_x_ki,
+            kd=angular_x_kd,
+            output_limits=(-max_angular_velocity, max_angular_velocity),
+        )
+        self.pid_angular_y = PIDController(
+            kp=angular_y_kp,
+            ki=angular_y_ki,
+            kd=angular_y_kd,
+            output_limits=(-max_angular_velocity, max_angular_velocity),
+        )
+        self.pid_angular_z = PIDController(
+            kp=angular_z_kp,
+            ki=angular_z_ki,
+            kd=angular_z_kd,
+            output_limits=(-max_angular_velocity, max_angular_velocity),
+        )
 
         self.last_position_error = None
         self.last_rotation_error = None
@@ -319,9 +415,10 @@ class PBVSController:
         self.last_target_reached = False
 
         logger.info(
-            f"Initialized PBVS controller: pos_gain={position_gain}, rot_gain={rotation_gain}, "
-            f"max_vel={max_velocity}m/s, max_ang_vel={max_angular_velocity}rad/s, "
-            f"target_tolerance={target_tolerance}m"
+            f"Initialized PBVS 6-DOF PID controller: "
+            f"linear=({linear_x_kp:.2f},{linear_x_ki:.2f},{linear_x_kd:.2f}), "
+            f"angular=({angular_x_kp:.2f},{angular_x_ki:.2f},{angular_x_kd:.2f}), "
+            f"max_vel={max_velocity}m/s, max_ang_vel={max_angular_velocity}rad/s"
         )
 
     def clear_state(self):
@@ -331,6 +428,20 @@ class PBVSController:
         self.last_velocity_cmd = None
         self.last_angular_velocity_cmd = None
         self.last_target_reached = False
+
+        # Reset all 6-DOF PID controllers
+        self.pid_linear_x.integral = 0.0
+        self.pid_linear_x.prev_error = 0.0
+        self.pid_linear_y.integral = 0.0
+        self.pid_linear_y.prev_error = 0.0
+        self.pid_linear_z.integral = 0.0
+        self.pid_linear_z.prev_error = 0.0
+        self.pid_angular_x.integral = 0.0
+        self.pid_angular_x.prev_error = 0.0
+        self.pid_angular_y.integral = 0.0
+        self.pid_angular_y.prev_error = 0.0
+        self.pid_angular_z.integral = 0.0
+        self.pid_angular_z.prev_error = 0.0
 
     def compute_control(self, ee_pose: Pose, grasp_pose: Pose) -> Optional[Twist]:
         """
@@ -351,14 +462,17 @@ class PBVSController:
         )
         self.last_position_error = error
 
-        # Compute velocity command with proportional control
-        velocity_cmd = Vector3(
-            error.x * self.position_gain,
-            error.y * self.position_gain,
-            error.z * self.position_gain,
-        )
+        # Use control period as dt for consistent PID timing
+        dt = self.control_period
 
-        # Limit velocity magnitude
+        # Compute velocity command with PID control for each linear axis
+        velocity_x = self.pid_linear_x.update(error.x, dt)
+        velocity_y = self.pid_linear_y.update(error.y, dt)
+        velocity_z = self.pid_linear_z.update(error.z, dt)
+
+        velocity_cmd = Vector3(velocity_x, velocity_y, velocity_z)
+
+        # Apply overall velocity magnitude limit
         vel_magnitude = np.linalg.norm([velocity_cmd.x, velocity_cmd.y, velocity_cmd.z])
         if vel_magnitude > self.max_velocity:
             scale = self.max_velocity / vel_magnitude
@@ -416,11 +530,14 @@ class PBVSController:
 
         self.last_rotation_error = Vector3(roll_error, pitch_error, yaw_error)
 
-        # Apply proportional control
+        # Use control period as dt for consistent PID timing (same as linear)
+        dt = self.control_period
+
+        # Apply PID control for all 3 angular axes
         angular_velocity = Vector3(
-            roll_error * self.rotation_gain,
-            pitch_error * self.rotation_gain,
-            yaw_error * self.rotation_gain,
+            self.pid_angular_x.update(roll_error, dt),  # PID control for roll
+            self.pid_angular_y.update(pitch_error, dt),  # PID control for pitch
+            self.pid_angular_z.update(yaw_error, dt),  # PID control for yaw
         )
 
         # Limit angular velocity magnitude

@@ -108,7 +108,7 @@ class TestInterface:
         global task_in_progress
         try:
             logger.info(f"Starting servo to object at ({x}, {y})")
-            if self.robot.servo_to_object(x, y, target_distance=0.4):
+            if self.robot.servo_to_object(x, y, target_distance=0.45):
                 logger.info("Reached object successfully")
             else:
                 logger.error("Failed to servo to object")

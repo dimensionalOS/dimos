@@ -265,6 +265,7 @@ class UnitreeWebRTCConnection:
 
     @rpc
     def standup(self):
+        self.in_pose_mode = False
         self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]})
         time.sleep(0.5)
         self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["RecoveryStand"]})

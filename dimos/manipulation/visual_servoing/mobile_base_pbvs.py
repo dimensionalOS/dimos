@@ -96,14 +96,22 @@ class MobileBasePBVS(Module):
 
     def __init__(
         self,
-        position_gain: float = 0.4,
-        rotation_gain: float = 0.5,
+        # PID parameters for linear motion
+        linear_x_kp: float = 0.4,
+        linear_x_ki: float = 0.0,
+        linear_x_kd: float = 0.1,
+        linear_y_kp: float = 0.4,
+        linear_y_ki: float = 0.0,
+        linear_y_kd: float = 0.1,
+        # PID parameters for angular motion (mobile base only uses Z)
+        angular_z_kp: float = 0.5,
+        angular_z_ki: float = 0.0,
+        angular_z_kd: float = 0.05,
+        # Control parameters
+        control_frequency: float = 20.0,  # Hz
         max_linear_velocity: float = 0.6,  # m/s
         max_angular_velocity: float = 0.8,  # rad/s
-        deadband_velocity_x: float = 0.2,  # Minimum linear X velocity to overcome deadband
-        deadband_velocity_y: float = 0.2,  # Minimum linear Y velocity to overcome deadband
-        deadband_angular_velocity: float = 0.15,  # Minimum angular velocity to overcome deadband
-        target_tolerance: float = 0.2,  # 20cm tolerance
+        target_tolerance: float = 0.15,  # 15cm tolerance
         min_confidence: float = 0.5,
         camera_frame_id: str = "camera_link",
         base_frame_id: str = "base_link",
@@ -114,14 +122,18 @@ class MobileBasePBVS(Module):
         """Initialize mobile base PBVS module."""
         super().__init__(**kwargs)
 
-        # Control parameters
-        self.position_gain = position_gain
-        self.rotation_gain = rotation_gain
+        # Store PID parameters
+        self.linear_x_kp = linear_x_kp
+        self.linear_x_ki = linear_x_ki
+        self.linear_x_kd = linear_x_kd
+        self.linear_y_kp = linear_y_kp
+        self.linear_y_ki = linear_y_ki
+        self.linear_y_kd = linear_y_kd
+        self.angular_z_kp = angular_z_kp
+        self.angular_z_ki = angular_z_ki
+        self.angular_z_kd = angular_z_kd
         self.max_linear_velocity = max_linear_velocity
         self.max_angular_velocity = max_angular_velocity
-        self.deadband_velocity_x = deadband_velocity_x
-        self.deadband_velocity_y = deadband_velocity_y
-        self.deadband_angular_velocity = deadband_angular_velocity
         self.target_distance = 1.0
         self.target_tolerance = target_tolerance
         self.tracking_loss_timeout = tracking_loss_timeout
@@ -136,8 +148,16 @@ class MobileBasePBVS(Module):
         self.tf = TF()
         self.detector = None
         self.controller = PBVSController(
-            position_gain=position_gain,
-            rotation_gain=rotation_gain,
+            linear_x_kp=linear_x_kp,
+            linear_x_ki=linear_x_ki,
+            linear_x_kd=linear_x_kd,
+            linear_y_kp=linear_y_kp,
+            linear_y_ki=linear_y_ki,
+            linear_y_kd=linear_y_kd,
+            angular_z_kp=angular_z_kp,
+            angular_z_ki=angular_z_ki,
+            angular_z_kd=angular_z_kd,
+            control_frequency=control_frequency,
             max_velocity=max_linear_velocity,
             max_angular_velocity=max_angular_velocity,
             target_tolerance=target_tolerance,
@@ -507,6 +527,7 @@ class MobileBasePBVS(Module):
         retracted_pose = offset_distance(
             target_pose, self.target_distance, approach_vector=Vector3(-1, 0, 0)
         )
+        retracted_pose.position.z = 0.0
 
         # Check if target reached first (position tolerance only for mobile base)
         error_magnitude, target_reached = is_target_reached(
@@ -519,12 +540,10 @@ class MobileBasePBVS(Module):
 
         if target_reached:
             with self.state_lock:
-                if self.state != ServoingState.REACHED:
-                    self.state = ServoingState.REACHED
-                    logger.info(f"Target reached! Error magnitude: {error_magnitude:.3f}m")
-                    # Publish reached state
-                    if self.tracking_state:
-                        self.tracking_state.publish(String(data=self.state.value))
+                logger.info(f"Target reached! Error magnitude: {error_magnitude:.3f}m")
+                self.state = ServoingState.REACHED
+                # Publish reached state
+                self.tracking_state.publish(String(data=self.state.value))
             # Send zero velocity while at target
             self._send_zero_velocity()
             return
@@ -541,26 +560,10 @@ class MobileBasePBVS(Module):
         # Compute control commands only if not reached
         twist_cmd = self.controller.compute_control(ee_pose, retracted_pose)
 
-        # Apply deadband compensation
-        linear_x = twist_cmd.linear.x
-        linear_y = twist_cmd.linear.y
-        angular_z = twist_cmd.angular.z
-
-        # Apply deadband to linear velocities
-        if abs(linear_x) > 0 and abs(linear_x) < self.deadband_velocity_x:
-            linear_x = self.deadband_velocity_x if linear_x > 0 else -self.deadband_velocity_x
-        if abs(linear_y) > 0 and abs(linear_y) < self.deadband_velocity_y:
-            linear_y = self.deadband_velocity_y if linear_y > 0 else -self.deadband_velocity_y
-
-        # Apply deadband to angular velocity
-        if abs(angular_z) > 0 and abs(angular_z) < self.deadband_angular_velocity:
-            angular_z = (
-                self.deadband_angular_velocity if angular_z > 0 else -self.deadband_angular_velocity
-            )
-
+        # Create mobile base twist (only X, Y linear and Z angular)
         mobile_twist = Twist(
-            linear=Vector3(linear_x, linear_y, 0),
-            angular=Vector3(0, 0, angular_z),
+            linear=Vector3(twist_cmd.linear.x, twist_cmd.linear.y, 0),
+            angular=Vector3(0, 0, twist_cmd.angular.z),
         )
         self.cmd_vel.publish(mobile_twist)
 
