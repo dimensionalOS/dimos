@@ -103,7 +103,7 @@ class ZedCameraThread(threading.Thread):
             reverse_vertex_order=False,
             map_type=sl.SPATIAL_MAP_TYPE.MESH,
         )
-        spatial_mapping_parameters.resolution_meter = 0.08
+        spatial_mapping_parameters.resolution_meter = 0.1
         spatial_mapping_parameters.range_meter = 10.0
 
         self.pymesh = sl.Mesh()
