@@ -23,6 +23,7 @@ from dimos_lcm.nav_msgs import MapMetaData
 from dimos_lcm.nav_msgs import OccupancyGrid as LCMOccupancyGrid
 from dimos_lcm.std_msgs import Time as LCMTime
 from scipy import ndimage
+from scipy.spatial import KDTree
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
@@ -432,6 +433,170 @@ class OccupancyGrid(Timestamped):
             # Expand existing free space areas by the specified radius
             # This will NOT expand from obstacles, only from free space
 
+            free_mask = grid == 0  # Current free space
+            free_radius_cells = int(np.ceil(mark_free_radius / resolution))
+
+            # Create circular kernel
+            y, x = np.ogrid[
+                -free_radius_cells : free_radius_cells + 1,
+                -free_radius_cells : free_radius_cells + 1,
+            ]
+            kernel = x**2 + y**2 <= free_radius_cells**2
+
+            # Dilate free space areas
+            expanded_free = ndimage.binary_dilation(free_mask, structure=kernel, iterations=1)
+
+            # Mark expanded areas as free, but don't override obstacles
+            grid[expanded_free & (grid != 100)] = 0
+
+        # Create and return OccupancyGrid
+        # Get timestamp from cloud if available
+        ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
+
+        occupancy_grid = cls(
+            grid=grid,
+            resolution=resolution,
+            origin=origin,
+            frame_id=frame_id or cloud.frame_id,
+            ts=ts,
+        )
+
+        return occupancy_grid
+
+    @classmethod
+    def from_pointcloud_adaptive(
+        cls,
+        cloud: "PointCloud2",
+        resolution: float = 0.05,
+        neighborhood_radius: float = 0.15,
+        height_diff_threshold: float = 0.3,
+        min_neighbors: int = 3,
+        frame_id: Optional[str] = None,
+        mark_free_radius: float = 0.4,
+    ) -> "OccupancyGrid":
+        """Create an OccupancyGrid from a PointCloud2 using adaptive neighborhood-based obstacle detection.
+
+        This method marks obstacles by comparing each point with its neighborhood to detect
+        significant height variations, which typically indicate obstacles like walls, objects, etc.
+
+        Args:
+            cloud: PointCloud2 message containing 3D points
+            resolution: Grid resolution in meters/cell (default: 0.05)
+            neighborhood_radius: Radius in meters to search for neighbors (default: 0.15)
+            height_diff_threshold: Height difference threshold in meters to mark as obstacle (default: 0.3)
+            min_neighbors: Minimum number of neighbors required for comparison (default: 3)
+            frame_id: Reference frame for the grid (default: uses cloud's frame_id)
+            mark_free_radius: Radius in meters around obstacles to mark as free space (default: 0.4)
+
+        Returns:
+            OccupancyGrid with occupied cells where significant height variations were detected
+        """
+
+        # Get points as numpy array
+        points = cloud.as_numpy()
+
+        if len(points) == 0:
+            # Return empty grid
+            return cls(
+                width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
+            )
+
+        # Build KDTree for efficient neighbor search in X-Y plane
+        points_xy = points[:, :2]  # Only X and Y coordinates
+        tree = KDTree(points_xy)
+
+        # Initialize arrays to track obstacle and ground points
+        is_obstacle = np.zeros(len(points), dtype=bool)
+        is_ground = np.zeros(len(points), dtype=bool)
+
+        # For each point, compare with its neighbors
+        for i, point in enumerate(points):
+            # Find neighbors within radius (in X-Y plane)
+            neighbor_indices = tree.query_ball_point(points_xy[i], neighborhood_radius)
+
+            # Remove self from neighbors
+            neighbor_indices = [idx for idx in neighbor_indices if idx != i]
+
+            if len(neighbor_indices) >= min_neighbors:
+                # Get heights of neighbors
+                neighbor_heights = points[neighbor_indices, 2]
+                point_height = point[2]
+
+                # Calculate height statistics
+                height_diff_max = np.max(np.abs(neighbor_heights - point_height))
+                height_std = np.std(neighbor_heights)
+
+                # Mark as obstacle if significant height variation exists
+                if height_diff_max > height_diff_threshold:
+                    is_obstacle[i] = True
+                # Mark as ground if point is low and neighbors are uniform
+                elif point_height < height_diff_threshold and height_std < 0.1:
+                    is_ground[i] = True
+                # Also check if this point is significantly higher than most neighbors
+                elif (
+                    np.sum(point_height - neighbor_heights > height_diff_threshold)
+                    > len(neighbor_indices) * 0.5
+                ):
+                    is_obstacle[i] = True
+
+        # Get obstacle and ground points
+        obstacle_points = points[is_obstacle]
+        ground_points = points[is_ground]
+
+        # Find bounds of the point cloud in X-Y plane
+        min_x = np.min(points[:, 0])
+        max_x = np.max(points[:, 0])
+        min_y = np.min(points[:, 1])
+        max_y = np.max(points[:, 1])
+
+        # Add some padding around the bounds
+        padding = 1  # 1 meter padding
+        min_x -= padding
+        max_x += padding
+        min_y -= padding
+        max_y += padding
+
+        # Calculate grid dimensions
+        width = int(np.ceil((max_x - min_x) / resolution))
+        height = int(np.ceil((max_y - min_y) / resolution))
+
+        # Create origin pose (bottom-left corner of the grid)
+        origin = Pose()
+        origin.position.x = min_x
+        origin.position.y = min_y
+        origin.position.z = 0.0
+        origin.orientation.w = 1.0  # No rotation
+
+        # Initialize grid (all unknown)
+        grid = np.full((height, width), -1, dtype=np.int8)
+
+        # First, mark ground points as free space
+        if len(ground_points) > 0:
+            ground_x = ((ground_points[:, 0] - min_x) / resolution).astype(np.int32)
+            ground_y = ((ground_points[:, 1] - min_y) / resolution).astype(np.int32)
+
+            # Clip indices to grid bounds
+            ground_x = np.clip(ground_x, 0, width - 1)
+            ground_y = np.clip(ground_y, 0, height - 1)
+
+            # Mark ground cells as free
+            grid[ground_y, ground_x] = 0  # Free space
+
+        # Then mark obstacle points (will override ground if at same location)
+        if len(obstacle_points) > 0:
+            obs_x = ((obstacle_points[:, 0] - min_x) / resolution).astype(np.int32)
+            obs_y = ((obstacle_points[:, 1] - min_y) / resolution).astype(np.int32)
+
+            # Clip indices to grid bounds
+            obs_x = np.clip(obs_x, 0, width - 1)
+            obs_y = np.clip(obs_y, 0, height - 1)
+
+            # Mark cells as occupied
+            grid[obs_y, obs_x] = 100  # Lethal obstacle
+
+        # Apply mark_free_radius to expand free space areas
+        if mark_free_radius > 0:
+            # Expand existing free space areas by the specified radius
             free_mask = grid == 0  # Current free space
             free_radius_cells = int(np.ceil(mark_free_radius / resolution))
 

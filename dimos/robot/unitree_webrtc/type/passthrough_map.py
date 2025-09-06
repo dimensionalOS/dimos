@@ -71,11 +71,13 @@ class PassthroughMap(Module):
                 self.global_map.publish(self.latest_world_map)
 
                 # Generate and publish global costmap
-                occupancygrid = OccupancyGrid.from_pointcloud(
+                occupancygrid = OccupancyGrid.from_pointcloud_adaptive(
                     self.latest_world_map,
                     resolution=self.cost_resolution,
-                    min_height=self.min_height,
-                    max_height=self.max_height,
+                    neighborhood_radius=0.15,
+                    height_diff_threshold=0.2,
+                    min_neighbors=3,
+                    mark_free_radius=0.4,
                 )
                 self.global_costmap.publish(occupancygrid)
 
