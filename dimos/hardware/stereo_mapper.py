@@ -22,6 +22,7 @@ import os
 import sys
 import time
 import logging
+import argparse
 
 from dimos.hardware.zed_camera_single import ZedModuleSingle
 
@@ -211,8 +212,6 @@ class StereoMapper:
         if self.zed_module:
             self.zed_module.stop()
 
-        # Map module doesn't have a stop method, skip
-
         if self.foxglove_bridge:
             self.foxglove_bridge.stop()
 
@@ -228,22 +227,12 @@ class StereoMapper:
 
 
 def main():
-    """Main entry point for StereoMapper."""
-    import argparse
-
     parser = argparse.ArgumentParser(description="Stereo Mapping with ZED Camera")
     parser.add_argument("--port", type=int, default=7779, help="Foxglove websocket port")
-    parser.add_argument(
-        "--no-spatial-mapping",
-        action="store_true",
-        help="Disable ZED spatial mapping and use traditional accumulation instead",
-    )
     args = parser.parse_args()
 
-    # Configure LCM
     pubsub.lcm.autoconf()
 
-    # Create and start mapper
     mapper = StereoMapper(websocket_port=args.port)
     mapper.start()
 
