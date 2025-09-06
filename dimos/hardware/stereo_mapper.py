@@ -13,10 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-StereoMapper - Exactly like UnitreeGo2 but using ZED camera data.
-Uses ZED for both lidar (pointcloud) and odometry (pose).
-"""
 
 import os
 import sys
@@ -46,7 +42,7 @@ logger = setup_logger(__name__, level=logging.INFO)
 
 class StereoMapper:
     """
-    Stereo mapping system using ZED camera - structured exactly like UnitreeGo2.
+    Stereo mapping system using ZED camera
     """
 
     def __init__(self, websocket_port: int = 7779):
@@ -58,7 +54,7 @@ class StereoMapper:
         """
         self.websocket_port = websocket_port
         self.lcm = LCM()
-        self.tf = None  # Initialize TF later to avoid conflicts
+        self.tf = None
 
         self.dimos = None
         self.zed_module = None
@@ -71,24 +67,19 @@ class StereoMapper:
         logger.info(f"StereoMapper initialized - websocket port {websocket_port}")
 
     def start(self):
-        """Start the stereo mapping system - exactly like UnitreeGo2.start()."""
         logger.info("Starting StereoMapper system...")
 
-        # Start Dimos
         self.dimos = core.start(1, memory_limit="30GiB")
 
         # Initialize TF after Dimos is started
         self.tf = TF()
 
-        # Deploy modules in same order as UnitreeGo2
         self._deploy_zed_and_connection()
         self._deploy_mapping()
         self._deploy_visualization()
 
-        # Start all modules
         self._start_modules()
 
-        # Start LCM
         self.lcm.start()
 
         logger.info("=" * 60)
@@ -100,16 +91,14 @@ class StereoMapper:
         logger.info("  /odom - Camera pose from ZED visual odometry")
         logger.info("  /global_map")
         logger.info("  /global_costmap - Navigation costmap")
-        logger.info("  /local_costmap - Local costmap")
         logger.info("")
         logger.info("Foxglove display frame: 'world'")
         logger.info("TF chain: world → base_link → camera_link")
         logger.info("=" * 60)
 
     def _deploy_zed_and_connection(self):
-        """Deploy ZED camera module and configure connections - combines _deploy_connection from UnitreeGo2."""
-
         logger.info("Deploying ZED camera module with spatial mapping...")
+
         self.zed_module = self.dimos.deploy(
             ZedModuleSingle,
             voxel_size=self.voxel_size,
@@ -118,13 +107,11 @@ class StereoMapper:
 
         self.zed_module.pointcloud_msg.transport = core.LCMTransport("/lidar", LidarMessage)
         self.zed_module.pose.transport = core.LCMTransport("/odom", PoseStamped)
-
         self.zed_module.pose.subscribe(self._publish_tf)
 
         logger.info("✓ ZED camera module deployed and configured")
 
     def _publish_tf(self, msg: PoseStamped):
-        """Publish TF transforms - exactly like UnitreeGo2's ConnectionModule._publish_tf."""
         # Only publish TF if we have a valid pose (ZED tracking is working)
         if msg is None:
             logger.debug("No valid pose from ZED yet, skipping TF publish")
@@ -156,7 +143,6 @@ class StereoMapper:
         # No need for camera_optical transform - ZED already outputs in ROS frame
 
     def _deploy_mapping(self):
-        """Deploy and configure the mapping module."""
         logger.info("Deploying mapping module...")
 
         self.mapper = self.dimos.deploy(
@@ -168,7 +154,7 @@ class StereoMapper:
             frame_id="world",
         )
 
-        # Configure transports - same topics as UnitreeGo2
+        # Configure transports
         self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
         self.mapper.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)
         self.mapper.local_costmap.transport = core.LCMTransport("/local_costmap", OccupancyGrid)
@@ -179,7 +165,6 @@ class StereoMapper:
         logger.info("✓ Mapping module deployed and connected to ZED")
 
     def _deploy_visualization(self):
-        """Deploy visualization (Foxglove bridge)."""
         logger.info("Deploying visualization...")
 
         self.foxglove_bridge = FoxgloveBridge()
@@ -187,26 +172,21 @@ class StereoMapper:
         logger.info(f"✓ Foxglove bridge ready on port {self.websocket_port}")
 
     def _start_modules(self):
-        """Start all deployed modules."""
         logger.info("Starting all modules...")
 
-        # Start ZED first
         logger.info("  Starting ZED module...")
         self.zed_module.start()
         time.sleep(3)  # Give ZED time to initialize
 
-        # Start mapper
         logger.info("  Starting mapper module...")
         self.mapper.start()
 
-        # Start Foxglove
         logger.info("  Starting Foxglove bridge...")
         self.foxglove_bridge.start()
 
         logger.info("✓ All modules started")
 
     def stop(self):
-        """Stop the stereo mapping system."""
         logger.info("Stopping StereoMapper...")
 
         if self.zed_module:
