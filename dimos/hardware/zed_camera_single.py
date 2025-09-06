@@ -35,7 +35,7 @@ logger = setup_logger(__name__)
 
 
 class ZedCameraThread(threading.Thread):
-    def __init__(self, publish_pointcloud, publish_pose, voxel_size):
+    def __init__(self, publish_pointcloud, publish_pose, voxel_size, map_publish_interval):
         super().__init__(daemon=True)
         self._stop_event = threading.Event()
         self.pymesh = None
@@ -46,7 +46,7 @@ class ZedCameraThread(threading.Thread):
         self.pose_thread = None
         self.check_interval = 0.02
         self.runtime_parameters = sl.RuntimeParameters()
-        self.pointcloud_publish_interval = 3.0
+        self.map_publish_interval = map_publish_interval
 
     def stop_publishing(self):
         self._stop_event.set()
@@ -157,7 +157,7 @@ class ZedCameraThread(threading.Thread):
 
             duration = time.time() - last_call
 
-            if duration < self.pointcloud_publish_interval:
+            if duration < self.map_publish_interval:
                 continue
 
             self.zed.request_spatial_map_async()
@@ -215,6 +215,7 @@ class ZedModuleSingle(Module):
             publish_pointcloud=self._publish_pointcloud,
             publish_pose=self._publish_pose,
             voxel_size=self.voxel_size,
+            map_publish_interval=self.map_publish_interval,
         )
         logger.info("ZEDModuleSingle initialized")
 
@@ -275,6 +276,3 @@ class ZedModuleSingle(Module):
                 frame_id="world",
             )
             self.pointcloud_msg.publish(lidar_msg)
-            logger.info(f"Published pointcloud with {len(pcd.points)} points")
-        else:
-            logger.info("No pointcloud data to publish")

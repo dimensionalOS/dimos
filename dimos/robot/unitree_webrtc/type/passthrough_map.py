@@ -45,7 +45,7 @@ class PassthroughMap(Module):
         self,
         cost_resolution: float = 0.05,
         global_publish_interval: float = 2.5,
-        min_height: float = 0.15,
+        min_height: float = 0.2,
         max_height: float = 1.5,
         frame_id: str = "world",
         **kwargs,
@@ -73,7 +73,6 @@ class PassthroughMap(Module):
         # Publish global map periodically
         def publish(_):
             if self.latest_world_map is not None:
-                logger.info(f"Publishing global_map from ZED spatial mapping")
                 self.global_map.publish(self.latest_world_map)
 
                 # Generate and publish global costmap

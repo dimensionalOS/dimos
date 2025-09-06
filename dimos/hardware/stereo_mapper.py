@@ -115,19 +115,11 @@ class StereoMapper:
             map_publish_interval=self.map_publish_interval,
         )
 
-        # Configure transports - use same topic names as UnitreeGo2
-        # These are the main topics that UnitreeGo2 uses
         self.zed_module.pointcloud_msg.transport = core.LCMTransport("/lidar", LidarMessage)
         self.zed_module.pose.transport = core.LCMTransport("/odom", PoseStamped)
-        # self.zed_module.color_image.transport = core.LCMTransport("/zed/color_image", Image)
 
-        # Additional ZED-specific topics for debugging
-        # self.zed_module.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
-        # self.zed_module.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
-
-        # Subscribe to pose messages to publish TF transforms
         self.zed_module.pose.subscribe(self._publish_tf)
-        # Subscribe to lidar messages to log metadata
+
         logger.info("✓ ZED camera module deployed and configured")
 
     def _publish_tf(self, msg: PoseStamped):
@@ -170,7 +162,7 @@ class StereoMapper:
             PassthroughMap,
             cost_resolution=self.voxel_size,
             global_publish_interval=self.map_publish_interval,
-            min_height=0.15,
+            min_height=0.2,
             max_height=1.5,
             frame_id="world",
         )
