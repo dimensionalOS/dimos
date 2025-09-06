@@ -12,16 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-import logging
-import open3d as o3d
-import reactivex.operators as ops
 from reactivex import interval
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)

@@ -103,7 +103,7 @@ class ZedCameraThread(threading.Thread):
             reverse_vertex_order=False,
             map_type=sl.SPATIAL_MAP_TYPE.MESH,
         )
-        spatial_mapping_parameters.resolution_meter = 0.1
+        spatial_mapping_parameters.resolution_meter = 0.09
         spatial_mapping_parameters.range_meter = 10.0
 
         self.pymesh = sl.Mesh()
@@ -111,8 +111,8 @@ class ZedCameraThread(threading.Thread):
         tracking_state = sl.POSITIONAL_TRACKING_STATE.OFF
         mapping_state = sl.SPATIAL_MAPPING_STATE.NOT_ENABLED
 
-        # Exclude points with confidence level > 30. 0 is the highest confidence, 100 the lowest. 50 is the default.
-        self.runtime_parameters.confidence_threshold = 30
+        # Exclude points with confidence level > 25. 0 is the highest confidence, 100 the lowest. 50 is the default.
+        self.runtime_parameters.confidence_threshold = 25
         self.runtime_parameters.enable_fill_mode = True
 
         image = sl.Mat()
@@ -188,8 +188,8 @@ class ZedCameraThread(threading.Thread):
         valid = np.isfinite(points).all(axis=1)
         valid_points = points[valid]
 
-        # Filter out points with Z > 1.8m
-        z_filter = valid_points[:, 2] <= 1.8
+        # Filter out points with Z > 1.5m
+        z_filter = valid_points[:, 2] <= 1.5
         valid_points = valid_points[z_filter]
 
         if not len(valid_points):
