@@ -60,7 +60,6 @@ class ObjectTracking(Module):
 
     def __init__(
         self,
-        camera_intrinsics: Optional[List[float]] = None,  # [fx, fy, cx, cy]
         reid_threshold: int = 10,
         reid_fail_tolerance: int = 5,
         frame_id: str = "camera_link",
@@ -79,8 +78,7 @@ class ObjectTracking(Module):
         # Call parent Module init
         super().__init__()
 
-        self.camera_intrinsics = camera_intrinsics
-        self._camera_info_received = False
+        self.camera_intrinsics = None
         self.reid_threshold = reid_threshold
         self.reid_fail_tolerance = reid_fail_tolerance
         self.frame_id = frame_id
@@ -141,7 +139,7 @@ class ObjectTracking(Module):
             self.color_image.observable(),
             self.depth.observable(),
             buffer_size=2.0,  # 2 second buffer
-            match_tolerance=0.05,  # 50ms tolerance
+            match_tolerance=0.5,  # 500ms tolerance
         )
         self._aligned_frames_subscription = aligned_frames.subscribe(on_aligned_frames)
 
@@ -156,11 +154,6 @@ class ObjectTracking(Module):
                 camera_info_msg.K[2],
                 camera_info_msg.K[5],
             ]
-            if not self._camera_info_received:
-                self._camera_info_received = True
-                logger.info(
-                    f"Camera intrinsics received from camera_info: {self.camera_intrinsics}"
-                )
 
         self.camera_info.subscribe(on_camera_info)
 

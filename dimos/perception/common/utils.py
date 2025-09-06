@@ -19,10 +19,119 @@ from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 from dimos_lcm.vision_msgs import Detection3D, Detection2D, BoundingBox2D
+from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.std_msgs import Header
+from dimos.msgs.sensor_msgs import Image
 import torch
+import yaml
 
 logger = setup_logger("dimos.perception.common.utils")
+
+
+def load_camera_info(yaml_path: str, frame_id: str = "camera_link") -> CameraInfo:
+    """
+    Load ROS-style camera_info YAML file and convert to CameraInfo LCM message.
+
+    Args:
+        yaml_path: Path to camera_info YAML file (ROS format)
+        frame_id: Frame ID for the camera (default: "camera_link")
+
+    Returns:
+        CameraInfo: LCM CameraInfo message with all calibration data
+    """
+    with open(yaml_path, "r") as f:
+        camera_info_data = yaml.safe_load(f)
+
+    # Extract image dimensions
+    width = camera_info_data.get("image_width", 1280)
+    height = camera_info_data.get("image_height", 720)
+
+    # Extract camera matrix (K) - already in row-major format
+    K = camera_info_data["camera_matrix"]["data"]
+
+    # Extract distortion coefficients
+    D = camera_info_data["distortion_coefficients"]["data"]
+
+    # Extract rectification matrix (R) if available, else use identity
+    R = camera_info_data.get("rectification_matrix", {}).get("data", [1, 0, 0, 0, 1, 0, 0, 0, 1])
+
+    # Extract projection matrix (P) if available
+    P = camera_info_data.get("projection_matrix", {}).get("data", None)
+
+    # If P not provided, construct from K
+    if P is None:
+        fx = K[0]
+        fy = K[4]
+        cx = K[2]
+        cy = K[5]
+        P = [fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1, 0]
+
+    # Create header
+    header = Header(frame_id)
+
+    # Create and return CameraInfo message
+    return CameraInfo(
+        D_length=len(D),
+        header=header,
+        height=height,
+        width=width,
+        distortion_model=camera_info_data.get("distortion_model", "plumb_bob"),
+        D=D,
+        K=K,
+        R=R,
+        P=P,
+        binning_x=0,
+        binning_y=0,
+    )
+
+
+def load_camera_info_opencv(yaml_path: str) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Load ROS-style camera_info YAML file and convert to OpenCV camera matrix and distortion coefficients.
+
+    Args:
+        yaml_path: Path to camera_info YAML file (ROS format)
+
+    Returns:
+        K: 3x3 camera intrinsic matrix
+        dist: 1xN distortion coefficients array (for plumb_bob model)
+    """
+    with open(yaml_path, "r") as f:
+        camera_info = yaml.safe_load(f)
+
+    # Extract camera matrix (K)
+    camera_matrix_data = camera_info["camera_matrix"]["data"]
+    K = np.array(camera_matrix_data).reshape(3, 3)
+
+    # Extract distortion coefficients
+    dist_coeffs_data = camera_info["distortion_coefficients"]["data"]
+    dist = np.array(dist_coeffs_data)
+
+    # Ensure dist is 1D array for OpenCV compatibility
+    if dist.ndim == 2:
+        dist = dist.flatten()
+
+    return K, dist
+
+
+def rectify_image(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarray) -> Image:
+    """
+    Rectify (undistort) an image using camera calibration parameters.
+
+    Args:
+        image: Input Image object to rectify
+        camera_matrix: 3x3 camera intrinsic matrix (K)
+        dist_coeffs: Distortion coefficients array
+
+    Returns:
+        Image: Rectified Image object with same format and metadata
+    """
+    # Apply undistortion using OpenCV
+    rectified_data = cv2.undistort(image.data, camera_matrix, dist_coeffs)
+
+    # Create new Image object with rectified data, preserving all other properties
+    return Image(data=rectified_data, format=image.format, frame_id=image.frame_id, ts=image.ts)
 
 
 def project_3d_points_to_2d(
