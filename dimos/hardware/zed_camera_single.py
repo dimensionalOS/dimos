@@ -207,9 +207,10 @@ class ZedModuleSingle(Module):
     pointcloud_msg: Out[LidarMessage] = None
     pose: Out[PoseStamped] = None
 
-    def __init__(self, **kwargs):
+    def __init__(self, voxel_size, map_publish_interval, **kwargs):
         super().__init__(**kwargs)
-        self.voxel_size = 0.1
+        self.voxel_size = voxel_size
+        self.map_publish_interval = map_publish_interval
         self._zed_camera_thread = ZedCameraThread(
             publish_pointcloud=self._publish_pointcloud,
             publish_pose=self._publish_pose,

@@ -76,6 +76,9 @@ class StereoMapper:
         self.foxglove_bridge = None
         self.storages = None  # For recording
 
+        self.voxel_size = 0.1  # ZED spatial mapping voxel size
+        self.map_publish_interval = 2.5  # seconds
+
         logger.info(f"StereoMapper initialized - websocket port {websocket_port}")
 
     def start(self):
@@ -125,7 +128,11 @@ class StereoMapper:
         else:
             # Deploy real ZED module
             logger.info("Deploying ZED camera module with spatial mapping...")
-            self.zed_module = self.dimos.deploy(ZedModuleSingle)
+            self.zed_module = self.dimos.deploy(
+                ZedModuleSingle,
+                voxel_size=self.voxel_size,
+                map_publish_interval=self.map_publish_interval,
+            )
 
         # Configure transports - use same topic names as UnitreeGo2
         # These are the main topics that UnitreeGo2 uses
@@ -228,8 +235,8 @@ class StereoMapper:
 
         self.mapper = self.dimos.deploy(
             PassthroughMap,
-            voxel_size=0.05,
-            global_publish_interval=2.5,
+            cost_resolution=self.voxel_size,
+            global_publish_interval=self.map_publish_interval,
             min_height=0.15,
             max_height=1.5,
             frame_id="world",
