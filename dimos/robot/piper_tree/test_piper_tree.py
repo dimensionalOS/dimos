@@ -54,7 +54,7 @@ class TestInterface:
         self.robot = robot
         self.lcm = LCM()
         self.latest_camera = None
-        self.mode = "pick_place"  # pick_place or servoing
+        self.mode = "pick_place"  # pick_place, servoing, or mobile_pick_place
         self.executor = ThreadPoolExecutor(max_workers=1)
         self._running = False
 
@@ -112,6 +112,23 @@ class TestInterface:
                 logger.info("Reached object successfully")
             else:
                 logger.error("Failed to servo to object")
+        finally:
+            task_in_progress = False
+
+    def execute_mobile_pick_and_place(self, x, y):
+        """Execute mobile pick and place task."""
+        global task_in_progress
+        try:
+            logger.info(f"Starting mobile pick and place at ({x}, {y})")
+            result = self.robot.mobile_pick_and_place(
+                x, y, servo_distance=0.4, servo_timeout=30.0, pick_timeout=60.0
+            )
+            if result.get("success"):
+                logger.info(f"Mobile pick and place completed: {result.get('message', 'Success')}")
+            else:
+                logger.error(
+                    f"Mobile pick and place failed: {result.get('error', 'Unknown error')}"
+                )
         finally:
             task_in_progress = False
 
@@ -173,7 +190,7 @@ def main():
 
     print("\n" + "=" * 60)
     print("CONTROLS:")
-    print("  'm' - Switch mode (pick_place <-> servoing)")
+    print("  'm' - Switch mode (cycles through pick_place, servoing, mobile_pick_place)")
     print("  'p' - Execute pick-only (after selecting pick location)")
     print("  'r' - Reset everything")
     print("  's' - Stop servoing")
@@ -185,6 +202,8 @@ def main():
     print("  OR press 'p' after first click for pick-only")
     print("\nVISUAL SERVOING MODE:")
     print("  Click on object to servo to it")
+    print("\nMOBILE PICK AND PLACE MODE:")
+    print("  Click on object to servo to it and pick it up")
     print("=" * 60 + "\n")
 
     try:
@@ -193,8 +212,13 @@ def main():
             if interface.latest_camera is not None:
                 display_image = interface.latest_camera.copy()
                 # Add status overlay
-                status_text = f"Mode: {interface.mode.upper()}"
-                color = (0, 255, 0) if interface.mode == "pick_place" else (255, 0, 255)
+                status_text = f"Mode: {interface.mode.upper().replace('_', ' ')}"
+                if interface.mode == "pick_place":
+                    color = (0, 255, 0)
+                elif interface.mode == "servoing":
+                    color = (255, 0, 255)
+                else:  # mobile_pick_place
+                    color = (0, 165, 255)
                 cv2.putText(
                     display_image, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2
                 )
@@ -252,7 +276,7 @@ def main():
                                 2,
                                 tipLength=0.05,
                             )
-                else:
+                elif interface.mode == "servoing":
                     # Servoing mode
                     if task_in_progress:
                         status = "Servoing in progress..."
@@ -260,6 +284,18 @@ def main():
                     else:
                         status = "Click object to servo"
                         color = (255, 0, 255)
+
+                    cv2.putText(
+                        display_image, status, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2
+                    )
+                else:
+                    # Mobile pick and place mode
+                    if task_in_progress:
+                        status = "Mobile pick & place in progress..."
+                        color = (255, 165, 0)
+                    else:
+                        status = "Click object to servo & pick"
+                        color = (0, 165, 255)
 
                     cv2.putText(
                         display_image, status, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2
@@ -275,12 +311,17 @@ def main():
                     interface._running = False
                     break
                 elif key == ord("m"):
-                    # Switch mode
-                    interface.mode = "servoing" if interface.mode == "pick_place" else "pick_place"
+                    # Cycle through modes
+                    if interface.mode == "pick_place":
+                        interface.mode = "servoing"
+                    elif interface.mode == "servoing":
+                        interface.mode = "mobile_pick_place"
+                    else:
+                        interface.mode = "pick_place"
                     pick_location = None
                     place_location = None
                     task_in_progress = False
-                    logger.info(f"Switched to {interface.mode} mode")
+                    logger.info(f"Switched to {interface.mode.replace('_', ' ')} mode")
                 elif key == ord("r"):
                     # Reset everything
                     pick_location = None
@@ -343,6 +384,10 @@ def main():
                     # Execute servoing
                     task_in_progress = True
                     interface.executor.submit(interface.execute_servo, x, y)
+                elif interface.mode == "mobile_pick_place":
+                    # Execute mobile pick and place
+                    task_in_progress = True
+                    interface.executor.submit(interface.execute_mobile_pick_and_place, x, y)
 
                 mouse_click = None
 

@@ -222,8 +222,6 @@ class PiperArmRobot(Robot):
 
             if self.piper_arm:
                 self.piper_arm.goto_zero()
-                time.sleep(1.5)
-                self.piper_arm.disable()
                 time.sleep(0.5)
                 self.piper_arm.stop()
 

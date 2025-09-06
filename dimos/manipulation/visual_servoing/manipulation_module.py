@@ -22,7 +22,7 @@ import cv2
 import time
 import threading
 from copy import deepcopy
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, Union, Tuple
 from enum import Enum
 from collections import deque
 
@@ -31,7 +31,7 @@ import numpy as np
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.geometry_msgs import Vector3, Pose, Quaternion, Transform, Twist
-from dimos_lcm.vision_msgs import Detection3DArray, Detection2DArray
+from dimos_lcm.vision_msgs import Detection3D, Detection3DArray, Detection2DArray
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.std_msgs import String
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
@@ -199,6 +199,7 @@ class ManipulationModule(Module):
         self.ee_frame_id = "ee_link"
 
         self.target_click = None
+        self.target_object = None
         self.home_pose = Pose(
             position=Vector3(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
         )
@@ -352,16 +353,16 @@ class ManipulationModule(Module):
 
     @rpc
     def pick_and_place(
-        self, target_x: int = None, target_y: int = None, place_x: int = None, place_y: int = None
+        self,
+        pick_target: Union[Tuple[int, int], Detection3D] = None,
+        place_target: Union[Tuple[int, int], None] = None,
     ) -> Dict[str, Any]:
         """
         Execute a pick and place task (blocking).
 
         Args:
-            target_x: Optional X coordinate of target object
-            target_y: Optional Y coordinate of target object
-            place_x: Optional X coordinate of place location
-            place_y: Optional Y coordinate of place location
+            pick_target: Either (x, y) pixel coordinates, a Detection3D object, or None to use existing target
+            place_target: Either (x, y) pixel coordinates for place location, or None
 
         Returns:
             Dict with success status and details
@@ -373,11 +374,26 @@ class ManipulationModule(Module):
         self.task_failed = False
 
         try:
-            if target_x is not None and target_y is not None:
-                self.target_click = (target_x, target_y)
+            # Handle pick target
+            if pick_target is not None:
+                if isinstance(pick_target, tuple) and len(pick_target) == 2:
+                    # Pixel coordinates provided
+                    self.target_click = pick_target
+                elif isinstance(pick_target, Detection3D):
+                    # Detection3D object provided - set it directly
+                    self.target_object = pick_target
+                    self.target_click = None
 
-            if place_x is not None and place_y is not None and self.latest_depth is not None:
-                self._set_place_target(place_x, place_y)
+            # Handle place target
+            if place_target is not None:
+                if (
+                    isinstance(place_target, tuple)
+                    and len(place_target) == 2
+                    and self.latest_depth is not None
+                ):
+                    self._set_place_target(place_target[0], place_target[1])
+                else:
+                    self.place_target_position = None
             else:
                 self.place_target_position = None
 
@@ -436,11 +452,16 @@ class ManipulationModule(Module):
         self._process_detections()
 
         if self.target_click:
-            x, y = self.target_click
-            if not self.pick_target(x, y):
+            if not self.pick_target(self.target_click):
                 logger.error("Failed to select target")
                 return False
             self.target_click = None
+
+        if self.target_object:
+            if not self.pick_target(self.target_object):
+                logger.error("Failed to select target")
+                return False
+            self.target_object = None
 
         start_time = time.time()
         while time.time() - start_time < 60.0:
@@ -849,36 +870,64 @@ class ManipulationModule(Module):
             logger.error("No place pose for retraction")
             self.task_failed = True
 
-    def pick_target(self, x: int, y: int) -> bool:
-        """Select a target object at the given pixel coordinates."""
+    def pick_target(self, target: Union[Tuple[int, int], Detection3D]) -> bool:
+        """
+        Select a target object either from pixel coordinates or directly from a Detection3D object.
+
+        Args:
+            target: Either a tuple of (x, y) pixel coordinates or a Detection3D object
+
+        Returns:
+            bool: True if target was successfully selected, False otherwise
+        """
         self._process_detections()
 
-        if not self.last_detection_2d_array or not self.last_detection_3d_array:
-            logger.warning("No detections available")
-            return False
+        if isinstance(target, tuple):
+            if not self.last_detection_2d_array or not self.last_detection_3d_array:
+                logger.warning("No detections available for pixel selection")
+                return False
 
-        clicked_3d = find_clicked_detection(
-            (x, y), self.last_detection_2d_array.detections, self.last_detection_3d_array.detections
-        )
+            target_detection = find_clicked_detection(
+                target,
+                self.last_detection_2d_array.detections,
+                self.last_detection_3d_array.detections,
+            )
 
-        if not clicked_3d or not self.pbvs:
-            return False
+            if not target_detection:
+                logger.warning(f"No object found at pixel coordinates ({target[0]}, {target[1]})")
+                return False
 
-        self.pbvs.set_target(clicked_3d)
+        elif isinstance(target, Detection3D):
+            target_detection = target
 
-        if clicked_3d.bbox and clicked_3d.bbox.size:
-            self.target_object_height = clicked_3d.bbox.size.z
+        self.pbvs.set_target(target_detection)
+        self.last_valid_target = target_detection
+        if target_detection and target_detection.bbox and target_detection.bbox.center:
+            self.tf.publish(
+                Transform(
+                    translation=target_detection.bbox.center.position,
+                    rotation=target_detection.bbox.center.orientation,
+                    frame_id=self.track_frame_id,
+                    child_frame_id="tracked_object",
+                    ts=time.time(),
+                )
+            )
 
-        position = clicked_3d.bbox.center.position
+        if target_detection.bbox and target_detection.bbox.size:
+            self.target_object_height = target_detection.bbox.size.z
+
+        position = target_detection.bbox.center.position
         logger.info(f"Target selected: pos=({position.x:.3f}, {position.y:.3f}, {position.z:.3f})")
 
-        self._update_tracking(self.last_detection_3d_array)
+        if self.last_detection_3d_array:
+            self._update_tracking(self.last_detection_3d_array)
 
         if self.enable_mobile_base:
             self.set_grasp_stage(GraspStage.POSE)
             self.pose_adjusted = False
         else:
             self.set_grasp_stage(GraspStage.PRE_GRASP)
+
         self.waiting_for_reach = False
         self.current_executed_pose = None
         return True
@@ -891,8 +940,7 @@ class ManipulationModule(Module):
         self._process_detections()
 
         if self.target_click:
-            x, y = self.target_click
-            if self.pick_target(x, y):
+            if self.pick_target(self.target_click):
                 self.target_click = None
 
         if self.last_detection_3d_array and self.grasp_stage in [

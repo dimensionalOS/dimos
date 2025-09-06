@@ -19,7 +19,7 @@ Uses PBVS controller to compute velocity commands for mobile base control.
 
 import time
 import threading
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from enum import Enum
 from collections import deque
 import numpy as np
@@ -28,7 +28,7 @@ import cv2
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.geometry_msgs import Twist, Vector3, Pose, Quaternion, Transform, PoseStamped
-from dimos_lcm.vision_msgs import Detection3DArray, Detection2DArray
+from dimos_lcm.vision_msgs import Detection3D, Detection3DArray, Detection2DArray
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.std_msgs import String
 
@@ -167,6 +167,7 @@ class MobileBasePBVS(Module):
         self.state = ServoingState.IDLE
         self.state_lock = threading.Lock()
         self.target_object = None
+        self.last_tracked_detection = None
         self.target_object_history = deque(maxlen=4)  # Keep last 4 target positions
         self.last_detection_time = None
         self.tracking_thread = None
@@ -276,6 +277,18 @@ class MobileBasePBVS(Module):
         """
         with self.state_lock:
             return self.state.value
+
+    @rpc
+    def get_latest_detection3d(self) -> Optional[Detection3D]:
+        """Get the latest tracked target Detection3D object.
+
+        Returns:
+            The last tracked target as Detection3D object (persists after stop_track),
+            or None if no object has been tracked
+        """
+        # Return the persistent last tracked detection, not the current target_object
+        # This allows accessing the detection even after stop_track() is called
+        return self.last_tracked_detection
 
     def stop(self):
         with self.state_lock:
@@ -403,7 +416,7 @@ class MobileBasePBVS(Module):
         # Stop robot
         self._send_zero_velocity()
 
-        # Clear state
+        # Clear state (but keep last_tracked_detection for persistence)
         with self.state_lock:
             self.state = ServoingState.IDLE
         self.target_object = None
@@ -488,6 +501,7 @@ class MobileBasePBVS(Module):
 
         if match_result.is_valid_match:
             self.target_object = match_result.matched_object
+            self.last_tracked_detection = match_result.matched_object
             # Add to history for averaging
             self.target_object_history.append(match_result.matched_object)
             self.last_detection_time = time.time()

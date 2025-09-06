@@ -171,9 +171,15 @@ class PiperTree(Robot):
             Dict with success status and details
         """
         try:
+            # Create tuples for the new signature
+            pick_target = (pick_x, pick_y) if pick_x is not None and pick_y is not None else None
+            place_target = (
+                (place_x, place_y) if place_x is not None and place_y is not None else None
+            )
+
             result = self.rpc_client.call_sync(
                 f"{self.MANIPULATION_MODULE}/pick_and_place",
-                ([pick_x, pick_y, place_x, place_y], {}),
+                ([pick_target, place_target], {}),
                 rpc_timeout=timeout,
                 max_retries=1,
             )
@@ -182,6 +188,64 @@ class PiperTree(Robot):
             return result
         except Exception as e:
             logger.error(f"Pick and place RPC failed: {e}")
+            self.standup()
+            return {"success": False, "error": str(e)}
+
+    def mobile_pick_and_place(
+        self,
+        target_x: int,
+        target_y: int,
+        servo_distance: float = 0.4,
+        servo_timeout: float = 30.0,
+        pick_timeout: float = 60.0,
+    ) -> Dict[str, Any]:
+        """Execute mobile pick and place: servo to object then pick it.
+
+        This function combines visual servoing with object picking:
+        1. Servo to the object at the specified distance
+        2. Get the tracked Detection3D object
+        3. Pass it directly to the manipulation module for picking
+
+        Args:
+            target_x: X pixel coordinate of target
+            target_y: Y pixel coordinate of target
+            servo_distance: Distance to maintain from object during servoing (meters)
+            servo_timeout: Timeout for servoing operation (seconds)
+            pick_timeout: Timeout for pick operation (seconds)
+
+        Returns:
+            Dict with success status and details
+        """
+        # Step 1: Servo to the object
+        logger.info(f"Starting mobile pick: servoing to object at ({target_x}, {target_y})")
+        if not self.servo_to_object(target_x, target_y, servo_distance, servo_timeout):
+            return {"success": False, "error": "Failed to servo to object"}
+
+        # Step 2: Get the tracked Detection3D object
+        if not self.mobile_base_servoing:
+            return {"success": False, "error": "Mobile base servoing module not initialized"}
+
+        tracked_detection = self.mobile_base_servoing.get_latest_detection3d()
+        if not tracked_detection:
+            return {"success": False, "error": "No tracked object available after servoing"}
+
+        logger.info("Successfully tracked object, now executing pick")
+
+        # Step 3: Execute pick using the Detection3D object directly in pick_and_place
+        try:
+            # Call pick_and_place directly with the Detection3D object
+            result = self.rpc_client.call_sync(
+                f"{self.MANIPULATION_MODULE}/pick_and_place",
+                ([tracked_detection, None], {}),  # Pass Detection3D as pick_target, no place target
+                rpc_timeout=pick_timeout,
+                max_retries=1,
+            )
+
+            self.standup()
+            return result
+
+        except Exception as e:
+            logger.error(f"Mobile pick and place failed: {e}")
             self.standup()
             return {"success": False, "error": str(e)}
 
