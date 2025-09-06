@@ -30,21 +30,15 @@ sys.path.append(
 )
 
 from dimos import core
-from dimos.hardware.zed_filtered_module import FilteredZEDModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.map import Map  # Use regular Map, not LimitedMap
 from dimos.robot.unitree_webrtc.type.passthrough_map import PassthroughMap
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
-from dimos.msgs.sensor_msgs import Image
-from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.logging_config import setup_logger
-import numpy as np
-from dimos.hardware.zed_camera import ZEDModule
 from dimos.hardware.fake_zed_module import FakeZEDModule
 from dimos.utils.testing import TimedSensorStorage
 
@@ -234,7 +228,7 @@ class StereoMapper:
 
         self.mapper = self.dimos.deploy(
             PassthroughMap,
-            voxel_size=0.05,  # Match ZED downsampling
+            voxel_size=0.05,
             global_publish_interval=2.5,
             min_height=0.15,
             max_height=1.5,
@@ -248,7 +242,6 @@ class StereoMapper:
 
         # Connect lidar input - connect directly to ZED module's pointcloud output
         self.mapper.lidar.connect(self.zed_module.pointcloud_msg)
-        # self.mapper.odom.connect(self.zed_module.pose)
 
         logger.info("✓ Mapping module deployed and connected to ZED")
 

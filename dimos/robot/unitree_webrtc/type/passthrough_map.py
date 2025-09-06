@@ -37,14 +37,12 @@ class PassthroughMap(Module):
     """
 
     lidar: In[LidarMessage] = None
-    odom: In[PoseStamped] = None  # Keep for compatibility but not used
     global_map: Out[LidarMessage] = None
     global_costmap: Out[OccupancyGrid] = None
     local_costmap: Out[OccupancyGrid] = None
 
     def __init__(
         self,
-        voxel_size: float = 0.05,
         cost_resolution: float = 0.05,
         global_publish_interval: float = 2.5,
         min_height: float = 0.15,
@@ -52,7 +50,6 @@ class PassthroughMap(Module):
         frame_id: str = "world",
         **kwargs,
     ):
-        self.voxel_size = voxel_size
         self.cost_resolution = cost_resolution
         self.global_publish_interval = global_publish_interval
         self.min_height = min_height

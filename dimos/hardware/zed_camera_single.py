@@ -188,8 +188,8 @@ class ZedCameraThread(threading.Thread):
         valid = np.isfinite(points).all(axis=1)
         valid_points = points[valid]
 
-        # Filter out points with Z > 2.0m
-        z_filter = valid_points[:, 2] <= 2.0
+        # Filter out points with Z > 1.8m
+        z_filter = valid_points[:, 2] <= 1.8
         valid_points = valid_points[z_filter]
 
         if not len(valid_points):
