@@ -157,15 +157,6 @@ class PBVS:
             self.controller.clear_state()
         logger.info("Target cleared")
 
-    def get_current_target(self) -> Optional[Detection3D]:
-        """
-        Get the current target object.
-
-        Returns:
-            Current target Detection3D or None if no target selected
-        """
-        return self.current_target
-
     def update_tracking(self, new_detections: Optional[Detection3DArray] = None) -> bool:
         """
         Update target tracking with new detections using a rolling window.
@@ -230,6 +221,7 @@ class PBVS:
 
     def compute_control(
         self,
+        target_pose: Pose,
         ee_pose: Pose,
         grasp_distance: float = 0.15,
         grasp_pitch_degrees: float = 45.0,
@@ -247,18 +239,11 @@ class PBVS:
             - If direct_ee_control=False: Twist command with velocities
             - Returns None if no target
         """
-        # Check if we have a target
-        if not self.current_target:
-            return None
 
         # Update target grasp pose with provided distance and pitch
         self.target_grasp_pose = update_target_grasp_pose(
-            self.current_target.bbox.center, ee_pose, grasp_distance, grasp_pitch_degrees
+            target_pose, ee_pose, grasp_distance, grasp_pitch_degrees
         )
-
-        if self.target_grasp_pose is None:
-            logger.warning("Failed to compute grasp pose")
-            return None
 
         self.last_position_error, self.last_target_reached = is_target_reached(
             self.target_grasp_pose, ee_pose, position_tolerance=self.target_tolerance

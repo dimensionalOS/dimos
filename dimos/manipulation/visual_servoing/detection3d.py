@@ -28,6 +28,7 @@ from dimos.perception.common.utils import bbox2d_to_corners
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion, Transform
 from dimos.msgs.std_msgs import Header
+from dimos_lcm.geometry_msgs import PoseWithCovariance
 from dimos_lcm.vision_msgs import (
     Detection3D,
     Detection3DArray,
@@ -191,7 +192,8 @@ class Detection3DProcessor:
                 header=header,  # Use header with transform timestamp
                 results=[
                     ObjectHypothesisWithPose(
-                        hypothesis=ObjectHypothesis(class_id=name, score=float(prob))
+                        hypothesis=ObjectHypothesis(class_id=name, score=float(prob)),
+                        pose=PoseWithCovariance(pose=camera_pose, covariance=np.zeros(36)),
                     )
                 ],
                 bbox=BoundingBox3D(center=center_pose, size=Vector3(size_x, size_y, size_z)),

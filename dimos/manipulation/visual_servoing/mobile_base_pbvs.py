@@ -340,33 +340,35 @@ class MobileBasePBVS(Module):
 
     def _select_target(self, x: int, y: int) -> bool:
         """Select target object at given coordinates."""
-        # Always process a fresh frame for selection
-        self._process_frame()
+        max_attempts = 3
 
-        # Give it a second try if first attempt failed
-        if not self.last_detections_2d or not self.last_detections_3d:
-            time.sleep(0.1)  # Wait briefly for new sensor data
+        # Try up to 3 times to get detections
+        for attempt in range(max_attempts):
             self._process_frame()
 
-        if not self.last_detections_2d or not self.last_detections_3d:
-            logger.warning("No detections available after processing frame")
-            return False
+            if self.last_detections_2d and self.last_detections_3d:
+                # Try to find clicked detection
+                clicked_3d = find_clicked_detection(
+                    (x, y), self.last_detections_2d.detections, self.last_detections_3d.detections
+                )
 
-        # Find clicked detection
-        clicked_3d = find_clicked_detection(
-            (x, y), self.last_detections_2d.detections, self.last_detections_3d.detections
-        )
+                if clicked_3d and clicked_3d.bbox and clicked_3d.bbox.center:
+                    self.target_object = clicked_3d
+                    # Initialize history with the first detection
+                    self.target_object_history.clear()
+                    self.target_object_history.append(clicked_3d)
+                    self.last_detection_time = time.time()
+                    pos = clicked_3d.bbox.center.position
+                    logger.info(f"Selected target at ({pos.x:.2f}, {pos.y:.2f}, {pos.z:.2f})")
+                    return True
 
-        if clicked_3d and clicked_3d.bbox and clicked_3d.bbox.center:
-            self.target_object = clicked_3d
-            # Initialize history with the first detection
-            self.target_object_history.clear()
-            self.target_object_history.append(clicked_3d)
-            self.last_detection_time = time.time()
-            pos = clicked_3d.bbox.center.position
-            logger.info(f"Selected target at ({pos.x:.2f}, {pos.y:.2f}, {pos.z:.2f})")
-            return True
+            if attempt < max_attempts - 1:
+                logger.info(
+                    f"Attempt {attempt + 1}/{max_attempts} failed to find target, retrying..."
+                )
+                time.sleep(0.1)  # Wait briefly for new sensor data
 
+        logger.warning(f"No target found at ({x}, {y}) after {max_attempts} attempts")
         return False
 
     def _detection_loop(self):

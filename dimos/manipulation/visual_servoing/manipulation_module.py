@@ -556,7 +556,7 @@ class ManipulationModule(Module):
         self.task_failed = True
         return False
 
-    def _get_target_in_base_frame(self):
+    def _get_target_in_base_frame(self) -> Optional[Pose]:
         """Get the tracked target transformed to base_link frame for grasp generation."""
         if not self.pbvs or not self.pbvs.current_target:
             return None
@@ -575,12 +575,9 @@ class ManipulationModule(Module):
             logger.warning("Cannot transform tracked object to base frame")
             return None
 
-        target_in_base = deepcopy(self.pbvs.current_target)
         target_pose = base_to_target.to_pose()
-        target_in_base.bbox.center.position = target_pose.position
-        target_in_base.bbox.center.orientation = target_pose.orientation
 
-        return target_in_base
+        return target_pose
 
     def _update_tracking(self, detection_3d_array: Optional[Detection3DArray]) -> bool:
         """Update tracking with new detections."""
@@ -589,7 +586,7 @@ class ManipulationModule(Module):
 
         target_tracked = self.pbvs.update_tracking(detection_3d_array)
         if target_tracked:
-            self.last_valid_target = self.pbvs.get_current_target()
+            self.last_valid_target = self.pbvs.current_target
 
             # Publish TF for tracked object
             if (
@@ -603,6 +600,18 @@ class ManipulationModule(Module):
                         rotation=self.last_valid_target.bbox.center.orientation,
                         frame_id=self.track_frame_id,
                         child_frame_id="tracked_object",
+                        ts=time.time(),
+                    )
+                )
+                logger.info(
+                    f"self.last_valid_target: {self.last_valid_target.results[0].pose.pose}"
+                )
+                self.tf.publish(
+                    Transform(
+                        translation=self.last_valid_target.results[0].pose.pose.position,
+                        rotation=self.last_valid_target.results[0].pose.pose.orientation,
+                        frame_id=self.camera_frame_id,
+                        child_frame_id="tracked_object_optical",
                         ts=time.time(),
                     )
                 )
@@ -713,13 +722,10 @@ class ManipulationModule(Module):
             logger.warning("Cannot get target in base frame for grasp")
             return
 
-        original_target = self.pbvs.current_target
-        self.pbvs.current_target = target_in_base
-
-        dynamic_pitch = self.calculate_dynamic_grasp_pitch(target_in_base.bbox.center)
-        target_pose = self.pbvs.compute_control(ee_pose, self.pregrasp_distance, dynamic_pitch)
-
-        self.pbvs.current_target = original_target
+        dynamic_pitch = self.calculate_dynamic_grasp_pitch(target_in_base)
+        target_pose = self.pbvs.compute_control(
+            target_in_base, ee_pose, self.pregrasp_distance, dynamic_pitch
+        )
 
         if not target_pose:
             return
@@ -758,7 +764,7 @@ class ManipulationModule(Module):
             logger.warning("Cannot get target in base frame for final grasp")
             return
 
-        dynamic_pitch = self.calculate_dynamic_grasp_pitch(target_in_base.bbox.center)
+        dynamic_pitch = self.calculate_dynamic_grasp_pitch(target_in_base)
         normalized_pitch = dynamic_pitch / 90.0
         grasp_distance = -self.grasp_distance_range + (
             2 * self.grasp_distance_range * normalized_pitch
@@ -775,19 +781,16 @@ class ManipulationModule(Module):
             return
         ee_pose = ee_transform.to_pose()
 
-        original_target = self.pbvs.current_target
-        self.pbvs.current_target = target_in_base
-
-        target_pose = self.pbvs.compute_control(ee_pose, grasp_distance, dynamic_pitch)
-
-        self.pbvs.current_target = original_target
+        target_pose = self.pbvs.compute_control(
+            target_in_base, ee_pose, grasp_distance, dynamic_pitch
+        )
         if target_pose:
             if not self.check_within_workspace(target_pose):
                 logger.error("Grasp pose outside workspace")
                 self.task_failed = True
                 return
 
-            object_width = target_in_base.bbox.size.x
+            object_width = self.pbvs.current_target.bbox.size.x
             gripper_opening = max(
                 0.005, min(object_width + self.grasp_width_offset, self.gripper_max_opening)
             )
@@ -962,7 +965,7 @@ class ManipulationModule(Module):
         elif self.grasp_stage == GraspStage.RETRACT:
             self.execute_retract()
 
-        target_tracked = self.pbvs.get_current_target() is not None if self.pbvs else False
+        target_tracked = self.pbvs.current_target is not None if self.pbvs else False
         ee_transform = self.tf.get(
             parent_frame=self.base_frame_id,
             child_frame=self.ee_frame_id,
