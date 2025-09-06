@@ -39,8 +39,6 @@ from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.logging_config import setup_logger
-from dimos.hardware.fake_zed_module import FakeZEDModule
-from dimos.utils.testing import TimedSensorStorage
 
 logger = setup_logger(__name__, level=logging.INFO)
 
@@ -50,23 +48,14 @@ class StereoMapper:
     Stereo mapping system using ZED camera - structured exactly like UnitreeGo2.
     """
 
-    def __init__(
-        self,
-        websocket_port: int = 7779,
-        record_path: str = None,
-        replay_path: str = None,
-    ):
+    def __init__(self, websocket_port: int = 7779):
         """
         Initialize StereoMapper with ZED camera.
 
         Args:
             websocket_port: Port for Foxglove websocket connection
-            record_path: Optional path to record sensor data
-            replay_path: Optional path to replay recorded data from
         """
         self.websocket_port = websocket_port
-        self.record_path = record_path
-        self.replay_path = replay_path
         self.lcm = LCM()
         self.tf = None  # Initialize TF later to avoid conflicts
 
@@ -74,7 +63,6 @@ class StereoMapper:
         self.zed_module = None
         self.mapper = None
         self.foxglove_bridge = None
-        self.storages = None  # For recording
 
         self.voxel_size = 0.1  # ZED spatial mapping voxel size
         self.map_publish_interval = 2.5  # seconds
@@ -109,7 +97,6 @@ class StereoMapper:
         logger.info("Publishing topics:")
         logger.info("  /lidar - Pointcloud from ZED (as LidarMessage)")
         logger.info("  /odom - Camera pose from ZED visual odometry")
-        logger.info("  /zed/color_image - RGB camera feed")
         logger.info("  /global_map")
         logger.info("  /global_costmap - Navigation costmap")
         logger.info("  /local_costmap - Local costmap")
@@ -121,18 +108,12 @@ class StereoMapper:
     def _deploy_zed_and_connection(self):
         """Deploy ZED camera module and configure connections - combines _deploy_connection from UnitreeGo2."""
 
-        if self.replay_path:
-            # Deploy fake ZED module for replay
-            logger.info(f"Deploying FakeZEDModule for replay from: {self.replay_path}")
-            self.zed_module = self.dimos.deploy(FakeZEDModule, recording_path=self.replay_path)
-        else:
-            # Deploy real ZED module
-            logger.info("Deploying ZED camera module with spatial mapping...")
-            self.zed_module = self.dimos.deploy(
-                ZedModuleSingle,
-                voxel_size=self.voxel_size,
-                map_publish_interval=self.map_publish_interval,
-            )
+        logger.info("Deploying ZED camera module with spatial mapping...")
+        self.zed_module = self.dimos.deploy(
+            ZedModuleSingle,
+            voxel_size=self.voxel_size,
+            map_publish_interval=self.map_publish_interval,
+        )
 
         # Configure transports - use same topic names as UnitreeGo2
         # These are the main topics that UnitreeGo2 uses
@@ -148,10 +129,6 @@ class StereoMapper:
         self.zed_module.pose.subscribe(self._publish_tf)
         # Subscribe to lidar messages to log metadata
         logger.info("✓ ZED camera module deployed and configured")
-
-        # Set up recording if requested (not in replay mode)
-        if self.record_path and not self.replay_path:
-            self._setup_recording()
 
     def _publish_tf(self, msg: PoseStamped):
         """Publish TF transforms - exactly like UnitreeGo2's ConnectionModule._publish_tf."""
@@ -184,50 +161,6 @@ class StereoMapper:
         self.tf.publish(camera_link)
 
         # No need for camera_optical transform - ZED already outputs in ROS frame
-
-    def _setup_recording(self):
-        """Set up recording for ZED sensor streams."""
-        logger.info(f"Setting up recording to {self.record_path}")
-
-        # Create storage instances for each stream
-        # TimedSensorStorage automatically saves with timestamps
-        self.storages = {
-            "lidar": TimedSensorStorage(f"{self.record_path}/lidar"),
-            "pose": TimedSensorStorage(f"{self.record_path}/pose"),
-            "color_image": TimedSensorStorage(f"{self.record_path}/color_image"),
-            "depth_image": TimedSensorStorage(f"{self.record_path}/depth_image"),
-            "camera_info": TimedSensorStorage(f"{self.record_path}/camera_info"),
-        }
-
-        # Record lidar pointcloud
-        self.zed_module.pointcloud_msg.transport.subscribe(
-            lambda msg: self.storages["lidar"].save_one(msg)
-        )
-        logger.info("  Recording /lidar stream")
-
-        # # Record pose/odometry
-        # self.zed_module.pose.transport.subscribe(lambda msg: self.storages["pose"].save_one(msg))
-        # logger.info("  Recording /odom stream")
-
-        # # Record color image
-        # self.zed_module.color_image.transport.subscribe(
-        #     lambda msg: self.storages["color_image"].save_one(msg)
-        # )
-        # logger.info("  Recording /zed/color_image stream")
-
-        # # Record depth image
-        # self.zed_module.depth_image.transport.subscribe(
-        #     lambda msg: self.storages["depth_image"].save_one(msg)
-        # )
-        # logger.info("  Recording /zed/depth_image stream")
-
-        # # Record camera info
-        # self.zed_module.camera_info.transport.subscribe(
-        #     lambda msg: self.storages["camera_info"].save_one(msg)
-        # )
-        # logger.info("  Recording /zed/camera_info stream")
-
-        logger.info(f"✓ Recording setup complete - saving to {self.record_path}")
 
     def _deploy_mapping(self):
         """Deploy and configure the mapping module."""
@@ -283,10 +216,6 @@ class StereoMapper:
         """Stop the stereo mapping system."""
         logger.info("Stopping StereoMapper...")
 
-        # Recordings are saved automatically by TimedSensorStorage
-        if self.storages:
-            logger.info(f"✓ Recording saved to {self.record_path}")
-
         if self.zed_module:
             self.zed_module.stop()
 
@@ -312,10 +241,6 @@ def main():
 
     parser = argparse.ArgumentParser(description="Stereo Mapping with ZED Camera")
     parser.add_argument("--port", type=int, default=7779, help="Foxglove websocket port")
-    parser.add_argument("--record", type=str, help="Recording name/path for saving ZED data")
-    parser.add_argument(
-        "--replay", type=str, help="Path to recorded data to replay instead of using real camera"
-    )
     parser.add_argument(
         "--no-spatial-mapping",
         action="store_true",
@@ -327,11 +252,7 @@ def main():
     pubsub.lcm.autoconf()
 
     # Create and start mapper
-    mapper = StereoMapper(
-        websocket_port=args.port,
-        record_path=args.record,
-        replay_path=args.replay,
-    )
+    mapper = StereoMapper(websocket_port=args.port)
     mapper.start()
 
     try:

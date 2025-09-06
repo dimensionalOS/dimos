@@ -111,8 +111,8 @@ class ZedCameraThread(threading.Thread):
         tracking_state = sl.POSITIONAL_TRACKING_STATE.OFF
         mapping_state = sl.SPATIAL_MAPPING_STATE.NOT_ENABLED
 
-        # Exclude points with confidence level > 35. 0 is the highest confidence, 100 the lowest. 50 is the default.
-        self.runtime_parameters.confidence_threshold = 35
+        # Exclude points with confidence level > 30. 0 is the highest confidence, 100 the lowest. 50 is the default.
+        self.runtime_parameters.confidence_threshold = 30
         self.runtime_parameters.enable_fill_mode = True
 
         image = sl.Mat()
