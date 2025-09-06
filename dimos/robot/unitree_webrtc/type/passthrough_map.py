@@ -75,7 +75,7 @@ class PassthroughMap(Module):
                     self.latest_world_map,
                     resolution=self.cost_resolution,
                     neighborhood_radius=0.15,
-                    height_diff_threshold=0.2,
+                    height_diff_threshold=0.3,
                     min_neighbors=3,
                     mark_free_radius=0.4,
                 )
