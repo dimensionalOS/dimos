@@ -129,6 +129,7 @@ class UnitreeG1(Robot):
         skill_library: Optional[SkillLibrary] = None,
         recording_path: str = None,
         replay_path: str = None,
+        enable_joystick: bool = False,
     ):
         """Initialize the G1 robot.
 
@@ -138,12 +139,14 @@ class UnitreeG1(Robot):
             skill_library: Skill library instance
             recording_path: Path to save recordings (if recording)
             replay_path: Path to replay recordings from (if replaying)
+            enable_joystick: Enable pygame joystick control
         """
         super().__init__()
         self.ip = ip
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.recording_path = recording_path
         self.replay_path = replay_path
+        self.enable_joystick = enable_joystick
         self.lcm = LCM()
 
         # Initialize skill library with G1 robot type
@@ -161,6 +164,7 @@ class UnitreeG1(Robot):
         self.connection = None
         self.zed_camera = None
         self.foxglove_bridge = None
+        self.joystick = None
 
         self._setup_directories()
 
@@ -171,11 +175,17 @@ class UnitreeG1(Robot):
 
     def start(self):
         """Start the robot system with all modules."""
-        self.dimos = core.start(2)  # 2 workers for connection and ZED modules
+        self.dimos = core.start(
+            3 if self.enable_joystick else 2
+        )  # Extra worker for joystick if enabled
 
         self._deploy_connection()
         self._deploy_camera()
         self._deploy_visualization()
+
+        if self.enable_joystick:
+            self._deploy_joystick()
+
         self._start_modules()
 
         self.lcm.start()
@@ -189,7 +199,8 @@ class UnitreeG1(Robot):
 
         # Configure LCM transports
         self.connection.odom.transport = core.LCMTransport("/g1/odom", PoseStamped)
-        self.connection.movecmd.transport = core.LCMTransport("/g1/cmd_vel", Twist)
+        # Use standard /cmd_vel topic for compatibility with joystick and navigation
+        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
 
     def _deploy_camera(self):
         """Deploy and configure the ZED camera module (real or fake based on replay_path)."""
@@ -233,11 +244,23 @@ class UnitreeG1(Robot):
         """Deploy visualization tools."""
         self.foxglove_bridge = FoxgloveBridge()
 
+    def _deploy_joystick(self):
+        """Deploy joystick control module."""
+        from dimos.robot.unitree_webrtc.g1_joystick_module import G1JoystickModule
+
+        logger.info("Deploying G1 joystick module...")
+        self.joystick = self.dimos.deploy(G1JoystickModule)
+        self.joystick.twist_out.transport = core.LCMTransport("/cmd_vel", Twist)
+        logger.info("Joystick module deployed - pygame window will open")
+
     def _start_modules(self):
         """Start all deployed modules."""
         self.connection.start()
         self.zed_camera.start()
         self.foxglove_bridge.start()
+
+        if self.joystick:
+            self.joystick.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -276,21 +299,48 @@ class UnitreeG1(Robot):
 def main():
     """Main entry point for testing."""
     import os
+    import argparse
     from dotenv import load_dotenv
 
     load_dotenv()
 
-    ip = os.getenv("ROBOT_IP")
-    if not ip:
-        logger.error("ROBOT_IP not set in environment")
+    parser = argparse.ArgumentParser(description="Unitree G1 Humanoid Robot Control")
+    parser.add_argument("--ip", default=os.getenv("ROBOT_IP"), help="Robot IP address")
+    parser.add_argument("--joystick", action="store_true", help="Enable pygame joystick control")
+    parser.add_argument("--output-dir", help="Output directory for logs/data")
+    parser.add_argument("--record", help="Path to save recording")
+    parser.add_argument("--replay", help="Path to replay recording from")
+
+    args = parser.parse_args()
+
+    if not args.ip:
+        logger.error("Robot IP not set. Use --ip or set ROBOT_IP environment variable")
         return
 
     pubsub.lcm.autoconf()
 
-    robot = UnitreeG1(ip=ip)
+    robot = UnitreeG1(
+        ip=args.ip,
+        output_dir=args.output_dir,
+        recording_path=args.record,
+        replay_path=args.replay,
+        enable_joystick=args.joystick,
+    )
     robot.start()
 
     try:
+        if args.joystick:
+            print("\n" + "=" * 50)
+            print("G1 HUMANOID JOYSTICK CONTROL")
+            print("=" * 50)
+            print("Focus the pygame window to control")
+            print("Keys:")
+            print("  WASD = Forward/Back/Strafe")
+            print("  QE = Turn Left/Right")
+            print("  Space = Emergency Stop")
+            print("  ESC = Quit pygame (then Ctrl+C to exit)")
+            print("=" * 50 + "\n")
+
         logger.info("G1 robot running. Press Ctrl+C to stop.")
         while True:
             time.sleep(1)
