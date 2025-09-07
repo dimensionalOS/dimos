@@ -25,7 +25,7 @@ from typing import Optional
 
 from dimos import core
 from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, TwistStamped
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.protocol.tf import TF
@@ -34,7 +34,7 @@ from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
-from geometry_msgs.msg import Twist as ROSTwist
+from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
 from dimos.hardware.zed_camera import ZEDModule
@@ -54,7 +54,7 @@ logging.getLogger("asyncio").setLevel(logging.ERROR)
 class G1ConnectionModule(Module):
     """Simplified connection module for G1 - uses WebRTC for control."""
 
-    movecmd: In[Twist] = None
+    movecmd: In[TwistStamped] = None
     odom: Out[PoseStamped] = None
     ip: str
     connection_type: str = "webrtc"
@@ -90,8 +90,9 @@ class G1ConnectionModule(Module):
         return self._odom
 
     @rpc
-    def move(self, twist: Twist, duration: float = 0.0):
+    def move(self, twist_stamped: TwistStamped, duration: float = 0.0):
         """Send movement command to robot."""
+        twist = Twist(linear=twist_stamped.linear, angular=twist_stamped.angular)
         self.connection.move(twist, duration)
 
     @rpc
@@ -192,8 +193,7 @@ class UnitreeG1(Robot):
 
         # Configure LCM transports
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
-        # Use standard /cmd_vel topic for compatibility with joystick and navigation
-        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", TwistStamped)
 
     def _deploy_camera(self):
         """Deploy and configure the ZED camera module (real or fake based on replay_path)."""
@@ -237,7 +237,7 @@ class UnitreeG1(Robot):
         """Deploy and configure visualization modules."""
         # Deploy WebSocket visualization module
         self.websocket_vis = self.dimos.deploy(WebsocketVisModule, port=self.websocket_port)
-        self.websocket_vis.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.websocket_vis.movecmd_stamped.transport = core.LCMTransport("/cmd_vel", TwistStamped)
 
         # Connect to robot pose
         self.websocket_vis.robot_pose.connect(self.connection.odom)
@@ -260,7 +260,7 @@ class UnitreeG1(Robot):
 
         # Add /cmd_vel topic from ROS to DIMOS
         self.ros_bridge.add_topic(
-            "/cmd_vel", Twist, ROSTwist, direction=BridgeDirection.ROS_TO_DIMOS
+            "/cmd_vel", TwistStamped, ROSTwistStamped, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
         logger.info("ROS bridge deployed: /cmd_vel (ROS → DIMOS)")
@@ -284,21 +284,13 @@ class UnitreeG1(Robot):
                 self.skill_library.init()
                 self.skill_library.initialize_skills()
 
-    def move(self, twist: Twist, duration: float = 0.0):
+    def move(self, twist_stamped: TwistStamped, duration: float = 0.0):
         """Send movement command to robot."""
-        self.connection.move(twist, duration)
+        self.connection.move(twist_stamped, duration)
 
     def get_odom(self) -> PoseStamped:
         """Get the robot's odometry."""
         return self.connection.get_odom()
-
-    def standup(self):
-        """Make the robot stand up."""
-        return self.connection.standup()
-
-    def liedown(self):
-        """Make the robot lie down."""
-        return self.connection.liedown()
 
     def shutdown(self):
         """Shutdown the robot and clean up resources."""
