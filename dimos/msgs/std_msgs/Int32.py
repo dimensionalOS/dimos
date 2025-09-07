@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright 2025 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,7 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .Header import Header
-from .Int32 import Int32
+# Copyright 2025 Dimensional Inc.
 
-__all__ = ["Header", "Int32"]
+"""Int32 message type."""
+
+from typing import ClassVar
+from dimos_lcm.std_msgs import Int32 as LCMInt32
+
+
+class Int32(LCMInt32):
+    """ROS-compatible Int32 message."""
+
+    msg_name: ClassVar[str] = "std_msgs.Int32"
+
+    def __init__(self, data: int = 0):
+        """Initialize Int32 with data value."""
+        self.data = data
