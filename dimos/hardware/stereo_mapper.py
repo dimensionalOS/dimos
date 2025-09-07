@@ -151,8 +151,6 @@ class StereoMapper:
             voxel_size=self.voxel_size,
             cost_resolution=self.voxel_size,
             global_publish_interval=self.map_publish_interval,
-            min_height=0.2,
-            max_height=1.5,
             frame_id="world",
         )
 

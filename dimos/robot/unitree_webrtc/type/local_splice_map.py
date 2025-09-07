@@ -27,14 +27,6 @@ logger = setup_logger(__name__)
 
 
 class LocalSpliceMap(Module):
-    """
-    Map module that extracts a local cylinder (3m radius) from incoming lidar data
-    and splices it into a persistent global map.
-
-    Unlike PassthroughMap which just passes through the ZED's world map,
-    this builds its own global map by accumulating local scans at the robot's position.
-    """
-
     lidar: In[LidarMessage] = None
     odom: In[PoseStamped] = None
     global_map: Out[LidarMessage] = None
@@ -44,8 +36,8 @@ class LocalSpliceMap(Module):
     def __init__(
         self,
         cylinder_radius: float = 3.0,
-        voxel_size: float = 0.05,
-        cost_resolution: float = 0.05,
+        voxel_size: float = 0.1,
+        cost_resolution: float = 0.1,
         global_publish_interval: float = 2.5,
         min_height: float = 0.2,
         max_height: float = 1.5,
@@ -60,66 +52,51 @@ class LocalSpliceMap(Module):
         self.max_height = max_height
         self.frame_id = frame_id
 
-        # Internal global map accumulator
         self.global_pointcloud = o3d.geometry.PointCloud()
-
-        # Current robot position
         self.current_odom: PoseStamped = None
-
-        # Latest local scan for local costmap
         self.latest_local_scan: LidarMessage = None
 
         super().__init__(**kwargs)
 
     @rpc
     def start(self):
-        logger.info(f"LocalSpliceMap.start() - Cylinder radius: {self.cylinder_radius}m")
-        logger.info(f"Publishing global map every {self.global_publish_interval}s")
+        self.lidar.subscribe(self._process_lidar_message)
+        self.odom.subscribe(self._update_odom)
 
-        # Subscribe to inputs
-        self.lidar.subscribe(self.process_lidar_message)
-        self.odom.subscribe(self.update_odom)
-
-        # Publish global map periodically
         def publish(_):
-            if len(self.global_pointcloud.points) > 0:
-                # Convert to LidarMessage
-                global_map_msg = LidarMessage(
-                    pointcloud=self.global_pointcloud,
-                    origin=[0.0, 0.0, 0.0],
-                    resolution=self.voxel_size,
-                    frame_id=self.frame_id,
-                    ts=time.time(),
-                )
-                self.global_map.publish(global_map_msg)
+            if not len(self.global_pointcloud.points):
+                return
 
-                # Generate and publish global costmap
-                occupancygrid = OccupancyGrid.from_pointcloud_adaptive(
-                    global_map_msg,
-                    resolution=self.cost_resolution,
-                    neighborhood_radius=0.15,
-                    height_diff_threshold=0.3,
-                    min_neighbors=3,
-                    mark_free_radius=0.4,
-                )
-                self.global_costmap.publish(occupancygrid)
+            global_map_msg = LidarMessage(
+                pointcloud=self.global_pointcloud,
+                origin=[0.0, 0.0, 0.0],
+                resolution=self.voxel_size,
+                frame_id=self.frame_id,
+                ts=time.time(),
+            )
+            self.global_map.publish(global_map_msg)
 
-                logger.debug(
-                    f"Published global map with {len(self.global_pointcloud.points)} points"
-                )
+            occupancygrid = OccupancyGrid.from_pointcloud_adaptive(
+                global_map_msg,
+                resolution=self.cost_resolution,
+                neighborhood_radius=0.15,
+                height_diff_threshold=0.3,
+                min_neighbors=3,
+                mark_free_radius=0.4,
+            )
+            self.global_costmap.publish(occupancygrid)
+
+            logger.info(f"Published global map with {len(self.global_pointcloud.points)} points")
 
         if self.global_publish_interval is not None:
             interval(self.global_publish_interval).subscribe(publish)
 
     @rpc
-    def update_odom(self, msg: PoseStamped):
-        """Update current robot position from odometry."""
+    def _update_odom(self, msg: PoseStamped):
         self.current_odom = msg
-        logger.debug(f"Updated robot position: ({msg.position.x:.2f}, {msg.position.y:.2f})")
 
     @rpc
-    def process_lidar_message(self, frame: LidarMessage):
-        """Process incoming lidar messages."""
+    def _process_lidar_message(self, frame: LidarMessage):
         if self.current_odom is None:
             logger.warning("No odometry available yet, skipping lidar frame")
             return
@@ -149,7 +126,7 @@ class LocalSpliceMap(Module):
         points = np.asarray(frame.pointcloud.points)
 
         if len(points) == 0:
-            logger.debug("Empty lidar frame, skipping")
+            logger.info("Empty lidar frame, skipping")
             return
 
         # Transform points to world frame if needed
@@ -170,7 +147,7 @@ class LocalSpliceMap(Module):
         cylinder_points = points_world[cylinder_mask]
 
         if len(cylinder_points) == 0:
-            logger.debug("No points within cylinder radius")
+            logger.info("No points within cylinder radius")
             return
 
         # Create pointcloud from cylinder points
@@ -183,7 +160,7 @@ class LocalSpliceMap(Module):
         # Splice into global map - remove old points in cylinder and add new ones
         self.splice_cylinder_into_map(cylinder_voxelized, robot_pos)
 
-        logger.debug(
+        logger.info(
             f"Added {len(cylinder_points)} points from cylinder, "
             f"global map now has {len(self.global_pointcloud.points)} points"
         )
