@@ -55,19 +55,15 @@ class B1ConnectionModule(Module):
         self.port = port
         self.test_mode = test_mode
         self.current_mode = 0  # Start in IDLE mode for safety
-
         # Internal state as B1Command
         self._current_cmd = B1Command(mode=0)
-
         # Thread control
         self.running = False
         self.send_thread = None
-
-        # UDP socket (created in start)
         self.socket = None
-
-        # Packet counter for debugging
         self.packet_count = 0
+        self.last_command_time = time.time()
+        self.command_timeout = 0.1  # 100ms timeout matching C++ server
 
     @rpc
     def start(self):
@@ -96,11 +92,10 @@ class B1ConnectionModule(Module):
     @rpc
     def stop(self):
         """Stop the connection and send stop commands."""
-        # Send stop command multiple times for safety
-        self.set_mode(0)  # IDLE mode
+        self.set_mode(0)  # IDLE
         self._current_cmd = B1Command(mode=0)  # Zero all velocities
 
-        # Send multiple stop packets to ensure receipt
+        # Send multiple stop packets
         if not self.test_mode and self.socket:
             stop_cmd = B1Command(mode=0)
             for _ in range(5):
@@ -108,12 +103,10 @@ class B1ConnectionModule(Module):
                 self.socket.sendto(data, (self.ip, self.port))
                 time.sleep(0.02)
 
-        # Stop thread
         self.running = False
         if self.send_thread:
             self.send_thread.join(timeout=0.5)
 
-        # Close socket
         if self.socket:
             self.socket.close()
             self.socket = None
@@ -129,8 +122,9 @@ class B1ConnectionModule(Module):
             print(
                 f"[TEST] Received Twist: linear=({twist.linear.x:.2f}, {twist.linear.y:.2f}), angular.z={twist.angular.z:.2f}"
             )
-        # Convert Twist to B1Command using current mode
+        # Convert Twist to B1Command
         self._current_cmd = B1Command.from_twist(twist, self.current_mode)
+        self.last_command_time = time.time()
 
     def handle_mode(self, mode_msg: Int32):
         """Handle mode change message.
@@ -161,18 +155,41 @@ class B1ConnectionModule(Module):
         return True
 
     def _send_loop(self):
-        """Continuously send current command at 50Hz."""
+        """Continuously send current command at 50Hz with safety timeout."""
+        timeout_warned = False
+
         while self.running:
             try:
-                if self.test_mode:
-                    # Test mode - print status periodically
-                    if self.packet_count % 50 == 0:  # Every second
-                        print(f"[TEST] {self._current_cmd} | Packets: {self.packet_count}")
+                # Safety check: If no command received recently, send zeros
+                time_since_last_cmd = time.time() - self.last_command_time
+
+                if time_since_last_cmd > self.command_timeout:
+                    # Command is stale - send zero velocities for safety
+                    if not timeout_warned:
+                        if self.test_mode:
+                            print(
+                                f"[TEST] Command timeout ({time_since_last_cmd:.1f}s) - sending zeros"
+                            )
+                        timeout_warned = True
+
+                    # Create safe idle command
+                    safe_cmd = B1Command(mode=self.current_mode)
+                    safe_cmd.lx = 0.0
+                    safe_cmd.ly = 0.0
+                    safe_cmd.rx = 0.0
+                    safe_cmd.ry = 0.0
+                    cmd_to_send = safe_cmd
                 else:
-                    # Real mode - send UDP packet
-                    if self.socket:
-                        data = self._current_cmd.to_bytes()
-                        self.socket.sendto(data, (self.ip, self.port))
+                    # Send command if fresh
+                    if timeout_warned:
+                        if self.test_mode:
+                            print("[TEST] Commands resumed - control restored")
+                        timeout_warned = False
+                    cmd_to_send = self._current_cmd
+
+                if self.socket:
+                    data = cmd_to_send.to_bytes()
+                    self.socket.sendto(data, (self.ip, self.port))
 
                 self.packet_count += 1
 
@@ -183,7 +200,6 @@ class B1ConnectionModule(Module):
                 if self.running:
                     print(f"Send error: {e}")
 
-    # Direct RPC methods for mode control
     @rpc
     def idle(self):
         """Set robot to idle mode."""
@@ -232,11 +248,27 @@ class TestB1ConnectionModule(B1ConnectionModule):
         super().__init__(ip, port, test_mode=True, *args, **kwargs)
 
     def _send_loop(self):
-        """Override to provide better test output."""
+        """Override to provide better test output with timeout detection."""
+        timeout_warned = False
+
         while self.running:
-            # Print current state every 0.5 seconds (not every packet)
+            time_since_last_cmd = time.time() - self.last_command_time
+            is_timeout = time_since_last_cmd > self.command_timeout
+
+            # Show timeout transitions
+            if is_timeout and not timeout_warned:
+                print(f"[TEST] Command timeout! Sending zeros after {time_since_last_cmd:.1f}s")
+                timeout_warned = True
+            elif not is_timeout and timeout_warned:
+                print("[TEST] Commands resumed - control restored")
+                timeout_warned = False
+
+            # Print current state every 0.5 seconds
             if self.packet_count % 25 == 0:
-                print(f"[TEST] {self._current_cmd} | Count: {self.packet_count}")
+                if is_timeout:
+                    print(f"[TEST] B1Cmd[ZEROS] (timeout) | Count: {self.packet_count}")
+                else:
+                    print(f"[TEST] {self._current_cmd} | Count: {self.packet_count}")
 
             self.packet_count += 1
             time.sleep(0.020)
