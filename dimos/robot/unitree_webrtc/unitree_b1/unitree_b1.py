@@ -74,75 +74,48 @@ class UnitreeB1(Robot):
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.enable_joystick = enable_joystick
         self.test_mode = test_mode
-
-        # Initialize with basic locomotion capability
         self.capabilities = [RobotCapability.LOCOMOTION]
-
-        # Skills (will be added in future)
-        self.skill_library = skill_library
-
-        # Module references
         self.connection = None
         self.joystick = None
 
-        # Ensure output directory exists
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
 
-        # Initialize DimOS
+    def start(self):
+        """Start the B1 robot - initialize DimOS, deploy modules, and start them."""
+
         logger.info("Initializing DimOS...")
         self.dimos = core.start(2)
 
-        # Deploy modules
         logger.info("Deploying connection module...")
-        self._deploy_connection()
-        if self.enable_joystick:
-            self._deploy_joystick()
+        if self.test_mode:
+            self.connection = self.dimos.deploy(TestB1ConnectionModule, self.ip, self.port)
+        else:
+            self.connection = self.dimos.deploy(B1ConnectionModule, self.ip, self.port)
 
-        # Start modules
-        self._start_modules()
+        # Configure LCM transports for connection
+        self.connection.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.connection.mode_cmd.transport = core.LCMTransport("/b1/mode", Int32)
+
+        # Deploy joystick move_vel control
+        if self.enable_joystick:
+            from dimos.robot.unitree_webrtc.unitree_b1.joystick_module import JoystickModule
+
+            self.joystick = self.dimos.deploy(JoystickModule)
+            self.joystick.twist_out.transport = core.LCMTransport("/cmd_vel", Twist)
+            self.joystick.mode_out.transport = core.LCMTransport("/b1/mode", Int32)
+            logger.info("Joystick module deployed - pygame window will open")
+
+        self.connection.start()
+        self.connection.idle()  # Start in IDLE mode for safety
+        logger.info("B1 started in IDLE mode (safety)")
+
+        if self.joystick:
+            self.joystick.start()
 
         logger.info(f"UnitreeB1 initialized - UDP control to {self.ip}:{self.port}")
         if self.enable_joystick:
             logger.info("Pygame joystick module enabled for testing")
-
-    def _deploy_connection(self):
-        """Deploy and configure the connection module."""
-        if self.test_mode:
-            self.connection = self.dimos.deploy(TestB1ConnectionModule, self.ip, self.port)
-        else:
-            self.connection = self.dimos.deploy(
-                B1ConnectionModule, self.ip, self.port, self.test_mode
-            )
-
-        # Configure LCM transports for standard interfaces
-        self.connection.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
-        self.connection.mode_cmd.transport = core.LCMTransport("/b1/mode", Int32)
-
-    def _deploy_joystick(self):
-        """Deploy and configure the joystick module for testing."""
-        from dimos.robot.unitree_webrtc.unitree_b1.joystick_module import JoystickModule
-
-        self.joystick = self.dimos.deploy(JoystickModule)
-
-        # Connect joystick outputs to standard topics
-        self.joystick.twist_out.transport = core.LCMTransport("/cmd_vel", Twist)
-        self.joystick.mode_out.transport = core.LCMTransport("/b1/mode", Int32)
-
-        logger.info("Joystick module deployed - pygame window will open")
-
-    def _start_modules(self):
-        """Start all deployed modules."""
-        # Start connection (includes starting 50Hz sending thread)
-        self.connection.start()
-
-        # Start in IDLE mode for safety
-        self.connection.idle()
-        logger.info("B1 started in IDLE mode (safety)")
-
-        # Start joystick if enabled
-        if self.joystick:
-            self.joystick.start()
 
     # Robot control methods (standard interface)
     def move(self, twist: Twist, duration: float = 0.0):
@@ -220,6 +193,8 @@ def main():
         test_mode=args.test,
     )
 
+    robot.start()
+
     try:
         if args.joystick:
             print("\n" + "=" * 50)
@@ -230,8 +205,8 @@ def main():
             print("  0/1/2 = Idle/Stand/Walk modes")
             print("  WASD = Move/Turn")
             print("  JL = Strafe")
-            print("  Space = Emergency Stop")
-            print("  Q/ESC = Quit")
+            print("  Space/Q = Emergency Stop")
+            print("  ESC = Quit pygame (then Ctrl+C to exit)")
             print("=" * 50 + "\n")
 
             # Keep running until interrupted

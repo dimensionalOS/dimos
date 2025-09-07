@@ -42,7 +42,7 @@ class JoystickModule(Module):
         Module.__init__(self, *args, **kwargs)
         self.pygame_ready = False
         self.running = False
-        self.current_mode = 2  # Start in walk mode
+        self.current_mode = 0  # Start in IDLE mode for safety
 
     @rpc
     def start(self):
@@ -79,13 +79,10 @@ class JoystickModule(Module):
         print("  WASD = Movement/Turning")
         print("  IJKL = Strafing/Pitch (in appropriate modes)")
         print("  1/2/0 = Stand/Walk/Idle modes")
-        print("  Space = Emergency Stop")
-        print("  Q/ESC = Quit")
-
-        last_twist = Twist()
+        print("  Space/Q = Emergency Stop")
+        print("  ESC = Quit (or use Ctrl+C)")
 
         while self.running and self.pygame_ready:
-            # Handle pygame events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
@@ -111,7 +108,7 @@ class JoystickModule(Module):
                         mode_msg.data = 2
                         self.mode_out.publish(mode_msg)
                         print("Mode: WALK")
-                    elif event.key == pygame.K_SPACE:
+                    elif event.key == pygame.K_SPACE or event.key == pygame.K_q:
                         self.keys_held.clear()
                         # Send IDLE mode for emergency stop
                         self.current_mode = 0
@@ -124,7 +121,8 @@ class JoystickModule(Module):
                         stop_twist.angular = Vector3(0, 0, 0)
                         self.twist_out.publish(stop_twist)
                         print("EMERGENCY STOP!")
-                    elif event.key == pygame.K_ESCAPE or event.key == pygame.K_q:
+                    elif event.key == pygame.K_ESCAPE:
+                        # ESC still quits for development convenience
                         self.running = False
 
                 elif event.type == pygame.KEYUP:
@@ -157,7 +155,6 @@ class JoystickModule(Module):
 
             # Always publish twist at 50Hz (matching working client behavior)
             self.twist_out.publish(twist)
-            last_twist = twist
 
             # Update pygame display
             self._update_display(twist)
@@ -208,9 +205,8 @@ class JoystickModule(Module):
         else:
             pygame.draw.circle(self.screen, (0, 255, 0), (450, 30), 15)  # Green = stopped
 
-        # Instructions at bottom
         y_pos = 300
-        help_texts = ["WASD: Move | JL: Strafe | 1/2/0: Modes", "Space: Stop | Q/ESC: Quit"]
+        help_texts = ["WASD: Move | JL: Strafe | 1/2/0: Modes", "Space/Q: E-Stop | ESC: Quit"]
         for text in help_texts:
             surf = self.font.render(text, True, (150, 150, 150))
             self.screen.blit(surf, (20, y_pos))
