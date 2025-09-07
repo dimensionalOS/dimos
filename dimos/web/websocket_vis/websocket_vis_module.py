@@ -111,9 +111,13 @@ class WebsocketVisModule(Module):
         self.server_thread = threading.Thread(target=self._run_server, daemon=True)
         self.server_thread.start()
 
-        self.robot_pose.subscribe(self._on_robot_pose)
-        self.path.subscribe(self._on_path)
-        self.global_costmap.subscribe(self._on_global_costmap)
+        # Only subscribe to connected topics
+        if self.robot_pose.connection is not None:
+            self.robot_pose.subscribe(self._on_robot_pose)
+        if self.path.connection is not None:
+            self.path.subscribe(self._on_path)
+        if self.global_costmap.connection is not None:
+            self.global_costmap.subscribe(self._on_global_costmap)
 
         logger.info(f"WebSocket server started on http://localhost:{self.port}")
 
