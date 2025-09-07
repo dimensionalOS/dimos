@@ -39,30 +39,30 @@ https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform-
 # We use 0.20.0
 export VERSION=20
  
-$ sudo apt-get install libjpeg-dev zlib1g-dev libpython3-dev libopenblas-dev libavcodec-dev libavformat-dev libswscale-dev
-$ git clone --branch release/0.$VERSION https://github.com/pytorch/vision torchvision
-$ cd torchvision
-$ export BUILD_VERSION=0.$VERSION.0
-$ python3 setup.py install --user # remove --user if installing in virtualenv
+sudo apt-get install libjpeg-dev zlib1g-dev libpython3-dev libopenblas-dev libavcodec-dev libavformat-dev libswscale-dev
+git clone --branch release/0.$VERSION https://github.com/pytorch/vision torchvision
+cd torchvision
+export BUILD_VERSION=0.$VERSION.0
+python3 setup.py install --user # remove --user if installing in virtualenv
 ```
 
 ### Verify success: 
 ```bash
 $ python3
->>> import torch
->>> print(torch.__version__)
->>> print('CUDA available: ' + str(torch.cuda.is_available()))  # Should be True
->>> print('cuDNN version: ' + str(torch.backends.cudnn.version()))
->>> a = torch.cuda.FloatTensor(2).zero_()
->>> print('Tensor a = ' + str(a))
->>> b = torch.randn(2).cuda()
->>> print('Tensor b = ' + str(b))
->>> c = a + b
->>> print('Tensor c = ' + str(c))
+import torch
+print(torch.__version__)
+print('CUDA available: ' + str(torch.cuda.is_available()))  # Should be True
+print('cuDNN version: ' + str(torch.backends.cudnn.version()))
+a = torch.cuda.FloatTensor(2).zero_()
+print('Tensor a = ' + str(a))
+b = torch.randn(2).cuda()
+print('Tensor b = ' + str(b))
+c = a + b
+print('Tensor c = ' + str(c))
 
 $ python3
->>> import torchvision
->>> print(torchvision.__version__)
+import torchvision
+print(torchvision.__version__)
 ```
 
 ## Install Onnxruntime-gpu 
