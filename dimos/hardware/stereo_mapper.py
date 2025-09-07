@@ -147,7 +147,7 @@ class StereoMapper:
 
         self.mapper = self.dimos.deploy(
             LocalSpliceMap,
-            cylinder_radius=3.0,
+            cylinder_radius=4.0,
             voxel_size=self.voxel_size,
             cost_resolution=self.voxel_size,
             global_publish_interval=self.map_publish_interval,
