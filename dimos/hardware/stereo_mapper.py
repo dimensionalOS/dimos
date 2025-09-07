@@ -28,7 +28,7 @@ sys.path.append(
 
 from dimos import core
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.passthrough_map import PassthroughMap
+from dimos.robot.unitree_webrtc.type.local_splice_map import LocalSpliceMap
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
 from dimos.protocol import pubsub
@@ -146,7 +146,9 @@ class StereoMapper:
         logger.info("Deploying mapping module...")
 
         self.mapper = self.dimos.deploy(
-            PassthroughMap,
+            LocalSpliceMap,
+            cylinder_radius=3.0,
+            voxel_size=self.voxel_size,
             cost_resolution=self.voxel_size,
             global_publish_interval=self.map_publish_interval,
             min_height=0.2,
@@ -162,7 +164,10 @@ class StereoMapper:
         # Connect lidar input - connect directly to ZED module's pointcloud output
         self.mapper.lidar.connect(self.zed_module.pointcloud_msg)
 
-        logger.info("✓ Mapping module deployed and connected to ZED")
+        # Connect odometry input to mapper
+        self.mapper.odom.connect(self.zed_module.pose)
+
+        logger.info("✓ Mapping module deployed and connected to ZED with odometry")
 
     def _deploy_visualization(self):
         logger.info("Deploying visualization...")
