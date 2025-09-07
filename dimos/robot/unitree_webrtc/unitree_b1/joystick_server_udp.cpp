@@ -77,9 +77,9 @@ private:
     float dt = 0.002;
     
     // Control parameters
-    const float MAX_FORWARD_SPEED = 0.3f;   // m/s
-    const float MAX_SIDE_SPEED = 0.3f;     // m/s  
-    const float MAX_YAW_SPEED = 0.3f;      // rad/s
+    const float MAX_FORWARD_SPEED = 0.2f;   // m/s
+    const float MAX_SIDE_SPEED = 0.2f;     // m/s  
+    const float MAX_YAW_SPEED = 0.2f;      // rad/s
     const float MAX_BODY_HEIGHT = 0.1f;     // m
     const float MAX_EULER_ANGLE = 0.3f;     // rad
     const float DEADZONE = 0.0f;            // joystick deadzone
@@ -283,9 +283,9 @@ void JoystickServer::RobotControl() {
             break;
             
         case 2:  // Walk mode
-            cmd.velocity[0] = current_cmd.ly * MAX_FORWARD_SPEED;
-            cmd.yawSpeed = -current_cmd.lx * MAX_YAW_SPEED;
-            cmd.velocity[1] = -current_cmd.rx * MAX_SIDE_SPEED;
+            cmd.velocity[0] = std::clamp(current_cmd.ly * MAX_FORWARD_SPEED, -MAX_FORWARD_SPEED, MAX_FORWARD_SPEED);
+            cmd.yawSpeed = std::clamp(-current_cmd.lx * MAX_YAW_SPEED, -MAX_YAW_SPEED, MAX_YAW_SPEED);
+            cmd.velocity[1] = std::clamp(-current_cmd.rx * MAX_SIDE_SPEED, -MAX_SIDE_SPEED, MAX_SIDE_SPEED);
             
             // Check button states for gait type
             if (current_cmd.buttons & 0x0001) {  // Button A
