@@ -27,10 +27,10 @@ import reactivex as rx
 import reactivex.operators as ops
 
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree_webrtc.robot_config import RobotConfig
 from dimos.agents.claude_agent import ClaudeAgent
 from dimos.skills.kill_skill import KillSkill
 from dimos.skills.navigation import NavigateWithText, GetPose, NavigateToGoal, Explore
-from dimos.skills.unitree.unitree_speak import UnitreeSpeak
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.stream.audio.pipelines import stt, tts
 from dimos.utils.logging_config import setup_logger
@@ -77,10 +77,11 @@ def main():
     logger.info("Starting Unitree Go2 Robot with Agent")
 
     # Create robot instance
-    robot = UnitreeGo2(
-        ip=os.getenv("ROBOT_IP"),
-        connection_type=os.getenv("CONNECTION_TYPE", "webrtc"),
+    config = RobotConfig(
+        robot_ip=os.getenv("ROBOT_IP"),
+        connection_type=os.getenv("CONNECTION_TYPE"),
     )
+    robot = UnitreeGo2(config=config)
 
     robot.start()
     time.sleep(3)

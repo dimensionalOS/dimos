@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 import reactivex as rx
 import reactivex.operators as ops
 
+from dimos.robot.unitree_webrtc.robot_config import RobotConfig
 from dimos.robot.unitree_webrtc.unitree_g1 import UnitreeG1
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.agents.claude_agent import ClaudeAgent
@@ -97,7 +98,7 @@ def main():
 
     # Create robot instance with recording/replay support
     robot = UnitreeG1(
-        ip=robot_ip or "0.0.0.0",  # Dummy IP for replay mode
+        config=RobotConfig(robot_ip=robot_ip or "0.0.0.0"),  # Dummy IP for replay mode
         recording_path=args.record,
         replay_path=args.replay,
     )

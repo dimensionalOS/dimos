@@ -24,6 +24,7 @@ import reactivex.operators as ops
 from dotenv import load_dotenv
 
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
+from dimos.robot.unitree_webrtc.robot_config import RobotConfig
 from dimos.utils.testing import SensorReplay, SensorStorage
 
 _EXPECTED_TOTAL_RAD = -4.05212
@@ -92,7 +93,9 @@ def test_store_odometry_stream() -> None:
 
     load_dotenv()
 
-    robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
+    config = RobotConfig(robot_ip=os.getenv("ROBOT_IP"))
+    # TODO: `mode` is not an argument
+    robot = UnitreeGo2(config=config, mode="ai")
     robot.standup()
 
     storage = SensorStorage("raw_odometry_rotate_walk")

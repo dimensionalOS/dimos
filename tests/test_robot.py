@@ -16,6 +16,7 @@ import os
 import time
 import threading
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree_webrtc.robot_config import RobotConfig
 from dimos.robot.local_planner.local_planner import navigate_to_goal_local
 from dimos.web.robot_web_interface import RobotWebInterface
 from reactivex import operators as RxOps
@@ -26,7 +27,9 @@ def main():
     print("Initializing Unitree Go2 robot with local planner visualization...")
 
     # Initialize the robot with webrtc interface
-    robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
+    config = RobotConfig(robot_ip=os.getenv("ROBOT_IP"))
+    # TODO: `mode` is not an argument
+    robot = UnitreeGo2(config=config, mode="ai")
 
     # Get the camera stream
     video_stream = robot.get_video_stream()

@@ -14,6 +14,7 @@
 import os
 from dotenv import load_dotenv
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree_webrtc.robot_config import RobotConfig
 from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
 from dimos.web.websocket_vis.server import WebsocketVis
 from dimos.web.robot_web_interface import RobotWebInterface
@@ -37,7 +38,9 @@ warnings.filterwarnings("ignore", message=".*RTCSctpTransport.*")
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 load_dotenv()
-robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="normal", enable_perception=False)
+config = RobotConfig(robot_ip=os.getenv("ROBOT_IP"))
+# TODO: `mode` is not an argument
+robot = UnitreeGo2(config=config, mode="normal", enable_perception=False)
 
 
 # Add graceful shutdown handling to prevent WebRTC task destruction errors

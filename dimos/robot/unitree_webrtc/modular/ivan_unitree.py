@@ -38,7 +38,7 @@ from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
+logger = setup_logger(__file__, level=logging.INFO)
 
 
 def deploy_foxglove(dimos, connection, mapper, global_planner):

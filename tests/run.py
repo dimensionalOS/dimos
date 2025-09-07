@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 from dimos.agents.cerebras_agent import CerebrasAgent
 from dimos.agents.claude_agent import ClaudeAgent
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree_webrtc.robot_config import RobotConfig
 
 # from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
@@ -77,11 +78,10 @@ def parse_arguments():
 
 args = parse_arguments()
 
+config = RobotConfig(robot_ip=os.getenv("ROBOT_IP"))
+# TODO: `mode` is not an argument
 # Initialize robot with spatial memory parameters - using WebRTC mode instead of "ai"
-robot = UnitreeGo2(
-    ip=os.getenv("ROBOT_IP"),
-    mode="normal",
-)
+robot = UnitreeGo2(config=config, mode="normal")
 
 
 # Add graceful shutdown handling to prevent WebRTC task destruction errors

@@ -135,7 +135,6 @@ class UnitreeG1(Robot):
     def __init__(
         self,
         config: RobotConfig,
-        output_dir: str = None,
         skill_library: Optional[SkillLibrary] = None,
         recording_path: str = None,
         replay_path: str = None,
@@ -144,14 +143,14 @@ class UnitreeG1(Robot):
 
         Args:
             config: RobotConfig instance with connection details
-            output_dir: Directory for saving outputs
             skill_library: Skill library instance
             recording_path: Path to save recordings (if recording)
             replay_path: Path to replay recordings from (if replaying)
         """
         super().__init__()
         self.config = config
-        self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
+        self.config.robot_model = "unitree_g1"
+        self.output_dir = config.output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.recording_path = recording_path
         self.replay_path = replay_path
         self.lcm = LCM()
@@ -292,7 +291,6 @@ def main():
 
     config = RobotConfig(
         connection_type=os.getenv("CONNECTION_TYPE"),
-        robot_model="unitree_g1",
         robot_ip=os.getenv("ROBOT_IP"),
         scene=os.getenv("SCENE"),
         websocket_port=7779,

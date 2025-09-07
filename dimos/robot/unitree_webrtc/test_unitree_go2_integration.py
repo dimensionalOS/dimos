@@ -27,6 +27,7 @@ from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
 from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator
 from dimos.robot.unitree_webrtc.unitree_go2 import ConnectionModule
+from dimos.robot.unitree_webrtc.robot_config import RobotConfig
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.utils.logging_config import setup_logger
@@ -72,7 +73,7 @@ class TestUnitreeGo2CoreModules:
             # Deploy ConnectionModule with playback mode (uses test data)
             connection = dimos.deploy(
                 ConnectionModule,
-                ip="127.0.0.1",  # IP doesn't matter for playback
+                robot_config=RobotConfig(robot_ip="127.0.0.1"),  # IP doesn't matter for playback
                 playback=True,  # Enable playback mode
             )
 

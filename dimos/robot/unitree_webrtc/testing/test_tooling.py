@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
+from dimos.robot.unitree_webrtc.robot_config import RobotConfig
 from dimos.utils.reactive import backpressure
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
@@ -30,7 +31,9 @@ def test_record_all():
     from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 
     load_dotenv()
-    robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
+    config = RobotConfig(robot_ip=os.getenv("ROBOT_IP"))
+    # TODO: `mode` is not an argument
+    robot = UnitreeGo2(config=config, mode="ai")
 
     print("Robot is standing up...")
 
