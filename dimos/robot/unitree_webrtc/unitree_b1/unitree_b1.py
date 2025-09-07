@@ -184,7 +184,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Create robot instance
     robot = UnitreeB1(
         ip=args.ip,
         port=args.port,
@@ -209,7 +208,6 @@ def main():
             print("  ESC = Quit pygame (then Ctrl+C to exit)")
             print("=" * 50 + "\n")
 
-            # Keep running until interrupted
             import time
 
             while True:
@@ -221,7 +219,6 @@ def main():
             print("Use robot.move(Twist(...)) to send velocity commands")
             print("Press Ctrl+C to exit\n")
 
-            # Keep running
             import time
 
             while True:
