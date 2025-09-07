@@ -49,8 +49,13 @@ def load_model(input_device: InputController, robot: str, scene: str):
 
     mujoco.mj_resetDataKeyframe(model, data, 0)
 
+    match robot:
+        case "unitree_g1":
+            sim_dt = 0.002
+        case _:
+            sim_dt = 0.005
+
     ctrl_dt = 0.02
-    sim_dt = 0.002
     n_substeps = int(round(ctrl_dt / sim_dt))
     model.opt.timestep = sim_dt
 
