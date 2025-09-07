@@ -73,6 +73,8 @@ class UnitreeWebRTCConnection:
     def __init__(self, ip: str, mode: str = "ai"):
         self.ip = ip
         self.mode = mode
+        self.stop_timer = None
+        self.cmd_vel_timeout = 0.2
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
         self.connect()
 
@@ -127,7 +129,7 @@ class UnitreeWebRTCConnection:
         async def async_move():
             self.conn.datachannel.pub_sub.publish_without_callback(
                 RTC_TOPIC["WIRELESS_CONTROLLER"],
-                data={"lx": y, "ly": x, "rx": -yaw, "ry": 0},
+                data={"lx": -y, "ly": x, "rx": -yaw, "ry": 0},
             )
 
         async def async_move_duration():
@@ -138,6 +140,15 @@ class UnitreeWebRTCConnection:
             while time.time() - start_time < duration:
                 await async_move()
                 await asyncio.sleep(sleep_time)
+
+        # Cancel existing timer and start a new one
+        if self.stop_timer:
+            self.stop_timer.cancel()
+
+        # Auto-stop after 0.5 seconds if no new commands
+        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop)
+        self.stop_timer.daemon = True
+        self.stop_timer.start()
 
         try:
             if duration > 0:
@@ -323,10 +334,20 @@ class UnitreeWebRTCConnection:
         Returns:
             bool: True if stop command was sent successfully
         """
+        # Cancel timer since we're explicitly stopping
+        if self.stop_timer:
+            self.stop_timer.cancel()
+            self.stop_timer = None
+
         return self.move(Twist())
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""
+        # Cancel timer
+        if self.stop_timer:
+            self.stop_timer.cancel()
+            self.stop_timer = None
+
         if hasattr(self, "task") and self.task:
             self.task.cancel()
         if hasattr(self, "conn"):
