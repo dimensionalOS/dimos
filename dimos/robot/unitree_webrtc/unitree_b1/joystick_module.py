@@ -76,8 +76,8 @@ class JoystickModule(Module):
 
         print("JoystickModule started - Focus pygame window to control")
         print("Controls:")
-        print("  WASD = Movement/Turning")
-        print("  IJKL = Strafing/Pitch (in appropriate modes)")
+        print("  Walk Mode: WASD = Move/Turn, JL = Strafe")
+        print("  Stand Mode: WASD = Height/Yaw, JL = Roll, IK = Pitch")
         print("  1/2/0 = Stand/Walk/Idle modes")
         print("  Space/Q = Emergency Stop")
         print("  ESC = Quit (or use Ctrl+C)")
@@ -133,25 +133,50 @@ class JoystickModule(Module):
             twist.linear = Vector3(0, 0, 0)
             twist.angular = Vector3(0, 0, 0)
 
-            # Only apply movement in walk mode (mode 2)
-            if self.current_mode == 2:
+            # Apply controls based on mode
+            if self.current_mode == 2:  # WALK mode - movement control
                 # Forward/backward (W/S)
                 if pygame.K_w in self.keys_held:
                     twist.linear.x = 1.0  # Forward
                 if pygame.K_s in self.keys_held:
                     twist.linear.x = -1.0  # Backward
 
-                # Turning (A/D) - note the inversion for correct direction
+                # Turning (A/D)
                 if pygame.K_a in self.keys_held:
-                    twist.angular.z = 1.0  # Turn left (positive angular.z)
+                    twist.angular.z = 1.0  # Turn left
                 if pygame.K_d in self.keys_held:
-                    twist.angular.z = -1.0  # Turn right (negative angular.z)
+                    twist.angular.z = -1.0  # Turn right
 
-                # Strafing (J/L) - note the inversion for correct direction
+                # Strafing (J/L)
                 if pygame.K_j in self.keys_held:
-                    twist.linear.y = 1.0  # Strafe left (positive linear.y)
+                    twist.linear.y = 1.0  # Strafe left
                 if pygame.K_l in self.keys_held:
-                    twist.linear.y = -1.0  # Strafe right (negative linear.y)
+                    twist.linear.y = -1.0  # Strafe right
+
+            elif self.current_mode == 1:  # STAND mode - body pose control
+                # Height control (W/S) - use linear.z for body height
+                if pygame.K_w in self.keys_held:
+                    twist.linear.z = 1.0  # Raise body
+                if pygame.K_s in self.keys_held:
+                    twist.linear.z = -1.0  # Lower body
+
+                # Yaw control (A/D) - use angular.z for body yaw
+                if pygame.K_a in self.keys_held:
+                    twist.angular.z = 1.0  # Rotate body left
+                if pygame.K_d in self.keys_held:
+                    twist.angular.z = -1.0  # Rotate body right
+
+                # Roll control (J/L) - use angular.x for body roll
+                if pygame.K_j in self.keys_held:
+                    twist.angular.x = 1.0  # Roll left
+                if pygame.K_l in self.keys_held:
+                    twist.angular.x = -1.0  # Roll right
+
+                # Pitch control (I/K) - use angular.y for body pitch
+                if pygame.K_i in self.keys_held:
+                    twist.angular.y = 1.0  # Pitch forward
+                if pygame.K_k in self.keys_held:
+                    twist.angular.y = -1.0  # Pitch backward
 
             # Always publish twist at 50Hz (matching working client behavior)
             self.twist_out.publish(twist)
@@ -185,10 +210,12 @@ class JoystickModule(Module):
         texts = [
             f"Mode: {mode_text}",
             "",
-            f"Linear X (Forward/Back): {twist.linear.x:+.2f}",
-            f"Linear Y (Strafe L/R): {twist.linear.y:+.2f}",
-            f"Angular Z (Turn L/R): {twist.angular.z:+.2f}",
-            "",
+            f"Linear X: {twist.linear.x:+.2f}",
+            f"Linear Y: {twist.linear.y:+.2f}",
+            f"Linear Z: {twist.linear.z:+.2f}",
+            f"Angular X: {twist.angular.x:+.2f}",
+            f"Angular Y: {twist.angular.y:+.2f}",
+            f"Angular Z: {twist.angular.z:+.2f}",
             "Keys: " + ", ".join([pygame.key.name(k).upper() for k in self.keys_held if k < 256]),
         ]
 
@@ -199,8 +226,14 @@ class JoystickModule(Module):
                 self.screen.blit(surf, (20, y_pos))
             y_pos += 30
 
-        # Movement indicator
-        if twist.linear.x != 0 or twist.linear.y != 0 or twist.angular.z != 0:
+        if (
+            twist.linear.x != 0
+            or twist.linear.y != 0
+            or twist.linear.z != 0
+            or twist.angular.x != 0
+            or twist.angular.y != 0
+            or twist.angular.z != 0
+        ):
             pygame.draw.circle(self.screen, (255, 0, 0), (450, 30), 15)  # Red = moving
         else:
             pygame.draw.circle(self.screen, (0, 255, 0), (450, 30), 15)  # Green = stopped

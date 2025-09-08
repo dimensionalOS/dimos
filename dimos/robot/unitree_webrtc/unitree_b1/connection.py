@@ -207,8 +207,8 @@ class B1ConnectionModule(Module):
         return True
 
     @rpc
-    def stand(self):
-        """Set robot to stand mode."""
+    def pose(self):
+        """Set robot to stand/pose mode for reaching ground objects with manipulator."""
         self.set_mode(1)
         return True
 

@@ -61,10 +61,8 @@ The B1 robot runs Ubuntu with the following requirements:
 
 ```bash
 # Navigate to build directory
-cd build
-
-# Run with sudo for memory locking (required for real-time control)
-sudo ./joystick_server
+cd Unitree/sdk/unitree_legged_sdk_B1/build/
+./joystick_server
 
 # You should see:
 # UDP Unitree B1 Joystick Control Server
