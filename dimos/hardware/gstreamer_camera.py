@@ -201,6 +201,8 @@ class GstreamerCameraModule(Module):
             return Gst.FlowReturn.OK
 
         buffer = sample.get_buffer()
+        print(buffer)
+        print(buffer.__dict__)
         caps = sample.get_caps()
 
         # Extract video format information

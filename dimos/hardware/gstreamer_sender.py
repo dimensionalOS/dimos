@@ -229,7 +229,7 @@ class GStreamerVideoSenderWithMetadata:
         self.start_time = time.time()
         self.frame_count = 0
 
-        logger.info(f"Video sender with metadata started:")
+        logger.info("Video sender with metadata started:")
         logger.info(f"  Source: {self.device}")
         logger.info(f"  Resolution: {self.width}x{self.height} @ {self.framerate}fps")
         logger.info(f"  Bitrate: {self.bitrate} kbps")
