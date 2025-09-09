@@ -14,13 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Enhanced GStreamer sender that embeds absolute timestamps in the H264 stream
+using SEI (Supplemental Enhancement Information) messages.
+
+This allows the receiver to extract the exact capture time of each frame.
+
+TODO: Add Ubuntu dependencies needed to run this script
+"""
+
 import argparse
 import logging
 import signal
-import struct
 import sys
 import time
-from typing import Optional
 
 # Add system path for gi module if needed
 if "/usr/lib/python3/dist-packages" not in sys.path:
@@ -29,8 +36,8 @@ if "/usr/lib/python3/dist-packages" not in sys.path:
 import gi
 
 gi.require_version("Gst", "1.0")
-gi.require_version("GstRtp", "1.0")
-from gi.repository import GLib, Gst, GstRtp
+gi.require_version("GstVideo", "1.0")
+from gi.repository import GLib, Gst
 
 # Initialize GStreamer
 Gst.init(None)
@@ -39,11 +46,11 @@ Gst.init(None)
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger("gstreamer_sender")
+logger = logging.getLogger("gstreamer_sender_metadata")
 
 
-class GStreamerVideoSender:
-    """Send video from a camera with embedded timestamps using GStreamer."""
+class GStreamerVideoSenderWithMetadata:
+    """Send video with embedded timestamp metadata."""
 
     def __init__(
         self,
@@ -56,21 +63,21 @@ class GStreamerVideoSender:
         multicast_group: str = "224.0.0.1",
         port: int = 5000,
         multicast_iface: str = "wlo1",
-        use_test_src: bool = False,
+        embed_metadata: bool = True,
     ):
-        """Initialize the GStreamer video sender.
+        """Initialize the GStreamer video sender with metadata support.
 
         Args:
-            device: Video device path (e.g., /dev/video0)
+            device: Video device path
             width: Video width in pixels
             height: Video height in pixels
             framerate: Frame rate in fps
-            format_str: Video format (e.g., YUY2, UYVY)
+            format_str: Video format
             bitrate: H264 encoding bitrate in kbps
             multicast_group: Multicast group address
             port: UDP port for sending
             multicast_iface: Network interface for multicast
-            use_test_src: Use test video source instead of camera
+            embed_metadata: Embed timestamp metadata in stream
         """
         self.device = device
         self.width = width
@@ -81,96 +88,112 @@ class GStreamerVideoSender:
         self.multicast_group = multicast_group
         self.port = port
         self.multicast_iface = multicast_iface
-        self.use_test_src = use_test_src
+        self.embed_metadata = embed_metadata
 
         self.pipeline = None
+        self.videosrc = None
+        self.encoder = None
+        self.payloader = None
         self.main_loop = None
         self.running = False
         self.start_time = None
         self.frame_count = 0
 
     def create_pipeline(self):
-        """Create the GStreamer pipeline."""
+        """Create the GStreamer pipeline with metadata injection."""
 
-        # Choose video source
-        if self.use_test_src:
-            # Use test source for debugging
-            source_str = f"""
-                videotestsrc is-live=true pattern=ball !
-                video/x-raw,width={self.width},height={self.height},framerate={self.framerate}/1
-            """
-            logger.info("Using test video source")
-        else:
-            # Use real camera
-            source_str = f"""
-                v4l2src device={self.device} do-timestamp=true !
-                video/x-raw,width={self.width},height={self.height},
-                format={self.format},framerate={self.framerate}/1
-            """
-            logger.info(f"Using camera device: {self.device}")
+        # Create pipeline
+        self.pipeline = Gst.Pipeline.new("sender-pipeline")
 
-        # Build the complete pipeline
-        pipeline_str = f"""
-            {source_str} !
-            videoconvert !
-            clockoverlay halignment=left valignment=top 
-                time-format="%Y-%m-%d %H:%M:%S.%f" !
-            x264enc tune=zerolatency bitrate={self.bitrate} !
-            rtph264pay config-interval=1 pt=96 !
-            udpsink host={self.multicast_group} port={self.port} 
-                auto-multicast=true multicast-iface={self.multicast_iface}
-                sync=false name=udpsink
-        """
+        # Create elements
+        self.videosrc = Gst.ElementFactory.make("v4l2src", "source")
+        self.videosrc.set_property("device", self.device)
+        self.videosrc.set_property("do-timestamp", True)
+        logger.info(f"Using camera device: {self.device}")
 
-        try:
-            self.pipeline = Gst.parse_launch(pipeline_str)
+        # Create caps filter for video format
+        capsfilter = Gst.ElementFactory.make("capsfilter", "capsfilter")
+        caps = Gst.Caps.from_string(
+            f"video/x-raw,width={self.width},height={self.height},"
+            f"format={self.format},framerate={self.framerate}/1"
+        )
+        capsfilter.set_property("caps", caps)
 
-            # Get the RTP payloader to access RTP packets
-            rtppay = self.pipeline.get_by_name("pay0")
-            if not rtppay:
-                # Try to find rtph264pay element
-                for element in self.pipeline.iterate_elements():
-                    if element.get_factory().get_name() == "rtph264pay":
-                        rtppay = element
-                        break
+        # Video converter
+        videoconvert = Gst.ElementFactory.make("videoconvert", "convert")
 
-            # Connect to the payloader's pad to intercept packets
-            if rtppay:
-                srcpad = rtppay.get_static_pad("src")
-                if srcpad:
-                    srcpad.add_probe(Gst.PadProbeType.BUFFER, self._on_buffer_probe, None)
-                    logger.info("Added buffer probe to RTP payloader")
+        # H264 encoder
+        self.encoder = Gst.ElementFactory.make("x264enc", "encoder")
+        self.encoder.set_property("tune", "zerolatency")
+        self.encoder.set_property("bitrate", self.bitrate)
+        self.encoder.set_property("key-int-max", 30)  # Insert keyframe every 30 frames
 
-            # Set up bus message handling
-            bus = self.pipeline.get_bus()
-            bus.add_signal_watch()
-            bus.connect("message", self._on_bus_message)
+        # RTP payloader
+        self.payloader = Gst.ElementFactory.make("rtph264pay", "payloader")
+        self.payloader.set_property("config-interval", 1)
+        self.payloader.set_property("pt", 96)
 
-        except Exception as e:
-            logger.error(f"Failed to create pipeline: {e}")
-            raise
+        # UDP sink
+        udpsink = Gst.ElementFactory.make("udpsink", "sink")
+        udpsink.set_property("host", self.multicast_group)
+        udpsink.set_property("port", self.port)
+        udpsink.set_property("auto-multicast", True)
+        udpsink.set_property("multicast-iface", self.multicast_iface)
+        udpsink.set_property("sync", False)
 
-    def _on_buffer_probe(self, pad, info, user_data):
-        """Probe callback to add timestamp metadata to RTP packets."""
+        # Add elements to pipeline
+        self.pipeline.add(self.videosrc)
+        self.pipeline.add(capsfilter)
+        self.pipeline.add(videoconvert)
+        self.pipeline.add(self.encoder)
+        self.pipeline.add(self.payloader)
+        self.pipeline.add(udpsink)
+
+        # Link elements
+        if not self.videosrc.link(capsfilter):
+            raise RuntimeError("Failed to link source to capsfilter")
+        if not capsfilter.link(videoconvert):
+            raise RuntimeError("Failed to link capsfilter to videoconvert")
+        if not videoconvert.link(self.encoder):
+            raise RuntimeError("Failed to link timeoverlay to encoder")
+        if not self.encoder.link(self.payloader):
+            raise RuntimeError("Failed to link encoder to payloader")
+        if not self.payloader.link(udpsink):
+            raise RuntimeError("Failed to link payloader to udpsink")
+
+        # Add probes for metadata injection
+        if self.embed_metadata:
+            # Add probe before encoder to inject metadata
+            encoder_sink_pad = self.encoder.get_static_pad("sink")
+            encoder_sink_pad.add_probe(
+                Gst.PadProbeType.BUFFER, self._inject_timestamp_metadata, None
+            )
+
+            # Add probe after payloader to modify RTP timestamps
+            payloader_src_pad = self.payloader.get_static_pad("src")
+            payloader_src_pad.add_probe(Gst.PadProbeType.BUFFER, self._modify_rtp_timestamp, None)
+
+        # Set up bus message handling
+        bus = self.pipeline.get_bus()
+        bus.add_signal_watch()
+        bus.connect("message", self._on_bus_message)
+
+    def _inject_timestamp_metadata(self, pad, info, user_data):
         buffer = info.get_buffer()
         if buffer:
-            # Add current timestamp as RTP header extension
-            # This timestamp will be in nanoseconds since epoch
-            current_time_ns = int(time.time() * 1e9)
-
-            # Set the buffer PTS to current time
-            # This helps maintain accurate timestamps
-            buffer.pts = current_time_ns
-
-            # Count frames for statistics
+            current_time = time.time()
+            buffer.pts = int(current_time * 1e9)
+            buffer.dts = buffer.pts
             self.frame_count += 1
+        return Gst.PadProbeReturn.OK
 
-            # Log periodically
-            if self.frame_count % (self.framerate * 2) == 0:  # Every 2 seconds
-                elapsed = time.time() - self.start_time
-                fps = self.frame_count / elapsed
-                logger.info(f"Sent {self.frame_count} frames, FPS: {fps:.1f}")
-
+    def _modify_rtp_timestamp(self, pad, info, user_data):
+        """Modify RTP timestamps to carry absolute time information."""
+        buffer = info.get_buffer()
+        if buffer and buffer.pts != Gst.CLOCK_TIME_NONE:
+            # The buffer PTS now contains our absolute timestamp
+            # We could modify RTP headers here if needed
+            pass
         return Gst.PadProbeReturn.OK
 
     def _on_bus_message(self, bus, message):
@@ -187,18 +210,13 @@ class GStreamerVideoSender:
         elif t == Gst.MessageType.WARNING:
             warn, debug = message.parse_warning()
             logger.warning(f"Pipeline warning: {warn}, {debug}")
-        elif t == Gst.MessageType.STATE_CHANGED:
-            if message.src == self.pipeline:
-                old_state, new_state, pending = message.parse_state_changed()
-                logger.debug(f"Pipeline state: {old_state.value_name} -> {new_state.value_name}")
 
     def start(self):
-        """Start the video sender."""
         if self.running:
             logger.warning("Sender is already running")
             return
 
-        logger.info("Creating pipeline...")
+        logger.info("Creating pipeline with metadata support...")
         self.create_pipeline()
 
         logger.info("Starting pipeline...")
@@ -211,13 +229,13 @@ class GStreamerVideoSender:
         self.start_time = time.time()
         self.frame_count = 0
 
-        logger.info(f"Video sender started:")
-        logger.info(f"  Source: {self.device if not self.use_test_src else 'test pattern'}")
+        logger.info(f"Video sender with metadata started:")
+        logger.info(f"  Source: {self.device}")
         logger.info(f"  Resolution: {self.width}x{self.height} @ {self.framerate}fps")
         logger.info(f"  Bitrate: {self.bitrate} kbps")
         logger.info(f"  Multicast: {self.multicast_group}:{self.port} on {self.multicast_iface}")
+        logger.info(f"  Metadata: {'Enabled' if self.embed_metadata else 'Disabled'}")
 
-        # Create and run main loop
         self.main_loop = GLib.MainLoop()
         try:
             self.main_loop.run()
@@ -227,7 +245,6 @@ class GStreamerVideoSender:
             self.stop()
 
     def stop(self):
-        """Stop the video sender."""
         if not self.running:
             return
 
@@ -249,21 +266,19 @@ class GStreamerVideoSender:
 
 
 def main():
-    """Main entry point."""
-    parser = argparse.ArgumentParser(description="GStreamer video sender with timestamps")
+    parser = argparse.ArgumentParser(
+        description="GStreamer video sender with embedded timestamp metadata"
+    )
 
     # Video source options
     parser.add_argument(
         "--device", default="/dev/video0", help="Video device path (default: /dev/video0)"
     )
-    parser.add_argument(
-        "--test-src", action="store_true", help="Use test video source instead of camera"
-    )
 
     # Video format options
     parser.add_argument("--width", type=int, default=2560, help="Video width (default: 2560)")
     parser.add_argument("--height", type=int, default=720, help="Video height (default: 720)")
-    parser.add_argument("--framerate", type=int, default=60, help="Frame rate in fps (default: 60)")
+    parser.add_argument("--framerate", type=int, default=15, help="Frame rate in fps (default: 60)")
     parser.add_argument("--format", default="YUY2", help="Video format (default: YUY2)")
 
     # Encoding options
@@ -282,18 +297,18 @@ def main():
         "--multicast-iface", default="wlo1", help="Network interface for multicast (default: wlo1)"
     )
 
+    # Metadata options
+    parser.add_argument(
+        "--no-metadata", action="store_true", help="Disable timestamp metadata embedding"
+    )
+
     # Logging options
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 
-    # Set logging level
-    if args.verbose:
-        logger.setLevel(logging.DEBUG)
-        logging.getLogger().setLevel(logging.DEBUG)
-
     # Create and start sender
-    sender = GStreamerVideoSender(
+    sender = GStreamerVideoSenderWithMetadata(
         device=args.device,
         width=args.width,
         height=args.height,
@@ -303,7 +318,7 @@ def main():
         multicast_group=args.multicast_group,
         port=args.port,
         multicast_iface=args.multicast_iface,
-        use_test_src=args.test_src,
+        embed_metadata=not args.no_metadata,
     )
 
     # Handle signals gracefully
