@@ -43,20 +43,31 @@ Gst.init(None)
 class GstreamerCameraModule(Module):
     """Module that captures frames from a remote camera using GStreamer and publishes them as Image messages.
 
-    To send the video from the server run this:
+    To send the video from the server, you have three options:
 
+    Option 1: Simple command-line (timestamps will be relative to receiver start):
     ```bash
-    gst-launch-1.0 v4l2src device=/dev/video0 do-timestamp=true ! \\
+    gst-launch-1.0 v4l2src device=/dev/video0 ! \\
       video/x-raw,width=2560,height=720,format=YUY2,framerate=60/1 ! \\
       videoconvert ! x264enc tune=zerolatency bitrate=5000 ! \\
-      rtph264pay config-interval=1 timestamp-offset=0 ! \\
-      application/x-rtp,clock-rate=90000 ! \\
+      rtph264pay config-interval=1 ! \\
       udpsink host=224.0.0.1 port=5000 auto-multicast=true \\
       multicast-iface=wlo1
     ```
 
+    Option 2: With absolute timestamps (recommended):
+    ```bash
+    python3 gstreamer_sender_with_metadata.py --device /dev/video0 --multicast-iface wlo1
+    ```
+    This embeds the actual capture timestamp in each frame.
+
+    Option 3: Test mode without camera:
+    ```bash
+    python3 gstreamer_sender_with_metadata.py --test-src --multicast-iface wlo1
+    ```
+
     Note: change wlo1 with your actual network interface.
-    The do-timestamp=true ensures timestamps are captured from the source.
+    The receiver automatically detects whether timestamps are absolute or relative.
     """
 
     video: Out[Image] = None
@@ -89,6 +100,8 @@ class GstreamerCameraModule(Module):
         self.use_sender_timestamps = use_sender_timestamps
         self.timestamp_offset = timestamp_offset
         self.base_time = None  # Will store the pipeline base time
+        self.first_pts = None  # First PTS received, used as reference
+        self.first_local_time = None  # Local time when first PTS was received
 
         self.pipeline = None
         self.appsink = None
@@ -127,14 +140,20 @@ class GstreamerCameraModule(Module):
         if self.main_loop_thread:
             self.main_loop_thread.join(timeout=2.0)
 
+        # Reset timestamp tracking
+        self.first_pts = None
+        self.first_local_time = None
+
         logger.info("GStreamer camera module stopped")
 
     def _create_pipeline(self):
+        # Note: We add do-timestamp=false to udpsrc to preserve original timestamps
+        # and use-pipeline-clock=false on rtpjitterbuffer to avoid overwriting them
         pipeline_str = f"""
             udpsrc multicast-group={self.multicast_group} port={self.port} 
-                multicast-iface={self.multicast_iface} !
+                multicast-iface={self.multicast_iface} do-timestamp=false !
             application/x-rtp,payload=96,clock-rate=90000 !
-            rtpjitterbuffer !
+            rtpjitterbuffer mode=slave !
             rtph264depay !
             avdec_h264 !
             videoconvert !
@@ -210,11 +229,29 @@ class GstreamerCameraModule(Module):
 
         # Extract timestamp from buffer
         if self.use_sender_timestamps and buffer.pts != Gst.CLOCK_TIME_NONE:
-            # Use the sender's timestamp from the buffer PTS
-            # GStreamer timestamps are in nanoseconds
-            # The PTS represents the presentation timestamp
-            timestamp = (buffer.pts / 1e9) + self.timestamp_offset
-            print(f"Using sender timestamp: {timestamp}")
+            pts_seconds = buffer.pts / 1e9
+
+            # Check if this looks like an absolute timestamp (> year 2020 in seconds)
+            # Absolute timestamps from the sender will be > 1577836800 (Jan 1, 2020)
+            # Relative timestamps from GStreamer pipeline will be small (< 1000000)
+            if pts_seconds > 1577836800:
+                # This is an absolute timestamp from the sender
+                timestamp = pts_seconds + self.timestamp_offset
+                print(f"Using absolute timestamp from sender: {timestamp}")
+            else:
+                # This is a relative timestamp from the pipeline
+                # Use the first frame as a reference point
+                if self.first_pts is None:
+                    # This is the first frame - establish reference
+                    self.first_pts = pts_seconds
+                    self.first_local_time = time.time()
+                    timestamp = self.first_local_time + self.timestamp_offset
+                    print(f"Using relative timestamp from sender, first frame: {timestamp}")
+                else:
+                    # Calculate timestamp based on PTS difference from first frame
+                    pts_delta = pts_seconds - self.first_pts
+                    timestamp = self.first_local_time + pts_delta + self.timestamp_offset
+                    print(f"Using relative timestamp from sender: {timestamp}")
         else:
             # Use local time
             timestamp = time.time() + self.timestamp_offset
