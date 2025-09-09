@@ -10,7 +10,13 @@ import dimos.core.colors as colors
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleBase
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
-from dimos.core.transport import LCMTransport, ZenohTransport, pLCMTransport
+from dimos.core.transport import (
+    LCMTransport,
+    ZenohTransport,
+    pLCMTransport,
+    SHMTransport,
+    pSHMTransport,
+)
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
