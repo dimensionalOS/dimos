@@ -34,7 +34,7 @@ gi.require_version("GstApp", "1.0")
 from gi.repository import Gst, GstApp, GLib
 
 from dimos.core import Module, Out, rpc
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.hardware.gstreamer_camera", level=logging.INFO)
@@ -213,7 +213,7 @@ class GstreamerCameraModule(Module):
             timestamp = time.time()
             image_msg = Image(
                 data=image_array.copy(),  # Make a copy to ensure data persistence
-                format=Image.ImageFormat.BGR,
+                format=ImageFormat.BGR,
                 frame_id=self.frame_id,
                 ts=timestamp,
             )
