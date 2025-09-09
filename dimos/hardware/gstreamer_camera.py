@@ -17,6 +17,7 @@
 import logging
 import sys
 import threading
+import time
 
 import numpy as np
 
@@ -59,6 +60,7 @@ class GstreamerCameraModule(Module):
         port: int = 5000,
         multicast_iface: str = "enp109s0",
         frame_id: str = "camera",
+        use_sender_timestamps: bool = True,
         timestamp_offset: float = 0.0,
         *args,
         **kwargs,
@@ -70,13 +72,18 @@ class GstreamerCameraModule(Module):
             port: UDP port for receiving video
             multicast_iface: Network interface for multicast
             frame_id: Frame ID for the published images
+            use_sender_timestamps: If True, use timestamps from the sender (via RTP/buffer PTS)
             timestamp_offset: Offset to add to timestamps (useful for clock synchronization)
         """
         self.multicast_group = multicast_group
         self.port = port
         self.multicast_iface = multicast_iface
         self.frame_id = frame_id
+        self.use_sender_timestamps = use_sender_timestamps
         self.timestamp_offset = timestamp_offset
+        self.base_time = None  # Will store the pipeline base time
+        self.first_pts = None  # First PTS received, used as reference
+        self.first_local_time = None  # Local time when first PTS was received
 
         self.pipeline = None
         self.appsink = None
@@ -115,6 +122,10 @@ class GstreamerCameraModule(Module):
         if self.main_loop_thread:
             self.main_loop_thread.join(timeout=2.0)
 
+        # Reset timestamp tracking
+        self.first_pts = None
+        self.first_local_time = None
+
         logger.info("GStreamer camera module stopped")
 
     def _create_pipeline(self):
@@ -149,6 +160,9 @@ class GstreamerCameraModule(Module):
         if ret == Gst.StateChangeReturn.FAILURE:
             logger.error("Unable to set the pipeline to playing state")
             raise RuntimeError("Failed to start GStreamer pipeline")
+
+        # Store the pipeline base time for timestamp calculation
+        self.base_time = self.pipeline.get_base_time()
 
         # Run the main loop in a separate thread
         self.main_loop_thread = threading.Thread(target=self._run_main_loop)
@@ -195,8 +209,33 @@ class GstreamerCameraModule(Module):
         height = struct.get_value("height")
 
         # Extract timestamp from buffer
-        pts_seconds = buffer.pts / 1e9
-        timestamp = pts_seconds + self.timestamp_offset
+        if self.use_sender_timestamps and buffer.pts != Gst.CLOCK_TIME_NONE:
+            pts_seconds = buffer.pts / 1e9
+
+            # Check if this looks like an absolute timestamp (> year 2020 in seconds)
+            # Absolute timestamps from the sender will be > 1577836800 (Jan 1, 2020)
+            # Relative timestamps from GStreamer pipeline will be small (< 1000000)
+            if pts_seconds > 1577836800:
+                # This is an absolute timestamp from the sender
+                timestamp = pts_seconds + self.timestamp_offset
+                print(f"Using absolute timestamp from sender: {timestamp}")
+            else:
+                # This is a relative timestamp from the pipeline
+                # Use the first frame as a reference point
+                if self.first_pts is None:
+                    # This is the first frame - establish reference
+                    self.first_pts = pts_seconds
+                    self.first_local_time = time.time()
+                    timestamp = self.first_local_time + self.timestamp_offset
+                    print(f"Using relative timestamp from sender, first frame: {timestamp}")
+                else:
+                    # Calculate timestamp based on PTS difference from first frame
+                    pts_delta = pts_seconds - self.first_pts
+                    timestamp = self.first_local_time + pts_delta + self.timestamp_offset
+                    print(f"Using relative timestamp from sender: {timestamp}")
+        else:
+            # Use local time
+            timestamp = time.time() + self.timestamp_offset
 
         # Map the buffer to access the data
         success, map_info = buffer.map(Gst.MapFlags.READ)
