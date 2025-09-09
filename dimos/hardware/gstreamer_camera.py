@@ -214,6 +214,7 @@ class GstreamerCameraModule(Module):
             # GStreamer timestamps are in nanoseconds
             # The PTS represents the presentation timestamp
             timestamp = (buffer.pts / 1e9) + self.timestamp_offset
+            print(f"Using sender timestamp: {timestamp}")
         else:
             # Use local time
             timestamp = time.time() + self.timestamp_offset
