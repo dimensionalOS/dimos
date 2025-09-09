@@ -16,18 +16,15 @@
 
 import logging
 import os
-import sys
 import time
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Import the GStreamer camera module
 from dimos.hardware.gstreamer_camera import GstreamerCameraModule
 from dimos import core
 from dimos.protocol import pubsub
 from dimos.msgs.sensor_msgs import Image
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 def main():
@@ -61,7 +58,6 @@ def main():
     last_log_time = [time.time()]
 
     def on_frame(msg):
-        """Callback for received frames."""
         frame_count[0] += 1
         current_time = time.time()
 

@@ -18,10 +18,12 @@ import logging
 import sys
 import threading
 import time
-from typing import Optional
 
-import cv2
 import numpy as np
+
+from dimos.core import Module, Out, rpc
+from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.utils.logging_config import setup_logger
 
 # Add system path for gi module if needed
 if "/usr/lib/python3/dist-packages" not in sys.path:
@@ -31,11 +33,7 @@ import gi
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-from gi.repository import Gst, GstApp, GLib
-
-from dimos.core import Module, Out, rpc
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.utils.logging_config import setup_logger
+from gi.repository import Gst, GLib
 
 logger = setup_logger("dimos.hardware.gstreamer_camera", level=logging.INFO)
 
@@ -43,7 +41,20 @@ Gst.init(None)
 
 
 class GstreamerCameraModule(Module):
-    """Module that captures frames from a remote camera using GStreamer and publishes them as LCM Image messages."""
+    """Module that captures frames from a remote camera using GStreamer and publishes them as Image messages.
+
+    To send the video from the server run this:
+
+    ```bash
+    gst-launch-1.0 v4l2src device=/dev/video0 ! \\
+      video/x-raw,width=2560,height=720,format=YUY2,framerate=60/1 ! \\
+      videoconvert ! x264enc tune=zerolatency bitrate=5000 ! \\
+      rtph264pay ! udpsink host=224.0.0.1 port=5000 auto-multicast=true \\
+      multicast-iface=wlo1
+    ```
+
+    Note: change wlo1 with your actual network interface. 
+    """
 
     video: Out[Image] = None
 
@@ -79,7 +90,6 @@ class GstreamerCameraModule(Module):
 
     @rpc
     def start(self):
-        """Start the GStreamer pipeline and begin capturing frames."""
         if self.running:
             logger.warning("GStreamer camera module is already running")
             return
@@ -93,7 +103,6 @@ class GstreamerCameraModule(Module):
 
     @rpc
     def stop(self):
-        """Stop the GStreamer pipeline."""
         if not self.running:
             return
 
@@ -111,8 +120,6 @@ class GstreamerCameraModule(Module):
         logger.info("GStreamer camera module stopped")
 
     def _create_pipeline(self):
-        """Create the GStreamer pipeline for receiving and decoding video."""
-        # Build the pipeline string
         pipeline_str = f"""
             udpsrc multicast-group={self.multicast_group} port={self.port} 
                 multicast-iface={self.multicast_iface} !
@@ -127,17 +134,13 @@ class GstreamerCameraModule(Module):
         try:
             self.pipeline = Gst.parse_launch(pipeline_str)
             self.appsink = self.pipeline.get_by_name("sink")
-
-            # Connect to the new-sample signal
             self.appsink.connect("new-sample", self._on_new_sample)
-
         except Exception as e:
             logger.error(f"Failed to create GStreamer pipeline: {e}")
             raise
 
     def _start_pipeline(self):
         """Start the GStreamer pipeline and main loop."""
-        # Set up the main loop
         self.main_loop = GLib.MainLoop()
 
         # Start the pipeline
@@ -157,7 +160,6 @@ class GstreamerCameraModule(Module):
         bus.connect("message", self._on_bus_message)
 
     def _run_main_loop(self):
-        """Run the GStreamer main loop."""
         try:
             self.main_loop.run()
         except Exception as e:
@@ -184,7 +186,6 @@ class GstreamerCameraModule(Module):
         if sample is None:
             return Gst.FlowReturn.OK
 
-        # Get the buffer
         buffer = sample.get_buffer()
         caps = sample.get_caps()
 
@@ -192,7 +193,6 @@ class GstreamerCameraModule(Module):
         struct = caps.get_structure(0)
         width = struct.get_value("width")
         height = struct.get_value("height")
-        format_str = struct.get_value("format")
 
         # Map the buffer to access the data
         success, map_info = buffer.map(Gst.MapFlags.READ)
@@ -233,44 +233,3 @@ class GstreamerCameraModule(Module):
     def __del__(self):
         """Cleanup when the module is destroyed."""
         self.stop()
-
-
-def main():
-    """Test the GStreamer camera module."""
-    import os
-    from dimos import core
-    from dimos.protocol import pubsub
-
-    # Initialize LCM
-    pubsub.lcm.autoconf()
-
-    # Start dimos
-    dimos = core.start(8)
-
-    # Deploy the GStreamer camera module
-    camera = dimos.deploy(
-        GstreamerCameraModule,
-        multicast_group="224.0.0.1",
-        port=5000,
-        multicast_iface=os.getenv("MULTICAST_IFACE", "enp109s0"),
-        frame_id="zed_camera",
-    )
-
-    # Set up LCM transport for the video output
-    camera.video.transport = core.LCMTransport("/zed/video", Image)
-
-    # Start the camera
-    camera.start()
-
-    logger.info("GStreamer camera module is running. Press Ctrl+C to stop.")
-
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
-        camera.stop()
-
-
-if __name__ == "__main__":
-    main()
