@@ -46,14 +46,17 @@ class GstreamerCameraModule(Module):
     To send the video from the server run this:
 
     ```bash
-    gst-launch-1.0 v4l2src device=/dev/video0 ! \\
+    gst-launch-1.0 v4l2src device=/dev/video0 do-timestamp=true ! \\
       video/x-raw,width=2560,height=720,format=YUY2,framerate=60/1 ! \\
       videoconvert ! x264enc tune=zerolatency bitrate=5000 ! \\
-      rtph264pay ! udpsink host=224.0.0.1 port=5000 auto-multicast=true \\
+      rtph264pay config-interval=1 timestamp-offset=0 ! \\
+      application/x-rtp,clock-rate=90000 ! \\
+      udpsink host=224.0.0.1 port=5000 auto-multicast=true \\
       multicast-iface=wlo1
     ```
 
-    Note: change wlo1 with your actual network interface. 
+    Note: change wlo1 with your actual network interface.
+    The do-timestamp=true ensures timestamps are captured from the source.
     """
 
     video: Out[Image] = None
@@ -64,6 +67,8 @@ class GstreamerCameraModule(Module):
         port: int = 5000,
         multicast_iface: str = "enp109s0",
         frame_id: str = "camera",
+        use_sender_timestamps: bool = True,
+        timestamp_offset: float = 0.0,
         *args,
         **kwargs,
     ):
@@ -74,11 +79,16 @@ class GstreamerCameraModule(Module):
             port: UDP port for receiving video
             multicast_iface: Network interface for multicast
             frame_id: Frame ID for the published images
+            use_sender_timestamps: If True, use timestamps from the sender (via RTP/buffer PTS)
+            timestamp_offset: Offset to add to timestamps (useful for clock synchronization)
         """
         self.multicast_group = multicast_group
         self.port = port
         self.multicast_iface = multicast_iface
         self.frame_id = frame_id
+        self.use_sender_timestamps = use_sender_timestamps
+        self.timestamp_offset = timestamp_offset
+        self.base_time = None  # Will store the pipeline base time
 
         self.pipeline = None
         self.appsink = None
@@ -123,7 +133,8 @@ class GstreamerCameraModule(Module):
         pipeline_str = f"""
             udpsrc multicast-group={self.multicast_group} port={self.port} 
                 multicast-iface={self.multicast_iface} !
-            application/x-rtp,payload=96 !
+            application/x-rtp,payload=96,clock-rate=90000 !
+            rtpjitterbuffer !
             rtph264depay !
             avdec_h264 !
             videoconvert !
@@ -148,6 +159,9 @@ class GstreamerCameraModule(Module):
         if ret == Gst.StateChangeReturn.FAILURE:
             logger.error("Unable to set the pipeline to playing state")
             raise RuntimeError("Failed to start GStreamer pipeline")
+
+        # Store the pipeline base time for timestamp calculation
+        self.base_time = self.pipeline.get_base_time()
 
         # Run the main loop in a separate thread
         self.main_loop_thread = threading.Thread(target=self._run_main_loop)
@@ -194,6 +208,16 @@ class GstreamerCameraModule(Module):
         width = struct.get_value("width")
         height = struct.get_value("height")
 
+        # Extract timestamp from buffer
+        if self.use_sender_timestamps and buffer.pts != Gst.CLOCK_TIME_NONE:
+            # Use the sender's timestamp from the buffer PTS
+            # GStreamer timestamps are in nanoseconds
+            # The PTS represents the presentation timestamp
+            timestamp = (buffer.pts / 1e9) + self.timestamp_offset
+        else:
+            # Use local time
+            timestamp = time.time() + self.timestamp_offset
+
         # Map the buffer to access the data
         success, map_info = buffer.map(Gst.MapFlags.READ)
         if not success:
@@ -209,8 +233,7 @@ class GstreamerCameraModule(Module):
             # For BGR format, we have 3 channels
             image_array = data.reshape((height, width, 3))
 
-            # Create an Image message
-            timestamp = time.time()
+            # Create an Image message with the extracted timestamp
             image_msg = Image(
                 data=image_array.copy(),  # Make a copy to ensure data persistence
                 format=ImageFormat.BGR,
