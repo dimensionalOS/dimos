@@ -96,20 +96,21 @@ class GStreamerVideoSenderWithRTPExt:
         if not buffer:
             return Gst.PadProbeReturn.OK
 
-        # Make buffer writable
-        writable_buffer = buffer.make_writable()
-        if not writable_buffer:
-            logger.error("Failed to make buffer writable")
-            return Gst.PadProbeReturn.OK
-
-        # Replace the buffer in the probe info with the writable one
-        info.set_buffer(writable_buffer)
+        # Check if buffer is writable, if not make a copy
+        if not buffer.is_writable():
+            # Create a writable copy
+            buffer = buffer.copy_deep()
+            if not buffer:
+                logger.error("Failed to create writable buffer copy")
+                return Gst.PadProbeReturn.OK
+            # Replace the buffer in the probe info
+            info.set_buffer(buffer)
 
         current_time = time.time()
 
         # Get the RTP buffer
         rtp_buffer = GstRtp.RTPBuffer()
-        success = rtp_buffer.map(writable_buffer, Gst.MapFlags.WRITE | Gst.MapFlags.READ)
+        success = rtp_buffer.map(buffer, Gst.MapFlags.WRITE | Gst.MapFlags.READ)
 
         if success:
             try:
