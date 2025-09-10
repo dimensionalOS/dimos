@@ -154,7 +154,7 @@ class TCPCameraModule(Module):
             self.appsink.connect("new-sample", self._on_new_sample)
 
             # Set caps on appsrc - let h264parse figure out the format
-            caps = Gst.Caps.from_string("video/x-h264")
+            caps = Gst.Caps.from_string("video/x-h264, stream-format=avc")
             self.appsrc.set_property("caps", caps)
 
             # Add bus watch for debugging
