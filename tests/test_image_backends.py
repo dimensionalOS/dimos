@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import numpy as np
 import pytest
@@ -104,14 +118,17 @@ def test_solve_pnp_parity():
     # Synthetic camera and 3D points
     K = np.array([[400.0, 0.0, 32.0], [0.0, 400.0, 24.0], [0.0, 0.0, 1.0]], dtype=np.float64)
     dist = None
-    obj = np.array([
-        [-0.5, -0.5, 0.0],
-        [0.5, -0.5, 0.0],
-        [0.5, 0.5, 0.0],
-        [-0.5, 0.5, 0.0],
-        [0.0, 0.0, 0.5],
-        [0.0, 0.0, 1.0],
-    ], dtype=np.float32)
+    obj = np.array(
+        [
+            [-0.5, -0.5, 0.0],
+            [0.5, -0.5, 0.0],
+            [0.5, 0.5, 0.0],
+            [-0.5, 0.5, 0.0],
+            [0.0, 0.0, 0.5],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
 
     rvec_true = np.zeros((3, 1), dtype=np.float64)
     tvec_true = np.array([[0.0], [0.0], [2.0]], dtype=np.float64)
@@ -120,7 +137,9 @@ def test_solve_pnp_parity():
 
     # Build images (content irrelevant for solvePnP)
     cpu = Image.from_numpy(np.zeros((48, 64, 3), dtype=np.uint8), format=ImageFormat.BGR)
-    gpu = Image.from_numpy(np.zeros((48, 64, 3), dtype=np.uint8), format=ImageFormat.BGR, to_cuda=True)
+    gpu = Image.from_numpy(
+        np.zeros((48, 64, 3), dtype=np.uint8), format=ImageFormat.BGR, to_cuda=True
+    )
 
     ok_cpu, r_cpu, t_cpu = cpu.solve_pnp(obj, img_pts, K, dist)
     ok_gpu, r_gpu, t_gpu = gpu.solve_pnp(obj, img_pts, K, dist)
@@ -142,11 +161,12 @@ def test_perf_compare_grayscale():
     cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
     gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
     import time
-    t0 = time.perf_counter();
+
+    t0 = time.perf_counter()
     for _ in range(10):
         _ = cpu.to_grayscale()
     cpu_t = time.perf_counter() - t0
-    t0 = time.perf_counter();
+    t0 = time.perf_counter()
     for _ in range(10):
         _ = gpu.to_grayscale()
     gpu_t = time.perf_counter() - t0
@@ -160,11 +180,12 @@ def test_perf_compare_resize():
     cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
     gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
     import time
-    t0 = time.perf_counter();
+
+    t0 = time.perf_counter()
     for _ in range(5):
         _ = cpu.resize(320, 240)
     cpu_t = time.perf_counter() - t0
-    t0 = time.perf_counter();
+    t0 = time.perf_counter()
     for _ in range(5):
         _ = gpu.resize(320, 240)
     gpu_t = time.perf_counter() - t0
@@ -178,11 +199,12 @@ def test_perf_compare_sharpness():
     cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
     gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
     import time
-    t0 = time.perf_counter();
+
+    t0 = time.perf_counter()
     for _ in range(3):
         _ = cpu.sharpness()
     cpu_t = time.perf_counter() - t0
-    t0 = time.perf_counter();
+    t0 = time.perf_counter()
     for _ in range(3):
         _ = gpu.sharpness()
     gpu_t = time.perf_counter() - t0
@@ -201,13 +223,16 @@ def test_perf_compare_solvepnp():
     img_pts, _ = cv2.projectPoints(obj, rvec_true, tvec_true, K, dist)
     img_pts = img_pts.reshape(-1, 2).astype(np.float32)
     cpu = Image.from_numpy(np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR)
-    gpu = Image.from_numpy(np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR, to_cuda=True)
+    gpu = Image.from_numpy(
+        np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR, to_cuda=True
+    )
     import time
-    t0 = time.perf_counter();
+
+    t0 = time.perf_counter()
     for _ in range(5):
         _ = cpu.solve_pnp(obj, img_pts, K, dist)
     cpu_t = time.perf_counter() - t0
-    t0 = time.perf_counter();
+    t0 = time.perf_counter()
     for _ in range(5):
         _ = gpu.solve_pnp(obj, img_pts, K, dist)
     gpu_t = time.perf_counter() - t0
@@ -232,11 +257,12 @@ def test_perf_compare_tracker():
     trk_cpu = cpu1.create_csrt_tracker(bbox0)
     trk_gpu = gpu1.create_csrt_tracker(bbox0)
     import time
-    t0 = time.perf_counter();
+
+    t0 = time.perf_counter()
     for _ in range(10):
         _ = cpu2.csrt_update(trk_cpu)
     cpu_t = time.perf_counter() - t0
-    t0 = time.perf_counter();
+    t0 = time.perf_counter()
     for _ in range(10):
         _ = gpu2.csrt_update(trk_gpu)
     gpu_t = time.perf_counter() - t0
@@ -305,9 +331,13 @@ def test_solve_pnp_ransac_with_outliers_and_distortion():
     img_pts = img_pts.astype(np.float32)
 
     cpu = Image.from_numpy(np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR)
-    gpu = Image.from_numpy(np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR, to_cuda=True)
+    gpu = Image.from_numpy(
+        np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR, to_cuda=True
+    )
 
-    ok_gpu, r_gpu, t_gpu, mask_gpu = gpu.solve_pnp_ransac(obj, img_pts, K, dist, iterations_count=150, reprojection_error=3.0)
+    ok_gpu, r_gpu, t_gpu, mask_gpu = gpu.solve_pnp_ransac(
+        obj, img_pts, K, dist, iterations_count=150, reprojection_error=3.0
+    )
     assert ok_gpu
     inlier_ratio = mask_gpu.mean()
     assert inlier_ratio > 0.7
@@ -337,11 +367,14 @@ def test_solve_pnp_batch_correctness_and_perf():
     img = np.stack(img, axis=0).astype(np.float32)
 
     cpu = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8), format=ImageFormat.BGR)
-    gpu = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8), format=ImageFormat.BGR, to_cuda=True)
+    gpu = Image.from_numpy(
+        np.zeros((10, 10, 3), dtype=np.uint8), format=ImageFormat.BGR, to_cuda=True
+    )
 
     # CPU loop
     import time
-    t0 = time.perf_counter();
+
+    t0 = time.perf_counter()
     r_list = []
     t_list = []
     for b in range(B):
@@ -352,7 +385,7 @@ def test_solve_pnp_batch_correctness_and_perf():
     cpu_t = time.perf_counter() - t0
 
     # CUDA batched
-    t0 = time.perf_counter();
+    t0 = time.perf_counter()
     r_b, t_b = gpu.solve_pnp_batch(obj, img, K)
     gpu_t = time.perf_counter() - t0
     print(f"solvePnP-batch cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s (B={B}, N={N})")
@@ -364,15 +397,19 @@ def test_solve_pnp_batch_correctness_and_perf():
         assert err.mean() < 1e-2
         assert err.max() < 1e-1
 
+
 def test_nvimgcodec_flag_and_fallback(monkeypatch):
     # Force nvimgcodec flag on, then reload Image and ensure fallback works
     monkeypatch.setenv("USE_NVIMGCODEC", "1")
     import importlib as _importlib
-    ImageMod = _importlib.import_module('dimos.msgs.sensor_msgs.Image')
+
+    ImageMod = _importlib.import_module("dimos.msgs.sensor_msgs.Image")
     _importlib.reload(ImageMod)
     # Even if nvimgcodec missing, to_base64 should work (fallback)
     arr = _rand_uint8((32, 32, 3))
-    img = ImageMod.Image.from_numpy(arr, format=ImageMod.ImageFormat.BGR, to_cuda=bool(ImageMod.HAS_CUDA))
+    img = ImageMod.Image.from_numpy(
+        arr, format=ImageMod.ImageFormat.BGR, to_cuda=bool(ImageMod.HAS_CUDA)
+    )
     b64 = img.to_base64()
     assert isinstance(b64, str) and len(b64) > 0
     # Turn flag off and reload
@@ -388,7 +425,8 @@ def test_nvimgcodec_gpu_path(monkeypatch):
     # Enable flag and reload; skip if nvimgcodec not present
     monkeypatch.setenv("USE_NVIMGCODEC", "1")
     import importlib as _importlib
-    ImageMod = _importlib.import_module('dimos.msgs.sensor_msgs.Image')
+
+    ImageMod = _importlib.import_module("dimos.msgs.sensor_msgs.Image")
     _importlib.reload(ImageMod)
     if not ImageMod.HAS_NVIMGCODEC:
         pytest.skip("nvimgcodec library not available")
@@ -398,5 +436,5 @@ def test_nvimgcodec_gpu_path(monkeypatch):
     b64 = img.to_base64()
     assert isinstance(b64, str) and len(b64) > 0
     # Some builds may import nvimgcodec but not support CuPy device buffers; allow skip
-    if not getattr(ImageMod, 'NVIMGCODEC_LAST_USED', False):
+    if not getattr(ImageMod, "NVIMGCODEC_LAST_USED", False):
         pytest.skip("nvimgcodec present but encode fell back to CPU in this environment")
