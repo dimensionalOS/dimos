@@ -15,10 +15,10 @@
 # limitations under the License.
 
 """
-GStreamer TCP sender that preserves absolute timestamps.
+GStreamer TCP sender that embeds absolute timestamps in the stream.
 
-This sender uses TCP transport with GDPPAY serialization to maintain
-exact capture timestamps through the network transmission.
+This sender uses TCP transport and embeds the absolute capture time
+as metadata that can be extracted by the receiver.
 
 Ubuntu dependencies:
     sudo apt install python3-gi python3-gi-cairo gir1.2-gstreamer-1.0 \
@@ -33,6 +33,7 @@ Ubuntu dependencies:
 import argparse
 import logging
 import signal
+import struct
 import sys
 import time
 
@@ -57,7 +58,7 @@ logger = logging.getLogger("gstreamer_tcp_sender")
 
 
 class GStreamerTCPSender:
-    """Send video over TCP with preserved absolute timestamps."""
+    """Send video over TCP with embedded absolute timestamps."""
 
     def __init__(
         self,
@@ -94,11 +95,11 @@ class GStreamerTCPSender:
         self.pipeline = None
         self.videosrc = None
         self.encoder = None
+        self.mux = None
         self.main_loop = None
         self.running = False
         self.start_time = None
         self.frame_count = 0
-        self.system_start_time = time.time()
 
     def create_pipeline(self):
         """Create the GStreamer pipeline with TCP server sink."""
@@ -127,13 +128,15 @@ class GStreamerTCPSender:
         self.encoder = Gst.ElementFactory.make("x264enc", "encoder")
         self.encoder.set_property("tune", "zerolatency")
         self.encoder.set_property("bitrate", self.bitrate)
-        self.encoder.set_property("key-int-max", 30)  # Insert keyframe every 30 frames
+        self.encoder.set_property("key-int-max", 30)
 
-        # H264 parser to ensure proper stream formatting
+        # H264 parser
         h264parse = Gst.ElementFactory.make("h264parse", "parser")
 
-        # GDP payloader - serializes GStreamer buffers with timestamps
-        gdppay = Gst.ElementFactory.make("gdppay", "gdppay")
+        # Use matroskamux which preserves timestamps better
+        self.mux = Gst.ElementFactory.make("matroskamux", "mux")
+        self.mux.set_property("streamable", True)
+        self.mux.set_property("writing-app", "gstreamer-tcp-sender")
 
         # TCP server sink
         tcpserversink = Gst.ElementFactory.make("tcpserversink", "sink")
@@ -147,7 +150,7 @@ class GStreamerTCPSender:
         self.pipeline.add(videoconvert)
         self.pipeline.add(self.encoder)
         self.pipeline.add(h264parse)
-        self.pipeline.add(gdppay)
+        self.pipeline.add(self.mux)
         self.pipeline.add(tcpserversink)
 
         # Link elements
@@ -159,34 +162,40 @@ class GStreamerTCPSender:
             raise RuntimeError("Failed to link videoconvert to encoder")
         if not self.encoder.link(h264parse):
             raise RuntimeError("Failed to link encoder to h264parse")
-        if not h264parse.link(gdppay):
-            raise RuntimeError("Failed to link h264parse to gdppay")
-        if not gdppay.link(tcpserversink):
-            raise RuntimeError("Failed to link gdppay to tcpserversink")
+        if not h264parse.link(self.mux):
+            raise RuntimeError("Failed to link h264parse to mux")
+        if not self.mux.link(tcpserversink):
+            raise RuntimeError("Failed to link mux to tcpserversink")
 
-        # Add probe to track frames
-        encoder_src_pad = self.encoder.get_static_pad("src")
-        encoder_src_pad.add_probe(Gst.PadProbeType.BUFFER, self._on_buffer_probe, None)
+        # Add probe to inject absolute timestamps
+        videoconvert_src_pad = videoconvert.get_static_pad("src")
+        videoconvert_src_pad.add_probe(
+            Gst.PadProbeType.BUFFER, self._inject_absolute_timestamp, None
+        )
 
         # Set up bus message handling
         bus = self.pipeline.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self._on_bus_message)
 
-    def _on_buffer_probe(self, pad, info, user_data):
-        """Probe to track frame timestamps."""
+    def _inject_absolute_timestamp(self, pad, info, user_data):
+        """Inject absolute timestamp into buffer."""
         buffer = info.get_buffer()
         if buffer:
-            # The buffer already has PTS set by do-timestamp=True
-            # This is the absolute timestamp we want to preserve
-            if buffer.pts != Gst.CLOCK_TIME_NONE:
-                self.frame_count += 1
-                if self.frame_count % 30 == 0:  # Log every 30 frames
-                    pts_seconds = buffer.pts / 1e9
-                    elapsed = time.time() - self.system_start_time
-                    logger.debug(
-                        f"Frame {self.frame_count}: PTS={pts_seconds:.3f}s, System elapsed={elapsed:.3f}s"
-                    )
+            # Get the current absolute time when frame was captured
+            absolute_time = time.time()
+
+            # Convert to nanoseconds for GStreamer
+            absolute_time_ns = int(absolute_time * 1e9)
+
+            # Set both PTS and DTS to the absolute time
+            # This will be preserved by matroskamux
+            buffer.pts = absolute_time_ns
+            buffer.dts = absolute_time_ns
+
+            self.frame_count += 1
+            if self.frame_count % 30 == 0:  # Log every 30 frames
+                logger.debug(f"Frame {self.frame_count}: Absolute timestamp={absolute_time:.6f}s")
         return Gst.PadProbeReturn.OK
 
     def _on_bus_message(self, bus, message):
@@ -215,7 +224,7 @@ class GStreamerTCPSender:
             logger.warning("Sender is already running")
             return
 
-        logger.info("Creating TCP pipeline...")
+        logger.info("Creating TCP pipeline with absolute timestamps...")
         self.create_pipeline()
 
         logger.info("Starting pipeline...")
@@ -233,6 +242,7 @@ class GStreamerTCPSender:
         logger.info(f"  Resolution: {self.width}x{self.height} @ {self.framerate}fps")
         logger.info(f"  Bitrate: {self.bitrate} kbps")
         logger.info(f"  TCP Server: {self.host}:{self.port}")
+        logger.info(f"  Container: Matroska (preserves absolute timestamps)")
         logger.info(f"  Waiting for client connections...")
 
         self.main_loop = GLib.MainLoop()
@@ -266,7 +276,7 @@ class GStreamerTCPSender:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="GStreamer TCP video sender with preserved absolute timestamps"
+        description="GStreamer TCP video sender with absolute timestamps"
     )
 
     # Video source options

@@ -41,10 +41,10 @@ Gst.init(None)
 
 
 class GstreamerCameraModule(Module):
-    """Module that captures frames from a remote camera using GStreamer TCP and publishes them as Image messages.
+    """Module that captures frames from a remote camera using GStreamer TCP with absolute timestamps.
 
     This module connects to a TCP server running the gstreamer_sender.py script
-    and receives video with preserved absolute timestamps.
+    and receives video with preserved absolute timestamps from the Matroska container.
 
     To send the video from the server:
 
@@ -117,10 +117,10 @@ class GstreamerCameraModule(Module):
         logger.info("GStreamer camera module stopped")
 
     def _create_pipeline(self):
-        # TCP client source with GDP depayloader to preserve timestamps
+        # TCP client source with Matroska demuxer to extract absolute timestamps
         pipeline_str = f"""
             tcpclientsrc host={self.host} port={self.port} !
-            gdpdepay !
+            matroskademux name=demux !
             h264parse !
             avdec_h264 !
             videoconvert !
@@ -196,14 +196,15 @@ class GstreamerCameraModule(Module):
         height = struct.get_value("height")
 
         # Get the absolute timestamp from the buffer
-        # GDP preserves the original PTS from the sender
+        # Matroska preserves the absolute timestamps we set in the sender
         if buffer.pts != Gst.CLOCK_TIME_NONE:
             # Convert nanoseconds to seconds and add offset
+            # This is the absolute time from when the frame was captured
             timestamp = (buffer.pts / 1e9) + self.timestamp_offset
         else:
-            # Fallback to current time if no PTS
+            # This shouldn't happen with our setup
+            logger.error("No PTS in buffer - Matroska should preserve timestamps!")
             timestamp = time.time() + self.timestamp_offset
-            logger.warning("No PTS in buffer, using current time")
 
         # Map the buffer to access the data
         success, map_info = buffer.map(Gst.MapFlags.READ)
@@ -239,7 +240,7 @@ class GstreamerCameraModule(Module):
                 fps = self.frame_count / (current_time - self.last_log_time)
                 logger.debug(
                     f"Receiving frames - FPS: {fps:.1f}, Resolution: {width}x{height}, "
-                    f"Latest timestamp: {timestamp:.3f}"
+                    f"Absolute timestamp: {timestamp:.6f}"
                 )
                 self.frame_count = 0
                 self.last_log_time = current_time
