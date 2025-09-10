@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import struct
 import sys
 import threading
 import time
@@ -33,23 +34,18 @@ import gi
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-from gi.repository import Gst, GLib
+gi.require_version("GstRtp", "1.0")
+from gi.repository import Gst, GLib, GstRtp
 
-logger = setup_logger("dimos.hardware.gstreamer_camera", level=logging.INFO)
+logger = setup_logger("dimos.hardware.gstreamer_camera_rtp_ext", level=logging.INFO)
 
 Gst.init(None)
 
 
-class GstreamerCameraModule(Module):
-    """Module that captures frames from a remote camera using GStreamer and publishes them as Image messages.
+class GstreamerCameraRTPExtModule(Module):
+    """Module that captures frames from a remote camera using GStreamer with RTP extension timestamps.
 
-    To send the video from the server:
-
-    ```bash
-    python3 gstreamer_sender_with_metadata.py --device /dev/video0 --multicast-iface wlo1
-    ```
-
-    Note: change wlo1 with your actual network interface.
+    This version extracts absolute timestamps from RTP header extensions.
     """
 
     video: Out[Image] = None
@@ -60,7 +56,6 @@ class GstreamerCameraModule(Module):
         port: int = 5000,
         multicast_iface: str = "enp109s0",
         frame_id: str = "camera",
-        use_sender_timestamps: bool = True,
         timestamp_offset: float = 0.0,
         *args,
         **kwargs,
@@ -72,18 +67,14 @@ class GstreamerCameraModule(Module):
             port: UDP port for receiving video
             multicast_iface: Network interface for multicast
             frame_id: Frame ID for the published images
-            use_sender_timestamps: If True, use timestamps from the sender (via RTP/buffer PTS)
             timestamp_offset: Offset to add to timestamps (useful for clock synchronization)
         """
         self.multicast_group = multicast_group
         self.port = port
         self.multicast_iface = multicast_iface
         self.frame_id = frame_id
-        self.use_sender_timestamps = use_sender_timestamps
         self.timestamp_offset = timestamp_offset
-        self.base_time = None  # Will store the pipeline base time
-        self.first_pts = None  # First PTS received, used as reference
-        self.first_local_time = None  # Local time when first PTS was received
+        self.extracted_timestamp = None  # Will store timestamp from RTP extension
 
         self.pipeline = None
         self.appsink = None
@@ -122,21 +113,16 @@ class GstreamerCameraModule(Module):
         if self.main_loop_thread:
             self.main_loop_thread.join(timeout=2.0)
 
-        # Reset timestamp tracking
-        self.first_pts = None
-        self.first_local_time = None
-
         logger.info("GStreamer camera module stopped")
 
     def _create_pipeline(self):
-        # Note: We use do-timestamp=false to preserve timestamps from sender
-        # Add rtponvifparse to extract ONVIF timestamps if available
+        # Build pipeline string
         pipeline_str = f"""
             udpsrc multicast-group={self.multicast_group} port={self.port} 
                 multicast-iface={self.multicast_iface} do-timestamp=false !
             application/x-rtp,payload=96,clock-rate=90000,encoding-name=H264 !
+            identity name=rtp_inspector !
             rtpjitterbuffer do-retransmission=false mode=none !
-            rtponvifparse !
             rtph264depay !
             avdec_h264 !
             videoconvert !
@@ -148,22 +134,68 @@ class GstreamerCameraModule(Module):
             self.pipeline = Gst.parse_launch(pipeline_str)
             self.appsink = self.pipeline.get_by_name("sink")
             self.appsink.connect("new-sample", self._on_new_sample)
+
+            # Get the identity element to inspect RTP packets
+            rtp_inspector = self.pipeline.get_by_name("rtp_inspector")
+            if rtp_inspector:
+                # Add probe to extract RTP header extensions
+                src_pad = rtp_inspector.get_static_pad("src")
+                src_pad.add_probe(Gst.PadProbeType.BUFFER, self._extract_rtp_timestamp, None)
+                logger.info("Added RTP header extension extractor")
+
         except Exception as e:
             logger.error(f"Failed to create GStreamer pipeline: {e}")
             raise
 
+    def _extract_rtp_timestamp(self, pad, info, user_data):
+        """Extract timestamp from RTP header extension."""
+        buffer = info.get_buffer()
+        if buffer:
+            # Try to get RTP buffer
+            rtp_buffer = GstRtp.RTPBuffer()
+            success = rtp_buffer.map(buffer, Gst.MapFlags.READ)
+
+            if success:
+                try:
+                    # Check for one-byte header extensions
+                    extension_count = rtp_buffer.get_extension_onebyte_header_count()
+
+                    for i in range(extension_count):
+                        ext_id, ext_data = rtp_buffer.get_extension_onebyte_header(i)
+
+                        # Extension ID 1 is our timestamp
+                        if ext_id == 1 and len(ext_data) >= 8:
+                            # Unpack NTP timestamp (8 bytes: 4 bytes seconds, 4 bytes fraction)
+                            ntp_seconds, ntp_fraction = struct.unpack(">II", ext_data[:8])
+
+                            # Convert NTP to Unix timestamp
+                            # NTP epoch is January 1, 1900
+                            # Unix epoch is January 1, 1970
+                            # Difference is 2208988800 seconds
+                            unix_timestamp = ntp_seconds - 2208988800
+                            unix_timestamp += ntp_fraction / (2**32)  # Add fractional part
+
+                            self.extracted_timestamp = unix_timestamp
+
+                            if self.frame_count % 30 == 0:
+                                logger.debug(f"Extracted RTP timestamp: {unix_timestamp}")
+                            break
+
+                finally:
+                    rtp_buffer.unmap()
+
+        return Gst.PadProbeReturn.OK
+
     def _start_pipeline(self):
         """Start the GStreamer pipeline and main loop."""
         self.main_loop = GLib.MainLoop()
+        self.frame_count = 0
 
         # Start the pipeline
         ret = self.pipeline.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
             logger.error("Unable to set the pipeline to playing state")
             raise RuntimeError("Failed to start GStreamer pipeline")
-
-        # Store the pipeline base time for timestamp calculation
-        self.base_time = self.pipeline.get_base_time()
 
         # Run the main loop in a separate thread
         self.main_loop_thread = threading.Thread(target=self._run_main_loop)
@@ -203,41 +235,22 @@ class GstreamerCameraModule(Module):
 
         buffer = sample.get_buffer()
         caps = sample.get_caps()
-        print("buffer time", buffer.pts)
 
         # Extract video format information
         struct = caps.get_structure(0)
         width = struct.get_value("width")
         height = struct.get_value("height")
 
-        # Extract timestamp from buffer
-        if self.use_sender_timestamps and buffer.pts != Gst.CLOCK_TIME_NONE:
-            pts_seconds = buffer.pts / 1e9
-
-            # Check if this looks like an absolute timestamp (> year 2020 in seconds)
-            # Absolute timestamps from the sender will be > 1577836800 (Jan 1, 2020)
-            # Relative timestamps from GStreamer pipeline will be small (< 1000000)
-            if pts_seconds > 1577836800:
-                # This is an absolute timestamp from the sender
-                timestamp = pts_seconds + self.timestamp_offset
-                print(f"Using absolute timestamp from sender: {timestamp}")
-            else:
-                # This is a relative timestamp from the pipeline
-                # Use the first frame as a reference point
-                if self.first_pts is None:
-                    # This is the first frame - establish reference
-                    self.first_pts = pts_seconds
-                    self.first_local_time = time.time()
-                    timestamp = self.first_local_time + self.timestamp_offset
-                    print(f"Using relative timestamp from sender, first frame: {timestamp}")
-                else:
-                    # Calculate timestamp based on PTS difference from first frame
-                    pts_delta = pts_seconds - self.first_pts
-                    timestamp = self.first_local_time + pts_delta + self.timestamp_offset
-                    print(f"Using relative timestamp from sender: {timestamp}")
+        # Use timestamp from RTP extension if available
+        if self.extracted_timestamp is not None:
+            timestamp = self.extracted_timestamp + self.timestamp_offset
+            logger.debug(f"Using RTP extension timestamp: {timestamp}")
+            # Clear for next frame
+            self.extracted_timestamp = None
         else:
-            # Use local time
+            # Fall back to local time
             timestamp = time.time() + self.timestamp_offset
+            logger.debug(f"No RTP extension, using local time: {timestamp}")
 
         # Map the buffer to access the data
         success, map_info = buffer.map(Gst.MapFlags.READ)
@@ -247,16 +260,14 @@ class GstreamerCameraModule(Module):
 
         try:
             # Convert buffer data to numpy array
-            # The videoconvert element outputs BGR format
             data = np.frombuffer(map_info.data, dtype=np.uint8)
 
             # Reshape to image dimensions
-            # For BGR format, we have 3 channels
             image_array = data.reshape((height, width, 3))
 
             # Create an Image message with the extracted timestamp
             image_msg = Image(
-                data=image_array.copy(),  # Make a copy to ensure data persistence
+                data=image_array.copy(),
                 format=ImageFormat.BGR,
                 frame_id=self.frame_id,
                 ts=timestamp,
@@ -265,6 +276,7 @@ class GstreamerCameraModule(Module):
             # Publish the image
             if self.video and self.running:
                 self.video.publish(image_msg)
+                self.frame_count += 1
 
         except Exception as e:
             logger.error(f"Error processing frame: {e}")
