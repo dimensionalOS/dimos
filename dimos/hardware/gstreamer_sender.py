@@ -105,7 +105,6 @@ class TCPVideoServer:
                 format={self.format},framerate={self.framerate}/1 !
             videoconvert !
             x264enc tune=zerolatency bitrate={self.bitrate} key-int-max=30 !
-            h264parse !
             appsink name=sink emit-signals=true sync=false max-buffers=1 drop=false
         """
 
