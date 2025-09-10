@@ -50,6 +50,11 @@ from gi.repository import GLib, Gst
 # Initialize GStreamer
 Gst.init(None)
 
+# Suppress common GStreamer warnings
+import os
+
+os.environ["GST_DEBUG"] = "1"  # Only show errors
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"

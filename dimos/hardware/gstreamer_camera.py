@@ -39,6 +39,11 @@ logger = setup_logger("dimos.hardware.gstreamer_camera", level=logging.INFO)
 
 Gst.init(None)
 
+# Suppress common GStreamer warnings
+import os
+
+os.environ["GST_DEBUG"] = "1"  # Only show errors
+
 
 class GstreamerCameraModule(Module):
     """Module that captures frames from a remote camera using GStreamer TCP with absolute timestamps.
