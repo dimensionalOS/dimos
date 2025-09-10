@@ -178,6 +178,7 @@ class TCPCameraModule(Module):
 
                 # Parse header
                 timestamp, frame_size = struct.unpack(HEADER_FORMAT, header_data)
+                print(f"Received header: ts={timestamp:.3f}, size={frame_size}")
 
                 # Receive frame data
                 frame_data = self._receive_exact(frame_size)
@@ -246,6 +247,7 @@ class TCPCameraModule(Module):
 
     def _on_new_sample(self, appsink):
         """Handle decoded video frames."""
+        print("New sample received")
         sample = appsink.emit("pull-sample")
         if sample is None:
             return Gst.FlowReturn.OK
