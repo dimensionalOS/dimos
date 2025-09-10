@@ -131,11 +131,9 @@ class TCPVideoServer:
 
         buffer = sample.get_buffer()
 
-        # Get absolute timestamp
-        if buffer.pts != Gst.CLOCK_TIME_NONE:
-            timestamp = buffer.pts / 1e9  # Convert to seconds
-        else:
-            timestamp = time.time()
+        # Always use current Unix time for absolute timestamps
+        # GStreamer's buffer.pts is relative to pipeline start, not Unix epoch
+        timestamp = time.time()
 
         # Extract H264 data
         success, map_info = buffer.map(Gst.MapFlags.READ)
