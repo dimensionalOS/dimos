@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    """Test the GStreamer camera module."""
-
     # Initialize LCM
     pubsub.lcm.autoconf()
 
