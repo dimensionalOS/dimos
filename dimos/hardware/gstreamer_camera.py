@@ -139,7 +139,7 @@ class TCPCameraModule(Module):
     def _create_pipeline(self):
         """Create GStreamer pipeline for H264 decoding."""
         pipeline_str = """
-            appsrc name=source emit-signals=false is-live=true format=3 !
+            appsrc name=source is-live=true format=3 !
             h264parse !
             avdec_h264 !
             videoconvert !
@@ -191,7 +191,7 @@ class TCPCameraModule(Module):
                 buffer.dts = buffer.pts
 
                 # Push to pipeline
-                ret = self.appsrc.emit("push-buffer", buffer)
+                ret = self.appsrc.push_buffer(buffer)
                 if ret != Gst.FlowReturn.OK:
                     logger.warning(f"Failed to push buffer: {ret}")
 
