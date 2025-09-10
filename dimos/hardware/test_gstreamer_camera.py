@@ -35,16 +35,16 @@ def main():
     logger.info("Starting dimos...")
     dimos = core.start(8)
 
-    # Get network interface from environment or use default
-    multicast_iface = os.getenv("MULTICAST_IFACE", "enp109s0")
+    # Get TCP server host from environment or use default
+    tcp_host = os.getenv("TCP_HOST", "localhost")
+    tcp_port = int(os.getenv("TCP_PORT", "5000"))
 
     # Deploy the GStreamer camera module
-    logger.info(f"Deploying GStreamer camera module (interface: {multicast_iface})...")
+    logger.info(f"Deploying GStreamer TCP camera module (connecting to {tcp_host}:{tcp_port})...")
     camera = dimos.deploy(
         GstreamerCameraModule,
-        multicast_group="224.0.0.1",
-        port=5000,
-        multicast_iface=multicast_iface,
+        host=tcp_host,
+        port=tcp_port,
         frame_id="zed_camera",
     )
 
@@ -54,16 +54,25 @@ def main():
     # Counter for received frames
     frame_count = [0]
     last_log_time = [time.time()]
+    first_timestamp = [None]
 
     def on_frame(msg):
         frame_count[0] += 1
         current_time = time.time()
 
+        # Capture first timestamp to show absolute timestamps are preserved
+        if first_timestamp[0] is None:
+            first_timestamp[0] = msg.ts
+            logger.info(f"First frame absolute timestamp: {msg.ts:.6f}")
+
         # Log stats every 2 seconds
         if current_time - last_log_time[0] >= 2.0:
             fps = frame_count[0] / (current_time - last_log_time[0])
+            timestamp_delta = msg.ts - first_timestamp[0]
             logger.info(
-                f"Received {frame_count[0]} frames - FPS: {fps:.1f} - Resolution: {msg.width}x{msg.height}"
+                f"Received {frame_count[0]} frames - FPS: {fps:.1f} - "
+                f"Resolution: {msg.width}x{msg.height} - "
+                f"Timestamp: {msg.ts:.3f} (delta: {timestamp_delta:.3f}s)"
             )
             frame_count[0] = 0
             last_log_time[0] = current_time
@@ -75,11 +84,14 @@ def main():
     logger.info("Starting GStreamer camera...")
     camera.start()
 
-    logger.info("GStreamer camera module is running. Press Ctrl+C to stop.")
-    logger.info(
-        f"Listening for video on multicast group 224.0.0.1:{5000} on interface {multicast_iface}"
-    )
+    logger.info("GStreamer TCP camera module is running. Press Ctrl+C to stop.")
+    logger.info(f"Connecting to TCP server at {tcp_host}:{tcp_port}")
     logger.info("Publishing frames to LCM topic: /zed/video")
+    logger.info("")
+    logger.info("To start the sender on the camera machine, run:")
+    logger.info(
+        f"  python3 dimos/hardware/gstreamer_sender.py --device /dev/video0 --host 0.0.0.0 --port {tcp_port}"
+    )
 
     try:
         while True:

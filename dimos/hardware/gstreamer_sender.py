@@ -15,10 +15,10 @@
 # limitations under the License.
 
 """
-Enhanced GStreamer sender that embeds absolute timestamps in the H264 stream
-using SEI (Supplemental Enhancement Information) messages.
+GStreamer TCP sender that preserves absolute timestamps.
 
-This allows the receiver to extract the exact capture time of each frame.
+This sender uses TCP transport with GDPPAY serialization to maintain
+exact capture timestamps through the network transmission.
 
 Ubuntu dependencies:
     sudo apt install python3-gi python3-gi-cairo gir1.2-gstreamer-1.0 \
@@ -53,11 +53,11 @@ Gst.init(None)
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger("gstreamer_sender_metadata")
+logger = logging.getLogger("gstreamer_tcp_sender")
 
 
-class GStreamerVideoSenderWithMetadata:
-    """Send video with embedded timestamp metadata."""
+class GStreamerTCPSender:
+    """Send video over TCP with preserved absolute timestamps."""
 
     def __init__(
         self,
@@ -67,12 +67,10 @@ class GStreamerVideoSenderWithMetadata:
         framerate: int = 60,
         format_str: str = "YUY2",
         bitrate: int = 5000,
-        multicast_group: str = "224.0.0.1",
+        host: str = "0.0.0.0",
         port: int = 5000,
-        multicast_iface: str = "wlo1",
-        embed_metadata: bool = True,
     ):
-        """Initialize the GStreamer video sender with metadata support.
+        """Initialize the GStreamer TCP sender.
 
         Args:
             device: Video device path
@@ -81,10 +79,8 @@ class GStreamerVideoSenderWithMetadata:
             framerate: Frame rate in fps
             format_str: Video format
             bitrate: H264 encoding bitrate in kbps
-            multicast_group: Multicast group address
-            port: UDP port for sending
-            multicast_iface: Network interface for multicast
-            embed_metadata: Embed timestamp metadata in stream
+            host: Host to listen on (0.0.0.0 for all interfaces)
+            port: TCP port for listening
         """
         self.device = device
         self.width = width
@@ -92,25 +88,23 @@ class GStreamerVideoSenderWithMetadata:
         self.framerate = framerate
         self.format = format_str
         self.bitrate = bitrate
-        self.multicast_group = multicast_group
+        self.host = host
         self.port = port
-        self.multicast_iface = multicast_iface
-        self.embed_metadata = embed_metadata
 
         self.pipeline = None
         self.videosrc = None
         self.encoder = None
-        self.payloader = None
         self.main_loop = None
         self.running = False
         self.start_time = None
         self.frame_count = 0
+        self.system_start_time = time.time()
 
     def create_pipeline(self):
-        """Create the GStreamer pipeline with metadata injection."""
+        """Create the GStreamer pipeline with TCP server sink."""
 
         # Create pipeline
-        self.pipeline = Gst.Pipeline.new("sender-pipeline")
+        self.pipeline = Gst.Pipeline.new("tcp-sender-pipeline")
 
         # Create elements
         self.videosrc = Gst.ElementFactory.make("v4l2src", "source")
@@ -135,26 +129,26 @@ class GStreamerVideoSenderWithMetadata:
         self.encoder.set_property("bitrate", self.bitrate)
         self.encoder.set_property("key-int-max", 30)  # Insert keyframe every 30 frames
 
-        # RTP payloader
-        self.payloader = Gst.ElementFactory.make("rtph264pay", "payloader")
-        self.payloader.set_property("config-interval", 1)
-        self.payloader.set_property("pt", 96)
+        # H264 parser to ensure proper stream formatting
+        h264parse = Gst.ElementFactory.make("h264parse", "parser")
 
-        # UDP sink
-        udpsink = Gst.ElementFactory.make("udpsink", "sink")
-        udpsink.set_property("host", self.multicast_group)
-        udpsink.set_property("port", self.port)
-        udpsink.set_property("auto-multicast", True)
-        udpsink.set_property("multicast-iface", self.multicast_iface)
-        udpsink.set_property("sync", False)
+        # GDP payloader - serializes GStreamer buffers with timestamps
+        gdppay = Gst.ElementFactory.make("gdppay", "gdppay")
+
+        # TCP server sink
+        tcpserversink = Gst.ElementFactory.make("tcpserversink", "sink")
+        tcpserversink.set_property("host", self.host)
+        tcpserversink.set_property("port", self.port)
+        tcpserversink.set_property("sync", False)
 
         # Add elements to pipeline
         self.pipeline.add(self.videosrc)
         self.pipeline.add(capsfilter)
         self.pipeline.add(videoconvert)
         self.pipeline.add(self.encoder)
-        self.pipeline.add(self.payloader)
-        self.pipeline.add(udpsink)
+        self.pipeline.add(h264parse)
+        self.pipeline.add(gdppay)
+        self.pipeline.add(tcpserversink)
 
         # Link elements
         if not self.videosrc.link(capsfilter):
@@ -162,45 +156,37 @@ class GStreamerVideoSenderWithMetadata:
         if not capsfilter.link(videoconvert):
             raise RuntimeError("Failed to link capsfilter to videoconvert")
         if not videoconvert.link(self.encoder):
-            raise RuntimeError("Failed to link timeoverlay to encoder")
-        if not self.encoder.link(self.payloader):
-            raise RuntimeError("Failed to link encoder to payloader")
-        if not self.payloader.link(udpsink):
-            raise RuntimeError("Failed to link payloader to udpsink")
+            raise RuntimeError("Failed to link videoconvert to encoder")
+        if not self.encoder.link(h264parse):
+            raise RuntimeError("Failed to link encoder to h264parse")
+        if not h264parse.link(gdppay):
+            raise RuntimeError("Failed to link h264parse to gdppay")
+        if not gdppay.link(tcpserversink):
+            raise RuntimeError("Failed to link gdppay to tcpserversink")
 
-        # Add probes for metadata injection
-        if self.embed_metadata:
-            # Add probe before encoder to inject metadata
-            encoder_sink_pad = self.encoder.get_static_pad("sink")
-            encoder_sink_pad.add_probe(
-                Gst.PadProbeType.BUFFER, self._inject_timestamp_metadata, None
-            )
-
-            # Add probe after payloader to modify RTP timestamps
-            payloader_src_pad = self.payloader.get_static_pad("src")
-            payloader_src_pad.add_probe(Gst.PadProbeType.BUFFER, self._modify_rtp_timestamp, None)
+        # Add probe to track frames
+        encoder_src_pad = self.encoder.get_static_pad("src")
+        encoder_src_pad.add_probe(Gst.PadProbeType.BUFFER, self._on_buffer_probe, None)
 
         # Set up bus message handling
         bus = self.pipeline.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self._on_bus_message)
 
-    def _inject_timestamp_metadata(self, pad, info, user_data):
+    def _on_buffer_probe(self, pad, info, user_data):
+        """Probe to track frame timestamps."""
         buffer = info.get_buffer()
         if buffer:
-            current_time = time.time()
-            buffer.pts = int(current_time * 1e9)
-            buffer.dts = buffer.pts
-            self.frame_count += 1
-        return Gst.PadProbeReturn.OK
-
-    def _modify_rtp_timestamp(self, pad, info, user_data):
-        """Modify RTP timestamps to carry absolute time information."""
-        buffer = info.get_buffer()
-        if buffer and buffer.pts != Gst.CLOCK_TIME_NONE:
-            # The buffer PTS now contains our absolute timestamp
-            # We could modify RTP headers here if needed
-            pass
+            # The buffer already has PTS set by do-timestamp=True
+            # This is the absolute timestamp we want to preserve
+            if buffer.pts != Gst.CLOCK_TIME_NONE:
+                self.frame_count += 1
+                if self.frame_count % 30 == 0:  # Log every 30 frames
+                    pts_seconds = buffer.pts / 1e9
+                    elapsed = time.time() - self.system_start_time
+                    logger.debug(
+                        f"Frame {self.frame_count}: PTS={pts_seconds:.3f}s, System elapsed={elapsed:.3f}s"
+                    )
         return Gst.PadProbeReturn.OK
 
     def _on_bus_message(self, bus, message):
@@ -217,13 +203,19 @@ class GStreamerVideoSenderWithMetadata:
         elif t == Gst.MessageType.WARNING:
             warn, debug = message.parse_warning()
             logger.warning(f"Pipeline warning: {warn}, {debug}")
+        elif t == Gst.MessageType.STATE_CHANGED:
+            if message.src == self.pipeline:
+                old_state, new_state, pending_state = message.parse_state_changed()
+                logger.debug(
+                    f"Pipeline state changed: {old_state.value_nick} -> {new_state.value_nick}"
+                )
 
     def start(self):
         if self.running:
             logger.warning("Sender is already running")
             return
 
-        logger.info("Creating pipeline with metadata support...")
+        logger.info("Creating TCP pipeline...")
         self.create_pipeline()
 
         logger.info("Starting pipeline...")
@@ -236,12 +228,12 @@ class GStreamerVideoSenderWithMetadata:
         self.start_time = time.time()
         self.frame_count = 0
 
-        logger.info(f"Video sender with metadata started:")
+        logger.info(f"TCP video sender started:")
         logger.info(f"  Source: {self.device}")
         logger.info(f"  Resolution: {self.width}x{self.height} @ {self.framerate}fps")
         logger.info(f"  Bitrate: {self.bitrate} kbps")
-        logger.info(f"  Multicast: {self.multicast_group}:{self.port} on {self.multicast_iface}")
-        logger.info(f"  Metadata: {'Enabled' if self.embed_metadata else 'Disabled'}")
+        logger.info(f"  TCP Server: {self.host}:{self.port}")
+        logger.info(f"  Waiting for client connections...")
 
         self.main_loop = GLib.MainLoop()
         try:
@@ -269,12 +261,12 @@ class GStreamerVideoSenderWithMetadata:
             avg_fps = self.frame_count / elapsed
             logger.info(f"Total frames sent: {self.frame_count}, Average FPS: {avg_fps:.1f}")
 
-        logger.info("Video sender stopped")
+        logger.info("TCP video sender stopped")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="GStreamer video sender with embedded timestamp metadata"
+        description="GStreamer TCP video sender with preserved absolute timestamps"
     )
 
     # Video source options
@@ -285,7 +277,7 @@ def main():
     # Video format options
     parser.add_argument("--width", type=int, default=2560, help="Video width (default: 2560)")
     parser.add_argument("--height", type=int, default=720, help="Video height (default: 720)")
-    parser.add_argument("--framerate", type=int, default=15, help="Frame rate in fps (default: 60)")
+    parser.add_argument("--framerate", type=int, default=15, help="Frame rate in fps (default: 15)")
     parser.add_argument("--format", default="YUY2", help="Video format (default: YUY2)")
 
     # Encoding options
@@ -295,37 +287,30 @@ def main():
 
     # Network options
     parser.add_argument(
-        "--multicast-group",
-        default="224.0.0.1",
-        help="Multicast group address (default: 224.0.0.1)",
+        "--host",
+        default="0.0.0.0",
+        help="Host to listen on (default: 0.0.0.0 for all interfaces)",
     )
-    parser.add_argument("--port", type=int, default=5000, help="UDP port (default: 5000)")
-    parser.add_argument(
-        "--multicast-iface", default="wlo1", help="Network interface for multicast (default: wlo1)"
-    )
-
-    # Metadata options
-    parser.add_argument(
-        "--no-metadata", action="store_true", help="Disable timestamp metadata embedding"
-    )
+    parser.add_argument("--port", type=int, default=5000, help="TCP port (default: 5000)")
 
     # Logging options
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
     # Create and start sender
-    sender = GStreamerVideoSenderWithMetadata(
+    sender = GStreamerTCPSender(
         device=args.device,
         width=args.width,
         height=args.height,
         framerate=args.framerate,
         format_str=args.format,
         bitrate=args.bitrate,
-        multicast_group=args.multicast_group,
+        host=args.host,
         port=args.port,
-        multicast_iface=args.multicast_iface,
-        embed_metadata=not args.no_metadata,
     )
 
     # Handle signals gracefully

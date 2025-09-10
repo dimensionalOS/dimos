@@ -41,51 +41,49 @@ Gst.init(None)
 
 
 class GstreamerCameraModule(Module):
-    """Module that captures frames from a remote camera using GStreamer and publishes them as Image messages.
+    """Module that captures frames from a remote camera using GStreamer TCP and publishes them as Image messages.
+
+    This module connects to a TCP server running the gstreamer_sender.py script
+    and receives video with preserved absolute timestamps.
 
     To send the video from the server:
 
     ```bash
-    python3 dimos/hardware/gstreamer_sender.py --device /dev/video0 --multicast-iface wlo1
+    python3 dimos/hardware/gstreamer_sender.py --device /dev/video0 --host 0.0.0.0 --port 5000
     ```
-
-    Note: change wlo1 with your actual network interface.
     """
 
     video: Out[Image] = None
 
     def __init__(
         self,
-        multicast_group: str = "224.0.0.1",
+        host: str = "localhost",
         port: int = 5000,
-        multicast_iface: str = "enp109s0",
         frame_id: str = "camera",
         timestamp_offset: float = 0.0,
         *args,
         **kwargs,
     ):
-        """Initialize the GStreamer camera module.
+        """Initialize the GStreamer TCP camera module.
 
         Args:
-            multicast_group: Multicast group address for receiving video
-            port: UDP port for receiving video
-            multicast_iface: Network interface for multicast
+            host: TCP server host to connect to
+            port: TCP server port
             frame_id: Frame ID for the published images
             timestamp_offset: Offset to add to timestamps (useful for clock synchronization)
         """
-        self.multicast_group = multicast_group
+        self.host = host
         self.port = port
-        self.multicast_iface = multicast_iface
         self.frame_id = frame_id
         self.timestamp_offset = timestamp_offset
-        self.first_pts = None  # First PTS received, used as reference
-        self.first_local_time = None  # Local time when first PTS was received
 
         self.pipeline = None
         self.appsink = None
         self.main_loop = None
         self.main_loop_thread = None
         self.running = False
+        self.frame_count = 0
+        self.last_log_time = time.time()
 
         Module.__init__(self, *args, **kwargs)
 
@@ -98,9 +96,7 @@ class GstreamerCameraModule(Module):
         self._create_pipeline()
         self._start_pipeline()
         self.running = True
-        logger.info(
-            f"GStreamer camera module started - receiving from {self.multicast_group}:{self.port} on {self.multicast_iface}"
-        )
+        logger.info(f"GStreamer TCP camera module started - connecting to {self.host}:{self.port}")
 
     @rpc
     def stop(self):
@@ -118,21 +114,14 @@ class GstreamerCameraModule(Module):
         if self.main_loop_thread:
             self.main_loop_thread.join(timeout=2.0)
 
-        # Reset timestamp tracking
-        self.first_pts = None
-        self.first_local_time = None
-
         logger.info("GStreamer camera module stopped")
 
     def _create_pipeline(self):
-        # Note: We add do-timestamp=false to udpsrc to preserve original timestamps
-        # and use-pipeline-clock=false on rtpjitterbuffer to avoid overwriting them
+        # TCP client source with GDP depayloader to preserve timestamps
         pipeline_str = f"""
-            udpsrc multicast-group={self.multicast_group} port={self.port} 
-                multicast-iface={self.multicast_iface} do-timestamp=false !
-            application/x-rtp,payload=96,clock-rate=90000 !
-            rtpjitterbuffer mode=slave !
-            rtph264depay !
+            tcpclientsrc host={self.host} port={self.port} !
+            gdpdepay !
+            h264parse !
             avdec_h264 !
             videoconvert !
             video/x-raw,format=BGR !
@@ -186,6 +175,11 @@ class GstreamerCameraModule(Module):
         elif t == Gst.MessageType.WARNING:
             warn, debug = message.parse_warning()
             logger.warning(f"GStreamer warning: {warn}, {debug}")
+        elif t == Gst.MessageType.STATE_CHANGED:
+            if message.src == self.pipeline:
+                old_state, new_state, pending_state = message.parse_state_changed()
+                if new_state == Gst.State.PLAYING:
+                    logger.info("Pipeline is now playing - connected to TCP server")
 
     def _on_new_sample(self, appsink):
         """Handle new video samples from the appsink."""
@@ -201,17 +195,15 @@ class GstreamerCameraModule(Module):
         width = struct.get_value("width")
         height = struct.get_value("height")
 
-        pts_seconds = buffer.pts / 1e9
-
-        if self.first_pts is None:
-            # This is the first frame - establish reference
-            self.first_pts = pts_seconds
-            self.first_local_time = time.time()
-            timestamp = self.first_local_time + self.timestamp_offset
+        # Get the absolute timestamp from the buffer
+        # GDP preserves the original PTS from the sender
+        if buffer.pts != Gst.CLOCK_TIME_NONE:
+            # Convert nanoseconds to seconds and add offset
+            timestamp = (buffer.pts / 1e9) + self.timestamp_offset
         else:
-            # Calculate timestamp based on PTS difference from first frame
-            pts_delta = pts_seconds - self.first_pts
-            timestamp = self.first_local_time + pts_delta + self.timestamp_offset
+            # Fallback to current time if no PTS
+            timestamp = time.time() + self.timestamp_offset
+            logger.warning("No PTS in buffer, using current time")
 
         # Map the buffer to access the data
         success, map_info = buffer.map(Gst.MapFlags.READ)
@@ -228,7 +220,7 @@ class GstreamerCameraModule(Module):
             # For BGR format, we have 3 channels
             image_array = data.reshape((height, width, 3))
 
-            # Create an Image message with the extracted timestamp
+            # Create an Image message with the absolute timestamp
             image_msg = Image(
                 data=image_array.copy(),  # Make a copy to ensure data persistence
                 format=ImageFormat.BGR,
@@ -239,6 +231,18 @@ class GstreamerCameraModule(Module):
             # Publish the image
             if self.video and self.running:
                 self.video.publish(image_msg)
+
+            # Log statistics periodically
+            self.frame_count += 1
+            current_time = time.time()
+            if current_time - self.last_log_time >= 5.0:
+                fps = self.frame_count / (current_time - self.last_log_time)
+                logger.debug(
+                    f"Receiving frames - FPS: {fps:.1f}, Resolution: {width}x{height}, "
+                    f"Latest timestamp: {timestamp:.3f}"
+                )
+                self.frame_count = 0
+                self.last_log_time = current_time
 
         except Exception as e:
             logger.error(f"Error processing frame: {e}")
