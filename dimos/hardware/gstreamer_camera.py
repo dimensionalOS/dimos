@@ -139,8 +139,7 @@ class TCPCameraModule(Module):
     def _create_pipeline(self):
         """Create GStreamer pipeline for H264 decoding."""
         pipeline_str = """
-            appsrc name=source is-live=true format=3 !
-            video/x-h264,stream-format=byte-stream,alignment=au !
+            appsrc name=source is-live=true format=time stream-type=stream !
             h264parse !
             avdec_h264 !
             videoconvert !
@@ -154,8 +153,8 @@ class TCPCameraModule(Module):
             self.appsink = self.pipeline.get_by_name("sink")
             self.appsink.connect("new-sample", self._on_new_sample)
 
-            # Set caps on appsrc
-            caps = Gst.Caps.from_string("video/x-h264,stream-format=byte-stream,alignment=au")
+            # Set caps on appsrc - let h264parse figure out the format
+            caps = Gst.Caps.from_string("video/x-h264")
             self.appsrc.set_property("caps", caps)
 
             # Add bus watch for debugging
@@ -276,7 +275,7 @@ class TCPCameraModule(Module):
     def _on_new_sample(self, appsink):
         """Handle decoded video frames."""
         print("New sample received")
-        sample = appsink.emit("pull-sample")
+        sample = appsink.pull_sample()
         if sample is None:
             return Gst.FlowReturn.OK
 
