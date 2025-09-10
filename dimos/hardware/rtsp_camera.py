@@ -134,7 +134,6 @@ class RTSPCameraModule(Module):
                 protocols={protocols}
                 buffer-mode=0
                 latency={self.latency}
-                do-timestamp=false
                 ntp-sync=false
                 drop-on-latency=true !
             rtph264depay !
