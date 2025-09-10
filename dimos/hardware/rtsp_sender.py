@@ -140,10 +140,13 @@ class RTSPVideoServer:
 
         # Set pipeline to use system clock for absolute timestamps
         clock = Gst.SystemClock.obtain()
-        pipeline.use_clock(clock)
+        pipeline.set_clock(clock)
 
         # Set base time to 0 to use absolute timestamps
         pipeline.set_base_time(0)
+
+        # Set start time to 0 to preserve absolute timestamps
+        pipeline.set_start_time(0)
 
         logger.debug("Media configured with absolute timestamps")
 
