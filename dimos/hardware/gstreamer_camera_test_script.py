@@ -18,7 +18,7 @@ import logging
 import time
 import argparse
 
-from dimos.hardware.tcp_camera import TCPCameraModule
+from dimos.hardware.gstreamer_camera import TCPCameraModule
 from dimos import core
 from dimos.protocol import pubsub
 from dimos.msgs.sensor_msgs import Image
@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    """Test the TCP camera module with absolute timestamps."""
-
     parser = argparse.ArgumentParser(description="Test TCP camera module with absolute timestamps")
     parser.add_argument("--host", default="localhost", help="TCP server host (default: localhost)")
     parser.add_argument("--port", type=int, default=5555, help="TCP server port (default: 5555)")
