@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import time
@@ -40,8 +54,22 @@ class Image:
         if kwargs.pop("to_gpu", False):
             to_cuda = True
         if to_cuda and HAS_CUDA:
-            return cls(CudaImage(np_image if hasattr(np_image, 'shape') else np.asarray(np_image), format, kwargs.get("frame_id", ""), kwargs.get("ts", time.time())))  # type: ignore
-        return cls(NumpyImage(np.asarray(np_image), format, kwargs.get("frame_id", ""), kwargs.get("ts", time.time())))
+            return cls(
+                CudaImage(
+                    np_image if hasattr(np_image, "shape") else np.asarray(np_image),
+                    format,
+                    kwargs.get("frame_id", ""),
+                    kwargs.get("ts", time.time()),
+                )
+            )  # type: ignore
+        return cls(
+            NumpyImage(
+                np.asarray(np_image),
+                format,
+                kwargs.get("frame_id", ""),
+                kwargs.get("ts", time.time()),
+            )
+        )
 
     @classmethod
     def from_file(
@@ -63,11 +91,17 @@ class Image:
         return cls(CudaImage(arr, detected) if to_cuda and HAS_CUDA else NumpyImage(arr, detected))  # type: ignore
 
     @classmethod
-    def from_depth(cls, depth_data, frame_id: str = "", ts: float = None, to_cuda: bool = False) -> "Image":
+    def from_depth(
+        cls, depth_data, frame_id: str = "", ts: float = None, to_cuda: bool = False
+    ) -> "Image":
         arr = np.asarray(depth_data)
         if arr.dtype != np.float32:
             arr = arr.astype(np.float32)
-        impl = CudaImage(arr, ImageFormat.DEPTH, frame_id, time.time() if ts is None else ts) if to_cuda and HAS_CUDA else NumpyImage(arr, ImageFormat.DEPTH, frame_id, time.time() if ts is None else ts)  # type: ignore
+        impl = (
+            CudaImage(arr, ImageFormat.DEPTH, frame_id, time.time() if ts is None else ts)
+            if to_cuda and HAS_CUDA
+            else NumpyImage(arr, ImageFormat.DEPTH, frame_id, time.time() if ts is None else ts)
+        )  # type: ignore
         return cls(impl)
 
     # Delegation
@@ -117,12 +151,23 @@ class Image:
     def to_cpu(self) -> "Image":
         if isinstance(self._impl, NumpyImage):
             return self.copy()
-        return Image(NumpyImage(np.asarray(self._impl.to_opencv()), self._impl.format, self._impl.frame_id, self._impl.ts))
+        return Image(
+            NumpyImage(
+                np.asarray(self._impl.to_opencv()),
+                self._impl.format,
+                self._impl.frame_id,
+                self._impl.ts,
+            )
+        )
 
     def to_cupy(self) -> "Image":
         if isinstance(self._impl, CudaImage):
             return self.copy()
-        return Image(CudaImage(np.asarray(self._impl.data), self._impl.format, self._impl.frame_id, self._impl.ts))  # type: ignore
+        return Image(
+            CudaImage(
+                np.asarray(self._impl.data), self._impl.format, self._impl.frame_id, self._impl.ts
+            )
+        )  # type: ignore
 
     def to_opencv(self) -> np.ndarray:
         return self._impl.to_opencv()
@@ -187,4 +232,3 @@ HAS_CUDA = HAS_CUDA
 ImageFormat = ImageFormat
 NVIMGCODEC_LAST_USED = NVIMGCODEC_LAST_USED
 HAS_NVIMGCODEC = HAS_NVIMGCODEC
-

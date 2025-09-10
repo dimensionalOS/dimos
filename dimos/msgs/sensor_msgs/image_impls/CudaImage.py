@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import time
@@ -110,7 +124,9 @@ def _rodrigues_from_R_np(R: np.ndarray) -> np.ndarray:
     return rvec.reshape(3, 1).astype(np.float64)
 
 
-def _undistort_points_cuda(img_px: "cp.ndarray", K: "cp.ndarray", dist: "cp.ndarray", iterations: int = 8) -> "cp.ndarray":
+def _undistort_points_cuda(
+    img_px: "cp.ndarray", K: "cp.ndarray", dist: "cp.ndarray", iterations: int = 8
+) -> "cp.ndarray":
     """Iteratively undistort pixel coordinates on device (Brown–Conrady).
 
     Returns pixel coordinates after undistortion (fx*xu+cx, fy*yu+cy).
@@ -179,7 +195,9 @@ class CudaImage(AbstractImage):
         if self.format == ImageFormat.RGBA:
             return self.copy()  # type: ignore
         if self.format == ImageFormat.BGRA:
-            return CudaImage(_bgra_to_rgba_cuda(self.data), ImageFormat.RGBA, self.frame_id, self.ts)
+            return CudaImage(
+                _bgra_to_rgba_cuda(self.data), ImageFormat.RGBA, self.frame_id, self.ts
+            )
         if self.format == ImageFormat.GRAY:
             return CudaImage(_gray_to_rgb_cuda(self.data), ImageFormat.RGB, self.frame_id, self.ts)
         if self.format in (ImageFormat.GRAY16, ImageFormat.DEPTH16):
@@ -193,14 +211,23 @@ class CudaImage(AbstractImage):
         if self.format == ImageFormat.RGB:
             return CudaImage(_rgb_to_bgr_cuda(self.data), ImageFormat.BGR, self.frame_id, self.ts)
         if self.format == ImageFormat.RGBA:
-            return CudaImage(_rgba_to_bgra_cuda(self.data)[..., :3], ImageFormat.BGR, self.frame_id, self.ts)
+            return CudaImage(
+                _rgba_to_bgra_cuda(self.data)[..., :3], ImageFormat.BGR, self.frame_id, self.ts
+            )
         if self.format == ImageFormat.BGRA:
             return CudaImage(self.data[..., :3], ImageFormat.BGR, self.frame_id, self.ts)
         if self.format == ImageFormat.GRAY:
-            return CudaImage(_rgb_to_bgr_cuda(_gray_to_rgb_cuda(self.data)), ImageFormat.BGR, self.frame_id, self.ts)
+            return CudaImage(
+                _rgb_to_bgr_cuda(_gray_to_rgb_cuda(self.data)),
+                ImageFormat.BGR,
+                self.frame_id,
+                self.ts,
+            )
         if self.format == ImageFormat.GRAY16:
             gray8 = (self.data.astype(cp.float32) / 256.0).clip(0, 255).astype(cp.uint8)  # type: ignore
-            return CudaImage(_rgb_to_bgr_cuda(_gray_to_rgb_cuda(gray8)), ImageFormat.BGR, self.frame_id, self.ts)
+            return CudaImage(
+                _rgb_to_bgr_cuda(_gray_to_rgb_cuda(gray8)), ImageFormat.BGR, self.frame_id, self.ts
+            )
         if self.format in (ImageFormat.DEPTH, ImageFormat.DEPTH16):
             return self.copy()  # type: ignore
         return self.copy()  # type: ignore
@@ -209,22 +236,34 @@ class CudaImage(AbstractImage):
         if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH):
             return self.copy()  # type: ignore
         if self.format == ImageFormat.BGR:
-            return CudaImage(_rgb_to_gray_cuda(_bgr_to_rgb_cuda(self.data)), ImageFormat.GRAY, self.frame_id, self.ts)
+            return CudaImage(
+                _rgb_to_gray_cuda(_bgr_to_rgb_cuda(self.data)),
+                ImageFormat.GRAY,
+                self.frame_id,
+                self.ts,
+            )
         if self.format == ImageFormat.RGB:
             return CudaImage(_rgb_to_gray_cuda(self.data), ImageFormat.GRAY, self.frame_id, self.ts)
         if self.format in (ImageFormat.RGBA, ImageFormat.BGRA):
-            rgb = self.data[..., :3] if self.format == ImageFormat.RGBA else _bgra_to_rgba_cuda(self.data)[..., :3]
+            rgb = (
+                self.data[..., :3]
+                if self.format == ImageFormat.RGBA
+                else _bgra_to_rgba_cuda(self.data)[..., :3]
+            )
             return CudaImage(_rgb_to_gray_cuda(rgb), ImageFormat.GRAY, self.frame_id, self.ts)
         raise ValueError(f"Unsupported format: {self.format}")
 
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> "CudaImage":
-        return CudaImage(_resize_bilinear_hwc_cuda(self.data, height, width), self.format, self.frame_id, self.ts)
+        return CudaImage(
+            _resize_bilinear_hwc_cuda(self.data, height, width), self.format, self.frame_id, self.ts
+        )
 
     def sharpness(self) -> float:
         if cp is None:
             return 0.0
         try:
             from cupyx.scipy import ndimage as cndimage  # type: ignore
+
             gray = self.to_grayscale().data.astype(cp.float32)
             deriv5 = cp.asarray([1, 2, 0, -2, -1], dtype=cp.float32)
             smooth5 = cp.asarray([1, 4, 6, 4, 1], dtype=cp.float32)
@@ -280,7 +319,14 @@ class CudaImage(AbstractImage):
         def skew(v):
             vx, vy, vz = v[..., 0], v[..., 1], v[..., 2]
             O = cp.zeros_like(vx)
-            return cp.stack([cp.stack([O, -vz, vy], axis=-1), cp.stack([vz, O, -vx], axis=-1), cp.stack([-vy, vx, O], axis=-1)], axis=-2)
+            return cp.stack(
+                [
+                    cp.stack([O, -vz, vy], axis=-1),
+                    cp.stack([vz, O, -vx], axis=-1),
+                    cp.stack([-vy, vx, O], axis=-1),
+                ],
+                axis=-2,
+            )
 
         def rodrigues(r):
             theta = cp.linalg.norm(r)
@@ -339,7 +385,9 @@ class CudaImage(AbstractImage):
         obj_b = cp.asarray(object_points_batch, dtype=cp.float64)
         img_b = cp.asarray(image_points_batch, dtype=cp.float64)
         if camera_matrix.ndim == 2:
-            K_b = cp.broadcast_to(cp.asarray(camera_matrix, dtype=cp.float64), (obj_b.shape[0], 3, 3))
+            K_b = cp.broadcast_to(
+                cp.asarray(camera_matrix, dtype=cp.float64), (obj_b.shape[0], 3, 3)
+            )
         else:
             K_b = cp.asarray(camera_matrix, dtype=cp.float64)
         if dist_coeffs is not None:
@@ -353,7 +401,14 @@ class CudaImage(AbstractImage):
         def skew_batch(v):
             vx, vy, vz = v[..., 0], v[..., 1], v[..., 2]
             O = cp.zeros_like(vx)
-            return cp.stack([cp.stack([O, -vz, vy], axis=-1), cp.stack([vz, O, -vx], axis=-1), cp.stack([-vy, vx, O], axis=-1)], axis=-2)
+            return cp.stack(
+                [
+                    cp.stack([O, -vz, vy], axis=-1),
+                    cp.stack([vz, O, -vx], axis=-1),
+                    cp.stack([-vy, vx, O], axis=-1),
+                ],
+                axis=-2,
+            )
 
         def rodrigues_batch(r):
             theta = cp.linalg.norm(r, axis=1)
@@ -367,7 +422,7 @@ class CudaImage(AbstractImage):
 
         for _ in range(int(iterations)):
             Rb = rodrigues_batch(rvecs)
-            Xc = cp.einsum('bij,bnj->bni', Rb, obj_b) + tvecs[:, None, :]
+            Xc = cp.einsum("bij,bnj->bni", Rb, obj_b) + tvecs[:, None, :]
             X, Y, Z = Xc[:, :, 0], Xc[:, :, 1], Xc[:, :, 2]
             invZ = 1.0 / cp.clip(Z, 1e-9, None)
             u_hat = fx[:, None] * X * invZ + cx[:, None]
@@ -398,7 +453,7 @@ class CudaImage(AbstractImage):
             r = cp.stack([r_u, r_v], axis=2).reshape(B, -1)
             JT = cp.transpose(J, (0, 2, 1))
             JTJ = cp.matmul(JT, J)
-            JTr = cp.einsum('bji,bi->bj', JT, r)
+            JTr = cp.einsum("bji,bi->bj", JT, r)
             I6 = cp.eye(6, dtype=cp.float64)
             deltas = cp.zeros((B, 6), dtype=cp.float64)
             for b in range(B):
@@ -441,10 +496,19 @@ class CudaImage(AbstractImage):
             fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
             rvec = cp.zeros((3,), dtype=cp.float64)
             tvec = cp.array([0.0, 0.0, 2.0], dtype=cp.float64)
+
             def skew(v):
                 vx, vy, vz = v[..., 0], v[..., 1], v[..., 2]
                 O = cp.zeros_like(vx)
-                return cp.stack([cp.stack([O, -vz, vy], axis=-1), cp.stack([vz, O, -vx], axis=-1), cp.stack([-vy, vx, O], axis=-1)], axis=-2)
+                return cp.stack(
+                    [
+                        cp.stack([O, -vz, vy], axis=-1),
+                        cp.stack([vz, O, -vx], axis=-1),
+                        cp.stack([-vy, vx, O], axis=-1),
+                    ],
+                    axis=-2,
+                )
+
             def rodrigues(r):
                 theta = cp.linalg.norm(r)
                 I = cp.eye(3, dtype=cp.float64)
@@ -454,6 +518,7 @@ class CudaImage(AbstractImage):
                 Kx = skew(k)
                 s, c = cp.sin(theta), cp.cos(theta)
                 return I + s * Kx + (1.0 - c) * (Kx @ Kx)
+
             for _ in range(20):
                 R = rodrigues(rvec)
                 Xc = (obj @ R.T) + tvec
@@ -492,7 +557,7 @@ class CudaImage(AbstractImage):
             rvec, tvec = gn(obj_s, img_s)
             # Score all points
             fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
-            Xc = (obj_all[0] @ (cp.eye(3, dtype=cp.float64) + 0))  # dummy to ensure dtype
+            Xc = obj_all[0] @ (cp.eye(3, dtype=cp.float64) + 0)  # dummy to ensure dtype
             # Project
             R = None
             # Rodrigues for scoring
@@ -501,7 +566,13 @@ class CudaImage(AbstractImage):
                 R = cp.eye(3, dtype=cp.float64)
             else:
                 k = rvec / theta
-                Kx = cp.stack([cp.stack([0*k[0], -k[2], k[1]]), cp.stack([k[2], 0*k[0], -k[0]]), cp.stack([-k[1], k[0], 0*k[0]])])  # not used; simplification skipped
+                Kx = cp.stack(
+                    [
+                        cp.stack([0 * k[0], -k[2], k[1]]),
+                        cp.stack([k[2], 0 * k[0], -k[0]]),
+                        cp.stack([-k[1], k[0], 0 * k[0]]),
+                    ]
+                )  # not used; simplification skipped
                 # Use CPU Rodrigues for robust scoring
                 R = cp.asarray(cv2.Rodrigues(cp.asnumpy(rvec).reshape(3, 1))[0])
             Xc = (obj_all[0] @ R.T) + tvec
@@ -522,11 +593,24 @@ class CudaImage(AbstractImage):
 
         in_idx = cp.nonzero(best_mask)[0]
         rvec, tvec = gn(obj_all[0][in_idx], img_all[0][in_idx])
-        return True, cp.asnumpy(rvec).reshape(3, 1), cp.asnumpy(tvec).reshape(3, 1), cp.asnumpy(best_mask)
+        return (
+            True,
+            cp.asnumpy(rvec).reshape(3, 1),
+            cp.asnumpy(tvec).reshape(3, 1),
+            cp.asnumpy(best_mask),
+        )
 
 
 class _CudaTemplateTracker:
-    def __init__(self, tmpl: "cp.ndarray", scale_step: float = 1.05, lr: float = 0.1, search_radius: int = 16, x0: int = 0, y0: int = 0):
+    def __init__(
+        self,
+        tmpl: "cp.ndarray",
+        scale_step: float = 1.05,
+        lr: float = 0.1,
+        search_radius: int = 16,
+        x0: int = 0,
+        y0: int = 0,
+    ):
         self.tmpl = tmpl.astype(cp.float32)
         self.h, self.w = int(tmpl.shape[0]), int(tmpl.shape[1])
         self.scale_step = float(scale_step)

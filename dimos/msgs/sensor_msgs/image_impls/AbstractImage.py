@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import base64
@@ -23,6 +37,7 @@ NVIMGCODEC_LAST_USED = False
 try:  # pragma: no cover - optional dependency
     if HAS_CUDA and USE_NVIMGCODEC:
         from nvidia import nvimgcodec  # type: ignore
+
         try:
             _enc_probe = nvimgcodec.Encoder()  # type: ignore[attr-defined]
             HAS_NVIMGCODEC = True
@@ -82,13 +97,13 @@ def _encode_nvimgcodec_cuda(bgr_cu, quality: int = 80) -> bytes:  # pragma: no c
         img = nvimgcodec.Image(bgr_cu, nvimgcodec.PixelFormat.BGR)  # type: ignore[attr-defined]
     except Exception:
         img = nvimgcodec.Image(cp.asnumpy(bgr_cu), nvimgcodec.PixelFormat.BGR)  # type: ignore[attr-defined]
-    if hasattr(nvimgcodec, 'EncodeParams'):
+    if hasattr(nvimgcodec, "EncodeParams"):
         params = nvimgcodec.EncodeParams(quality=quality)  # type: ignore[attr-defined]
         bitstreams = encoder.encode([img], [params])
     else:
         bitstreams = encoder.encode([img])
     bs0 = bitstreams[0]
-    if hasattr(bs0, 'buf'):
+    if hasattr(bs0, "buf"):
         return bytes(bs0.buf)
     return bytes(bs0)
 
@@ -145,7 +160,9 @@ class AbstractImage(ABC):
         ...
 
     @abstractmethod
-    def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> "AbstractImage":  # pragma: no cover - abstract
+    def resize(
+        self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR
+    ) -> "AbstractImage":  # pragma: no cover - abstract
         ...
 
     @abstractmethod
@@ -153,7 +170,9 @@ class AbstractImage(ABC):
         ...
 
     def copy(self) -> "AbstractImage":
-        return self.__class__(data=self.data.copy(), format=self.format, frame_id=self.frame_id, ts=self.ts)  # type: ignore
+        return self.__class__(
+            data=self.data.copy(), format=self.format, frame_id=self.frame_id, ts=self.ts
+        )  # type: ignore
 
     def save(self, filepath: str) -> bool:
         global NVIMGCODEC_LAST_USED
@@ -183,8 +202,9 @@ class AbstractImage(ABC):
             except Exception:
                 NVIMGCODEC_LAST_USED = False
         bgr = self.to_bgr()
-        success, buffer = cv2.imencode(".jpg", _to_cpu(bgr.data), [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
+        success, buffer = cv2.imencode(
+            ".jpg", _to_cpu(bgr.data), [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]
+        )
         if not success:
             raise ValueError("Failed to encode image as JPEG")
         return base64.b64encode(buffer.tobytes()).decode("utf-8")
-

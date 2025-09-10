@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import time
@@ -38,7 +52,12 @@ class NumpyImage(AbstractImage):
             return cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
         if self.format == ImageFormat.BGRA:
             return cv2.cvtColor(arr, cv2.COLOR_BGRA2BGR)
-        if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH, ImageFormat.DEPTH16):
+        if self.format in (
+            ImageFormat.GRAY,
+            ImageFormat.GRAY16,
+            ImageFormat.DEPTH,
+            ImageFormat.DEPTH16,
+        ):
             return arr
         raise ValueError(f"Unsupported format: {self.format}")
 
@@ -47,7 +66,9 @@ class NumpyImage(AbstractImage):
             return self.copy()  # type: ignore
         arr = self.data
         if self.format == ImageFormat.BGR:
-            return NumpyImage(cv2.cvtColor(arr, cv2.COLOR_BGR2RGB), ImageFormat.RGB, self.frame_id, self.ts)
+            return NumpyImage(
+                cv2.cvtColor(arr, cv2.COLOR_BGR2RGB), ImageFormat.RGB, self.frame_id, self.ts
+            )
         if self.format == ImageFormat.RGBA:
             return self.copy()  # RGBA contains RGB + alpha
         if self.format == ImageFormat.BGRA:
@@ -64,30 +85,57 @@ class NumpyImage(AbstractImage):
             return self.copy()  # type: ignore
         arr = self.data
         if self.format == ImageFormat.RGB:
-            return NumpyImage(cv2.cvtColor(arr, cv2.COLOR_RGB2BGR), ImageFormat.BGR, self.frame_id, self.ts)
+            return NumpyImage(
+                cv2.cvtColor(arr, cv2.COLOR_RGB2BGR), ImageFormat.BGR, self.frame_id, self.ts
+            )
         if self.format == ImageFormat.RGBA:
-            return NumpyImage(cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR), ImageFormat.BGR, self.frame_id, self.ts)
+            return NumpyImage(
+                cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR), ImageFormat.BGR, self.frame_id, self.ts
+            )
         if self.format == ImageFormat.BGRA:
-            return NumpyImage(cv2.cvtColor(arr, cv2.COLOR_BGRA2BGR), ImageFormat.BGR, self.frame_id, self.ts)
+            return NumpyImage(
+                cv2.cvtColor(arr, cv2.COLOR_BGRA2BGR), ImageFormat.BGR, self.frame_id, self.ts
+            )
         if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH16):
             gray8 = (arr / 256).astype(np.uint8) if self.format != ImageFormat.GRAY else arr
-            return NumpyImage(cv2.cvtColor(gray8, cv2.COLOR_GRAY2BGR), ImageFormat.BGR, self.frame_id, self.ts)
+            return NumpyImage(
+                cv2.cvtColor(gray8, cv2.COLOR_GRAY2BGR), ImageFormat.BGR, self.frame_id, self.ts
+            )
         return self.copy()  # type: ignore
 
     def to_grayscale(self) -> "NumpyImage":
         if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH):
             return self.copy()  # type: ignore
         if self.format == ImageFormat.BGR:
-            return NumpyImage(cv2.cvtColor(self.data, cv2.COLOR_BGR2GRAY), ImageFormat.GRAY, self.frame_id, self.ts)
+            return NumpyImage(
+                cv2.cvtColor(self.data, cv2.COLOR_BGR2GRAY),
+                ImageFormat.GRAY,
+                self.frame_id,
+                self.ts,
+            )
         if self.format == ImageFormat.RGB:
-            return NumpyImage(cv2.cvtColor(self.data, cv2.COLOR_RGB2GRAY), ImageFormat.GRAY, self.frame_id, self.ts)
+            return NumpyImage(
+                cv2.cvtColor(self.data, cv2.COLOR_RGB2GRAY),
+                ImageFormat.GRAY,
+                self.frame_id,
+                self.ts,
+            )
         if self.format in (ImageFormat.RGBA, ImageFormat.BGRA):
             code = cv2.COLOR_RGBA2GRAY if self.format == ImageFormat.RGBA else cv2.COLOR_BGRA2GRAY
-            return NumpyImage(cv2.cvtColor(self.data, code), ImageFormat.GRAY, self.frame_id, self.ts)
+            return NumpyImage(
+                cv2.cvtColor(self.data, code), ImageFormat.GRAY, self.frame_id, self.ts
+            )
         raise ValueError(f"Unsupported format: {self.format}")
 
-    def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> "NumpyImage":
-        return NumpyImage(cv2.resize(self.data, (width, height), interpolation=interpolation), self.format, self.frame_id, self.ts)
+    def resize(
+        self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR
+    ) -> "NumpyImage":
+        return NumpyImage(
+            cv2.resize(self.data, (width, height), interpolation=interpolation),
+            self.format,
+            self.frame_id,
+            self.ts,
+        )
 
     def sharpness(self) -> float:
         gray = self.to_grayscale()
@@ -164,4 +212,3 @@ class NumpyImage(AbstractImage):
         if inliers is not None and len(inliers) > 0:
             mask[inliers.flatten()] = 1
         return bool(ok), rvec.astype(np.float64), tvec.astype(np.float64), mask
-
