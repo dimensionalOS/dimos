@@ -46,7 +46,7 @@ class GstreamerCameraModule(Module):
     To send the video from the server:
 
     ```bash
-    python3 gstreamer_sender_with_metadata.py --device /dev/video0 --multicast-iface wlo1
+    python3 dimos/hardware/gstreamer_sender.py --device /dev/video0 --multicast-iface wlo1
     ```
 
     Note: change wlo1 with your actual network interface.
