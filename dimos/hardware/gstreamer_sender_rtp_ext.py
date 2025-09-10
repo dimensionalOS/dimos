@@ -93,38 +93,51 @@ class GStreamerVideoSenderWithRTPExt:
     def add_rtp_timestamp_extension(self, pad, info, user_data):
         """Add absolute timestamp to RTP header extension."""
         buffer = info.get_buffer()
-        if buffer:
-            current_time = time.time()
+        if not buffer:
+            return Gst.PadProbeReturn.OK
 
-            # Get the RTP buffer
-            rtp_buffer = GstRtp.RTPBuffer()
-            success = rtp_buffer.map(buffer, Gst.MapFlags.WRITE | Gst.MapFlags.READ)
+        # Make buffer writable
+        writable_buffer = buffer.make_writable()
+        if not writable_buffer:
+            logger.error("Failed to make buffer writable")
+            return Gst.PadProbeReturn.OK
 
-            if success:
-                try:
-                    # Convert timestamp to NTP format (seconds since 1900)
-                    # NTP epoch is January 1, 1900
-                    # Unix epoch is January 1, 1970
-                    # Difference is 2208988800 seconds
-                    ntp_timestamp = current_time + 2208988800
+        # Replace the buffer in the probe info with the writable one
+        info.set_buffer(writable_buffer)
 
-                    # NTP timestamp is 64 bits: 32 bits seconds, 32 bits fraction
-                    ntp_seconds = int(ntp_timestamp)
-                    ntp_fraction = int((ntp_timestamp - ntp_seconds) * (2**32))
+        current_time = time.time()
 
-                    # Pack as 8 bytes
-                    timestamp_bytes = struct.pack(">II", ntp_seconds, ntp_fraction)
+        # Get the RTP buffer
+        rtp_buffer = GstRtp.RTPBuffer()
+        success = rtp_buffer.map(writable_buffer, Gst.MapFlags.WRITE | Gst.MapFlags.READ)
 
-                    # Add as RTP header extension
-                    # Extension ID 1 is commonly used for timestamps
-                    rtp_buffer.add_extension_onebyte_header(1, timestamp_bytes)
+        if success:
+            try:
+                # Convert timestamp to NTP format (seconds since 1900)
+                # NTP epoch is January 1, 1900
+                # Unix epoch is January 1, 1970
+                # Difference is 2208988800 seconds
+                ntp_timestamp = current_time + 2208988800
 
-                    self.frame_count += 1
-                    if self.frame_count % 30 == 0:
-                        logger.debug(f"Added RTP extension with timestamp {current_time}")
+                # NTP timestamp is 64 bits: 32 bits seconds, 32 bits fraction
+                ntp_seconds = int(ntp_timestamp)
+                ntp_fraction = int((ntp_timestamp - ntp_seconds) * (2**32))
 
-                finally:
-                    rtp_buffer.unmap()
+                # Pack as 8 bytes
+                timestamp_bytes = struct.pack(">II", ntp_seconds, ntp_fraction)
+
+                # Add as RTP header extension
+                # Extension ID 1 is commonly used for timestamps
+                rtp_buffer.add_extension_onebyte_header(1, timestamp_bytes)
+
+                self.frame_count += 1
+                if self.frame_count % 30 == 0:
+                    logger.debug(f"Added RTP extension with timestamp {current_time}")
+
+            finally:
+                rtp_buffer.unmap()
+        else:
+            logger.error("Failed to map RTP buffer")
 
         return Gst.PadProbeReturn.OK
 
