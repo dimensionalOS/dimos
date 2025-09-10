@@ -140,6 +140,7 @@ class TCPCameraModule(Module):
         """Create GStreamer pipeline for H264 decoding."""
         pipeline_str = """
             appsrc name=source is-live=true format=3 !
+            video/x-h264,stream-format=byte-stream,alignment=au !
             h264parse !
             avdec_h264 !
             videoconvert !
@@ -152,6 +153,15 @@ class TCPCameraModule(Module):
             self.appsrc = self.pipeline.get_by_name("source")
             self.appsink = self.pipeline.get_by_name("sink")
             self.appsink.connect("new-sample", self._on_new_sample)
+
+            # Set caps on appsrc
+            caps = Gst.Caps.from_string("video/x-h264,stream-format=byte-stream,alignment=au")
+            self.appsrc.set_property("caps", caps)
+
+            # Add bus watch for debugging
+            bus = self.pipeline.get_bus()
+            bus.add_signal_watch()
+            bus.connect("message", self._on_bus_message)
         except Exception as e:
             logger.error(f"Failed to create GStreamer pipeline: {e}")
             raise
@@ -192,6 +202,7 @@ class TCPCameraModule(Module):
 
                 # Push to pipeline
                 ret = self.appsrc.push_buffer(buffer)
+                print(f"Push buffer result: {ret}")
                 if ret != Gst.FlowReturn.OK:
                     logger.warning(f"Failed to push buffer: {ret}")
 
@@ -244,6 +255,23 @@ class TCPCameraModule(Module):
                 return None
             data += chunk
         return data
+
+    def _on_bus_message(self, bus, message):
+        """Handle bus messages for debugging."""
+        t = message.type
+        if t == Gst.MessageType.ERROR:
+            err, debug = message.parse_error()
+            logger.error(f"Pipeline error: {err}, {debug}")
+        elif t == Gst.MessageType.WARNING:
+            err, debug = message.parse_warning()
+            logger.warning(f"Pipeline warning: {err}, {debug}")
+        elif t == Gst.MessageType.STATE_CHANGED:
+            if message.src == self.pipeline:
+                old_state, new_state, pending = message.parse_state_changed()
+                print(
+                    f"Pipeline state changed from {old_state.value_nick} to {new_state.value_nick}"
+                )
+        return True
 
     def _on_new_sample(self, appsink):
         """Handle decoded video frames."""
