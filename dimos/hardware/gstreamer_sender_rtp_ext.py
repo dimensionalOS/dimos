@@ -96,24 +96,26 @@ class GStreamerVideoSenderWithRTPExt:
         if not buffer:
             return Gst.PadProbeReturn.OK
 
-        # Check if buffer is writable, if not make a copy
-        if not buffer.is_writable():
-            # Create a writable copy
+        # Try to map the buffer for writing first
+        # If it fails, make a copy
+        rtp_buffer = GstRtp.RTPBuffer()
+        success = rtp_buffer.map(buffer, Gst.MapFlags.WRITE | Gst.MapFlags.READ)
+
+        if not success:
+            # Buffer is not writable, make a copy
             buffer = buffer.copy_deep()
             if not buffer:
                 logger.error("Failed to create writable buffer copy")
                 return Gst.PadProbeReturn.OK
             # Replace the buffer in the probe info
             info.set_buffer(buffer)
-
-        current_time = time.time()
-
-        # Get the RTP buffer
-        rtp_buffer = GstRtp.RTPBuffer()
-        success = rtp_buffer.map(buffer, Gst.MapFlags.WRITE | Gst.MapFlags.READ)
+            # Try mapping again
+            success = rtp_buffer.map(buffer, Gst.MapFlags.WRITE | Gst.MapFlags.READ)
 
         if success:
             try:
+                current_time = time.time()
+
                 # Convert timestamp to NTP format (seconds since 1900)
                 # NTP epoch is January 1, 1900
                 # Unix epoch is January 1, 1970
@@ -138,7 +140,7 @@ class GStreamerVideoSenderWithRTPExt:
             finally:
                 rtp_buffer.unmap()
         else:
-            logger.error("Failed to map RTP buffer")
+            logger.error("Failed to map RTP buffer even after copy")
 
         return Gst.PadProbeReturn.OK
 
