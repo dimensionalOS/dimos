@@ -24,11 +24,10 @@ import logging
 from typing import Optional
 
 from dimos import core
-from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, TwistStamped
+from dimos.core import Module, In, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
-from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
@@ -55,16 +54,12 @@ class G1ConnectionModule(Module):
     """Simplified connection module for G1 - uses WebRTC for control."""
 
     movecmd: In[TwistStamped] = None
-    odom: Out[PoseStamped] = None
     ip: str
     connection_type: str = "webrtc"
-
-    _odom: PoseStamped = None
 
     def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
         self.ip = ip
         self.connection_type = connection_type
-        self.tf = TF()
         self.connection = None
         Module.__init__(self, *args, **kwargs)
 
@@ -73,37 +68,13 @@ class G1ConnectionModule(Module):
         """Start the connection and subscribe to sensor streams."""
         # Use the exact same UnitreeWebRTCConnection as Go2
         self.connection = UnitreeWebRTCConnection(self.ip)
-
-        # Subscribe only to odometry (no video/lidar for G1)
-        self.connection.odom_stream().subscribe(self._publish_tf)
         self.movecmd.subscribe(self.move)
-
-    def _publish_tf(self, msg):
-        """Publish odometry and TF transforms."""
-        self._odom = msg
-        self.odom.publish(msg)
-        self.tf.publish(Transform.from_pose("base_link", msg))
-
-    @rpc
-    def get_odom(self) -> Optional[PoseStamped]:
-        """Get the robot's odometry."""
-        return self._odom
 
     @rpc
     def move(self, twist_stamped: TwistStamped, duration: float = 0.0):
         """Send movement command to robot."""
         twist = Twist(linear=twist_stamped.linear, angular=twist_stamped.angular)
         self.connection.move(twist, duration)
-
-    @rpc
-    def standup(self):
-        """Make the robot stand up."""
-        return self.connection.standup()
-
-    @rpc
-    def liedown(self):
-        """Make the robot lie down."""
-        return self.connection.liedown()
 
     @rpc
     def publish_request(self, topic: str, data: dict):
@@ -123,6 +94,8 @@ class UnitreeG1(Robot):
         recording_path: str = None,
         replay_path: str = None,
         enable_joystick: bool = False,
+        enable_connection: bool = True,
+        enable_ros_bridge: bool = True,
     ):
         """Initialize the G1 robot.
 
@@ -134,6 +107,8 @@ class UnitreeG1(Robot):
             recording_path: Path to save recordings (if recording)
             replay_path: Path to replay recordings from (if replaying)
             enable_joystick: Enable pygame joystick control
+            enable_connection: Enable robot connection module
+            enable_ros_bridge: Enable ROS bridge
         """
         super().__init__()
         self.ip = ip
@@ -141,6 +116,8 @@ class UnitreeG1(Robot):
         self.recording_path = recording_path
         self.replay_path = replay_path
         self.enable_joystick = enable_joystick
+        self.enable_connection = enable_connection
+        self.enable_ros_bridge = enable_ros_bridge
         self.websocket_port = websocket_port
         self.lcm = LCM()
 
@@ -173,13 +150,17 @@ class UnitreeG1(Robot):
         """Start the robot system with all modules."""
         self.dimos = core.start(4)  # 2 workers for connection and visualization
 
-        self._deploy_connection()
+        if self.enable_connection:
+            self._deploy_connection()
+
         self._deploy_visualization()
 
         if self.enable_joystick:
             self._deploy_joystick()
 
-        self._deploy_ros_bridge()
+        if self.enable_ros_bridge:
+            self._deploy_ros_bridge()
+
         self._start_modules()
 
         self.lcm.start()
@@ -192,7 +173,6 @@ class UnitreeG1(Robot):
         self.connection = self.dimos.deploy(G1ConnectionModule, self.ip)
 
         # Configure LCM transports
-        self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", TwistStamped)
 
     def _deploy_camera(self):
@@ -239,8 +219,7 @@ class UnitreeG1(Robot):
         self.websocket_vis = self.dimos.deploy(WebsocketVisModule, port=self.websocket_port)
         self.websocket_vis.movecmd_stamped.transport = core.LCMTransport("/cmd_vel", TwistStamped)
 
-        # Connect to robot pose
-        self.websocket_vis.robot_pose.connect(self.connection.odom)
+        # Note: robot_pose connection removed since odom was removed from G1ConnectionModule
 
         # Deploy Foxglove bridge
         self.foxglove_bridge = FoxgloveBridge()
@@ -267,7 +246,8 @@ class UnitreeG1(Robot):
 
     def _start_modules(self):
         """Start all deployed modules."""
-        self.connection.start()
+        if self.connection:
+            self.connection.start()
         self.websocket_vis.start()
         self.foxglove_bridge.start()
 
@@ -290,7 +270,8 @@ class UnitreeG1(Robot):
 
     def get_odom(self) -> PoseStamped:
         """Get the robot's odometry."""
-        return self.connection.get_odom()
+        # Note: odom functionality removed from G1ConnectionModule
+        return None
 
     def shutdown(self):
         """Shutdown the robot and clean up resources."""
