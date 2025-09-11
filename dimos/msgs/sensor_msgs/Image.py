@@ -304,8 +304,7 @@ NVIMGCODEC_LAST_USED = NVIMGCODEC_LAST_USED
 HAS_NVIMGCODEC = HAS_NVIMGCODEC
 
 
-# Reactive sharpness window (matches prior implementation, adapted to facade Image)
-def sharpness_window(target_frequency: float, source: Observable) -> Observable:
+def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
     """Periodically emit the sharpest Image seen within the sliding window.
 
     Args:
@@ -321,7 +320,7 @@ def sharpness_window(target_frequency: float, source: Observable) -> Observable:
 
     thread_scheduler = ThreadPoolScheduler(max_workers=1)
 
-    def find_best(*_argv):
+    def find_best(*argv):
         if not window._items:
             return None
         return max(window._items, key=lambda x: x.sharpness())
