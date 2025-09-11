@@ -180,14 +180,39 @@ class Image:
     @property
     def data(self):
         return self._impl.data
+    @data.setter
+    def data(self, value) -> None:
+        # Preserve backend semantics: ensure array type matches implementation
+        if isinstance(self._impl, NumpyImage):
+            self._impl.data = np.asarray(value)
+        elif isinstance(self._impl, CudaImage):  # type: ignore
+            if cp is None:
+                raise RuntimeError("CuPy not available to set CUDA image data")
+            self._impl.data = cp.asarray(value)  # type: ignore
+        else:
+            self._impl.data = value
 
     @property
     def format(self) -> ImageFormat:
         return self._impl.format
+    @format.setter
+    def format(self, value) -> None:
+        if isinstance(value, ImageFormat):
+            self._impl.format = value
+        elif isinstance(value, str):
+            try:
+                self._impl.format = ImageFormat[value]
+            except KeyError as e:
+                raise ValueError(f"Invalid ImageFormat: {value}") from e
+        else:
+            raise TypeError("format must be ImageFormat or str name")
 
     @property
     def frame_id(self) -> str:
         return self._impl.frame_id
+    @frame_id.setter
+    def frame_id(self, value: str) -> None:
+        self._impl.frame_id = str(value)
 
     @property
     def ts(self) -> float:
