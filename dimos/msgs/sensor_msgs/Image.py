@@ -180,6 +180,7 @@ class Image:
     @property
     def data(self):
         return self._impl.data
+
     @data.setter
     def data(self, value) -> None:
         # Preserve backend semantics: ensure array type matches implementation
@@ -195,6 +196,7 @@ class Image:
     @property
     def format(self) -> ImageFormat:
         return self._impl.format
+
     @format.setter
     def format(self, value) -> None:
         if isinstance(value, ImageFormat):
@@ -210,6 +212,7 @@ class Image:
     @property
     def frame_id(self) -> str:
         return self._impl.frame_id
+
     @frame_id.setter
     def frame_id(self, value: str) -> None:
         self._impl.frame_id = str(value)
