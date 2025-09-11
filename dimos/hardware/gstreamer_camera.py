@@ -41,8 +41,7 @@ Gst.init(None)
 
 
 class GstreamerCameraModule(Module):
-    """Module that captures frames from a remote camera using GStreamer TCP with absolute timestamps.
-    """
+    """Module that captures frames from a remote camera using GStreamer TCP with absolute timestamps."""
 
     video: Out[Image] = None
 
