@@ -30,6 +30,10 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
 )
 from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
 from dimos.msgs.sensor_msgs.image_impls.CudaImage import CudaImage
+try:
+    import cupy as cp  # type: ignore
+except Exception:
+    cp = None  # type: ignore
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
@@ -42,10 +46,53 @@ from dimos_lcm.std_msgs.Header import Header
 class Image:
     msg_name = "sensor_msgs.Image"
 
-    def __init__(self, impl: AbstractImage):
-        self._impl = impl
-
     # Construction
+    def __init__(
+        self,
+        impl: AbstractImage | None = None,
+        *,
+        data=None,
+        format: ImageFormat | None = None,
+        frame_id: str | None = None,
+        ts: float | None = None,
+    ):
+        """Construct an Image facade.
+
+        Usage:
+        - Image(impl=<AbstractImage>)
+        - Image(data=<ndarray | cupy.ndarray>, format=ImageFormat.BGR, frame_id=str, ts=float)
+
+        Notes:
+        - When constructed from `data`, uses CudaImage if `data` is a CuPy array and CUDA is available; otherwise NumpyImage.
+        - `format` defaults to ImageFormat.BGR; `frame_id` defaults to ""; `ts` defaults to `time.time()`.
+        """
+        # Disallow mixing impl with raw kwargs
+        if impl is not None and any(x is not None for x in (data, format, frame_id, ts)):
+            raise TypeError("Provide either 'impl' or ('data', 'format', 'frame_id', 'ts'), not both")
+
+        if impl is not None:
+            self._impl = impl
+            return
+
+        # Raw constructor path
+        if data is None:
+            raise TypeError("'data' is required when constructing Image without 'impl'")
+        fmt = format if format is not None else ImageFormat.BGR
+        fid = frame_id if frame_id is not None else ""
+        tstamp = ts if ts is not None else time.time()
+
+        # Detect CuPy array without a hard dependency
+        is_cu = False
+        try:
+            import cupy as _cp  # type: ignore
+            is_cu = isinstance(data, _cp.ndarray)
+        except Exception:
+            is_cu = False
+
+        if is_cu and HAS_CUDA:
+            self._impl = CudaImage(data, fmt, fid, tstamp)  # type: ignore
+        else:
+            self._impl = NumpyImage(np.asarray(data), fmt, fid, tstamp)
     @classmethod
     def from_impl(cls, impl: AbstractImage) -> "Image":
         return cls(impl)
