@@ -201,6 +201,13 @@ class GstreamerCameraModule(Module):
             # Convert nanoseconds to seconds and add offset
             # This is the absolute time from when the frame was captured
             timestamp = (buffer.pts / 1e9) + self.timestamp_offset
+
+            # Skip frames with invalid timestamps (before year 2000)
+            # This filters out initial gray frames with relative timestamps
+            year_2000_timestamp = 946684800.0  # January 1, 2000 00:00:00 UTC
+            if timestamp < year_2000_timestamp:
+                logger.debug(f"Skipping frame with invalid timestamp: {timestamp:.6f}")
+                return Gst.FlowReturn.OK
         else:
             # This shouldn't happen with our setup
             logger.error("No PTS in buffer - Matroska should preserve timestamps!")
