@@ -475,6 +475,192 @@ def test_multiple_message_types(bridge):
     assert bridge.lcm.subscribe.call_count == dimos_to_ros_count
 
 
+def test_topic_remapping_ros_to_dimos(bridge):
+    """Test remapping topic names for ROS to DIMOS direction."""
+    ros_topic = "/cmd_vel"
+    dimos_remapped = "/robot/velocity_command"
+
+    bridge.add_topic(
+        ros_topic,
+        Twist,
+        ROSTwist,
+        direction=BridgeDirection.ROS_TO_DIMOS,
+        remap_topic=dimos_remapped,
+    )
+
+    # Verify ROS subscribes to original topic
+    bridge.node.create_subscription.assert_called_once()
+    call_args = bridge.node.create_subscription.call_args
+    assert call_args[0][1] == ros_topic  # ROS side uses original topic
+
+    # Verify bridge metadata contains both names
+    assert ros_topic in bridge._bridges
+    bridge_info = bridge._bridges[ros_topic]
+    assert bridge_info["ros_topic_name"] == ros_topic
+    assert bridge_info["dimos_topic_name"] == dimos_remapped
+    assert bridge_info["dimos_topic"].topic == dimos_remapped
+
+
+def test_topic_remapping_dimos_to_ros(bridge):
+    """Test remapping topic names for DIMOS to ROS direction."""
+    dimos_topic = "/velocity_command"
+    ros_remapped = "/mobile_base/cmd_vel"
+
+    bridge.add_topic(
+        dimos_topic,
+        Twist,
+        ROSTwist,
+        direction=BridgeDirection.DIMOS_TO_ROS,
+        remap_topic=ros_remapped,
+    )
+
+    # Verify ROS publishes to remapped topic
+    bridge.node.create_publisher.assert_called_once_with(ROSTwist, ros_remapped, bridge._qos)
+
+    # Verify DIMOS subscribes to original topic
+    bridge.lcm.subscribe.assert_called_once()
+    dimos_topic_arg = bridge.lcm.subscribe.call_args[0][0]
+    assert dimos_topic_arg.topic == dimos_topic
+
+    # Verify bridge metadata
+    assert dimos_topic in bridge._bridges
+    bridge_info = bridge._bridges[dimos_topic]
+    assert bridge_info["ros_topic_name"] == ros_remapped
+    assert bridge_info["dimos_topic_name"] == dimos_topic
+
+
+def test_remapped_message_flow_ros_to_dimos(bridge):
+    """Test message flow with remapped topics from ROS to DIMOS."""
+    ros_topic = "/ros/cmd_vel"
+    dimos_remapped = "/dimos/velocity"
+
+    bridge.add_topic(
+        ros_topic,
+        Twist,
+        ROSTwist,
+        direction=BridgeDirection.ROS_TO_DIMOS,
+        remap_topic=dimos_remapped,
+    )
+
+    # Get the ROS callback
+    ros_callback = bridge.node.create_subscription.call_args[0][2]
+
+    # Send a ROS message
+    ros_msg = ROSTwist()
+    ros_msg.linear = ROSVector3(x=2.0, y=3.0, z=4.0)
+    ros_msg.angular = ROSVector3(x=0.2, y=0.3, z=0.4)
+
+    ros_callback(ros_msg)
+
+    # Verify DIMOS publishes to remapped topic
+    bridge.lcm.publish.assert_called_once()
+    published_topic, published_msg = bridge.lcm.publish.call_args[0]
+    assert published_topic.topic == dimos_remapped
+    assert isinstance(published_msg, Twist)
+    assert published_msg.linear.x == 2.0
+
+
+def test_remapped_message_flow_dimos_to_ros(bridge):
+    """Test message flow with remapped topics from DIMOS to ROS."""
+    dimos_topic = "/dimos/velocity"
+    ros_remapped = "/ros/cmd_vel"
+
+    bridge.add_topic(
+        dimos_topic,
+        Twist,
+        ROSTwist,
+        direction=BridgeDirection.DIMOS_TO_ROS,
+        remap_topic=ros_remapped,
+    )
+
+    # Get the DIMOS callback
+    dimos_callback = bridge.lcm.subscribe.call_args[0][1]
+
+    # Send a DIMOS message
+    dimos_msg = Twist(linear=Vector3(5.0, 6.0, 7.0), angular=Vector3(0.5, 0.6, 0.7))
+
+    ros_publisher = bridge.node.create_publisher.return_value
+    dimos_callback(dimos_msg, None)
+
+    # Verify ROS publishes to remapped topic
+    ros_publisher.publish.assert_called_once()
+    published_msg = ros_publisher.publish.call_args[0][0]
+    assert isinstance(published_msg, ROSTwist)
+    assert published_msg.linear.x == 5.0
+
+
+def test_multiple_remapped_topics(bridge):
+    """Test multiple topics with remapping."""
+    topic_configs = [
+        # (original_name, dimos_type, ros_type, direction, remap_name)
+        ("/cmd_vel", Twist, ROSTwist, BridgeDirection.ROS_TO_DIMOS, "/robot/velocity"),
+        ("/odom", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS, "/robot/odometry"),
+        ("/path", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS, "/navigation/global_path"),
+        (
+            "/goal",
+            PoseStamped,
+            ROSPoseStamped,
+            BridgeDirection.DIMOS_TO_ROS,
+            "/navigation/goal_pose",
+        ),
+    ]
+
+    for topic, dimos_type, ros_type, direction, remap in topic_configs:
+        bridge.add_topic(topic, dimos_type, ros_type, direction=direction, remap_topic=remap)
+
+    assert len(bridge._bridges) == 4
+
+    # Verify ROS to DIMOS remapping
+    assert bridge._bridges["/cmd_vel"]["dimos_topic_name"] == "/robot/velocity"
+    assert bridge._bridges["/odom"]["dimos_topic_name"] == "/robot/odometry"
+
+    # Verify DIMOS to ROS remapping
+    assert bridge._bridges["/path"]["ros_topic_name"] == "/navigation/global_path"
+    assert bridge._bridges["/goal"]["ros_topic_name"] == "/navigation/goal_pose"
+
+
+def test_no_remapping_when_none(bridge):
+    """Test that topics work normally when remap_topic is None."""
+    topic = "/cmd_vel"
+
+    bridge.add_topic(
+        topic, Twist, ROSTwist, direction=BridgeDirection.ROS_TO_DIMOS, remap_topic=None
+    )
+
+    bridge_info = bridge._bridges[topic]
+    assert bridge_info["ros_topic_name"] == topic
+    assert bridge_info["dimos_topic_name"] == topic
+
+
+def test_stress_remapped_topics(bridge):
+    """Test stress scenario with remapped topics."""
+    num_messages = 100
+    ros_topic = "/ros/high_freq"
+    dimos_remapped = "/dimos/data_stream"
+
+    bridge.add_topic(
+        ros_topic,
+        Twist,
+        ROSTwist,
+        direction=BridgeDirection.ROS_TO_DIMOS,
+        remap_topic=dimos_remapped,
+    )
+
+    ros_callback = bridge.node.create_subscription.call_args[0][2]
+
+    for i in range(num_messages):
+        ros_msg = ROSTwist()
+        ros_msg.linear = ROSVector3(x=float(i), y=float(i * 2), z=float(i * 3))
+        ros_callback(ros_msg)
+
+    assert bridge.lcm.publish.call_count == num_messages
+
+    # Verify all published to remapped topic
+    for call in bridge.lcm.publish.call_args_list:
+        topic, _ = call[0]
+        assert topic.topic == dimos_remapped
+
+
 def test_navigation_stack_topics(bridge):
     """Test common navigation stack topics."""
     nav_topics = [
@@ -654,3 +840,70 @@ def test_autonomous_vehicle_topics(bridge):
 
     assert len(control_topics) == 4  # steering, throttle, brake, planned_trajectory
     assert len(feedback_topics) == 2  # pose, current_path
+
+
+def test_remapping_with_navigation_stack(bridge):
+    """Test remapping with common navigation stack patterns."""
+    # Map ROS2 Nav2 topics to custom DIMOS topics
+    nav_remapping = [
+        ("/cmd_vel", Twist, ROSTwist, BridgeDirection.DIMOS_TO_ROS, "/nav2/cmd_vel"),
+        ("/odom", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS, "/robot/odometry"),
+        ("/global_plan", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS, "/nav2/plan"),
+        ("/local_plan", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS, "/nav2/local_plan"),
+        ("/goal_pose", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS, "/robot/goal"),
+    ]
+
+    for topic, dimos_type, ros_type, direction, remap in nav_remapping:
+        bridge.add_topic(topic, dimos_type, ros_type, direction=direction, remap_topic=remap)
+
+    # Verify DIMOS to ROS remappings
+    assert bridge._bridges["/cmd_vel"]["ros_topic_name"] == "/nav2/cmd_vel"
+    assert bridge._bridges["/global_plan"]["ros_topic_name"] == "/nav2/plan"
+    assert bridge._bridges["/local_plan"]["ros_topic_name"] == "/nav2/local_plan"
+
+    # Verify ROS to DIMOS remappings
+    assert bridge._bridges["/odom"]["dimos_topic_name"] == "/robot/odometry"
+    assert bridge._bridges["/goal_pose"]["dimos_topic_name"] == "/robot/goal"
+
+
+def test_remapping_with_robot_namespace(bridge):
+    """Test remapping for multi-robot systems with namespaces."""
+    robot_id = "robot1"
+
+    # Remap topics to include robot namespace
+    topics_with_namespace = [
+        ("/cmd_vel", Twist, ROSTwist, BridgeDirection.DIMOS_TO_ROS, f"/{robot_id}/cmd_vel"),
+        ("/pose", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS, f"/{robot_id}/pose"),
+        ("/path", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS, f"/{robot_id}/path"),
+    ]
+
+    for topic, dimos_type, ros_type, direction, remap in topics_with_namespace:
+        bridge.add_topic(topic, dimos_type, ros_type, direction=direction, remap_topic=remap)
+
+    # Verify all topics are properly namespaced
+    assert bridge._bridges["/cmd_vel"]["ros_topic_name"] == "/robot1/cmd_vel"
+    assert bridge._bridges["/pose"]["dimos_topic_name"] == "/robot1/pose"
+    assert bridge._bridges["/path"]["ros_topic_name"] == "/robot1/path"
+
+
+def test_remapping_preserves_original_key(bridge):
+    """Test that remapping preserves the original topic name as the key."""
+    original_topic = "/original_topic"
+    remapped_name = "/remapped_topic"
+
+    bridge.add_topic(
+        original_topic,
+        Twist,
+        ROSTwist,
+        direction=BridgeDirection.ROS_TO_DIMOS,
+        remap_topic=remapped_name,
+    )
+
+    # Original topic name should be the key
+    assert original_topic in bridge._bridges
+    assert remapped_name not in bridge._bridges
+
+    # Bridge info should contain both names
+    bridge_info = bridge._bridges[original_topic]
+    assert bridge_info["ros_topic_name"] == original_topic
+    assert bridge_info["dimos_topic_name"] == remapped_name

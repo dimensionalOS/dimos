@@ -77,7 +77,12 @@ class ROSBridge:
             self._executor.shutdown()
 
     def add_topic(
-        self, topic_name: str, dimos_type: Type, ros_type: Type, direction: BridgeDirection
+        self,
+        topic_name: str,
+        dimos_type: Type,
+        ros_type: Type,
+        direction: BridgeDirection,
+        remap_topic: Optional[str] = None,
     ) -> None:
         """Add unidirectional bridging for a topic.
 
@@ -86,13 +91,24 @@ class ROSBridge:
             dimos_type: DIMOS message type (e.g., dimos.msgs.geometry_msgs.Twist)
             ros_type: ROS message type (e.g., geometry_msgs.msg.Twist)
             direction: Direction of bridging (ROS_TO_DIMOS or DIMOS_TO_ROS)
+            remap_topic: Optional remapped topic name for the other side
         """
         if topic_name in self._bridges:
             logger.warning(f"Topic {topic_name} already bridged")
             return
 
+        # Determine actual topic names for each side
+        ros_topic_name = topic_name
+        dimos_topic_name = topic_name
+
+        if remap_topic:
+            if direction == BridgeDirection.ROS_TO_DIMOS:
+                dimos_topic_name = remap_topic
+            else:  # DIMOS_TO_ROS
+                ros_topic_name = remap_topic
+
         # Create DIMOS/LCM topic
-        dimos_topic = Topic(topic_name, dimos_type)
+        dimos_topic = Topic(dimos_topic_name, dimos_type)
 
         ros_subscription = None
         ros_publisher = None
@@ -104,18 +120,18 @@ class ROSBridge:
                 self._ros_to_dimos(msg, dimos_topic, dimos_type, topic_name)
 
             ros_subscription = self.node.create_subscription(
-                ros_type, topic_name, ros_callback, self._qos
+                ros_type, ros_topic_name, ros_callback, self._qos
             )
-            logger.info(f"  ROS → DIMOS: Subscribing to ROS topic {topic_name}")
+            logger.info(f"  ROS → DIMOS: Subscribing to ROS topic {ros_topic_name}")
 
         elif direction == BridgeDirection.DIMOS_TO_ROS:
-            ros_publisher = self.node.create_publisher(ros_type, topic_name, self._qos)
+            ros_publisher = self.node.create_publisher(ros_type, ros_topic_name, self._qos)
 
             def dimos_callback(msg, _topic):
                 self._dimos_to_ros(msg, ros_publisher, topic_name)
 
             dimos_subscription = self.lcm.subscribe(dimos_topic, dimos_callback)
-            logger.info(f"  DIMOS → ROS: Subscribing to DIMOS topic {topic_name}")
+            logger.info(f"  DIMOS → ROS: Subscribing to DIMOS topic {dimos_topic_name}")
         else:
             raise ValueError(f"Invalid bridge direction: {direction}")
 
@@ -127,6 +143,8 @@ class ROSBridge:
             "ros_publisher": ros_publisher,
             "dimos_subscription": dimos_subscription,
             "direction": direction,
+            "ros_topic_name": ros_topic_name,
+            "dimos_topic_name": dimos_topic_name,
         }
 
         direction_str = {
@@ -135,6 +153,8 @@ class ROSBridge:
         }[direction]
 
         logger.info(f"Bridged topic: {topic_name} ({direction_str})")
+        if remap_topic:
+            logger.info(f"  Remapped: ROS '{ros_topic_name}' ↔ DIMOS '{dimos_topic_name}'")
         logger.info(f"  DIMOS type: {dimos_type.__name__}, ROS type: {ros_type.__name__}")
 
     def _ros_to_dimos(
