@@ -401,9 +401,7 @@ class UnitreeGo2(Robot):
 
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
-        self.connection.video.transport = core.pSHMTransport(
-            "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-        )
+        self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
         self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
         self.connection.camera_pose.transport = core.LCMTransport("/go2/camera_pose", PoseStamped)
@@ -478,12 +476,7 @@ class UnitreeGo2(Robot):
         self.websocket_vis.path.connect(self.global_planner.path)
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
 
-        self.foxglove_bridge = FoxgloveBridge(
-            shm_channels=[
-                "/go2/depth_image#sensor_msgs.Image",
-                "/go2/color_image#sensor_msgs.Image",
-            ]
-        )
+        self.foxglove_bridge = FoxgloveBridge()
 
     def _deploy_perception(self):
         """Deploy and configure perception modules."""
@@ -496,10 +489,7 @@ class UnitreeGo2(Robot):
             output_dir=self.spatial_memory_dir,
         )
 
-        color_image_default_capacity = 1920 * 1080 * 4
-        self.spatial_memory_module.video.transport = core.pSHMTransport(
-            "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-        )
+        self.spatial_memory_module.video.transport = core.LCMTransport("/go2/color_image", Image)
         self.spatial_memory_module.odom.transport = core.LCMTransport(
             "/go2/camera_pose", PoseStamped
         )
@@ -531,12 +521,8 @@ class UnitreeGo2(Robot):
         self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
 
         # Set up transports
-        self.depth_module.color_image.transport = core.pSHMTransport(
-            "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-        )
-        self.depth_module.depth_image.transport = core.pSHMTransport(
-            "/go2/depth_image", default_capacity=DEFAULT_CAPACITY_DEPTH_IMAGE
-        )
+        self.depth_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
+        self.depth_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
         self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
 
         logger.info("Camera module deployed and connected")
