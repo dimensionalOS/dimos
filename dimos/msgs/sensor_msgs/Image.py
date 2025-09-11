@@ -30,6 +30,7 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
 )
 from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
 from dimos.msgs.sensor_msgs.image_impls.CudaImage import CudaImage
+
 try:
     import cupy as cp  # type: ignore
 except Exception:
@@ -68,7 +69,9 @@ class Image:
         """
         # Disallow mixing impl with raw kwargs
         if impl is not None and any(x is not None for x in (data, format, frame_id, ts)):
-            raise TypeError("Provide either 'impl' or ('data', 'format', 'frame_id', 'ts'), not both")
+            raise TypeError(
+                "Provide either 'impl' or ('data', 'format', 'frame_id', 'ts'), not both"
+            )
 
         if impl is not None:
             self._impl = impl
@@ -85,6 +88,7 @@ class Image:
         is_cu = False
         try:
             import cupy as _cp  # type: ignore
+
             is_cu = isinstance(data, _cp.ndarray)
         except Exception:
             is_cu = False
@@ -93,6 +97,7 @@ class Image:
             self._impl = CudaImage(data, fmt, fid, tstamp)  # type: ignore
         else:
             self._impl = NumpyImage(np.asarray(data), fmt, fid, tstamp)
+
     @classmethod
     def from_impl(cls, impl: AbstractImage) -> "Image":
         return cls(impl)

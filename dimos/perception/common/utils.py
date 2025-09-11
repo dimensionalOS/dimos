@@ -325,7 +325,8 @@ def project_3d_points_to_2d_cpu(
 
 
 def project_3d_points_to_2d(
-    points_3d: Union[np.ndarray, "cp.ndarray"], camera_intrinsics: Union[List[float], np.ndarray, "cp.ndarray"]
+    points_3d: Union[np.ndarray, "cp.ndarray"],
+    camera_intrinsics: Union[List[float], np.ndarray, "cp.ndarray"],
 ) -> Union[np.ndarray, "cp.ndarray"]:
     """
     Project 3D points to 2D image coordinates using camera intrinsics.
@@ -338,7 +339,11 @@ def project_3d_points_to_2d(
         Nx2 array of 2D image coordinates (u, v)
     """
     if len(points_3d) == 0:
-        return (cp.zeros((0, 2), dtype=cp.int32) if _is_cu_array(points_3d) else np.zeros((0, 2), dtype=np.int32))
+        return (
+            cp.zeros((0, 2), dtype=cp.int32)
+            if _is_cu_array(points_3d)
+            else np.zeros((0, 2), dtype=np.int32)
+        )
 
     # Filter out points with zero or negative depth
     if _is_cu_array(points_3d) or _is_cu_array(camera_intrinsics):
@@ -415,7 +420,11 @@ def project_2d_points_to_3d(
         Nx3 array of 3D points (X, Y, Z)
     """
     if len(points_2d) == 0:
-        return (cp.zeros((0, 3), dtype=cp.float32) if _is_cu_array(points_2d) else np.zeros((0, 3), dtype=np.float32))
+        return (
+            cp.zeros((0, 3), dtype=cp.float32)
+            if _is_cu_array(points_2d)
+            else np.zeros((0, 3), dtype=np.float32)
+        )
 
     # Ensure depth_values is a numpy array
     if _is_cu_array(points_2d) or _is_cu_array(depth_values) or _is_cu_array(camera_intrinsics):
@@ -424,7 +433,9 @@ def project_2d_points_to_3d(
         depths = depth_values if _is_cu_array(depth_values) else xp.asarray(depth_values)
         K = camera_intrinsics if _is_cu_array(camera_intrinsics) else camera_intrinsics
         return project_2d_points_to_3d_cuda(pts, depths, K)  # type: ignore[arg-type]
-    return project_2d_points_to_3d_cpu(np.asarray(points_2d), np.asarray(depth_values), np.asarray(camera_intrinsics))
+    return project_2d_points_to_3d_cpu(
+        np.asarray(points_2d), np.asarray(depth_values), np.asarray(camera_intrinsics)
+    )
 
 
 def colorize_depth(
@@ -494,7 +505,14 @@ def colorize_depth(
             -1,
         )
         cv2.putText(
-            depth_rgb_np, min_text, (padding + 2, padding + text_h + 2), font, font_scale, text_color, thickness, line_type
+            depth_rgb_np,
+            min_text,
+            (padding + 2, padding + text_h + 2),
+            font,
+            font_scale,
+            text_color,
+            thickness,
+            line_type,
         )
 
         max_text = f"Max: {max_depth_actual:.2f}m"
@@ -507,7 +525,14 @@ def colorize_depth(
             -1,
         )
         cv2.putText(
-            depth_rgb_np, max_text, (w - padding - text_w - 2, padding + text_h + 2), font, font_scale, text_color, thickness, line_type
+            depth_rgb_np,
+            max_text,
+            (w - padding - text_w - 2, padding + text_h + 2),
+            font,
+            font_scale,
+            text_color,
+            thickness,
+            line_type,
         )
 
         if center_depth > 0:
@@ -517,8 +542,20 @@ def colorize_depth(
             center_text_y = center_y + text_h // 2
             cross_size = 10
             cross_color = (255, 255, 255)
-            cv2.line(depth_rgb_np, (center_x - cross_size, center_y), (center_x + cross_size, center_y), cross_color, 1)
-            cv2.line(depth_rgb_np, (center_x, center_y - cross_size), (center_x, center_y + cross_size), cross_color, 1)
+            cv2.line(
+                depth_rgb_np,
+                (center_x - cross_size, center_y),
+                (center_x + cross_size, center_y),
+                cross_color,
+                1,
+            )
+            cv2.line(
+                depth_rgb_np,
+                (center_x, center_y - cross_size),
+                (center_x, center_y + cross_size),
+                cross_color,
+                1,
+            )
             cv2.rectangle(
                 depth_rgb_np,
                 (center_text_x - 2, center_text_y - text_h - 2),
@@ -527,7 +564,14 @@ def colorize_depth(
                 -1,
             )
             cv2.putText(
-                depth_rgb_np, center_text, (center_text_x, center_text_y), font, font_scale, text_color, thickness, line_type
+                depth_rgb_np,
+                center_text,
+                (center_text_x, center_text_y),
+                font,
+                font_scale,
+                text_color,
+                thickness,
+                line_type,
             )
 
     return _to_cupy(depth_rgb_np) if was_cu else depth_rgb_np
@@ -634,7 +678,9 @@ def draw_segmentation_mask(
         colored_mask = np.zeros_like(img_np)
         colored_mask[mask_np > 0] = color
         mask_area = mask_np > 0
-        img_np[mask_area] = cv2.addWeighted(img_np[mask_area], 1 - alpha, colored_mask[mask_area], alpha, 0)
+        img_np[mask_area] = cv2.addWeighted(
+            img_np[mask_area], 1 - alpha, colored_mask[mask_area], alpha, 0
+        )
         if draw_contours:
             contours, _ = cv2.findContours(mask_np, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cv2.drawContours(img_np, contours, -1, color, contour_thickness)

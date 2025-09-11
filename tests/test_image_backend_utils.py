@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import numpy as np
 import pytest
 
@@ -30,13 +44,17 @@ def _has_cupy() -> bool:
         return False
 
 
-@pytest.mark.parametrize("shape,fmt", [((64, 64, 3), ImageFormat.BGR), ((64, 64), ImageFormat.GRAY)])
+@pytest.mark.parametrize(
+    "shape,fmt", [((64, 64, 3), ImageFormat.BGR), ((64, 64), ImageFormat.GRAY)]
+)
 def test_rectify_image_cpu(shape, fmt):
     arr = (np.random.rand(*shape) * (255 if fmt != ImageFormat.GRAY else 65535)).astype(
         np.uint8 if fmt != ImageFormat.GRAY else np.uint16
     )
     img = Image(data=arr, format=fmt, frame_id="cam", ts=123.456)
-    K = np.array([[100.0, 0, arr.shape[1] / 2], [0, 100.0, arr.shape[0] / 2], [0, 0, 1]], dtype=np.float64)
+    K = np.array(
+        [[100.0, 0, arr.shape[1] / 2], [0, 100.0, arr.shape[0] / 2], [0, 0, 1]], dtype=np.float64
+    )
     D = np.zeros(5, dtype=np.float64)
     out = rectify_image(img, K, D)
     assert out.shape[:2] == arr.shape[:2]
@@ -48,7 +66,9 @@ def test_rectify_image_cpu(shape, fmt):
 
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
-@pytest.mark.parametrize("shape,fmt", [((32, 32, 3), ImageFormat.BGR), ((32, 32), ImageFormat.GRAY)])
+@pytest.mark.parametrize(
+    "shape,fmt", [((32, 32, 3), ImageFormat.BGR), ((32, 32), ImageFormat.GRAY)]
+)
 def test_rectify_image_gpu_parity(shape, fmt):
     import cupy as cp  # type: ignore
 
@@ -57,7 +77,10 @@ def test_rectify_image_gpu_parity(shape, fmt):
     )
     arr_cu = cp.asarray(arr_np)
     img = Image(data=arr_cu, format=fmt, frame_id="cam", ts=1.23)
-    K = np.array([[80.0, 0, arr_np.shape[1] / 2], [0, 80.0, arr_np.shape[0] / 2], [0, 0, 1.0]], dtype=np.float64)
+    K = np.array(
+        [[80.0, 0, arr_np.shape[1] / 2], [0, 80.0, arr_np.shape[0] / 2], [0, 0, 1.0]],
+        dtype=np.float64,
+    )
     D = np.zeros(5, dtype=np.float64)
     out = rectify_image(img, K, D)
     # Zero distortion parity and backend preservation
@@ -77,11 +100,14 @@ def test_rectify_image_gpu_nonzero_dist_close():
     x = np.linspace(0, 255, W, dtype=np.float32)
     y = np.linspace(0, 255, H, dtype=np.float32)
     xv, yv = np.meshgrid(x, y)
-    arr_np = np.stack([
-        xv.astype(np.uint8),
-        yv.astype(np.uint8),
-        ((xv + yv) / 2).astype(np.uint8),
-    ], axis=2)
+    arr_np = np.stack(
+        [
+            xv.astype(np.uint8),
+            yv.astype(np.uint8),
+            ((xv + yv) / 2).astype(np.uint8),
+        ],
+        axis=2,
+    )
     img_cpu = Image(data=arr_np, format=ImageFormat.BGR, frame_id="cam", ts=0.5)
     img_gpu = Image(data=cp.asarray(arr_np), format=ImageFormat.BGR, frame_id="cam", ts=0.5)
 
@@ -94,7 +120,9 @@ def test_rectify_image_gpu_nonzero_dist_close():
     out_gpu = rectify_image(img_gpu, K, D)
     # Compare within a small tolerance
     # Small numeric differences may remain due to model and casting; keep tight tolerance
-    np.testing.assert_allclose(cp.asnumpy(out_gpu.data).astype(np.int16), out_cpu.data.astype(np.int16), atol=4)
+    np.testing.assert_allclose(
+        cp.asnumpy(out_gpu.data).astype(np.int16), out_cpu.data.astype(np.int16), atol=4
+    )
 
 
 def test_project_roundtrip_cpu():
@@ -151,7 +179,9 @@ def test_project_parity_gpu_cpu_random():
     Z_flat = pts3d_np[:, 2]
     pts3d_cpu = project_2d_points_to_3d(uv_cpu.astype(np.float32), Z_flat.astype(np.float32), K_np)
     pts3d_gpu = project_2d_points_to_3d(
-        cp.asarray(uv_cpu.astype(np.float32)), cp.asarray(Z_flat.astype(np.float32)), cp.asarray(K_np)
+        cp.asarray(uv_cpu.astype(np.float32)),
+        cp.asarray(Z_flat.astype(np.float32)),
+        cp.asarray(K_np),
     )
     assert pts3d_cpu.shape == cp.asnumpy(pts3d_gpu).shape
 
@@ -211,7 +241,9 @@ def test_draw_segmentation_mask_gpu_parity():
     mask_np = np.zeros((20, 30), dtype=np.uint8)
     mask_np[2:12, 3:20] = 1
     out_cpu = draw_segmentation_mask(img_np.copy(), mask_np, color=(100, 50, 200), alpha=0.4)
-    out_gpu = draw_segmentation_mask(cp.asarray(img_np), cp.asarray(mask_np), color=(100, 50, 200), alpha=0.4)
+    out_gpu = draw_segmentation_mask(
+        cp.asarray(img_np), cp.asarray(mask_np), color=(100, 50, 200), alpha=0.4
+    )
     np.testing.assert_array_equal(cp.asnumpy(out_gpu), out_cpu)
 
 
