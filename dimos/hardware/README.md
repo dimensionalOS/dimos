@@ -19,17 +19,17 @@ sudo apt install python3-gi python3-gi-cairo gir1.2-gstreamer-1.0 \
 On sender machine (with the camera):
 
 ```bash
-python3 gstreamer_sender.py --device /dev/video0 --host 0.0.0.0 --port 5000
+python3 dimos/hardware/gstreamer_sender.py --device /dev/video0 --host 0.0.0.0 --port 5000
 ```
 
 If it's a stereo camera and you only want to send the left side (the left camera):
 
 ```bash
-python3 gstreamer_sender.py --device /dev/video0 --host 0.0.0.0 --port 5000 --single-camera
+python3 dimos/hardware/gstreamer_sender.py --device /dev/video0 --host 0.0.0.0 --port 5000 --single-camera
 ```
 
 On receiver machine:
 
 ```bash
-python3 gstreamer_camera_test_script.py --host 10.0.0.227 --port 5000
+python3 dimos/hardware/gstreamer_camera_test_script.py --host 10.0.0.227 --port 5000
 ```
