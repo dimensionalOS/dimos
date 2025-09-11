@@ -208,10 +208,11 @@ class GstreamerCameraModule(Module):
             if timestamp < year_2000_timestamp:
                 logger.debug(f"Skipping frame with invalid timestamp: {timestamp:.6f}")
                 return Gst.FlowReturn.OK
+
         else:
-            # This shouldn't happen with our setup
-            logger.error("No PTS in buffer - Matroska should preserve timestamps!")
-            timestamp = time.time() + self.timestamp_offset
+            return Gst.FlowReturn.OK
+
+        print(f"Frame timestamp: {timestamp:.6f}")
 
         # Map the buffer to access the data
         success, map_info = buffer.map(Gst.MapFlags.READ)

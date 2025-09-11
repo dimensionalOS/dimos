@@ -14,8 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import logging
-import os
 import time
 
 from dimos.hardware.gstreamer_camera import GstreamerCameraModule
@@ -28,6 +28,29 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Test script for GStreamer TCP camera module")
+
+    # Network options
+    parser.add_argument(
+        "--host", default="localhost", help="TCP server host to connect to (default: localhost)"
+    )
+    parser.add_argument("--port", type=int, default=5000, help="TCP server port (default: 5000)")
+
+    # Camera options
+    parser.add_argument(
+        "--frame-id",
+        default="zed_camera",
+        help="Frame ID for published images (default: zed_camera)",
+    )
+
+    # Logging options
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+
+    args = parser.parse_args()
+
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
     # Initialize LCM
     pubsub.lcm.autoconf()
 
@@ -35,17 +58,13 @@ def main():
     logger.info("Starting dimos...")
     dimos = core.start(8)
 
-    # Get TCP server host from environment or use default
-    tcp_host = os.getenv("TCP_HOST", "localhost")
-    tcp_port = int(os.getenv("TCP_PORT", "5000"))
-
     # Deploy the GStreamer camera module
-    logger.info(f"Deploying GStreamer TCP camera module (connecting to {tcp_host}:{tcp_port})...")
+    logger.info(f"Deploying GStreamer TCP camera module (connecting to {args.host}:{args.port})...")
     camera = dimos.deploy(
         GstreamerCameraModule,
-        host=tcp_host,
-        port=tcp_port,
-        frame_id="zed_camera",
+        host=args.host,
+        port=args.port,
+        frame_id=args.frame_id,
     )
 
     # Set up LCM transport for the video output
@@ -85,12 +104,12 @@ def main():
     camera.start()
 
     logger.info("GStreamer TCP camera module is running. Press Ctrl+C to stop.")
-    logger.info(f"Connecting to TCP server at {tcp_host}:{tcp_port}")
+    logger.info(f"Connecting to TCP server at {args.host}:{args.port}")
     logger.info("Publishing frames to LCM topic: /zed/video")
     logger.info("")
     logger.info("To start the sender on the camera machine, run:")
     logger.info(
-        f"  python3 dimos/hardware/gstreamer_sender.py --device /dev/video0 --host 0.0.0.0 --port {tcp_port}"
+        f"  python3 dimos/hardware/gstreamer_sender.py --device /dev/video0 --host 0.0.0.0 --port {args.port}"
     )
 
     try:
