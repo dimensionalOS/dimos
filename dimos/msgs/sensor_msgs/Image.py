@@ -102,7 +102,9 @@ class Image:
         cls, cv_image: np.ndarray, format: ImageFormat = ImageFormat.BGR, **kwargs
     ) -> "Image":
         """Construct from an OpenCV image (NumPy array)."""
-        return cls(NumpyImage(cv_image, format, kwargs.get("frame_id", ""), kwargs.get("ts", time.time())))
+        return cls(
+            NumpyImage(cv_image, format, kwargs.get("frame_id", ""), kwargs.get("ts", time.time()))
+        )
 
     @classmethod
     def from_depth(
@@ -225,7 +227,11 @@ class Image:
             msg.header.stamp.sec = int(now)
             msg.header.stamp.nsec = int((now - int(now)) * 1e9)
 
-        arr = self.to_opencv() if self.format in (ImageFormat.BGR, ImageFormat.RGB, ImageFormat.RGBA, ImageFormat.BGRA) else self.to_opencv()
+        arr = (
+            self.to_opencv()
+            if self.format in (ImageFormat.BGR, ImageFormat.RGB, ImageFormat.RGBA, ImageFormat.BGRA)
+            else self.to_opencv()
+        )
         msg.height = int(arr.shape[0])
         msg.width = int(arr.shape[1])
         msg.encoding = _get_lcm_encoding(self.format, arr.dtype)
@@ -246,7 +252,16 @@ class Image:
             arr = arr.reshape((msg.height, msg.width))
         else:
             arr = arr.reshape((msg.height, msg.width, channels))
-        return cls(NumpyImage(arr, fmt, msg.header.frame_id if hasattr(msg, 'header') else '', msg.header.stamp.sec + msg.header.stamp.nsec / 1e9 if hasattr(msg, 'header') and getattr(msg.header, 'stamp', None) else time.time()))
+        return cls(
+            NumpyImage(
+                arr,
+                fmt,
+                msg.header.frame_id if hasattr(msg, "header") else "",
+                msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
+                if hasattr(msg, "header") and getattr(msg.header, "stamp", None)
+                else time.time(),
+            )
+        )
 
     # PnP wrappers
     def solve_pnp(self, *args, **kwargs):
