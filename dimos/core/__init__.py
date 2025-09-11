@@ -147,7 +147,7 @@ def patchdask(dask_client: Client):
 
     dask_client.deploy = deploy
     dask_client.check_worker_memory = check_worker_memory
-    dask_client.stop = lambda: dask_client.shutdown()
+    dask_client.stop = lambda: dask_client.close()
     return dask_client
 
 
@@ -175,10 +175,3 @@ def start(n: Optional[int] = None, memory_limit: str = "auto") -> Client:
         f"[green]Initialized dimos local cluster with [bright_blue]{n} workers, memory limit: {memory_limit}"
     )
     return patchdask(client)
-
-
-# this needs to go away
-# client.shutdown() is the correct shutdown method
-def stop(client: Client):
-    client.close()
-    client.cluster.close()

@@ -1,0 +1,237 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import queue
+import threading
+import time
+from abc import ABC, abstractmethod, abstractproperty
+from dataclasses import dataclass, field
+from functools import cache
+from typing import Any, Callable, Generic, Optional, Protocol, TypeVar
+
+import cv2
+import numpy as np
+from dimos_lcm.sensor_msgs import CameraInfo
+from reactivex import create
+from reactivex.observable import Observable
+
+from dimos.agents2 import Output, Reducer, Stream, skill
+from dimos.core import Module, Out, rpc
+from dimos.core.module import DaskModule, ModuleConfig
+from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import ImageFormat
+from dimos.protocol.service import Configurable, Service
+from dimos.utils.reactive import backpressure
+
+
+class CameraConfig(Protocol):
+    frame_id_prefix: Optional[str]
+
+
+CameraConfigT = TypeVar("CameraConfigT", bound=CameraConfig)
+
+
+# StereoCamera interface, for cameras that provide standard
+# color, depth, pointcloud, and pose messages
+class ColorCameraHardware(Configurable[CameraConfigT], Generic[CameraConfigT]):
+    @abstractmethod
+    def color_stream(self) -> Observable[Image]:
+        pass
+
+    @abstractproperty
+    def camera_info(self) -> CameraInfo:
+        pass
+
+
+@dataclass
+class WebcamConfig(CameraConfig):
+    camera_index: int = 0
+    frame_width: int = 640
+    frame_height: int = 480
+    frequency: int = 10
+    camera_info: CameraInfo = field(default_factory=CameraInfo)
+    frame_id_prefix: Optional[str] = None
+
+
+class Webcam(ColorCameraHardware[WebcamConfig]):
+    default_config = WebcamConfig
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._capture = None
+        self._capture_thread = None
+        self._stop_event = threading.Event()
+        self._observer = None
+
+    @cache
+    def color_stream(self) -> Observable[Image]:
+        """Create an observable that starts/stops camera on subscription"""
+
+        def subscribe(observer, scheduler=None):
+            # Store the observer so emit() can use it
+            self._observer = observer
+
+            # Start the camera when someone subscribes
+            try:
+                self.start()
+            except Exception as e:
+                observer.on_error(e)
+                return
+
+            # Return a dispose function to stop camera when unsubscribed
+            def dispose():
+                self._observer = None
+                self.stop()
+
+            return dispose
+
+        return backpressure(create(subscribe))
+
+    def start(self):
+        if self._capture_thread and self._capture_thread.is_alive():
+            return
+
+        # Open the video capture
+        self._capture = cv2.VideoCapture(self.config.camera_index)
+        if not self._capture.isOpened():
+            raise RuntimeError(f"Failed to open camera {self.config.camera_index}")
+
+        # Set camera properties
+        self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.frame_width)
+        self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.frame_height)
+
+        # Clear stop event and start the capture thread
+        self._stop_event.clear()
+        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._capture_thread.start()
+
+    @rpc
+    def stop(self):
+        """Stop capturing frames"""
+        # Signal thread to stop
+        self._stop_event.set()
+
+        # Wait for thread to finish
+        if self._capture_thread and self._capture_thread.is_alive():
+            self._capture_thread.join(timeout=(1.0 / self.config.frequency) + 0.1)
+
+        # Release the capture
+        if self._capture:
+            self._capture.release()
+            self._capture = None
+
+    def _frame(self, frame: str):
+        if not self.config.frame_id_prefix:
+            return frame
+        else:
+            return f"{self.config.frame_id_prefix}/{frame}"
+
+    def capture_frame(self) -> Image:
+        # Read frame
+        ret, frame = self._capture.read()
+        if not ret:
+            raise RuntimeError(f"Failed to read frame from camera {self.config.camera_index}")
+
+        # Convert BGR to RGB (OpenCV uses BGR by default)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Create Image message
+        # Using Image.from_numpy() since it's designed for numpy arrays
+        # Setting format to RGB since we converted from BGR->RGB above
+        image = Image.from_numpy(
+            frame_rgb,
+            format=ImageFormat.RGB,  # We converted to RGB above
+            frame_id=self._frame("camera"),  # Standard frame ID for camera images
+            ts=time.time(),  # Current timestamp
+        )
+        return image
+
+    def _capture_loop(self):
+        """Capture frames at the configured frequency"""
+        frame_interval = 1.0 / self.config.frequency
+        next_frame_time = time.time()
+
+        while self._capture and not self._stop_event.is_set():
+            image = self.capture_frame()
+
+            # Emit the image to the observer only if not stopping
+            if self._observer and not self._stop_event.is_set():
+                self._observer.on_next(image)
+
+            # Wait for next frame time or until stopped
+            next_frame_time += frame_interval
+            sleep_time = next_frame_time - time.time()
+            if sleep_time > 0:
+                # Use event.wait so we can be interrupted by stop
+                if self._stop_event.wait(timeout=sleep_time):
+                    break  # Stop was requested
+            else:
+                # We're running behind, reset timing
+                next_frame_time = time.time()
+
+    @property
+    def camera_info(self) -> CameraInfo:
+        """Return the camera info from config"""
+        return self.config.camera_info
+
+    def emit(self, image: Image): ...
+
+    def image_stream(self):
+        return self.image.observable()
+
+
+@dataclass
+class ColorCameraModuleConfig(ModuleConfig):
+    hardware: Callable[[], ColorCameraHardware] | ColorCameraHardware = Webcam
+
+
+class ColorCameraModule(DaskModule):
+    image: Out[Image] = None
+    hardware: ColorCameraHardware = None
+    _module_subscription: Optional[Any] = None  # Subscription disposable
+    _skill_stream: Optional[Observable[Image]] = None
+    default_config = ColorCameraModuleConfig
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    @rpc
+    def start(self):
+        if callable(self.config.hardware):
+            self.hardware = self.config.hardware()
+        else:
+            self.hardware = self.config.hardware
+
+        if self._module_subscription:
+            return "already started"
+        stream = self.hardware.color_stream()
+        self._module_subscription = stream.subscribe(self.image.publish)
+
+    @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
+    def video_stream(self) -> Image:
+        """implicit video stream skill"""
+        _queue = queue.Queue(maxsize=1)
+        self.hardware.color_stream().subscribe(_queue.put)
+
+        for image in iter(_queue.get, None):
+            yield image
+
+    def stop(self):
+        if self._module_subscription:
+            self._module_subscription.dispose()
+            self._module_subscription = None
+        # Also stop the hardware if it has a stop method
+        if self.hardware and hasattr(self.hardware, "stop"):
+            self.hardware.stop()
+        super().stop()
