@@ -42,6 +42,12 @@ def main():
         default="zed_camera",
         help="Frame ID for published images (default: zed_camera)",
     )
+    parser.add_argument(
+        "--reconnect-interval",
+        type=float,
+        default=5.0,
+        help="Seconds to wait before attempting reconnection (default: 5.0)",
+    )
 
     # Logging options
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
@@ -65,6 +71,7 @@ def main():
         host=args.host,
         port=args.port,
         frame_id=args.frame_id,
+        reconnect_interval=args.reconnect_interval,
     )
 
     # Set up LCM transport for the video output

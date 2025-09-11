@@ -61,6 +61,7 @@ class GstreamerCameraModule(Module):
         port: int = 5000,
         frame_id: str = "camera",
         timestamp_offset: float = 0.0,
+        reconnect_interval: float = 5.0,
         *args,
         **kwargs,
     ):
@@ -71,19 +72,23 @@ class GstreamerCameraModule(Module):
             port: TCP server port
             frame_id: Frame ID for the published images
             timestamp_offset: Offset to add to timestamps (useful for clock synchronization)
+            reconnect_interval: Seconds to wait before attempting reconnection
         """
         self.host = host
         self.port = port
         self.frame_id = frame_id
         self.timestamp_offset = timestamp_offset
+        self.reconnect_interval = reconnect_interval
 
         self.pipeline = None
         self.appsink = None
         self.main_loop = None
         self.main_loop_thread = None
         self.running = False
+        self.should_reconnect = False
         self.frame_count = 0
         self.last_log_time = time.time()
+        self.reconnect_timer_id = None
 
         Module.__init__(self, *args, **kwargs)
 
@@ -93,13 +98,28 @@ class GstreamerCameraModule(Module):
             logger.warning("GStreamer camera module is already running")
             return
 
-        self._create_pipeline()
-        self._start_pipeline()
-        self.running = True
-        logger.info(f"GStreamer TCP camera module started - connecting to {self.host}:{self.port}")
+        self.should_reconnect = True
+        self._connect()
+
+    def _connect(self):
+        """Connect to the TCP server."""
+        if not self.should_reconnect:
+            return
+
+        try:
+            self._create_pipeline()
+            self._start_pipeline()
+            self.running = True
+            logger.info(f"GStreamer TCP camera module connected to {self.host}:{self.port}")
+        except Exception as e:
+            logger.error(f"Failed to connect to {self.host}:{self.port}: {e}")
+            self._schedule_reconnect()
 
     @rpc
     def stop(self):
+        self.should_reconnect = False
+        self._cleanup_reconnect_timer()
+
         if not self.running:
             return
 
@@ -116,6 +136,47 @@ class GstreamerCameraModule(Module):
             self.main_loop_thread.join(timeout=2.0)
 
         logger.info("GStreamer camera module stopped")
+
+    def _cleanup_reconnect_timer(self):
+        """Cancel any pending reconnect timer."""
+        if self.reconnect_timer_id:
+            GLib.source_remove(self.reconnect_timer_id)
+            self.reconnect_timer_id = None
+
+    def _schedule_reconnect(self):
+        """Schedule a reconnection attempt."""
+        if not self.should_reconnect:
+            return
+
+        self._cleanup_reconnect_timer()
+        logger.info(f"Scheduling reconnect in {self.reconnect_interval} seconds...")
+        self.reconnect_timer_id = GLib.timeout_add_seconds(
+            int(self.reconnect_interval), self._reconnect_timeout
+        )
+
+    def _reconnect_timeout(self):
+        """Timeout callback for reconnection."""
+        self.reconnect_timer_id = None
+        if self.should_reconnect:
+            logger.info("Attempting to reconnect...")
+            self._connect()
+        return False  # Don't repeat the timeout
+
+    def _handle_disconnect(self):
+        """Handle disconnection and prepare for reconnect."""
+        if not self.should_reconnect:
+            return
+
+        self.running = False
+
+        if self.pipeline:
+            self.pipeline.set_state(Gst.State.NULL)
+            self.pipeline = None
+
+        self.appsink = None
+
+        logger.warning(f"Disconnected from {self.host}:{self.port}")
+        self._schedule_reconnect()
 
     def _create_pipeline(self):
         # TCP client source with Matroska demuxer to extract absolute timestamps
@@ -167,12 +228,12 @@ class GstreamerCameraModule(Module):
         t = message.type
 
         if t == Gst.MessageType.EOS:
-            logger.info("End of stream")
-            self.stop()
+            logger.info("End of stream - server disconnected")
+            self._handle_disconnect()
         elif t == Gst.MessageType.ERROR:
             err, debug = message.parse_error()
             logger.error(f"GStreamer error: {err}, {debug}")
-            self.stop()
+            self._handle_disconnect()
         elif t == Gst.MessageType.WARNING:
             warn, debug = message.parse_warning()
             logger.warning(f"GStreamer warning: {warn}, {debug}")
