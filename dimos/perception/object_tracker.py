@@ -21,6 +21,7 @@ from typing import Dict, List, Optional
 from dimos.core import In, Out, Module, rpc
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
 from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, Pose, PoseStamped
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
@@ -28,9 +29,7 @@ from dimos.utils.logging_config import setup_logger
 # Import LCM messages
 from dimos_lcm.vision_msgs import (
     Detection2D,
-    Detection2DArray,
     Detection3D,
-    Detection3DArray,
     ObjectHypothesisWithPose,
 )
 from dimos_lcm.sensor_msgs import CameraInfo
