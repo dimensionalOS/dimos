@@ -111,7 +111,8 @@ class GstreamerCameraModule(Module):
         if self.main_loop:
             self.main_loop.quit()
 
-        if self.main_loop_thread:
+        # Only join the thread if we're not calling from within it
+        if self.main_loop_thread and self.main_loop_thread != threading.current_thread():
             self.main_loop_thread.join(timeout=2.0)
 
         logger.info("GStreamer camera module stopped")
