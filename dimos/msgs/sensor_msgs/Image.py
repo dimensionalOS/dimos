@@ -30,6 +30,13 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
 )
 from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
 from dimos.msgs.sensor_msgs.image_impls.CudaImage import CudaImage
+import reactivex as rx
+from reactivex import operators as ops
+from reactivex.observable import Observable
+from reactivex.scheduler import ThreadPoolScheduler
+from dimos.types.timestamped import TimestampedBufferCollection
+from dimos_lcm.sensor_msgs.Image import Image as LCMImage
+from dimos_lcm.std_msgs.Header import Header
 
 
 class Image:
@@ -91,6 +98,13 @@ class Image:
         return cls(CudaImage(arr, detected) if to_cuda and HAS_CUDA else NumpyImage(arr, detected))  # type: ignore
 
     @classmethod
+    def from_opencv(
+        cls, cv_image: np.ndarray, format: ImageFormat = ImageFormat.BGR, **kwargs
+    ) -> "Image":
+        """Construct from an OpenCV image (NumPy array)."""
+        return cls(NumpyImage(cv_image, format, kwargs.get("frame_id", ""), kwargs.get("ts", time.time())))
+
+    @classmethod
     def from_depth(
         cls, depth_data, frame_id: str = "", ts: float = None, to_cuda: bool = False
     ) -> "Image":
@@ -124,6 +138,10 @@ class Image:
     @property
     def ts(self) -> float:
         return self._impl.ts
+
+    @ts.setter
+    def ts(self, value: float) -> None:
+        self._impl.ts = float(value)
 
     @property
     def height(self) -> int:
@@ -193,6 +211,43 @@ class Image:
     def to_base64(self, quality: int = 80) -> str:
         return self._impl.to_base64(quality)
 
+    # LCM encode/decode
+    def lcm_encode(self, frame_id: Optional[str] = None) -> bytes:
+        msg = LCMImage()
+        msg.header = Header()
+        msg.header.seq = 0
+        msg.header.frame_id = frame_id or self.frame_id
+        if self.ts is not None:
+            msg.header.stamp.sec = int(self.ts)
+            msg.header.stamp.nsec = int((self.ts - int(self.ts)) * 1e9)
+        else:
+            now = time.time()
+            msg.header.stamp.sec = int(now)
+            msg.header.stamp.nsec = int((now - int(now)) * 1e9)
+
+        arr = self.to_opencv() if self.format in (ImageFormat.BGR, ImageFormat.RGB, ImageFormat.RGBA, ImageFormat.BGRA) else self.to_opencv()
+        msg.height = int(arr.shape[0])
+        msg.width = int(arr.shape[1])
+        msg.encoding = _get_lcm_encoding(self.format, arr.dtype)
+        msg.is_bigendian = False
+        channels = 1 if arr.ndim == 2 else int(arr.shape[2])
+        msg.step = int(arr.shape[1] * arr.dtype.itemsize * channels)
+        img_bytes = arr.tobytes()
+        msg.data_length = len(img_bytes)
+        msg.data = img_bytes
+        return msg.lcm_encode()
+
+    @classmethod
+    def lcm_decode(cls, data: bytes, **kwargs) -> "Image":
+        msg = LCMImage.lcm_decode(data)
+        fmt, dtype, channels = _parse_lcm_encoding(msg.encoding)
+        arr = np.frombuffer(msg.data, dtype=dtype)
+        if channels == 1:
+            arr = arr.reshape((msg.height, msg.width))
+        else:
+            arr = arr.reshape((msg.height, msg.width, channels))
+        return cls(NumpyImage(arr, fmt, msg.header.frame_id if hasattr(msg, 'header') else '', msg.header.stamp.sec + msg.header.stamp.nsec / 1e9 if hasattr(msg, 'header') and getattr(msg.header, 'stamp', None) else time.time()))
+
     # PnP wrappers
     def solve_pnp(self, *args, **kwargs):
         return self._impl.solve_pnp(*args, **kwargs)  # type: ignore
@@ -232,3 +287,78 @@ HAS_CUDA = HAS_CUDA
 ImageFormat = ImageFormat
 NVIMGCODEC_LAST_USED = NVIMGCODEC_LAST_USED
 HAS_NVIMGCODEC = HAS_NVIMGCODEC
+
+
+# Reactive sharpness window (matches prior implementation, adapted to facade Image)
+def sharpness_window(target_frequency: float, source: Observable) -> Observable:
+    """Periodically emit the sharpest Image seen within the sliding window.
+
+    Args:
+        target_frequency: Emission frequency in Hz.
+        source: An observable stream of Image instances.
+
+    Returns:
+        Observable emitting the sharpest Image in the current window at the
+        specified frequency. Emits None if the window is empty.
+    """
+    window = TimestampedBufferCollection(1.0 / target_frequency)
+    source.subscribe(window.add)
+
+    thread_scheduler = ThreadPoolScheduler(max_workers=1)
+
+    def find_best(*_argv):
+        if not window._items:
+            return None
+        return max(window._items, key=lambda x: x.sharpness())
+
+    return rx.interval(1.0 / target_frequency).pipe(
+        ops.observe_on(thread_scheduler), ops.map(find_best)
+    )
+
+
+def _get_lcm_encoding(fmt: ImageFormat, dtype: np.dtype) -> str:
+    if fmt == ImageFormat.GRAY:
+        if dtype == np.uint8:
+            return "mono8"
+        if dtype == np.uint16:
+            return "mono16"
+    if fmt == ImageFormat.GRAY16:
+        return "mono16"
+    if fmt == ImageFormat.RGB:
+        return "rgb8"
+    if fmt == ImageFormat.RGBA:
+        return "rgba8"
+    if fmt == ImageFormat.BGR:
+        return "bgr8"
+    if fmt == ImageFormat.BGRA:
+        return "bgra8"
+    if fmt == ImageFormat.DEPTH:
+        if dtype == np.float32:
+            return "32FC1"
+        if dtype == np.float64:
+            return "64FC1"
+    if fmt == ImageFormat.DEPTH16:
+        if dtype == np.uint16:
+            return "16UC1"
+        if dtype == np.int16:
+            return "16SC1"
+    raise ValueError(f"Unsupported LCM encoding for fmt={fmt}, dtype={dtype}")
+
+
+def _parse_lcm_encoding(enc: str):
+    m = {
+        "mono8": (ImageFormat.GRAY, np.uint8, 1),
+        "mono16": (ImageFormat.GRAY16, np.uint16, 1),
+        "rgb8": (ImageFormat.RGB, np.uint8, 3),
+        "rgba8": (ImageFormat.RGBA, np.uint8, 4),
+        "bgr8": (ImageFormat.BGR, np.uint8, 3),
+        "bgra8": (ImageFormat.BGRA, np.uint8, 4),
+        "32FC1": (ImageFormat.DEPTH, np.float32, 1),
+        "32FC3": (ImageFormat.RGB, np.float32, 3),
+        "64FC1": (ImageFormat.DEPTH, np.float64, 1),
+        "16UC1": (ImageFormat.DEPTH16, np.uint16, 1),
+        "16SC1": (ImageFormat.DEPTH16, np.int16, 1),
+    }
+    if enc not in m:
+        raise ValueError(f"Unsupported encoding: {enc}")
+    return m[enc]
