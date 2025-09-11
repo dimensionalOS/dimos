@@ -70,6 +70,7 @@ class GStreamerTCPSender:
         bitrate: int = 5000,
         host: str = "0.0.0.0",
         port: int = 5000,
+        single_camera: bool = False,
     ):
         """Initialize the GStreamer TCP sender.
 
@@ -82,6 +83,7 @@ class GStreamerTCPSender:
             bitrate: H264 encoding bitrate in kbps
             host: Host to listen on (0.0.0.0 for all interfaces)
             port: TCP port for listening
+            single_camera: If True, crop to left half (for stereo cameras)
         """
         self.device = device
         self.width = width
@@ -91,6 +93,7 @@ class GStreamerTCPSender:
         self.bitrate = bitrate
         self.host = host
         self.port = port
+        self.single_camera = single_camera
 
         self.pipeline = None
         self.videosrc = None
@@ -124,6 +127,16 @@ class GStreamerTCPSender:
         # Video converter
         videoconvert = Gst.ElementFactory.make("videoconvert", "convert")
 
+        # Crop element for single camera mode
+        videocrop = None
+        if self.single_camera:
+            videocrop = Gst.ElementFactory.make("videocrop", "crop")
+            # Crop to left half: for 2560x720 stereo, get left 1280x720
+            videocrop.set_property("left", 0)
+            videocrop.set_property("right", self.width // 2)  # Remove right half
+            videocrop.set_property("top", 0)
+            videocrop.set_property("bottom", 0)
+
         # H264 encoder
         self.encoder = Gst.ElementFactory.make("x264enc", "encoder")
         self.encoder.set_property("tune", "zerolatency")
@@ -148,6 +161,8 @@ class GStreamerTCPSender:
         self.pipeline.add(self.videosrc)
         self.pipeline.add(capsfilter)
         self.pipeline.add(videoconvert)
+        if videocrop:
+            self.pipeline.add(videocrop)
         self.pipeline.add(self.encoder)
         self.pipeline.add(h264parse)
         self.pipeline.add(self.mux)
@@ -158,8 +173,17 @@ class GStreamerTCPSender:
             raise RuntimeError("Failed to link source to capsfilter")
         if not capsfilter.link(videoconvert):
             raise RuntimeError("Failed to link capsfilter to videoconvert")
-        if not videoconvert.link(self.encoder):
-            raise RuntimeError("Failed to link videoconvert to encoder")
+
+        # Link through crop if in single camera mode
+        if videocrop:
+            if not videoconvert.link(videocrop):
+                raise RuntimeError("Failed to link videoconvert to videocrop")
+            if not videocrop.link(self.encoder):
+                raise RuntimeError("Failed to link videocrop to encoder")
+        else:
+            if not videoconvert.link(self.encoder):
+                raise RuntimeError("Failed to link videoconvert to encoder")
+
         if not self.encoder.link(h264parse):
             raise RuntimeError("Failed to link encoder to h264parse")
         if not h264parse.link(self.mux):
@@ -168,10 +192,13 @@ class GStreamerTCPSender:
             raise RuntimeError("Failed to link mux to tcpserversink")
 
         # Add probe to inject absolute timestamps
-        videoconvert_src_pad = videoconvert.get_static_pad("src")
-        videoconvert_src_pad.add_probe(
-            Gst.PadProbeType.BUFFER, self._inject_absolute_timestamp, None
-        )
+        # Place probe after crop (if present) or after videoconvert
+        if videocrop:
+            probe_element = videocrop
+        else:
+            probe_element = videoconvert
+        probe_pad = probe_element.get_static_pad("src")
+        probe_pad.add_probe(Gst.PadProbeType.BUFFER, self._inject_absolute_timestamp, None)
 
         # Set up bus message handling
         bus = self.pipeline.get_bus()
@@ -239,7 +266,14 @@ class GStreamerTCPSender:
 
         logger.info(f"TCP video sender started:")
         logger.info(f"  Source: {self.device}")
-        logger.info(f"  Resolution: {self.width}x{self.height} @ {self.framerate}fps")
+        if self.single_camera:
+            output_width = self.width // 2
+            logger.info(f"  Input Resolution: {self.width}x{self.height} @ {self.framerate}fps")
+            logger.info(
+                f"  Output Resolution: {output_width}x{self.height} @ {self.framerate}fps (left camera only)"
+            )
+        else:
+            logger.info(f"  Resolution: {self.width}x{self.height} @ {self.framerate}fps")
         logger.info(f"  Bitrate: {self.bitrate} kbps")
         logger.info(f"  TCP Server: {self.host}:{self.port}")
         logger.info(f"  Container: Matroska (preserves absolute timestamps)")
@@ -303,6 +337,13 @@ def main():
     )
     parser.add_argument("--port", type=int, default=5000, help="TCP port (default: 5000)")
 
+    # Camera options
+    parser.add_argument(
+        "--single-camera",
+        action="store_true",
+        help="Extract left camera only from stereo feed (crops 2560x720 to 1280x720)",
+    )
+
     # Logging options
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
@@ -321,6 +362,7 @@ def main():
         bitrate=args.bitrate,
         host=args.host,
         port=args.port,
+        single_camera=args.single_camera,
     )
 
     # Handle signals gracefully
