@@ -113,12 +113,9 @@ class SkillLibrary:
         # Key based only on the name
         key = name
 
-        print(f"Preparing to create instance with name: {name} and args: {kwargs}")
-
         if key not in self._instances:
             # Instead of creating an instance, store the args for later use
             self._instances[key] = kwargs
-            print(f"Stored args for later instance creation: {name} with args: {kwargs}")
 
     def call(self, name, **args):
         try:
