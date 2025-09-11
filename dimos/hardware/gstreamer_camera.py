@@ -274,8 +274,6 @@ class GstreamerCameraModule(Module):
         else:
             return Gst.FlowReturn.OK
 
-        print(f"Frame timestamp: {timestamp:.6f}")
-
         # Map the buffer to access the data
         success, map_info = buffer.map(Gst.MapFlags.READ)
         if not success:
