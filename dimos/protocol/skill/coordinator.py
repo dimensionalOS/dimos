@@ -283,6 +283,7 @@ class SkillCoordinator(Module):
     _agent_loop: Optional[asyncio.AbstractEventLoop]
 
     def __init__(self) -> None:
+        # TODO: Why isn't this super().__init__() ? SkillContainer is not a superclass
         SkillContainer.__init__(self)
         self._loop = get_loop()
         self._static_containers = []
