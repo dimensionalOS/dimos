@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import time
+import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Generic, Literal, Optional, TypeVar
@@ -139,15 +140,23 @@ class SkillMsg(Timestamped, Generic[M]):
         if self.type == MsgType.start:
             return f"Start({time_ago:.1f}s ago)"
         if self.type == MsgType.ret:
-            return f"Ret({time_ago:.1f}s ago, val={self.content})"
+            return f"Ret({time_ago:.1f}s ago, val={_truncate_str(self.content)})"
         if self.type == MsgType.error:
-            return f"Error({time_ago:.1f}s ago, val={self.content})"
+            return f"Error({time_ago:.1f}s ago, val={_truncate_str(self.content)})"
         if self.type == MsgType.pending:
             return f"Pending({time_ago:.1f}s ago)"
         if self.type == MsgType.stream:
-            return f"Stream({time_ago:.1f}s ago, val={self.content})"
+            return f"Stream({time_ago:.1f}s ago, val={_truncate_str(self.content)})"
         if self.type == MsgType.reduced_stream:
-            return f"Stream({time_ago:.1f}s ago, val={self.content})"
+            return f"Stream({time_ago:.1f}s ago, val={_truncate_str(self.content)})"
+
+
+def _truncate_str(arg: Any) -> str:
+    string = str(arg)
+    max = int(os.getenv("TRUNCATE_MAX", "2000"))
+    if max == 0 or len(string) <= max:
+        return string
+    return string[:max] + "...(truncated)..."
 
 
 # typing looks complex but it's a standard reducer function signature, using SkillMsgs
