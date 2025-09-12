@@ -19,9 +19,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Generic, TypeVar
+from dimos.utils.logging_config import setup_logger
 
 MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")
+
+
+logger = setup_logger(__name__)
 
 
 class PubSub(Generic[TopicT, MsgT], ABC):
@@ -116,6 +120,9 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT], ABC):
     def publish(self, topic: TopicT, message: MsgT) -> None:
         """Encode the message and publish it."""
         encoded_message = self.encode(message, topic)
+        if encoded_message is None:
+            logger.warning("Encoding returned None, not publishing")
+            return
         super().publish(topic, encoded_message)  # type: ignore[misc]
 
     def subscribe(

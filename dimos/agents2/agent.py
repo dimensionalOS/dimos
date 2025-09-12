@@ -276,6 +276,9 @@ class Agent(AgentSpec):
 
     @rpc
     def query(self, query: str):
+        # TODO: could this be
+        # from distributed.utils import sync
+        # return sync(self._loop, self.agent_loop, query)
         return asyncio.run_coroutine_threadsafe(self.agent_loop(query), self._loop).result()
 
     async def query_async(self, query: str):
