@@ -109,7 +109,7 @@ def main():
         provider=Provider.OPENAI,  # Would need ANTHROPIC provider
     )
 
-    # testcontainer = dimos.deploy(SkillContainerTest)
+    testcontainer = dimos.deploy(SkillContainerTest)
     webcam = dimos.deploy(ColorCameraModule, hardware=lambda: Webcam(camera_index=4))
 
     webcam.image.transport = LCMTransport("/image", Image)
@@ -120,7 +120,7 @@ def main():
     time.sleep(1)  # Give some time for camera to start
     agent.register_skills(human_input)
     agent.register_skills(webcam)
-    # agent.register_skills(testcontainer)
+    agent.register_skills(testcontainer)
 
     agent.run_implicit_skill("video_stream")
     agent.run_implicit_skill("human")

@@ -61,7 +61,7 @@ class SkillContainerTest(Module):
     def current_time(self, frequency: Optional[float] = 10) -> Generator[str, None, None]:
         """Provides current time."""
         while True:
-            yield datetime.datetime.now()
+            yield str(datetime.datetime.now())
             time.sleep(1 / frequency)
 
     @skill(stream=Stream.passive, reducer=Reducer.latest)
