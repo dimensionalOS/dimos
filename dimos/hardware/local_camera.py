@@ -391,8 +391,8 @@ def main():
         single_camera=args.single_camera,
     )
 
-    # Set up LCM transport for the video output
-    camera.video.transport = core.LCMTransport(args.topic, Image)
+    # Set up LCM transport for the video output with multicast
+    camera.video.transport = core.LCMTransport(args.topic, Image, url="udpm://224.0.0.0:7667?ttl=1")
 
     # Counter for received frames
     frame_count = [0]
