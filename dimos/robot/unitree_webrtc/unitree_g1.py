@@ -24,8 +24,12 @@ import logging
 from typing import Optional
 
 from dimos import core
-from dimos.core import Module, In, rpc
+from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs import Image
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.robot.foxglove_bridge import FoxgloveBridge
@@ -34,9 +38,11 @@ from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+from nav_msgs.msg import Odometry as ROSOdometry
+from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
-from dimos.hardware.zed_camera import ZEDModule
+#from dimos.hardware.zed_camera import ZEDModule
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 
@@ -54,6 +60,9 @@ class G1ConnectionModule(Module):
     """Simplified connection module for G1 - uses WebRTC for control."""
 
     movecmd: In[TwistStamped] = None
+    odom_in: In[Odometry] = None
+
+    odom_pose: Out[PoseStamped] = None
     ip: str
     connection_type: str = "webrtc"
 
@@ -69,6 +78,15 @@ class G1ConnectionModule(Module):
         # Use the exact same UnitreeWebRTCConnection as Go2
         self.connection = UnitreeWebRTCConnection(self.ip)
         self.movecmd.subscribe(self.move)
+        self.odom_in.subscribe(self._publish_odom_pose)
+
+    def _publish_odom_pose(self, msg: Odometry):
+        self.odom_pose.publish(PoseStamped(
+            ts=msg.ts,
+            frame_id=msg.frame_id,
+            position=msg.pose.pose.position,
+            orientation=msg.pose.orientation
+        ))
 
     @rpc
     def move(self, twist_stamped: TwistStamped, duration: float = 0.0):
@@ -96,6 +114,7 @@ class UnitreeG1(Robot):
         enable_joystick: bool = False,
         enable_connection: bool = True,
         enable_ros_bridge: bool = True,
+        enable_camera: bool = False,
     ):
         """Initialize the G1 robot.
 
@@ -109,6 +128,7 @@ class UnitreeG1(Robot):
             enable_joystick: Enable pygame joystick control
             enable_connection: Enable robot connection module
             enable_ros_bridge: Enable ROS bridge
+            enable_camera: Enable ZED camera module
         """
         super().__init__()
         self.ip = ip
@@ -118,6 +138,7 @@ class UnitreeG1(Robot):
         self.enable_joystick = enable_joystick
         self.enable_connection = enable_connection
         self.enable_ros_bridge = enable_ros_bridge
+        self.enable_camera = enable_camera
         self.websocket_port = websocket_port
         self.lcm = LCM()
 
@@ -138,6 +159,7 @@ class UnitreeG1(Robot):
         self.foxglove_bridge = None
         self.joystick = None
         self.ros_bridge = None
+        self.zed_camera = None
 
         self._setup_directories()
 
@@ -154,6 +176,9 @@ class UnitreeG1(Robot):
             self._deploy_connection()
 
         self._deploy_visualization()
+
+        if self.enable_camera:
+            self._deploy_camera()
 
         if self.enable_joystick:
             self._deploy_joystick()
@@ -174,6 +199,8 @@ class UnitreeG1(Robot):
 
         # Configure LCM transports
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", TwistStamped)
+        self.connection.odom_in.transport = core.LCMTransport("/state_estimation", Odometry)
+        self.connection.odom_pose.transport = core.LCMTransport("/odom", PoseStamped)
 
     def _deploy_camera(self):
         """Deploy and configure the ZED camera module (real or fake based on replay_path)."""
@@ -242,7 +269,17 @@ class UnitreeG1(Robot):
             "/cmd_vel", TwistStamped, ROSTwistStamped, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
-        logger.info("ROS bridge deployed: /cmd_vel (ROS → DIMOS)")
+        # Add /state_estimation topic from ROS to DIMOS
+        self.ros_bridge.add_topic(
+            "/state_estimation", Odometry, ROSOdometry, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+
+        # Add /tf topic from ROS to DIMOS
+        self.ros_bridge.add_topic(
+            "/tf", TFMessage, ROSTFMessage, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+
+        logger.info("ROS bridge deployed: /cmd_vel, /state_estimation, /tf (ROS → DIMOS)")
 
     def _start_modules(self):
         """Start all deployed modules."""
@@ -306,6 +343,7 @@ def main():
     parser = argparse.ArgumentParser(description="Unitree G1 Humanoid Robot Control")
     parser.add_argument("--ip", default=os.getenv("ROBOT_IP"), help="Robot IP address")
     parser.add_argument("--joystick", action="store_true", help="Enable pygame joystick control")
+    parser.add_argument("--camera", action="store_true", help="Enable ZED camera module")
     parser.add_argument("--output-dir", help="Output directory for logs/data")
     parser.add_argument("--record", help="Path to save recording")
     parser.add_argument("--replay", help="Path to replay recording from")
@@ -324,6 +362,9 @@ def main():
         recording_path=args.record,
         replay_path=args.replay,
         enable_joystick=args.joystick,
+        enable_camera=args.camera,
+        enable_connection=False,
+        enable_ros_bridge=True
     )
     robot.start()
 
