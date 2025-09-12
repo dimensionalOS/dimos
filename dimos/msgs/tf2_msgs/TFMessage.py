@@ -35,6 +35,7 @@ from dimos_lcm.std_msgs import Header as LCMHeader
 from dimos_lcm.std_msgs import Time as LCMTime
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 from tf2_msgs.msg import TFMessage as ROSTFMessage
+from geometry_msgs.msg import TransformStamped as ROSTransformStamped
 
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
