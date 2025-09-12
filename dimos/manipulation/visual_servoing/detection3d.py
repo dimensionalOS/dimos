@@ -28,14 +28,13 @@ from dimos.perception.common.utils import bbox2d_to_corners
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
 from dimos.msgs.std_msgs import Header
+from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
 from dimos_lcm.vision_msgs import (
     Detection3D,
-    Detection3DArray,
     BoundingBox3D,
     ObjectHypothesisWithPose,
     ObjectHypothesis,
     Detection2D,
-    Detection2DArray,
     BoundingBox2D,
     Pose2D,
     Point2D,
