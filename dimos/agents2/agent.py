@@ -84,6 +84,7 @@ def _custom_json_serializers(obj):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
 
+
 # takes an overview of running skills from the coorindator
 # and builds messages to be sent to an agent
 def snapshot_to_messages(
@@ -139,7 +140,9 @@ def snapshot_to_messages(
         state_overview.append(summary_from_state(skill_state, special_data))
 
     if state_overview:
-        state_overview_str = "\n".join(json.dumps(s, default=_custom_json_serializers) for s in state_overview)
+        state_overview_str = "\n".join(
+            json.dumps(s, default=_custom_json_serializers) for s in state_overview
+        )
         state_msg = AIMessage("State Overview:\n" + state_overview_str)
 
     return {
