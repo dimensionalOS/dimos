@@ -34,9 +34,10 @@ from threading import Thread
 import reactivex as rx
 import reactivex.operators as ops
 
-from dimos.agents2 import Agent, Reducer, Stream, skill
+from dimos.agents2 import Agent, Output, Reducer, Stream, skill
 from dimos.agents2.spec import Model, Provider
 from dimos.core import Module
+from dimos.hardware.webcam import ColorCameraModule, Webcam
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.utils.logging_config import setup_logger
@@ -62,6 +63,8 @@ class WebModule(Module):
     agent_response: rx.subject.Subject = None
 
     thread: Thread = None
+
+    _human_messages_running = False
 
     def __init__(self):
         super().__init__()
@@ -92,13 +95,14 @@ class WebModule(Module):
 
         super().stop()
 
-    @skill(stream=Stream.call_agent, reducer=Reducer.all)
+    @skill(stream=Stream.call_agent, reducer=Reducer.all, output=Output.human)
     def human_messages(self):
-        """provide human messages from web interface."""
+        """Provide human messages from web interface. Don't use this tool, it's running implicitly already"""
+        if self._human_messages_running:
+            return "already running"
+        self._human_messages_running = True
         while True:
-            print("waiting for human message...")
             message = self.human_query.pipe(ops.first()).run()
-            print("GOT HUMAN MESSAGE:", message)
             yield message
 
 
@@ -145,14 +149,18 @@ class UnitreeAgentRunner:
         # Start agent
         agent.start()
 
-        agent.run_implicit_skill("human_messages")
         # Log available skills
         tools = agent.get_tools()
         logger.info(f"Agent configured with {len(tools)} skills:")
         for tool in tools:  # Show first 5
             logger.info(f"  - {tool.name}")
 
-        agent.query("hello")
+        agent.run_implicit_skill("human_messages")
+        # agent.run_implicit_skill("current_time")
+
+        print("STARTING AGENT LOOP")
+        print(agent.loop_thread())
+        print("AGENT LOOP STARTED")
         return agent
 
     def setup_web(self) -> WebModule:
@@ -161,62 +169,6 @@ class UnitreeAgentRunner:
         web_module.start()
 
         return web_module
-
-    def handle_queries(self):
-        """Handle incoming queries from web interface."""
-        if not self.web_interface or not self.agent:
-            return
-
-        # Subscribe to query stream from web interface
-        def process_query(query_text):
-            if not query_text or not self.running:
-                return
-
-            logger.info(f"Received query: {query_text}")
-
-            # Run the query in a separate thread to handle async properly
-            def run_async_query():
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    coroutine = self.agent.query_async(query_text)
-                    task = asyncio.ensure_future(coroutine, loop=loop)
-
-                    try:
-                        response = loop.run_until_complete(asyncio.wait_for(task, timeout=30.0))
-                    except asyncio.TimeoutError:
-                        response = "Query timeout - agent took too long to respond"
-                        logger.warning("Agent query timed out after 30 seconds")
-
-                    # Send response back through web interface
-                    if response and self.agent_response_subject:
-                        self.agent_response_subject.on_next(response)
-                        logger.info(
-                            f"Agent response: {response[:100]}..."
-                            if len(response) > 100
-                            else f"Agent response: {response}"
-                        )
-
-                    loop.close()
-
-                except Exception as e:
-                    logger.error(f"Error processing query: {e}")
-                    import traceback
-
-                    traceback.print_exc()
-                    if self.agent_response_subject:
-                        self.agent_response_subject.on_next(f"Error: {str(e)}")
-
-            # Start query in thread
-            import threading
-
-            query_thread = threading.Thread(target=run_async_query, daemon=True)
-            query_thread.start()
-
-        # Subscribe to web interface query stream
-        if hasattr(self.web_interface, "query_stream"):
-            self.web_interface.query_stream.subscribe(process_query)
-            logger.info("Subscribed to web interface queries")
 
     def run(self):
         """Main run loop."""
@@ -239,21 +191,30 @@ class UnitreeAgentRunner:
             sys.exit(1)
 
         # Load system prompt
-        try:
-            with open(SYSTEM_PROMPT_PATH, "r") as f:
-                system_prompt = f.read()
-        except FileNotFoundError:
-            logger.warning(f"System prompt file not found at {SYSTEM_PROMPT_PATH}")
-            system_prompt = """You are a helpful robot assistant controlling a Unitree Go2 quadruped robot.
+        # try:
+        #    with open(SYSTEM_PROMPT_PATH, "r") as f:
+        #        system_prompt = f.read()
+        # except FileNotFoundError:
+        #   logger.warning(f"System prompt file not found at {SYSTEM_PROMPT_PATH}")
+
+        # above made agent perform terrible
+        system_prompt = """You are a helpful robot assistant controlling a Unitree Go2 quadruped robot.
 You can move, navigate, speak, and perform various actions. Be helpful and friendly."""
 
         try:
             # Setup components
             self.robot = self.setup_robot()
             self.web_interface = self.setup_web()
+
+            from dimos.protocol.skill.test_coordinator import SkillContainerTest
+
+            webcam = ColorCameraModule()
+            webcam.start()
             self.agent = self.setup_agent(
                 [
-                    UnitreeSkillContainer(robot=self.robot),
+                    # SkillContainerTest(),
+                    webcam,
+                    UnitreeSkillContainer(self.robot),
                     self.web_interface,
                 ],
                 system_prompt,
@@ -261,7 +222,6 @@ You can move, navigate, speak, and perform various actions. Be helpful and frien
 
             # Start handling queries
             self.running = True
-            self.handle_queries()
 
             logger.info("=" * 60)
             logger.info("Unitree Go2 Agent Ready (agents2 framework)!")
@@ -273,7 +233,8 @@ You can move, navigate, speak, and perform various actions. Be helpful and frien
             logger.info("  - Ask the robot to speak text")
             logger.info("=" * 60)
 
-            time.sleep(1000)
+            while True:
+                time.sleep(1)
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received")
         except Exception as e:

@@ -110,14 +110,15 @@ def main():
     )
 
     testcontainer = dimos.deploy(SkillContainerTest)
-    webcam = dimos.deploy(ColorCameraModule, hardware=lambda: Webcam(camera_index=4))
-
+    webcam = dimos.deploy(ColorCameraModule, hardware=lambda: Webcam(camera_index=0))
     webcam.image.transport = LCMTransport("/image", Image)
+
     webcam.start()
 
     human_input = dimos.deploy(HumanInput)
 
-    time.sleep(1)  # Give some time for camera to start
+    time.sleep(1)
+
     agent.register_skills(human_input)
     agent.register_skills(webcam)
     agent.register_skills(testcontainer)
@@ -125,7 +126,6 @@ def main():
     agent.run_implicit_skill("video_stream")
     agent.run_implicit_skill("human")
 
-    # Start agent
     agent.start()
     agent.loop_thread()
 

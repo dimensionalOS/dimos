@@ -269,14 +269,17 @@ class Agent(AgentSpec):
 
             traceback.print_exc()
 
+    @rpc
     def loop_thread(self):
-        return asyncio.run_coroutine_threadsafe(self.agent_loop(), self._loop)
+        asyncio.run_coroutine_threadsafe(self.agent_loop(), self._loop)
+        return True
 
+    @rpc
     def query(self, query: str):
-        return asyncio.ensure_future(self.agent_loop(query))
+        return asyncio.run_coroutine_threadsafe(self.agent_loop(query), self._loop).result()
 
-    def query_async(self, query: str):
-        return self.agent_loop(query)
+    async def query_async(self, query: str):
+        return await self.agent_loop(query)
 
     def register_skills(self, container):
         return self.coordinator.register_skills(container)

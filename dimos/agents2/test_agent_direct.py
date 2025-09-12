@@ -16,9 +16,6 @@
 
 from contextlib import contextmanager
 
-import pytest
-import pytest_asyncio
-
 from dimos.agents2.agent import Agent
 from dimos.core import start
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
@@ -64,7 +61,7 @@ def local():
 
 
 @contextmanager
-def mixed():
+def partial():
     """Dask context: testcontainer on dimos, agent local"""
     with dimos_cluster() as dimos:
         testcontainer = dimos.deploy(SkillContainerTest)
@@ -107,18 +104,20 @@ def test_agent(agent_context):
         agent.register_skills(testcontainer)
         agent.start()
 
-        # agent.run_implicit_skill("uptime_seconds")
-
         print("query agent")
-        # When running locally, call the async method directly
+
         agent.query(
             "hi there, please tell me what's your name and current date, and how much is 124181112 + 124124?"
         )
+
         print("Agent loop finished, asking about camera")
+
         agent.query("tell me what you see on the camera?")
 
         # you can run skillspy and agentspy in parallel with this test for a better observation of what's happening
 
 
 if __name__ == "__main__":
-    list(map(test_agent, [full]))
+    # list(map(test_agent, [local, partial, full]))
+    # it works with all, but not above if used in the same file, investigate
+    list(map(test_agent, [partial]))

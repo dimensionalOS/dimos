@@ -53,12 +53,10 @@ def get_loop() -> asyncio.AbstractEventLoop:
 
     try:
         running_loop = asyncio.get_running_loop()
-        print("loop already running")
         return running_loop
     except RuntimeError:
         import threading
 
-        print("creating new loop")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
