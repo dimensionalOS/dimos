@@ -42,7 +42,8 @@ from nav_msgs.msg import Odometry as ROSOdometry
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
-#from dimos.hardware.zed_camera import ZEDModule
+
+# from dimos.hardware.zed_camera import ZEDModule
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 
@@ -81,12 +82,14 @@ class G1ConnectionModule(Module):
         self.odom_in.subscribe(self._publish_odom_pose)
 
     def _publish_odom_pose(self, msg: Odometry):
-        self.odom_pose.publish(PoseStamped(
-            ts=msg.ts,
-            frame_id=msg.frame_id,
-            position=msg.pose.pose.position,
-            orientation=msg.pose.orientation
-        ))
+        self.odom_pose.publish(
+            PoseStamped(
+                ts=msg.ts,
+                frame_id=msg.frame_id,
+                position=msg.pose.pose.position,
+                orientation=msg.pose.orientation,
+            )
+        )
 
     @rpc
     def move(self, twist_stamped: TwistStamped, duration: float = 0.0):
@@ -364,7 +367,7 @@ def main():
         enable_joystick=args.joystick,
         enable_camera=args.camera,
         enable_connection=False,
-        enable_ros_bridge=True
+        enable_ros_bridge=True,
     )
     robot.start()
 
