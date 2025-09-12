@@ -27,3 +27,17 @@ On receiver machine:
 ```bash
 python3 dimos/hardware/gstreamer_camera_test_script.py --host 10.0.0.227 --port 5000
 ```
+
+## Local camera capture
+
+To capture directly from a local camera device:
+
+```bash
+python3 dimos/hardware/local_camera.py --device /dev/video0
+```
+
+For stereo cameras (left camera only):
+
+```bash
+python3 dimos/hardware/local_camera.py --device /dev/video0 --single-camera
+```
