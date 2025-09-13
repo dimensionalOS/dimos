@@ -1,0 +1,8 @@
+{
+  "responses": [
+    {
+      "content": "Hi! My name is Mr. Potato. How can I assist you today?",
+      "tool_calls": []
+    }
+  ]
+}
