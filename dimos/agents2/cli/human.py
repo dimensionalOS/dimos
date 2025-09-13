@@ -32,5 +32,4 @@ class HumanInput(Module):
         msg_queue = queue.Queue()
         transport.subscribe(msg_queue.put)
         for message in iter(msg_queue.get, None):
-            print("User input received:", message)
             yield message

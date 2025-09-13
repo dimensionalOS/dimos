@@ -13,15 +13,11 @@
 # limitations under the License.
 
 print("Starting human CLI...")
+import json
 import queue
-from typing import Any, List, Optional
+from typing import Any, List, Optional, TypedDict
 
-from langchain_core.messages import (
-    AIMessage,
-    HumanMessage,
-    SystemMessage,
-    ToolMessage,
-)
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolCall, ToolMessage
 
 from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.core import In, Module, Out, pLCMTransport, rpc
@@ -32,14 +28,27 @@ def run_cli():
     human_transport = pLCMTransport("/human_input")
     agent_transport = pLCMTransport("/agent")
 
+    def tool_call_logger(tool: ToolCall):
+        f = tool.get("function")
+        arguments = json.loads(f.get("arguments", "{}"))
+        args = arguments.get("args", [])
+        kwargs = arguments.get("kwargs", {})
+        name = f.get("name")
+
+        return f"<toolcall> {name}({args}, {kwargs})"
+
     def receive_msg(msg):
+        if isinstance(msg, SystemMessage):
+            print(f"<system> {msg.content}")
         if isinstance(msg, AIMessage):
-            content = msg.content
-            if content.startswith("{"):
-                return
-            if content.startswith("State Overview"):
-                return
-            print(f"<agent> {msg.content}")
+            print(
+                f"<agent> {msg.content}"
+                + "  ".join(
+                    list(map(tool_call_logger, msg.additional_kwargs.get("tool_calls", []))),
+                )
+            )
+        if isinstance(msg, ToolMessage):
+            print(f"<tool> {msg.content}")
 
     agent_transport.subscribe(receive_msg)
 
