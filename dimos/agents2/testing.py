@@ -22,14 +22,21 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Union
 from langchain.chat_models import init_chat_model
 from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import SimpleChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable
 
 
 class MockModel(SimpleChatModel):
     """Custom fake chat model that supports tool calls for testing.
-    
+
     Can operate in two modes:
     1. Playback mode (default): Reads responses from a JSON file or list
     2. Record mode: Uses a real LLM and saves responses to a JSON file
@@ -48,37 +55,34 @@ class MockModel(SimpleChatModel):
         json_path = kwargs.pop("json_path", None)
         model_provider = kwargs.pop("model_provider", "openai")
         model_name = kwargs.pop("model_name", "gpt-4o")
-        
+
         super().__init__(**kwargs)
-        
+
         self.json_path = Path(json_path) if json_path else None
-        self.record = bool(os.getenv('RECORD'))
+        self.record = bool(os.getenv("RECORD"))
         self.i = 0
         self._bound_tools: Optional[Sequence[Any]] = None
         self.recorded_messages = []
-        
+
         if self.record:
             # Initialize real model for recording
-            self.real_model = init_chat_model(
-                model_provider=model_provider,
-                model=model_name
-            )
+            self.real_model = init_chat_model(model_provider=model_provider, model=model_name)
             self.responses = []  # Initialize empty for record mode
         elif self.json_path:
             self.responses = self._load_responses_from_json()
         elif responses:
             self.responses = responses
         else:
-            raise ValueError('no responses')
+            raise ValueError("no responses")
 
     @property
     def _llm_type(self) -> str:
         return "tool-call-fake-chat-model"
-    
+
     def _load_responses_from_json(self) -> List[AIMessage]:
-        with open(self.json_path, 'r') as f:
+        with open(self.json_path, "r") as f:
             data = json.load(f)
-        
+
         responses = []
         for item in data.get("responses", []):
             if isinstance(item, str):
@@ -86,29 +90,27 @@ class MockModel(SimpleChatModel):
             else:
                 # Reconstruct AIMessage from dict
                 msg = AIMessage(
-                    content=item.get("content", ""),
-                    tool_calls=item.get("tool_calls", [])
+                    content=item.get("content", ""), tool_calls=item.get("tool_calls", [])
                 )
                 responses.append(msg)
         return responses
-    
+
     def _save_responses_to_json(self):
         if not self.json_path:
             return
-        
+
         self.json_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         data = {
             "responses": [
-                {
-                    "content": msg.content,
-                    "tool_calls": getattr(msg, 'tool_calls', [])
-                } if isinstance(msg, AIMessage) else msg
+                {"content": msg.content, "tool_calls": getattr(msg, "tool_calls", [])}
+                if isinstance(msg, AIMessage)
+                else msg
                 for msg in self.recorded_messages
             ]
         }
-        
-        with open(self.json_path, 'w') as f:
+
+        with open(self.json_path, "w") as f:
             json.dump(data, f, indent=2, default=str)
 
     def _call(
@@ -132,23 +134,23 @@ class MockModel(SimpleChatModel):
             # Recording mode - use real model and save responses
             if not self.real_model:
                 raise ValueError("Real model not initialized for recording")
-            
+
             # Bind tools if needed
             model = self.real_model
             if self._bound_tools:
                 model = model.bind_tools(self._bound_tools)
-            
+
             result = model.invoke(messages)
             self.recorded_messages.append(result)
             self._save_responses_to_json()
-            
+
             generation = ChatGeneration(message=result)
             return ChatResult(generations=[generation])
         else:
             # Playback mode - use predefined responses
             if not self.responses:
                 raise ValueError(f"No responses available for playback. ")
-            
+
             if self.i >= len(self.responses):
                 self.i = 0  # Wrap around
 
