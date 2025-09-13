@@ -1,0 +1,28 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "add",
+          "args": {
+            "args": [
+              124181112,
+              124124
+            ]
+          },
+          "id": "call_C8EFMynybjEVf70iCrCnvpBG",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "The sum of 124,181,112 and 124,124 is 124,305,236.",
+      "tool_calls": []
+    },
+    {
+      "content": "One billion is represented as 1,000,000,000, and one million is 1,000,000. The difference between them is 999,000,000.",
+      "tool_calls": []
+    }
+  ]
+}
