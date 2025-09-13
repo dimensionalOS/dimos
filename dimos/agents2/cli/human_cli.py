@@ -12,53 +12,263 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-print("Starting human CLI...")
+from __future__ import annotations
+
 import json
-import queue
-from typing import Any, List, Optional, TypedDict
+import textwrap
+import threading
+from datetime import datetime
+from typing import Any, List, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolCall, ToolMessage
+from rich.console import Console
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Container, Vertical
+from textual.events import Key
+from textual.widgets import Footer, Input, RichLog
 
-from dimos.agents2 import Output, Reducer, Stream, skill
-from dimos.core import In, Module, Out, pLCMTransport, rpc
-from dimos.protocol.pubsub.lcmpubsub import PickleLCM
+from dimos.core import pLCMTransport
 
 
-def run_cli():
-    human_transport = pLCMTransport("/human_input")
-    agent_transport = pLCMTransport("/agent")
+class HumanCLIApp(App):
+    """IRC-like interface for interacting with DimOS agents."""
 
-    def tool_call_logger(tool: ToolCall):
-        f = tool.get("function")
-        arguments = json.loads(f.get("arguments", "{}"))
-        args = arguments.get("args", [])
-        kwargs = arguments.get("kwargs", {})
-        name = f.get("name")
+    CSS = """
+    Screen {
+        background: black;
+    }
+    
+    #chat-container {
+        height: 1fr;
+        background: black;
+    }
+    
+    Input {
+        background: black;
+        dock: bottom;
+    }
+    
+    RichLog {
+        background: black;
+    }
+    """
 
-        return f"<toolcall> {name}({args}, {kwargs})"
+    BINDINGS = [
+        Binding("q", "quit", "Quit", show=False),
+        Binding("ctrl+c", "quit", "Quit"),
+        Binding("ctrl+l", "clear", "Clear chat"),
+    ]
 
-    def receive_msg(msg):
-        if isinstance(msg, SystemMessage):
-            print(f"<system> {msg.content}")
-        if isinstance(msg, AIMessage):
-            print(
-                f"<agent> {msg.content}"
-                + "  ".join(
-                    list(map(tool_call_logger, msg.additional_kwargs.get("tool_calls", []))),
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.human_transport = pLCMTransport("/human_input")
+        self.agent_transport = pLCMTransport("/agent")
+        self.chat_log: Optional[RichLog] = None
+        self.input_widget: Optional[Input] = None
+        self._subscription_thread: Optional[threading.Thread] = None
+        self._running = False
+
+    def compose(self) -> ComposeResult:
+        """Compose the IRC-like interface."""
+        with Container(id="chat-container"):
+            self.chat_log = RichLog(highlight=True, markup=True, wrap=False)
+            yield self.chat_log
+
+        self.input_widget = Input(placeholder="Type a message...")
+        yield self.input_widget
+
+    def on_mount(self) -> None:
+        """Initialize the app when mounted."""
+        self.theme = "flexoki"
+        self._running = True
+
+        # Start subscription thread
+        self._subscription_thread = threading.Thread(target=self._subscribe_to_agent, daemon=True)
+        self._subscription_thread.start()
+
+        # Focus on input
+        self.input_widget.focus()
+
+        # Welcome message
+        self._add_system_message("Connected to DimOS Agent Interface")
+
+    def on_unmount(self) -> None:
+        """Clean up when unmounting."""
+        self._running = False
+
+    def _subscribe_to_agent(self) -> None:
+        """Subscribe to agent messages in a separate thread."""
+
+        def receive_msg(msg):
+            if not self._running:
+                return
+
+            timestamp = datetime.now().strftime("%H:%M:%S")
+
+            if isinstance(msg, SystemMessage):
+                self.call_from_thread(
+                    self._add_message, timestamp, "system", msg.content, "bright_cyan"
                 )
-            )
-        if isinstance(msg, ToolMessage):
-            print(f"<tool> {msg.content}")
+            elif isinstance(msg, AIMessage):
+                content = msg.content or ""
+                tool_calls = msg.additional_kwargs.get("tool_calls", [])
+                if tool_calls:
+                    # Format tool calls with newlines between them
+                    tool_info = "\n".join(self._format_tool_call(tc) for tc in tool_calls)
+                    if content:
+                        content += "\n" + tool_info
+                    else:
+                        content = tool_info
+                self.call_from_thread(
+                    self._add_message, timestamp, "agent", content, "bright_green"
+                )
+            elif isinstance(msg, ToolMessage):
+                self.call_from_thread(self._add_message, timestamp, "tool", msg.content, "yellow")
+            elif isinstance(msg, HumanMessage):
+                self.call_from_thread(
+                    self._add_message, timestamp, "human", msg.content, "bright_blue"
+                )
 
-    agent_transport.subscribe(receive_msg)
+        self.agent_transport.subscribe(receive_msg)
 
-    while True:
-        # read cli input
-        text_line = input("> ")
-        if text_line.lower() in ["exit", "quit"]:
-            break
-        human_transport.publish(None, text_line)
+    def _format_tool_call(self, tool_call: ToolCall) -> str:
+        """Format a tool call for display."""
+        f = tool_call.get("function", {})
+        name = f.get("name", "unknown")
+        try:
+            arguments = json.loads(f.get("arguments", "{}"))
+            args = arguments.get("args", [])
+            kwargs = arguments.get("kwargs", {})
+            if args and kwargs:
+                params = f"{args}, {kwargs}"
+            elif args:
+                params = str(args)
+            elif kwargs:
+                params = str(kwargs)
+            else:
+                params = ""
+            return f"→ {name}({params})"
+        except:
+            return f"→ {name}()"
+
+    def _add_message(self, timestamp: str, sender: str, content: str, color: str) -> None:
+        """Add a message to the chat log."""
+        # Strip leading/trailing whitespace from content
+        content = content.strip() if content else ""
+
+        # Format timestamp with nicer colors - split into hours, minutes, seconds
+        time_parts = timestamp.split(":")
+        if len(time_parts) == 3:
+            # Format as HH:MM:SS with colored colons
+            timestamp_formatted = f" [dim white]{time_parts[0]}[/dim white][bright_black]:[/bright_black][dim white]{time_parts[1]}[/dim white][bright_black]:[/bright_black][dim white]{time_parts[2]}[/dim white]"
+        else:
+            timestamp_formatted = f" [dim white]{timestamp}[/dim white]"
+
+        # Format sender with consistent width
+        sender_formatted = f"[{color}]{sender:>8}[/{color}]"
+
+        # Calculate the prefix length for proper indentation
+        # space (1) + timestamp (8) + space (1) + sender (8) + space (1) + separator (1) + space (1) = 21
+        prefix = f"{timestamp_formatted} {sender_formatted} │ "
+        indent = " " * 19  # Spaces to align with the content after the separator
+
+        # Get the width of the chat area (accounting for borders and padding)
+        width = self.chat_log.size.width - 4 if self.chat_log.size else 76
+
+        # Calculate the available width for text (subtract prefix length)
+        text_width = max(width - 20, 40)  # Minimum 40 chars for text
+
+        # Split content into lines first (respecting explicit newlines)
+        lines = content.split("\n")
+
+        for line_idx, line in enumerate(lines):
+            # Wrap each line to fit the available width
+            if line_idx == 0:
+                # First line includes the full prefix
+                wrapped = textwrap.wrap(
+                    line, width=text_width, initial_indent="", subsequent_indent=""
+                )
+                if wrapped:
+                    self.chat_log.write(prefix + wrapped[0])
+                    for wrapped_line in wrapped[1:]:
+                        self.chat_log.write(indent + "│ " + wrapped_line)
+                else:
+                    # Empty line
+                    self.chat_log.write(prefix)
+            else:
+                # Subsequent lines from explicit newlines
+                wrapped = textwrap.wrap(
+                    line, width=text_width, initial_indent="", subsequent_indent=""
+                )
+                if wrapped:
+                    for wrapped_line in wrapped:
+                        self.chat_log.write(indent + "│ " + wrapped_line)
+                else:
+                    # Empty line
+                    self.chat_log.write(indent + "│")
+
+    def _add_system_message(self, content: str) -> None:
+        """Add a system message to the chat."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self._add_message(timestamp, "system", content, "cyan")
+
+    def on_key(self, event: Key) -> None:
+        """Handle key events."""
+        if event.key == "ctrl+c":
+            self.exit()
+            event.prevent_default()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle input submission."""
+        message = event.value.strip()
+        if not message:
+            return
+
+        # Clear input
+        self.input_widget.value = ""
+
+        # Check for commands
+        if message.lower() in ["/exit", "/quit"]:
+            self.exit()
+            return
+        elif message.lower() == "/clear":
+            self.action_clear()
+            return
+        elif message.lower() == "/help":
+            self._add_system_message("Commands: /clear, /help, /exit, /quit")
+            return
+
+        # Send to agent (message will be displayed when received back)
+        self.human_transport.publish(None, message)
+
+    def action_clear(self) -> None:
+        """Clear the chat log."""
+        self.chat_log.clear()
+
+    def action_quit(self) -> None:
+        """Quit the application."""
+        self._running = False
+        self.exit()
+
+
+def main():
+    """Main entry point for the human CLI."""
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "web":
+        # Support for textual-serve web mode
+        import os
+
+        from textual_serve.server import Server
+
+        server = Server(f"python {os.path.abspath(__file__)}")
+        server.serve()
+    else:
+        app = HumanCLIApp()
+        app.run()
 
 
 if __name__ == "__main__":
-    run_cli()
+    main()
