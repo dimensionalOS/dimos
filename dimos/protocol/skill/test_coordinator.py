@@ -81,7 +81,7 @@ class SkillContainerTest(Module):
     def take_photo(self) -> str:
         """Takes a camera photo"""
         print("Taking photo...")
-        img = Image.from_file(get_data("cafe.jpg"))
+        img = Image.from_file(get_data("cafe-smol.jpg"))
         print("Photo taken.")
         return img
 
