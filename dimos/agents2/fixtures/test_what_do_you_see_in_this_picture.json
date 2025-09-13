@@ -1,0 +1,21 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "take_photo",
+          "args": {
+            "args": null
+          },
+          "id": "call_Blp9k0YiZa2wirFmcluRWtGJ",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "The image shows a group of people sitting at an outdoor caf\u00e9 or restaurant. It's a sunny day, and the area is decorated with hanging flower baskets. They appear to be enjoying a meal together, and the atmosphere looks pleasant and relaxed.",
+      "tool_calls": []
+    }
+  ]
+}
