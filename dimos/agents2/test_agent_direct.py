@@ -120,4 +120,4 @@ def test_agent(agent_context):
 if __name__ == "__main__":
     # list(map(test_agent, [local, partial, full]))
     # it works with all, but not above if used in the same file, investigate
-    list(map(test_agent, [partial]))
+    list(map(test_agent, [local, partial]))

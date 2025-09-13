@@ -124,9 +124,17 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
             req_id = req.get("id")
             if req_id is not None:
+                if getattr(self, "_has_been_closed", False):
+                    print("-" * 100)
+                    print("publishing to closed rpc", "id", req_id, "res", repr(response))
+                    print("-" * 100)
+
                 self.publish(topic_res, self._encodeRPCRes({"id": req_id, "res": response}))
 
         self.subscribe(topic_req, receive_call)
+
+    def set_as_closed(self):
+        setattr(self, "_has_been_closed", True)
 
 
 # simple PUBSUB RPC implementation that doesn't encode
