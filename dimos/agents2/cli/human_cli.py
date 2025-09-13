@@ -108,28 +108,32 @@ class HumanCLIApp(App):
             timestamp = datetime.now().strftime("%H:%M:%S")
 
             if isinstance(msg, SystemMessage):
-                self.call_from_thread(
-                    self._add_message, timestamp, "system", msg.content, "bright_cyan"
-                )
+                self.call_from_thread(self._add_message, timestamp, "system", msg.content, "red")
             elif isinstance(msg, AIMessage):
                 content = msg.content or ""
                 tool_calls = msg.additional_kwargs.get("tool_calls", [])
+
+                # Display the main content first
+                if content:
+                    self.call_from_thread(self._add_message, timestamp, "agent", content, "orange")
+
+                # Display tool calls separately with different formatting
                 if tool_calls:
-                    # Format tool calls with newlines between them
-                    tool_info = "\n".join(self._format_tool_call(tc) for tc in tool_calls)
-                    if content:
-                        content += "\n" + tool_info
-                    else:
-                        content = tool_info
-                self.call_from_thread(
-                    self._add_message, timestamp, "agent", content, "bright_green"
-                )
+                    for tc in tool_calls:
+                        tool_info = self._format_tool_call(tc)
+                        self.call_from_thread(
+                            self._add_message, timestamp, "tool", tool_info, "cyan"
+                        )
+
+                # If neither content nor tool calls, show a placeholder
+                if not content and not tool_calls:
+                    self.call_from_thread(
+                        self._add_message, timestamp, "agent", "<no response>", "dim"
+                    )
             elif isinstance(msg, ToolMessage):
                 self.call_from_thread(self._add_message, timestamp, "tool", msg.content, "yellow")
             elif isinstance(msg, HumanMessage):
-                self.call_from_thread(
-                    self._add_message, timestamp, "human", msg.content, "bright_blue"
-                )
+                self.call_from_thread(self._add_message, timestamp, "human", msg.content, "green")
 
         self.agent_transport.subscribe(receive_msg)
 
@@ -141,17 +145,19 @@ class HumanCLIApp(App):
             arguments = json.loads(f.get("arguments", "{}"))
             args = arguments.get("args", [])
             kwargs = arguments.get("kwargs", {})
-            if args and kwargs:
-                params = f"{args}, {kwargs}"
-            elif args:
-                params = str(args)
-            elif kwargs:
-                params = str(kwargs)
-            else:
-                params = ""
-            return f"→ {name}({params})"
-        except:
-            return f"→ {name}()"
+
+            # Format parameters more readably
+            params_parts = []
+            if args:
+                params_parts.append(", ".join(repr(arg) for arg in args))
+            if kwargs:
+                kw_parts = [f"{k}={repr(v)}" for k, v in kwargs.items()]
+                params_parts.append(", ".join(kw_parts))
+
+            params = ", ".join(params_parts) if params_parts else ""
+            return f"▶ {name}({params})"
+        except Exception as e:
+            return f"▶ {name}(<error parsing arguments>)"
 
     def _add_message(self, timestamp: str, sender: str, content: str, color: str) -> None:
         """Add a message to the chat log."""
@@ -191,9 +197,9 @@ class HumanCLIApp(App):
                     line, width=text_width, initial_indent="", subsequent_indent=""
                 )
                 if wrapped:
-                    self.chat_log.write(prefix + wrapped[0])
+                    self.chat_log.write(prefix + f"[{color}]{wrapped[0]}[/{color}]")
                     for wrapped_line in wrapped[1:]:
-                        self.chat_log.write(indent + "│ " + wrapped_line)
+                        self.chat_log.write(indent + f"│ [{color}]{wrapped_line}[/{color}]")
                 else:
                     # Empty line
                     self.chat_log.write(prefix)
@@ -204,7 +210,7 @@ class HumanCLIApp(App):
                 )
                 if wrapped:
                     for wrapped_line in wrapped:
-                        self.chat_log.write(indent + "│ " + wrapped_line)
+                        self.chat_log.write(indent + f"│ [{color}]{wrapped_line}[/{color}]")
                 else:
                     # Empty line
                     self.chat_log.write(indent + "│")
@@ -212,7 +218,7 @@ class HumanCLIApp(App):
     def _add_system_message(self, content: str) -> None:
         """Add a system message to the chat."""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self._add_message(timestamp, "system", content, "cyan")
+        self._add_message(timestamp, "system", content, "red")
 
     def on_key(self, event: Key) -> None:
         """Handle key events."""
@@ -237,7 +243,14 @@ class HumanCLIApp(App):
             self.action_clear()
             return
         elif message.lower() == "/help":
-            self._add_system_message("Commands: /clear, /help, /exit, /quit")
+            help_text = """Commands:
+  /clear - Clear the chat log
+  /help  - Show this help message
+  /exit  - Exit the application
+  /quit  - Exit the application
+  
+Tool calls are displayed in cyan with ▶ prefix"""
+            self._add_system_message(help_text)
             return
 
         # Send to agent (message will be displayed when received back)
