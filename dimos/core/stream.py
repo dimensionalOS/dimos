@@ -79,6 +79,9 @@ class Transport(ObservableMixin[T]):
     # used by local Output
     def broadcast(self, selfstream: Out[T], value: T): ...
 
+    def publish(self, msg: T):
+        self.broadcast(None, msg)
+
     # used by local Input
     def subscribe(self, selfstream: In[T], callback: Callable[[T], any]) -> None: ...
 

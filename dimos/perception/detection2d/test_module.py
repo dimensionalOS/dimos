@@ -69,23 +69,23 @@ def publish_lcm(
     detected_pc: list[PointCloud2],
 ):
     lidar_frame_transport = LCMTransport("/lidar", LidarMessage)
-    lidar_frame_transport.broadcast(None, lidar_frame)
+    lidar_frame_transport.publish(lidar_frame)
 
     image_frame_transport = LCMTransport("/image", Image)
-    image_frame_transport.broadcast(None, image_frame)
+    image_frame_transport.publish(image_frame)
 
     odom_frame_transport = LCMTransport("/odom", Odometry)
-    odom_frame_transport.broadcast(None, odom_frame)
+    odom_frame_transport.publish(odom_frame)
 
     camera_info_transport = LCMTransport("/camera_info", CameraInfo)
-    camera_info_transport.broadcast(None, camera_info)
+    camera_info_transport.publish(camera_info)
 
     for idx, detection in enumerate(detected_pc):
         detected_pointcloud_transport = LCMTransport(f"/detected_{idx}", PointCloud2)
-        detected_pointcloud_transport.broadcast(None, detection)
+        detected_pointcloud_transport.publish(detection)
 
     annotations_transport = LCMTransport("/annotations", ImageAnnotations)
-    annotations_transport.broadcast(None, annotations)
+    annotations_transport.publish(annotations)
 
 
 def test_basic(moment):
@@ -93,8 +93,6 @@ def test_basic(moment):
     tf = TF()
     odom_frame, lidar_frame, image_frame, camera_info, transforms = moment
     tf.publish(*transforms)
-
-    print("Published transforms:", *transforms)
 
     camera_transform = tf.get("camera_optical", "world")
 
@@ -111,3 +109,5 @@ def test_basic(moment):
         build_imageannotations([image_frame, detections]),
         separate_detections_pointcloud,
     )
+
+    print("detections:\n", "\n".join(map(str, separate_detections_pointcloud)))
