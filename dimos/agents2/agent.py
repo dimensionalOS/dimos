@@ -249,6 +249,12 @@ class Agent(AgentSpec):
         if first_query:
             self.append_history(HumanMessage(first_query))
 
+        def _get_state() -> str:
+            # TODO: FIX THIS EXTREME HACK
+            update = self.coordinator.generate_snapshot(clear=False)
+            snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)
+            return json.dumps(snapshot_msgs, sort_keys=True, default=lambda o: repr(o))
+
         try:
             while True:
                 # we are getting tools from the coordinator on each turn
@@ -267,6 +273,8 @@ class Agent(AgentSpec):
 
                 logger.info(f"Agent response: {msg.content}")
 
+                state = _get_state()
+
                 if msg.tool_calls:
                     self.execute_tool_calls(msg.tool_calls)
 
@@ -279,7 +287,9 @@ class Agent(AgentSpec):
 
                 # coordinator will continue once a skill state has changed in
                 # such a way that agent call needs to be executed
-                await self.coordinator.wait_for_updates()
+
+                if state == _get_state():
+                    await self.coordinator.wait_for_updates()
 
                 # we request a full snapshot of currently running, finished or errored out skills
                 # we ask for removal of finished skills from subsequent snapshots (clear=True)
