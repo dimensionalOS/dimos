@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import functools
+import pickle
 import time
 from typing import Any, Callable, List, Optional, Tuple
 
@@ -365,12 +366,14 @@ class DetectionPointcloud(Detect2DModule):
 
         return combined_pointcloud
 
-    def filter_pc(self, pc: PointCloud2) -> PointCloud2:
+    def cleanup_pointcloud(self, pc: PointCloud2) -> PointCloud2:
         height = pc.filter_by_height(-0.05)
-        statistical = height.pointcloud.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)[
-            0
-        ]
+        statistical, _ = height.pointcloud.remove_statistical_outlier(
+            nb_neighbors=20, std_ratio=2.0
+        )
         return PointCloud2(statistical, pc.frame_id, pc.ts)
+
+    def raycast(self, transform: Transform, pc: PointCloud2): ...
 
     def process_frame(
         self,
@@ -386,14 +389,13 @@ class DetectionPointcloud(Detect2DModule):
 
         separate_pcs = list(
             map(
-                self.filter_pc,
+                self.cleanup_pointcloud,
                 self.filter_points_in_detections(
                     pointcloud, image, camera_info, detection_list, transform
                 ),
             )
         )
 
-        print(separate_pcs)
         # Combine all filtered pointclouds into one
         combined_pc = self.combine_pointclouds(separate_pcs)
 
