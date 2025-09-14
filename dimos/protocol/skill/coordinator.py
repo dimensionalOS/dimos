@@ -386,8 +386,9 @@ class SkillCoordinator(Module):
     def handle_message(self, msg: SkillMsg) -> None:
         if self._closed_coord:
             import traceback
+
             traceback.print_stack()
-            print("SkillCoordinator is closed, ignoring message", '-' * 1000)
+            print("SkillCoordinator is closed, ignoring message", "-" * 1000)
             return
         # logger.info(f"SkillMsg from {msg.skill_name}, {msg.call_id} - {msg}")
 

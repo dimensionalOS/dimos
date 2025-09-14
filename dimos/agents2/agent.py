@@ -14,6 +14,7 @@
 import asyncio
 import json
 import datetime
+import uuid
 from operator import itemgetter
 from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
 
@@ -167,6 +168,9 @@ class Agent(AgentSpec):
         self.state_messages = []
         self.coordinator = SkillCoordinator()
         self._history = []
+        self._agent_id = str(uuid.uuid4())
+        self._agent_stopped = False
+        self._agent_loop_lock = asyncio.Lock()
 
         if self.config.system_prompt:
             if isinstance(self.config.system_prompt, str):
@@ -186,12 +190,17 @@ class Agent(AgentSpec):
             )
 
     @rpc
+    def get_agent_id(self) -> str:
+        return self._agent_id
+
+    @rpc
     def start(self):
         self.coordinator.start()
 
     @rpc
     def stop(self):
         self.coordinator.stop()
+        self._agent_stopped = True
 
     def clear_history(self):
         self._history.clear()
@@ -208,6 +217,9 @@ class Agent(AgentSpec):
     # Used by agent to execute tool calls
     def execute_tool_calls(self, tool_calls: List[ToolCall]) -> None:
         """Execute a list of tool calls from the agent."""
+        if self._agent_stopped:
+            logger.warning("Agent is stopped, cannot execute tool calls.")
+            return
         for tool_call in tool_calls:
             logger.info(f"executing skill call {tool_call}")
             self.coordinator.call_skill(
@@ -218,9 +230,23 @@ class Agent(AgentSpec):
 
     # used to inject skill calls into the agent loop without agent asking for it
     def run_implicit_skill(self, skill_name: str, *args, **kwargs) -> None:
+        if self._agent_stopped:
+            logger.warning("Agent is stopped, cannot execute implicit skill calls.")
+            return
         self.coordinator.call_skill(False, skill_name, {"args": args, "kwargs": kwargs})
 
     async def agent_loop(self, first_query: str = ""):
+        if self._agent_stopped:
+            logger.warning("Agent is stopped, cannot run agent loop.")
+            return "Agent is stopped."
+
+        import traceback
+
+        traceback.print_stack()
+        async with self._agent_loop_lock:
+            return await self._agent_loop(first_query)
+
+    async def _agent_loop(self, first_query: str = ""):
         self.state_messages = []
         if first_query:
             self.append_history(HumanMessage(first_query))

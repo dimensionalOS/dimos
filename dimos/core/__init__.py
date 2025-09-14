@@ -74,8 +74,8 @@ class RPCClient:
                 result, unsub_fn = self.rpc.call_sync(f"{self.remote_name}/{name}", (args, kwargs))
                 self._unsub_fns.append(unsub_fn)
 
-                # TODO: Use a common name for stopping services.
-                if name == "stop":
+                # TODO: This is ugly.
+                if name in ("stop", "close", "shutdown"):
                     self.stop_client()
 
                 return result

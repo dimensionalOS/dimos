@@ -225,6 +225,6 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
 
         # Render to string with title above
         with console.capture() as capture:
-            console.print(Text("  Agent", style="bold blue"))
+            console.print(Text(f"  Agent ({self._agent_id})", style="bold blue"))
             console.print(table)
         return capture.get().strip()

@@ -82,8 +82,10 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
     ) -> Callable[[], None]:
         if self.l is None:
             logger.error("Tried to subscribe after LCM was closed")
+
             def noop():
                 pass
+
             return noop
 
         lcm_subscription = self.l.subscribe(str(topic), lambda _, msg: callback(msg, topic))

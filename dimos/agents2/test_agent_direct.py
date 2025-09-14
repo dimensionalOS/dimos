@@ -27,7 +27,6 @@ system_prompt = (
 
 @contextmanager
 def dimos_cluster():
-    """Session-scoped fixture to initialize dimos cluster once."""
     dimos = start(2)
     try:
         yield dimos
@@ -50,14 +49,8 @@ def local():
         raise e
     finally:
         # Ensure cleanup happens while event loop is still active
-        try:
-            agent.stop()
-        except Exception:
-            pass
-        try:
-            testcontainer.stop()
-        except Exception:
-            pass
+        agent.stop()
+        testcontainer.stop()
 
 
 @contextmanager
@@ -69,14 +62,8 @@ def partial():
         try:
             yield agent, testcontainer
         finally:
-            try:
-                agent.stop()
-            except Exception:
-                pass
-            try:
-                testcontainer.stop()
-            except Exception:
-                pass
+            agent.stop()
+            testcontainer.stop()
 
 
 @contextmanager
@@ -88,14 +75,8 @@ def full():
         try:
             yield agent, testcontainer
         finally:
-            try:
-                agent.stop()
-            except Exception:
-                pass
-            try:
-                testcontainer.stop()
-            except Exception:
-                pass
+            agent.stop()
+            testcontainer.stop()
 
 
 def test_agent(agent_context):
@@ -113,6 +94,10 @@ def test_agent(agent_context):
         print("Agent loop finished, asking about camera")
 
         agent.query("tell me what you see on the camera?")
+
+        print("=" * 150)
+        print("End of test", agent.get_agent_id())
+        print("=" * 150)
 
         # you can run skillspy and agentspy in parallel with this test for a better observation of what's happening
 

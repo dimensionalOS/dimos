@@ -235,7 +235,7 @@ class LCMService(Service[LCMConfig]):
             self.l = self.config.lcm
         else:
             self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
-        
+
         self._l_lock = threading.Lock()
 
         self._stop_event = threading.Event()
@@ -272,7 +272,7 @@ class LCMService(Service[LCMConfig]):
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join()
-        
+
         # Clean up LCM instance if we created it
         if not self.config.lcm:
             with self._l_lock:
