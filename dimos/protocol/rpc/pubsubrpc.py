@@ -126,7 +126,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
             if req_id is not None:
                 self.publish(topic_res, self._encodeRPCRes({"id": req_id, "res": response}))
 
-        self.subscribe(topic_req, receive_call)
+        return self.subscribe(topic_req, receive_call)
 
 
 # simple PUBSUB RPC implementation that doesn't encode

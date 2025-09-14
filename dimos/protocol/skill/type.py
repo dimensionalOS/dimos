@@ -84,18 +84,6 @@ class SkillConfig:
         parts.append(f"ret={self.ret.name}")
         return f"Skill({', '.join(parts)})"
 
-    def __getstate__(self):
-        """Custom pickle state to exclude the unpickleable function."""
-        state = self.__dict__.copy()
-        # Remove the unpickleable function
-        state["f"] = None
-        return state
-
-    def __setstate__(self, state):
-        """Custom pickle restore."""
-        self.__dict__.update(state)
-        # The function will need to be rebound when used
-
 
 class MsgType(Enum):
     pending = 0

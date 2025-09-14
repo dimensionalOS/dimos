@@ -92,6 +92,11 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer):
         except ValueError:
             ...
 
+    def close_rpc(self):
+        if self.rpc:
+            self.rpc.stop()
+            self.rpc = None
+
     @property
     def tf(self):
         if self._tf is None:

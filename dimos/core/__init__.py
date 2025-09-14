@@ -29,6 +29,20 @@ class RPCClient:
         self.actor_instance = actor_instance
         self.rpcs = actor_class.rpcs.keys()
         self.rpc.start()
+        self._unsub_fns = []
+
+    def stop_client(self):
+        for unsub in self._unsub_fns:
+            try:
+                unsub()
+            except Exception:
+                pass
+
+        self._unsub_fns = []
+
+        if self.rpc:
+            self.rpc.stop()
+            self.rpc = None
 
     def __reduce__(self):
         # Return the class and the arguments needed to reconstruct the object
@@ -57,7 +71,14 @@ class RPCClient:
             original_method = getattr(self.actor_class, name, None)
 
             def rpc_call(*args, **kwargs):
-                return self.rpc.call_sync(f"{self.remote_name}/{name}", (args, kwargs))
+                result, unsub_fn = self.rpc.call_sync(f"{self.remote_name}/{name}", (args, kwargs))
+                self._unsub_fns.append(unsub_fn)
+
+                # TODO: Use a common name for stopping services.
+                if name == "stop":
+                    self.stop_client()
+
+                return result
 
             # Copy docstring and other attributes from original method
             if original_method:

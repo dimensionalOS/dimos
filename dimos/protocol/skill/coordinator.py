@@ -283,7 +283,7 @@ class SkillCoordinator(Module):
     _agent_loop: Optional[asyncio.AbstractEventLoop]
 
     def __init__(self) -> None:
-        # TODO: Why isn't this super().__init__() ? SkillContainer is not a superclass
+        # TODO: Why isn't this super().__init__() ?
         SkillContainer.__init__(self)
         self._loop = get_loop()
         self._static_containers = []
@@ -294,6 +294,8 @@ class SkillCoordinator(Module):
         self._updates_available = None
         self._agent_loop = None
         self._pending_notifications = 0  # Count pending notifications
+        self._closed_coord = False
+        self._transport_unsub_fn = None
 
     def _ensure_updates_available(self) -> asyncio.Event:
         """Lazily create the updates available event in the correct loop context."""
@@ -323,11 +325,14 @@ class SkillCoordinator(Module):
     @rpc
     def start(self) -> None:
         self.skill_transport.start()
-        self.skill_transport.subscribe(self.handle_message)
+        self._transport_unsub_fn = self.skill_transport.subscribe(self.handle_message)
 
     @rpc
     def stop(self) -> None:
+        self._closed_coord = True
         self.skill_transport.stop()
+        if self._transport_unsub_fn:
+            self._transport_unsub_fn()
 
     def len(self) -> int:
         return len(self._skills)
@@ -379,6 +384,11 @@ class SkillCoordinator(Module):
     #
     # Checks if agent needs to be notified (if ToolConfig has Return=call_agent or Stream=call_agent)
     def handle_message(self, msg: SkillMsg) -> None:
+        if self._closed_coord:
+            import traceback
+            traceback.print_stack()
+            print("SkillCoordinator is closed, ignoring message", '-' * 1000)
+            return
         # logger.info(f"SkillMsg from {msg.skill_name}, {msg.call_id} - {msg}")
 
         if self._skill_state.get(msg.call_id) is None:

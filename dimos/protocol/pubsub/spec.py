@@ -119,9 +119,10 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT], ABC):
 
     def publish(self, topic: TopicT, message: MsgT) -> None:
         """Encode the message and publish it."""
+        if getattr(self, '_stop_event') is not None and self._stop_event.is_set():
+            return
         encoded_message = self.encode(message, topic)
         if encoded_message is None:
-            logger.warning("Encoding returned None, not publishing")
             return
         super().publish(topic, encoded_message)  # type: ignore[misc]
 
