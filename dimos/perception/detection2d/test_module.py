@@ -146,9 +146,9 @@ def hidden_point_removal(camera_transform: Transform, pc: PointCloud2, radius: f
     """Remove points not visible from camera location.
 
     Args:
-        camera_transform: Transform from camera to world frame
+        camera_transform: Transform from world to camera_optical frame (will be inverted)
         pc: PointCloud2 in world frame
-        radius: Radius for spherical projection (default 1000.0)
+        radius: Radius for spherical projection (default 100.0)
 
     Returns:
         PointCloud2 with only visible points
@@ -156,9 +156,11 @@ def hidden_point_removal(camera_transform: Transform, pc: PointCloud2, radius: f
     import numpy as np
     import open3d as o3d
 
-    # Get camera position in world frame
-    camera_position = camera_transform.translation
-    print(f"Camera position: {camera_position}")
+    # Invert transform to get camera position in world frame
+    # The input transform is world->camera_optical, we need camera_optical->world
+    camera_to_world = camera_transform.inverse()
+    camera_position = camera_to_world.translation
+    print(f"Camera position in world: {camera_position}")
 
     # Convert to numpy array for open3d
     camera_pos_np = camera_position.to_numpy().reshape(3, 1)
@@ -176,6 +178,60 @@ def hidden_point_removal(camera_transform: Transform, pc: PointCloud2, radius: f
     visible_pcd = pcd.select_by_index(visible_indices)
 
     return PointCloud2(visible_pcd, frame_id=pc.frame_id, ts=pc.ts)
+
+
+def test_camera_position():
+    """Test to inspect camera position values."""
+    with open(DETECTION_RESULT_PKL, "rb") as f:
+        detections, camera_transform = pickle.load(f)
+
+        print("\n=== Camera Transform Debug ===")
+        print(f"Full transform: {camera_transform}")
+        print(f"Translation vector: {camera_transform.translation}")
+
+        # Test if we need to invert the transform
+        # If this is actually world->camera_optical, we need to invert it
+        try:
+            # Try to invert the transform
+            inverted = camera_transform.inverse()
+            print(f"\nInverted transform translation: {inverted.translation}")
+            print(f"Inverted X: {inverted.translation.x}")
+            print(f"Inverted Y: {inverted.translation.y}")
+            print(f"Inverted Z: {inverted.translation.z}")
+        except:
+            print("Could not invert transform")
+
+        # Check first detection point cloud
+        if detections:
+            first_pc = detections[0]
+            points = first_pc.pointcloud.points
+            print(f"\nFirst detection has {len(points)} points")
+            if len(points) > 0:
+                import numpy as np
+
+                points_np = np.asarray(points)
+                print(f"Point cloud bounds:")
+                print(f"  X: [{points_np[:, 0].min():.3f}, {points_np[:, 0].max():.3f}]")
+                print(f"  Y: [{points_np[:, 1].min():.3f}, {points_np[:, 1].max():.3f}]")
+                print(f"  Z: [{points_np[:, 2].min():.3f}, {points_np[:, 2].max():.3f}]")
+
+                # Test both interpretations
+                print("\nIf transform is camera_optical->world:")
+                camera_pos = camera_transform.translation.to_numpy()
+                distances = np.linalg.norm(points_np - camera_pos, axis=1)
+                print(f"  Distance to points: {distances.min():.1f}-{distances.max():.1f}m")
+
+                try:
+                    print("\nIf transform is world->camera_optical (need inverse):")
+                    inv_pos = inverted.translation.to_numpy()
+                    distances_inv = np.linalg.norm(points_np - inv_pos, axis=1)
+                    print(
+                        f"  Distance to points: {distances_inv.min():.1f}-{distances_inv.max():.1f}m"
+                    )
+                except:
+                    pass
+
+        print("==============================\n")
 
 
 def test_hidden_removal():
