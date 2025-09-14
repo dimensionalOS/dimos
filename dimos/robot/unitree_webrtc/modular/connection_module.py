@@ -206,7 +206,7 @@ class ConnectionModule(Module):
 
     def _publish_tf(self, msg):
         self.odom.publish(msg)
-        self.tf.publish(**self._odom_to_tf(msg))
+        self.tf.publish(*self._odom_to_tf(msg))
 
     @rpc
     def publish_request(self, topic: str, data: dict):
