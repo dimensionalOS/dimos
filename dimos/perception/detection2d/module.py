@@ -208,6 +208,7 @@ class Detect2DModule(Module):
         self.detector = self._initDetector()
 
     def process_frame(self, image: Image) -> Detections:
+        print("Processing frame for detection", image)
         return [image, better_detection_format(self.detector.process_image(image.to_opencv()))]
 
     @functools.cache
@@ -366,14 +367,27 @@ class DetectionPointcloud(Detect2DModule):
 
         return combined_pointcloud
 
+    def hidden_point_removal(
+        self, camera_transform: Transform, pc: PointCloud2, radius: float = 100.0
+    ):
+        camera_position = camera_transform.inverse().translation
+        camera_pos_np = camera_position.to_numpy().reshape(3, 1)
+
+        pcd = pc.pointcloud
+        try:
+            _, visible_indices = pcd.hidden_point_removal(camera_pos_np, radius)
+            visible_pcd = pcd.select_by_index(visible_indices)
+
+            return PointCloud2(visible_pcd, frame_id=pc.frame_id, ts=pc.ts)
+        except Exception as e:
+            return pc
+
     def cleanup_pointcloud(self, pc: PointCloud2) -> PointCloud2:
         height = pc.filter_by_height(-0.05)
         statistical, _ = height.pointcloud.remove_statistical_outlier(
             nb_neighbors=20, std_ratio=2.0
         )
         return PointCloud2(statistical, pc.frame_id, pc.ts)
-
-    def raycast(self, transform: Transform, pc: PointCloud2): ...
 
     def process_frame(
         self,
@@ -382,19 +396,22 @@ class DetectionPointcloud(Detect2DModule):
         camera_info: CameraInfo,
         transform: Transform,
     ):
-        detections = super().process_frame(image)
+        if not transform:
+            return None
+        image, detection_list = detections
+        print("Processing frame for detection with pointcloud", image)
         # Filter pointcloud based on detections
-        image = detections[0]  # Extract image from detection tuple
-        detection_list = detections[1]  # Extract detection list from tuple
 
-        separate_pcs = list(
-            map(
-                self.cleanup_pointcloud,
-                self.filter_points_in_detections(
-                    pointcloud, image, camera_info, detection_list, transform
-                ),
-            )
-        )
+        separate_pcs = []
+        for pc in self.filter_points_in_detections(
+            pointcloud, image, camera_info, detection_list, transform
+        ):
+            if pc is None:
+                continue
+            pc = self.hidden_point_removal(transform, self.cleanup_pointcloud(pc))
+            if pc is None:
+                continue
+            separate_pcs.append(pc)
 
         # Combine all filtered pointclouds into one
         combined_pc = self.combine_pointclouds(separate_pcs)
@@ -411,4 +428,4 @@ class DetectionPointcloud(Detect2DModule):
         )
 
         # Output combined filtered pointcloud
-        combined_stream.subscribe(self.filtered_pointcloud.publish)
+        combined_stream.pipe(ops.map(lambda x: x[3])).subscribe(self.filtered_pointcloud.publish)
