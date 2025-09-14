@@ -20,7 +20,7 @@ import logging
 import os
 import time
 import warnings
-from typing import Optional
+from typing import List, Optional
 
 import reactivex as rx
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -180,9 +180,8 @@ class ConnectionModule(Module):
         self.camera_info_stream().subscribe(self.camera_info.publish)
         self.movecmd.subscribe(self.connection.move)
 
-    def _publish_tf(self, msg):
-        self.odom.publish(msg)
-
+    @classmethod
+    def _odom_to_tf(self, odom: PoseStamped) -> List[Transform]:
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -199,11 +198,15 @@ class ConnectionModule(Module):
             ts=camera_link.ts,
         )
 
-        self.tf.publish(
-            Transform.from_pose("base_link", msg),
+        return [
+            Transform.from_pose("base_link", odom),
             camera_link,
             camera_optical,
-        )
+        ]
+
+    def _publish_tf(self, msg):
+        self.odom.publish(msg)
+        self.tf.publish(**self._odom_to_tf(msg))
 
     @rpc
     def publish_request(self, topic: str, data: dict):
@@ -216,8 +219,8 @@ class ConnectionModule(Module):
         """
         return self.connection.publish_request(topic, data)
 
-    @functools.cache
-    def camera_info_stream(self) -> Observable[CameraInfo]:
+    @classmethod
+    def _camera_info(self) -> Out[CameraInfo]:
         fx, fy, cx, cy = list(
             map(
                 lambda x: int(x / image_resize_factor),
@@ -256,14 +259,11 @@ class ConnectionModule(Module):
             "binning_y": 0,
         }
 
-        return rx.interval(1).pipe(
-            ops.map(
-                lambda x: CameraInfo(
-                    **base_msg,
-                    header=Header("camera_optical"),
-                )
-            )
-        )
+        return CameraInfo(**base_msg, header=Header("camera_optical"))
+
+    @functools.cache
+    def camera_info_stream(self) -> Observable[CameraInfo]:
+        return rx.interval(1).pipe(ops.map(lambda _: self._camera_info()))
 
 
 def deploy_connection(dimos, **kwargs):

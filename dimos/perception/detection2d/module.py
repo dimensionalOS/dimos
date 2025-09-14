@@ -36,9 +36,11 @@ from dimos_lcm.vision_msgs import (
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
-from dimos.perception.detection2d.detic import Detic2DDetector
+
+# from dimos.perception.detection2d.detic import Detic2DDetector
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.protocol.tf.tf import TF
 from dimos.types.timestamped import to_ros_stamp
@@ -204,13 +206,13 @@ class Detect2DModule(Module):
             self._detectorClass = detector
         self.detector = self._initDetector()
 
-    def detect(self, image: Image) -> Detections:
+    def process_frame(self, image: Image) -> Detections:
         return [image, better_detection_format(self.detector.process_image(image.to_opencv()))]
 
     @functools.cache
     def detection_stream(self):
         # from dimos.activate_cuda import _init_cuda
-        detection_stream = self.image.observable().pipe(ops.map(self.detect))
+        detection_stream = self.image.observable().pipe(ops.map(self.process_frame))
 
         detection_stream.pipe(ops.map(build_imageannotations)).subscribe(self.annotations.publish)
         detection_stream.pipe(
@@ -227,22 +229,13 @@ class Detect2DModule(Module):
     def stop(self): ...
 
 
-class DetectionPointcloud(Module):
+class DetectionPointcloud(Detect2DModule):
     camera_info: In[CameraInfo] = None
     pointcloud: In[PointCloud2] = None
     filtered_pointcloud: Out[PointCloud2] = None
     image: In[Image] = None
     detections: Out[Detection2DArrayFix] = None
     annotations: Out[ImageAnnotations] = None
-
-    # _initDetector = Detic2DDetector
-    _initDetector = Yolo2DDetector
-
-    def __init__(self, *args, detector=Optional[Callable[[Any], Any]], **kwargs):
-        super().__init__(*args, **kwargs)
-        if detector:
-            self._detectorClass = detector
-        self.detector = self._initDetector()
 
     def detect(self, image: Image) -> Detections:
         return [image, better_detection_format(self.detector.process_image(image.to_opencv()))]
@@ -392,20 +385,20 @@ class DetectionPointcloud(Module):
 
         return combined_pointcloud
 
-    def process_frame(self, data):
-        """Process a single frame with image, pointcloud, camera info and detections."""
-        detections, pointcloud, camera_info = data
-
-        # Get transform
-        world_to_optical_transform = self.tf.get("camera_optical", "world")
-        if world_to_optical_transform is None:
-            return None
-
-        extrinsics = self.transform_to_matrix(world_to_optical_transform)
+    def process_frame(
+        self,
+        image: Image,
+        pointcloud: PointCloud2,
+        camera_info: CameraInfo,
+        transform: Transform,
+    ):
+        detections = super().process_frame(image)
+        extrinsics = self.transform_to_matrix(transform)
 
         # Filter pointcloud based on detections
         image = detections[0]  # Extract image from detection tuple
         detection_list = detections[1]  # Extract detection list from tuple
+
         filtered_pcs = self.filter_points_in_detections(
             pointcloud, image, camera_info, detection_list, extrinsics
         )
@@ -413,14 +406,14 @@ class DetectionPointcloud(Module):
         # Combine all filtered pointclouds into one
         combined_pc = self.combine_pointclouds(filtered_pcs)
 
-        return combined_pc
+        return [image, detection_list, combined_pc]
 
     @rpc
     def start(self):
         # Combine detection stream with pointcloud and camera_info
         combined_stream = self.detection_stream().pipe(
             ops.with_latest_from(self.pointcloud.observable(), self.camera_info.observable()),
-            ops.map(self.process_frame),
+            ops.map(lambda data: self.process_frame(*data, self.tf.get("camera_optical", "world"))),
             ops.filter(lambda x: x is not None),
         )
 
