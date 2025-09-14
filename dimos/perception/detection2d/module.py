@@ -399,14 +399,14 @@ class DetectionPointcloud(Detect2DModule):
         image = detections[0]  # Extract image from detection tuple
         detection_list = detections[1]  # Extract detection list from tuple
 
-        filtered_pcs = self.filter_points_in_detections(
+        separate_pcs = self.filter_points_in_detections(
             pointcloud, image, camera_info, detection_list, extrinsics
         )
 
         # Combine all filtered pointclouds into one
-        combined_pc = self.combine_pointclouds(filtered_pcs)
+        combined_pc = self.combine_pointclouds(separate_pcs)
 
-        return [image, detection_list, combined_pc]
+        return [image, detection_list, separate_pcs, combined_pc]
 
     @rpc
     def start(self):
