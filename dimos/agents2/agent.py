@@ -170,7 +170,6 @@ class Agent(AgentSpec):
         self._history = []
         self._agent_id = str(uuid.uuid4())
         self._agent_stopped = False
-        self._agent_loop_lock = asyncio.Lock()
 
         if self.config.system_prompt:
             if isinstance(self.config.system_prompt, str):
@@ -236,17 +235,16 @@ class Agent(AgentSpec):
         self.coordinator.call_skill(False, skill_name, {"args": args, "kwargs": kwargs})
 
     async def agent_loop(self, first_query: str = ""):
+        # TODO: Should I add a lock here to prevent concurrent calls to agent_loop?
+
         if self._agent_stopped:
             logger.warning("Agent is stopped, cannot run agent loop.")
-            return "Agent is stopped."
+            # return "Agent is stopped."
+            import traceback
 
-        import traceback
+            traceback.print_stack()
+            return
 
-        traceback.print_stack()
-        async with self._agent_loop_lock:
-            return await self._agent_loop(first_query)
-
-    async def _agent_loop(self, first_query: str = ""):
         self.state_messages = []
         if first_query:
             self.append_history(HumanMessage(first_query))

@@ -93,7 +93,7 @@ class RPCClient:
         return self.actor_instance.__getattr__(name)
 
 
-def patchdask(dask_client: Client):
+def patchdask(dask_client: Client, local_cluster: LocalCluster) -> Client:
     def deploy(
         actor_class,
         *args,
@@ -166,9 +166,14 @@ def patchdask(dask_client: Client):
                 f"[bold]Total: {total_used_gb:.2f}/{total_limit_gb:.2f}GB ({total_percentage:.1f}%) across {total_workers} workers[/bold]"
             )
 
+    def close_all():
+        dask_client.shutdown()
+        local_cluster.close()
+
     dask_client.deploy = deploy
     dask_client.check_worker_memory = check_worker_memory
     dask_client.stop = lambda: dask_client.close()
+    dask_client.close_all = close_all
     return dask_client
 
 
@@ -195,4 +200,4 @@ def start(n: Optional[int] = None, memory_limit: str = "auto") -> Client:
     console.print(
         f"[green]Initialized dimos local cluster with [bright_blue]{n} workers, memory limit: {memory_limit}"
     )
-    return patchdask(client)
+    return patchdask(client, cluster)

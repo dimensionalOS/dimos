@@ -31,7 +31,7 @@ def dimos_cluster():
     try:
         yield dimos
     finally:
-        dimos.shutdown()
+        dimos.close_all()
 
 
 @contextmanager
