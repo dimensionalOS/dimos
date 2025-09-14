@@ -365,6 +365,13 @@ class DetectionPointcloud(Detect2DModule):
 
         return combined_pointcloud
 
+    def filter_pc(self, pc: PointCloud2) -> PointCloud2:
+        height = pc.filter_by_height(-0.05)
+        statistical = height.pointcloud.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)[
+            0
+        ]
+        return PointCloud2(statistical, pc.frame_id, pc.ts)
+
     def process_frame(
         self,
         image: Image,
@@ -377,10 +384,16 @@ class DetectionPointcloud(Detect2DModule):
         image = detections[0]  # Extract image from detection tuple
         detection_list = detections[1]  # Extract detection list from tuple
 
-        separate_pcs = self.filter_points_in_detections(
-            pointcloud, image, camera_info, detection_list, transform
+        separate_pcs = list(
+            map(
+                self.filter_pc,
+                self.filter_points_in_detections(
+                    pointcloud, image, camera_info, detection_list, transform
+                ),
+            )
         )
 
+        print(separate_pcs)
         # Combine all filtered pointclouds into one
         combined_pc = self.combine_pointclouds(separate_pcs)
 
