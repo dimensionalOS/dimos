@@ -256,12 +256,13 @@ class DetectionPointcloud(Detect2DModule):
         self,
         points_3d: np.ndarray,
         camera_matrix: np.ndarray,
-        extrinsics: np.ndarray,
+        extrinsics: Transform,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Project 3D points to 2D camera coordinates."""
         # Transform points from world to camera_optical frame
         points_homogeneous = np.hstack([points_3d, np.ones((points_3d.shape[0], 1))])
-        points_camera = (extrinsics @ points_homogeneous.T).T
+        extrinsics_matrix = extrinsics.to_matrix()
+        points_camera = (extrinsics_matrix @ points_homogeneous.T).T
 
         # Filter out points behind the camera
         valid_mask = points_camera[:, 2] > 0
@@ -273,34 +274,13 @@ class DetectionPointcloud(Detect2DModule):
 
         return points_2d, valid_mask
 
-    def transform_to_matrix(self, transform) -> np.ndarray:
-        """Convert a Transform object to a 4x4 transformation matrix."""
-        # Build rotation matrix from quaternion
-        q = transform.rotation
-        x, y, z, w = q.x, q.y, q.z, q.w
-
-        R = np.array(
-            [
-                [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-                [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-                [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-            ]
-        )
-
-        # Build 4x4 transformation matrix
-        T = np.eye(4)
-        T[:3, :3] = R
-        T[:3, 3] = [transform.translation.x, transform.translation.y, transform.translation.z]
-
-        return T
-
     def filter_points_in_detections(
         self,
         pointcloud: PointCloud2,
         image: Image,
         camera_info: CameraInfo,
         detection_list: List[Detection],
-        world_to_camera_transform: np.ndarray,
+        world_to_camera_transform: Transform,
     ) -> List[PointCloud2]:
         """Filter lidar points that fall within detection bounding boxes."""
         # Extract camera parameters
@@ -393,14 +373,12 @@ class DetectionPointcloud(Detect2DModule):
         transform: Transform,
     ):
         detections = super().process_frame(image)
-        extrinsics = self.transform_to_matrix(transform)
-
         # Filter pointcloud based on detections
         image = detections[0]  # Extract image from detection tuple
         detection_list = detections[1]  # Extract detection list from tuple
 
         separate_pcs = self.filter_points_in_detections(
-            pointcloud, image, camera_info, detection_list, extrinsics
+            pointcloud, image, camera_info, detection_list, transform
         )
 
         # Combine all filtered pointclouds into one
