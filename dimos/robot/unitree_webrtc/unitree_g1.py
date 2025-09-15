@@ -292,7 +292,9 @@ class UnitreeG1(Robot):
             "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
-        logger.info("ROS bridge deployed: /cmd_vel, /state_estimation, /tf, /registered_scan (ROS → DIMOS)")
+        logger.info(
+            "ROS bridge deployed: /cmd_vel, /state_estimation, /tf, /registered_scan (ROS → DIMOS)"
+        )
 
     def _start_modules(self):
         """Start all deployed modules."""
