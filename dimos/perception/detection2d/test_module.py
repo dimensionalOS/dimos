@@ -132,6 +132,11 @@ def test_basic(moment):
 
     print("detections:\n", "\n".join(map(str, separate_detections_pointcloud)))
 
+    # how do we count points in this detection? should be 10 exactly
+    num_points = len(separate_detections_pointcloud[0].pointcloud.points)
+    print(f"Number of points in first detection: {num_points}")
+    assert num_points == 10, f"Expected 10 points, got {num_points}"
+
 
 # from https://www.open3d.org/docs/release/python_api/open3d.geometry.PointCloud.html
 #
@@ -156,6 +161,7 @@ def hidden_point_removal(camera_transform: Transform, pc: PointCloud2, radius: f
     return PointCloud2(visible_pcd, frame_id=pc.frame_id, ts=pc.ts)
 
 
+@pytest.mark.tool
 def test_hidden_removal():
     lcm.autoconf()
 

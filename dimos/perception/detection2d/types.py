@@ -17,7 +17,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from dimos.msgs.sensor_msgs import Image
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
+    ImageAnnotations,
+    PointsAnnotation,
+    TextAnnotation,
+)
+from dimos_lcm.vision_msgs import (
+    BoundingBox2D,
+    Detection2DArray,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+    Point2D,
+    Pose2D,
+)
+from dimos_lcm.vision_msgs import (
+    Detection2D as ROSDetection2D,
+)
+
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.types.timestamped import Timestamped
 
 Bbox = Tuple[float, float, float, float]
@@ -58,6 +75,14 @@ class Detection2D(Timestamped):
     image: Optional[Image] = None
 
     @classmethod
+    def from_detector(
+        cls, raw_detections: InconvinientDetectionFormat, **kwargs
+    ) -> List["Detection2D"]:
+        return [
+            cls.from_detection(raw, **kwargs) for raw in better_detection_format(raw_detections)
+        ]
+
+    @classmethod
     def from_detection(cls, raw_detection: Detection, **kwargs) -> "Detection2D":
         [bbox, track_id, class_id, confidence, name] = raw_detection
 
@@ -72,6 +97,15 @@ class Detection2D(Timestamped):
             name=name,
             **kwargs,
         )
+
+    def lcm_encode(self):
+        return self.to_imageannotations().lcm_encode()
+
+    def to_imageannotations(self) -> ImageAnnotations: ...
+
+    def to_detection2d(self) -> ROSDetection2D: ...
+
+    def localize(self, pcd: PointCloud2) -> LocalizedDetection2D: ...
 
 
 @dataclass
