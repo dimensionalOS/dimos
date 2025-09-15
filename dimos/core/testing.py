@@ -25,7 +25,6 @@ from dimos.core import (
     RemoteOut,
     rpc,
     start,
-    stop,
 )
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -38,7 +37,7 @@ def dimos():
     """Fixture to create a Dimos client for testing."""
     client = start(2)
     yield client
-    stop(client)
+    client.stop()
 
 
 class MockRobotClient(Module):
