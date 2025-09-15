@@ -58,12 +58,14 @@ originalwidth, originalheight = (1280, 720)
 
 
 class FakeRTC(UnitreeWebRTCConnection):
+    dir_name = "unitree_go2_lidar_corrected"
+
     # we don't want UnitreeWebRTCConnection to init
     def __init__(
         self,
         **kwargs,
     ):
-        get_data("unitree_office_walk")
+        get_data(self.dir_name)
         self.replay_config = {
             "loop": kwargs.get("loop"),
             "seek": kwargs.get("seek"),
@@ -83,24 +85,25 @@ class FakeRTC(UnitreeWebRTCConnection):
         print("liedown suppressed")
 
     @functools.cache
-    def raw_lidar_stream(self):
+    def lidar_stream(self):
         print("lidar stream start")
-        lidar_store = TimedSensorReplay("unitree_office_walk/lidar")
+        lidar_store = TimedSensorReplay(f"{self.dir_name}/lidar")
         return lidar_store.stream(**self.replay_config)
 
     @functools.cache
     def raw_odom_stream(self):
         print("odom stream start")
-        odom_store = TimedSensorReplay("unitree_office_walk/odom")
-        return odom_store.stream(**self.replay_config)
+        odom_store = TimedSensorReplay(f"{self.dir_name}/odom")
+
+        return odom_store.stream(**self.replay_config, debug=True)
 
     # we don't have raw video stream in the data set
     @functools.cache
     def raw_video_stream(self):
         print("video stream start")
         video_store = TimedSensorReplay(
-            "unitree_office_walk/video",
-            autocast=lambda data: Image.from_numpy(data, format=ImageFormat.RGB),
+            f"{self.dir_name}/video",
+            # autocast=lambda data: Image.from_numpy(data, format=ImageFormat.RGB),
         )
 
         return video_store.stream(**self.replay_config)

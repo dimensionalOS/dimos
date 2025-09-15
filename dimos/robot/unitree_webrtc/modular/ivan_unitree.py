@@ -33,7 +33,7 @@ def detection_unitree():
     dimos = start(6)
 
     connection = deploy_connection(dimos, loop=False, speed=0.2)
-    connection.record("unitree_go2_lidar_corrected")
+    # connection.record("unitree_go2_lidar_corrected")
     mapper = deploy_navigation(dimos, connection)
 
     detection = dimos.deploy(Detection3DModule)
