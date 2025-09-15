@@ -216,20 +216,18 @@ class CudaImage(AbstractImage):
             )
         if self.format == ImageFormat.BGRA:
             return CudaImage(self.data[..., :3], ImageFormat.BGR, self.frame_id, self.ts)
-        if self.format == ImageFormat.GRAY:
+        if self.format in (ImageFormat.GRAY, ImageFormat.DEPTH):
             return CudaImage(
                 _rgb_to_bgr_cuda(_gray_to_rgb_cuda(self.data)),
                 ImageFormat.BGR,
                 self.frame_id,
                 self.ts,
             )
-        if self.format == ImageFormat.GRAY16:
+        if self.format in (ImageFormat.GRAY16, ImageFormat.DEPTH16):
             gray8 = (self.data.astype(cp.float32) / 256.0).clip(0, 255).astype(cp.uint8)  # type: ignore
             return CudaImage(
                 _rgb_to_bgr_cuda(_gray_to_rgb_cuda(gray8)), ImageFormat.BGR, self.frame_id, self.ts
             )
-        if self.format in (ImageFormat.DEPTH, ImageFormat.DEPTH16):
-            return self.copy()  # type: ignore
         return self.copy()  # type: ignore
 
     def to_grayscale(self) -> "CudaImage":
