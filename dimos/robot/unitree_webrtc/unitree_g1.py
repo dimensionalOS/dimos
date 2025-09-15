@@ -27,8 +27,7 @@ from dimos import core
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs import Image
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos.msgs.sensor_msgs import Image, CameraInfo, PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
@@ -39,15 +38,21 @@ from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from nav_msgs.msg import Odometry as ROSOdometry
+from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
 
-# from dimos.hardware.zed_camera import ZEDModule
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1", level=logging.INFO)
+
+# try:
+#     from dimos.hardware.zed_camera import ZEDModule
+# except ImportError:
+#     logger.warning("ZEDModule not found. Please install pyzed to use ZED camera functionality.")
+#     ZEDModule = None
 
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
@@ -282,7 +287,12 @@ class UnitreeG1(Robot):
             "/tf", TFMessage, ROSTFMessage, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
-        logger.info("ROS bridge deployed: /cmd_vel, /state_estimation, /tf (ROS → DIMOS)")
+        # Add /registered_scan topic from ROS to DIMOS
+        self.ros_bridge.add_topic(
+            "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+
+        logger.info("ROS bridge deployed: /cmd_vel, /state_estimation, /tf, /registered_scan (ROS → DIMOS)")
 
     def _start_modules(self):
         """Start all deployed modules."""

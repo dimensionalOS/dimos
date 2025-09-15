@@ -28,6 +28,15 @@ from dimos_lcm.sensor_msgs.PointCloud2 import (
 from dimos_lcm.sensor_msgs.PointField import PointField
 from dimos_lcm.std_msgs.Header import Header
 
+# Import ROS types
+try:
+    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+    from sensor_msgs.msg import PointField as ROSPointField
+    from std_msgs.msg import Header as ROSHeader
+    ROS_AVAILABLE = True
+except ImportError:
+    ROS_AVAILABLE = False
+
 from dimos.types.timestamped import Timestamped
 
 
@@ -211,3 +220,133 @@ class PointCloud2(Timestamped):
     def __repr__(self) -> str:
         """String representation."""
         return f"PointCloud(points={len(self)}, frame_id='{self.frame_id}', ts={self.ts})"
+
+    @classmethod
+    def from_ros_msg(cls, ros_msg: "ROSPointCloud2") -> "PointCloud2":
+        """Convert from ROS sensor_msgs/PointCloud2 message.
+        
+        Args:
+            ros_msg: ROS PointCloud2 message
+            
+        Returns:
+            PointCloud2 instance
+        """
+        if not ROS_AVAILABLE:
+            raise ImportError("ROS packages not available. Cannot convert from ROS message.")
+            
+        # Handle empty point cloud
+        if ros_msg.width == 0 or ros_msg.height == 0:
+            pc = o3d.geometry.PointCloud()
+            return cls(
+                pointcloud=pc,
+                frame_id=ros_msg.header.frame_id,
+                ts=ros_msg.header.stamp.sec + ros_msg.header.stamp.nanosec / 1e9,
+            )
+        
+        # Parse field information to find X, Y, Z offsets
+        x_offset = y_offset = z_offset = None
+        for field in ros_msg.fields:
+            if field.name == "x":
+                x_offset = field.offset
+            elif field.name == "y":
+                y_offset = field.offset
+            elif field.name == "z":
+                z_offset = field.offset
+        
+        if any(offset is None for offset in [x_offset, y_offset, z_offset]):
+            raise ValueError("PointCloud2 message missing X, Y, or Z fields")
+        
+        # Extract points from binary data
+        num_points = ros_msg.width * ros_msg.height
+        points = np.zeros((num_points, 3), dtype=np.float32)
+        
+        data = ros_msg.data
+        point_step = ros_msg.point_step
+        
+        # Determine byte order
+        byte_order = ">" if ros_msg.is_bigendian else "<"
+        
+        for i in range(num_points):
+            base_offset = i * point_step
+            
+            # Extract X, Y, Z (assuming float32)
+            x_bytes = data[base_offset + x_offset : base_offset + x_offset + 4]
+            y_bytes = data[base_offset + y_offset : base_offset + y_offset + 4]
+            z_bytes = data[base_offset + z_offset : base_offset + z_offset + 4]
+            
+            points[i, 0] = struct.unpack(f"{byte_order}f", x_bytes)[0]
+            points[i, 1] = struct.unpack(f"{byte_order}f", y_bytes)[0]
+            points[i, 2] = struct.unpack(f"{byte_order}f", z_bytes)[0]
+        
+        # Filter out NaN and Inf values if not dense
+        if not ros_msg.is_dense:
+            mask = np.isfinite(points).all(axis=1)
+            points = points[mask]
+        
+        # Create Open3D point cloud
+        pc = o3d.geometry.PointCloud()
+        pc.points = o3d.utility.Vector3dVector(points)
+        
+        # Extract timestamp
+        ts = ros_msg.header.stamp.sec + ros_msg.header.stamp.nanosec / 1e9
+        
+        return cls(
+            pointcloud=pc,
+            frame_id=ros_msg.header.frame_id,
+            ts=ts,
+        )
+    
+    def to_ros_msg(self) -> "ROSPointCloud2":
+        """Convert to ROS sensor_msgs/PointCloud2 message.
+        
+        Returns:
+            ROS PointCloud2 message
+        """
+        if not ROS_AVAILABLE:
+            raise ImportError("ROS packages not available. Cannot convert to ROS message.")
+            
+        ros_msg = ROSPointCloud2()
+        
+        # Set header
+        ros_msg.header = ROSHeader()
+        ros_msg.header.frame_id = self.frame_id
+        ros_msg.header.stamp.sec = int(self.ts)
+        ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1e9)
+        
+        points = self.as_numpy()
+        
+        if len(points) == 0:
+            # Empty point cloud
+            ros_msg.height = 0
+            ros_msg.width = 0
+            ros_msg.fields = []
+            ros_msg.is_bigendian = False
+            ros_msg.point_step = 0
+            ros_msg.row_step = 0
+            ros_msg.data = b""
+            ros_msg.is_dense = True
+            return ros_msg
+        
+        # Set dimensions
+        ros_msg.height = 1  # Unorganized point cloud
+        ros_msg.width = len(points)
+        
+        # Define fields (X, Y, Z as float32)
+        ros_msg.fields = [
+            ROSPointField(name="x", offset=0, datatype=ROSPointField.FLOAT32, count=1),
+            ROSPointField(name="y", offset=4, datatype=ROSPointField.FLOAT32, count=1),
+            ROSPointField(name="z", offset=8, datatype=ROSPointField.FLOAT32, count=1),
+        ]
+        
+        # Set point step and row step
+        ros_msg.point_step = 12  # 3 floats * 4 bytes each
+        ros_msg.row_step = ros_msg.point_step * ros_msg.width
+        
+        # Convert points to bytes (little endian float32)
+        ros_msg.data = points.astype(np.float32).tobytes()
+        
+        # Set properties
+        ros_msg.is_bigendian = False  # Little endian
+        ros_msg.is_dense = True  # No invalid points
+        
+        return ros_msg
