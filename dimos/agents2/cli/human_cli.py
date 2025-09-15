@@ -144,14 +144,11 @@ class HumanCLIApp(App):
         try:
             arguments = json.loads(f.get("arguments", "{}"))
             args = arguments.get("args", [])
-            kwargs = arguments.get("kwargs", {})
 
             # Format parameters more readably
             params_parts = []
             if args:
-                params_parts.append(", ".join(repr(arg) for arg in args))
-            if kwargs:
-                kw_parts = [f"{k}={repr(v)}" for k, v in kwargs.items()]
+                kw_parts = [f"{k}={repr(v)}" for k, v in args.items()]
                 params_parts.append(", ".join(kw_parts))
 
             params = ", ".join(params_parts) if params_parts else ""

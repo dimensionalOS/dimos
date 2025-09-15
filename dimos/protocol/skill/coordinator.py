@@ -375,8 +375,7 @@ class SkillCoordinator(Module):
 
         return skill_config.call(
             call_id,
-            *(args.get("args") or []),
-            **(args.get("kwargs") or {}),
+            **(args.get("args") or {}),
         )
 
     # Receives a message from active skill

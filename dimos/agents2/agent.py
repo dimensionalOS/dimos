@@ -228,11 +228,11 @@ class Agent(AgentSpec):
             )
 
     # used to inject skill calls into the agent loop without agent asking for it
-    def run_implicit_skill(self, skill_name: str, *args, **kwargs) -> None:
+    def run_implicit_skill(self, skill_name: str, **kwargs) -> None:
         if self._agent_stopped:
             logger.warning("Agent is stopped, cannot execute implicit skill calls.")
             return
-        self.coordinator.call_skill(False, skill_name, {"args": args, "kwargs": kwargs})
+        self.coordinator.call_skill(False, skill_name, {"args": kwargs})
 
     async def agent_loop(self, first_query: str = ""):
         # TODO: Should I add a lock here to prevent concurrent calls to agent_loop?

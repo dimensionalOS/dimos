@@ -43,7 +43,7 @@ async def test_tool_call():
                 tool_calls=[
                     {
                         "name": "add",
-                        "args": {"args": [], "kwargs": {"x": 5, "y": 3}},
+                        "args": {"args": {"x": 5, "y": 3}},
                         "id": "tool_call_1",
                     }
                 ],
@@ -87,7 +87,7 @@ async def test_image_tool_call():
                 tool_calls=[
                     {
                         "name": "take_photo",
-                        "args": {"args": [], "kwargs": {}},
+                        "args": {"args": {}},
                         "id": "tool_call_image_1",
                     }
                 ],
@@ -142,7 +142,7 @@ async def test_tool_call_implicit_detections():
                 tool_calls=[
                     {
                         "name": "take_photo",
-                        "args": {"args": [], "kwargs": {}},
+                        "args": {"args": {}},
                         "id": "tool_call_image_1",
                     }
                 ],

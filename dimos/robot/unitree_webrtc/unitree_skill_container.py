@@ -24,7 +24,7 @@ import time
 from typing import TYPE_CHECKING, Optional
 
 from dimos.core import Module
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.utils.logging_config import setup_logger
@@ -119,6 +119,10 @@ class UnitreeSkillContainer(Module):
     def move(self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0) -> str:
         """Move the robot using direct velocity commands. Determine duration required based on user distance instructions.
 
+        Example call:
+            args = { "x": 0.5, "y": 0.0, "yaw": 0.0, "duration": 2.0 }
+            move(**args)
+
         Args:
             x: Forward velocity (m/s)
             y: Left/right velocity (m/s)
@@ -128,7 +132,8 @@ class UnitreeSkillContainer(Module):
         if self._robot is None:
             return "Error: Robot not connected"
 
-        self._robot.move(Vector3(x, y, yaw), duration=duration)
+        twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
+        self._robot.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 
     @skill()
