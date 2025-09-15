@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection2d.types import Detection2D, better_detection_format
+from dimos.perception.detection2d.type import Detection2D, better_detection_format
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.utils.data import get_data
 

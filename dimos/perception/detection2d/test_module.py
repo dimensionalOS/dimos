@@ -70,7 +70,7 @@ def moment():
 
 def publish_detected_pc(detected_pc: list[PointCloud2]):
     for idx, detection in enumerate(detected_pc):
-        detected_pointcloud_transport = LCMTransport(f"/detected_{idx}", PointCloud2)
+        detected_pointcloud_transport: LCMTransport = LCMTransport(f"/detected_{idx}", PointCloud2)
         detected_pointcloud_transport.publish(detection)
 
 
@@ -82,19 +82,19 @@ def publish_lcm(
     annotations,
     detected_pc: list[PointCloud2],
 ):
-    lidar_frame_transport = LCMTransport("/lidar", LidarMessage)
+    lidar_frame_transport: LCMTransport = LCMTransport("/lidar", LidarMessage)
     lidar_frame_transport.publish(lidar_frame)
 
-    image_frame_transport = LCMTransport("/image", Image)
+    image_frame_transport: LCMTransport = LCMTransport("/image", Image)
     image_frame_transport.publish(image_frame)
 
-    odom_frame_transport = LCMTransport("/odom", Odometry)
+    odom_frame_transport: LCMTransport = LCMTransport("/odom", Odometry)
     odom_frame_transport.publish(odom_frame)
 
-    camera_info_transport = LCMTransport("/camera_info", CameraInfo)
+    camera_info_transport: LCMTransport = LCMTransport("/camera_info", CameraInfo)
     camera_info_transport.publish(camera_info)
 
-    annotations_transport = LCMTransport("/annotations", ImageAnnotations)
+    annotations_transport: LCMTransport = LCMTransport("/annotations", ImageAnnotations)
     annotations_transport.publish(annotations)
 
     publish_detected_pc(detected_pc)
@@ -133,7 +133,9 @@ def test_basic(moment):
     print("detections:\n", "\n".join(map(str, separate_detections_pointcloud)))
 
     # how do we count points in this detection? should be 10 exactly
-    num_points = len(separate_detections_pointcloud[0].pointcloud.points)
+    # separate_detections_pointcloud now contains Detection3D objects
+    detection3d = separate_detections_pointcloud[0]
+    num_points = len(detection3d.pointcloud.pointcloud.points)
     print(f"Number of points in first detection: {num_points}")
     assert num_points == 10, f"Expected 10 points, got {num_points}"
 

@@ -42,6 +42,12 @@ from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
 
 # from dimos.perception.detection2d.detic import Detic2DDetector
+from dimos.perception.detection2d.type import (
+    Detection2D,
+    Detection3D,
+    build_detection2d_array,
+    build_imageannotations,
+)
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.protocol.tf.tf import TF
 from dimos.types.timestamped import to_ros_stamp
@@ -51,155 +57,25 @@ class Detection2DArrayFix(Detection2DArray):
     msg_name = "vision_msgs.Detection2DArray"
 
 
-Bbox = Tuple[float, float, float, float]
-CenteredBbox = Tuple[float, float, float, float]
-# yolo and detic have bad output formats
-InconvinientDetectionFormat = Tuple[List[Bbox], List[int], List[int], List[float], List[List[str]]]
+# Type aliases for clarity
+ImageDetections = Tuple[Image, List[Detection2D]]
+ImageDetection = Tuple[Image, Detection2D]
 
 
-Detection = Tuple[Bbox, int, int, float, str]
-Detections = List[Detection]
-ImageDetections = Tuple[Image, Detections]
-ImageDetection = Tuple[Image, Detection]
-
-
-def get_bbox_center(bbox: Bbox) -> CenteredBbox:
-    x1, y1, x2, y2 = bbox
-    center_x = (x1 + x2) / 2.0
-    center_y = (y1 + y2) / 2.0
-    width = float(x2 - x1)
-    height = float(y2 - y1)
-    return [center_x, center_y, width, height]
-
-
-def build_bbox(bbox: Bbox) -> BoundingBox2D:
-    center_x, center_y, width, height = get_bbox_center(bbox)
-
-    return BoundingBox2D(
-        center=Pose2D(
-            position=Point2D(x=center_x, y=center_y),
-            theta=0.0,
-        ),
-        size_x=width,
-        size_y=height,
-    )
-
-
-def build_detection2d(image, detection) -> Detection2D:
-    [bbox, track_id, class_id, confidence, name] = detection
-
-    return Detection2D(
-        header=Header(image.ts, "camera_link"),
-        bbox=build_bbox(bbox),
-        results=[
-            ObjectHypothesisWithPose(
-                ObjectHypothesis(
-                    class_id=class_id,
-                    score=1.0,
-                )
-            )
-        ],
-    )
-
-
-def build_detection2d_array(imageDetections: ImageDetections) -> Detection2DArrayFix:
+def build_detection2d_array_fix(imageDetections: ImageDetections) -> Detection2DArrayFix:
+    """Build Detection2DArrayFix from image and list of Detection2D objects."""
     [image, detections] = imageDetections
     return Detection2DArrayFix(
         detections_length=len(detections),
         header=Header(image.ts, "camera_link"),
-        detections=list(
-            map(
-                functools.partial(build_detection2d, image),
-                detections,
-            )
-        ),
+        detections=[det.to_detection2d() for det in detections],
     )
 
 
-# yolo and detic have bad formats this translates into list of detections
-def better_detection_format(inconvinient_detections: InconvinientDetectionFormat) -> Detections:
-    bboxes, track_ids, class_ids, confidences, names = inconvinient_detections
-    return [
-        [bbox, track_id, class_id, confidence, name]
-        for bbox, track_id, class_id, confidence, name in zip(
-            bboxes, track_ids, class_ids, confidences, names
-        )
-    ]
-
-
-def build_imageannotation_text(image: Image, detection: Detection) -> ImageAnnotations:
-    [bbox, track_id, class_id, confidence, name] = detection
-
-    x1, y1, x2, y2 = bbox
-
-    font_size = int(image.height / 35)
-    return [
-        TextAnnotation(
-            timestamp=to_ros_stamp(image.ts),
-            position=Point2(x=x1, y=y2 + font_size),
-            text=f"confidence: {confidence:.3f}",
-            font_size=font_size,
-            text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
-            background_color=Color(r=0, g=0, b=0, a=1),
-        ),
-        TextAnnotation(
-            timestamp=to_ros_stamp(image.ts),
-            position=Point2(x=x1, y=y1),
-            text=f"{name}_{class_id}_{track_id}",
-            font_size=font_size,
-            text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
-            background_color=Color(r=0, g=0, b=0, a=1),
-        ),
-    ]
-
-
-def build_imageannotation_box(image: Image, detection: Detection) -> ImageAnnotations:
-    [bbox, track_id, class_id, confidence, name] = detection
-
-    x1, y1, x2, y2 = bbox
-
-    thickness = image.height / 720
-
-    return PointsAnnotation(
-        timestamp=to_ros_stamp(image.ts),
-        outline_color=Color(r=0.0, g=0.0, b=0.0, a=1.0),
-        fill_color=Color(r=1.0, g=0.0, b=0.0, a=0.15),
-        thickness=thickness,
-        points_length=4,
-        points=[
-            Point2(x1, y1),
-            Point2(x1, y2),
-            Point2(x2, y2),
-            Point2(x2, y1),
-        ],
-        type=PointsAnnotation.LINE_LOOP,
-    )
-
-
-def build_imageannotations(image_detections: [Image, Detections]) -> ImageAnnotations:
-    [image, detections] = image_detections
-
-    def flatten(xss):
-        return [x for xs in xss for x in xs]
-
-    points = list(map(functools.partial(build_imageannotation_box, image), detections))
-    texts = list(flatten(map(functools.partial(build_imageannotation_text, image), detections)))
-
-    return ImageAnnotations(
-        texts=texts,
-        texts_length=len(texts),
-        points=points,
-        points_length=len(points),
-    )
-
-
-# needs to emit a detection class not this stupid array
-# detection class can render itself into image annotations, or 2ddetections etc
-# combining detection class with pointcloud gives you a detection with pointcloud
 class Detection2DModule(Module):
-    image: In[Image] = None
-    detections: Out[Detection2DArrayFix] = None
-    annotations: Out[ImageAnnotations] = None
+    image: In[Image] = None  # type: ignore
+    detections: Out[Detection2DArrayFix] = None  # type: ignore
+    annotations: Out[ImageAnnotations] = None  # type: ignore
 
     # _initDetector = Detic2DDetector
     _initDetector = Yolo2DDetector
@@ -210,8 +86,11 @@ class Detection2DModule(Module):
             self._detectorClass = detector
         self.detector = self._initDetector()
 
-    def process_frame(self, image: Image) -> Detections:
-        return [image, better_detection_format(self.detector.process_image(image.to_opencv()))]
+    def process_frame(self, image: Image) -> ImageDetections:
+        detections = Detection2D.from_detector(
+            self.detector.process_image(image.to_opencv()), image=image
+        )
+        return (image, detections)
 
     @functools.cache
     def detection_stream(self):
@@ -220,7 +99,7 @@ class Detection2DModule(Module):
 
         detection_stream.pipe(ops.map(build_imageannotations)).subscribe(self.annotations.publish)
         detection_stream.pipe(
-            ops.filter(lambda x: len(x) != 0), ops.map(build_detection2d_array)
+            ops.filter(lambda x: len(x[1]) != 0), ops.map(build_detection2d_array_fix)
         ).subscribe(self.detections.publish)
 
         return detection_stream
@@ -234,15 +113,18 @@ class Detection2DModule(Module):
 
 
 class DetectionPointcloud(Detection2DModule):
-    camera_info: In[CameraInfo] = None
-    pointcloud: In[PointCloud2] = None
-    filtered_pointcloud: Out[PointCloud2] = None
-    image: In[Image] = None
-    detections: Out[Detection2DArrayFix] = None
-    annotations: Out[ImageAnnotations] = None
+    camera_info: In[CameraInfo] = None  # type: ignore
+    pointcloud: In[PointCloud2] = None  # type: ignore
+    filtered_pointcloud: Out[PointCloud2] = None  # type: ignore
+    image: In[Image] = None  # type: ignore
+    detections: Out[Detection2DArrayFix] = None  # type: ignore
+    annotations: Out[ImageAnnotations] = None  # type: ignore
 
-    def detect(self, image: Image) -> Detections:
-        return [image, better_detection_format(self.detector.process_image(image.to_opencv()))]
+    def detect(self, image: Image) -> ImageDetections:
+        detections = Detection2D.from_detector(
+            self.detector.process_image(image.to_opencv()), image=image
+        )
+        return (image, detections)
 
     @functools.cache
     def detection_stream(self):
@@ -251,7 +133,7 @@ class DetectionPointcloud(Detection2DModule):
 
         detection_stream.pipe(ops.map(build_imageannotations)).subscribe(self.annotations.publish)
         detection_stream.pipe(
-            ops.filter(lambda x: len(x) != 0), ops.map(build_detection2d_array)
+            ops.filter(lambda x: len(x[1]) != 0), ops.map(build_detection2d_array_fix)
         ).subscribe(self.detections.publish)
 
         return detection_stream
@@ -283,9 +165,9 @@ class DetectionPointcloud(Detection2DModule):
         pointcloud: PointCloud2,
         image: Image,
         camera_info: CameraInfo,
-        detection_list: List[Detection],
+        detection_list: List[Detection2D],
         world_to_camera_transform: Transform,
-    ) -> List[PointCloud2]:
+    ) -> List[Optional[PointCloud2]]:
         """Filter lidar points that fall within detection bounding boxes."""
         # Extract camera parameters
         fx, fy, cx = camera_info.K[0], camera_info.K[4], camera_info.K[2]
@@ -315,11 +197,11 @@ class DetectionPointcloud(Detection2DModule):
         points_2d = points_2d[in_image_mask]
         valid_3d_points = valid_3d_points[in_image_mask]
 
-        filtered_pointclouds = []
+        filtered_pointclouds: List[Optional[PointCloud2]] = []
 
         for detection in detection_list:
-            # Detection format: [bbox, track_id, class_id, confidence, names]
-            bbox, track_id, class_id, confidence, names = detection
+            # Extract bbox from Detection2D object
+            bbox = detection.bbox
             x_min, y_min, x_max, y_max = bbox
 
             # Find points within this detection box (with small margin)
@@ -391,7 +273,7 @@ class DetectionPointcloud(Detection2DModule):
         )
         return PointCloud2(statistical, pc.frame_id, pc.ts)
 
-    def process_frame(
+    def process_frame(  # type: ignore[override]
         self,
         imagedetections: ImageDetections,
         pointcloud: PointCloud2,
@@ -404,21 +286,23 @@ class DetectionPointcloud(Detection2DModule):
         # print("Processing frame for detection with pointcloud", image)
         # Filter pointcloud based on detections
 
-        separate_pcs = []
-        for pc in self.filter_points_in_detections(
+        pointcloud_list = self.filter_points_in_detections(
             pointcloud, image, camera_info, detection_list, transform
-        ):
+        )
+
+        localized_detections = []
+        for detection, pc in zip(detection_list, pointcloud_list):
             if pc is None:
                 continue
             pc = self.hidden_point_removal(transform, self.cleanup_pointcloud(pc))
             if pc is None:
                 continue
-            separate_pcs.append(pc)
+            localized_detections.append(detection.localize(pc))
 
         # Combine all filtered pointclouds into one
-        combined_pc = self.combine_pointclouds(separate_pcs)
+        combined_pc = self.combine_pointclouds([det.pointcloud for det in localized_detections])
 
-        return [image, detection_list, separate_pcs, combined_pc]
+        return [image, detection_list, localized_detections, combined_pc]
 
     @functools.cache
     def pointcloud_stream(self):
@@ -443,13 +327,14 @@ class DetectionDB(DetectionPointcloud):
             ops.map(lambda x: [x[1], x[2]]),
         ).subscribe(self.add_detections)
 
-    def add_detections(self, data: List[[Detections, PointCloud2]]):
-        for detection, pc in zip(*data):
-            if pc is None:
+    def add_detections(self, data: Tuple[List[Detection2D], List[Detection3D]]):
+        detections, detection3ds = data
+        for det3d in detection3ds:
+            if det3d.pointcloud is None:
                 continue
-            self.add_detection(detection, pc)
+            self.add_detection(det3d, det3d.pointcloud)
 
     # TODO collect all detections from a recording, store the stream
     # replay the stream into add_detection, validate the output
-    def add_detection(self, detection: Detection, pc: PointCloud2):
+    def add_detection(self, detection: Detection2D, pc: PointCloud2):
         print("DETECTION", detection, pc)
