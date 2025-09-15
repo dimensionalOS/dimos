@@ -27,7 +27,6 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
 from dimos_lcm.foxglove_msgs.Point2 import Point2
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
-    Detection2DArray,
     ObjectHypothesis,
     ObjectHypothesisWithPose,
     Point2D,
@@ -40,7 +39,7 @@ from dimos_lcm.vision_msgs import (
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
-from dimos.types.timestamped import Timestamped, to_ros_stamp
+from dimos.types.timestamped import Timestamped, to_ros_stamp, to_timestamp
 
 Bbox = Tuple[float, float, float, float]
 CenteredBbox = Tuple[float, float, float, float]
@@ -55,7 +54,7 @@ Detections = List[Detection]
 def better_detection_format(inconvinient_detections: InconvinientDetectionFormat) -> Detections:
     bboxes, track_ids, class_ids, confidences, names = inconvinient_detections
     return [
-        (bbox, track_id, class_id, confidence, name[0] if name else "")
+        (bbox, track_id, class_id, confidence, name if name else "")
         for bbox, track_id, class_id, confidence, name in zip(
             bboxes, track_ids, class_ids, confidences, names
         )
@@ -105,7 +104,7 @@ class Detection2D(Timestamped):
         height = float(y2 - y1)
         return (center_x, center_y, width, height)
 
-    def build_bbox(self) -> BoundingBox2D:
+    def to_ros_bbox(self) -> BoundingBox2D:
         center_x, center_y, width, height = self.get_bbox_center()
         return BoundingBox2D(
             center=Pose2D(
@@ -153,10 +152,54 @@ class Detection2D(Timestamped):
             ],
         )
 
-    def to_detection2d(self) -> ROSDetection2D:
+    @classmethod
+    def from_ros_detection2d(cls, ros_det: ROSDetection2D, **kwargs) -> "Detection2D":
+        """Convert from ROS Detection2D message to Detection2D object."""
+        # Extract bbox from ROS format
+        center_x = ros_det.bbox.center.position.x
+        center_y = ros_det.bbox.center.position.y
+        width = ros_det.bbox.size_x
+        height = ros_det.bbox.size_y
+
+        # Convert centered bbox to corner format
+        x1 = center_x - width / 2.0
+        y1 = center_y - height / 2.0
+        x2 = center_x + width / 2.0
+        y2 = center_y + height / 2.0
+        bbox = (x1, y1, x2, y2)
+
+        # Extract hypothesis info
+        class_id = 0
+        confidence = 0.0
+        if ros_det.results:
+            hypothesis = ros_det.results[0].hypothesis
+            class_id = hypothesis.class_id
+            confidence = hypothesis.score
+
+        # Extract track_id
+        track_id = int(ros_det.id) if ros_det.id.isdigit() else 0
+
+        # Extract timestamp
+        ts = to_timestamp(ros_det.header.stamp)
+
+        # Name is not stored in ROS Detection2D, so we'll use a placeholder
+        # Remove 'name' from kwargs if present to avoid duplicate
+        name = kwargs.pop("name", f"class_{class_id}")
+
+        return cls(
+            bbox=bbox,
+            track_id=track_id,
+            class_id=class_id,
+            confidence=confidence,
+            name=name,
+            ts=ts,
+            **kwargs,
+        )
+
+    def to_ros_detection2d(self) -> ROSDetection2D:
         return ROSDetection2D(
             header=Header(self.ts, "camera_link"),
-            bbox=self.build_bbox(),
+            bbox=self.to_ros_bbox(),
             results=[
                 ObjectHypothesisWithPose(
                     ObjectHypothesis(
@@ -165,8 +208,7 @@ class Detection2D(Timestamped):
                     )
                 )
             ],
-            source_id="",
-            id=self.track_id,
+            id=str(self.track_id),
         )
 
     def to_3d(self, **kwargs) -> "Detection3D":

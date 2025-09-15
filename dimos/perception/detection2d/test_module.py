@@ -23,8 +23,8 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.perception.detection2d import Detection2DArrayFix, Detection2DModule, DetectionPointcloud
-from dimos.perception.detection2d.module import DetectionPointcloud, build_imageannotations
+from dimos.perception.detection2d import Detection2DArrayFix, Detection2DModule
+from dimos.perception.detection2d.module import Detection3D, build_imageannotations
 from dimos.protocol.service import lcmservice as lcm
 from dimos.protocol.tf import TF
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
@@ -40,21 +40,20 @@ DETECTION_RESULT_PKL = os.path.join(TEST_DIR, "detection_result.pkl")
 
 @pytest.fixture
 def moment():
-    data_dir = "unitree_office_walk"
+    # data_dir = "unitree_office_walk"
+    data_dir = "unitree_go2_lidar_corrected"
     get_data(data_dir)
 
-    target_timestamp = 1751591272.9654856
+    seek = 10
 
-    lidar_frame = TimedSensorReplay(
-        f"{data_dir}/lidar", autocast=LidarMessage.from_msg
-    ).find_closest(target_timestamp)
+    lidar_frame = TimedSensorReplay(f"{data_dir}/lidar").find_closest_seek(seek)
 
-    image_frame = TimedSensorReplay(f"{data_dir}/video", autocast=Image.from_numpy).find_closest(
-        target_timestamp
-    )
+    image_frame = TimedSensorReplay(
+        f"{data_dir}/video",
+    ).find_closest(lidar_frame.ts)
 
     odom_frame = TimedSensorReplay(f"{data_dir}/odom", autocast=Odometry.from_msg).find_closest(
-        target_timestamp
+        lidar_frame.ts
     )
 
     transforms = ConnectionModule._odom_to_tf(odom_frame)
@@ -71,7 +70,7 @@ def moment():
 def publish_detected_pc(detected_pc: list[PointCloud2]):
     for idx, detection in enumerate(detected_pc):
         detected_pointcloud_transport: LCMTransport = LCMTransport(f"/detected_{idx}", PointCloud2)
-        detected_pointcloud_transport.publish(detection)
+        detected_pointcloud_transport.publish(detection.pointcloud)
 
 
 def publish_lcm(
@@ -108,9 +107,10 @@ def test_basic(moment):
 
     camera_transform = tf.get("camera_optical", "world")
 
-    detector = DetectionPointcloud()
-    image_detections = Detection2DModule.process_frame(detector, image_frame)
-    image, detections = image_detections
+    from dimos.perception.detection2d.module import Detection3DModule
+
+    detector = Detection3DModule()
+    detections = Detection2DModule.process_frame(detector, image_frame)
 
     # Process detections to get Detection3D objects
     detection3d_list = detector.process_frame(
@@ -123,12 +123,18 @@ def test_basic(moment):
     with open(DETECTION_RESULT_PKL, "wb") as f:
         pickle.dump(detection_result, f)
 
+    # Save just the first detection3d for the load test
+    if detection3d_list:
+        detection3d_pkl = os.path.join(TEST_DIR, "detection3d.pkl")
+        with open(detection3d_pkl, "wb") as f:
+            pickle.dump(detection3d_list[0], f)
+
     publish_lcm(
         lidar_frame,
         image_frame,
         odom_frame,
         camera_info,
-        build_imageannotations((image, detections)),
+        build_imageannotations((image_frame, detections)),
         detection3d_list,
     )
 

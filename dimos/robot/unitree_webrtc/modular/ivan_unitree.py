@@ -20,8 +20,8 @@ from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos.core import LCMTransport, start
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.perception.detection2d import Detection2DArrayFix, DetectionPointcloud
-from dimos.perception.detection2d.module import DetectionPointcloudDb
+from dimos.perception.detection2d import Detection2DArrayFix
+from dimos.perception.detection2d.module import Detection3DModule
 from dimos.protocol.pubsub import lcm
 from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
 from dimos.utils.logging_config import setup_logger
@@ -33,9 +33,10 @@ def detection_unitree():
     dimos = start(6)
 
     connection = deploy_connection(dimos, loop=False, speed=0.2)
+    connection.record("unitree_go2_lidar_corrected")
     mapper = deploy_navigation(dimos, connection)
 
-    detection = dimos.deploy(DetectionPointcloudDb)
+    detection = dimos.deploy(Detection3DModule)
 
     detection.image.connect(connection.video)
     detection.camera_info.connect(connection.camera_info)
@@ -45,7 +46,7 @@ def detection_unitree():
     detection.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
     detection.filtered_pointcloud.transport = LCMTransport("/filtered_pointcloud", PointCloud2)
 
-    detection.start()
+    # detection.start()
 
     try:
         while True:

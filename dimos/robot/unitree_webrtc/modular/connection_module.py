@@ -136,13 +136,13 @@ class ConnectionModule(Module):
         from dimos.utils.testing import TimedSensorStorage
 
         lidar_store = TimedSensorStorage(f"{recording_name}/lidar")
-        lidar_store.save_stream(self.connection.raw_lidar_stream()).subscribe(lambda x: x)
+        lidar_store.save_stream(self.connection.lidar_stream()).subscribe(lambda x: x)
 
         odom_store = TimedSensorStorage(f"{recording_name}/odom")
         odom_store.save_stream(self.connection.raw_odom_stream()).subscribe(lambda x: x)
 
         video_store = TimedSensorStorage(f"{recording_name}/video")
-        video_store.save_stream(self.connection.raw_video_stream()).subscribe(lambda x: x)
+        video_store.save_stream(self.connection.video_stream()).subscribe(lambda x: x)
 
     @rpc
     def start(self):
@@ -169,6 +169,10 @@ class ConnectionModule(Module):
             lambda odom: self._publish_tf(odom) and self.odom.publish(odom)
         )
 
+        # self.connection.lidar_stream().subscribe(lambda lidar: print("LIDAR", lidar.ts))
+        # self.connection.video_stream().subscribe(lambda video: print("IMAGE", video.ts))
+        # self.connection.odom_stream().subscribe(lambda odom: print("ODOM", odom.ts))
+
         def attach_frame_id(image: Image) -> Image:
             image.frame_id = "camera_optical"
 
@@ -176,10 +180,10 @@ class ConnectionModule(Module):
                 int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
             )
 
-        sharpness_window(
-            5, self.connection.video_stream().pipe(ops.map(attach_frame_id))
-        ).subscribe(image_pub)
-
+        # sharpness_window(
+        # 5, self.connection.video_stream().pipe(ops.map(attach_frame_id))
+        # ).subscribe(image_pub)
+        self.connection.video_stream().subscribe(image_pub)
         # self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
         self.camera_info_stream().subscribe(self.camera_info.publish)
         self.movecmd.subscribe(self.connection.move)
