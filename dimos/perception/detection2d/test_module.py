@@ -110,12 +110,14 @@ def test_basic(moment):
 
     detector = DetectionPointcloud()
     image_detections = Detection2DModule.process_frame(detector, image_frame)
+    image, detections = image_detections
 
-    [image, detections, separate_detections_pointcloud, detections_pointcloud] = (
-        detector.process_frame(image_detections, lidar_frame, camera_info, camera_transform)
+    # Process detections to get Detection3D objects
+    detection3d_list = detector.process_frame(
+        detections, lidar_frame, camera_info, camera_transform
     )
 
-    detection_result = [separate_detections_pointcloud, camera_transform]
+    detection_result = [detection3d_list, camera_transform]
 
     # Assuming you have your detection_result object
     with open(DETECTION_RESULT_PKL, "wb") as f:
@@ -126,15 +128,15 @@ def test_basic(moment):
         image_frame,
         odom_frame,
         camera_info,
-        build_imageannotations([image_frame, detections]),
-        separate_detections_pointcloud,
+        build_imageannotations((image, detections)),
+        detection3d_list,
     )
 
-    print("detections:\n", "\n".join(map(str, separate_detections_pointcloud)))
+    print("detections:\n", "\n".join(map(str, detection3d_list)))
 
     # how do we count points in this detection? should be 10 exactly
-    # separate_detections_pointcloud now contains Detection3D objects
-    detection3d = separate_detections_pointcloud[0]
+    # detection3d_list contains Detection3D objects
+    detection3d = detection3d_list[0]
     num_points = len(detection3d.pointcloud.pointcloud.points)
     print(f"Number of points in first detection: {num_points}")
     assert num_points == 10, f"Expected 10 points, got {num_points}"

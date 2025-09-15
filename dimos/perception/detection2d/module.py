@@ -45,7 +45,6 @@ from dimos.msgs.std_msgs import Header
 from dimos.perception.detection2d.type import (
     Detection2D,
     Detection3D,
-    build_detection2d_array,
     build_imageannotations,
 )
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
@@ -275,66 +274,79 @@ class DetectionPointcloud(Detection2DModule):
 
     def process_frame(  # type: ignore[override]
         self,
-        imagedetections: ImageDetections,
+        detections: List[Detection2D],
         pointcloud: PointCloud2,
         camera_info: CameraInfo,
         transform: Transform,
-    ):
+    ) -> List[Detection3D]:
         if not transform:
-            return None
-        image, detection_list = imagedetections
-        # print("Processing frame for detection with pointcloud", image)
-        # Filter pointcloud based on detections
+            return []
+
+        # Get image from first detection (all should have same image)
+        if not detections:
+            return []
+
+        image = detections[0].image
+        if image is None:
+            return []
 
         pointcloud_list = self.filter_points_in_detections(
-            pointcloud, image, camera_info, detection_list, transform
+            pointcloud, image, camera_info, detections, transform
         )
 
-        localized_detections = []
-        for detection, pc in zip(detection_list, pointcloud_list):
+        detection3d_list = []
+        for detection, pc in zip(detections, pointcloud_list):
             if pc is None:
                 continue
             pc = self.hidden_point_removal(transform, self.cleanup_pointcloud(pc))
             if pc is None:
                 continue
-            localized_detections.append(detection.localize(pc))
+            detection3d_list.append(detection.to_3d(pointcloud=pc, transform=transform))
 
-        # Combine all filtered pointclouds into one
-        combined_pc = self.combine_pointclouds([det.pointcloud for det in localized_detections])
-
-        return [image, detection_list, localized_detections, combined_pc]
+        return detection3d_list
 
     @functools.cache
     def pointcloud_stream(self):
+        # Returns stream of List[Detection3D]
         return self.detection_stream().pipe(
+            ops.map(
+                lambda image_detections: image_detections[1]
+            ),  # Extract just the List[Detection2D]
             ops.with_latest_from(self.pointcloud.observable(), self.camera_info.observable()),
-            ops.map(lambda data: self.process_frame(*data, self.tf.get("camera_optical", "world"))),
-            ops.filter(lambda x: x is not None),
+            ops.map(
+                lambda args: self.process_frame(
+                    *args,  # List[Detection2D], PointCloud2, CameraInfo
+                    self.tf.get("camera_optical", "world"),
+                )
+            ),
+            ops.filter(lambda detection3d_list: len(detection3d_list) > 0),
         )
 
     @rpc
     def start(self):
-        self.pointcloud_stream().pipe(ops.map(lambda x: x[3])).subscribe(
-            self.filtered_pointcloud.publish
-        )
+        # Publish combined pointcloud from all Detection3D objects
+        self.pointcloud_stream().pipe(
+            ops.map(
+                lambda detection3d_list: self.combine_pointclouds(
+                    [det.pointcloud for det in detection3d_list]
+                )
+            )
+        ).subscribe(self.filtered_pointcloud.publish)
 
 
 class DetectionDB(DetectionPointcloud):
     @rpc
     def start(self):
         super().start()
-        self.pointcloud_stream().pipe(
-            ops.map(lambda x: [x[1], x[2]]),
-        ).subscribe(self.add_detections)
+        self.pointcloud_stream().subscribe(self.add_detections)
 
-    def add_detections(self, data: Tuple[List[Detection2D], List[Detection3D]]):
-        detections, detection3ds = data
-        for det3d in detection3ds:
+    def add_detections(self, detection3d_list: List[Detection3D]):
+        for det3d in detection3d_list:
             if det3d.pointcloud is None:
                 continue
             self.add_detection(det3d, det3d.pointcloud)
 
     # TODO collect all detections from a recording, store the stream
     # replay the stream into add_detection, validate the output
-    def add_detection(self, detection: Detection2D, pc: PointCloud2):
+    def add_detection(self, detection: Detection3D, pc: PointCloud2):
         print("DETECTION", detection, pc)
