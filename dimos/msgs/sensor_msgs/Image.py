@@ -61,11 +61,11 @@ class Image:
 
         Usage:
         - Image(impl=<AbstractImage>)
-        - Image(data=<ndarray | cupy.ndarray>, format=ImageFormat.BGR, frame_id=str, ts=float)
+        - Image(data=<ndarray | cupy.ndarray>, format=ImageFormat.RGB, frame_id=str, ts=float)
 
         Notes:
         - When constructed from `data`, uses CudaImage if `data` is a CuPy array and CUDA is available; otherwise NumpyImage.
-        - `format` defaults to ImageFormat.BGR; `frame_id` defaults to ""; `ts` defaults to `time.time()`.
+        - `format` defaults to ImageFormat.RGB; `frame_id` defaults to ""; `ts` defaults to `time.time()`.
         """
         # Disallow mixing impl with raw kwargs
         if impl is not None and any(x is not None for x in (data, format, frame_id, ts)):
@@ -80,7 +80,7 @@ class Image:
         # Raw constructor path
         if data is None:
             raise TypeError("'data' is required when constructing Image without 'impl'")
-        fmt = format if format is not None else ImageFormat.BGR
+        fmt = format if format is not None else ImageFormat.RGB
         fid = frame_id if frame_id is not None else ""
         tstamp = ts if ts is not None else time.time()
 
@@ -106,7 +106,7 @@ class Image:
     def from_numpy(
         cls,
         np_image: np.ndarray,
-        format: ImageFormat = ImageFormat.BGR,
+        format: ImageFormat = ImageFormat.RGB,
         to_cuda: bool = False,
         **kwargs,
     ) -> "Image":
@@ -132,7 +132,7 @@ class Image:
 
     @classmethod
     def from_file(
-        cls, filepath: str, format: ImageFormat = ImageFormat.BGR, to_cuda: bool = False, **kwargs
+        cls, filepath: str, format: ImageFormat = ImageFormat.RGB, to_cuda: bool = False, **kwargs
     ) -> "Image":
         if kwargs.pop("to_gpu", False):
             to_cuda = True
@@ -142,9 +142,9 @@ class Image:
         if arr.ndim == 2:
             detected = ImageFormat.GRAY16 if arr.dtype == np.uint16 else ImageFormat.GRAY
         elif arr.shape[2] == 3:
-            detected = ImageFormat.BGR
+            detected = ImageFormat.BGR # OpenCV default
         elif arr.shape[2] == 4:
-            detected = ImageFormat.BGRA
+            detected = ImageFormat.BGRA # OpenCV default
         else:
             detected = format
         return cls(CudaImage(arr, detected) if to_cuda and HAS_CUDA else NumpyImage(arr, detected))  # type: ignore
