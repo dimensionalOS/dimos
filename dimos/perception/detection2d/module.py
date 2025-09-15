@@ -21,10 +21,10 @@ from dimos_lcm.foxglove_msgs import (
 )
 from dimos_lcm.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.Point2 import Point2
+from dimos.msgs.vision_msgs import Detection2DArray
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D,
-    Detection2DArray,
     ObjectHypothesis,
     ObjectHypothesisWithPose,
     Point2D,
@@ -41,10 +41,6 @@ from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.types.timestamped import to_ros_stamp
-
-
-class Detection2DArrayFix(Detection2DArray):
-    msg_name = "vision_msgs.Detection2DArray"
 
 
 Bbox = Tuple[float, float, float, float]
@@ -98,9 +94,9 @@ def build_detection2d(image, detection) -> Detection2D:
     )
 
 
-def build_detection2d_array(imageDetections: ImageDetections) -> Detection2DArrayFix:
+def build_detection2d_array(imageDetections: ImageDetections) -> Detection2DArray:
     [image, detections] = imageDetections
-    return Detection2DArrayFix(
+    return Detection2DArray(
         detections_length=len(detections),
         header=Header(image.ts, "camera_link"),
         detections=list(
@@ -191,7 +187,7 @@ def build_imageannotations(image_detections: [Image, Detections]) -> ImageAnnota
 
 class Detect2DModule(Module):
     image: In[Image] = None
-    detections: Out[Detection2DArrayFix] = None
+    detections: Out[Detection2DArray] = None
     annotations: Out[ImageAnnotations] = None
 
     # _initDetector = Detic2DDetector
@@ -212,7 +208,7 @@ class Detect2DModule(Module):
         self.annotation_stream().subscribe(self.annotations.publish)
 
     @functools.cache
-    def detection2d_stream(self) -> Observable[Detection2DArrayFix]:
+    def detection2d_stream(self) -> Observable[Detection2DArray]:
         return self.image.observable().pipe(ops.map(self.detect), ops.map(build_detection2d_array))
 
     @functools.cache
