@@ -18,7 +18,6 @@ Run script for Piper Arm robot with Claude agent integration.
 Provides manipulation capabilities with natural language interface.
 """
 
-import asyncio
 import os
 import sys
 import time
@@ -100,7 +99,7 @@ def main():
     try:
         # Start the robot (this is async, so we need asyncio.run)
         logger.info("Initializing robot...")
-        asyncio.run(robot.start())
+        robot.start()
         logger.info("Robot initialized successfully")
 
         # Set up skill library
