@@ -142,9 +142,9 @@ class Image:
         if arr.ndim == 2:
             detected = ImageFormat.GRAY16 if arr.dtype == np.uint16 else ImageFormat.GRAY
         elif arr.shape[2] == 3:
-            detected = ImageFormat.BGR # OpenCV default
+            detected = ImageFormat.BGR  # OpenCV default
         elif arr.shape[2] == 4:
-            detected = ImageFormat.BGRA # OpenCV default
+            detected = ImageFormat.BGRA  # OpenCV default
         else:
             detected = format
         return cls(CudaImage(arr, detected) if to_cuda and HAS_CUDA else NumpyImage(arr, detected))  # type: ignore
