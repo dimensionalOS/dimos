@@ -29,7 +29,7 @@ from reactivex.observable import Observable
 
 from dimos.core import In, LCMTransport, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_window
 from dimos.msgs.std_msgs import Header
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
@@ -98,7 +98,11 @@ class FakeRTC(UnitreeWebRTCConnection):
     @functools.cache
     def raw_video_stream(self):
         print("video stream start")
-        video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
+        video_store = TimedSensorReplay(
+            "unitree_office_walk/video",
+            autocast=lambda data: Image.from_numpy(data, format=ImageFormat.RGB),
+        )
+
         return video_store.stream(**self.replay_config)
 
     @functools.cache

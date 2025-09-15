@@ -74,7 +74,6 @@ def transform_chain(odom_frame: Odometry) -> list:
     from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
     from dimos.protocol.tf import TF
 
-    print("TS IS", odom_frame.ts)
     camera_link = Transform(
         translation=Vector3(0.3, 0.0, 0.0),
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
