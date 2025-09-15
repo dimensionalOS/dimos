@@ -24,5 +24,7 @@ def test_detection2dtype():
     image = Image.from_file(get_data("cafe.jpg"))
     raw_detections = detector.process_image(image.to_opencv())
 
-    for det in better_detection_format(raw_detections):
-        print(Detection2D.from_detection(det, image=image))
+    detections = Detection2D.from_detector(raw_detections, image=image)
+
+    for det in detections:
+        print(det)
