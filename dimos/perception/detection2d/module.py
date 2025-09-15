@@ -57,7 +57,7 @@ CenteredBbox = Tuple[float, float, float, float]
 InconvinientDetectionFormat = Tuple[List[Bbox], List[int], List[int], List[float], List[List[str]]]
 
 
-Detection = Tuple[Bbox, int, int, float, List[str]]
+Detection = Tuple[Bbox, int, int, float, str]
 Detections = List[Detection]
 ImageDetections = Tuple[Image, Detections]
 ImageDetection = Tuple[Image, Detection]
@@ -193,7 +193,10 @@ def build_imageannotations(image_detections: [Image, Detections]) -> ImageAnnota
     )
 
 
-class Detect2DModule(Module):
+# needs to emit a detection class not this stupid array
+# detection class can render itself into image annotations, or 2ddetections etc
+# combining detection class with pointcloud gives you a detection with pointcloud
+class Detection2DModule(Module):
     image: In[Image] = None
     detections: Out[Detection2DArrayFix] = None
     annotations: Out[ImageAnnotations] = None
@@ -208,7 +211,6 @@ class Detect2DModule(Module):
         self.detector = self._initDetector()
 
     def process_frame(self, image: Image) -> Detections:
-        print("Processing frame for detection", image)
         return [image, better_detection_format(self.detector.process_image(image.to_opencv()))]
 
     @functools.cache
@@ -231,7 +233,7 @@ class Detect2DModule(Module):
     def stop(self): ...
 
 
-class DetectionPointcloud(Detect2DModule):
+class DetectionPointcloud(Detection2DModule):
     camera_info: In[CameraInfo] = None
     pointcloud: In[PointCloud2] = None
     filtered_pointcloud: Out[PointCloud2] = None
@@ -391,15 +393,15 @@ class DetectionPointcloud(Detect2DModule):
 
     def process_frame(
         self,
-        image: Image,
+        imagedetections: ImageDetections,
         pointcloud: PointCloud2,
         camera_info: CameraInfo,
         transform: Transform,
     ):
         if not transform:
             return None
-        image, detection_list = detections
-        print("Processing frame for detection with pointcloud", image)
+        image, detection_list = imagedetections
+        # print("Processing frame for detection with pointcloud", image)
         # Filter pointcloud based on detections
 
         separate_pcs = []
@@ -418,14 +420,36 @@ class DetectionPointcloud(Detect2DModule):
 
         return [image, detection_list, separate_pcs, combined_pc]
 
-    @rpc
-    def start(self):
-        # Combine detection stream with pointcloud and camera_info
-        combined_stream = self.detection_stream().pipe(
+    @functools.cache
+    def pointcloud_stream(self):
+        return self.detection_stream().pipe(
             ops.with_latest_from(self.pointcloud.observable(), self.camera_info.observable()),
             ops.map(lambda data: self.process_frame(*data, self.tf.get("camera_optical", "world"))),
             ops.filter(lambda x: x is not None),
         )
 
-        # Output combined filtered pointcloud
-        combined_stream.pipe(ops.map(lambda x: x[3])).subscribe(self.filtered_pointcloud.publish)
+    @rpc
+    def start(self):
+        self.pointcloud_stream().pipe(ops.map(lambda x: x[3])).subscribe(
+            self.filtered_pointcloud.publish
+        )
+
+
+class DetectionDB(DetectionPointcloud):
+    @rpc
+    def start(self):
+        super().start()
+        self.pointcloud_stream().pipe(
+            ops.map(lambda x: [x[1], x[2]]),
+        ).subscribe(self.add_detections)
+
+    def add_detections(self, data: List[[Detections, PointCloud2]]):
+        for detection, pc in zip(*data):
+            if pc is None:
+                continue
+            self.add_detection(detection, pc)
+
+    # TODO collect all detections from a recording, store the stream
+    # replay the stream into add_detection, validate the output
+    def add_detection(self, detection: Detection, pc: PointCloud2):
+        print("DETECTION", detection, pc)

@@ -23,7 +23,7 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.perception.detection2d import Detection2DArrayFix, DetectionPointcloud
+from dimos.perception.detection2d import Detection2DArrayFix, Detection2DModule, DetectionPointcloud
 from dimos.perception.detection2d.module import DetectionPointcloud, build_imageannotations
 from dimos.protocol.service import lcmservice as lcm
 from dimos.protocol.tf import TF
@@ -109,8 +109,10 @@ def test_basic(moment):
     camera_transform = tf.get("camera_optical", "world")
 
     detector = DetectionPointcloud()
-    [image_frame, detections, separate_detections_pointcloud, detections_pointcloud] = (
-        detector.process_frame(image_frame, lidar_frame, camera_info, camera_transform)
+    image_detections = Detection2DModule.process_frame(detector, image_frame)
+
+    [image, detections, separate_detections_pointcloud, detections_pointcloud] = (
+        detector.process_frame(image_detections, lidar_frame, camera_info, camera_transform)
     )
 
     detection_result = [separate_detections_pointcloud, camera_transform]

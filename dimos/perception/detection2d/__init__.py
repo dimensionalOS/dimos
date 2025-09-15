@@ -1,6 +1,6 @@
 from dimos.perception.detection2d.module import (
-    Detect2DModule,
     Detection2DArrayFix,
+    Detection2DModule,
     DetectionPointcloud,
 )
 from dimos.perception.detection2d.utils import *
