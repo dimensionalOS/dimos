@@ -28,9 +28,9 @@ from dimos.msgs.std_msgs import Header
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
 from dimos_lcm.std_msgs import String
 from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.vision_msgs import Detection2DArray, Detection3DArray
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.perception.common.utils import (
     extract_pose_from_detection3d,
@@ -656,6 +656,8 @@ class UnitreeGo2(Robot):
             return False
 
         logger.info(f"Starting object tracking with bbox: {bbox}")
+        self.object_tracker.track(bbox)
+
         self.object_tracker.track(bbox)
 
         start_time = time.time()
