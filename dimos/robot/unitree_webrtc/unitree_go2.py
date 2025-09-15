@@ -24,7 +24,6 @@ from typing import List, Optional
 
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.std_msgs import Bool, String
-from dimos_lcm.vision_msgs import Detection2DArray, Detection3DArray
 
 from dimos import core
 from dimos.core import In, Module, Out, rpc
@@ -36,13 +35,14 @@ from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, Navig
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
+from dimos.msgs.vision_msgs import Detection3DArray
+from dimos.perception.spatial_perception import SpatialMemory
 from dimos.perception.common.utils import (
     extract_pose_from_detection3d,
     load_camera_info,
     load_camera_info_opencv,
     rectify_image,
 )
-from dimos.perception.object_tracker import ObjectTracking
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
@@ -50,7 +50,6 @@ from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.robot import Robot
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree_webrtc.depth_module import DepthModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -76,6 +75,18 @@ logging.getLogger("root").setLevel(logging.WARNING)
 # Suppress warnings
 warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
+
+"""
+Constants for shared memory
+Usually, auto-detection for size would be preferred. Sadly, though, channels are made
+and frozen *before* the first frame is received.
+Therefore, a maximum capacity for color image and depth image transfer should be defined
+ahead of time.
+"""
+# Default color image size: 1920x1080 frame x 3 (RGB) x uint8
+DEFAULT_CAPACITY_COLOR_IMAGE = 1920 * 1080 * 3
+# Default depth image size: 1280x720 frame * 4 (float32 size)
+DEFAULT_CAPACITY_DEPTH_IMAGE = 1280 * 720 * 4
 
 
 class FakeRTC:
