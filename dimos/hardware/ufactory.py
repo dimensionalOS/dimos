@@ -33,7 +33,11 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.geometry_msgs.Vector3 import Vector3 as MsgVector3
 from dimos.msgs.std_msgs import Header
 from dimos.protocol.tf import TF
-from dimos.utils.transform_utils import quaternion_to_euler, euler_to_quaternion, create_transform_from_6dof
+from dimos.utils.transform_utils import (
+    quaternion_to_euler,
+    euler_to_quaternion,
+    create_transform_from_6dof,
+)
 
 # Import for consistent publishing
 from reactivex import interval
@@ -74,13 +78,7 @@ class xArm:
         self.arm.motion_enable(enable=True)
         self.arm.set_mode(0)
         self.arm.set_state(state=0)
-        self.R_base_t0 = np.array(
-            [
-                [1,  0,  0],
-                [0, -1,  0],
-                [0,  0, -1]
-            ]
-        )
+        self.R_base_t0 = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
         # self.gotoZero()
 
     def get_arm_length(self):
@@ -316,6 +314,7 @@ class xArm:
         self.arm.set_state(0)
         logger.info("Arm reset complete")
 
+
 class XArmModule(Module):
     """
     Dimos module for xArm that provides RPC control interface and publishes EE pose.
@@ -542,9 +541,7 @@ class XArmModule(Module):
         if self.arm:
             return self.arm.get_ee_pose()
         # Return a default pose if arm not initialized
-        return Pose(
-            position=MsgVector3(0.5, 0.0, 0.2), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
-        )
+        return Pose(position=MsgVector3(0.5, 0.0, 0.2), orientation=Quaternion(0.0, 0.0, 0.0, 1.0))
 
     @rpc
     def cmd_gripper_ctrl(self, position: float, effort: float = 0.25):
