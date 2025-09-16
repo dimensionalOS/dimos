@@ -45,7 +45,7 @@ def detection_unitree():
     detection.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
     detection.filtered_pointcloud.transport = LCMTransport("/filtered_pointcloud", PointCloud2)
 
-    detection.start()
+    # detection.start()
 
     try:
         while True:

@@ -23,8 +23,9 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.perception.detection2d import Detection2DArrayFix, Detection2DModule
-from dimos.perception.detection2d.module import Detection3D, build_imageannotations
+
+from dimos.perception.detection2d.module2D import Detection2DModule
+from dimos.perception.detection2d.module3D import Detection3DModule, build_imageannotations
 from dimos.protocol.service import lcmservice as lcm
 from dimos.protocol.tf import TF
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
@@ -32,6 +33,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
+
 
 # Global path for the detection result pickle file
 TEST_DIR = os.path.dirname(__file__)
@@ -105,8 +107,6 @@ def test_basic(moment):
     tf.publish(*transforms)
 
     camera_transform = tf.get("camera_optical", "world")
-
-    from dimos.perception.detection2d.module import Detection3DModule
 
     detector = Detection3DModule()
     detections = Detection2DModule.process_frame(detector, image_frame)

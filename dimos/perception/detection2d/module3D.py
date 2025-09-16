@@ -12,35 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import functools
-import pickle
 import time
-from typing import Any, Callable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
-from dimos_lcm.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
-    PointsAnnotation,
-    TextAnnotation,
 )
-from dimos_lcm.foxglove_msgs.Point2 import Point2
 from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.vision_msgs import (
-    BoundingBox2D,
-    Detection2D,
-    ObjectHypothesis,
-    ObjectHypothesisWithPose,
-    Point2D,
-    Pose2D,
-)
+from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D
 from reactivex import operators as ops
-from reactivex.observable import Observable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.perception.detection2d.module2D import Detection2DModule
 
 # from dimos.perception.detection2d.detic import Detic2DDetector
 from dimos.perception.detection2d.type import (
@@ -48,22 +36,14 @@ from dimos.perception.detection2d.type import (
     Detection3D,
     build_imageannotations,
 )
-from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
-from dimos.protocol.tf.tf import TF
-from dimos.types.timestamped import to_ros_stamp
-
-
-class Detection2DArrayFix(Detection2DArray):
-    msg_name = "vision_msgs.Detection2DArray"
-
 
 # Type aliases for clarity
 ImageDetections = Tuple[Image, List[Detection2D]]
 ImageDetection = Tuple[Image, Detection2D]
 
 
-def build_detection2d_array_fix(imageDetections: ImageDetections) -> Detection2DArrayFix:
-    """Build Detection2DArrayFix from image and list of Detection2D objects."""
+def build_detection2d_array_fix(imageDetections: ImageDetections) -> Detection2DArray:
+    """Build Detection2DArray from image and list of Detection2D objects."""
     [image, detections] = imageDetections
     return Detection2DArray(
         detections_length=len(detections),
@@ -72,60 +52,12 @@ def build_detection2d_array_fix(imageDetections: ImageDetections) -> Detection2D
     )
 
 
-class Detection2DModule(Module):
-    image: In[Image] = None  # type: ignore
-    detections: Out[Detection2D] = None  # type: ignore
-    annotations: Out[ImageAnnotations] = None  # type: ignore
-
-    # _initDetector = Detic2DDetector
-    _initDetector = Yolo2DDetector
-
-    def __init__(self, *args, detector=Optional[Callable[[Any], Any]], **kwargs):
-        super().__init__(*args, **kwargs)
-        if detector:
-            self._detectorClass = detector
-        self.detector = self._initDetector()
-
-    def process_frame(self, image: Image) -> List[Detection2D]:
-        detections = Detection2D.from_detector(
-            self.detector.process_image(image.to_opencv()), image=image
-        )
-        return detections
-
-    @functools.cache
-    def detection_stream(self):
-        # Returns stream of individual Detection2D objects
-        detection_stream = self.image.observable().pipe(
-            ops.map(self.process_frame),
-            ops.flat_map(
-                lambda detections: ops.from_iterable(detections)
-            ),  # Flatten list to individual items
-        )
-
-        # Publish each detection individually
-        detection_stream.subscribe(self.detections.publish)
-
-        # Convert each Detection2D to ImageAnnotations
-        detection_stream.pipe(ops.map(lambda detection: detection.to_imageannotations())).subscribe(
-            self.annotations.publish
-        )
-
-        return detection_stream
-
-    @rpc
-    def start(self):
-        self.detection_stream()
-
-    @rpc
-    def stop(self): ...
-
-
 class Detection3DModule(Detection2DModule):
     camera_info: In[CameraInfo] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
     filtered_pointcloud: Out[PointCloud2] = None  # type: ignore
     image: In[Image] = None  # type: ignore
-    detections: Out[Detection2DArrayFix] = None  # type: ignore
+    detections: Out[Detection2DArray] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
     def detect(self, image: Image) -> ImageDetections:
