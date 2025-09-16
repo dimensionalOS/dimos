@@ -37,7 +37,9 @@ def test_detection3d_to_pose(detections3d):
 
         # Position should be the pointcloud center
         center = det.center()
-        assert np.allclose([pose.position.x, pose.position.y, pose.position.z], center)
+        assert np.allclose(
+            [pose.position.x, pose.position.y, pose.position.z], [center.x, center.y, center.z]
+        )
 
         # Orientation should be identity quaternion
         assert np.allclose(
