@@ -18,6 +18,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar
 
+import numpy as np
 from dimos_lcm.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
@@ -39,7 +40,7 @@ from rich.table import Table
 from rich.text import Text
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
-from dimos.msgs.geometry_msgs import Transform
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -72,7 +73,7 @@ class Detection2D(Timestamped):
     class_id: int
     confidence: float
     name: str
-    ts: float = 0.0
+    ts: float
 
     def to_repr_dict(self) -> Dict[str, Any]:
         """Return a dictionary representation of the detection for display purposes."""
@@ -293,20 +294,46 @@ class Detection2D(Timestamped):
 
 @dataclass
 class Detection3D(Detection2D):
-    pointcloud: Optional[PointCloud2] = None
-    transform: Optional[Transform] = None
+    pointcloud: PointCloud2
+    transform: Transform
 
     def localize(self, pointcloud: PointCloud2) -> Detection3D:
         self.pointcloud = pointcloud
         return self
 
+    def center(self) -> np.ndarray:
+        """Calculate the center of the pointcloud in world frame."""
+        return np.asarray(self.pointcloud.pointcloud.points).mean(axis=0)
+
+    def to_pose(self) -> PoseStamped:
+        """Convert detection to a PoseStamped using pointcloud center.
+
+        Returns pose in world frame with identity rotation.
+        The pointcloud is already in world frame.
+        """
+        center_world = self.center()
+
+        return PoseStamped(
+            ts=self.ts,
+            frame_id="world",
+            position=center_world.tolist(),
+            orientation=[0.0, 0.0, 0.0, 1.0],  # Identity quaternion
+        )
+
     def to_repr_dict(self) -> Dict[str, Any]:
         d = super().to_repr_dict()
 
-        if self.pointcloud is not None:
-            d["pc"] = str(len(self.pointcloud))
-        else:
-            d["pc"] = "None"
+        # Add pointcloud info
+        d["points"] = str(len(self.pointcloud))
+
+        # Calculate distance from camera
+        # The pointcloud is in world frame, and transform gives camera position in world
+        center_world = self.center()
+        print("CENTER", center_world)
+        # Camera position in world frame is the translation part of the transform
+        camera_pos = self.transform.translation
+        distance = np.linalg.norm(center_world - camera_pos.to_numpy())
+        d["dist"] = f"{distance:.2f}m"
 
         return d
 

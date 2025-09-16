@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 from typing import TypedDict
 
 import pytest
@@ -21,6 +22,8 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection2d.module2D import Detection2DModule
+from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.protocol.service import lcmservice as lcm
 from dimos.protocol.tf import TF
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
@@ -92,3 +95,21 @@ def publish_lcm(moment: Moment):
     if annotations:
         annotations_transport: LCMTransport = LCMTransport("/annotations", ImageAnnotations)
         annotations_transport.publish(annotations)
+
+
+@functools.cache
+@pytest.fixture
+def detections2d(moment: Moment):
+    return Detection2DModule().process_frame(moment.get("image_frame"))
+
+
+@functools.cache
+@pytest.fixture
+def detections3d(moment: Moment):
+    detections2d = Detection2DModule().process_frame(moment.get("image_frame"))
+    pointcloud = moment.get("lidar_frame")
+    camera_transform = moment.get("tf").get("camera_optical", "world")
+
+    return Detection3DModule(camera_info=moment.get("camera_info")).process_frame(
+        detections2d, pointcloud, camera_transform
+    )

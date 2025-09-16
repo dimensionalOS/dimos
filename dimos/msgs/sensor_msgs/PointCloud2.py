@@ -63,6 +63,9 @@ class PointCloud2(Timestamped):
         pcd.points = o3d.utility.Vector3dVector(points)
         return cls(pointcloud=pcd, ts=timestamp, frame_id=frame_id)
 
+    def points(self):
+        return self.pointcloud.points
+
     # TODO what's the usual storage here? is it already numpy?
     def as_numpy(self) -> np.ndarray:
         """Get points as numpy array."""

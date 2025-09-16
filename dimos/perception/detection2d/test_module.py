@@ -20,7 +20,6 @@ from dimos.perception.detection2d.module3D import Detection3DModule
 def test_module2d(moment: Moment):
     detections2d = Detection2DModule().process_frame(moment.get("image_frame"))
 
-    print(detections2d[0])
     print(detections2d)
 
     annotations = detections2d.to_image_annotations()
@@ -36,5 +35,4 @@ def test_module3d(moment: Moment):
         detections2d, pointcloud, camera_transform
     )
 
-    print(detections3d[0])
     print(detections3d)
