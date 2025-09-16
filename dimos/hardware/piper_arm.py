@@ -552,6 +552,7 @@ class PiperArmModule(Module):
         """Clean up resources on module destruction."""
         self.stop()
 
+
 if __name__ == "__main__":
     # Simple test script to start the PiperArmModule
     logger.info("Starting Piper Arm Robot")
@@ -566,7 +567,6 @@ if __name__ == "__main__":
     time.sleep(2)
     print(arm.get_ee_pose())
     arm.softStop()
-
 
     try:
         while True:
