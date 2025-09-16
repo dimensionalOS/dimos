@@ -62,6 +62,7 @@ class WebcamConfig(CameraConfig):
     frequency: int = 10
     camera_info: CameraInfo = field(default_factory=CameraInfo)
     frame_id_prefix: Optional[str] = None
+    stereo_slice: Optional[int] = None  # For stereo cameras, 1 for left, 2 for right
 
 
 class Webcam(ColorCameraHardware[WebcamConfig]):
@@ -155,6 +156,15 @@ class Webcam(ColorCameraHardware[WebcamConfig]):
             frame_id=self._frame("camera"),  # Standard frame ID for camera images
             ts=time.time(),  # Current timestamp
         )
+
+        if self.config.stereo_slice in (1, 2):
+            image.frame_id = self._frame(f"camera_stereo_{self.config.stereo_slice}")
+            half_width = image.width // 2
+            if self.config.stereo_slice == 1:
+                image = image.crop(0, 0, half_width, image.height)
+            else:
+                image = image.crop(half_width, 0, half_width, image.height)
+
         return image
 
     def _capture_loop(self):
