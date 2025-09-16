@@ -18,7 +18,7 @@ import time
 import math
 import numpy as np
 import logging
-from typing import Tuple
+from typing import Tuple, Optional
 
 from xarm.wrapper import XArmAPI
 
@@ -27,10 +27,16 @@ from dimos.hardware.end_effector import EndEffector
 import dimos.core as core
 from dimos.core import Module, In, Out, rpc
 from dimos.protocol.service.lcmservice import autoconf
-from dimos.msgs.geometry_msgs import Pose, Vector3, Twist
+from dimos.msgs.geometry_msgs import Pose, Vector3, Twist, PoseStamped, Transform, Quaternion
 import dimos.protocol.service.lcmservice as lcmservice
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.utils.transform_utils import quaternion_to_euler, euler_to_quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3 as MsgVector3
+from dimos.msgs.std_msgs import Header
+from dimos.protocol.tf import TF
+from dimos.utils.transform_utils import quaternion_to_euler, euler_to_quaternion, create_transform_from_6dof
+
+# Import for consistent publishing
+from reactivex import interval
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +50,7 @@ class UFactoryEndEffector(EndEffector):
         return self.model
 
 
-class UFactory7DOFArm:
+class xArm:
     def __init__(self, ip=None, xarm_type="xarm7"):
         if ip is None:
             self.ip = input("Enter the IP address of the xArm: ")
@@ -68,6 +74,13 @@ class UFactory7DOFArm:
         self.arm.motion_enable(enable=True)
         self.arm.set_mode(0)
         self.arm.set_state(state=0)
+        self.R_base_t0 = np.array(
+            [
+                [1,  0,  0],
+                [0, -1,  0],
+                [0,  0, -1]
+            ]
+        )
         # self.gotoZero()
 
     def get_arm_length(self):
@@ -94,7 +107,7 @@ class UFactory7DOFArm:
         # Position: x=57mm, y=0mm, z=280mm, rx=0°, ry=120°, rz=0°
         # xArm API expects mm and degrees
         x, y, z = 500, 0, 200  # mm
-        roll, pitch, yaw = 0, 120, 0  # degrees
+        roll, pitch, yaw = 180, -30, 0  # degrees
         logger.debug(
             f"Going to observe position: x={x}, y={y}, z={z}, roll={roll}, pitch={pitch}, yaw={yaw}"
         )
@@ -303,6 +316,309 @@ class UFactory7DOFArm:
         self.arm.set_state(0)
         logger.info("Arm reset complete")
 
+class XArmModule(Module):
+    """
+    Dimos module for xArm that provides RPC control interface and publishes EE pose.
+
+    Publishes:
+        - ee_pose: End-effector pose as PoseStamped
+
+    RPC methods:
+        - All xArm control methods exposed via RPC
+    """
+
+    # LCM outputs
+    ee_pose: Out[PoseStamped] = None
+
+    def __init__(
+        self,
+        arm_ip: str = None,
+        arm_type: str = "xarm7",
+        publish_rate: float = 30.0,
+        base_frame_id: str = "base_link",
+        ee_frame_id: str = "ee_link",
+        camera_frame_id: str = "camera_link",
+        ee_to_camera_6dof: Optional[list] = None,
+        **kwargs,
+    ):
+        """
+        Initialize xArm Module.
+
+        Args:
+            arm_ip: IP address of the xArm robot
+            arm_type: Type of xArm (e.g., "xarm7")
+            publish_rate: Rate to publish EE pose and transforms (Hz)
+            base_frame_id: TF frame ID for robot base
+            ee_frame_id: TF frame ID for end-effector
+            camera_frame_id: TF frame ID for camera
+            ee_to_camera_6dof: EE to camera transform [x, y, z, rx, ry, rz] in meters and radians
+        """
+        super().__init__(**kwargs)
+
+        self.arm_ip = arm_ip
+        self.arm_type = arm_type
+        self.publish_rate = publish_rate
+        self.base_frame_id = base_frame_id
+        self.ee_frame_id = ee_frame_id
+        self.camera_frame_id = camera_frame_id
+        self.publish_period = 1.0 / publish_rate
+
+        # EE to camera transform
+        if ee_to_camera_6dof is None:
+            ee_to_camera_6dof = [0.115, 0.00, 0.00, 0.0, 0.0, 0.0]
+        pos = Vector3(ee_to_camera_6dof[0], ee_to_camera_6dof[1], ee_to_camera_6dof[2])
+        rot = Vector3(ee_to_camera_6dof[3], ee_to_camera_6dof[4], ee_to_camera_6dof[5])
+        self.T_ee_to_camera = create_transform_from_6dof(pos, rot)
+
+        # Extract translation and rotation for TF
+        self.ee_to_camera_translation = Vector3(
+            ee_to_camera_6dof[0], ee_to_camera_6dof[1], ee_to_camera_6dof[2]
+        )
+        # Convert euler to quaternion for TF
+        self.ee_to_camera_rotation = euler_to_quaternion(rot, degrees=False)
+
+        # Internal xArm instance
+        self.arm = None
+
+        # Publishing control
+        self._running = False
+        self._subscription = None
+        self._sequence = 0
+
+        # Initialize TF publisher
+        self.tf = TF()
+
+        logger.info(f"XArmModule initialized, will publish at {publish_rate} Hz")
+
+    @rpc
+    def start(self):
+        """Start the xArm module and begin publishing EE pose."""
+        if self._running:
+            logger.warning("xArm module already running")
+            return
+
+        # Initialize the actual xArm
+        logger.info("Initializing xArm hardware...")
+        self.arm = xArm(ip=self.arm_ip, xarm_type=self.arm_type)
+
+        # Start publishing EE pose
+        self._running = True
+
+        # Use reactivex interval for consistent publishing rate
+        self._subscription = interval(self.publish_period).subscribe(
+            lambda _: self._publish_ee_pose_and_transforms()
+        )
+
+        logger.info("xArm module started successfully")
+
+    @rpc
+    def stop(self):
+        """Stop the xArm module."""
+        if not self._running:
+            return
+
+        self._running = False
+
+        # Stop subscription
+        if self._subscription:
+            self._subscription.dispose()
+            self._subscription = None
+
+        # Disable arm
+        if self.arm:
+            try:
+                self.arm.disable()
+            except Exception as e:
+                logger.warning(f"Error disabling arm: {e}")
+
+        logger.info("xArm module stopped")
+
+    def _publish_ee_pose_and_transforms(self):
+        """Publish current end-effector pose and TF transforms."""
+        if not self._running or not self.arm:
+            return
+
+        try:
+            # Get current EE pose
+            pose = self.arm.get_ee_pose()
+
+            if pose:
+                # Create header with timestamp
+                header = Header(self.base_frame_id)
+                self._sequence += 1
+
+                # Publish EE pose as PoseStamped
+                msg = PoseStamped(
+                    ts=header.ts,
+                    position=[pose.position.x, pose.position.y, pose.position.z],
+                    orientation=[
+                        pose.orientation.x,
+                        pose.orientation.y,
+                        pose.orientation.z,
+                        pose.orientation.w,
+                    ],
+                    frame_id=self.base_frame_id,
+                )
+                self.ee_pose.publish(msg)
+
+                # Publish TF transforms
+                # 1. base_link -> ee_link transform
+                ee_transform = Transform(
+                    translation=pose.position,
+                    rotation=pose.orientation,
+                    frame_id=self.base_frame_id,
+                    child_frame_id=self.ee_frame_id,
+                    ts=header.ts,
+                )
+                self.tf.publish(ee_transform)
+
+                # 2. ee_link -> camera_link transform (static offset)
+                camera_transform = Transform(
+                    translation=self.ee_to_camera_translation,
+                    rotation=self.ee_to_camera_rotation,
+                    frame_id=self.ee_frame_id,
+                    child_frame_id=self.camera_frame_id,
+                    ts=header.ts,
+                )
+                self.tf.publish(camera_transform)
+
+        except Exception as e:
+            logger.error(f"Error publishing EE pose and transforms: {e}")
+
+    # Expose all xArm methods via RPC
+
+    @rpc
+    def enable(self):
+        """Enable the xArm."""
+        if self.arm:
+            self.arm.enable()
+
+    @rpc
+    def disable(self):
+        """Disable the xArm."""
+        if self.arm:
+            self.arm.disable()
+
+    @rpc
+    def goto_zero(self):
+        """Move arm to zero position."""
+        if self.arm:
+            self.arm.gotoZero()
+
+    @rpc
+    def goto_observe(self):
+        """Move arm to observe position."""
+        if self.arm:
+            self.arm.gotoObserve()
+        else:
+            logger.warning("Cannot go to observe position - arm not initialized yet")
+
+    @rpc
+    def soft_stop(self):
+        """Perform soft stop."""
+        if self.arm:
+            self.arm.softStop()
+
+    @rpc
+    def cmd_ee_pose(self, pose: Pose, line_mode: bool = False):
+        """
+        Command end-effector to target pose.
+
+        Args:
+            pose: Target pose for end-effector
+            line_mode: Whether to use line mode for movement
+        """
+        if self.arm:
+            self.arm.cmd_ee_pose(pose, line_mode)
+
+    @rpc
+    def get_ee_pose(self) -> Pose:
+        """
+        Get current end-effector pose.
+
+        Returns:
+            Current EE pose
+        """
+        if self.arm:
+            return self.arm.get_ee_pose()
+        # Return a default pose if arm not initialized
+        return Pose(
+            position=MsgVector3(0.5, 0.0, 0.2), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+        )
+
+    @rpc
+    def cmd_gripper_ctrl(self, position: float, effort: float = 0.25):
+        """
+        Command gripper position and effort.
+
+        Args:
+            position: Gripper opening in meters
+            effort: Gripper effort (normalized 0-1)
+        """
+        if self.arm:
+            self.arm.cmd_gripper_ctrl(position, effort)
+
+    @rpc
+    def enable_gripper(self):
+        """Enable the gripper."""
+        if self.arm:
+            self.arm.enable_gripper()
+
+    @rpc
+    def release_gripper(self):
+        """Release (open) the gripper."""
+        if self.arm:
+            self.arm.release_gripper()
+
+    @rpc
+    def close_gripper(self, commanded_effort: float = 0.5):
+        """
+        Close the gripper.
+
+        Args:
+            commanded_effort: Effort to use when closing
+        """
+        if self.arm:
+            self.arm.close_gripper(commanded_effort)
+
+    @rpc
+    def get_gripper_feedback(self) -> Tuple[float, float]:
+        """
+        Get gripper feedback.
+
+        Returns:
+            Tuple of (position_meters, current_amperes)
+        """
+        if self.arm:
+            return self.arm.get_gripper_feedback()
+        return (0.0, 0.0)
+
+    @rpc
+    def gripper_object_detected(self, commanded_effort: float = 0.25) -> bool:
+        """
+        Check if object is detected in gripper.
+
+        Args:
+            commanded_effort: The effort that was used when closing
+
+        Returns:
+            True if object is detected
+        """
+        if self.arm:
+            return self.arm.gripper_object_detected(commanded_effort)
+        return False
+
+    @rpc
+    def reset_arm(self):
+        """Reset the arm."""
+        if self.arm:
+            self.arm.resetArm()
+
+    @rpc
+    def cleanup(self):
+        """Clean up resources on module destruction."""
+        self.stop()
+
 
 class xArmBridge(Module):
     joint_state: In[JointState] = None
@@ -320,7 +636,7 @@ class xArmBridge(Module):
     @rpc
     def start(self):
         # subscribe to incoming LCM JointState messages
-        self.arm = UFactory7DOFArm(ip=self.arm_ip, xarm_type=self.arm_type)
+        self.arm = xArm(ip=self.arm_ip, xarm_type=self.arm_type)
         self.arm.enable()
         # print(f"Initialized xArmBridge with arm type: {self.arm.xarm_type}")
         self.joint_state.subscribe(self._on_joint_state)
@@ -381,16 +697,19 @@ def TestXarmBridge(arm_ip: str = None, arm_type: str = "xArm7"):
         time.sleep(0.01)
 
 
-if __name__ == "__main__":
-    # TestXarmBridge(arm_ip="192.168.1.197", arm_type="xarm7")
-
-    # # arm.cmd_joint_angles([0, 0, 0, 120, 0, 0, 0], speed=speed)
-
-    # arm.gotoZero()
-    arm = UFactory7DOFArm(ip="192.168.1.197", xarm_type="xarm7")
+def test_xarm():
+    """Test function for xArm - moved to avoid circular imports."""
+    arm = xArm(ip="10.0.0.197", xarm_type="xarm7")
     arm.enable()
-    # arm.gotoObserve()
-    # time.sleep(2)
+    arm.gotoObserve()
+    print(arm.get_ee_pose())
+    time.sleep(2)
     arm.gotoZero()
+    print(arm.get_ee_pose())
     # arm.disconnect()
     print("disconnected")
+
+
+if __name__ == "__main__":
+    # TestXarmBridge(arm_ip="192.168.1.197", arm_type="xarm7")
+    test_xarm()
