@@ -183,9 +183,11 @@ class PiperArmRobot(Robot):
             Dict with success status and details
         """
         if self.manipulation_interface:
+            pick_target = (pick_x, pick_y)
+            place_target = (place_x, place_y) if place_x is not None and place_y is not None else None
             return self.manipulation_interface.rpc.call_sync(
                 f"{self.manipulation_interface.remote_name}/pick_and_place",
-                ([pick_x, pick_y, place_x, place_y], {}),
+                ([pick_target, place_target], {}),
                 rpc_timeout=rpc_timeout,
                 max_retries=1,  # Don't retry for long operations
             )

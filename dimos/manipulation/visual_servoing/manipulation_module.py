@@ -25,6 +25,7 @@ from copy import deepcopy
 from typing import Optional, Any, Dict, Union, Tuple
 from enum import Enum
 from collections import deque
+import traceback
 
 import numpy as np
 
@@ -422,6 +423,8 @@ class ManipulationModule(Module):
 
         except Exception as e:
             logger.error(f"Error in pick and place: {e}")
+            
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}
         finally:
             self.task_running = False
@@ -578,14 +581,10 @@ class ManipulationModule(Module):
             return None
 
         if self.track_frame_id == self.base_frame_id:
-            # Extract pose from Detection3D object
-            if (
-                self.pbvs.current_target
-                and self.pbvs.current_target.bbox
-                and self.pbvs.current_target.bbox.center
-            ):
-                return self.pbvs.current_target.bbox.center
-            return None
+            return Pose(
+                position=self.pbvs.current_target.bbox.center.position,
+                orientation=self.pbvs.current_target.bbox.center.orientation
+            )
 
         base_to_target = self.tf.get(
             parent_frame=self.base_frame_id,
