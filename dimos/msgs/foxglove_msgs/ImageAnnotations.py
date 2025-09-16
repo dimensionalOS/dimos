@@ -16,6 +16,17 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations as Foxglov
 
 
 class ImageAnnotations(FoxgloveImageAnnotations):
+    def __add__(self, other: "ImageAnnotations") -> "ImageAnnotations":
+        points = self.points + other.points
+        texts = self.texts + other.texts
+
+        return ImageAnnotations(
+            texts=texts,
+            texts_length=len(texts),
+            points=points,
+            points_length=len(points),
+        )
+
     def agent_encode(self) -> str:
         if len(self.texts) == 0:
             return None

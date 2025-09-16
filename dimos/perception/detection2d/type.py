@@ -14,13 +14,13 @@
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import numpy as np
 from dimos_lcm.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
     PointsAnnotation,
     TextAnnotation,
 )
@@ -36,6 +36,7 @@ from dimos_lcm.vision_msgs import (
     Detection2D as ROSDetection2D,
 )
 
+from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
@@ -118,38 +119,63 @@ class Detection2D(Timestamped):
     def lcm_encode(self):
         return self.to_imageannotations().lcm_encode()
 
-    def to_imageannotations(self) -> ImageAnnotations:
-        bbox = self.bbox
-        points = [
-            Point2(x=float(bbox[0]), y=float(bbox[1])),
-            Point2(x=float(bbox[2]), y=float(bbox[1])),
-            Point2(x=float(bbox[2]), y=float(bbox[3])),
-            Point2(x=float(bbox[0]), y=float(bbox[3])),
-            Point2(x=float(bbox[0]), y=float(bbox[1])),
+    def to_text_annotation(self) -> List[TextAnnotation]:
+        x1, y1, x2, y2 = self.bbox
+
+        font_size = int(self.image.height / 35)
+        return [
+            TextAnnotation(
+                timestamp=to_ros_stamp(self.ts),
+                position=Point2(x=x1, y=y2 + font_size),
+                text=f"confidence: {self.confidence:.3f}",
+                font_size=font_size,
+                text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
+                background_color=Color(r=0, g=0, b=0, a=1),
+            ),
+            TextAnnotation(
+                timestamp=to_ros_stamp(self.ts),
+                position=Point2(x=x1, y=y1),
+                text=f"{self.name}_{self.class_id}_{self.track_id}",
+                font_size=font_size,
+                text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
+                background_color=Color(r=0, g=0, b=0, a=1),
+            ),
         ]
+
+    def to_points_annotation(self) -> List[PointsAnnotation]:
+        x1, y1, x2, y2 = self.bbox
+
+        thickness = self.image.height / 720
+
+        return [
+            PointsAnnotation(
+                timestamp=to_ros_stamp(self.ts),
+                outline_color=Color(r=0.0, g=0.0, b=0.0, a=1.0),
+                fill_color=Color(r=1.0, g=0.0, b=0.0, a=0.15),
+                thickness=thickness,
+                points_length=4,
+                points=[
+                    Point2(x1, y1),
+                    Point2(x1, y2),
+                    Point2(x2, y2),
+                    Point2(x2, y1),
+                ],
+                type=PointsAnnotation.LINE_LOOP,
+            )
+        ]
+
+    def to_annotations(self) -> ImageAnnotations:
+        if self.image is None:
+            raise ValueError("Image is required to create ImageAnnotations")
+
+        points = self.to_points_annotation()
+        texts = self.to_text_annotation()
+
         return ImageAnnotations(
-            circles=[],
-            points=[
-                PointsAnnotation(
-                    timestamp=to_ros_stamp(self.ts),
-                    type=PointsAnnotation.LINE_LOOP,
-                    points=points,
-                    outline_color=Color(r=0.0, g=1.0, b=0.0, a=1.0),
-                    outline_colors=[],
-                    fill_color=Color(r=0.0, g=0.0, b=0.0, a=0.0),
-                    thickness=2.0,
-                )
-            ],
-            texts=[
-                TextAnnotation(
-                    timestamp=to_ros_stamp(self.ts),
-                    position=Point2(x=float(bbox[0]), y=float(bbox[3]) + 10),
-                    text=f"{self.name} (id:{self.track_id})",
-                    font_size=16.0,
-                    text_color=Color(r=1.0, g=1.0, b=1.0, a=1.0),
-                    background_color=Color(r=0.0, g=0.0, b=0.0, a=0.8),
-                )
-            ],
+            texts=texts,
+            texts_length=len(texts),
+            points=points,
+            points_length=len(points),
         )
 
     @classmethod
@@ -234,18 +260,61 @@ class Detection3D(Detection2D):
         return self
 
 
-def build_imageannotations(image_detections: Tuple[Image, List[Detection2D]]) -> ImageAnnotations:
-    """Build ImageAnnotations from image and list of Detection2D objects."""
-    image, detections = image_detections
-    if not detections:
-        return ImageAnnotations(circles=[], points=[], texts=[])
+def build_imageannotation_text(detection: Detection2D) -> List[TextAnnotation]:
+    x1, y1, x2, y2 = detection.bbox
 
-    all_points = []
-    all_texts = []
+    font_size = int(detection.image.height / 35)
+    return [
+        TextAnnotation(
+            timestamp=to_ros_stamp(detection.ts),
+            position=Point2(x=x1, y=y2 + font_size),
+            text=f"confidence: {detection.confidence:.3f}",
+            font_size=font_size,
+            text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
+            background_color=Color(r=0, g=0, b=0, a=1),
+        ),
+        TextAnnotation(
+            timestamp=to_ros_stamp(detection.ts),
+            position=Point2(x=x1, y=y1),
+            text=f"{detection.name}_{detection.class_id}_{detection.track_id}",
+            font_size=font_size,
+            text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
+            background_color=Color(r=0, g=0, b=0, a=1),
+        ),
+    ]
 
-    for detection in detections:
-        annotation = detection.to_imageannotations()
-        all_points.extend(annotation.points)
-        all_texts.extend(annotation.texts)
 
-    return ImageAnnotations(circles=[], points=all_points, texts=all_texts)
+def build_imageannotation_box(detection: Detection2D) -> PointsAnnotation:
+    x1, y1, x2, y2 = detection.bbox
+
+    thickness = detection.image.height / 720
+
+    return PointsAnnotation(
+        timestamp=to_ros_stamp(detection.ts),
+        outline_color=Color(r=0.0, g=0.0, b=0.0, a=1.0),
+        fill_color=Color(r=1.0, g=0.0, b=0.0, a=0.15),
+        thickness=thickness,
+        points_length=4,
+        points=[
+            Point2(x1, y1),
+            Point2(x1, y2),
+            Point2(x2, y2),
+            Point2(x2, y1),
+        ],
+        type=PointsAnnotation.LINE_LOOP,
+    )
+
+
+def build_imageannotations(detections: List[Detection2D]) -> ImageAnnotations:
+    def flatten(xss):
+        return [x for xs in xss for x in xs]
+
+    points = list(map(build_imageannotation_box, detections))
+    texts = list(flatten(map(build_imageannotation_text, detections)))
+
+    return ImageAnnotations(
+        texts=texts,
+        texts_length=len(texts),
+        points=points,
+        points_length=len(points),
+    )

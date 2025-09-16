@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import os
 import pickle
 
@@ -23,7 +24,6 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.sensor_msgs.Image import Image
-
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule, build_imageannotations
 from dimos.protocol.service import lcmservice as lcm
@@ -34,7 +34,6 @@ from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
 
-
 # Global path for the detection result pickle file
 TEST_DIR = os.path.dirname(__file__)
 DETECTION_RESULT_PKL = os.path.join(TEST_DIR, "detection_result.pkl")
@@ -42,20 +41,26 @@ DETECTION_RESULT_PKL = os.path.join(TEST_DIR, "detection_result.pkl")
 
 @pytest.fixture
 def moment():
-    # data_dir = "unitree_office_walk"
     data_dir = "unitree_go2_lidar_corrected"
     get_data(data_dir)
 
     seek = 10
 
     lidar_frame = TimedSensorReplay(f"{data_dir}/lidar").find_closest_seek(seek)
+
     image_frame = TimedSensorReplay(
         f"{data_dir}/video",
     ).find_closest(lidar_frame.ts)
 
+    image_frame.frame_id = "camera_optical"
+
     odom_frame = TimedSensorReplay(f"{data_dir}/odom", autocast=Odometry.from_msg).find_closest(
         lidar_frame.ts
     )
+
+    print("odom", odom_frame)
+    print("lidar", lidar_frame)
+    print("image", image_frame)
 
     transforms = ConnectionModule._odom_to_tf(odom_frame)
 
@@ -95,6 +100,7 @@ def publish_lcm(
     camera_info_transport.publish(camera_info)
 
     annotations_transport: LCMTransport = LCMTransport("/annotations", ImageAnnotations)
+    print("Annotations are", annotations.points)
     annotations_transport.publish(annotations)
 
     publish_detected_pc(detected_pc)
@@ -133,7 +139,13 @@ def test_basic(moment):
         image_frame,
         odom_frame,
         camera_info,
-        build_imageannotations((image_frame, detections)),
+        functools.reduce(
+            lambda accum, detection: detection.to_annotations()
+            if accum is None
+            else accum + detection.to_annotations(),
+            detection3d_list,
+            None,
+        ),
         detection3d_list,
     )
 
