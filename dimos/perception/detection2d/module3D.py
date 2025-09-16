@@ -33,8 +33,7 @@ from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.type import (
     Detection2D,
     Detection3D,
-    to_imageannotations,
-    to_ros_detection2d_array,
+    ImageDetections2D,
 )
 
 # Type aliases for clarity
@@ -43,7 +42,8 @@ ImageDetection = Tuple[Image, Detection2D]
 
 
 class Detection3DModule(Detection2DModule):
-    camera_info: In[CameraInfo] = None  # type: ignore
+    camera_info: CameraInfo
+
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
 
@@ -51,23 +51,15 @@ class Detection3DModule(Detection2DModule):
     detections: Out[Detection2DArray] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
+    def __init__(self, camera_info: CameraInfo, *args, **kwargs):
+        self.camera_info = camera_info
+        super().__init__(*args, **kwargs)
+
     def detect(self, image: Image) -> ImageDetections:
         detections = Detection2D.from_detector(
             self.detector.process_image(image.to_opencv()), ts=image.ts
         )
         return (image, detections)
-
-    @functools.cache
-    def detection_stream(self):
-        detection_stream = self.image.observable().pipe(ops.map(self.detect))
-
-        detection_stream.pipe(ops.map(to_imageannotations)).subscribe(self.annotations.publish)
-
-        detection_stream.pipe(
-            ops.filter(lambda x: len(x[1]) != 0), ops.map(to_ros_detection2d_array)
-        ).subscribe(self.detections.publish)
-
-        return detection_stream
 
     def project_points_to_camera(
         self,
@@ -93,14 +85,13 @@ class Detection3DModule(Detection2DModule):
 
     def filter_points_in_detections(
         self,
+        detections: ImageDetections2D,
         pointcloud: PointCloud2,
-        image: Image,
-        camera_info: CameraInfo,
-        detection_list: List[Detection2D],
         world_to_camera_transform: Transform,
     ) -> List[Optional[PointCloud2]]:
         """Filter lidar points that fall within detection bounding boxes."""
         # Extract camera parameters
+        camera_info = self.camera_info
         fx, fy, cx = camera_info.K[0], camera_info.K[4], camera_info.K[2]
         cy = camera_info.K[5]
         image_width = camera_info.width
@@ -130,7 +121,7 @@ class Detection3DModule(Detection2DModule):
 
         filtered_pointclouds: List[Optional[PointCloud2]] = []
 
-        for detection in detection_list:
+        for detection in detections.detections:
             # Extract bbox from Detection2D object
             bbox = detection.bbox
             x_min, y_min, x_max, y_max = bbox
@@ -206,11 +197,12 @@ class Detection3DModule(Detection2DModule):
 
     def process_frame(  # type: ignore[override]
         self,
-        detections: List[Detection2D],
+        detections: ImageDetections2D,
         pointcloud: PointCloud2,
-        camera_info: CameraInfo,
         transform: Transform,
     ) -> List[Detection3D]:
+        print("DETECTIONS", detections)
+
         if not transform:
             return []
 
@@ -218,14 +210,11 @@ class Detection3DModule(Detection2DModule):
         if not detections:
             return []
 
-        print("DETECTIONS", detections)
-        image = detections[0].image
+        image = detections.image
         if image is None:
             return []
 
-        pointcloud_list = self.filter_points_in_detections(
-            pointcloud, image, camera_info, detections, transform
-        )
+        pointcloud_list = self.filter_points_in_detections(detections, pointcloud, transform)
 
         detection3d_list = []
         for detection, pc in zip(detections, pointcloud_list):
