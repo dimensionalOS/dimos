@@ -34,6 +34,7 @@ from dimos.perception.detection2d.type import (
     Detection2D,
     Detection3D,
     ImageDetections2D,
+    ImageDetections3D,
 )
 
 # Type aliases for clarity
@@ -201,7 +202,7 @@ class Detection3DModule(Detection2DModule):
         detections: ImageDetections2D,
         pointcloud: PointCloud2,
         transform: Transform,
-    ) -> List[Detection3D]:
+    ) -> ImageDetections3D:
         # print("3d processing frame:\n", "\n".join(map(str, [detections, pointcloud, transform])))
 
         pointcloud_list = self.filter_points_in_detections(detections, pointcloud, transform)
@@ -216,7 +217,7 @@ class Detection3DModule(Detection2DModule):
 
             detection3d_list.append(detection.to_3d(pointcloud=pc, transform=transform))
 
-        return detection3d_list
+        return ImageDetections3D(detections.image, detection3d_list)
 
     @functools.cache
     def pointcloud_stream(self):

@@ -14,8 +14,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
-from typing import Generic, List, Optional, Tuple, TypeVar
+from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar
 
 from dimos_lcm.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
@@ -33,6 +34,9 @@ from dimos_lcm.vision_msgs import (
 from dimos_lcm.vision_msgs import (
     Detection2D as ROSDetection2D,
 )
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import Transform
@@ -69,6 +73,49 @@ class Detection2D(Timestamped):
     confidence: float
     name: str
     ts: float = 0.0
+
+    def to_repr_dict(self) -> Dict[str, Any]:
+        """Return a dictionary representation of the detection for display purposes."""
+        x1, y1, x2, y2 = self.bbox
+        return {
+            "name": self.name,
+            "class": str(self.class_id),
+            "track": str(self.track_id),
+            "conf": self.confidence,
+            "bbox": f"[{x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}]",
+        }
+
+    def __str__(self):
+        console = Console(force_terminal=True, legacy_windows=False)
+        d = self.to_repr_dict()
+
+        # Create confidence text with color based on value
+        conf_color = "green" if d["conf"] > 0.8 else "yellow" if d["conf"] > 0.5 else "red"
+        conf_text = Text(f"{d['conf']:.1%}", style=conf_color)
+
+        # Build the string representation
+        parts = [
+            Text(f"{self.__class__.__name__}("),
+            Text(d["name"], style="bold cyan"),
+            Text(f" cls={d['class']} trk={d['track']} "),
+            conf_text,
+            Text(f" {d['bbox']}"),
+        ]
+
+        # Add any extra fields (e.g., points for Detection3D)
+        extra_keys = [k for k in d.keys() if k not in ["name", "class", "track", "conf", "bbox"]]
+        for key in extra_keys:
+            if d[key] == "None":
+                parts.append(Text(f" {key}={d[key]}", style="dim"))
+            else:
+                parts.append(Text(f" {key}={d[key]}", style="blue"))
+
+        parts.append(Text(")"))
+
+        # Render to string
+        with console.capture() as capture:
+            console.print(*parts, end="")
+        return capture.get().strip()
 
     @classmethod
     def from_detector(
@@ -163,9 +210,6 @@ class Detection2D(Timestamped):
     # and ImageAnnotations message normally contains multiple detections annotations
     # so ImageDetections2D and ImageDetections3D normally implements this for whole image
     def to_annotations(self) -> ImageAnnotations:
-        if self.image is None:
-            raise ValueError("Image is required to create ImageAnnotations")
-
         points = self.to_points_annotation()
         texts = self.to_text_annotation()
 
@@ -256,8 +300,44 @@ class Detection3D(Detection2D):
         self.pointcloud = pointcloud
         return self
 
+    def to_repr_dict(self) -> Dict[str, Any]:
+        d = super().to_repr_dict()
+
+        if self.pointcloud is not None:
+            d["pc"] = str(len(self.pointcloud))
+        else:
+            d["pc"] = "None"
+
+        return d
+
 
 T = TypeVar("T", bound="Detection2D")
+
+
+def _hash_to_color(name: str) -> str:
+    """Generate a consistent color for a given name using hash."""
+    # List of rich colors to choose from
+    colors = [
+        "cyan",
+        "magenta",
+        "yellow",
+        "blue",
+        "green",
+        "red",
+        "bright_cyan",
+        "bright_magenta",
+        "bright_yellow",
+        "bright_blue",
+        "bright_green",
+        "bright_red",
+        "purple",
+        "white",
+        "pink",
+    ]
+
+    # Hash the name and pick a color
+    hash_value = hashlib.md5(name.encode()).digest()[0]
+    return colors[hash_value % len(colors)]
 
 
 class ImageDetections(Generic[T]):
@@ -268,19 +348,57 @@ class ImageDetections(Generic[T]):
         self.image = image
         self.detections = detections
         for det in self.detections:
-            det.image = image
             if not det.ts:
                 det.ts = image.ts
 
     def __str__(self):
-        detections_str = ", ".join(det.name for det in self.detections)
-        return f"ImageDetections(ts={to_timestamp(self.image.ts)}, num_detections={len(self.detections)}, {detections_str})"
+        console = Console(force_terminal=True, legacy_windows=False)
+
+        # Dynamically build columns based on the first detection's dict keys
+        if not self.detections:
+            return "Empty ImageDetections"
+
+        # Create a table for detections
+        table = Table(
+            title=f"{self.__class__.__name__} [{len(self.detections)} detections @ {to_timestamp(self.image.ts):.3f}]",
+            show_header=True,
+            show_edge=True,
+        )
+
+        first_dict = self.detections[0].to_repr_dict()
+        table.add_column("#", style="dim")
+        for col in first_dict.keys():
+            color = _hash_to_color(col)
+            table.add_column(col.title(), style=color)
+
+        # Add each detection to the table
+        for i, det in enumerate(self.detections):
+            d = det.to_repr_dict()
+            row = [str(i)]
+
+            for key in first_dict.keys():
+                if key == "conf":
+                    # Color-code confidence
+                    conf_color = "green" if d[key] > 0.8 else "yellow" if d[key] > 0.5 else "red"
+                    row.append(Text(f"{d[key]:.1%}", style=conf_color))
+                elif key == "points" and d.get(key) == "None":
+                    row.append(Text(d.get(key, ""), style="dim"))
+                else:
+                    row.append(str(d.get(key, "")))
+            table.add_row(*row)
+
+        with console.capture() as capture:
+            console.print(table)
+        return capture.get().strip()
 
     def __len__(self):
         return len(self.detections)
 
     def __iter__(self):
         return iter(self.detections)
+
+    def __getitem__(self, index):
+        return self.detections[index]
 
     def to_ros_detection2d_array(self) -> Detection2DArray:
         return Detection2DArray(
@@ -317,6 +435,4 @@ class ImageDetections2D(ImageDetections[Detection2D]):
 class ImageDetections3D(ImageDetections[Detection3D]):
     """Specialized class for 3D detections in an image."""
 
-    def __str__(self):
-        detections_str = ", ".join(det.name for det in self.detections)
-        return f"ImageDetections3D(ts={to_timestamp(self.image.ts)}, num_detections={len(self.detections)}, {detections_str})"
+    ...
