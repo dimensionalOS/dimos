@@ -117,6 +117,7 @@ class SkillState:
             return self.ret_msg.content
 
         if self.state == SkillStateEnum.error:
+            print("Error msg:", self.error_msg.content)
             if self.reduced_stream_msg:
                 (self.reduced_stream_msg.content + "\n" + self.error_msg.content)
             else:
@@ -277,26 +278,61 @@ class SkillCoordinator(Module):
     _dynamic_containers: list[SkillContainer]
     _skill_state: SkillStateDict  # key is call_id, not skill_name
     _skills: dict[str, SkillConfig]
-    _updates_available: asyncio.Event
+    _updates_available: Optional[asyncio.Event]
     _loop: Optional[asyncio.AbstractEventLoop]
+    _agent_loop: Optional[asyncio.AbstractEventLoop]
 
     def __init__(self) -> None:
+        # TODO: Why isn't this super().__init__() ?
         SkillContainer.__init__(self)
         self._loop = get_loop()
         self._static_containers = []
         self._dynamic_containers = []
         self._skills = {}
         self._skill_state = SkillStateDict()
-        self._updates_available = asyncio.Event()
+        # Defer event creation until we're in the correct loop context
+        self._updates_available = None
+        self._agent_loop = None
+        self._pending_notifications = 0  # Count pending notifications
+        self._closed_coord = False
+        self._transport_unsub_fn = None
+
+    def _ensure_updates_available(self) -> asyncio.Event:
+        """Lazily create the updates available event in the correct loop context."""
+        if self._updates_available is None:
+            # Create the event in the current running loop, not the stored loop
+            try:
+                loop = asyncio.get_running_loop()
+                # print(f"[DEBUG] Creating _updates_available event in current loop {id(loop)}")
+                # Always use the current running loop for the event
+                # This ensures the event is created in the context where it will be used
+                self._updates_available = asyncio.Event()
+                # Store the loop where the event was created - this is the agent's loop
+                self._agent_loop = loop
+                # print(
+                #    f"[DEBUG] Created _updates_available event {id(self._updates_available)} in agent loop {id(loop)}"
+                # )
+            except RuntimeError:
+                # No running loop, defer event creation until we have the proper context
+                # print(f"[DEBUG] No running loop, deferring event creation")
+                # Don't create the event yet - wait for the proper loop context
+                pass
+        else:
+            ...
+            # print(f"[DEBUG] Reusing _updates_available event {id(self._updates_available)}")
+        return self._updates_available
 
     @rpc
     def start(self) -> None:
         self.skill_transport.start()
-        self.skill_transport.subscribe(self.handle_message)
+        self._transport_unsub_fn = self.skill_transport.subscribe(self.handle_message)
 
     @rpc
     def stop(self) -> None:
+        self._closed_coord = True
         self.skill_transport.stop()
+        if self._transport_unsub_fn:
+            self._transport_unsub_fn()
 
     def len(self) -> int:
         return len(self._skills)
@@ -322,7 +358,7 @@ class SkillCoordinator(Module):
         self, call_id: Union[str | Literal[False]], skill_name: str, args: dict[str, Any]
     ) -> None:
         if not call_id:
-            call_id = str(round(time.time()))
+            call_id = str(time.time())
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
             logger.error(
@@ -337,10 +373,17 @@ class SkillCoordinator(Module):
         # TODO agent often calls the skill again if previous response is still loading.
         # maybe create a new skill_state linked to a previous one? not sure
 
+        arg_keywords = args.get("args") or {}
+        arg_list = []
+
+        if isinstance(arg_keywords, list):
+            arg_list = arg_keywords
+            arg_keywords = {}
+
         return skill_config.call(
             call_id,
-            *(args.get("args") or []),
-            **(args.get("kwargs") or {}),
+            *arg_list,
+            **arg_keywords,
         )
 
     # Receives a message from active skill
@@ -348,6 +391,11 @@ class SkillCoordinator(Module):
     #
     # Checks if agent needs to be notified (if ToolConfig has Return=call_agent or Stream=call_agent)
     def handle_message(self, msg: SkillMsg) -> None:
+        if self._closed_coord:
+            import traceback
+
+            traceback.print_stack()
+            return
         # logger.info(f"SkillMsg from {msg.skill_name}, {msg.call_id} - {msg}")
 
         if self._skill_state.get(msg.call_id) is None:
@@ -359,7 +407,39 @@ class SkillCoordinator(Module):
         should_notify = self._skill_state[msg.call_id].handle_msg(msg)
 
         if should_notify:
-            self._loop.call_soon_threadsafe(self._updates_available.set)
+            updates_available = self._ensure_updates_available()
+            if updates_available is None:
+                print(f"[DEBUG] Event not created yet, deferring notification")
+                return
+
+            try:
+                current_loop = asyncio.get_running_loop()
+                agent_loop = getattr(self, "_agent_loop", self._loop)
+                # print(
+                #    f"[DEBUG] handle_message: current_loop={id(current_loop)}, agent_loop={id(agent_loop) if agent_loop else 'None'}, event={id(updates_available)}"
+                # )
+                if agent_loop and agent_loop != current_loop:
+                    # print(
+                    #    f"[DEBUG] Calling set() via call_soon_threadsafe from loop {id(current_loop)} to agent loop {id(agent_loop)}"
+                    # )
+                    agent_loop.call_soon_threadsafe(updates_available.set)
+                else:
+                    # print(f"[DEBUG] Calling set() directly in current loop {id(current_loop)}")
+                    updates_available.set()
+            except RuntimeError:
+                # No running loop, use call_soon_threadsafe if we have an agent loop
+                agent_loop = getattr(self, "_agent_loop", self._loop)
+                # print(
+                #    f"[DEBUG] No current running loop, agent_loop={id(agent_loop) if agent_loop else 'None'}"
+                # )
+                if agent_loop:
+                    # print(
+                    #    f"[DEBUG] Calling set() via call_soon_threadsafe to agent loop {id(agent_loop)}"
+                    # )
+                    agent_loop.call_soon_threadsafe(updates_available.set)
+                else:
+                    # print(f"[DEBUG] Event creation was deferred, can't notify")
+                    pass
 
     def has_active_skills(self) -> bool:
         if not self.has_passive_skills():
@@ -390,21 +470,67 @@ class SkillCoordinator(Module):
         Returns:
             True if updates are available, False on timeout
         """
+        updates_available = self._ensure_updates_available()
+        if updates_available is None:
+            # Force event creation now that we're in the agent's loop context
+            # print(f"[DEBUG] wait_for_updates: Creating event in current loop context")
+            current_loop = asyncio.get_running_loop()
+            self._updates_available = asyncio.Event()
+            self._agent_loop = current_loop
+            updates_available = self._updates_available
+            # print(
+            #    f"[DEBUG] wait_for_updates: Created event {id(updates_available)} in loop {id(current_loop)}"
+            # )
+
         try:
+            current_loop = asyncio.get_running_loop()
+
+            # Double-check the loop context before waiting
+            if self._agent_loop != current_loop:
+                # print(f"[DEBUG] Loop context changed! Recreating event for loop {id(current_loop)}")
+                self._updates_available = asyncio.Event()
+                self._agent_loop = current_loop
+                updates_available = self._updates_available
+
+            # print(
+            #    f"[DEBUG] wait_for_updates: current_loop={id(current_loop)}, event={id(updates_available)}, is_set={updates_available.is_set()}"
+            # )
             if timeout:
-                await asyncio.wait_for(self._updates_available.wait(), timeout=timeout)
+                # print(f"[DEBUG] Waiting for event with timeout {timeout}")
+                await asyncio.wait_for(updates_available.wait(), timeout=timeout)
             else:
-                await self._updates_available.wait()
+                print(f"[DEBUG] Waiting for event without timeout")
+                await updates_available.wait()
+            print(f"[DEBUG] Event was set! Returning True")
             return True
         except asyncio.TimeoutError:
+            print(f"[DEBUG] Timeout occurred while waiting for event")
             return False
+        except RuntimeError as e:
+            if "bound to a different event loop" in str(e):
+                print(
+                    f"[DEBUG] Event loop binding error detected, recreating event and returning False to retry"
+                )
+                # Recreate the event in the current loop
+                current_loop = asyncio.get_running_loop()
+                self._updates_available = asyncio.Event()
+                self._agent_loop = current_loop
+                return False
+            else:
+                raise
 
     def generate_snapshot(self, clear: bool = True) -> SkillStateDict:
         """Generate a fresh snapshot of completed skills and optionally clear them."""
         ret = copy(self._skill_state)
 
         if clear:
-            self._updates_available.clear()
+            updates_available = self._ensure_updates_available()
+            if updates_available is not None:
+                # print(f"[DEBUG] generate_snapshot: clearing event {id(updates_available)}")
+                updates_available.clear()
+            else:
+                ...
+                # rint(f"[DEBUG] generate_snapshot: event not created yet, nothing to clear")
             to_delete = []
             # Since snapshot is being sent to agent, we can clear the finished skill runs
             for call_id, skill_run in self._skill_state.items():

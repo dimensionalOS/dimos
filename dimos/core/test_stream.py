@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import time
-from threading import Event, Thread
 from typing import Callable, Optional
 
 import pytest
@@ -22,19 +21,11 @@ from dimos.core import (
     In,
     LCMTransport,
     Module,
-    Out,
-    RemoteOut,
-    ZenohTransport,
-    pLCMTransport,
     rpc,
-    start,
-    stop,
 )
 from dimos.core.testing import MockRobotClient, dimos
-from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from dimos.utils.testing import SensorReplay
 
 assert dimos
 

@@ -153,7 +153,7 @@ def test_lcmrpc_normal_operation(lcm_server, lcm_client):
 
     # Normal call should work quickly
     start_time = time.time()
-    result = client.call_sync("add", ([5, 3], {}), rpc_timeout=0.5)
+    result = client.call_sync("add", ([5, 3], {}), rpc_timeout=0.5)[0]
     elapsed = time.time() - start_time
 
     assert result == 8

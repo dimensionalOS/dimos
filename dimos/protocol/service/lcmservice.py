@@ -221,8 +221,9 @@ class Topic:
 
 class LCMService(Service[LCMConfig]):
     default_config = LCMConfig
-    l: lcm.LCM
+    l: Optional[lcm.LCM]
     _stop_event: threading.Event
+    _l_lock: threading.Lock
     _thread: Optional[threading.Thread]
 
     def __init__(self, **kwargs) -> None:
@@ -230,9 +231,12 @@ class LCMService(Service[LCMConfig]):
 
         # we support passing an existing LCM instance
         if self.config.lcm:
+            # TODO: If we pass LCM in, it's unsafe to use in this thread and the _loop thread.
             self.l = self.config.lcm
         else:
             self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+
+        self._l_lock = threading.Lock()
 
         self._stop_event = threading.Event()
         self._thread = None
@@ -255,15 +259,23 @@ class LCMService(Service[LCMConfig]):
         """LCM message handling loop."""
         while not self._stop_event.is_set():
             try:
-                self.l.handle_timeout(50)
+                with self._l_lock:
+                    if self.l is None:
+                        break
+                    self.l.handle_timeout(50)
             except Exception as e:
                 stack_trace = traceback.format_exc()
                 print(f"Error in LCM handling: {e}\n{stack_trace}")
-                if self._stop_event.is_set():
-                    break
 
     def stop(self):
         """Stop the LCM loop."""
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join()
+
+        # Clean up LCM instance if we created it
+        if not self.config.lcm:
+            with self._l_lock:
+                if self.l is not None:
+                    del self.l
+                    self.l = None
