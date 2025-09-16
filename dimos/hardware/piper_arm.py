@@ -36,7 +36,7 @@ import pytest
 import dimos.core as core
 import dimos.protocol.service.lcmservice as lcmservice
 from dimos.core import In, Module, Out, rpc
-from dimos_lcm.geometry_msgs import Pose, Vector3, Twist
+from dimos.msgs.geometry_msgs import Pose, Vector3, Twist
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3 as MsgVector3
 from dimos.msgs.std_msgs import Header
@@ -296,7 +296,7 @@ class PiperArmModule(Module):
 
         # EE to camera transform
         if ee_to_camera_6dof is None:
-            ee_to_camera_6dof = [-0.065, 0.03, -0.095, 0.0, -1.57, 0.0]
+            ee_to_camera_6dof = [-0.065, 0.03, -0.095, 0.0, 0, 0.0]
         pos = Vector3(ee_to_camera_6dof[0], ee_to_camera_6dof[1], ee_to_camera_6dof[2])
         rot = Vector3(ee_to_camera_6dof[3], ee_to_camera_6dof[4], ee_to_camera_6dof[5])
         self.T_ee_to_camera = create_transform_from_6dof(pos, rot)
@@ -551,3 +551,27 @@ class PiperArmModule(Module):
     def cleanup(self):
         """Clean up resources on module destruction."""
         self.stop()
+
+if __name__ == "__main__":
+    # Simple test script to start the PiperArmModule
+    logger.info("Starting Piper Arm Robot")
+
+    # Create robot instance
+    arm = PiperArm()
+    arm.enable()
+    arm.gotoObserve()
+    time.sleep(2)
+    print(arm.get_ee_pose())
+    arm.gotoZero()
+    time.sleep(2)
+    print(arm.get_ee_pose())
+    arm.softStop()
+
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+    finally:
+        arm.stop()
