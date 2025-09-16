@@ -391,12 +391,10 @@ class SkillCoordinator(Module):
     #
     # Checks if agent needs to be notified (if ToolConfig has Return=call_agent or Stream=call_agent)
     def handle_message(self, msg: SkillMsg) -> None:
-        print(f"SkillCoordinator received message: {msg}", flush=True)
         if self._closed_coord:
             import traceback
 
             traceback.print_stack()
-            print("SkillCoordinator is closed, ignoring message", "-" * 1000)
             return
         # logger.info(f"SkillMsg from {msg.skill_name}, {msg.call_id} - {msg}")
 
@@ -440,7 +438,7 @@ class SkillCoordinator(Module):
                     # )
                     agent_loop.call_soon_threadsafe(updates_available.set)
                 else:
-                    print(f"[DEBUG] Event creation was deferred, can't notify")
+                    # print(f"[DEBUG] Event creation was deferred, can't notify")
                     pass
 
     def has_active_skills(self) -> bool:
