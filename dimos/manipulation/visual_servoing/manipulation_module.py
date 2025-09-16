@@ -423,7 +423,7 @@ class ManipulationModule(Module):
 
         except Exception as e:
             logger.error(f"Error in pick and place: {e}")
-            
+
             logger.error(f"Traceback: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}
         finally:
@@ -583,7 +583,7 @@ class ManipulationModule(Module):
         if self.track_frame_id == self.base_frame_id:
             return Pose(
                 position=self.pbvs.current_target.bbox.center.position,
-                orientation=self.pbvs.current_target.bbox.center.orientation
+                orientation=self.pbvs.current_target.bbox.center.orientation,
             )
 
         base_to_target = self.tf.get(
