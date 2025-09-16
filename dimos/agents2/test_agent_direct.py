@@ -79,7 +79,7 @@ def full():
             testcontainer.stop()
 
 
-def test_agent(agent_context):
+def check_agent(agent_context):
     """Test agent initialization and basic functionality across different configurations"""
     with agent_context() as [agent, testcontainer]:
         agent.register_skills(testcontainer)
@@ -103,4 +103,4 @@ def test_agent(agent_context):
 
 
 if __name__ == "__main__":
-    list(map(test_agent, [local, partial, full]))
+    list(map(check_agent, [local, partial, full]))

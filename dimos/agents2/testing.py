@@ -154,6 +154,13 @@ class MockModel(SimpleChatModel):
             response = self.responses[self.i]
             self.i += 1
 
+            # if self.i >= len(self.responses):
+            #     # Don't wrap around - stay at last response
+            #     response = self.responses[-1]
+            # else:
+            #     response = self.responses[self.i]
+            #     self.i += 1
+
             if isinstance(response, AIMessage):
                 message = response
             else:

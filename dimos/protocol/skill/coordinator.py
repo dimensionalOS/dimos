@@ -373,9 +373,17 @@ class SkillCoordinator(Module):
         # TODO agent often calls the skill again if previous response is still loading.
         # maybe create a new skill_state linked to a previous one? not sure
 
+        arg_keywords = args.get("args") or {}
+        arg_list = []
+
+        if isinstance(arg_keywords, list):
+            arg_list = arg_keywords
+            arg_keywords = {}
+
         return skill_config.call(
             call_id,
-            **(args.get("args") or {}),
+            *arg_list,
+            **arg_keywords,
         )
 
     # Receives a message from active skill

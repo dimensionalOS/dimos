@@ -243,7 +243,7 @@ class Agent(AgentSpec):
             import traceback
 
             traceback.print_stack()
-            return
+            return "Agent is stopped."
 
         self.state_messages = []
         if first_query:

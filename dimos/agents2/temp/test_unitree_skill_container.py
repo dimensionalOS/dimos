@@ -82,33 +82,6 @@ def test_agent_with_skills():
     return agent
 
 
-async def test_simple_query():
-    """Test a simple query to the agent."""
-    print("\n=== Testing Simple Query ===")
-
-    # Create container and agent
-    container = UnitreeSkillContainer(robot=None)
-    agent = Agent(
-        system_prompt="You are a test robot. When asked to wait, use the wait skill.",
-        model=Model.GPT_4O_MINI,
-        provider=Provider.OPENAI,
-    )
-    agent.register_skills(container)
-
-    # Start the agent
-    agent.start()
-
-    # Test query (this would normally interact with the LLM)
-    print("Testing agent query system...")
-    # Note: Actual query would require API keys and LLM interaction
-    # For now, just verify the system is set up correctly
-
-    print("Query system ready (would require API keys for actual test)")
-
-    # Clean up
-    agent.stop()
-
-
 def test_skill_schemas():
     """Test that skill schemas are properly generated for LangChain."""
     print("\n=== Testing Skill Schemas ===")
