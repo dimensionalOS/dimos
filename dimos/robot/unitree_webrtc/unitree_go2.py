@@ -478,10 +478,12 @@ class UnitreeGo2(Robot):
         self.websocket_vis.path.connect(self.global_planner.path)
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
 
-        self.foxglove_bridge = FoxgloveBridge(shm_channels=[
-            "/go2/depth_image#sensor_msgs.Image",
-            "/go2/color_image#sensor_msgs.Image"
-        ])
+        self.foxglove_bridge = FoxgloveBridge(
+            shm_channels=[
+                "/go2/depth_image#sensor_msgs.Image",
+                "/go2/color_image#sensor_msgs.Image",
+            ]
+        )
 
     def _deploy_perception(self):
         """Deploy and configure perception modules."""
