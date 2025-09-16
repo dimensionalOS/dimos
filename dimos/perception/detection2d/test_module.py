@@ -74,7 +74,7 @@ def test_module3d_replay(dimos_cluster):
     module3D = dimos_cluster.deploy(Detection3DModule, camera_info=ConnectionModule._camera_info())
 
     module3D.image.connect(connection.video)
-    module3D.pointcloud.connect(connection.lidar)
+    module3D.pointcloud.connect(mapper.global_map)
 
     module3D.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
     module3D.detections.transport = LCMTransport("/detections", Detection2DArray)

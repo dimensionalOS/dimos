@@ -94,11 +94,11 @@ class Detection3DModule(Detection2DModule):
         self,
         detections: ImageDetections2D,
         pointcloud: PointCloud2,
-        camera_info: CameraInfo,
         world_to_camera_transform: Transform,
     ) -> List[Optional[PointCloud2]]:
         """Filter lidar points that fall within detection bounding boxes."""
         # Extract camera parameters
+        camera_info = self.camera_info
         fx, fy, cx = camera_info.K[0], camera_info.K[4], camera_info.K[2]
         cy = camera_info.K[5]
         image_width = camera_info.width
@@ -207,7 +207,6 @@ class Detection3DModule(Detection2DModule):
         # these have to be timestamp aligned
         detections: ImageDetections2D,
         pointcloud: PointCloud2,
-        camera_info: CameraInfo,
         transform: Transform,
     ) -> ImageDetections3D:
         # print(
@@ -229,9 +228,7 @@ class Detection3DModule(Detection2DModule):
         if not transform:
             return None
 
-        pointcloud_list = self.filter_points_in_detections(
-            detections, pointcloud, camera_info, transform
-        )
+        pointcloud_list = self.filter_points_in_detections(detections, pointcloud, transform)
 
         detection3d_list = []
         for detection, pc in zip(detections, pointcloud_list):
@@ -265,17 +262,20 @@ class Detection3DModule(Detection2DModule):
     @rpc
     def start(self):
         time_tolerance = 5.0  # seconds
-        pointcloud_buffer = TimestampedBufferCollection[PointCloud2](window_duration=time_tolerance)
-        self.pointcloud.observable().subscribe(pointcloud_buffer.add)
+        # pointcloud_buffer = TimestampedBufferCollection[PointCloud2](window_duration=time_tolerance)
+        # self.pointcloud.observable().subscribe(pointcloud_buffer.add)
 
-        def detection2d_to_3d(
-            detections: ImageDetections2D,
-        ):
-            pc = pointcloud_buffer.find_closest(detections.image.ts)
+        # get latest from mapper
+        def detection2d_to_3d(args):
+            detections, pc = args
+            # pc = pointcloud_buffer.find_closest(detections.image.ts)
             transform = self.tf.get("camera_optical", "world", detections.image.ts, time_tolerance)
-            return self.process_frame(detections, pc, self.camera_info, transform)
+            return self.process_frame(detections, pc, transform)
 
-        combined_stream = self.detection_stream().pipe(ops.map(detection2d_to_3d))
+        # combined_stream = self.detection_stream().pipe(ops.map(detection2d_to_3d))
+        combined_stream = self.detection_stream().pipe(
+            ops.with_latest_from(self.pointcloud.observable()), ops.map(detection2d_to_3d)
+        )
 
         self.detection_stream().subscribe(
             lambda det: self.detections.publish(det.to_ros_detection2d_array())
