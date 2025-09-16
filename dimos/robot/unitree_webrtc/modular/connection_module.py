@@ -173,9 +173,6 @@ class ConnectionModule(Module):
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
-        def image_pub(img):
-            self.video.publish(img)
-
         # Connect sensor streams to outputs
         self.connection.lidar_stream().subscribe(self.lidar.publish)
         self.connection.odom_stream().subscribe(
@@ -196,7 +193,8 @@ class ConnectionModule(Module):
         # sharpness_window(
         # 5, self.connection.video_stream().pipe(ops.map(attach_frame_id))
         # ).subscribe(image_pub)
-        self.connection.video_stream().subscribe(image_pub)
+        self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(self.video.publish)
+
         # self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
         self.camera_info_stream().subscribe(self.camera_info.publish)
         self.movecmd.subscribe(self.connection.move)

@@ -60,9 +60,14 @@ class Detection2DModule(Module):
         # Publish each detection individually
         detection_stream.subscribe(self.detections.publish)
 
+        def pubannotations(annotations: ImageAnnotations):
+            print("Publishing annotations with", len(annotations.annotations), "items")
+            print(annotations)
+            self.annotations.publish(annotations)
+
         # Convert each Detection2D to ImageAnnotations
         detection_stream.pipe(ops.map(lambda detection: detection.to_imageannotations())).subscribe(
-            self.annotations.publish
+            pubannotations
         )
 
         return detection_stream
