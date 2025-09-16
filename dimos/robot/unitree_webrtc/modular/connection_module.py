@@ -20,6 +20,7 @@ import logging
 import os
 import time
 import warnings
+from dataclasses import dataclass
 from typing import List, Optional
 
 import reactivex as rx
@@ -27,7 +28,8 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core import In, LCMTransport, Module, ModuleConfig, Out, rpc
+from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
 from dimos.msgs.std_msgs import Header
@@ -36,7 +38,7 @@ from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.testing import TimedSensorReplay
+from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
 
@@ -95,7 +97,7 @@ class FakeRTC(UnitreeWebRTCConnection):
         print("odom stream start")
         odom_store = TimedSensorReplay(f"{self.dir_name}/odom")
 
-        return odom_store.stream(**self.replay_config, debug=True)
+        return odom_store.stream(**self.replay_config)
 
     # we don't have raw video stream in the data set
     @functools.cache
@@ -120,6 +122,14 @@ class FakeRTC(UnitreeWebRTCConnection):
         return {"status": "ok", "message": "Fake publish"}
 
 
+@dataclass
+class ConnectionModuleConfig(ModuleConfig):
+    ip: Optional[str] = None
+    connection_type: str = "fake"  # or "fake" or "mujoco"
+    loop: bool = False  # For fake connection
+    speed: float = 1.0  # For fake connection
+
+
 class ConnectionModule(Module):
     camera_info: Out[CameraInfo] = None
     odom: Out[PoseStamped] = None
@@ -129,6 +139,8 @@ class ConnectionModule(Module):
 
     connection = None
 
+    default_config = ConnectionModuleConfig
+
     def __init__(self, connection_type: str = "webrtc", *args, **kwargs):
         self.connection_config = kwargs
         self.connection_type = connection_type
@@ -136,15 +148,13 @@ class ConnectionModule(Module):
 
     @rpc
     def record(self, recording_name: str):
-        from dimos.utils.testing import TimedSensorStorage
-
-        lidar_store = TimedSensorStorage(f"{recording_name}/lidar")
+        lidar_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/lidar")
         lidar_store.save_stream(self.connection.lidar_stream()).subscribe(lambda x: x)
 
-        odom_store = TimedSensorStorage(f"{recording_name}/odom")
+        odom_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/odom")
         odom_store.save_stream(self.connection.raw_odom_stream()).subscribe(lambda x: x)
 
-        video_store = TimedSensorStorage(f"{recording_name}/video")
+        video_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/video")
         video_store.save_stream(self.connection.video_stream()).subscribe(lambda x: x)
 
     @rpc
