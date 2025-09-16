@@ -44,7 +44,7 @@ class B1ConnectionModule(Module):
     cmd_vel: In[TwistStamped] = None  # Timestamped velocity commands from ROS
     mode_cmd: In[Int32] = None  # Mode changes
     odom_in: In[Odometry] = None  # External odometry from ROS SLAM/lidar
-    
+
     odom_pose: Out[PoseStamped] = None  # Converted pose for internal use
 
     def __init__(
@@ -107,7 +107,7 @@ class B1ConnectionModule(Module):
         if self.stop_timer:
             self.stop_timer.cancel()
             self.stop_timer = None
-        
+
         self.set_mode(0)  # IDLE
         self._current_cmd = B1Command(mode=0)  # Zero all velocities
 
@@ -137,9 +137,13 @@ class B1ConnectionModule(Module):
         # Extract Twist from TwistStamped
         twist = Twist(linear=twist_stamped.linear, angular=twist_stamped.angular)
 
-        logger.debug(f"Received cmd_vel: linear=({twist.linear.x:.3f}, {twist.linear.y:.3f}, {twist.linear.z:.3f}), angular=({twist.angular.x:.3f}, {twist.angular.y:.3f}, {twist.angular.z:.3f})")
+        logger.debug(
+            f"Received cmd_vel: linear=({twist.linear.x:.3f}, {twist.linear.y:.3f}, {twist.linear.z:.3f}), angular=({twist.angular.x:.3f}, {twist.angular.y:.3f}, {twist.angular.z:.3f})"
+        )
 
-        has_movement = abs(twist.linear.x) > 0.01 or abs(twist.linear.y) > 0.01 or abs(twist.angular.z) > 0.01
+        has_movement = (
+            abs(twist.linear.x) > 0.01 or abs(twist.linear.y) > 0.01 or abs(twist.angular.z) > 0.01
+        )
 
         if has_movement and self.current_mode != 2:
             logger.info("Auto-switching to WALK mode for ROS control")
@@ -149,17 +153,19 @@ class B1ConnectionModule(Module):
             self.set_mode(0)
 
         if self.test_mode:
-            logger.info(f"[TEST] Received TwistStamped: linear=({twist.linear.x:.2f}, {twist.linear.y:.2f}), angular.z={twist.angular.z:.2f}")
+            logger.info(
+                f"[TEST] Received TwistStamped: linear=({twist.linear.x:.2f}, {twist.linear.y:.2f}), angular.z={twist.angular.z:.2f}"
+            )
 
         self._current_cmd = B1Command.from_twist(twist, self.current_mode)
 
         logger.debug(f"Converted to B1Command: {self._current_cmd}")
 
         self.last_command_time = time.time()
-        
+
         if self.stop_timer:
             self.stop_timer.cancel()
-        
+
         self.stop_timer = threading.Timer(self.command_timeout, self._safety_stop)
         self.stop_timer.daemon = True
         self.stop_timer.start()
@@ -206,9 +212,13 @@ class B1ConnectionModule(Module):
                 if time_since_last_cmd > self.command_timeout:
                     # Command is stale - send zero velocities for safety
                     if not timeout_warned:
-                        logger.warning(f"Command timeout ({time_since_last_cmd:.1f}s) - sending zeros for safety")
+                        logger.warning(
+                            f"Command timeout ({time_since_last_cmd:.1f}s) - sending zeros for safety"
+                        )
                         if self.test_mode:
-                            logger.info(f"[TEST] Command timeout ({time_since_last_cmd:.1f}s) - sending zeros")
+                            logger.info(
+                                f"[TEST] Command timeout ({time_since_last_cmd:.1f}s) - sending zeros"
+                            )
                         timeout_warned = True
 
                     # Create safe idle command
@@ -229,11 +239,13 @@ class B1ConnectionModule(Module):
 
                 # Log status every second (50 packets)
                 if self.packet_count % 50 == 0:
-                    logger.info(f"Sending B1 commands at 50Hz | Mode: {self.current_mode} | Count: {self.packet_count}")
+                    logger.info(
+                        f"Sending B1 commands at 50Hz | Mode: {self.current_mode} | Count: {self.packet_count}"
+                    )
                     if not self.test_mode:
                         logger.debug(f"Current B1Command: {self._current_cmd}")
                         data = cmd_to_send.to_bytes()
-                        hex_str = ' '.join(f'{b:02x}' for b in data)
+                        hex_str = " ".join(f"{b:02x}" for b in data)
                         logger.debug(f"UDP packet ({len(data)} bytes): {hex_str}")
 
                 if self.socket:
@@ -251,7 +263,7 @@ class B1ConnectionModule(Module):
 
     def _publish_odom_pose(self, msg: Odometry):
         """Convert and publish odometry as PoseStamped.
-        
+
         This matches G1's approach of receiving external odometry.
         """
         if self.odom_pose:
@@ -262,13 +274,13 @@ class B1ConnectionModule(Module):
                 orientation=msg.pose.pose.orientation,
             )
             self.odom_pose.publish(pose_stamped)
-    
+
     def _safety_stop(self):
         """Safety stop called by timer if no commands received."""
         logger.warning("Safety timeout - sending stop command")
         if self.test_mode:
             logger.info("[TEST] Safety timeout - sending stop command")
-        
+
         # Zero velocities but maintain current mode
         safe_cmd = B1Command(mode=self.current_mode)
         safe_cmd.lx = 0.0
@@ -276,7 +288,7 @@ class B1ConnectionModule(Module):
         safe_cmd.rx = 0.0
         safe_cmd.ry = 0.0
         self._current_cmd = safe_cmd
-    
+
     @rpc
     def idle(self):
         """Set robot to idle mode."""
@@ -337,7 +349,9 @@ class TestB1ConnectionModule(B1ConnectionModule):
 
             # Show timeout transitions
             if is_timeout and not timeout_warned:
-                logger.info(f"[TEST] Command timeout! Sending zeros after {time_since_last_cmd:.1f}s")
+                logger.info(
+                    f"[TEST] Command timeout! Sending zeros after {time_since_last_cmd:.1f}s"
+                )
                 timeout_warned = True
             elif not is_timeout and timeout_warned:
                 logger.info("[TEST] Commands resumed - control restored")
