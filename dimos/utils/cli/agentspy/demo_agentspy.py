@@ -13,91 +13,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Demo script that runs skills in the background while agentspy monitors them."""
+"""Demo script to test agent message publishing and agentspy reception."""
 
 import time
-import threading
-from dimos.protocol.skill.agent_interface import AgentInterface
-from dimos.protocol.skill.skill import SkillContainer, skill
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from dimos.protocol.pubsub.lcmpubsub import PickleLCM
+from dimos.protocol.pubsub import lcm
 
 
-class DemoSkills(SkillContainer):
-    @skill()
-    def count_to(self, n: int) -> str:
-        """Count to n with delays."""
-        for i in range(n):
-            time.sleep(0.5)
-        return f"Counted to {n}"
+def test_publish_messages():
+    """Publish test messages to verify agentspy is working."""
+    print("Starting agent message publisher demo...")
 
-    @skill()
-    def compute_fibonacci(self, n: int) -> int:
-        """Compute nth fibonacci number."""
-        if n <= 1:
-            return n
-        a, b = 0, 1
-        for _ in range(2, n + 1):
-            time.sleep(0.1)  # Simulate computation
-            a, b = b, a + b
-        return b
+    # Create transport
+    transport = PickleLCM()
+    topic = lcm.Topic("/agent")
 
-    @skill()
-    def simulate_error(self) -> None:
-        """Skill that always errors."""
-        time.sleep(0.3)
-        raise RuntimeError("Simulated error for testing")
+    print(f"Publishing to topic: {topic}")
 
-    @skill()
-    def quick_task(self, name: str) -> str:
-        """Quick task that completes fast."""
-        time.sleep(0.1)
-        return f"Quick task '{name}' done!"
+    # Test messages
+    messages = [
+        SystemMessage("System initialized for testing"),
+        HumanMessage("Hello agent, can you help me?"),
+        AIMessage(
+            "Of course! I'm here to help.",
+            tool_calls=[{"name": "get_info", "args": {"query": "test"}, "id": "1"}],
+        ),
+        ToolMessage(name="get_info", content="Test result: success", tool_call_id="1"),
+        AIMessage("The test was successful!", metadata={"state": True}),
+    ]
 
+    # Publish messages with delays
+    for i, msg in enumerate(messages):
+        print(f"\nPublishing message {i + 1}: {type(msg).__name__}")
+        print(f"Content: {msg.content if hasattr(msg, 'content') else msg}")
 
-def run_demo_skills():
-    """Run demo skills in background."""
-    # Create and start agent interface
-    agent_interface = AgentInterface()
-    agent_interface.start()
+        transport.publish(topic, msg)
+        time.sleep(1)  # Wait 1 second between messages
 
-    # Register skills
-    demo_skills = DemoSkills()
-    agent_interface.register_skills(demo_skills)
-
-    # Run various skills periodically
-    def skill_runner():
-        counter = 0
-        while True:
-            time.sleep(2)
-
-            # Run different skills based on counter
-            if counter % 4 == 0:
-                demo_skills.count_to(3, skillcall=True)
-            elif counter % 4 == 1:
-                demo_skills.compute_fibonacci(10, skillcall=True)
-            elif counter % 4 == 2:
-                demo_skills.quick_task(f"task-{counter}", skillcall=True)
-            else:
-                try:
-                    demo_skills.simulate_error(skillcall=True)
-                except:
-                    pass  # Expected to fail
-
-            counter += 1
-
-    # Start skill runner in background
-    thread = threading.Thread(target=skill_runner, daemon=True)
-    thread.start()
-
-    print("Demo skills running in background. Start agentspy in another terminal to monitor.")
-    print("Run: agentspy")
-
-    # Keep running
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nDemo stopped.")
+    print("\nAll messages published! Check agentspy to see if they were received.")
+    print("Keeping publisher alive for 10 more seconds...")
+    time.sleep(10)
 
 
 if __name__ == "__main__":
-    run_demo_skills()
+    test_publish_messages()

@@ -15,7 +15,6 @@
 import logging
 import time
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos.core import LCMTransport, start

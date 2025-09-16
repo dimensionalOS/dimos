@@ -1,0 +1,38 @@
+{
+  "name": "command-center-extension",
+  "displayName": "command-center-extension",
+  "description": "",
+  "publisher": "dimensional",
+  "homepage": "",
+  "version": "0.0.0",
+  "license": "UNLICENSED",
+  "main": "./dist/extension.js",
+  "keywords": [],
+  "scripts": {
+    "build": "foxglove-extension build",
+    "foxglove:prepublish": "foxglove-extension build --mode production",
+    "lint": "eslint .",
+    "lint:ci": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "local-install": "foxglove-extension install",
+    "package": "foxglove-extension package",
+    "pretest": "foxglove-extension pretest"
+  },
+  "devDependencies": {
+    "@foxglove/eslint-plugin": "2.1.0",
+    "@foxglove/extension": "2.34.0",
+    "@types/d3": "^7.4.3",
+    "@types/react": "18.3.24",
+    "@types/react-dom": "18.3.7",
+    "create-foxglove-extension": "1.0.6",
+    "eslint": "9.34.0",
+    "prettier": "3.6.2",
+    "react": "18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "5.9.2"
+  },
+  "dependencies": {
+    "d3": "^7.9.0",
+    "socket.io-client": "^4.8.1"
+  }
+}

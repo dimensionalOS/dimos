@@ -556,6 +556,7 @@ class ZEDModule(Module):
         set_floor_as_origin: bool = True,
         publish_rate: float = 30.0,
         frame_id: str = "zed_camera",
+        recording_path: str = None,
         **kwargs,
     ):
         """
@@ -571,6 +572,7 @@ class ZEDModule(Module):
             set_floor_as_origin: Set floor as origin for tracking
             publish_rate: Rate to publish messages (Hz)
             frame_id: TF frame ID for messages
+            recording_path: Path to save recorded data
         """
         super().__init__(**kwargs)
 
@@ -581,6 +583,7 @@ class ZEDModule(Module):
         self.set_floor_as_origin = set_floor_as_origin
         self.publish_rate = publish_rate
         self.frame_id = frame_id
+        self.recording_path = recording_path
 
         # Convert string parameters to ZED enums
         self.resolution = getattr(sl.RESOLUTION, resolution, sl.RESOLUTION.HD720)
@@ -594,6 +597,19 @@ class ZEDModule(Module):
 
         # Initialize TF publisher
         self.tf = TF()
+
+        # Initialize storage for recording if path provided
+        self.storages = None
+        if self.recording_path:
+            from dimos.utils.testing import TimedSensorStorage
+
+            self.storages = {
+                "color": TimedSensorStorage(f"{self.recording_path}/color"),
+                "depth": TimedSensorStorage(f"{self.recording_path}/depth"),
+                "pose": TimedSensorStorage(f"{self.recording_path}/pose"),
+                "camera_info": TimedSensorStorage(f"{self.recording_path}/camera_info"),
+            }
+            logger.info(f"Recording enabled - saving to {self.recording_path}")
 
         logger.info(f"ZEDModule initialized for camera {camera_id}")
 
@@ -679,6 +695,18 @@ class ZEDModule(Module):
             if left_img is None or depth is None:
                 return
 
+            # Save raw color data if recording
+            if self.storages and left_img is not None:
+                self.storages["color"].save_one(left_img)
+
+            # Save raw depth data if recording
+            if self.storages and depth is not None:
+                self.storages["depth"].save_one(depth)
+
+            # Save raw pose data if recording
+            if self.storages and pose_data:
+                self.storages["pose"].save_one(pose_data)
+
             # Create header
             header = Header(self.frame_id)
             self._sequence += 1
@@ -742,6 +770,10 @@ class ZEDModule(Module):
             info = self.zed_camera.get_camera_info()
             if not info:
                 return
+
+            # Save raw camera info if recording
+            if self.storages:
+                self.storages["camera_info"].save_one(info)
 
             # Get calibration parameters
             left_cam = info.get("left_cam", {})

@@ -24,7 +24,7 @@ MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")
 
 
-class PubSub(ABC, Generic[TopicT, MsgT]):
+class PubSub(Generic[TopicT, MsgT], ABC):
     """Abstract base class for pub/sub implementations with sugar methods."""
 
     @abstractmethod
@@ -91,7 +91,7 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
             unsubscribe_fn()
 
 
-class PubSubEncoderMixin(ABC, Generic[TopicT, MsgT]):
+class PubSubEncoderMixin(Generic[TopicT, MsgT], ABC):
     """Mixin that encodes messages before publishing and decodes them after receiving.
 
     Usage: Just specify encoder and decoder as a subclass:
@@ -132,7 +132,14 @@ class PubSubEncoderMixin(ABC, Generic[TopicT, MsgT]):
 
 class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT]):
     def encode(self, msg: MsgT, *_: TopicT) -> bytes:
-        return pickle.dumps(msg)
+        try:
+            return pickle.dumps(msg)
+        except Exception as e:
+            print("Pickle encoding error:", e)
+            import traceback
+
+            traceback.print_exc()
+            print("Tried to pickle:", msg)
 
     def decode(self, msg: bytes, _: TopicT) -> MsgT:
         return pickle.loads(msg)

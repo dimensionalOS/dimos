@@ -25,8 +25,9 @@ class FoxgloveBridge(Module):
     _thread: threading.Thread
     _loop: asyncio.AbstractEventLoop
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, shm_channels=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.shm_channels = shm_channels or []
         self.start()
 
     @rpc
@@ -35,7 +36,13 @@ class FoxgloveBridge(Module):
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
             try:
-                bridge = LCMFoxgloveBridge(host="0.0.0.0", port=8765, debug=False, num_threads=4)
+                bridge = LCMFoxgloveBridge(
+                    host="0.0.0.0",
+                    port=8765,
+                    debug=False,
+                    num_threads=4,
+                    shm_channels=self.shm_channels,
+                )
                 self._loop.run_until_complete(bridge.run())
             except Exception as e:
                 print(f"Foxglove bridge error: {e}")

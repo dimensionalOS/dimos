@@ -11,27 +11,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
-import time
 from abc import abstractmethod
 from dataclasses import dataclass
-from enum import Enum
 from typing import Callable, Generic, Optional, TypeVar, Union
 
-from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
+from dimos.protocol.pubsub.lcmpubsub import PickleLCM
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service import Service
-from dimos.protocol.skill.types import AgentMsg, Call, MsgType, Reducer, SkillConfig, Stream
-from dimos.types.timestamped import Timestamped
-
+from dimos.protocol.skill.type import SkillMsg
 
 # defines a protocol for communication between skills and agents
+# it has simple requirements of pub/sub semantics capable of sending and receiving SkillMsg objects
+
+
 class SkillCommsSpec:
     @abstractmethod
-    def publish(self, msg: AgentMsg) -> None: ...
+    def publish(self, msg: SkillMsg) -> None: ...
 
     @abstractmethod
-    def subscribe(self, cb: Callable[[AgentMsg], None]) -> None: ...
+    def subscribe(self, cb: Callable[[SkillMsg], None]) -> None: ...
 
     @abstractmethod
     def start(self) -> None: ...
@@ -46,11 +46,12 @@ TopicT = TypeVar("TopicT")
 
 @dataclass
 class PubSubCommsConfig(Generic[TopicT, MsgT]):
-    topic: Optional[TopicT] = None  # Required field but needs default for dataclass inheritance
+    topic: Optional[TopicT] = None
     pubsub: Union[type[PubSub[TopicT, MsgT]], PubSub[TopicT, MsgT], None] = None
     autostart: bool = True
 
 
+# implementation of the SkillComms using any standard PubSub mechanism
 class PubSubComms(Service[PubSubCommsConfig], SkillCommsSpec):
     default_config: type[PubSubCommsConfig] = PubSubCommsConfig
 
@@ -74,16 +75,16 @@ class PubSubComms(Service[PubSubCommsConfig], SkillCommsSpec):
     def stop(self):
         self.pubsub.stop()
 
-    def publish(self, msg: AgentMsg) -> None:
+    def publish(self, msg: SkillMsg) -> None:
         self.pubsub.publish(self.config.topic, msg)
 
-    def subscribe(self, cb: Callable[[AgentMsg], None]) -> None:
+    def subscribe(self, cb: Callable[[SkillMsg], None]) -> None:
         self.pubsub.subscribe(self.config.topic, lambda msg, topic: cb(msg))
 
 
 @dataclass
-class LCMCommsConfig(PubSubCommsConfig[str, AgentMsg]):
-    topic: str = "/agent"
+class LCMCommsConfig(PubSubCommsConfig[str, SkillMsg]):
+    topic: str = "/skill"
     pubsub: Union[type[PubSub], PubSub, None] = PickleLCM
     # lcm needs to be started only if receiving
     # skill comms are broadcast only in modules so we don't autostart

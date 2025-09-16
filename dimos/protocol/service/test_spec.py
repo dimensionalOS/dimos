@@ -84,3 +84,21 @@ def test_complete_configuration_override():
     assert service.config.timeout == 60.0
     assert service.config.max_connections == 50
     assert service.config.ssl_enabled is True
+
+
+def test_service_subclassing():
+    @dataclass
+    class ExtraConfig(DatabaseConfig):
+        extra_param: str = "default_value"
+
+    class ExtraDatabaseService(DatabaseService):
+        default_config = ExtraConfig
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+
+    bla = ExtraDatabaseService(host="custom-host2", extra_param="extra_value")
+
+    assert bla.config.host == "custom-host2"
+    assert bla.config.extra_param == "extra_value"
+    assert bla.config.port == 5432  # Default value from DatabaseConfig

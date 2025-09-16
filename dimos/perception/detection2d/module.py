@@ -28,18 +28,19 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D,
-    Detection2DArray,
     ObjectHypothesis,
     ObjectHypothesisWithPose,
     Point2D,
     Pose2D,
 )
 from reactivex import operators as ops
+from reactivex.observable import Observable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
+from dimos.msgs.vision_msgs import Detection2DArray
 
 # from dimos.perception.detection2d.detic import Detic2DDetector
 from dimos.perception.detection2d.type import (
@@ -64,7 +65,7 @@ ImageDetection = Tuple[Image, Detection2D]
 def build_detection2d_array_fix(imageDetections: ImageDetections) -> Detection2DArrayFix:
     """Build Detection2DArrayFix from image and list of Detection2D objects."""
     [image, detections] = imageDetections
-    return Detection2DArrayFix(
+    return Detection2DArray(
         detections_length=len(detections),
         header=Header(image.ts, "camera_link"),
         detections=[det.to_ros_detection2d() for det in detections],

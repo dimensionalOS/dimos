@@ -24,12 +24,13 @@ from typing import List, Optional
 
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
+from dimos.msgs.std_msgs import Header
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
 from dimos_lcm.std_msgs import String
 from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.vision_msgs import Detection2DArray, Detection3DArray
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.perception.common.utils import (
     extract_pose_from_detection3d,
@@ -77,6 +78,18 @@ logging.getLogger("root").setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
+"""
+Constants for shared memory
+Usually, auto-detection for size would be preferred. Sadly, though, channels are made
+and frozen *before* the first frame is received.
+Therefore, a maximum capacity for color image and depth image transfer should be defined
+ahead of time.
+"""
+# Default color image size: 1920x1080 frame x 3 (RGB) x uint8
+DEFAULT_CAPACITY_COLOR_IMAGE = 1920 * 1080 * 3
+# Default depth image size: 1280x720 frame * 4 (float32 size)
+DEFAULT_CAPACITY_DEPTH_IMAGE = 1280 * 720 * 4
+
 
 class FakeRTC:
     """Fake WebRTC connection for testing with recorded data."""
@@ -113,7 +126,7 @@ class FakeRTC:
         )
         return video_store.stream()
 
-    def move(self, vector: Vector3, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0):
         pass
 
     def publish_request(self, topic: str, data: dict):
@@ -124,7 +137,7 @@ class FakeRTC:
 class ConnectionModule(Module):
     """Module that handles robot sensor data, movement commands, and camera information."""
 
-    movecmd: In[Vector3] = None
+    movecmd: In[Twist] = None
     odom: Out[PoseStamped] = None
     lidar: Out[LidarMessage] = None
     video: Out[Image] = None
@@ -209,7 +222,7 @@ class ConnectionModule(Module):
 
         # Publish camera info and pose synchronized with video
         timestamp = msg.ts if msg.ts else time.time()
-        self._publish_camera_info()
+        self._publish_camera_info(timestamp)
         self._publish_camera_pose(timestamp)
 
     def _publish_tf(self, msg):
@@ -225,7 +238,9 @@ class ConnectionModule(Module):
         )
         self.tf.publish(camera_link)
 
-    def _publish_camera_info(self):
+    def _publish_camera_info(self, timestamp: float):
+        header = Header(timestamp, "camera_link")
+        self.lcm_camera_info.header = header
         self.camera_info.publish(self.lcm_camera_info)
 
     def _publish_camera_pose(self, timestamp: float):
@@ -263,9 +278,9 @@ class ConnectionModule(Module):
         return self._odom
 
     @rpc
-    def move(self, vector: Vector3, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0):
         """Send movement command to robot."""
-        self.connection.move(vector, duration)
+        self.connection.move(twist, duration)
 
     @rpc
     def standup(self):
@@ -387,7 +402,7 @@ class UnitreeGo2(Robot):
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
         self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
-        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Vector3)
+        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
         self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
         self.connection.camera_pose.transport = core.LCMTransport("/go2/camera_pose", PoseStamped)
 
@@ -423,7 +438,7 @@ class UnitreeGo2(Robot):
             "/global_costmap", OccupancyGrid
         )
         self.global_planner.path.transport = core.LCMTransport("/global_path", Path)
-        self.local_planner.cmd_vel.transport = core.LCMTransport("/cmd_vel", Vector3)
+        self.local_planner.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
         self.frontier_explorer.goal_request.transport = core.LCMTransport(
             "/goal_request", PoseStamped
         )
@@ -453,6 +468,9 @@ class UnitreeGo2(Robot):
         """Deploy and configure visualization modules."""
         self.websocket_vis = self.dimos.deploy(WebsocketVisModule, port=self.websocket_port)
         self.websocket_vis.click_goal.transport = core.LCMTransport("/goal_request", PoseStamped)
+        self.websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
+        self.websocket_vis.stop_explore_cmd.transport = core.LCMTransport("/stop_explore_cmd", Bool)
+        self.websocket_vis.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
 
         self.websocket_vis.robot_pose.connect(self.connection.odom)
         self.websocket_vis.path.connect(self.global_planner.path)
@@ -544,9 +562,9 @@ class UnitreeGo2(Robot):
         topic = Topic("/go2/color_image", Image)
         return self.lcm.wait_for_message(topic, timeout=timeout)
 
-    def move(self, vector: Vector3, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0):
         """Send movement command to robot."""
-        self.connection.move(vector, duration)
+        self.connection.move(twist, duration)
 
     def explore(self) -> bool:
         """Start autonomous frontier exploration.

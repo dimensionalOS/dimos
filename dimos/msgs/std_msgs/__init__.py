@@ -13,5 +13,6 @@
 # limitations under the License.
 
 from .Header import Header
+from .Int32 import Int32
 
-__all__ = ["Header"]
+__all__ = ["Header", "Int32"]

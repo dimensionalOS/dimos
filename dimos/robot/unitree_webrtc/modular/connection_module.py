@@ -27,9 +27,9 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.core import In, LCMTransport, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_window
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
+from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
 from dimos.msgs.std_msgs import Header
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
@@ -112,7 +112,7 @@ class FakeRTC(UnitreeWebRTCConnection):
     def video_stream(self):
         return self.raw_video_stream()
 
-    def move(self, vector: Vector3, duration: float = 0.0):
+    def move(self, vector: Twist, duration: float = 0.0):
         pass
 
     def publish_request(self, topic: str, data: dict):
@@ -125,7 +125,7 @@ class ConnectionModule(Module):
     odom: Out[PoseStamped] = None
     lidar: Out[LidarMessage] = None
     video: Out[Image] = None
-    movecmd: In[Vector3] = None
+    movecmd: In[Twist] = None
 
     connection = None
 
