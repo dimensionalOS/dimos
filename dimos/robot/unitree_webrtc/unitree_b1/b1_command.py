@@ -52,7 +52,7 @@ class B1Command(BaseModel):
             B1Command configured for the given Twist
         """
         # Max velocities from ROS needed to clamp to joystick ranges properly
-        MAX_LINEAR_VEL = 1.0   # m/s
+        MAX_LINEAR_VEL = 1.0  # m/s
         MAX_ANGULAR_VEL = 2.0  # rad/s
 
         if mode == 2:  # WALK mode - velocity control
@@ -69,9 +69,9 @@ class B1Command(BaseModel):
             # Already in normalized units, just clamp to [-1, 1]
             return cls(
                 lx=max(-1.0, min(1.0, -twist.angular.z)),  # ROS yaw → B1 yaw
-                ly=max(-1.0, min(1.0, twist.linear.z)),     # ROS height → B1 bodyHeight
-                rx=max(-1.0, min(1.0, -twist.angular.x)),   # ROS roll → B1 roll
-                ry=max(-1.0, min(1.0, twist.angular.y)),    # ROS pitch → B1 pitch
+                ly=max(-1.0, min(1.0, twist.linear.z)),  # ROS height → B1 bodyHeight
+                rx=max(-1.0, min(1.0, -twist.angular.x)),  # ROS roll → B1 roll
+                ry=max(-1.0, min(1.0, twist.angular.y)),  # ROS pitch → B1 pitch
                 mode=mode,
             )
         else:

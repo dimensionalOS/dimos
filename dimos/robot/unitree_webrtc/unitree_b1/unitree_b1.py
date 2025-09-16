@@ -229,7 +229,9 @@ def main():
     parser.add_argument("--port", type=int, default=9090, help="UDP port")
     parser.add_argument("--joystick", action="store_true", help="Enable pygame joystick control")
     parser.add_argument("--ros-bridge", action="store_true", default=True, help="Enable ROS bridge")
-    parser.add_argument("--no-ros-bridge", dest="ros_bridge", action="store_false", help="Disable ROS bridge")
+    parser.add_argument(
+        "--no-ros-bridge", dest="ros_bridge", action="store_false", help="Disable ROS bridge"
+    )
     parser.add_argument("--output-dir", help="Output directory for logs/data")
     parser.add_argument(
         "--test", action="store_true", help="Test mode - print commands instead of UDP"

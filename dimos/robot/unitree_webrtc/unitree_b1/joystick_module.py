@@ -124,7 +124,7 @@ class JoystickModule(Module):
                             ts=time.time(),
                             frame_id="base_link",
                             linear=stop_twist.linear,
-                            angular=stop_twist.angular
+                            angular=stop_twist.angular,
                         )
                         self.twist_out.publish(stop_twist_stamped)
                         print("EMERGENCY STOP!")
@@ -186,10 +186,7 @@ class JoystickModule(Module):
                     twist.angular.y = -1.0  # Pitch backward
 
             twist_stamped = TwistStamped(
-                ts=time.time(),
-                frame_id="base_link",
-                linear=twist.linear,
-                angular=twist.angular
+                ts=time.time(), frame_id="base_link", linear=twist.linear, angular=twist.angular
             )
             self.twist_out.publish(twist_stamped)
 
@@ -269,7 +266,7 @@ class JoystickModule(Module):
             ts=time.time(),
             frame_id="base_link",
             linear=stop_twist.linear,
-            angular=stop_twist.angular
+            angular=stop_twist.angular,
         )
         self.twist_out.publish(stop_twist_stamped)
         return True
