@@ -167,6 +167,25 @@ External Machine (Client)          B1 Robot (Server)
 └─────────────────────┘           └──────────────────┘
 ```
 
+## Setting up ROS Navigation stack with Unitree B1
+
+### Setup external Wireless USB Adapter on onboard hardware
+This is because the onboard hardware (mini PC, jetson, etc.) needs to connect to both the B1 wifi AP network to send cmd_vel messages over UDP, as well as the network running dimensional
+
+
+Plug in wireless adapter 
+```bash
+nmcli device status
+nmcli device wifi list ifname *DEVICE_NAME*
+# Connect to b1 network
+nmcli device wifi connect "Unitree_B1-251" password "00000000" ifname *DEVICE_NAME*
+# Verify connection 
+nmcli connection show --active
+```
+
+### *TODO: add more docs*
+
+
 ## Troubleshooting
 
 ### Cannot connect to B1

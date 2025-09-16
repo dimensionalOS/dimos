@@ -17,15 +17,21 @@
 
 """B1 Connection Module that accepts standard Twist commands and converts to UDP packets."""
 
+import logging
 import socket
 import threading
 import time
 from typing import Optional
 
-from dimos.core import In, Module, rpc
-from dimos.msgs.geometry_msgs import Twist
+from dimos.core import In, Out, Module, rpc
+from dimos.msgs.geometry_msgs import Twist, TwistStamped, PoseStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs import Int32
+from dimos.utils.logging_config import setup_logger
 from .b1_command import B1Command
+
+# Setup logger with DEBUG level for troubleshooting
+logger = setup_logger("dimos.robot.unitree_webrtc.unitree_b1.connection", level=logging.DEBUG)
 
 
 class B1ConnectionModule(Module):
@@ -35,9 +41,11 @@ class B1ConnectionModule(Module):
     internally converts to B1Command format, and sends UDP packets at 50Hz.
     """
 
-    # Module inputs
-    cmd_vel: In[Twist] = None  # Standard velocity commands
+    cmd_vel: In[TwistStamped] = None  # Timestamped velocity commands from ROS
     mode_cmd: In[Int32] = None  # Mode changes
+    odom_in: In[Odometry] = None  # External odometry from ROS SLAM/lidar
+    
+    odom_pose: Out[PoseStamped] = None  # Converted pose for internal use
 
     def __init__(
         self, ip: str = "192.168.12.1", port: int = 9090, test_mode: bool = False, *args, **kwargs
@@ -63,7 +71,8 @@ class B1ConnectionModule(Module):
         self.socket = None
         self.packet_count = 0
         self.last_command_time = time.time()
-        self.command_timeout = 0.1  # 100ms timeout matching C++ server
+        self.command_timeout = 0.2  # 200ms safety timeout
+        self.stop_timer = None
 
     @rpc
     def start(self):
@@ -72,15 +81,17 @@ class B1ConnectionModule(Module):
         # Setup UDP socket (unless in test mode)
         if not self.test_mode:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            print(f"B1 Connection started - UDP to {self.ip}:{self.port} at 50Hz")
+            logger.info(f"B1 Connection started - UDP to {self.ip}:{self.port} at 50Hz")
         else:
-            print(f"[TEST MODE] B1 Connection started - would send to {self.ip}:{self.port}")
+            logger.info(f"[TEST MODE] B1 Connection started - would send to {self.ip}:{self.port}")
 
         # Subscribe to input streams
         if self.cmd_vel:
-            self.cmd_vel.subscribe(self.handle_twist)
+            self.cmd_vel.subscribe(self.handle_twist_stamped)
         if self.mode_cmd:
             self.mode_cmd.subscribe(self.handle_mode)
+        if self.odom_in:
+            self.odom_in.subscribe(self._publish_odom_pose)
 
         # Start 50Hz sending thread
         self.running = True
@@ -92,6 +103,11 @@ class B1ConnectionModule(Module):
     @rpc
     def stop(self):
         """Stop the connection and send stop commands."""
+        # Cancel timer since we're explicitly stopping
+        if self.stop_timer:
+            self.stop_timer.cancel()
+            self.stop_timer = None
+        
         self.set_mode(0)  # IDLE
         self._current_cmd = B1Command(mode=0)  # Zero all velocities
 
@@ -113,26 +129,49 @@ class B1ConnectionModule(Module):
 
         return True
 
-    def handle_twist(self, twist: Twist):
-        """Handle standard Twist message and convert to B1Command.
+    def handle_twist_stamped(self, twist_stamped: TwistStamped):
+        """Handle timestamped Twist message and convert to B1Command.
 
         This is called automatically when messages arrive on cmd_vel input.
         """
+        # Extract Twist from TwistStamped
+        twist = Twist(linear=twist_stamped.linear, angular=twist_stamped.angular)
+
+        logger.debug(f"Received cmd_vel: linear=({twist.linear.x:.3f}, {twist.linear.y:.3f}, {twist.linear.z:.3f}), angular=({twist.angular.x:.3f}, {twist.angular.y:.3f}, {twist.angular.z:.3f})")
+
+        has_movement = abs(twist.linear.x) > 0.01 or abs(twist.linear.y) > 0.01 or abs(twist.angular.z) > 0.01
+
+        if has_movement and self.current_mode != 2:
+            logger.info("Auto-switching to WALK mode for ROS control")
+            self.set_mode(2)
+        elif not has_movement and self.current_mode == 2:
+            logger.info("Auto-switching to IDLE mode (zero velocities)")
+            self.set_mode(0)
+
         if self.test_mode:
-            print(
-                f"[TEST] Received Twist: linear=({twist.linear.x:.2f}, {twist.linear.y:.2f}), angular.z={twist.angular.z:.2f}"
-            )
-        # Convert Twist to B1Command
+            logger.info(f"[TEST] Received TwistStamped: linear=({twist.linear.x:.2f}, {twist.linear.y:.2f}), angular.z={twist.angular.z:.2f}")
+
         self._current_cmd = B1Command.from_twist(twist, self.current_mode)
+
+        logger.debug(f"Converted to B1Command: {self._current_cmd}")
+
         self.last_command_time = time.time()
+        
+        if self.stop_timer:
+            self.stop_timer.cancel()
+        
+        self.stop_timer = threading.Timer(self.command_timeout, self._safety_stop)
+        self.stop_timer.daemon = True
+        self.stop_timer.start()
 
     def handle_mode(self, mode_msg: Int32):
         """Handle mode change message.
 
         This is called automatically when messages arrive on mode_cmd input.
         """
+        logger.debug(f"Received mode change: {mode_msg.data}")
         if self.test_mode:
-            print(f"[TEST] Received mode change: {mode_msg.data}")
+            logger.info(f"[TEST] Received mode change: {mode_msg.data}")
         self.set_mode(mode_msg.data)
 
     @rpc
@@ -148,9 +187,10 @@ class B1ConnectionModule(Module):
             self._current_cmd.rx = 0.0
             self._current_cmd.ry = 0.0
 
+        mode_names = {0: "IDLE", 1: "STAND", 2: "WALK", 6: "RECOVERY"}
+        logger.info(f"Mode changed to: {mode_names.get(mode, mode)}")
         if self.test_mode:
-            mode_names = {0: "IDLE", 1: "STAND", 2: "WALK", 6: "RECOVERY"}
-            print(f"[TEST] Mode changed to: {mode_names.get(mode, mode)}")
+            logger.info(f"[TEST] Mode changed to: {mode_names.get(mode, mode)}")
 
         return True
 
@@ -166,10 +206,9 @@ class B1ConnectionModule(Module):
                 if time_since_last_cmd > self.command_timeout:
                     # Command is stale - send zero velocities for safety
                     if not timeout_warned:
+                        logger.warning(f"Command timeout ({time_since_last_cmd:.1f}s) - sending zeros for safety")
                         if self.test_mode:
-                            print(
-                                f"[TEST] Command timeout ({time_since_last_cmd:.1f}s) - sending zeros"
-                            )
+                            logger.info(f"[TEST] Command timeout ({time_since_last_cmd:.1f}s) - sending zeros")
                         timeout_warned = True
 
                     # Create safe idle command
@@ -182,10 +221,20 @@ class B1ConnectionModule(Module):
                 else:
                     # Send command if fresh
                     if timeout_warned:
+                        logger.info("Commands resumed - control restored")
                         if self.test_mode:
-                            print("[TEST] Commands resumed - control restored")
+                            logger.info("[TEST] Commands resumed - control restored")
                         timeout_warned = False
                     cmd_to_send = self._current_cmd
+
+                # Log status every second (50 packets)
+                if self.packet_count % 50 == 0:
+                    logger.info(f"Sending B1 commands at 50Hz | Mode: {self.current_mode} | Count: {self.packet_count}")
+                    if not self.test_mode:
+                        logger.debug(f"Current B1Command: {self._current_cmd}")
+                        data = cmd_to_send.to_bytes()
+                        hex_str = ' '.join(f'{b:02x}' for b in data)
+                        logger.debug(f"UDP packet ({len(data)} bytes): {hex_str}")
 
                 if self.socket:
                     data = cmd_to_send.to_bytes()
@@ -193,13 +242,41 @@ class B1ConnectionModule(Module):
 
                 self.packet_count += 1
 
-                # Maintain 50Hz rate (20ms between packets)
+                # 50Hz rate (20ms between packets)
                 time.sleep(0.020)
 
             except Exception as e:
                 if self.running:
-                    print(f"Send error: {e}")
+                    logger.error(f"Send error: {e}")
 
+    def _publish_odom_pose(self, msg: Odometry):
+        """Convert and publish odometry as PoseStamped.
+        
+        This matches G1's approach of receiving external odometry.
+        """
+        if self.odom_pose:
+            pose_stamped = PoseStamped(
+                ts=msg.ts,
+                frame_id=msg.frame_id,
+                position=msg.pose.pose.position,
+                orientation=msg.pose.pose.orientation,
+            )
+            self.odom_pose.publish(pose_stamped)
+    
+    def _safety_stop(self):
+        """Safety stop called by timer if no commands received."""
+        logger.warning("Safety timeout - sending stop command")
+        if self.test_mode:
+            logger.info("[TEST] Safety timeout - sending stop command")
+        
+        # Zero velocities but maintain current mode
+        safe_cmd = B1Command(mode=self.current_mode)
+        safe_cmd.lx = 0.0
+        safe_cmd.ly = 0.0
+        safe_cmd.rx = 0.0
+        safe_cmd.ry = 0.0
+        self._current_cmd = safe_cmd
+    
     @rpc
     def idle(self):
         """Set robot to idle mode."""
@@ -225,18 +302,21 @@ class B1ConnectionModule(Module):
         return True
 
     @rpc
-    def move(self, twist: Twist, duration: float = 0.0):
-        """Direct RPC method for sending Twist commands.
+    def move(self, twist_stamped: TwistStamped, duration: float = 0.0):
+        """Direct RPC method for sending TwistStamped commands.
 
         Args:
-            twist: Velocity command
+            twist_stamped: Timestamped velocity command
             duration: Not used, kept for compatibility
         """
-        self.handle_twist(twist)
+        self.handle_twist_stamped(twist_stamped)
         return True
 
     def cleanup(self):
         """Clean up resources when module is destroyed."""
+        if self.stop_timer:
+            self.stop_timer.cancel()
+            self.stop_timer = None
         self.stop()
 
 
@@ -257,18 +337,18 @@ class TestB1ConnectionModule(B1ConnectionModule):
 
             # Show timeout transitions
             if is_timeout and not timeout_warned:
-                print(f"[TEST] Command timeout! Sending zeros after {time_since_last_cmd:.1f}s")
+                logger.info(f"[TEST] Command timeout! Sending zeros after {time_since_last_cmd:.1f}s")
                 timeout_warned = True
             elif not is_timeout and timeout_warned:
-                print("[TEST] Commands resumed - control restored")
+                logger.info("[TEST] Commands resumed - control restored")
                 timeout_warned = False
 
             # Print current state every 0.5 seconds
             if self.packet_count % 25 == 0:
                 if is_timeout:
-                    print(f"[TEST] B1Cmd[ZEROS] (timeout) | Count: {self.packet_count}")
+                    logger.info(f"[TEST] B1Cmd[ZEROS] (timeout) | Count: {self.packet_count}")
                 else:
-                    print(f"[TEST] {self._current_cmd} | Count: {self.packet_count}")
+                    logger.info(f"[TEST] {self._current_cmd} | Count: {self.packet_count}")
 
             self.packet_count += 1
             time.sleep(0.020)
