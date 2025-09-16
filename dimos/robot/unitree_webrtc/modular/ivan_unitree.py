@@ -52,7 +52,7 @@ def detection_unitree():
             time.sleep(1)
     except KeyboardInterrupt:
         connection.stop()
-        mapper.stop()
+        # mapper.stop()
         detection.stop()
         logger.info("Shutting down...")
 

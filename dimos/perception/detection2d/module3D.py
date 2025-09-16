@@ -32,10 +32,10 @@ from dimos.perception.detection2d.module2D import Detection2DModule
 # from dimos.perception.detection2d.detic import Detic2DDetector
 from dimos.perception.detection2d.type import (
     Detection2D,
-    Detection3D,
     ImageDetections2D,
     ImageDetections3D,
 )
+from dimos.types.timestamped import TimestampedBufferCollection, to_human_readable
 
 # Type aliases for clarity
 ImageDetections = Tuple[Image, List[Detection2D]]
@@ -47,10 +47,16 @@ class Detection3DModule(Detection2DModule):
 
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
-
-    filtered_pointcloud: Out[PointCloud2] = None  # type: ignore
+    # type: ignore
     detections: Out[Detection2DArray] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
+
+    detected_pointcloud_1: Out[PointCloud2] = None  # type: ignore
+    detected_pointcloud_2: Out[PointCloud2] = None  # type: ignore
+    detected_pointcloud_3: Out[PointCloud2] = None  # type: ignore
+    detected_image_1: Out[Image] = None  # type: ignore
+    detected_image_2: Out[Image] = None  # type: ignore
+    detected_image_3: Out[Image] = None  # type: ignore
 
     def __init__(self, camera_info: CameraInfo, *args, **kwargs):
         self.camera_info = camera_info
@@ -88,11 +94,11 @@ class Detection3DModule(Detection2DModule):
         self,
         detections: ImageDetections2D,
         pointcloud: PointCloud2,
+        camera_info: CameraInfo,
         world_to_camera_transform: Transform,
     ) -> List[Optional[PointCloud2]]:
         """Filter lidar points that fall within detection bounding boxes."""
         # Extract camera parameters
-        camera_info = self.camera_info
         fx, fy, cx = camera_info.K[0], camera_info.K[4], camera_info.K[2]
         cy = camera_info.K[5]
         image_width = camera_info.width
@@ -201,11 +207,31 @@ class Detection3DModule(Detection2DModule):
         # these have to be timestamp aligned
         detections: ImageDetections2D,
         pointcloud: PointCloud2,
+        camera_info: CameraInfo,
         transform: Transform,
     ) -> ImageDetections3D:
-        # print("3d processing frame:\n", "\n".join(map(str, [detections, pointcloud, transform])))
+        # print(
+        #     "PROCESS FRAME 3D\n"
+        #     + "\n".join(
+        #         map(
+        #             str,
+        #             [
+        #                 detections,
+        #                 "PC " + str(pointcloud),
+        #                 "IMAGE" + str(detections.image),
+        #                 "CAM INFO " + str(camera_info),
+        #                 "TF " + str(transform),
+        #             ],
+        #         )
+        #     )
+        # )
 
-        pointcloud_list = self.filter_points_in_detections(detections, pointcloud, transform)
+        if not transform:
+            return None
+
+        pointcloud_list = self.filter_points_in_detections(
+            detections, pointcloud, camera_info, transform
+        )
 
         detection3d_list = []
         for detection, pc in zip(detections, pointcloud_list):
@@ -219,30 +245,61 @@ class Detection3DModule(Detection2DModule):
 
         return ImageDetections3D(detections.image, detection3d_list)
 
-    @functools.cache
-    def pointcloud_stream(self):
-        # Returns stream of List[Detection3D]
-        # Buffer Detection2D objects by image timestamp to process them together
-        return self.detection_stream().pipe(
-            ops.buffer_with_time(0.1),  # Buffer detections within 100ms window
-            ops.filter(lambda detections: len(detections) > 0),
-            ops.with_latest_from(self.pointcloud.observable(), self.camera_info.observable()),
-            ops.map(
-                lambda args: self.process_frame(
-                    *args,  # [List[Detection2D], PointCloud2, CameraInfo]
-                    self.tf.get("camera_optical", "world"),
-                )
-            ),
-            ops.filter(lambda detection3d_list: len(detection3d_list) > 0),
-        )
+    # @functools.cache
+    # def pointcloud_stream(self):
+    #     # Returns stream of List[Detection3D]
+    #     # Buffer Detection2D objects by image timestamp to process them together
+    #     return self.detection_stream().pipe(
+    #         ops.buffer_with_time(0.1),  # Buffer detections within 100ms window
+    #         ops.filter(lambda detections: len(detections) > 0),
+    #         ops.with_latest_from(self.pointcloud.observable(), self.camera_info.observable()),
+    #         ops.map(
+    #             lambda args: self.process_frame(
+    #                 *args,  # [List[Detection2D], PointCloud2, CameraInfo]
+    #                 self.tf.get("camera_optical", "world"),
+    #             )
+    #         ),
+    #         ops.filter(lambda detection3d_list: len(detection3d_list) > 0),
+    #     )
 
     @rpc
     def start(self):
-        # Publish combined pointcloud from all Detection3D objects
-        self.pointcloud_stream().pipe(
-            ops.map(
-                lambda detection3d_list: self.combine_pointclouds(
-                    [det.pointcloud for det in detection3d_list]
-                )
-            )
-        ).subscribe(self.filtered_pointcloud.publish)
+        time_tolerance = 5.0  # seconds
+        pointcloud_buffer = TimestampedBufferCollection[PointCloud2](window_duration=time_tolerance)
+        self.pointcloud.observable().subscribe(pointcloud_buffer.add)
+
+        def detection2d_to_3d(
+            detections: ImageDetections2D,
+        ):
+            pc = pointcloud_buffer.find_closest(detections.image.ts)
+            transform = self.tf.get("camera_optical", "world", detections.image.ts, time_tolerance)
+            return self.process_frame(detections, pc, self.camera_info, transform)
+
+        combined_stream = self.detection_stream().pipe(ops.map(detection2d_to_3d))
+
+        self.detection_stream().subscribe(
+            lambda det: self.detections.publish(det.to_ros_detection2d_array())
+        )
+
+        self.detection_stream().subscribe(
+            lambda det: self.annotations.publish(det.to_image_annotations())
+        )
+
+        combined_stream.subscribe(self._handle_combined_detections)
+
+    def _handle_combined_detections(self, detections: ImageDetections3D):
+        if not detections:
+            return
+        print(detections)
+
+        if len(detections) > 0:
+            self.detected_pointcloud_1.publish(detections[0].pointcloud)
+            self.detected_image_1.publish(detections[0].cropped_image())
+
+        if len(detections) > 1:
+            self.detected_pointcloud_2.publish(detections[1].pointcloud)
+            self.detected_image_2.publish(detections[1].cropped_image())
+
+        if len(detections) > 3:
+            self.detected_pointcloud_3.publish(detections[2].pointcloud)
+            self.detected_image_3.publish(detections[2].cropped_image())

@@ -41,7 +41,7 @@ class PointCloud2(Timestamped):
         frame_id: str = "world",
         ts: Optional[float] = None,
     ):
-        self.ts = ts if ts is not None else time.time()
+        self.ts = ts
         self.pointcloud = pointcloud if pointcloud is not None else o3d.geometry.PointCloud()
         self.frame_id = frame_id
 

@@ -30,7 +30,7 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.types.timestamped import Timestamped, TimestampedBufferCollection
+from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 
 
 class ImageFormat(Enum):
@@ -64,6 +64,9 @@ class Image(Timestamped):
     format: ImageFormat = field(default=ImageFormat.BGR)
     frame_id: str = field(default="")
     ts: float = field(default_factory=time.time)
+
+    def __str__(self):
+        return f"Image(shape={self.shape}, format={self.format}, dtype={self.dtype}, ts={to_human_readable(self.ts)})"
 
     def __post_init__(self):
         """Validate image data and format."""

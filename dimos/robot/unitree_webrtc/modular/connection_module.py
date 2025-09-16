@@ -96,7 +96,6 @@ class FakeRTC(UnitreeWebRTCConnection):
     def raw_odom_stream(self):
         print("odom stream start")
         odom_store = TimedSensorReplay(f"{self.dir_name}/odom")
-
         return odom_store.stream(**self.replay_config)
 
     # we don't have raw video stream in the data set
@@ -112,7 +111,11 @@ class FakeRTC(UnitreeWebRTCConnection):
 
     @functools.cache
     def video_stream(self):
-        return self.raw_video_stream()
+        def adjust_timestamp(image: Image) -> Image:
+            image.ts = image.ts - 60.0  # adjust timestamp to match lidar
+            return image
+
+        return self.raw_video_stream().pipe(ops.map(adjust_timestamp))
 
     def move(self, vector: Twist, duration: float = 0.0):
         pass
@@ -172,12 +175,12 @@ class ConnectionModule(Module):
                 self.connection.start()
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
-
-        # Connect sensor streams to outputs
-        self.connection.lidar_stream().subscribe(self.lidar.publish)
         self.connection.odom_stream().subscribe(
             lambda odom: self._publish_tf(odom) and self.odom.publish(odom)
         )
+
+        # Connect sensor streams to outputs
+        self.connection.lidar_stream().subscribe(self.lidar.publish)
 
         # self.connection.lidar_stream().subscribe(lambda lidar: print("LIDAR", lidar.ts))
         # self.connection.video_stream().subscribe(lambda video: print("IMAGE", video.ts))
@@ -185,10 +188,10 @@ class ConnectionModule(Module):
 
         def attach_frame_id(image: Image) -> Image:
             image.frame_id = "camera_optical"
-
-            return image.resize(
-                int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
-            )
+            return image
+            # return image.resize(
+            #    int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
+            # )
 
         # sharpness_window(
         # 5, self.connection.video_stream().pipe(ops.map(attach_frame_id))
@@ -206,7 +209,7 @@ class ConnectionModule(Module):
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
             frame_id="base_link",
             child_frame_id="camera_link",
-            ts=time.time(),
+            ts=odom.ts,
         )
 
         camera_optical = Transform(
@@ -214,7 +217,7 @@ class ConnectionModule(Module):
             rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
             frame_id="camera_link",
             child_frame_id="camera_optical",
-            ts=camera_link.ts,
+            ts=odom.ts,
         )
 
         return [
@@ -286,8 +289,8 @@ class ConnectionModule(Module):
 
 
 def deploy_connection(dimos, **kwargs):
-    foxglove_bridge = dimos.deploy(FoxgloveBridge)
-    foxglove_bridge.start()
+    # foxglove_bridge = dimos.deploy(FoxgloveBridge)
+    # foxglove_bridge.start()
 
     connection = dimos.deploy(
         ConnectionModule,
@@ -301,6 +304,5 @@ def deploy_connection(dimos, **kwargs):
     connection.video.transport = LCMTransport("/image", Image)
     connection.movecmd.transport = LCMTransport("/cmd_vel", Vector3)
     connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
-    connection.start()
 
     return connection
