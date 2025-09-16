@@ -88,6 +88,24 @@ class Detection2D(Timestamped):
             "bbox": f"[{x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}]",
         }
 
+    def to_image(self) -> Image:
+        return self.image
+
+    # return focused image, only on the bbox
+    def cropped_image(self, padding: int = 20) -> Image:
+        """Return a cropped version of the image focused on the bounding box.
+
+        Args:
+            padding: Pixels to add around the bounding box (default: 20)
+
+        Returns:
+            Cropped Image containing only the detection area plus padding
+        """
+        x1, y1, x2, y2 = map(int, self.bbox)
+        return self.image.crop(
+            x1 - padding, y1 - padding, x2 - x1 + 2 * padding, y2 - y1 + 2 * padding
+        )
+
     def __str__(self):
         console = Console(force_terminal=True, legacy_windows=False)
         d = self.to_repr_dict()

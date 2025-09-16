@@ -103,6 +103,9 @@ def publish_lcm(moment: Moment):
             detections_transport: LCMTransport = LCMTransport(f"/detected_{i}", PointCloud2)
             detections_transport.publish(detection.pointcloud)
 
+            detections_image_transport: LCMTransport = LCMTransport(f"/image_detected_{i}", Image)
+            detections_image_transport.publish(detection.cropped_image())
+
 
 @functools.cache
 @pytest.fixture
