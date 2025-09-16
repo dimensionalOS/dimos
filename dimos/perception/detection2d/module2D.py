@@ -21,9 +21,7 @@ from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection2d.type import (
-    Detection2D,
-)
+from dimos.perception.detection2d.type import Detection2D, ImageDetections2D
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 
 
@@ -32,7 +30,6 @@ class Detection2DModule(Module):
     detections: Out[Detection2D] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
-    # _initDetector = Detic2DDetector
     _initDetector = Yolo2DDetector
 
     def __init__(self, *args, detector=Optional[Callable[[Any], Any]], **kwargs):
@@ -41,40 +38,25 @@ class Detection2DModule(Module):
             self._detectorClass = detector
         self.detector = self._initDetector()
 
-    def process_frame(self, image: Image) -> List[Detection2D]:
-        detections = Detection2D.from_detector(
-            self.detector.process_image(image.to_opencv()), image=image
+    def process_frame(self, image: Image) -> ImageDetections2D:
+        return ImageDetections2D.from_detector(
+            image, self.detector.process_image(image.to_opencv())
         )
-        return detections
 
     @functools.cache
     def detection_stream(self):
-        # Returns stream of individual Detection2D objects
-        detection_stream = self.image.observable().pipe(
-            ops.map(self.process_frame),
-            ops.flat_map(
-                lambda detections: ops.from_iterable(detections)
-            ),  # Flatten list to individual items
-        )
-
-        # Publish each detection individually
-        detection_stream.subscribe(self.detections.publish)
-
-        def pubannotations(annotations: ImageAnnotations):
-            print("Publishing annotations with", len(annotations.annotations), "items")
-            print(annotations)
-            self.annotations.publish(annotations)
-
-        # Convert each Detection2D to ImageAnnotations
-        detection_stream.pipe(ops.map(lambda detection: detection.to_imageannotations())).subscribe(
-            pubannotations
-        )
-
+        detection_stream = self.image.observable().pipe(ops.map(self.process_frame))
         return detection_stream
 
     @rpc
     def start(self):
-        self.detection_stream()
+        self.detection_stream().subscribe(
+            lambda det: self.detections.publish(det.to_ros_detection2d_array())
+        )
+
+        self.detection_stream().subscribe(
+            lambda det: self.annotations.publish(det.to_foxglove_annotations())
+        )
 
     @rpc
     def stop(self): ...

@@ -26,7 +26,6 @@ from reactivex import operators as ops
 from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.module2D import Detection2DModule
 
@@ -34,7 +33,8 @@ from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.type import (
     Detection2D,
     Detection3D,
-    build_imageannotations,
+    to_imageannotations,
+    to_ros_detection2d_array,
 )
 
 # Type aliases for clarity
@@ -42,27 +42,18 @@ ImageDetections = Tuple[Image, List[Detection2D]]
 ImageDetection = Tuple[Image, Detection2D]
 
 
-def build_detection2d_array_fix(imageDetections: ImageDetections) -> Detection2DArray:
-    """Build Detection2DArray from image and list of Detection2D objects."""
-    [image, detections] = imageDetections
-    return Detection2DArray(
-        detections_length=len(detections),
-        header=Header(image.ts, "camera_link"),
-        detections=[det.to_ros_detection2d() for det in detections],
-    )
-
-
 class Detection3DModule(Detection2DModule):
     camera_info: In[CameraInfo] = None  # type: ignore
-    pointcloud: In[PointCloud2] = None  # type: ignore
-    filtered_pointcloud: Out[PointCloud2] = None  # type: ignore
     image: In[Image] = None  # type: ignore
+    pointcloud: In[PointCloud2] = None  # type: ignore
+
+    filtered_pointcloud: Out[PointCloud2] = None  # type: ignore
     detections: Out[Detection2DArray] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
     def detect(self, image: Image) -> ImageDetections:
         detections = Detection2D.from_detector(
-            self.detector.process_image(image.to_opencv()), image=image
+            self.detector.process_image(image.to_opencv()), ts=image.ts
         )
         return (image, detections)
 
@@ -70,9 +61,10 @@ class Detection3DModule(Detection2DModule):
     def detection_stream(self):
         detection_stream = self.image.observable().pipe(ops.map(self.detect))
 
-        detection_stream.pipe(ops.map(build_imageannotations)).subscribe(self.annotations.publish)
+        detection_stream.pipe(ops.map(to_imageannotations)).subscribe(self.annotations.publish)
+
         detection_stream.pipe(
-            ops.filter(lambda x: len(x[1]) != 0), ops.map(build_detection2d_array_fix)
+            ops.filter(lambda x: len(x[1]) != 0), ops.map(to_ros_detection2d_array)
         ).subscribe(self.detections.publish)
 
         return detection_stream

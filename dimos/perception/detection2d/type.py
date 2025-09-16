@@ -14,11 +14,9 @@
 
 from __future__ import annotations
 
-import functools
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-import numpy as np
 from dimos_lcm.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
@@ -40,6 +38,7 @@ from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
+from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.types.timestamped import Timestamped, to_ros_stamp, to_timestamp
 
 Bbox = Tuple[float, float, float, float]
@@ -70,7 +69,6 @@ class Detection2D(Timestamped):
     confidence: float
     name: str
     ts: float = 0.0
-    image: Optional[Image] = None
 
     @classmethod
     def from_detector(
@@ -83,10 +81,6 @@ class Detection2D(Timestamped):
     @classmethod
     def from_detection(cls, raw_detection: Detection, **kwargs) -> "Detection2D":
         bbox, track_id, class_id, confidence, name = raw_detection
-
-        image = kwargs.get("image", None)
-        if image is not None:
-            kwargs["ts"] = image.ts
 
         return cls(
             bbox=bbox,
@@ -250,6 +244,38 @@ class Detection2D(Timestamped):
         )
 
 
+class ImageDetections2D:
+    image: Image
+    detections: List[Detection2D]
+
+    @classmethod
+    def from_detector(
+        cls, image: Image, raw_detections: InconvinientDetectionFormat, **kwargs
+    ) -> "ImageDetections2D":
+        return cls(image=image, detections=Detection2D.from_detector(raw_detections, ts=image.ts))
+
+    def to_ros_detection2d_array(self) -> Detection2DArray:
+        return Detection2DArray(
+            detections_length=len(self.detections),
+            header=Header(self.image.ts, "camera_optical"),
+            detections=[det.to_ros_detection2d() for det in self.detections],
+        )
+
+    def to_image_annotations(self) -> ImageAnnotations:
+        def flatten(xss):
+            return [x for xs in xss for x in xs]
+
+        texts = flatten(det.to_text_annotation() for det in self.detections)
+        points = flatten(det.to_points_annotation() for det in self.detections)
+
+        return ImageAnnotations(
+            texts=texts,
+            texts_length=len(texts),
+            points=points,
+            points_length=len(points),
+        )
+
+
 @dataclass
 class Detection3D(Detection2D):
     pointcloud: Optional[PointCloud2] = None
@@ -260,7 +286,7 @@ class Detection3D(Detection2D):
         return self
 
 
-def build_imageannotation_text(detection: Detection2D) -> List[TextAnnotation]:
+def to_imageannotation_text(detection: Detection2D) -> List[TextAnnotation]:
     x1, y1, x2, y2 = detection.bbox
 
     font_size = int(detection.image.height / 35)
@@ -284,7 +310,7 @@ def build_imageannotation_text(detection: Detection2D) -> List[TextAnnotation]:
     ]
 
 
-def build_imageannotation_box(detection: Detection2D) -> PointsAnnotation:
+def to_imageannotation_box(detection: Detection2D) -> PointsAnnotation:
     x1, y1, x2, y2 = detection.bbox
 
     thickness = detection.image.height / 720
@@ -305,12 +331,12 @@ def build_imageannotation_box(detection: Detection2D) -> PointsAnnotation:
     )
 
 
-def build_imageannotations(detections: List[Detection2D]) -> ImageAnnotations:
+def to_imageannotations(detections: List[Detection2D]) -> ImageAnnotations:
     def flatten(xss):
         return [x for xs in xss for x in xs]
 
-    points = list(map(build_imageannotation_box, detections))
-    texts = list(flatten(map(build_imageannotation_text, detections)))
+    points = list(map(to_imageannotation_box, detections))
+    texts = list(flatten(map(to_imageannotation_text, detections)))
 
     return ImageAnnotations(
         texts=texts,
