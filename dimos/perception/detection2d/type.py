@@ -279,6 +279,9 @@ class ImageDetections(Generic[T]):
     def __len__(self):
         return len(self.detections)
 
+    def __iter__(self):
+        return iter(self.detections)
+
     def to_ros_detection2d_array(self) -> Detection2DArray:
         return Detection2DArray(
             detections_length=len(self.detections),
@@ -314,4 +317,6 @@ class ImageDetections2D(ImageDetections[Detection2D]):
 class ImageDetections3D(ImageDetections[Detection3D]):
     """Specialized class for 3D detections in an image."""
 
-    pass
+    def __str__(self):
+        detections_str = ", ".join(det.name for det in self.detections)
+        return f"ImageDetections3D(ts={to_timestamp(self.image.ts)}, num_detections={len(self.detections)}, {detections_str})"

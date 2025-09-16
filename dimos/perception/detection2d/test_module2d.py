@@ -18,23 +18,18 @@ from dimos.perception.detection2d.module3D import Detection3DModule
 
 
 def test_module2d(moment: Moment):
-    detections = Detection2DModule().process_frame(moment.get("image_frame"))
-    print(detections)
-    annotations = detections.to_image_annotations()
-
+    detections2d = Detection2DModule().process_frame(moment.get("image_frame"))
+    annotations = detections2d.to_image_annotations()
     publish_lcm({annotations: "annotations", **moment})
 
 
 def test_module3d(moment: Moment):
-    detections = Detection2DModule().process_frame(moment.get("image_frame"))
-
-    print(detections)
-
+    detections2d = Detection2DModule().process_frame(moment.get("image_frame"))
     pointcloud = moment.get("lidar_frame")
-    tf = moment.get("tf")
+    camera_transform = moment.get("tf").get("camera_optical", "world")
 
-    Detection3DModule(camera_info=moment.get("camera_info")).process_frame(
-        detections,
-        pointcloud,
-        tf.get("camera_optical", "world"),
+    detections3d = Detection3DModule(camera_info=moment.get("camera_info")).process_frame(
+        detections2d, pointcloud, camera_transform
     )
+
+    print(detections3d)

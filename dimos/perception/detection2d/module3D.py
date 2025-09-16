@@ -121,7 +121,7 @@ class Detection3DModule(Detection2DModule):
 
         filtered_pointclouds: List[Optional[PointCloud2]] = []
 
-        for detection in detections.detections:
+        for detection in detections:
             # Extract bbox from Detection2D object
             bbox = detection.bbox
             x_min, y_min, x_max, y_max = bbox
@@ -195,24 +195,14 @@ class Detection3DModule(Detection2DModule):
         )
         return PointCloud2(statistical, pc.frame_id, pc.ts)
 
-    def process_frame(  # type: ignore[override]
+    def process_frame(
         self,
+        # these have to be timestamp aligned
         detections: ImageDetections2D,
         pointcloud: PointCloud2,
         transform: Transform,
     ) -> List[Detection3D]:
-        print("DETECTIONS", detections)
-
-        if not transform:
-            return []
-
-        # Get image from first detection (all should have same image)
-        if not detections:
-            return []
-
-        image = detections.image
-        if image is None:
-            return []
+        # print("3d processing frame:\n", "\n".join(map(str, [detections, pointcloud, transform])))
 
         pointcloud_list = self.filter_points_in_detections(detections, pointcloud, transform)
 
@@ -223,6 +213,7 @@ class Detection3DModule(Detection2DModule):
             pc = self.hidden_point_removal(transform, self.cleanup_pointcloud(pc))
             if pc is None:
                 continue
+
             detection3d_list.append(detection.to_3d(pointcloud=pc, transform=transform))
 
         return detection3d_list
