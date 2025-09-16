@@ -22,20 +22,15 @@ import time
 import warnings
 from typing import List, Optional
 
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.std_msgs import Bool, String
-
 from dimos import core
 from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
+from dimos.msgs.std_msgs import Header
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.std_msgs import Header
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
-from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
-from dimos.navigation.global_planner import AstarPlanner
-from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.msgs.vision_msgs import Detection3DArray
+from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+from dimos_lcm.std_msgs import String
+from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.perception.common.utils import (
     extract_pose_from_detection3d,
@@ -43,24 +38,31 @@ from dimos.perception.common.utils import (
     load_camera_info_opencv,
     rectify_image,
 )
-from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.robot.robot import Robot
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+from dimos.navigation.global_planner import AstarPlanner
+from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
+from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
+from dimos.robot.unitree_webrtc.depth_module import DepthModule
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
-from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.transform_utils import offset_distance
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+from dimos.perception.object_tracker import ObjectTracking
+from dimos_lcm.std_msgs import Bool
+from dimos.robot.robot import Robot
+from dimos.types.robot_capabilities import RobotCapability
+
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
 
@@ -495,40 +497,40 @@ class UnitreeGo2(Robot):
         logger.info("Spatial memory module deployed and connected")
 
         # Deploy object tracker
-        # self.object_tracker = self.dimos.deploy(
-        #    ObjectTracking,
-        #    frame_id="camera_link",
-        # )
+        self.object_tracker = self.dimos.deploy(
+            ObjectTracking,
+            frame_id="camera_link",
+        )
 
         # Set up transports
-        # self.object_tracker.detection2darray.transport = core.LCMTransport(
-        #    "/go2/detection2d", Detection2DArray
-        # )
-        # self.object_tracker.detection3darray.transport = core.LCMTransport(
-        #    "/go2/detection3d", Detection3DArray
-        # )
-        # self.object_tracker.tracked_overlay.transport = core.LCMTransport(
-        #    "/go2/tracked_overlay", Image
-        # )
+        self.object_tracker.detection2darray.transport = core.LCMTransport(
+            "/go2/detection2d", Detection2DArray
+        )
+        self.object_tracker.detection3darray.transport = core.LCMTransport(
+            "/go2/detection3d", Detection3DArray
+        )
+        self.object_tracker.tracked_overlay.transport = core.LCMTransport(
+            "/go2/tracked_overlay", Image
+        )
 
         logger.info("Object tracker module deployed")
 
     def _deploy_camera(self):
         """Deploy and configure the camera module."""
         gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.5
-        # self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
+        self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
 
         # Set up transports
-        # self.depth_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
-        # self.depth_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
-        # self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
+        self.depth_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
+        self.depth_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
+        self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
 
         logger.info("Camera module deployed and connected")
 
         # Connect object tracker inputs after camera module is deployed
         if self.object_tracker:
             self.object_tracker.color_image.connect(self.connection.video)
-            # self.object_tracker.depth.connect(self.depth_module.depth_image)
+            self.object_tracker.depth.connect(self.depth_module.depth_image)
             self.object_tracker.camera_info.connect(self.connection.camera_info)
             logger.info("Object tracker connected to camera module")
 
@@ -543,8 +545,8 @@ class UnitreeGo2(Robot):
         self.websocket_vis.start()
         self.foxglove_bridge.start()
         self.spatial_memory_module.start()
-        # self.depth_module.start()
-        # self.object_tracker.start()
+        self.depth_module.start()
+        self.object_tracker.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -711,7 +713,7 @@ def main():
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Shutting down... due to keyboard interrupt")
+        logger.info("Shutting down...")
 
 
 if __name__ == "__main__":
