@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import glob
+import logging
 import os
 import pickle
 import time
@@ -20,21 +21,13 @@ from pathlib import Path
 from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
 
 from reactivex import (
-    concat,
-    concat_with_iterable,
-    empty,
     from_iterable,
     interval,
-    just,
-    merge,
-    timer,
 )
 from reactivex import operators as ops
-from reactivex import timer as rx_timer
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
-from dimos.types.timestamped import Timestamped, TimestampedCollection
 from dimos.utils.data import _get_data_dir, get_data
 
 T = TypeVar("T")
@@ -49,9 +42,12 @@ class SensorReplay(Generic[T]):
                   For example: lambda data: LidarMessage.from_msg(data)
     """
 
-    def __init__(self, name: str, autocast: Optional[Callable[[Any], T]] = None):
+    debug: Optional[str]
+
+    def __init__(self, name: str, autocast: Optional[Callable[[Any], T]] = None, debug=None):
         self.root_dir = get_data(name)
         self.autocast = autocast
+        self.debug = debug
 
     def load(self, *names: Union[int, str]) -> Union[T, Any, list[T], list[Any]]:
         if len(names) == 1:
@@ -59,6 +55,8 @@ class SensorReplay(Generic[T]):
         return list(map(lambda name: self.load_one(name), names))
 
     def load_one(self, name: Union[int, str, Path]) -> Union[T, Any]:
+        if self.debug:
+            print(f"{self.debug} load {name}")
         if isinstance(name, int):
             full_path = self.root_dir / f"/{name:03d}.pickle"
         elif isinstance(name, Path):
@@ -78,18 +76,15 @@ class SensorReplay(Generic[T]):
         except StopIteration:
             return None
 
-    def iterate(self, loop: bool = False) -> Iterator[Union[T, Any]]:
+    def iterate(self) -> Iterator[Union[T, Any]]:
         pattern = os.path.join(self.root_dir, "*")
-        files = sorted(glob.glob(pattern))
-
-        if not files:
-            return
-
-        while True:
-            for file_path in files:
-                yield self.load_one(Path(file_path))
-            if not loop:
-                break
+        for file_path in sorted(
+            glob.glob(pattern),
+            key=lambda x: int(os.path.basename(x).split(".")[0])
+            if os.path.basename(x).split(".")[0].isdigit()
+            else 0,
+        ):
+            yield self.load_one(Path(file_path))
 
     def stream(
         self, rate_hz: Optional[float] = None, loop: bool = False
@@ -175,6 +170,9 @@ class TimedSensorStorage(SensorStorage[T]):
 
 class TimedSensorReplay(SensorReplay[T]):
     def load_one(self, name: Union[int, str, Path]) -> Union[T, Any]:
+        if self.debug:
+            print(f"{self.debug} load {name}")
+
         if isinstance(name, int):
             full_path = self.root_dir / f"/{name:03d}.pickle"
         elif isinstance(name, Path):

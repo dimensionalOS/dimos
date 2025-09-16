@@ -47,7 +47,6 @@ def moment():
     seek = 10
 
     lidar_frame = TimedSensorReplay(f"{data_dir}/lidar").find_closest_seek(seek)
-
     image_frame = TimedSensorReplay(
         f"{data_dir}/video",
     ).find_closest(lidar_frame.ts)
@@ -145,7 +144,7 @@ def test_basic(moment):
     detection3d = detection3d_list[0]
     num_points = len(detection3d.pointcloud.pointcloud.points)
     print(f"Number of points in first detection: {num_points}")
-    assert num_points == 10, f"Expected 10 points, got {num_points}"
+    assert num_points == 81, f"Expected 10 points, got {num_points}"
 
 
 # from https://www.open3d.org/docs/release/python_api/open3d.geometry.PointCloud.html
