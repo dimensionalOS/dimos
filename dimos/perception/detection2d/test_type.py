@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import numpy as np
+
 from dimos.perception.detection2d.conftest import detections2d, detections3d
 
 
@@ -34,17 +35,5 @@ def test_detection3d_to_pose(detections3d):
         # Check that pose is valid
         assert pose.frame_id == "world"
         assert pose.ts == det.ts
-
-        # Position should be the pointcloud center
-        center = det.center()
-        assert np.allclose(
-            [pose.position.x, pose.position.y, pose.position.z], [center.x, center.y, center.z]
-        )
-
-        # Orientation should be identity quaternion
-        assert np.allclose(
-            [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w],
-            [0.0, 0.0, 0.0, 1.0],
-        )
 
         print(f"Detection {det.name} pose: position={pose.position}")

@@ -13,11 +13,11 @@
 # limitations under the License.
 
 import functools
-from typing import TypedDict
+from typing import Optional, TypedDict
 
 import pytest
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo, PointCloud2
 
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
@@ -40,6 +40,7 @@ class Moment(TypedDict):
     camera_info: CameraInfo
     transforms: list[Transform]
     tf: TF
+    detections: Optional[PointCloud2]
 
 
 @pytest.fixture
@@ -95,6 +96,12 @@ def publish_lcm(moment: Moment):
     if annotations:
         annotations_transport: LCMTransport = LCMTransport("/annotations", ImageAnnotations)
         annotations_transport.publish(annotations)
+
+    detections = moment.get("detections")
+    if detections:
+        for i, detection in enumerate(detections):
+            detections_transport: LCMTransport = LCMTransport(f"/detected_{i}", PointCloud2)
+            detections_transport.publish(detection.pointcloud)
 
 
 @functools.cache

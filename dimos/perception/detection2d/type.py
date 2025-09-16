@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 from dataclasses import dataclass
 from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar
@@ -74,6 +75,7 @@ class Detection2D(Timestamped):
     confidence: float
     name: str
     ts: float
+    image: Image
 
     def to_repr_dict(self) -> Dict[str, Any]:
         """Return a dictionary representation of the detection for display purposes."""
@@ -282,6 +284,7 @@ class Detection2D(Timestamped):
 
     def to_3d(self, **kwargs) -> "Detection3D":
         return Detection3D(
+            image=self.image,
             bbox=self.bbox,
             track_id=self.track_id,
             class_id=self.class_id,
@@ -301,23 +304,28 @@ class Detection3D(Detection2D):
         self.pointcloud = pointcloud
         return self
 
-    def center(self) -> np.ndarray:
+    @functools.cached_property
+    def center(self) -> Vector3:
         """Calculate the center of the pointcloud in world frame."""
-        return np.asarray(self.pointcloud.pointcloud.points).mean(axis=0)
+        points = np.asarray(self.pointcloud.pointcloud.points)
+        center = points.mean(axis=0)
 
+        return Vector3(center[0], center[1], center[2])
+
+    @functools.cached_property
     def to_pose(self) -> PoseStamped:
         """Convert detection to a PoseStamped using pointcloud center.
 
         Returns pose in world frame with identity rotation.
         The pointcloud is already in world frame.
         """
-        center_world = self.center()
+        center_world = self.center
 
         return PoseStamped(
             ts=self.ts,
             frame_id="world",
-            position=center_world.tolist(),
-            orientation=[0.0, 0.0, 0.0, 1.0],  # Identity quaternion
+            position=center_world,
+            orientation=(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
         )
 
     def to_repr_dict(self) -> Dict[str, Any]:
@@ -328,11 +336,11 @@ class Detection3D(Detection2D):
 
         # Calculate distance from camera
         # The pointcloud is in world frame, and transform gives camera position in world
-        center_world = self.center()
-        print("CENTER", center_world)
+        center_world = self.center
         # Camera position in world frame is the translation part of the transform
         camera_pos = self.transform.translation
-        distance = np.linalg.norm(center_world - camera_pos.to_numpy())
+        # Use Vector3 subtraction and magnitude
+        distance = (center_world - camera_pos).magnitude()
         d["dist"] = f"{distance:.2f}m"
 
         return d
@@ -392,15 +400,17 @@ class ImageDetections(Generic[T]):
             show_edge=True,
         )
 
-        first_dict = self.detections[0].to_repr_dict()
+        # Cache all repr_dicts to avoid double computation
+        detection_dicts = [det.to_repr_dict() for det in self.detections]
+
+        first_dict = detection_dicts[0]
         table.add_column("#", style="dim")
         for col in first_dict.keys():
             color = _hash_to_color(col)
             table.add_column(col.title(), style=color)
 
         # Add each detection to the table
-        for i, det in enumerate(self.detections):
-            d = det.to_repr_dict()
+        for i, d in enumerate(detection_dicts):
             row = [str(i)]
 
             for key in first_dict.keys():
@@ -454,8 +464,9 @@ class ImageDetections2D(ImageDetections[Detection2D]):
     def from_detector(
         cls, image: Image, raw_detections: InconvinientDetectionFormat, **kwargs
     ) -> "ImageDetections[Detection2D]":
-        return ImageDetections2D(
-            image=image, detections=Detection2D.from_detector(raw_detections, ts=image.ts)
+        return cls(
+            image=image,
+            detections=Detection2D.from_detector(raw_detections, image=image, ts=image.ts),
         )
 
 

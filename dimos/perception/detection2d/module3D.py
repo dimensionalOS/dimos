@@ -246,21 +246,3 @@ class Detection3DModule(Detection2DModule):
                 )
             )
         ).subscribe(self.filtered_pointcloud.publish)
-
-
-class DetectionDBModule(Detection3DModule):
-    @rpc
-    def start(self):
-        super().start()
-        self.pointcloud_stream().subscribe(self.add_detections)
-
-    def add_detections(self, detection3d_list: List[Detection3D]):
-        for det3d in detection3d_list:
-            if det3d.pointcloud is None:
-                continue
-            self.add_detection(det3d, det3d.pointcloud)
-
-    # TODO collect all detections from a recording, store the stream
-    # replay the stream into add_detection, validate the output
-    def add_detection(self, detection: Detection3D, pc: PointCloud2):
-        print("DETECTION", detection, pc)

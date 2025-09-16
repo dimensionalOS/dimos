@@ -30,9 +30,11 @@ def test_module3d(moment: Moment):
     detections2d = Detection2DModule().process_frame(moment.get("image_frame"))
     pointcloud = moment.get("lidar_frame")
     camera_transform = moment.get("tf").get("camera_optical", "world")
+    annotations = detections2d.to_image_annotations()
 
     detections3d = Detection3DModule(camera_info=moment.get("camera_info")).process_frame(
         detections2d, pointcloud, camera_transform
     )
+    publish_lcm({**moment, "annotations": annotations, "detections": detections3d})
 
     print(detections3d)
