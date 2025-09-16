@@ -87,6 +87,7 @@ def publish_lcm(
     annotations,
     detected_pc: list[PointCloud2],
 ):
+    lcm.autoconf()
     lidar_frame_transport: LCMTransport = LCMTransport("/lidar", LidarMessage)
     lidar_frame_transport.publish(lidar_frame)
 
