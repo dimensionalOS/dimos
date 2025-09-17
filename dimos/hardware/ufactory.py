@@ -403,28 +403,23 @@ class XArmModule(Module):
         pitch = np.pi - euler.y
 
         # 180° X flip transformation matrix
-        rotation_transform1 = np.array([
-            [1, 0, 0, 0],
-            [0, -1, 0, 0],
-            [0, 0, -1, 0],
-            [0, 0, 0, 1]
-        ])
+        rotation_transform1 = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
 
         # Pitch-dependent Y rotation (opposite of command pitch)
         print("Applying pitch rotation of:", pitch)
         cos_pitch = np.cos(pitch)
         sin_pitch = np.sin(pitch)
-        rotation_transform2 = np.array([
-            [cos_pitch, 0.0, sin_pitch, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [-sin_pitch, 0.0, cos_pitch, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ])
-
-        
+        rotation_transform2 = np.array(
+            [
+                [cos_pitch, 0.0, sin_pitch, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [-sin_pitch, 0.0, cos_pitch, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        )
 
         # Combined transformation
-        rotation_transform = rotation_transform1 @ rotation_transform2 
+        rotation_transform = rotation_transform1 @ rotation_transform2
 
         # Store the inverse transformation for feedback consistency
         self._last_command_correction_inverse = np.linalg.inv(rotation_transform)
@@ -445,7 +440,7 @@ class XArmModule(Module):
 
         # Use quaternion-aware matrix operations
         pose_matrix = pose_to_matrix(pose)
-        corrected =  pose_matrix @ self._last_command_correction_inverse
+        corrected = pose_matrix @ self._last_command_correction_inverse
         return matrix_to_pose(corrected)
 
     @rpc
@@ -528,7 +523,7 @@ class XArmModule(Module):
                     child_frame_id=self.ee_frame_id,
                     ts=header.ts,
                 )
-                
+
                 self.tf.publish(ee_transform)
 
                 # 2. ee_link -> camera_link transform (static offset)

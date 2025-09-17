@@ -318,11 +318,13 @@ def signal_handler(_signum, _frame):
     if global_robot and hasattr(global_robot, "piper_arm"):
         try:
             logger.info("Resetting arm to zero position...")
-            arm_module = getattr(global_robot, 'piper_arm', None) or getattr(global_robot, 'xarm', None)
+            arm_module = getattr(global_robot, "piper_arm", None) or getattr(
+                global_robot, "xarm", None
+            )
             if arm_module:
-                if hasattr(arm_module, 'reset_to_zero'):
+                if hasattr(arm_module, "reset_to_zero"):
                     arm_module.reset_to_zero()
-                elif hasattr(arm_module, 'goto_zero'):
+                elif hasattr(arm_module, "goto_zero"):
                     arm_module.goto_zero()
             time.sleep(2)
         except Exception as e:
@@ -333,17 +335,19 @@ def signal_handler(_signum, _frame):
 def get_robot_class(robot_type: str):
     """Get robot class based on type string."""
     robot_classes = {
-        'piper': PiperArmRobot,
-        'xarm': XArmRobot,
+        "piper": PiperArmRobot,
+        "xarm": XArmRobot,
     }
 
     if robot_type not in robot_classes:
-        raise ValueError(f"Unknown robot type: {robot_type}. Available types: {list(robot_classes.keys())}")
+        raise ValueError(
+            f"Unknown robot type: {robot_type}. Available types: {list(robot_classes.keys())}"
+        )
 
     return robot_classes[robot_type]
 
 
-def run_robot_with_viz(robot_type: str = 'piper', **kwargs):
+def run_robot_with_viz(robot_type: str = "piper", **kwargs):
     """Run the specified robot with visualization."""
     global global_robot
 
@@ -351,15 +355,15 @@ def run_robot_with_viz(robot_type: str = 'piper', **kwargs):
     logger.info(f"Starting {robot_class.__name__}")
 
     # Create robot instance with appropriate parameters
-    if robot_type == 'xarm':
+    if robot_type == "xarm":
         robot = robot_class(
-            arm_ip=kwargs.get('arm_ip', '10.0.0.197'),
-            arm_type=kwargs.get('arm_type', 'xarm7'),
-            enable_mobile_base_control=kwargs.get('enable_mobile_base_control', False)
+            arm_ip=kwargs.get("arm_ip", "10.0.0.197"),
+            arm_type=kwargs.get("arm_type", "xarm7"),
+            enable_mobile_base_control=kwargs.get("enable_mobile_base_control", False),
         )
     else:  # piper
         robot = robot_class(
-            enable_mobile_base_control=kwargs.get('enable_mobile_base_control', False)
+            enable_mobile_base_control=kwargs.get("enable_mobile_base_control", False)
         )
     global_robot = robot  # Set global for signal handler
 
@@ -398,12 +402,12 @@ def run_robot_with_viz(robot_type: str = 'piper', **kwargs):
         # Reset arm to zero position before stopping
         try:
             # Handle different robot arm modules
-            arm_module = getattr(robot, 'piper_arm', None) or getattr(robot, 'xarm', None)
+            arm_module = getattr(robot, "piper_arm", None) or getattr(robot, "xarm", None)
             if arm_module:
                 logger.info("Resetting arm to zero position...")
-                if hasattr(arm_module, 'reset_to_zero'):
+                if hasattr(arm_module, "reset_to_zero"):
                     arm_module.reset_to_zero()
-                elif hasattr(arm_module, 'goto_zero'):
+                elif hasattr(arm_module, "goto_zero"):
                     arm_module.goto_zero()
                 time.sleep(2)  # Give it time to reach zero position
                 arm_module.stop()
@@ -416,27 +420,21 @@ def run_robot_with_viz(robot_type: str = 'piper', **kwargs):
 
 if __name__ == "__main__":
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Hardware-agnostic pick and place test module')
+    parser = argparse.ArgumentParser(description="Hardware-agnostic pick and place test module")
     parser.add_argument(
-        '--robot-type',
-        choices=['piper', 'xarm'],
-        default=os.environ.get('ROBOT_TYPE', 'piper'),
-        help='Robot type to use (default: piper, can also be set via ROBOT_TYPE env var)'
+        "--robot-type",
+        choices=["piper", "xarm"],
+        default=os.environ.get("ROBOT_TYPE", "piper"),
+        help="Robot type to use (default: piper, can also be set via ROBOT_TYPE env var)",
     )
     parser.add_argument(
-        '--arm-ip',
-        default='10.0.0.197',
-        help='xArm IP address (only used for xarm robot type)'
+        "--arm-ip", default="10.0.0.197", help="xArm IP address (only used for xarm robot type)"
     )
     parser.add_argument(
-        '--arm-type',
-        default='xarm7',
-        help='xArm type (only used for xarm robot type)'
+        "--arm-type", default="xarm7", help="xArm type (only used for xarm robot type)"
     )
     parser.add_argument(
-        '--enable-mobile-base',
-        action='store_true',
-        help='Enable mobile base control'
+        "--enable-mobile-base", action="store_true", help="Enable mobile base control"
     )
 
     args = parser.parse_args()
@@ -449,5 +447,5 @@ if __name__ == "__main__":
         robot_type=args.robot_type,
         arm_ip=args.arm_ip,
         arm_type=args.arm_type,
-        enable_mobile_base_control=args.enable_mobile_base
+        enable_mobile_base_control=args.enable_mobile_base,
     )

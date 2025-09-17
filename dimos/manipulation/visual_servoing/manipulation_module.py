@@ -556,7 +556,7 @@ class ManipulationModule(Module):
                 time.sleep(0.1)
                 continue
             ee_pose = ee_transform.to_pose()
-            
+
             _, target_reached = is_target_reached(
                 self.current_executed_pose, ee_pose, position_tolerance=self.pbvs.target_tolerance
             )
