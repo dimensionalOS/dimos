@@ -242,7 +242,7 @@ def _play_base64_wav(block_content):
         wav_io = io.BytesIO(wav_bytes)
 
         # Open the WAV file
-        with wave.open(wav_io, 'rb') as wav_file:
+        with wave.open(wav_io, "rb") as wav_file:
             # Get WAV file parameters
             channels = wav_file.getnchannels()
             sample_width = wav_file.getsampwidth()
@@ -260,7 +260,7 @@ def _play_base64_wav(block_content):
             format=p.get_format_from_width(sample_width),
             channels=channels,
             rate=framerate,
-            output=True
+            output=True,
         )
 
         # Play audio

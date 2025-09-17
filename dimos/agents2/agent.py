@@ -221,7 +221,7 @@ class Agent(AgentSpec):
             return
         for tool_call in tool_calls:
             logger.info(f"executing skill call {tool_call}")
-                
+
             self.coordinator.call_skill(
                 tool_call.get("id"),
                 tool_call.get("name"),
@@ -270,7 +270,9 @@ class Agent(AgentSpec):
                 # Check if we have enough messages for LLM invocation
                 # Anthropic requires at least one human message in addition to system message
                 current_history = self.history()
-                if len(current_history) > 1 or (len(current_history) == 1 and not isinstance(current_history[0], SystemMessage)):
+                if len(current_history) > 1 or (
+                    len(current_history) == 1 and not isinstance(current_history[0], SystemMessage)
+                ):
                     # history() builds our message history dynamically
                     # ensures we include latest system state, but not old ones.
                     msg = self._llm.invoke(current_history)
