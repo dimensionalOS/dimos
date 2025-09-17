@@ -38,6 +38,7 @@ from dimos.core.module import ModuleConfig
 from dimos.protocol.pubsub import PubSub, lcm
 from dimos.protocol.service import Service
 from dimos.protocol.skill.skill import SkillContainer
+from dimos.utils.generic import truncate_display_string
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.agents.modules.base_agent")
@@ -206,9 +207,7 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
                         Text(content, style="blue"),
                     )
                 else:
-                    table.add_row(
-                        Text("Agent", style="magenta"), Text(content, style="magenta")
-                    )
+                    table.add_row(Text("Agent", style="magenta"), Text(content, style="magenta"))
 
                 for tool_call in message.tool_calls:
                     table.add_row(
@@ -223,7 +222,9 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
                     "Tool Response", Text(f"{message.name}() -> {message.content}"), style="red"
                 )
             elif isinstance(message, SystemMessage):
-                table.add_row("System", Text(message.content, style="yellow"))
+                table.add_row(
+                    "System", Text(truncate_display_string(message.content, 1000), style="yellow")
+                )
             else:
                 table.add_row("Unknown", str(message))
 

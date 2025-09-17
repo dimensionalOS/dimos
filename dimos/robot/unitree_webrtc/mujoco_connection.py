@@ -16,17 +16,24 @@
 
 
 import atexit
+import base64
 import functools
+import io
+import json
 import logging
 import threading
 import time
 from typing import List
+import wave
 
 from reactivex import Observable
 
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
+from dimos.utils.generic import truncate_display_string
+
+import pyaudio
 
 try:
     from dimos.simulation.mujoco.mujoco import MujocoThread
@@ -170,7 +177,14 @@ class MujocoConnection:
             self.mujoco_thread.move(twist, duration)
 
     def publish_request(self, topic: str, data: dict):
-        print("Received sport command request in Mujoco", topic, data)
+        string = f"Received robot command request in Mujoco. Topic: {topic}, Data: {data}"
+        print(truncate_display_string(string))
+
+        if topic == "rt/api/audiohub/request":
+            param = json.loads(data["parameter"])
+            block_content = param.get("block_content")
+            if block_content:
+                _play_base64_wav(block_content)
 
     def stop(self):
         """Stop the MuJoCo connection gracefully."""
@@ -217,3 +231,45 @@ class MujocoConnection:
             self.cleanup()
         except Exception:
             pass
+
+
+def _play_base64_wav(block_content):
+    try:
+        # Decode base64 to bytes
+        wav_bytes = base64.b64decode(block_content)
+
+        # Create a BytesIO object for the WAV data
+        wav_io = io.BytesIO(wav_bytes)
+
+        # Open the WAV file
+        with wave.open(wav_io, 'rb') as wav_file:
+            # Get WAV file parameters
+            channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
+            framerate = wav_file.getframerate()
+            n_frames = wav_file.getnframes()
+
+            # Read audio data
+            audio_data = wav_file.readframes(n_frames)
+
+        # Initialize PyAudio
+        p = pyaudio.PyAudio()
+
+        # Open audio stream
+        stream = p.open(
+            format=p.get_format_from_width(sample_width),
+            channels=channels,
+            rate=framerate,
+            output=True
+        )
+
+        # Play audio
+        stream.write(audio_data)
+
+        # Clean up
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+
+    except Exception as e:
+        logger.error(f"Failed to play base64 WAV: {e}")

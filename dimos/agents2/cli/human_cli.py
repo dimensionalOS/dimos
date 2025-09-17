@@ -30,6 +30,7 @@ from textual.events import Key
 from textual.widgets import Footer, Input, RichLog
 
 from dimos.core import pLCMTransport
+from dimos.utils.generic import truncate_display_string
 
 
 class HumanCLIApp(App):
@@ -108,7 +109,13 @@ class HumanCLIApp(App):
             timestamp = datetime.now().strftime("%H:%M:%S")
 
             if isinstance(msg, SystemMessage):
-                self.call_from_thread(self._add_message, timestamp, "system", msg.content, "red")
+                self.call_from_thread(
+                    self._add_message,
+                    timestamp,
+                    "system",
+                    truncate_display_string(msg.content, 1000),
+                    "red",
+                )
             elif isinstance(msg, AIMessage):
                 content = msg.content or ""
                 tool_calls = msg.additional_kwargs.get("tool_calls", [])
