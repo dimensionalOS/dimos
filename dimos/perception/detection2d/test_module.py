@@ -59,7 +59,7 @@ def test_module3d(moment: Moment):
 
 @pytest.mark.tool
 def test_module3d_replay(dimos_cluster):
-    connection = deploy_connection(dimos_cluster, loop=True, speed=0.2)
+    connection = deploy_connection(dimos_cluster, loop=False, speed=1.0)
     # mapper = deploy_navigation(dimos_cluster, connection)
     mapper = dimos_cluster.deploy(
         Map, voxel_size=0.5, cost_resolution=0.05, global_publish_interval=1.0
@@ -79,13 +79,13 @@ def test_module3d_replay(dimos_cluster):
     module3D.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
     module3D.detections.transport = LCMTransport("/detections", Detection2DArray)
 
+    module3D.detected_pointcloud_0.transport = LCMTransport("/detected/pointcloud/0", PointCloud2)
     module3D.detected_pointcloud_1.transport = LCMTransport("/detected/pointcloud/1", PointCloud2)
     module3D.detected_pointcloud_2.transport = LCMTransport("/detected/pointcloud/2", PointCloud2)
-    module3D.detected_pointcloud_3.transport = LCMTransport("/detected/pointcloud/3", PointCloud2)
 
+    module3D.detected_image_0.transport = LCMTransport("/detected/image/0", Image)
     module3D.detected_image_1.transport = LCMTransport("/detected/image/1", Image)
     module3D.detected_image_2.transport = LCMTransport("/detected/image/2", Image)
-    module3D.detected_image_3.transport = LCMTransport("/detected/image/3", Image)
 
     module3D.start()
     connection.start()

@@ -55,7 +55,7 @@ logging.getLogger("root").setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
-image_resize_factor = 1
+image_resize_factor = 2
 originalwidth, originalheight = (1280, 720)
 
 
@@ -104,18 +104,13 @@ class FakeRTC(UnitreeWebRTCConnection):
         print("video stream start")
         video_store = TimedSensorReplay(
             f"{self.dir_name}/video",
-            # autocast=lambda data: Image.from_numpy(data, format=ImageFormat.RGB),
         )
 
         return video_store.stream(**self.replay_config)
 
     @functools.cache
     def video_stream(self):
-        def adjust_timestamp(image: Image) -> Image:
-            image.ts = image.ts - 60.0  # adjust timestamp to match lidar
-            return image
-
-        return self.raw_video_stream().pipe(ops.map(adjust_timestamp))
+        return self.raw_video_stream()
 
     def move(self, vector: Twist, duration: float = 0.0):
         pass
@@ -188,15 +183,15 @@ class ConnectionModule(Module):
 
         def attach_frame_id(image: Image) -> Image:
             image.frame_id = "camera_optical"
-            return image
-            # return image.resize(
-            #    int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
-            # )
+            # return image
+            return image.resize(
+                int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
+            )
 
-        # sharpness_window(
-        # 5, self.connection.video_stream().pipe(ops.map(attach_frame_id))
-        # ).subscribe(image_pub)
-        self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(self.video.publish)
+        sharpness_window(
+            2, self.connection.video_stream().pipe(ops.map(attach_frame_id))
+        ).subscribe(self.video.publish)
+        # self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(self.video.publish)
 
         # self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
         self.camera_info_stream().subscribe(self.camera_info.publish)
