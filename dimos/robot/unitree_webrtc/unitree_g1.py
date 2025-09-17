@@ -26,6 +26,7 @@ from typing import Optional
 from dimos import core
 from dimos.core import Module, In, Out, rpc
 from dimos.hardware.zed_camera import ZEDModule
+from dimos.hardware.gstreamer_camera import GstreamerCameraModule
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
 from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -130,6 +131,9 @@ class UnitreeG1(Robot):
         recording_path: str = None,
         replay_path: str = None,
         enable_joystick: bool = False,
+        camera_type: str = "zed",
+        gstreamer_host: str = "localhost",
+        gstreamer_port: int = 5000,
     ):
         """Initialize the G1 robot.
 
@@ -140,6 +144,9 @@ class UnitreeG1(Robot):
             recording_path: Path to save recordings (if recording)
             replay_path: Path to replay recordings from (if replaying)
             enable_joystick: Enable pygame joystick control
+            camera_type: Type of camera to use ("zed" or "gstreamer")
+            gstreamer_host: Host for GStreamer camera connection
+            gstreamer_port: Port for GStreamer camera connection
         """
         super().__init__()
         self.ip = ip
@@ -147,6 +154,9 @@ class UnitreeG1(Robot):
         self.recording_path = recording_path
         self.replay_path = replay_path
         self.enable_joystick = enable_joystick
+        self.camera_type = camera_type
+        self.gstreamer_host = gstreamer_host
+        self.gstreamer_port = gstreamer_port
         self.lcm = LCM()
 
         # Initialize skill library with G1 robot type
@@ -203,7 +213,7 @@ class UnitreeG1(Robot):
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
 
     def _deploy_camera(self):
-        """Deploy and configure the ZED camera module (real or fake based on replay_path)."""
+        """Deploy and configure the ZED camera module (from the sdk, from gstreamer, or fake)."""
 
         if self.replay_path:
             # Use FakeZEDModule for replay
@@ -215,6 +225,29 @@ class UnitreeG1(Robot):
                 recording_path=self.replay_path,
                 frame_id="zed_camera",
             )
+            # Configure ZED LCM transports
+            self.zed_camera.color_image.transport = core.LCMTransport("/zed/color_image", Image)
+            self.zed_camera.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
+            self.zed_camera.camera_info.transport = core.LCMTransport(
+                "/zed/camera_info", CameraInfo
+            )
+            self.zed_camera.pose.transport = core.LCMTransport("/zed/pose", PoseStamped)
+
+        elif self.camera_type == "gstreamer":
+            # Use GStreamer camera module
+            logger.info(
+                f"Deploying GStreamer camera module (connecting to {self.gstreamer_host}:{self.gstreamer_port})..."
+            )
+            self.zed_camera = self.dimos.deploy(
+                GstreamerCameraModule,
+                host=self.gstreamer_host,
+                port=self.gstreamer_port,
+                frame_id="zed_camera",
+                reconnect_interval=5.0,
+            )
+            self.zed_camera.video.transport = core.LCMTransport("/zed/color_image", Image)
+            logger.info("GStreamer camera module configured")
+
         else:
             # Use real ZEDModule (with optional recording)
             logger.info("Deploying ZED camera module...")
@@ -231,14 +264,14 @@ class UnitreeG1(Robot):
                 frame_id="zed_camera",
                 recording_path=self.recording_path,  # Pass recording path if provided
             )
-
-        # Configure ZED LCM transports (same for both real and fake)
-        self.zed_camera.color_image.transport = core.LCMTransport("/zed/color_image", Image)
-        self.zed_camera.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
-        self.zed_camera.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
-        self.zed_camera.pose.transport = core.LCMTransport("/zed/pose", PoseStamped)
-
-        logger.info("ZED camera module configured")
+            # Configure ZED LCM transports
+            self.zed_camera.color_image.transport = core.LCMTransport("/zed/color_image", Image)
+            self.zed_camera.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
+            self.zed_camera.camera_info.transport = core.LCMTransport(
+                "/zed/camera_info", CameraInfo
+            )
+            self.zed_camera.pose.transport = core.LCMTransport("/zed/pose", PoseStamped)
+            logger.info("ZED camera module configured")
 
     def _deploy_visualization(self):
         """Deploy visualization tools."""
@@ -310,6 +343,23 @@ def main():
     parser.add_argument("--output-dir", help="Output directory for logs/data")
     parser.add_argument("--record", help="Path to save recording")
     parser.add_argument("--replay", help="Path to replay recording from")
+    parser.add_argument(
+        "--camera-type",
+        choices=["zed", "gstreamer"],
+        default="zed",
+        help="Type of camera to use (default: zed)",
+    )
+    parser.add_argument(
+        "--gstreamer-host",
+        default="localhost",
+        help="GStreamer camera host (default: localhost)",
+    )
+    parser.add_argument(
+        "--gstreamer-port",
+        type=int,
+        default=5000,
+        help="GStreamer camera port (default: 5000)",
+    )
 
     args = parser.parse_args()
 
@@ -325,6 +375,9 @@ def main():
         recording_path=args.record,
         replay_path=args.replay,
         enable_joystick=args.joystick,
+        camera_type=args.camera_type,
+        gstreamer_host=args.gstreamer_host,
+        gstreamer_port=args.gstreamer_port,
     )
     robot.start()
 
