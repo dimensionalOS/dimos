@@ -103,7 +103,14 @@ class XArmRobot(Robot):
             base_frame_id="base_link",
             ee_frame_id="ee_link",
             camera_frame_id="zed_camera_link",
-            ee_to_camera_6dof=[0.115, 0.0, -.10, 3.14, -1.57, 0],  # EE to camera transform for xArm
+            ee_to_camera_6dof=[
+                0.115,
+                0.0,
+                -0.10,
+                3.14,
+                -1.57,
+                0,
+            ],  # EE to camera transform for xArm
         )
 
         # Configure xArm output
