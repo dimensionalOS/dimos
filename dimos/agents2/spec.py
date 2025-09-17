@@ -196,21 +196,25 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
 
                 table.add_row(Text("Human", style="green"), Text(content, style="green"))
             elif isinstance(message, AIMessage):
+                content = message.content
+                if not isinstance(content, str):
+                    content = str(content) if content else ""
+
                 if hasattr(message, "metadata") and message.metadata.get("state"):
                     table.add_row(
                         Text("State Summary", style="blue"),
-                        Text(message.content, style="blue"),
+                        Text(content, style="blue"),
                     )
                 else:
                     table.add_row(
-                        Text("Agent", style="magenta"), Text(message.content, style="magenta")
+                        Text("Agent", style="magenta"), Text(content, style="magenta")
                     )
 
                 for tool_call in message.tool_calls:
                     table.add_row(
                         "Tool Call",
                         Text(
-                            f"{tool_call.get('name')}({tool_call.get('args').get('args')})",
+                            f"{tool_call.get('name')}({tool_call.get('args')})",
                             style="bold magenta",
                         ),
                     )

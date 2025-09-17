@@ -27,7 +27,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from dimos.agents2.spec import AgentSpec
+from dimos.agents2.spec import AgentSpec, Provider
 from dimos.core import rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
@@ -221,6 +221,7 @@ class Agent(AgentSpec):
             return
         for tool_call in tool_calls:
             logger.info(f"executing skill call {tool_call}")
+                
             self.coordinator.call_skill(
                 tool_call.get("id"),
                 tool_call.get("name"),
@@ -266,17 +267,25 @@ class Agent(AgentSpec):
                 for state_msg in self.state_messages:
                     self.publish(state_msg)
 
-                # history() builds our message history dynamically
-                # ensures we include latest system state, but not old ones.
-                msg = self._llm.invoke(self.history())
-                self.append_history(msg)
+                # Check if we have enough messages for LLM invocation
+                # Anthropic requires at least one human message in addition to system message
+                current_history = self.history()
+                if len(current_history) > 1 or (len(current_history) == 1 and not isinstance(current_history[0], SystemMessage)):
+                    # history() builds our message history dynamically
+                    # ensures we include latest system state, but not old ones.
+                    msg = self._llm.invoke(current_history)
+                    self.append_history(msg)
 
-                logger.info(f"Agent response: {msg.content}")
+                    logger.info(f"Agent response: {msg.content}")
 
-                state = _get_state()
+                    state = _get_state()
 
-                if msg.tool_calls:
-                    self.execute_tool_calls(msg.tool_calls)
+                    if msg.tool_calls:
+                        self.execute_tool_calls(msg.tool_calls)
+                else:
+                    # No LLM invocation needed yet, but still need to handle any updates
+                    msg = AIMessage(content="", tool_calls=[])
+                    state = _get_state()
 
                 print(self)
                 print(self.coordinator)

@@ -108,19 +108,16 @@ class FakeRTC:
 
     @functools.cache
     def lidar_stream(self):
-        print("lidar stream start")
         lidar_store = TimedSensorReplay("unitree_office_walk/lidar", autocast=LidarMessage.from_msg)
         return lidar_store.stream()
 
     @functools.cache
     def odom_stream(self):
-        print("odom stream start")
         odom_store = TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
         return odom_store.stream()
 
     @functools.cache
     def video_stream(self):
-        print("video stream start")
         video_store = TimedSensorReplay(
             "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
         )

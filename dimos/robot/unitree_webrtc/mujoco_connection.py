@@ -99,8 +99,6 @@ class MujocoConnection:
 
     @functools.cache
     def odom_stream(self):
-        print("odom stream start")
-
         def on_subscribe(observer, scheduler):
             if self._is_cleaned_up:
                 observer.on_completed()
@@ -135,8 +133,6 @@ class MujocoConnection:
 
     @functools.cache
     def video_stream(self):
-        print("video stream start")
-
         def on_subscribe(observer, scheduler):
             if self._is_cleaned_up:
                 observer.on_completed()
@@ -172,6 +168,9 @@ class MujocoConnection:
     def move(self, twist: Twist, duration: float = 0.0):
         if not self._is_cleaned_up:
             self.mujoco_thread.move(twist, duration)
+
+    def publish_request(self, topic: str, data: dict):
+        print("Received sport command request in Mujoco", topic, data)
 
     def stop(self):
         """Stop the MuJoCo connection gracefully."""

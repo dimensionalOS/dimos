@@ -264,7 +264,6 @@ class SkillStateDict(dict[str, SkillState]):
 
 from dimos.core.module import Module
 
-
 # This class is responsible for managing the lifecycle of skills,
 # handling skill calls, and coordinating communication between the agent and skills.
 #
@@ -379,6 +378,8 @@ class SkillCoordinator(Module):
         if isinstance(arg_keywords, list):
             arg_list = arg_keywords
             arg_keywords = {}
+
+        arg_list, arg_keywords = _interpret_args(args)
 
         return skill_config.call(
             call_id,
@@ -637,3 +638,21 @@ class SkillCoordinator(Module):
                 all_skills[skill_name] = skill_config.bind(getattr(container, skill_name))
 
         return all_skills
+
+
+def _interpret_args(args, first_pass=True):
+    if isinstance(args, list):
+        return args, {}
+    if not isinstance(args, dict):
+        return [args], {}
+    if args.keys() == {'args', 'kwargs'}:
+        return args['args'], args['kwargs']
+    if args.keys() == {'kwargs'}:
+        return [], args['kwargs']
+    if args.keys() != {'args'}:
+        return [], args
+    
+    if first_pass:
+        return _interpret_args(args['args'], first_pass=False)
+    
+    return [], args

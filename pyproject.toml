@@ -56,6 +56,7 @@ dependencies = [
     "langchain-chroma>=0.2.5",
     "langchain-core>=0.3.72",
     "langchain-openai>=0.3.28",
+    "langchain-anthropic>=0.3.20",
     "langchain-text-splitters>=0.3.9",  
     
     # Class Extraction
