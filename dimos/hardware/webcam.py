@@ -157,10 +157,10 @@ class Webcam(ColorCameraHardware[WebcamConfig]):
             ts=time.time(),  # Current timestamp
         )
 
-        if self.config.stereo_slice in (1, 2):
+        if self.config.stereo_slice in ("left", "right"):
             image.frame_id = self._frame(f"camera_stereo_{self.config.stereo_slice}")
             half_width = image.width // 2
-            if self.config.stereo_slice == 1:
+            if self.config.stereo_slice == "left":
                 image = image.crop(0, 0, half_width, image.height)
             else:
                 image = image.crop(half_width, 0, half_width, image.height)
