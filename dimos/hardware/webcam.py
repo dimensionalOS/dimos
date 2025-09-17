@@ -62,7 +62,7 @@ class WebcamConfig(CameraConfig):
     frequency: int = 10
     camera_info: CameraInfo = field(default_factory=CameraInfo)
     frame_id_prefix: Optional[str] = None
-    stereo_slice: Optional[int] = None  # For stereo cameras, 1 for left, 2 for right
+    stereo_slice: Optional[Literal["left", "right"]] = None  # For stereo cameras
 
 
 class Webcam(ColorCameraHardware[WebcamConfig]):
