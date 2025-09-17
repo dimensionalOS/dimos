@@ -378,7 +378,7 @@ def main():
         replay_path=args.replay,
         enable_joystick=args.joystick,
         enable_camera=args.camera,
-        enable_connection=False,
+        enable_connection=os.getenv("ROBOT_IP") is not None,
         enable_ros_bridge=True,
     )
     robot.start()
