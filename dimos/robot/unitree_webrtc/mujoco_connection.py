@@ -99,8 +99,6 @@ class MujocoConnection:
 
     @functools.cache
     def odom_stream(self):
-        print("odom stream start")
-
         def on_subscribe(observer, scheduler):
             if self._is_cleaned_up:
                 observer.on_completed()
@@ -135,8 +133,6 @@ class MujocoConnection:
 
     @functools.cache
     def video_stream(self):
-        print("video stream start")
-
         def on_subscribe(observer, scheduler):
             if self._is_cleaned_up:
                 observer.on_completed()
