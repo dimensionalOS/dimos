@@ -12,898 +12,409 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import MagicMock, patch
+import time
+import threading
+import unittest
+import numpy as np
 
-import pytest
-from geometry_msgs.msg import Twist as ROSTwist
-from geometry_msgs.msg import Vector3 as ROSVector3
-from geometry_msgs.msg import PoseStamped as ROSPoseStamped
-from geometry_msgs.msg import Pose as ROSPose
-from geometry_msgs.msg import Point as ROSPoint
-from geometry_msgs.msg import Quaternion as ROSQuaternion
-from nav_msgs.msg import Path as ROSPath
-from sensor_msgs.msg import LaserScan as ROSLaserScan
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-from std_msgs.msg import String as ROSString
-from std_msgs.msg import Header as ROSHeader
+from sensor_msgs.msg import PointField
+from tf2_msgs.msg import TFMessage as ROSTFMessage
+from geometry_msgs.msg import TransformStamped
 
-from dimos.msgs.geometry_msgs import Twist, Vector3, PoseStamped, Pose, Quaternion
-from dimos.msgs.nav_msgs import Path
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.msgs.geometry_msgs import TwistStamped
+from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.tf2_msgs import TFMessage
 from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
 
 
-@pytest.fixture
-def bridge():
-    """Create a ROSBridge instance with mocked internals."""
-    with (
-        patch("dimos.robot.ros_bridge.rclpy") as mock_rclpy,
-        patch("dimos.robot.ros_bridge.Node") as mock_node_class,
-        patch("dimos.robot.ros_bridge.LCM") as mock_lcm_class,
-        patch("dimos.robot.ros_bridge.MultiThreadedExecutor") as mock_executor_class,
-    ):
-        mock_rclpy.ok.return_value = False
-        mock_node = MagicMock()
-        mock_node.create_subscription = MagicMock(return_value=MagicMock())
-        mock_node.create_publisher = MagicMock(return_value=MagicMock())
-        mock_node_class.return_value = mock_node
-
-        mock_lcm = MagicMock()
-        mock_lcm.subscribe = MagicMock(return_value=MagicMock())
-        mock_lcm.publish = MagicMock()
-        mock_lcm_class.return_value = mock_lcm
-
-        mock_executor = MagicMock()
-        mock_executor_class.return_value = mock_executor
-
-        bridge = ROSBridge("test_bridge")
-
-        bridge._mock_rclpy = mock_rclpy
-        bridge._mock_node_class = mock_node_class
-        bridge._mock_lcm_class = mock_lcm_class
-
-        return bridge
-
-
-def test_bridge_initialization():
-    """Test that the bridge initializes correctly with its own instances."""
-    with (
-        patch("dimos.robot.ros_bridge.rclpy") as mock_rclpy,
-        patch("dimos.robot.ros_bridge.Node") as mock_node_class,
-        patch("dimos.robot.ros_bridge.LCM") as mock_lcm_class,
-        patch("dimos.robot.ros_bridge.MultiThreadedExecutor"),
-    ):
-        mock_rclpy.ok.return_value = False
-
-        bridge = ROSBridge("test_bridge")
-
-        mock_rclpy.init.assert_called_once()
-        mock_node_class.assert_called_once_with("test_bridge")
-        mock_lcm_class.assert_called_once()
-        bridge.lcm.start.assert_called_once()
-
-        assert bridge._bridges == {}
-        assert bridge._qos is not None
-
-
-def test_add_topic_ros_to_dimos(bridge):
-    """Test that add_topic creates ROS subscription for ROS->DIMOS direction."""
-    topic_name = "/cmd_vel"
-
-    bridge.add_topic(topic_name, Twist, ROSTwist, direction=BridgeDirection.ROS_TO_DIMOS)
-
-    bridge.node.create_subscription.assert_called_once()
-    call_args = bridge.node.create_subscription.call_args
-    assert call_args[0][0] == ROSTwist
-    assert call_args[0][1] == topic_name
-
-    bridge.node.create_publisher.assert_not_called()
-    bridge.lcm.subscribe.assert_not_called()
-
-    assert topic_name in bridge._bridges
-    assert "dimos_topic" in bridge._bridges[topic_name]
-    assert "dimos_type" in bridge._bridges[topic_name]
-    assert "ros_type" in bridge._bridges[topic_name]
-    assert bridge._bridges[topic_name]["dimos_type"] == Twist
-    assert bridge._bridges[topic_name]["ros_type"] == ROSTwist
-    assert bridge._bridges[topic_name]["direction"] == BridgeDirection.ROS_TO_DIMOS
-
-
-def test_add_topic_dimos_to_ros(bridge):
-    """Test that add_topic creates ROS publisher for DIMOS->ROS direction."""
-    topic_name = "/cmd_vel"
-
-    bridge.add_topic(topic_name, Twist, ROSTwist, direction=BridgeDirection.DIMOS_TO_ROS)
-
-    bridge.node.create_subscription.assert_not_called()
-    bridge.node.create_publisher.assert_called_once_with(ROSTwist, topic_name, bridge._qos)
-    bridge.lcm.subscribe.assert_called_once()
-
-    assert topic_name in bridge._bridges
-    assert "dimos_topic" in bridge._bridges[topic_name]
-    assert "dimos_type" in bridge._bridges[topic_name]
-    assert "ros_type" in bridge._bridges[topic_name]
-    assert bridge._bridges[topic_name]["dimos_type"] == Twist
-    assert bridge._bridges[topic_name]["ros_type"] == ROSTwist
-    assert bridge._bridges[topic_name]["direction"] == BridgeDirection.DIMOS_TO_ROS
-
-
-def test_ros_to_dimos_conversion(bridge):
-    """Test ROS to DIMOS message conversion and publishing."""
-    # Create a ROS Twist message
-    ros_msg = ROSTwist()
-    ros_msg.linear = ROSVector3(x=1.0, y=2.0, z=3.0)
-    ros_msg.angular = ROSVector3(x=0.1, y=0.2, z=0.3)
-
-    # Create DIMOS topic
-    dimos_topic = Topic("/test", Twist)
-
-    # Call the conversion method with type
-    bridge._ros_to_dimos(ros_msg, dimos_topic, Twist, "/test")
-
-    # Verify DIMOS publish was called
-    bridge.lcm.publish.assert_called_once()
-
-    # Get the published message
-    published_topic, published_msg = bridge.lcm.publish.call_args[0]
-
-    assert published_topic == dimos_topic
-    assert isinstance(published_msg, Twist)
-    assert published_msg.linear.x == 1.0
-    assert published_msg.linear.y == 2.0
-    assert published_msg.linear.z == 3.0
-    assert published_msg.angular.x == 0.1
-    assert published_msg.angular.y == 0.2
-    assert published_msg.angular.z == 0.3
-
-
-def test_dimos_to_ros_conversion(bridge):
-    """Test DIMOS to ROS message conversion and publishing."""
-    # Create a DIMOS Twist message
-    dimos_msg = Twist(linear=Vector3(4.0, 5.0, 6.0), angular=Vector3(0.4, 0.5, 0.6))
-
-    # Create mock ROS publisher
-    ros_pub = MagicMock()
-
-    # Call the conversion method
-    bridge._dimos_to_ros(dimos_msg, ros_pub, "/test")
-
-    # Verify ROS publish was called
-    ros_pub.publish.assert_called_once()
-
-    # Get the published message
-    published_msg = ros_pub.publish.call_args[0][0]
-
-    assert isinstance(published_msg, ROSTwist)
-    assert published_msg.linear.x == 4.0
-    assert published_msg.linear.y == 5.0
-    assert published_msg.linear.z == 6.0
-    assert published_msg.angular.x == 0.4
-    assert published_msg.angular.y == 0.5
-    assert published_msg.angular.z == 0.6
-
-
-def test_unidirectional_flow_ros_to_dimos(bridge):
-    """Test that messages flow from ROS to DIMOS when configured."""
-    topic_name = "/cmd_vel"
-
-    bridge.add_topic(topic_name, Twist, ROSTwist, direction=BridgeDirection.ROS_TO_DIMOS)
-
-    ros_callback = bridge.node.create_subscription.call_args[0][2]
-
-    ros_msg = ROSTwist()
-    ros_msg.linear = ROSVector3(x=1.5, y=2.5, z=3.5)
-    ros_msg.angular = ROSVector3(x=0.15, y=0.25, z=0.35)
-
-    ros_callback(ros_msg)
-
-    bridge.lcm.publish.assert_called_once()
-    _, published_msg = bridge.lcm.publish.call_args[0]
-    assert isinstance(published_msg, Twist)
-    assert published_msg.linear.x == 1.5
-
-
-def test_unidirectional_flow_dimos_to_ros(bridge):
-    """Test that messages flow from DIMOS to ROS when configured."""
-    topic_name = "/cmd_vel"
-
-    bridge.add_topic(topic_name, Twist, ROSTwist, direction=BridgeDirection.DIMOS_TO_ROS)
-
-    dimos_callback = bridge.lcm.subscribe.call_args[0][1]
-
-    dimos_msg = Twist(linear=Vector3(7.0, 8.0, 9.0), angular=Vector3(0.7, 0.8, 0.9))
-
-    ros_publisher = bridge.node.create_publisher.return_value
-
-    dimos_callback(dimos_msg, None)
-
-    ros_publisher.publish.assert_called_once()
-    published_ros_msg = ros_publisher.publish.call_args[0][0]
-    assert isinstance(published_ros_msg, ROSTwist)
-    assert published_ros_msg.linear.x == 7.0
-
-
-def test_multiple_topics(bridge):
-    """Test that multiple topics can be bridged simultaneously."""
-    topics = [
-        ("/cmd_vel", BridgeDirection.ROS_TO_DIMOS),
-        ("/teleop", BridgeDirection.DIMOS_TO_ROS),
-        ("/nav_cmd", BridgeDirection.ROS_TO_DIMOS),
-    ]
-
-    for topic, direction in topics:
-        bridge.add_topic(topic, Twist, ROSTwist, direction=direction)
-
-    assert len(bridge._bridges) == 3
-    for topic, _ in topics:
-        assert topic in bridge._bridges
-
-    assert bridge.node.create_subscription.call_count == 2
-    assert bridge.node.create_publisher.call_count == 1
-    assert bridge.lcm.subscribe.call_count == 1
-
-
-def test_stress_ros_to_dimos_100_messages(bridge):
-    """Test publishing 100 ROS messages and verify DIMOS receives them all."""
-    topic_name = "/stress_test"
-    num_messages = 100
-
-    bridge.add_topic(topic_name, Twist, ROSTwist, direction=BridgeDirection.ROS_TO_DIMOS)
-
-    ros_callback = bridge.node.create_subscription.call_args[0][2]
-
-    for i in range(num_messages):
-        ros_msg = ROSTwist()
-        ros_msg.linear = ROSVector3(x=float(i), y=float(i * 2), z=float(i * 3))
-        ros_msg.angular = ROSVector3(x=float(i * 0.1), y=float(i * 0.2), z=float(i * 0.3))
-
-        ros_callback(ros_msg)
-
-    assert bridge.lcm.publish.call_count == num_messages
-
-    last_call = bridge.lcm.publish.call_args_list[-1]
-    _, last_msg = last_call[0]
-    assert isinstance(last_msg, Twist)
-    assert last_msg.linear.x == 99.0
-    assert last_msg.linear.y == 198.0
-    assert last_msg.linear.z == 297.0
-    assert abs(last_msg.angular.x - 9.9) < 0.01
-    assert abs(last_msg.angular.y - 19.8) < 0.01
-    assert abs(last_msg.angular.z - 29.7) < 0.01
-
-
-def test_stress_dimos_to_ros_100_messages(bridge):
-    """Test publishing 100 DIMOS messages and verify ROS receives them all."""
-    topic_name = "/stress_test_reverse"
-    num_messages = 100
-
-    bridge.add_topic(topic_name, Twist, ROSTwist, direction=BridgeDirection.DIMOS_TO_ROS)
-
-    dimos_callback = bridge.lcm.subscribe.call_args[0][1]
-    ros_publisher = bridge.node.create_publisher.return_value
-
-    for i in range(num_messages):
-        dimos_msg = Twist(
-            linear=Vector3(float(i * 10), float(i * 20), float(i * 30)),
-            angular=Vector3(float(i * 0.01), float(i * 0.02), float(i * 0.03)),
+class TestROSBridge(unittest.TestCase):
+    """Test suite for ROS-DIMOS bridge."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        # Initialize ROS if not already done
+        if not rclpy.ok():
+            rclpy.init()
+
+        # Create test bridge
+        self.bridge = ROSBridge("test_ros_bridge")
+
+        # Create test node for publishing/subscribing
+        self.test_node = Node("test_node")
+
+        # Track received messages
+        self.ros_messages = []
+        self.dimos_messages = []
+        self.message_timestamps = {"ros": [], "dimos": []}
+
+    def tearDown(self):
+        """Clean up test fixtures."""
+        self.test_node.destroy_node()
+        self.bridge.shutdown()
+        if rclpy.ok():
+            rclpy.try_shutdown()
+
+    def test_ros_to_dimos_twist(self):
+        """Test ROS TwistStamped to DIMOS conversion and transmission."""
+        # Set up bridge
+        self.bridge.add_topic(
+            "/test_twist", TwistStamped, ROSTwistStamped, BridgeDirection.ROS_TO_DIMOS
         )
 
-        dimos_callback(dimos_msg, None)
+        # Subscribe to DIMOS side
+        lcm = LCM()
+        lcm.start()
+        topic = Topic("/test_twist", TwistStamped)
 
-    assert ros_publisher.publish.call_count == num_messages
+        def dimos_callback(msg, _topic):
+            self.dimos_messages.append(msg)
+            self.message_timestamps["dimos"].append(time.time())
 
-    last_call = ros_publisher.publish.call_args_list[-1]
-    last_ros_msg = last_call[0][0]
-    assert isinstance(last_ros_msg, ROSTwist)
-    assert last_ros_msg.linear.x == 990.0
-    assert last_ros_msg.linear.y == 1980.0
-    assert last_ros_msg.linear.z == 2970.0
-    assert abs(last_ros_msg.angular.x - 0.99) < 0.001
-    assert abs(last_ros_msg.angular.y - 1.98) < 0.001
-    assert abs(last_ros_msg.angular.z - 2.97) < 0.001
+        lcm.subscribe(topic, dimos_callback)
 
+        # Publish from ROS side
+        ros_pub = self.test_node.create_publisher(ROSTwistStamped, "/test_twist", 10)
 
-def test_two_topics_different_directions(bridge):
-    """Test two topics with different directions handling messages."""
-    topic_r2d = "/ros_to_dimos"
-    topic_d2r = "/dimos_to_ros"
+        # Send test messages
+        for i in range(10):
+            msg = ROSTwistStamped()
+            msg.header.stamp = self.test_node.get_clock().now().to_msg()
+            msg.header.frame_id = f"frame_{i}"
+            msg.twist.linear.x = float(i)
+            msg.twist.linear.y = float(i * 2)
+            msg.twist.angular.z = float(i * 0.1)
 
-    bridge.add_topic(topic_r2d, Twist, ROSTwist, direction=BridgeDirection.ROS_TO_DIMOS)
-    bridge.add_topic(topic_d2r, Twist, ROSTwist, direction=BridgeDirection.DIMOS_TO_ROS)
+            ros_pub.publish(msg)
+            self.message_timestamps["ros"].append(time.time())
+            time.sleep(0.01)  # 100Hz
 
-    ros_callback = bridge.node.create_subscription.call_args[0][2]
-    dimos_callback = bridge.lcm.subscribe.call_args[0][1]
-    ros_publisher = bridge.node.create_publisher.return_value
+        # Allow time for processing
+        time.sleep(0.5)
 
-    for i in range(50):
-        ros_msg = ROSTwist()
-        ros_msg.linear = ROSVector3(x=float(i), y=0.0, z=0.0)
-        ros_msg.angular = ROSVector3(x=0.0, y=0.0, z=float(i * 0.1))
-        ros_callback(ros_msg)
+        # Verify messages received
+        self.assertEqual(len(self.dimos_messages), 10, "Should receive all 10 messages")
 
-        dimos_msg = Twist(
-            linear=Vector3(0.0, float(i), 0.0), angular=Vector3(0.0, 0.0, float(i * 0.2))
+        # Verify message content
+        for i, msg in enumerate(self.dimos_messages):
+            self.assertEqual(msg.frame_id, f"frame_{i}")
+            self.assertAlmostEqual(msg.linear.x, float(i), places=5)
+            self.assertAlmostEqual(msg.linear.y, float(i * 2), places=5)
+            self.assertAlmostEqual(msg.angular.z, float(i * 0.1), places=5)
+
+    def test_dimos_to_ros_twist(self):
+        """Test DIMOS TwistStamped to ROS conversion and transmission."""
+        # Set up bridge
+        self.bridge.add_topic(
+            "/test_twist_reverse", TwistStamped, ROSTwistStamped, BridgeDirection.DIMOS_TO_ROS
         )
-        dimos_callback(dimos_msg, None)
 
-    assert bridge.lcm.publish.call_count == 50
-    assert ros_publisher.publish.call_count == 50
+        # Subscribe to ROS side
+        def ros_callback(msg):
+            self.ros_messages.append(msg)
+            self.message_timestamps["ros"].append(time.time())
 
-    last_dimos_call = bridge.lcm.publish.call_args_list[-1]
-    _, last_dimos_msg = last_dimos_call[0]
-    assert last_dimos_msg.linear.x == 49.0
+        self.test_node.create_subscription(ROSTwistStamped, "/test_twist_reverse", ros_callback, 10)
 
-    last_ros_call = ros_publisher.publish.call_args_list[-1]
-    last_ros_msg = last_ros_call[0][0]
-    assert last_ros_msg.linear.y == 49.0
+        # Use the bridge's LCM instance for publishing
+        topic = Topic("/test_twist_reverse", TwistStamped)
 
+        # Send test messages
+        for i in range(10):
+            msg = TwistStamped(ts=time.time(), frame_id=f"dimos_frame_{i}")
+            msg.linear.x = float(i * 3)
+            msg.linear.y = float(i * 4)
+            msg.angular.z = float(i * 0.2)
 
-def test_high_frequency_burst(bridge):
-    """Test handling a burst of 1000 messages to ensure no drops."""
-    topic_name = "/burst_test"
-    burst_size = 1000
+            self.bridge.lcm.publish(topic, msg)
+            self.message_timestamps["dimos"].append(time.time())
+            time.sleep(0.01)  # 100Hz
 
-    bridge.add_topic(topic_name, Twist, ROSTwist, direction=BridgeDirection.ROS_TO_DIMOS)
+        # Allow time for processing and spin the test node
+        for _ in range(50):  # Spin for 0.5 seconds
+            rclpy.spin_once(self.test_node, timeout_sec=0.01)
 
-    ros_callback = bridge.node.create_subscription.call_args[0][2]
+        # Verify messages received
+        self.assertEqual(len(self.ros_messages), 10, "Should receive all 10 messages")
 
-    messages_sent = []
-    for i in range(burst_size):
-        ros_msg = ROSTwist()
-        ros_msg.linear = ROSVector3(x=float(i), y=float(i), z=float(i))
-        ros_msg.angular = ROSVector3(x=0.0, y=0.0, z=0.0)
-        messages_sent.append(i)
-        ros_callback(ros_msg)
+        # Verify message content
+        for i, msg in enumerate(self.ros_messages):
+            self.assertEqual(msg.header.frame_id, f"dimos_frame_{i}")
+            self.assertAlmostEqual(msg.twist.linear.x, float(i * 3), places=5)
+            self.assertAlmostEqual(msg.twist.linear.y, float(i * 4), places=5)
+            self.assertAlmostEqual(msg.twist.angular.z, float(i * 0.2), places=5)
 
-    assert bridge.lcm.publish.call_count == burst_size
-
-    for idx, call in enumerate(bridge.lcm.publish.call_args_list):
-        _, msg = call[0]
-        assert msg.linear.x == float(idx)
-
-
-def test_multiple_topics_with_different_rates(bridge):
-    """Test multiple topics receiving messages at different rates."""
-    topics = {
-        "/fast_topic": 100,  # 100 messages
-        "/medium_topic": 50,  # 50 messages
-        "/slow_topic": 10,  # 10 messages
-    }
-
-    for topic_name in topics:
-        bridge.add_topic(topic_name, Twist, ROSTwist, direction=BridgeDirection.ROS_TO_DIMOS)
-
-    callbacks = []
-    for i in range(3):
-        callbacks.append(bridge.node.create_subscription.call_args_list[i][0][2])
-
-    bridge.lcm.publish.reset_mock()
-
-    for topic_idx, (topic_name, msg_count) in enumerate(topics.items()):
-        for i in range(msg_count):
-            ros_msg = ROSTwist()
-            ros_msg.linear = ROSVector3(x=float(topic_idx), y=float(i), z=0.0)
-            callbacks[topic_idx](ros_msg)
-
-    total_expected = sum(topics.values())
-    assert bridge.lcm.publish.call_count == total_expected
-
-
-def test_pose_stamped_bridging(bridge):
-    """Test bridging PoseStamped messages."""
-    topic_name = "/robot_pose"
-
-    # Test ROS to DIMOS
-    bridge.add_topic(
-        topic_name, PoseStamped, ROSPoseStamped, direction=BridgeDirection.ROS_TO_DIMOS
-    )
-
-    ros_callback = bridge.node.create_subscription.call_args[0][2]
-
-    ros_msg = ROSPoseStamped()
-    ros_msg.header.frame_id = "map"
-    ros_msg.header.stamp.sec = 100
-    ros_msg.header.stamp.nanosec = 500000000
-    ros_msg.pose.position.x = 10.0
-    ros_msg.pose.position.y = 20.0
-    ros_msg.pose.position.z = 30.0
-    ros_msg.pose.orientation.x = 0.0
-    ros_msg.pose.orientation.y = 0.0
-    ros_msg.pose.orientation.z = 0.707
-    ros_msg.pose.orientation.w = 0.707
-
-    ros_callback(ros_msg)
-
-    bridge.lcm.publish.assert_called_once()
-    _, published_msg = bridge.lcm.publish.call_args[0]
-    assert hasattr(published_msg, "frame_id")
-    assert hasattr(published_msg, "position")
-    assert hasattr(published_msg, "orientation")
-
-
-def test_path_bridging(bridge):
-    """Test bridging Path messages."""
-    topic_name = "/planned_path"
-
-    # Test DIMOS to ROS
-    bridge.add_topic(topic_name, Path, ROSPath, direction=BridgeDirection.DIMOS_TO_ROS)
-
-    dimos_callback = bridge.lcm.subscribe.call_args[0][1]
-    ros_publisher = bridge.node.create_publisher.return_value
-
-    # Create a DIMOS Path with multiple poses
-    poses = []
-    for i in range(5):
-        pose = PoseStamped(
-            ts=100.0 + i,
-            frame_id="map",
-            position=Vector3(float(i), float(i * 2), 0.0),
-            orientation=Quaternion(0, 0, 0, 1),
+    def test_frequency_preservation(self):
+        """Test that message frequencies are preserved through the bridge."""
+        # Set up bridge
+        self.bridge.add_topic(
+            "/test_freq", TwistStamped, ROSTwistStamped, BridgeDirection.ROS_TO_DIMOS
         )
-        poses.append(pose)
-
-    dimos_path = Path(frame_id="map", poses=poses)
-
-    dimos_callback(dimos_path, None)
-
-    ros_publisher.publish.assert_called_once()
-    published_ros_msg = ros_publisher.publish.call_args[0][0]
-    assert isinstance(published_ros_msg, ROSPath)
-
-
-def test_multiple_message_types(bridge):
-    """Test bridging multiple different message types simultaneously."""
-    topics = [
-        ("/cmd_vel", Twist, ROSTwist, BridgeDirection.ROS_TO_DIMOS),
-        ("/robot_pose", PoseStamped, ROSPoseStamped, BridgeDirection.DIMOS_TO_ROS),
-        ("/global_path", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS),
-        ("/local_path", Path, ROSPath, BridgeDirection.ROS_TO_DIMOS),
-        ("/teleop_twist", Twist, ROSTwist, BridgeDirection.ROS_TO_DIMOS),
-    ]
-
-    for topic_name, dimos_type, ros_type, direction in topics:
-        bridge.add_topic(topic_name, dimos_type, ros_type, direction=direction)
-
-    assert len(bridge._bridges) == 5
-
-    # Count subscriptions and publishers
-    ros_to_dimos_count = sum(1 for _, _, _, d in topics if d == BridgeDirection.ROS_TO_DIMOS)
-    dimos_to_ros_count = sum(1 for _, _, _, d in topics if d == BridgeDirection.DIMOS_TO_ROS)
-
-    assert bridge.node.create_subscription.call_count == ros_to_dimos_count
-    assert bridge.node.create_publisher.call_count == dimos_to_ros_count
-    assert bridge.lcm.subscribe.call_count == dimos_to_ros_count
-
-
-def test_topic_remapping_ros_to_dimos(bridge):
-    """Test remapping topic names for ROS to DIMOS direction."""
-    ros_topic = "/cmd_vel"
-    dimos_remapped = "/robot/velocity_command"
-
-    bridge.add_topic(
-        ros_topic,
-        Twist,
-        ROSTwist,
-        direction=BridgeDirection.ROS_TO_DIMOS,
-        remap_topic=dimos_remapped,
-    )
-
-    # Verify ROS subscribes to original topic
-    bridge.node.create_subscription.assert_called_once()
-    call_args = bridge.node.create_subscription.call_args
-    assert call_args[0][1] == ros_topic  # ROS side uses original topic
-
-    # Verify bridge metadata contains both names
-    assert ros_topic in bridge._bridges
-    bridge_info = bridge._bridges[ros_topic]
-    assert bridge_info["ros_topic_name"] == ros_topic
-    assert bridge_info["dimos_topic_name"] == dimos_remapped
-    assert bridge_info["dimos_topic"].topic == dimos_remapped
-
-
-def test_topic_remapping_dimos_to_ros(bridge):
-    """Test remapping topic names for DIMOS to ROS direction."""
-    dimos_topic = "/velocity_command"
-    ros_remapped = "/mobile_base/cmd_vel"
-
-    bridge.add_topic(
-        dimos_topic,
-        Twist,
-        ROSTwist,
-        direction=BridgeDirection.DIMOS_TO_ROS,
-        remap_topic=ros_remapped,
-    )
-
-    # Verify ROS publishes to remapped topic
-    bridge.node.create_publisher.assert_called_once_with(ROSTwist, ros_remapped, bridge._qos)
-
-    # Verify DIMOS subscribes to original topic
-    bridge.lcm.subscribe.assert_called_once()
-    dimos_topic_arg = bridge.lcm.subscribe.call_args[0][0]
-    assert dimos_topic_arg.topic == dimos_topic
-
-    # Verify bridge metadata
-    assert dimos_topic in bridge._bridges
-    bridge_info = bridge._bridges[dimos_topic]
-    assert bridge_info["ros_topic_name"] == ros_remapped
-    assert bridge_info["dimos_topic_name"] == dimos_topic
-
-
-def test_remapped_message_flow_ros_to_dimos(bridge):
-    """Test message flow with remapped topics from ROS to DIMOS."""
-    ros_topic = "/ros/cmd_vel"
-    dimos_remapped = "/dimos/velocity"
-
-    bridge.add_topic(
-        ros_topic,
-        Twist,
-        ROSTwist,
-        direction=BridgeDirection.ROS_TO_DIMOS,
-        remap_topic=dimos_remapped,
-    )
-
-    # Get the ROS callback
-    ros_callback = bridge.node.create_subscription.call_args[0][2]
-
-    # Send a ROS message
-    ros_msg = ROSTwist()
-    ros_msg.linear = ROSVector3(x=2.0, y=3.0, z=4.0)
-    ros_msg.angular = ROSVector3(x=0.2, y=0.3, z=0.4)
-
-    ros_callback(ros_msg)
-
-    # Verify DIMOS publishes to remapped topic
-    bridge.lcm.publish.assert_called_once()
-    published_topic, published_msg = bridge.lcm.publish.call_args[0]
-    assert published_topic.topic == dimos_remapped
-    assert isinstance(published_msg, Twist)
-    assert published_msg.linear.x == 2.0
-
-
-def test_remapped_message_flow_dimos_to_ros(bridge):
-    """Test message flow with remapped topics from DIMOS to ROS."""
-    dimos_topic = "/dimos/velocity"
-    ros_remapped = "/ros/cmd_vel"
-
-    bridge.add_topic(
-        dimos_topic,
-        Twist,
-        ROSTwist,
-        direction=BridgeDirection.DIMOS_TO_ROS,
-        remap_topic=ros_remapped,
-    )
-
-    # Get the DIMOS callback
-    dimos_callback = bridge.lcm.subscribe.call_args[0][1]
-
-    # Send a DIMOS message
-    dimos_msg = Twist(linear=Vector3(5.0, 6.0, 7.0), angular=Vector3(0.5, 0.6, 0.7))
-
-    ros_publisher = bridge.node.create_publisher.return_value
-    dimos_callback(dimos_msg, None)
-
-    # Verify ROS publishes to remapped topic
-    ros_publisher.publish.assert_called_once()
-    published_msg = ros_publisher.publish.call_args[0][0]
-    assert isinstance(published_msg, ROSTwist)
-    assert published_msg.linear.x == 5.0
-
-
-def test_multiple_remapped_topics(bridge):
-    """Test multiple topics with remapping."""
-    topic_configs = [
-        # (original_name, dimos_type, ros_type, direction, remap_name)
-        ("/cmd_vel", Twist, ROSTwist, BridgeDirection.ROS_TO_DIMOS, "/robot/velocity"),
-        ("/odom", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS, "/robot/odometry"),
-        ("/path", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS, "/navigation/global_path"),
-        (
-            "/goal",
-            PoseStamped,
-            ROSPoseStamped,
-            BridgeDirection.DIMOS_TO_ROS,
-            "/navigation/goal_pose",
-        ),
-    ]
-
-    for topic, dimos_type, ros_type, direction, remap in topic_configs:
-        bridge.add_topic(topic, dimos_type, ros_type, direction=direction, remap_topic=remap)
-
-    assert len(bridge._bridges) == 4
-
-    # Verify ROS to DIMOS remapping
-    assert bridge._bridges["/cmd_vel"]["dimos_topic_name"] == "/robot/velocity"
-    assert bridge._bridges["/odom"]["dimos_topic_name"] == "/robot/odometry"
-
-    # Verify DIMOS to ROS remapping
-    assert bridge._bridges["/path"]["ros_topic_name"] == "/navigation/global_path"
-    assert bridge._bridges["/goal"]["ros_topic_name"] == "/navigation/goal_pose"
-
-
-def test_no_remapping_when_none(bridge):
-    """Test that topics work normally when remap_topic is None."""
-    topic = "/cmd_vel"
-
-    bridge.add_topic(
-        topic, Twist, ROSTwist, direction=BridgeDirection.ROS_TO_DIMOS, remap_topic=None
-    )
-
-    bridge_info = bridge._bridges[topic]
-    assert bridge_info["ros_topic_name"] == topic
-    assert bridge_info["dimos_topic_name"] == topic
-
-
-def test_stress_remapped_topics(bridge):
-    """Test stress scenario with remapped topics."""
-    num_messages = 100
-    ros_topic = "/ros/high_freq"
-    dimos_remapped = "/dimos/data_stream"
-
-    bridge.add_topic(
-        ros_topic,
-        Twist,
-        ROSTwist,
-        direction=BridgeDirection.ROS_TO_DIMOS,
-        remap_topic=dimos_remapped,
-    )
-
-    ros_callback = bridge.node.create_subscription.call_args[0][2]
-
-    for i in range(num_messages):
-        ros_msg = ROSTwist()
-        ros_msg.linear = ROSVector3(x=float(i), y=float(i * 2), z=float(i * 3))
-        ros_callback(ros_msg)
-
-    assert bridge.lcm.publish.call_count == num_messages
-
-    # Verify all published to remapped topic
-    for call in bridge.lcm.publish.call_args_list:
-        topic, _ = call[0]
-        assert topic.topic == dimos_remapped
-
-
-def test_navigation_stack_topics(bridge):
-    """Test common navigation stack topics."""
-    nav_topics = [
-        ("/move_base/goal", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-        ("/move_base/global_plan", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS),
-        ("/move_base/local_plan", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS),
-        ("/cmd_vel", Twist, ROSTwist, BridgeDirection.DIMOS_TO_ROS),
-        ("/odom", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-        ("/robot_pose", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-    ]
-
-    for topic_name, dimos_type, ros_type, direction in nav_topics:
-        bridge.add_topic(topic_name, dimos_type, ros_type, direction=direction)
-
-    assert len(bridge._bridges) == len(nav_topics)
-
-    # Verify each topic is configured correctly
-    for topic_name, dimos_type, ros_type, direction in nav_topics:
-        assert topic_name in bridge._bridges
-        assert bridge._bridges[topic_name]["dimos_type"] == dimos_type
-        assert bridge._bridges[topic_name]["ros_type"] == ros_type
-        assert bridge._bridges[topic_name]["direction"] == direction
-
-
-def test_control_topics(bridge):
-    """Test control system topics."""
-    control_topics = [
-        ("/joint_commands", Twist, ROSTwist, BridgeDirection.DIMOS_TO_ROS),
-        ("/joint_states", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-        ("/trajectory", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS),
-        ("/feedback", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-    ]
-
-    for topic_name, dimos_type, ros_type, direction in control_topics:
-        bridge.add_topic(topic_name, dimos_type, ros_type, direction=direction)
-
-    assert len(bridge._bridges) == len(control_topics)
-
-
-def test_perception_topics(bridge):
-    """Test perception system topics."""
-    perception_topics = [
-        ("/detected_pose", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-        ("/tracked_path", Path, ROSPath, BridgeDirection.ROS_TO_DIMOS),
-        ("/vision_pose", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-    ]
-
-    for topic_name, dimos_type, ros_type, direction in perception_topics:
-        bridge.add_topic(topic_name, dimos_type, ros_type, direction=direction)
-
-    # All perception topics are ROS to DIMOS
-    assert bridge.node.create_subscription.call_count == len(perception_topics)
-    assert bridge.node.create_publisher.call_count == 0
-
-
-def test_mixed_frequency_topics(bridge):
-    """Test topics with different expected frequencies."""
-    # High frequency (100Hz+)
-    high_freq_topics = [
-        ("/imu/data", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-        ("/joint_states", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-    ]
-
-    # Medium frequency (10-50Hz)
-    medium_freq_topics = [
-        ("/cmd_vel", Twist, ROSTwist, BridgeDirection.DIMOS_TO_ROS),
-        ("/odom", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-    ]
-
-    # Low frequency (1-5Hz)
-    low_freq_topics = [
-        ("/global_path", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS),
-        ("/goal", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-    ]
-
-    all_topics = high_freq_topics + medium_freq_topics + low_freq_topics
-
-    for topic_name, dimos_type, ros_type, direction in all_topics:
-        bridge.add_topic(topic_name, dimos_type, ros_type, direction=direction)
-
-    assert len(bridge._bridges) == len(all_topics)
-
-    # Test high frequency message handling
-    for topic_name, _, _, direction in high_freq_topics:
-        if direction == BridgeDirection.ROS_TO_DIMOS:
-            # Find the callback for this topic
-            for i, call in enumerate(bridge.node.create_subscription.call_args_list):
-                if call[0][1] == topic_name:
-                    callback = call[0][2]
-                    # Send 100 messages rapidly
-                    for j in range(100):
-                        ros_msg = ROSPoseStamped()
-                        ros_msg.header.stamp.sec = j
-                        callback(ros_msg)
-                    break
-
-
-def test_bidirectional_prevention(bridge):
-    """Test that the same topic cannot be added in both directions."""
-    topic_name = "/cmd_vel"
-
-    # Add topic in one direction
-    bridge.add_topic(topic_name, Twist, ROSTwist, direction=BridgeDirection.ROS_TO_DIMOS)
-
-    # Try to add the same topic in opposite direction should not create duplicate
-    # The bridge should handle this gracefully
-    initial_bridges = len(bridge._bridges)
-    bridge.add_topic(topic_name, Twist, ROSTwist, direction=BridgeDirection.DIMOS_TO_ROS)
-
-    # Should still have the same number of bridges (topic gets reconfigured, not duplicated)
-    assert len(bridge._bridges) == initial_bridges
-
-
-def test_robot_arm_topics(bridge):
-    """Test robot arm control topics."""
-    arm_topics = [
-        ("/arm/joint_trajectory", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS),
-        ("/arm/joint_states", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-        ("/arm/end_effector_pose", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-        ("/arm/gripper_cmd", Twist, ROSTwist, BridgeDirection.DIMOS_TO_ROS),
-        ("/arm/cartesian_trajectory", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS),
-    ]
-
-    for topic_name, dimos_type, ros_type, direction in arm_topics:
-        bridge.add_topic(topic_name, dimos_type, ros_type, direction=direction)
-
-    assert len(bridge._bridges) == len(arm_topics)
-
-    # Check that arm control commands go from DIMOS to ROS
-    dimos_to_ros = [t for t in arm_topics if t[3] == BridgeDirection.DIMOS_TO_ROS]
-    ros_to_dimos = [t for t in arm_topics if t[3] == BridgeDirection.ROS_TO_DIMOS]
-
-    assert bridge.node.create_publisher.call_count == len(dimos_to_ros)
-    assert bridge.node.create_subscription.call_count == len(ros_to_dimos)
-
-
-def test_mobile_base_topics(bridge):
-    """Test mobile robot base topics."""
-    base_topics = [
-        ("/base/cmd_vel", Twist, ROSTwist, BridgeDirection.DIMOS_TO_ROS),
-        ("/base/odom", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-        ("/base/global_pose", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-        ("/base/path", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS),
-        ("/base/local_plan", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS),
-    ]
-
-    for topic_name, dimos_type, ros_type, direction in base_topics:
-        bridge.add_topic(topic_name, dimos_type, ros_type, direction=direction)
-
-    # Verify topics are properly categorized
-    for topic_name, dimos_type, ros_type, direction in base_topics:
-        bridge_info = bridge._bridges[topic_name]
-        assert bridge_info["direction"] == direction
-        assert bridge_info["dimos_type"] == dimos_type
-        assert bridge_info["ros_type"] == ros_type
-
-
-def test_autonomous_vehicle_topics(bridge):
-    """Test autonomous vehicle topics."""
-    av_topics = [
-        ("/vehicle/steering_cmd", Twist, ROSTwist, BridgeDirection.DIMOS_TO_ROS),
-        ("/vehicle/throttle_cmd", Twist, ROSTwist, BridgeDirection.DIMOS_TO_ROS),
-        ("/vehicle/brake_cmd", Twist, ROSTwist, BridgeDirection.DIMOS_TO_ROS),
-        ("/vehicle/pose", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS),
-        ("/vehicle/planned_trajectory", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS),
-        ("/vehicle/current_path", Path, ROSPath, BridgeDirection.ROS_TO_DIMOS),
-    ]
-
-    for topic_name, dimos_type, ros_type, direction in av_topics:
-        bridge.add_topic(topic_name, dimos_type, ros_type, direction=direction)
-
-    assert len(bridge._bridges) == len(av_topics)
-
-    # Count control vs feedback topics
-    control_topics = [t for t in av_topics if "cmd" in t[0] or "planned" in t[0]]
-    feedback_topics = [t for t in av_topics if "pose" in t[0] or "current" in t[0]]
-
-    assert len(control_topics) == 4  # steering, throttle, brake, planned_trajectory
-    assert len(feedback_topics) == 2  # pose, current_path
-
-
-def test_remapping_with_navigation_stack(bridge):
-    """Test remapping with common navigation stack patterns."""
-    # Map ROS2 Nav2 topics to custom DIMOS topics
-    nav_remapping = [
-        ("/cmd_vel", Twist, ROSTwist, BridgeDirection.DIMOS_TO_ROS, "/nav2/cmd_vel"),
-        ("/odom", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS, "/robot/odometry"),
-        ("/global_plan", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS, "/nav2/plan"),
-        ("/local_plan", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS, "/nav2/local_plan"),
-        ("/goal_pose", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS, "/robot/goal"),
-    ]
-
-    for topic, dimos_type, ros_type, direction, remap in nav_remapping:
-        bridge.add_topic(topic, dimos_type, ros_type, direction=direction, remap_topic=remap)
-
-    # Verify DIMOS to ROS remappings
-    assert bridge._bridges["/cmd_vel"]["ros_topic_name"] == "/nav2/cmd_vel"
-    assert bridge._bridges["/global_plan"]["ros_topic_name"] == "/nav2/plan"
-    assert bridge._bridges["/local_plan"]["ros_topic_name"] == "/nav2/local_plan"
-
-    # Verify ROS to DIMOS remappings
-    assert bridge._bridges["/odom"]["dimos_topic_name"] == "/robot/odometry"
-    assert bridge._bridges["/goal_pose"]["dimos_topic_name"] == "/robot/goal"
-
-
-def test_remapping_with_robot_namespace(bridge):
-    """Test remapping for multi-robot systems with namespaces."""
-    robot_id = "robot1"
-
-    # Remap topics to include robot namespace
-    topics_with_namespace = [
-        ("/cmd_vel", Twist, ROSTwist, BridgeDirection.DIMOS_TO_ROS, f"/{robot_id}/cmd_vel"),
-        ("/pose", PoseStamped, ROSPoseStamped, BridgeDirection.ROS_TO_DIMOS, f"/{robot_id}/pose"),
-        ("/path", Path, ROSPath, BridgeDirection.DIMOS_TO_ROS, f"/{robot_id}/path"),
-    ]
-
-    for topic, dimos_type, ros_type, direction, remap in topics_with_namespace:
-        bridge.add_topic(topic, dimos_type, ros_type, direction=direction, remap_topic=remap)
-
-    # Verify all topics are properly namespaced
-    assert bridge._bridges["/cmd_vel"]["ros_topic_name"] == "/robot1/cmd_vel"
-    assert bridge._bridges["/pose"]["dimos_topic_name"] == "/robot1/pose"
-    assert bridge._bridges["/path"]["ros_topic_name"] == "/robot1/path"
-
-
-def test_remapping_preserves_original_key(bridge):
-    """Test that remapping preserves the original topic name as the key."""
-    original_topic = "/original_topic"
-    remapped_name = "/remapped_topic"
-
-    bridge.add_topic(
-        original_topic,
-        Twist,
-        ROSTwist,
-        direction=BridgeDirection.ROS_TO_DIMOS,
-        remap_topic=remapped_name,
-    )
-
-    # Original topic name should be the key
-    assert original_topic in bridge._bridges
-    assert remapped_name not in bridge._bridges
-
-    # Bridge info should contain both names
-    bridge_info = bridge._bridges[original_topic]
-    assert bridge_info["ros_topic_name"] == original_topic
-    assert bridge_info["dimos_topic_name"] == remapped_name
+
+        # Subscribe to DIMOS side
+        lcm = LCM()
+        lcm.start()
+        topic = Topic("/test_freq", TwistStamped)
+
+        receive_times = []
+
+        def dimos_callback(_msg, _topic):
+            receive_times.append(time.time())
+
+        lcm.subscribe(topic, dimos_callback)
+
+        # Publish from ROS at specific frequencies
+        ros_pub = self.test_node.create_publisher(ROSTwistStamped, "/test_freq", 10)
+
+        # Test different frequencies
+        test_frequencies = [10, 50, 100]  # Hz
+
+        for target_freq in test_frequencies:
+            receive_times.clear()
+            send_times = []
+            period = 1.0 / target_freq
+
+            # Send messages at target frequency
+            start_time = time.time()
+            while time.time() - start_time < 1.0:  # Run for 1 second
+                msg = ROSTwistStamped()
+                msg.header.stamp = self.test_node.get_clock().now().to_msg()
+                msg.twist.linear.x = 1.0
+
+                ros_pub.publish(msg)
+                send_times.append(time.time())
+                time.sleep(period)
+
+            # Allow processing time
+            time.sleep(0.2)
+
+            # Calculate actual frequencies
+            if len(send_times) > 1:
+                send_intervals = np.diff(send_times)
+                send_freq = 1.0 / np.mean(send_intervals)
+            else:
+                send_freq = 0
+
+            if len(receive_times) > 1:
+                receive_intervals = np.diff(receive_times)
+                receive_freq = 1.0 / np.mean(receive_intervals)
+            else:
+                receive_freq = 0
+
+            # Verify frequency preservation (within 10% tolerance)
+            self.assertAlmostEqual(
+                receive_freq,
+                send_freq,
+                delta=send_freq * 0.1,
+                msg=f"Frequency not preserved for {target_freq}Hz: sent={send_freq:.1f}Hz, received={receive_freq:.1f}Hz",
+            )
+
+    def test_pointcloud_conversion(self):
+        """Test PointCloud2 message conversion with numpy optimization."""
+        # Set up bridge
+        self.bridge.add_topic(
+            "/test_cloud", PointCloud2, ROSPointCloud2, BridgeDirection.ROS_TO_DIMOS
+        )
+
+        # Subscribe to DIMOS side
+        lcm = LCM()
+        lcm.start()
+        topic = Topic("/test_cloud", PointCloud2)
+
+        received_cloud = []
+
+        def dimos_callback(msg, _topic):
+            received_cloud.append(msg)
+
+        lcm.subscribe(topic, dimos_callback)
+
+        # Create test point cloud
+        ros_pub = self.test_node.create_publisher(ROSPointCloud2, "/test_cloud", 10)
+
+        # Generate test points
+        num_points = 1000
+        points = np.random.randn(num_points, 3).astype(np.float32)
+
+        # Create ROS PointCloud2 message
+        msg = ROSPointCloud2()
+        msg.header.stamp = self.test_node.get_clock().now().to_msg()
+        msg.header.frame_id = "test_frame"
+        msg.height = 1
+        msg.width = num_points
+        msg.fields = [
+            PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+        ]
+        msg.is_bigendian = False
+        msg.point_step = 12
+        msg.row_step = msg.point_step * msg.width
+        msg.data = points.tobytes()
+        msg.is_dense = True
+
+        # Send point cloud
+        ros_pub.publish(msg)
+
+        # Allow processing time
+        time.sleep(0.5)
+
+        # Verify reception
+        self.assertEqual(len(received_cloud), 1, "Should receive point cloud")
+
+        # Verify point data
+        received_points = received_cloud[0].as_numpy()
+        self.assertEqual(received_points.shape, points.shape)
+        np.testing.assert_array_almost_equal(received_points, points, decimal=5)
+
+    def test_tf_high_frequency(self):
+        """Test TF message handling at high frequency."""
+        # Set up bridge
+        self.bridge.add_topic("/test_tf", TFMessage, ROSTFMessage, BridgeDirection.ROS_TO_DIMOS)
+
+        # Subscribe to DIMOS side
+        lcm = LCM()
+        lcm.start()
+        topic = Topic("/test_tf", TFMessage)
+
+        received_tfs = []
+        receive_times = []
+
+        def dimos_callback(msg, _topic):
+            received_tfs.append(msg)
+            receive_times.append(time.time())
+
+        lcm.subscribe(topic, dimos_callback)
+
+        # Publish TF at high frequency (200Hz)
+        ros_pub = self.test_node.create_publisher(ROSTFMessage, "/test_tf", 100)
+
+        target_freq = 200  # Hz
+        period = 1.0 / target_freq
+        num_messages = 200  # 1 second worth
+
+        send_times = []
+        for i in range(num_messages):
+            msg = ROSTFMessage()
+            transform = TransformStamped()
+            transform.header.stamp = self.test_node.get_clock().now().to_msg()
+            transform.header.frame_id = "world"
+            transform.child_frame_id = f"link_{i}"
+            transform.transform.translation.x = float(i)
+            transform.transform.rotation.w = 1.0
+            msg.transforms = [transform]
+
+            ros_pub.publish(msg)
+            send_times.append(time.time())
+            time.sleep(period)
+
+        # Allow processing time
+        time.sleep(0.5)
+
+        # Check message count (allow 5% loss tolerance)
+        min_expected = int(num_messages * 0.95)
+        self.assertGreaterEqual(
+            len(received_tfs),
+            min_expected,
+            f"Should receive at least {min_expected} of {num_messages} TF messages",
+        )
+
+        # Check frequency preservation
+        if len(receive_times) > 1:
+            receive_intervals = np.diff(receive_times)
+            receive_freq = 1.0 / np.mean(receive_intervals)
+
+            # For high frequency, allow 20% tolerance
+            self.assertAlmostEqual(
+                receive_freq,
+                target_freq,
+                delta=target_freq * 0.2,
+                msg=f"High frequency TF not preserved: expected={target_freq}Hz, got={receive_freq:.1f}Hz",
+            )
+
+    def test_bidirectional_bridge(self):
+        """Test simultaneous bidirectional message flow."""
+        # Set up bidirectional bridges for same topic type
+        self.bridge.add_topic(
+            "/ros_to_dimos", TwistStamped, ROSTwistStamped, BridgeDirection.ROS_TO_DIMOS
+        )
+
+        self.bridge.add_topic(
+            "/dimos_to_ros", TwistStamped, ROSTwistStamped, BridgeDirection.DIMOS_TO_ROS
+        )
+
+        dimos_received = []
+        ros_received = []
+
+        # DIMOS subscriber - use bridge's LCM
+        topic_r2d = Topic("/ros_to_dimos", TwistStamped)
+        self.bridge.lcm.subscribe(topic_r2d, lambda msg, _: dimos_received.append(msg))
+
+        # ROS subscriber
+        self.test_node.create_subscription(
+            ROSTwistStamped, "/dimos_to_ros", lambda msg: ros_received.append(msg), 10
+        )
+
+        # Set up publishers
+        ros_pub = self.test_node.create_publisher(ROSTwistStamped, "/ros_to_dimos", 10)
+        topic_d2r = Topic("/dimos_to_ros", TwistStamped)
+
+        # Keep track of whether threads should continue
+        stop_spinning = threading.Event()
+
+        # Spin the test node in background to receive messages
+        def spin_test_node():
+            while not stop_spinning.is_set():
+                rclpy.spin_once(self.test_node, timeout_sec=0.01)
+
+        spin_thread = threading.Thread(target=spin_test_node, daemon=True)
+        spin_thread.start()
+
+        # Send messages in both directions simultaneously
+        def send_ros_messages():
+            for i in range(50):
+                msg = ROSTwistStamped()
+                msg.header.stamp = self.test_node.get_clock().now().to_msg()
+                msg.twist.linear.x = float(i)
+                ros_pub.publish(msg)
+                time.sleep(0.02)  # 50Hz
+
+        def send_dimos_messages():
+            for i in range(50):
+                msg = TwistStamped(ts=time.time())
+                msg.linear.y = float(i * 2)
+                self.bridge.lcm.publish(topic_d2r, msg)
+                time.sleep(0.02)  # 50Hz
+
+        # Run both senders in parallel
+        ros_thread = threading.Thread(target=send_ros_messages)
+        dimos_thread = threading.Thread(target=send_dimos_messages)
+
+        ros_thread.start()
+        dimos_thread.start()
+
+        ros_thread.join()
+        dimos_thread.join()
+
+        # Allow processing time
+        time.sleep(0.5)
+        stop_spinning.set()
+        spin_thread.join(timeout=1.0)
+
+        # Verify both directions worked
+        self.assertGreaterEqual(len(dimos_received), 45, "Should receive most ROS->DIMOS messages")
+        self.assertGreaterEqual(len(ros_received), 45, "Should receive most DIMOS->ROS messages")
+
+        # Verify message integrity
+        for i, msg in enumerate(dimos_received[:45]):
+            self.assertAlmostEqual(msg.linear.x, float(i), places=5)
+
+        for i, msg in enumerate(ros_received[:45]):
+            self.assertAlmostEqual(msg.twist.linear.y, float(i * 2), places=5)
+
+
+if __name__ == "__main__":
+    unittest.main()
