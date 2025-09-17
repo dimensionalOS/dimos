@@ -74,7 +74,6 @@ class Drone(Robot):
             RobotCapability.VISION,
         ]
 
-        self.lcm = LCM()
         self.dimos = None
         self.connection = None
         self.camera = None
@@ -101,9 +100,6 @@ class Drone(Robot):
 
         # Start modules
         self._start_modules()
-
-        # Start LCM
-        self.lcm.start()
 
         logger.info("Drone system initialized and started")
         logger.info("Foxglove visualization available at http://localhost:8765")
