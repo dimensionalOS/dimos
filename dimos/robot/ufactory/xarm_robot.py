@@ -103,7 +103,7 @@ class XArmRobot(Robot):
             base_frame_id="base_link",
             ee_frame_id="ee_link",
             camera_frame_id="zed_camera_link",
-            ee_to_camera_6dof=[0.115, 0.00, 0.00, -3.14, -1.57, 0.0],  # EE to camera transform for xArm
+            ee_to_camera_6dof=[0.115, 0.0, -.10, 3.14, -1.57, 0],  # EE to camera transform for xArm
         )
 
         # Configure xArm output
@@ -115,7 +115,7 @@ class XArmRobot(Robot):
         track_frame = "world" if self.enable_mobile_base_control else "base_link"
         self.manipulation_interface = self.dimos.deploy(
             ManipulationModule,
-            piper_arm_module=self.xarm,  # Pass the arm module reference (uses same interface)
+            arm_module=self.xarm,  # Pass the arm module reference (uses same interface)
             min_confidence=0.3,
             max_depth=1.0,
             max_object_size=0.15,
