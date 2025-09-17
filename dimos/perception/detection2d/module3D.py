@@ -51,12 +51,12 @@ class Detection3DModule(Detection2DModule):
     detections: Out[Detection2DArray] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
+    detected_pointcloud_0: Out[PointCloud2] = None  # type: ignore
     detected_pointcloud_1: Out[PointCloud2] = None  # type: ignore
     detected_pointcloud_2: Out[PointCloud2] = None  # type: ignore
-    detected_pointcloud_3: Out[PointCloud2] = None  # type: ignore
+    detected_image_0: Out[Image] = None  # type: ignore
     detected_image_1: Out[Image] = None  # type: ignore
     detected_image_2: Out[Image] = None  # type: ignore
-    detected_image_3: Out[Image] = None  # type: ignore
 
     def __init__(self, camera_info: CameraInfo, *args, **kwargs):
         self.camera_info = camera_info
@@ -270,6 +270,7 @@ class Detection3DModule(Detection2DModule):
             detections, pc = args
             # pc = pointcloud_buffer.find_closest(detections.image.ts)
             transform = self.tf.get("camera_optical", "world", detections.image.ts, time_tolerance)
+            print("COMBINING 2D AND 3D", detections, pc, transform)
             return self.process_frame(detections, pc, transform)
 
         # combined_stream = self.detection_stream().pipe(ops.map(detection2d_to_3d))
@@ -290,16 +291,17 @@ class Detection3DModule(Detection2DModule):
     def _handle_combined_detections(self, detections: ImageDetections3D):
         if not detections:
             return
+
         print(detections)
 
         if len(detections) > 0:
-            self.detected_pointcloud_1.publish(detections[0].pointcloud)
-            self.detected_image_1.publish(detections[0].cropped_image())
+            self.detected_pointcloud_0.publish(detections[0].pointcloud)
+            self.detected_image_0.publish(detections[0].cropped_image())
 
         if len(detections) > 1:
-            self.detected_pointcloud_2.publish(detections[1].pointcloud)
-            self.detected_image_2.publish(detections[1].cropped_image())
+            self.detected_pointcloud_1.publish(detections[1].pointcloud)
+            self.detected_image_1.publish(detections[1].cropped_image())
 
         if len(detections) > 3:
-            self.detected_pointcloud_3.publish(detections[2].pointcloud)
-            self.detected_image_3.publish(detections[2].cropped_image())
+            self.detected_pointcloud_2.publish(detections[2].pointcloud)
+            self.detected_image_2.publish(detections[2].cropped_image())
