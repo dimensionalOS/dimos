@@ -121,7 +121,7 @@ class ManipulationModule(Module):
 
     def __init__(
         self,
-        piper_arm_module=None,
+        arm_module=None,
         min_confidence: float = 0.6,
         min_points: int = 30,
         max_depth: float = 1.0,
@@ -150,7 +150,7 @@ class ManipulationModule(Module):
         """
         super().__init__(**kwargs)
 
-        self.arm = piper_arm_module
+        self.arm = arm_module
         self.min_confidence = min_confidence
         self.min_points = min_points
         self.max_depth = max_depth
@@ -177,7 +177,7 @@ class ManipulationModule(Module):
         self.gripper_max_opening = 0.07
 
         self.workspace_min_radius = 0.2
-        self.workspace_max_radius = 0.75
+        self.workspace_max_radius = 1.0
         self.min_grasp_pitch_degrees = 5.0
         self.max_grasp_pitch_degrees = 60.0
 
@@ -556,7 +556,7 @@ class ManipulationModule(Module):
                 time.sleep(0.1)
                 continue
             ee_pose = ee_transform.to_pose()
-
+            
             _, target_reached = is_target_reached(
                 self.current_executed_pose, ee_pose, position_tolerance=self.pbvs.target_tolerance
             )

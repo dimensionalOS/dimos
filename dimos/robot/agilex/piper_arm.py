@@ -94,7 +94,7 @@ class PiperArmRobot(Robot):
             base_frame_id="base_link",
             ee_frame_id="ee_link",
             camera_frame_id="zed_camera_link",
-            ee_to_camera_6dof=[-0.065, 0.03, -0.095, 0.0, -1.57, 0.0],  # EE to camera transform
+            ee_to_camera_6dof=[-0.065, 0.03, -0.095, 0.0, -1.57, 0],  # EE to camera transform
         )
 
         # Configure Piper Arm output
@@ -106,7 +106,7 @@ class PiperArmRobot(Robot):
         track_frame = "world" if self.enable_mobile_base_control else "base_link"
         self.manipulation_interface = self.dimos.deploy(
             ManipulationModule,
-            piper_arm_module=self.piper_arm,  # Pass the arm module reference
+            arm_module=self.piper_arm,  # Pass the arm module reference
             min_confidence=0.3,
             max_depth=1.0,
             max_object_size=0.15,
