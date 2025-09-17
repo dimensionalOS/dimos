@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+
+import os
+import argparse
 # Copyright 2025 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +17,8 @@
 # limitations under the License.
 
 """
-Run script for Piper Arm robot with pick and place functionality.
+Hardware-agnostic pick and place test module.
+Supports both PiperArmRobot and XArmRobot with pick and place functionality.
 Subscribes to visualization images and handles mouse/keyboard input.
 """
 
@@ -25,6 +29,7 @@ import time
 import signal
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
+from typing import Union
 
 try:
     import pyzed.sl
@@ -33,6 +38,7 @@ except ImportError:
     sys.exit(1)
 
 from dimos.robot.agilex.piper_arm import PiperArmRobot
+from dimos.robot.ufactory.xarm_robot import XArmRobot
 from dimos.utils.logging_config import setup_logger
 
 # Import LCM message types
@@ -58,7 +64,7 @@ def mouse_callback(event, x, y, _flags, param):
 class CameraVisualizationNode:
     """Node that subscribes to camera images and handles user input."""
 
-    def __init__(self, robot: PiperArmRobot):
+    def __init__(self, robot: Union[PiperArmRobot, XArmRobot]):
         self.lcm = LCM()
         self.latest_camera = None
         self._running = False
@@ -105,7 +111,7 @@ class CameraVisualizationNode:
         cv2.namedWindow("Camera Feed")
         cv2.setMouseCallback("Camera Feed", mouse_callback, "Camera Feed")
 
-        print("=== Piper Arm Robot - Pick and Place ===")
+        print(f"=== {self.robot.__class__.__name__} - Pick and Place ===")
         print("Control mode: Simplified module-based with blocking operations")
         print("\nPICK AND PLACE WORKFLOW:")
         print("1. Click on an object to select PICK location")
@@ -312,20 +318,49 @@ def signal_handler(_signum, _frame):
     if global_robot and hasattr(global_robot, "piper_arm"):
         try:
             logger.info("Resetting arm to zero position...")
-            global_robot.piper_arm.reset_to_zero()
+            arm_module = getattr(global_robot, 'piper_arm', None) or getattr(global_robot, 'xarm', None)
+            if arm_module:
+                if hasattr(arm_module, 'reset_to_zero'):
+                    arm_module.reset_to_zero()
+                elif hasattr(arm_module, 'goto_zero'):
+                    arm_module.goto_zero()
             time.sleep(2)
         except Exception as e:
             logger.warning(f"Failed to reset arm: {e}")
     sys.exit(0)
 
 
-def run_piper_arm_with_viz():
-    """Run the Piper Arm robot with visualization."""
-    global global_robot
-    logger.info("Starting Piper Arm Robot")
+def get_robot_class(robot_type: str):
+    """Get robot class based on type string."""
+    robot_classes = {
+        'piper': PiperArmRobot,
+        'xarm': XArmRobot,
+    }
 
-    # Create robot instance
-    robot = PiperArmRobot(enable_mobile_base_control=False)
+    if robot_type not in robot_classes:
+        raise ValueError(f"Unknown robot type: {robot_type}. Available types: {list(robot_classes.keys())}")
+
+    return robot_classes[robot_type]
+
+
+def run_robot_with_viz(robot_type: str = 'piper', **kwargs):
+    """Run the specified robot with visualization."""
+    global global_robot
+
+    robot_class = get_robot_class(robot_type)
+    logger.info(f"Starting {robot_class.__name__}")
+
+    # Create robot instance with appropriate parameters
+    if robot_type == 'xarm':
+        robot = robot_class(
+            arm_ip=kwargs.get('arm_ip', '10.0.0.197'),
+            arm_type=kwargs.get('arm_type', 'xarm7'),
+            enable_mobile_base_control=kwargs.get('enable_mobile_base_control', False)
+        )
+    else:  # piper
+        robot = robot_class(
+            enable_mobile_base_control=kwargs.get('enable_mobile_base_control', False)
+        )
     global_robot = robot  # Set global for signal handler
 
     try:
@@ -362,21 +397,57 @@ def run_piper_arm_with_viz():
 
         # Reset arm to zero position before stopping
         try:
-            if robot.piper_arm:
+            # Handle different robot arm modules
+            arm_module = getattr(robot, 'piper_arm', None) or getattr(robot, 'xarm', None)
+            if arm_module:
                 logger.info("Resetting arm to zero position...")
-                robot.piper_arm.reset_to_zero()
+                if hasattr(arm_module, 'reset_to_zero'):
+                    arm_module.reset_to_zero()
+                elif hasattr(arm_module, 'goto_zero'):
+                    arm_module.goto_zero()
                 time.sleep(2)  # Give it time to reach zero position
-                robot.piper_arm.stop()
+                arm_module.stop()
         except Exception as e:
             logger.warning(f"Failed to reset arm: {e}")
 
         robot.stop()
-        logger.info("Robot stopped")
+        logger.info(f"{robot.__class__.__name__} stopped")
 
 
 if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Hardware-agnostic pick and place test module')
+    parser.add_argument(
+        '--robot-type',
+        choices=['piper', 'xarm'],
+        default=os.environ.get('ROBOT_TYPE', 'piper'),
+        help='Robot type to use (default: piper, can also be set via ROBOT_TYPE env var)'
+    )
+    parser.add_argument(
+        '--arm-ip',
+        default='10.0.0.197',
+        help='xArm IP address (only used for xarm robot type)'
+    )
+    parser.add_argument(
+        '--arm-type',
+        default='xarm7',
+        help='xArm type (only used for xarm robot type)'
+    )
+    parser.add_argument(
+        '--enable-mobile-base',
+        action='store_true',
+        help='Enable mobile base control'
+    )
+
+    args = parser.parse_args()
+
     # Set up signal handler for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
 
     # Run the robot
-    run_piper_arm_with_viz()
+    run_robot_with_viz(
+        robot_type=args.robot_type,
+        arm_ip=args.arm_ip,
+        arm_type=args.arm_type,
+        enable_mobile_base_control=args.enable_mobile_base
+    )
