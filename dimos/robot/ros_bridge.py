@@ -19,7 +19,7 @@ from typing import Dict, Any, Type, Literal, Optional
 from enum import Enum
 
 import rclpy
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
 
@@ -52,7 +52,7 @@ class ROSBridge:
         self.lcm = LCM()
         self.lcm.start()
 
-        self._executor = MultiThreadedExecutor()
+        self._executor = SingleThreadedExecutor()
         self._executor.add_node(self.node)
 
         self._spin_thread = threading.Thread(target=self._ros_spin, daemon=True)
