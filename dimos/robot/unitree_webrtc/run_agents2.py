@@ -46,12 +46,10 @@ if not os.getenv("ANTHROPIC_API_KEY"):
 
 
 class UnitreeAgents2Runner:
-
     def __init__(self):
         self.robot = None
         self.agent = None
 
-        
     def __enter__(self):
         self.robot = self.setup_robot()
 
