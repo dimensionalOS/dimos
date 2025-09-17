@@ -34,9 +34,12 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3 as MsgVector3
 from dimos.msgs.std_msgs import Header
 from dimos.protocol.tf import TF
 from dimos.utils.transform_utils import (
+    apply_transform,
     quaternion_to_euler,
     euler_to_quaternion,
     create_transform_from_6dof,
+    matrix_to_pose,
+    pose_to_matrix,
 )
 
 # Import for consistent publishing
@@ -101,11 +104,9 @@ class xArm:
 
     def gotoObserve(self):
         """Move to observation position similar to PiperArm"""
-        self.enable_position_mode()
-        # Position: x=57mm, y=0mm, z=280mm, rx=0°, ry=120°, rz=0°
         # xArm API expects mm and degrees
-        x, y, z = 500, 0, 200  # mm
-        roll, pitch, yaw = 180, -30, 0  # degrees
+        x, y, z = 400, 0, 300  # mm
+        roll, pitch, yaw = 180, -20, 0  # degrees
         logger.debug(
             f"Going to observe position: x={x}, y={y}, z={z}, roll={roll}, pitch={pitch}, yaw={yaw}"
         )
@@ -186,7 +187,6 @@ class xArm:
         if position_data[0] != 0:
             logger.error(f"Failed to get arm position, code: {position_data[0]}")
             return None
-
         pose_values = position_data[1]
         # Convert from mm to meters and degrees to quaternion
         x = pose_values[0] / 1000.0  # Convert mm to m
@@ -364,7 +364,7 @@ class XArmModule(Module):
 
         # EE to camera transform
         if ee_to_camera_6dof is None:
-            ee_to_camera_6dof = [0.115, 0.00, 0.00, 0.0, 0.0, 0.0]
+            ee_to_camera_6dof = [0.115, 0.00, 0.00, 0, -1.57, 0.0]
         pos = Vector3(ee_to_camera_6dof[0], ee_to_camera_6dof[1], ee_to_camera_6dof[2])
         rot = Vector3(ee_to_camera_6dof[3], ee_to_camera_6dof[4], ee_to_camera_6dof[5])
         self.T_ee_to_camera = create_transform_from_6dof(pos, rot)
@@ -384,10 +384,69 @@ class XArmModule(Module):
         self._subscription = None
         self._sequence = 0
 
+        # Store the last command correction for consistent feedback
+        self._last_command_correction_inverse = None
+
         # Initialize TF publisher
         self.tf = TF()
 
         logger.info(f"XArmModule initialized, will publish at {publish_rate} Hz")
+
+    def _command_to_arm_frame(self, pose: Pose) -> Pose:
+        """
+        Transform pose from command frame to arm frame.
+        Applies 180° X flip and pitch-dependent Y rotation.
+        Stores the correction for consistent feedback.
+        """
+        # Extract pitch from pose orientation
+        euler = quaternion_to_euler(pose.orientation, degrees=False)
+        pitch = np.pi - euler.y
+
+        # 180° X flip transformation matrix
+        rotation_transform1 = np.array([
+            [1, 0, 0, 0],
+            [0, -1, 0, 0],
+            [0, 0, -1, 0],
+            [0, 0, 0, 1]
+        ])
+
+        # Pitch-dependent Y rotation (opposite of command pitch)
+        print("Applying pitch rotation of:", pitch)
+        cos_pitch = np.cos(pitch)
+        sin_pitch = np.sin(pitch)
+        rotation_transform2 = np.array([
+            [cos_pitch, 0.0, sin_pitch, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [-sin_pitch, 0.0, cos_pitch, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ])
+
+        
+
+        # Combined transformation
+        rotation_transform = rotation_transform1 @ rotation_transform2 
+
+        # Store the inverse transformation for feedback consistency
+        self._last_command_correction_inverse = np.linalg.inv(rotation_transform)
+
+        # Use quaternion-aware matrix operations
+        pose_matrix = pose_to_matrix(pose)
+        transformed = pose_matrix @ rotation_transform
+        return matrix_to_pose(transformed)
+
+    def _arm_to_command_frame(self, pose: Pose) -> Pose:
+        """
+        Transform pose from arm frame to command frame.
+        Uses the stored inverse transformation from the last command for consistency.
+        """
+        # If no command correction has been stored yet, return the raw pose
+        if self._last_command_correction_inverse is None:
+            return pose
+
+        # Use quaternion-aware matrix operations
+        pose_matrix = pose_to_matrix(pose)
+        corrected =  pose_matrix @ self._last_command_correction_inverse
+        return matrix_to_pose(corrected)
 
     @rpc
     def start(self):
@@ -439,7 +498,7 @@ class XArmModule(Module):
 
         try:
             # Get current EE pose
-            pose = self.arm.get_ee_pose()
+            pose = self.get_ee_pose()
 
             if pose:
                 # Create header with timestamp
@@ -469,6 +528,7 @@ class XArmModule(Module):
                     child_frame_id=self.ee_frame_id,
                     ts=header.ts,
                 )
+                
                 self.tf.publish(ee_transform)
 
                 # 2. ee_link -> camera_link transform (static offset)
@@ -528,7 +588,12 @@ class XArmModule(Module):
             line_mode: Whether to use line mode for movement
         """
         if self.arm:
-            self.arm.cmd_ee_pose(pose, line_mode)
+            # Transform from command frame to arm frame
+            target_pose = self._command_to_arm_frame(pose)
+            print("Original pose:", pose)
+            print(f"Commanding rotated pose: {target_pose}")
+
+            self.arm.cmd_ee_pose(target_pose, line_mode)
 
     @rpc
     def get_ee_pose(self) -> Pose:
@@ -536,10 +601,15 @@ class XArmModule(Module):
         Get current end-effector pose.
 
         Returns:
-            Current EE pose
+            Current EE pose transformed from arm frame to command frame
         """
         if self.arm:
-            return self.arm.get_ee_pose()
+            # Get raw pose from arm
+            raw_pose = self.arm.get_ee_pose()
+            # Transform from arm frame to command frame
+            # print("Raw EE pose from arm:", raw_pose)
+            return self._arm_to_command_frame(raw_pose)
+            # return raw_pose
         # Return a default pose if arm not initialized
         return Pose(position=MsgVector3(0.5, 0.0, 0.2), orientation=Quaternion(0.0, 0.0, 0.0, 1.0))
 
