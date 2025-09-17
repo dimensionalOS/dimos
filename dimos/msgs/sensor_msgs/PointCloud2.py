@@ -257,27 +257,64 @@ class PointCloud2(Timestamped):
         if any(offset is None for offset in [x_offset, y_offset, z_offset]):
             raise ValueError("PointCloud2 message missing X, Y, or Z fields")
 
-        # Extract points from binary data
+        # Extract points from binary data using numpy for bulk conversion
         num_points = ros_msg.width * ros_msg.height
-        points = np.zeros((num_points, 3), dtype=np.float32)
-
         data = ros_msg.data
         point_step = ros_msg.point_step
 
         # Determine byte order
         byte_order = ">" if ros_msg.is_bigendian else "<"
 
-        for i in range(num_points):
-            base_offset = i * point_step
+        # Check if we can use fast numpy path (common case: sequential float32 x,y,z)
+        if (
+            x_offset == 0
+            and y_offset == 4
+            and z_offset == 8
+            and point_step >= 12
+            and not ros_msg.is_bigendian
+        ):
+            # Fast path: direct numpy reshape for tightly packed float32 x,y,z
+            # This is the most common case for point clouds
+            if point_step == 12:
+                # Perfectly packed x,y,z with no padding
+                points = np.frombuffer(data, dtype=np.float32).reshape(-1, 3)
+            else:
+                # Has additional fields after x,y,z, need to extract with stride
+                dt = np.dtype(
+                    [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("_pad", f"V{point_step - 12}")]
+                )
+                structured = np.frombuffer(data, dtype=dt, count=num_points)
+                points = np.column_stack((structured["x"], structured["y"], structured["z"]))
+        else:
+            # General case: handle arbitrary field offsets and byte order
+            # Create structured dtype for the entire point
+            dt_fields = []
 
-            # Extract X, Y, Z (assuming float32)
-            x_bytes = data[base_offset + x_offset : base_offset + x_offset + 4]
-            y_bytes = data[base_offset + y_offset : base_offset + y_offset + 4]
-            z_bytes = data[base_offset + z_offset : base_offset + z_offset + 4]
+            # Add padding before x if needed
+            if x_offset > 0:
+                dt_fields.append(("_pad_x", f"V{x_offset}"))
+            dt_fields.append(("x", f"{byte_order}f4"))
 
-            points[i, 0] = struct.unpack(f"{byte_order}f", x_bytes)[0]
-            points[i, 1] = struct.unpack(f"{byte_order}f", y_bytes)[0]
-            points[i, 2] = struct.unpack(f"{byte_order}f", z_bytes)[0]
+            # Add padding between x and y if needed
+            gap_xy = y_offset - x_offset - 4
+            if gap_xy > 0:
+                dt_fields.append(("_pad_xy", f"V{gap_xy}"))
+            dt_fields.append(("y", f"{byte_order}f4"))
+
+            # Add padding between y and z if needed
+            gap_yz = z_offset - y_offset - 4
+            if gap_yz > 0:
+                dt_fields.append(("_pad_yz", f"V{gap_yz}"))
+            dt_fields.append(("z", f"{byte_order}f4"))
+
+            # Add padding at the end to match point_step
+            remaining = point_step - z_offset - 4
+            if remaining > 0:
+                dt_fields.append(("_pad_end", f"V{remaining}"))
+
+            dt = np.dtype(dt_fields)
+            structured = np.frombuffer(data, dtype=dt, count=num_points)
+            points = np.column_stack((structured["x"], structured["y"], structured["z"]))
 
         # Filter out NaN and Inf values if not dense
         if not ros_msg.is_dense:

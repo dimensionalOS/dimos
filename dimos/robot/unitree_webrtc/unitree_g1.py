@@ -365,10 +365,6 @@ def main():
 
     args = parser.parse_args()
 
-    if not args.ip:
-        logger.error("Robot IP not set. Use --ip or set ROBOT_IP environment variable")
-        return
-
     pubsub.lcm.autoconf()
 
     robot = UnitreeG1(
