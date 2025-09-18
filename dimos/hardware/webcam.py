@@ -18,7 +18,7 @@ import time
 from abc import ABC, abstractmethod, abstractproperty
 from dataclasses import dataclass, field
 from functools import cache
-from typing import Any, Callable, Generic, Optional, Protocol, TypeVar
+from typing import Any, Callable, Generic, Optional, Protocol, TypeVar, Literal
 
 import cv2
 import numpy as np
@@ -62,6 +62,7 @@ class WebcamConfig(CameraConfig):
     frequency: int = 10
     camera_info: CameraInfo = field(default_factory=CameraInfo)
     frame_id_prefix: Optional[str] = None
+    stereo_slice: Optional[Literal["left", "right"]] = None  # For stereo cameras
 
 
 class Webcam(ColorCameraHardware[WebcamConfig]):
@@ -155,6 +156,15 @@ class Webcam(ColorCameraHardware[WebcamConfig]):
             frame_id=self._frame("camera"),  # Standard frame ID for camera images
             ts=time.time(),  # Current timestamp
         )
+
+        if self.config.stereo_slice in ("left", "right"):
+            image.frame_id = self._frame(f"camera_stereo_{self.config.stereo_slice}")
+            half_width = image.width // 2
+            if self.config.stereo_slice == "left":
+                image = image.crop(0, 0, half_width, image.height)
+            else:
+                image = image.crop(half_width, 0, half_width, image.height)
+
         return image
 
     def _capture_loop(self):
