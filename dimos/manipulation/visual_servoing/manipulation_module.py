@@ -565,7 +565,11 @@ class ManipulationModule(Module):
 
         if self.track_frame_id == self.base_frame_id:
             # Extract pose from Detection3D object
-            if self.pbvs.current_target and self.pbvs.current_target.bbox and self.pbvs.current_target.bbox.center:
+            if (
+                self.pbvs.current_target
+                and self.pbvs.current_target.bbox
+                and self.pbvs.current_target.bbox.center
+            ):
                 return self.pbvs.current_target.bbox.center
             return None
 
