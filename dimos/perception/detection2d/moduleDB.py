@@ -27,7 +27,8 @@ from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
-from dimos.perception.detection2d.module2D import Detection2DModule, Detection3DModule
+from dimos.perception.detection2d.module2D import Detection2DModule
+from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.perception.detection2d.type import (
     Detection2D,
     Detection3D,
@@ -50,6 +51,6 @@ class DetectionDBModule(Detection3DModule):
     def add_detection(self, detection: Detection3D):
         print("DETECTION", detection)
 
-    @skill
     def lookup(self, label: str) -> List[Detection3D]:
         """Look up a detection by label."""
+        return []

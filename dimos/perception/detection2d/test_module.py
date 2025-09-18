@@ -30,20 +30,22 @@ from dimos.robot.unitree_webrtc.type.map import Map
 
 
 def test_module2d(moment: Moment):
-    detections2d = Detection2DModule().process_image_frame(moment.get("image_frame"))
+    detections2d = Detection2DModule().process_image_frame(moment["image_frame"])
     print(detections2d)
 
     annotations = detections2d.to_image_annotations()
-    publish_lcm({annotations: "annotations", **moment})
+    publish_lcm({"annotations": annotations, **moment})
 
 
 def test_module3d(moment: Moment):
-    detections2d = Detection2DModule().process_image_frame(moment.get("image_frame"))
-    pointcloud = moment.get("lidar_frame")
-    camera_transform = moment.get("tf").get("camera_optical", "world")
+    detections2d = Detection2DModule().process_image_frame(moment["image_frame"])
+    pointcloud = moment["lidar_frame"]
+    camera_transform = moment["tf"].get("camera_optical", "world")
+    if camera_transform is None:
+        raise ValueError("No camera_optical transform in tf")
     annotations = detections2d.to_image_annotations()
 
-    detections3d = Detection3DModule(camera_info=moment.get("camera_info")).process_frame(
+    detections3d = Detection3DModule(camera_info=moment["camera_info"]).process_frame(
         detections2d, pointcloud, camera_transform
     )
 

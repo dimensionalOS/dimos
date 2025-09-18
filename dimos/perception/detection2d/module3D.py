@@ -226,7 +226,7 @@ class Detection3DModule(Detection2DModule):
         # )
 
         if not transform:
-            return None
+            return ImageDetections3D(detections.image, [])
 
         pointcloud_list = self.filter_points_in_detections(detections, pointcloud, transform)
 

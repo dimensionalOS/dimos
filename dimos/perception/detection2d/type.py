@@ -50,7 +50,7 @@ from dimos.types.timestamped import Timestamped, to_ros_stamp, to_timestamp
 Bbox = Tuple[float, float, float, float]
 CenteredBbox = Tuple[float, float, float, float]
 # yolo and detic have bad output formats
-InconvinientDetectionFormat = Tuple[List[Bbox], List[int], List[int], List[float], List[List[str]]]
+InconvinientDetectionFormat = Tuple[List[Bbox], List[int], List[int], List[float], List[str]]
 
 Detection = Tuple[Bbox, int, int, float, str]
 Detections = List[Detection]
@@ -478,7 +478,7 @@ class ImageDetections2D(ImageDetections[Detection2D]):
     @classmethod
     def from_detector(
         cls, image: Image, raw_detections: InconvinientDetectionFormat, **kwargs
-    ) -> "ImageDetections[Detection2D]":
+    ) -> "ImageDetections2D":
         return cls(
             image=image,
             detections=Detection2D.from_detector(raw_detections, image=image, ts=image.ts),

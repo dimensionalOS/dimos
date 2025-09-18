@@ -25,6 +25,7 @@ from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
+from dimos.perception.detection2d.type import ImageDetections3D
 from dimos.protocol.service import lcmservice as lcm
 from dimos.protocol.tf import TF
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
@@ -34,14 +35,15 @@ from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
 
 
-class Moment(TypedDict):
+class Moment(TypedDict, total=False):
     odom_frame: Odometry
     lidar_frame: LidarMessage
     image_frame: Image
     camera_info: CameraInfo
     transforms: list[Transform]
     tf: TF
-    detections: Optional[PointCloud2]
+    annotations: Optional[ImageAnnotations]
+    detections: Optional[ImageDetections3D]
 
 
 @pytest.fixture
@@ -118,15 +120,16 @@ def publish_lcm(moment: Moment):
 
 @pytest.fixture(scope="session")
 def detections2d(moment: Moment):
-    return Detection2DModule().process_image_frame(moment.get("image_frame"))
+    return Detection2DModule().process_image_frame(moment["image_frame"])
 
 
 @pytest.fixture(scope="session")
 def detections3d(moment: Moment):
-    detections2d = Detection2DModule().process_image_frame(moment.get("image_frame"))
-    pointcloud = moment.get("lidar_frame")
-    camera_transform = moment.get("tf").get("camera_optical", "world")
+    detections2d = Detection2DModule().process_image_frame(moment["image_frame"])
+    camera_transform = moment["tf"].get("camera_optical", "world")
+    if camera_transform is None:
+        raise ValueError("No camera_optical transform in tf")
 
-    return Detection3DModule(camera_info=moment.get("camera_info")).process_frame(
-        detections2d, pointcloud, camera_transform
+    return Detection3DModule(camera_info=moment["camera_info"]).process_frame(
+        detections2d, moment["lidar_frame"], camera_transform
     )
