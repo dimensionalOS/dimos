@@ -23,7 +23,7 @@ from dimos.agents2.spec import Model, Provider
 from dimos.agents2.cli.human import HumanInput
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
-from dimos.agents2.skills.unitree_wrappers.navigation_wrappers import NavigationSkillContainer
+from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.agents2.skills.unitree_wrappers.basic_wrappers import BasicSkillContainer
 from dimos.utils.logging_config import setup_logger
 
