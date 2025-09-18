@@ -212,6 +212,20 @@ class UnitreeWebRTCConnection:
         return backpressure(self.raw_odom_stream().pipe(ops.map(Odometry.from_msg)))
 
     @functools.cache
+    def video_stream(self) -> Observable[Image]:
+        return backpressure(
+            self.raw_video_stream().pipe(
+                ops.filter(lambda frame: frame is not None),
+                ops.map(
+                    lambda frame: Image.from_numpy(
+                        frame.to_ndarray(format="rgb24"),
+                        frame_id="camera_optical",
+                    )
+                ),
+            )
+        )
+
+    @functools.cache
     def lowstate_stream(self) -> Subject[LowStateMsg]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
@@ -255,7 +269,7 @@ class UnitreeWebRTCConnection:
         )
 
     @functools.lru_cache(maxsize=None)
-    def video_stream(self) -> Observable[VideoMessage]:
+    def raw_video_stream(self) -> Observable[VideoMessage]:
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
 

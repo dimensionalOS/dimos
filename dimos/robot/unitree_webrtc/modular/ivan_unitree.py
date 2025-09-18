@@ -18,12 +18,15 @@ import time
 from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos.core import LCMTransport, start
+
+# from dimos.msgs.detection2d import Detection2DArray
 from dimos.msgs.foxglove_msgs import ImageAnnotations
-from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.perception.detection2d import Detection2DArrayFix
-from dimos.perception.detection2d.module import Detection3DModule
+from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.perception.detection2d import Detection3DModule
 from dimos.protocol.pubsub import lcm
 from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
+from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
@@ -32,19 +35,27 @@ logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.IN
 def detection_unitree():
     dimos = start(6)
 
-    connection = deploy_connection(dimos, loop=False, speed=0.2)
-    # connection.record("unitree_go2_lidar_corrected")
+    connection = deploy_connection(dimos)
+    connection.start()
+    # connection.record("unitree_go2_office_walk2")
     # mapper = deploy_navigation(dimos, connection)
 
-    detection = dimos.deploy(Detection3DModule)
-    detection.image.connect(connection.video)
-    detection.camera_info.connect(connection.camera_info)
-    detection.pointcloud.connect(connection.lidar)
+    module3D = dimos.deploy(Detection3DModule, camera_info=ConnectionModule._camera_info())
 
-    detection.detections.transport = LCMTransport("/detections", Detection2DArrayFix)
-    detection.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
-    detection.filtered_pointcloud.transport = LCMTransport("/filtered_pointcloud", PointCloud2)
+    module3D.image.connect(connection.video)
+    module3D.pointcloud.connect(connection.lidar)
 
+    module3D.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
+    module3D.detections.transport = LCMTransport("/detections", Detection2DArray)
+
+    module3D.detected_pointcloud_0.transport = LCMTransport("/detected/pointcloud/0", PointCloud2)
+    module3D.detected_pointcloud_1.transport = LCMTransport("/detected/pointcloud/1", PointCloud2)
+    module3D.detected_pointcloud_2.transport = LCMTransport("/detected/pointcloud/2", PointCloud2)
+
+    module3D.detected_image_0.transport = LCMTransport("/detected/image/0", Image)
+    module3D.detected_image_1.transport = LCMTransport("/detected/image/1", Image)
+    module3D.detected_image_2.transport = LCMTransport("/detected/image/2", Image)
+    module3D.start()
     # detection.start()
 
     try:
@@ -53,7 +64,7 @@ def detection_unitree():
     except KeyboardInterrupt:
         connection.stop()
         # mapper.stop()
-        detection.stop()
+        # detection.stop()
         logger.info("Shutting down...")
 
 

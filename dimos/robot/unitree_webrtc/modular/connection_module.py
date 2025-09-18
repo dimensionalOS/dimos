@@ -38,6 +38,7 @@ from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.reactive import backpressure
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
@@ -55,12 +56,12 @@ logging.getLogger("root").setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
-image_resize_factor = 2
+image_resize_factor = 1
 originalwidth, originalheight = (1280, 720)
 
 
 class FakeRTC(UnitreeWebRTCConnection):
-    dir_name = "unitree_go2_lidar_corrected"
+    dir_name = "unitree_go2_office_walk2"
 
     # we don't want UnitreeWebRTCConnection to init
     def __init__(
@@ -93,24 +94,20 @@ class FakeRTC(UnitreeWebRTCConnection):
         return lidar_store.stream(**self.replay_config)
 
     @functools.cache
-    def raw_odom_stream(self):
+    def odom_stream(self):
         print("odom stream start")
         odom_store = TimedSensorReplay(f"{self.dir_name}/odom")
         return odom_store.stream(**self.replay_config)
 
     # we don't have raw video stream in the data set
     @functools.cache
-    def raw_video_stream(self):
+    def video_stream(self):
         print("video stream start")
         video_store = TimedSensorReplay(
             f"{self.dir_name}/video",
         )
 
         return video_store.stream(**self.replay_config)
-
-    @functools.cache
-    def video_stream(self):
-        return self.raw_video_stream()
 
     def move(self, vector: Twist, duration: float = 0.0):
         pass
@@ -150,7 +147,7 @@ class ConnectionModule(Module):
         lidar_store.save_stream(self.connection.lidar_stream()).subscribe(lambda x: x)
 
         odom_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/odom")
-        odom_store.save_stream(self.connection.raw_odom_stream()).subscribe(lambda x: x)
+        odom_store.save_stream(self.connection.odom_stream()).subscribe(lambda x: x)
 
         video_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/video")
         video_store.save_stream(self.connection.video_stream()).subscribe(lambda x: x)
@@ -181,19 +178,16 @@ class ConnectionModule(Module):
         # self.connection.video_stream().subscribe(lambda video: print("IMAGE", video.ts))
         # self.connection.odom_stream().subscribe(lambda odom: print("ODOM", odom.ts))
 
-        def attach_frame_id(image: Image) -> Image:
-            image.frame_id = "camera_optical"
-            # return image
+        def resize(image: Image) -> Image:
             return image.resize(
                 int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
             )
 
-        sharpness_window(
-            2, self.connection.video_stream().pipe(ops.map(attach_frame_id))
-        ).subscribe(self.video.publish)
-        # self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(self.video.publish)
+        sharpness = sharpness_window(10, self.connection.video_stream())
+        sharpness.subscribe(self.video.publish)
+        # self.connection.video_stream().subscribe(self.video.publish)
 
-        # self.connection.video_stream().pipe(ops.map(attach_frame_id)).subscribe(image_pub)
+        # self.connection.video_stream().pipe(ops.map(resize)).subscribe(self.video.publish)
         self.camera_info_stream().subscribe(self.camera_info.publish)
         self.movecmd.subscribe(self.connection.move)
 

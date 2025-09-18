@@ -270,7 +270,6 @@ class Detection3DModule(Detection2DModule):
             detections, pc = args
             # pc = pointcloud_buffer.find_closest(detections.image.ts)
             transform = self.tf.get("camera_optical", "world", detections.image.ts, time_tolerance)
-            print("COMBINING 2D AND 3D", detections, pc, transform)
             return self.process_frame(detections, pc, transform)
 
         # combined_stream = self.detection_stream().pipe(ops.map(detection2d_to_3d))

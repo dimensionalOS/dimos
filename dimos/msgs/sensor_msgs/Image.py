@@ -528,8 +528,10 @@ def sharpness_window(target_frequency: float, source: Observable[Image]) -> Obse
     def find_best(*argv):
         if not window._items:
             return None
-        return max(window._items, key=lambda x: x.sharpness())
+
+        found = max(window._items, key=lambda x: x.sharpness())
+        return found
 
     return rx.interval(1.0 / target_frequency).pipe(
-        ops.observe_on(thread_scheduler), ops.map(find_best)
+        ops.observe_on(thread_scheduler), ops.map(find_best), ops.filter(lambda x: x is not None)
     )

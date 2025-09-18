@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from copy import copy
 from typing import List, Optional, TypedDict
 
@@ -79,7 +80,8 @@ class LidarMessage(PointCloud2):
             "origin": origin,
             "resolution": data["resolution"],
             "pointcloud": pointcloud,
-            "ts": data["stamp"],
+            # - this is broken in unitree webrtc api "stamp":1.758148e+09
+            "ts": time.time(),  # data["stamp"],
             "raw_msg": raw_message,
             **kwargs,
         }
