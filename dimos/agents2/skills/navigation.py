@@ -198,8 +198,40 @@ class NavigationSkillContainer(SkillContainer):
                     f"Starting navigation to ({pos_x:.2f}, {pos_y:.2f}) with rotation {theta:.2f}"
                 )
 
+                # Get current robot position for debugging
+                try:
+                    current_pose = self._robot.get_odom()
+                    logger.info(
+                        f"Current robot position: ({current_pose.position.x:.2f}, {current_pose.position.y:.2f})"
+                    )
+                    distance_to_goal = (
+                        (pos_x - current_pose.position.x) ** 2
+                        + (pos_y - current_pose.position.y) ** 2
+                    ) ** 0.5
+                    logger.info(f"Distance to goal: {distance_to_goal:.2f}m")
+                except Exception as e:
+                    logger.warning(f"Could not get current position: {e}")
+
                 # Use the robot's navigate_to method
+                logger.info(f"Calling navigate_to with goal_pose: {goal_pose}")
+
+                # Check navigator state before starting
+                try:
+                    initial_state = self._robot.navigator.get_state()
+                    logger.info(f"Navigator initial state: {initial_state}")
+                except Exception as e:
+                    logger.warning(f"Could not get initial navigator state: {e}")
+
+                # Try navigation
                 result = self._robot.navigate_to(goal_pose, blocking=True)
+                logger.info(f"Navigation result: {result}")
+
+                # Check final navigator state
+                try:
+                    final_state = self._robot.navigator.get_state()
+                    logger.info(f"Navigator final state: {final_state}")
+                except Exception as e:
+                    logger.warning(f"Could not get final navigator state: {e}")
 
                 if result:
                     logger.info("Navigation completed successfully")
@@ -212,14 +244,25 @@ class NavigationSkillContainer(SkillContainer):
                         "metadata": metadata,
                     }
                 else:
-                    logger.error("Navigation did not complete successfully")
+                    logger.error(
+                        "Navigation did not complete successfully - checking navigator state"
+                    )
+                    # Try to get more information about why navigation failed
+                    try:
+                        nav_state = self._robot.navigator.get_state()
+                        logger.error(f"Navigator state: {nav_state}")
+                        goal_reached = self._robot.navigator.is_goal_reached()
+                        logger.error(f"Goal reached: {goal_reached}")
+                    except Exception as e:
+                        logger.error(f"Could not get navigator state: {e}")
+
                     return {
                         "success": False,
                         "query": query,
                         "position": (pos_x, pos_y),
                         "rotation": theta,
                         "similarity": similarity,
-                        "error": "Navigation did not complete successfully",
+                        "error": "Navigation did not complete successfully - goal may be unreachable or navigator failed",
                     }
             else:
                 logger.warning(f"No valid position data found for query: '{query}'")
