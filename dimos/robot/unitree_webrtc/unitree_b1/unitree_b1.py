@@ -39,9 +39,19 @@ from dimos.robot.unitree_webrtc.unitree_b1.connection import (
 from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
-from geometry_msgs.msg import TwistStamped as ROSTwistStamped
-from nav_msgs.msg import Odometry as ROSOdometry
-from tf2_msgs.msg import TFMessage as ROSTFMessage
+
+# Handle ROS imports for environments where ROS is not available like CI
+try:
+    from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+    from nav_msgs.msg import Odometry as ROSOdometry
+    from tf2_msgs.msg import TFMessage as ROSTFMessage
+
+    ROS_AVAILABLE = True
+except ImportError:
+    ROSTwistStamped = None
+    ROSOdometry = None
+    ROSTFMessage = None
+    ROS_AVAILABLE = False
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_b1", level=logging.INFO)
 
