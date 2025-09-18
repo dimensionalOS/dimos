@@ -31,7 +31,6 @@ from reactivex import Observable
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
-from dimos.utils.generic import truncate_display_string
 
 import pyaudio
 
@@ -177,8 +176,7 @@ class MujocoConnection:
             self.mujoco_thread.move(twist, duration)
 
     def publish_request(self, topic: str, data: dict):
-        string = f"Received robot command request in Mujoco. Topic: {topic}, Data: {data}"
-        print(truncate_display_string(string))
+        print(f"Received robot command request in Mujoco. Topic: {topic}")
 
         if topic == "rt/api/audiohub/request":
             param = json.loads(data["parameter"])

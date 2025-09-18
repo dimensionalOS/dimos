@@ -586,11 +586,14 @@ class UnitreeGo2(Robot):
         logger.info(
             f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
         )
+        print("navigator.set_goal", pose)
         self.navigator.set_goal(pose)
         time.sleep(1.0)
 
+        print("blocking", blocking)
         if blocking:
             while self.navigator.get_state() == NavigatorState.FOLLOWING_PATH:
+                print("navigator state", self.navigator.get_state())
                 time.sleep(0.25)
 
             time.sleep(1.0)
