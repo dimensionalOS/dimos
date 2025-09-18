@@ -271,12 +271,31 @@ class Agent(AgentSpec):
                 # Check if we have enough messages for LLM invocation
                 # Anthropic requires at least one human message in addition to system message
                 current_history = self.history()
-                if len(current_history) > 1 or (
-                    len(current_history) == 1 and not isinstance(current_history[0], SystemMessage)
+
+                # Filter out any messages with empty content (except final assistant message)
+                filtered_history = []
+                for i, message in enumerate(current_history):
+                    is_final_assistant = i == len(current_history) - 1 and isinstance(
+                        message, AIMessage
+                    )
+                    has_content = (
+                        hasattr(message, "content") and message.content and message.content.strip()
+                    )
+
+                    if has_content or is_final_assistant:
+                        filtered_history.append(message)
+                    else:
+                        logger.warning(
+                            f"Filtering out message with empty content: {type(message).__name__}"
+                        )
+
+                if len(filtered_history) > 1 or (
+                    len(filtered_history) == 1
+                    and not isinstance(filtered_history[0], SystemMessage)
                 ):
                     # history() builds our message history dynamically
                     # ensures we include latest system state, but not old ones.
-                    msg = self._llm.invoke(current_history)
+                    msg = self._llm.invoke(filtered_history)
                     self.append_history(msg)
 
                     logger.info(f"Agent response: {msg.content}")
