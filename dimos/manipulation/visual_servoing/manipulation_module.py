@@ -354,15 +354,19 @@ class ManipulationModule(Module):
     @rpc
     def pick_and_place(
         self,
-        pick_target: Union[Tuple[int, int], Detection3D] = None,
-        place_target: Union[Tuple[int, int], None] = None,
+        pick_x: Union[int, Tuple[int, int], Detection3D] = None,
+        pick_y: int = None,
+        place_x: int = None,
+        place_y: int = None,
     ) -> Dict[str, Any]:
         """
         Execute a pick and place task (blocking).
 
         Args:
-            pick_target: Either (x, y) pixel coordinates, a Detection3D object, or None to use existing target
-            place_target: Either (x, y) pixel coordinates for place location, or None
+            pick_x: X coordinate for pick location, or a tuple (x, y), or Detection3D object
+            pick_y: Y coordinate for pick location (when pick_x is int)
+            place_x: X coordinate for place location (optional)
+            place_y: Y coordinate for place location (optional)
 
         Returns:
             Dict with success status and details
@@ -374,26 +378,24 @@ class ManipulationModule(Module):
         self.task_failed = False
 
         try:
-            # Handle pick target
-            if pick_target is not None:
-                if isinstance(pick_target, tuple) and len(pick_target) == 2:
-                    # Pixel coordinates provided
-                    self.target_click = pick_target
-                elif isinstance(pick_target, Detection3D):
-                    # Detection3D object provided - set it directly
-                    self.target_object = pick_target
+            # Handle pick target - support multiple input formats
+            if pick_x is not None:
+                if isinstance(pick_x, tuple) and len(pick_x) == 2:
+                    # Tuple (x, y) provided
+                    self.target_click = pick_x
+                    self.target_object = None
+                elif isinstance(pick_x, Detection3D):
+                    # Detection3D object provided
+                    self.target_object = pick_x
                     self.target_click = None
+                elif isinstance(pick_x, int) and pick_y is not None:
+                    # Individual coordinates provided
+                    self.target_click = (pick_x, pick_y)
+                    self.target_object = None
 
             # Handle place target
-            if place_target is not None:
-                if (
-                    isinstance(place_target, tuple)
-                    and len(place_target) == 2
-                    and self.latest_depth is not None
-                ):
-                    self._set_place_target(place_target[0], place_target[1])
-                else:
-                    self.place_target_position = None
+            if place_x is not None and place_y is not None and self.latest_depth is not None:
+                self._set_place_target(place_x, place_y)
             else:
                 self.place_target_position = None
 
@@ -562,7 +564,10 @@ class ManipulationModule(Module):
             return None
 
         if self.track_frame_id == self.base_frame_id:
-            return self.pbvs.current_target
+            # Extract pose from Detection3D object
+            if self.pbvs.current_target and self.pbvs.current_target.bbox and self.pbvs.current_target.bbox.center:
+                return self.pbvs.current_target.bbox.center
+            return None
 
         base_to_target = self.tf.get(
             parent_frame=self.base_frame_id,
