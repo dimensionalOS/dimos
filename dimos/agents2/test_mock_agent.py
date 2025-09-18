@@ -27,8 +27,6 @@ from dimos.core import LCMTransport, start
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d import Detect2DModule
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -167,15 +165,8 @@ def test_tool_call_implicit_detections():
     robot_connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
     robot_connection.start()
 
-    detect2d = dimos.deploy(Detect2DModule)
-    detect2d.detections.transport = LCMTransport("/detections", Detection2DArray)
-    detect2d.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
-    detect2d.image.connect(robot_connection.video)
-    detect2d.start()
-
     test_skill_module = dimos.deploy(SkillContainerTest)
 
-    agent.register_skills(detect2d)
     agent.register_skills(test_skill_module)
     agent.start()
 
@@ -208,5 +199,4 @@ def test_tool_call_implicit_detections():
     agent.stop()
     test_skill_module.stop()
     robot_connection.stop()
-    detect2d.stop()
     dimos.stop()
