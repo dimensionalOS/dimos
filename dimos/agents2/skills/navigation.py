@@ -403,16 +403,13 @@ class NavigationSkillContainer(SkillContainer):
             return str({"success": False, "error": error_msg})
 
     @skill(ret=Return.call_agent, stream=Stream.none)
-    def navigate_to_goal(
-        self, x: float, y: float, theta: Optional[float] = None, timeout: float = 40.0
-    ) -> str:
+    def navigate_to_goal(self, x: float, y: float, theta: Optional[float] = None) -> str:
         """Navigate to a specific goal position.
 
         Args:
             x: X coordinate of the goal in meters
             y: Y coordinate of the goal in meters
             theta: Orientation at goal in radians (optional)
-            timeout: Maximum time to spend navigating in seconds
         """
         try:
             logger.info(

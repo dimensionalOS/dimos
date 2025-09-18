@@ -270,4 +270,4 @@ def _play_base64_wav(block_content):
         p.terminate()
 
     except Exception as e:
-        logger.error(f"Failed to play base64 WAV: {e}")
+        pass

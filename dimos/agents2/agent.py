@@ -309,8 +309,8 @@ class Agent(AgentSpec):
                     # Yield control to prevent tight loop when waiting for messages
                     await asyncio.sleep(0.1)
 
-                # print(self)
-                # print(self.coordinator)
+                print(self)
+                print(self.coordinator)
 
                 self._write_debug_history_file()
 
