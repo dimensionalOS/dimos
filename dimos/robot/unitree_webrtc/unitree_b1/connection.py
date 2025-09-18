@@ -62,8 +62,7 @@ class B1ConnectionModule(Module):
         self.ip = ip
         self.port = port
         self.test_mode = test_mode
-        self.current_mode = 0  # Start in IDLE mode for safety
-        # Internal state as B1Command
+        self.current_mode = 0  # Start in IDLE mode
         self._current_cmd = B1Command(mode=0)
         # Thread control
         self.running = False
@@ -266,11 +265,7 @@ class B1ConnectionModule(Module):
             self.odom_pose.publish(pose_stamped)
 
     def _watchdog_loop(self):
-        """Single watchdog thread that monitors command freshness.
-
-        This is more efficient than creating Timer threads for every command.
-        Checks every 50ms if commands are stale and zeros them if needed.
-        """
+        """Single watchdog thread that monitors command freshness."""
         while self.watchdog_running:
             try:
                 time_since_last_cmd = time.time() - self.last_command_time
@@ -284,7 +279,6 @@ class B1ConnectionModule(Module):
                         if self.test_mode:
                             logger.info(f"[TEST] Watchdog timeout - zeroing commands")
 
-                        # Zero velocities but maintain mode
                         self._current_cmd.lx = 0.0
                         self._current_cmd.ly = 0.0
                         self._current_cmd.rx = 0.0
@@ -293,7 +287,6 @@ class B1ConnectionModule(Module):
                         self.timeout_active = True
                 else:
                     if self.timeout_active:
-                        # Commands resumed
                         logger.info("Watchdog: Commands resumed - control restored")
                         if self.test_mode:
                             logger.info("[TEST] Watchdog: Commands resumed")
