@@ -1,0 +1,65 @@
+#!/bin/bash
+
+set -euo pipefail
+
+files=(
+  dimos/agents2/conftest.py
+  dimos/agents2/constants.py
+  dimos/agents2/skills/conftest.py
+  dimos/agents2/temp/run_unitree_agents2.py
+  dimos/agents2/temp/test_unitree_skill_container.py
+  dimos/agents/memory/spatial_vector_db.py
+  dimos/agents/modules/base.py
+  dimos/agents/test_agent_image_message.py
+  #dimos/agents/test_agent_tools.py
+  #dimos/agents/test_agent_message_streams.py
+  #dimos/agents/test_base_agent_text.py
+  #dimos/agents/test_conversation_history.py
+  dimos/conftest.py
+  dimos/constants.py
+  #dimos/core/module.py
+  #dimos/core/test_core.py
+  #dimos/core/test_stream.py
+  #dimos/hardware/gstreamer_camera.py
+  #dimos/hardware/gstreamer_camera_test_script.py
+  #dimos/hardware/gstreamer_sender.py
+  #dimos/manipulation/visual_servoing/detection3d.py
+  #dimos/manipulation/visual_servoing/manipulation_module.py
+  #dimos/manipulation/visual_servoing/pbvs.py
+  dimos/models/qwen/video_query.py
+  dimos/msgs/vision_msgs/BoundingBox2DArray.py
+  dimos/msgs/vision_msgs/BoundingBox3DArray.py
+  dimos/msgs/vision_msgs/Detection2DArray.py
+  dimos/msgs/vision_msgs/Detection3DArray.py
+  dimos/msgs/vision_msgs/__init__.py
+  #dimos/navigation/bt_navigator/goal_validator.py
+  #dimos/navigation/bt_navigator/navigator.py
+  #dimos/perception/detection2d/__init__.py
+  #dimos/perception/detection2d/module.py
+  #dimos/perception/object_tracker.py
+  #dimos/perception/spatial_perception.py
+  #dimos/protocol/rpc/off_test_pubsubrpc.py
+  dimos/protocol/rpc/pubsubrpc.py
+  dimos/protocol/rpc/test_lcmrpc_timeout.py
+  #dimos/protocol/skill/skill.py
+  #dimos/protocol/skill/test_coordinator.py
+  dimos/protocol/skill/test_utils.py
+  dimos/protocol/skill/utils.py
+  dimos/robot/foxglove_bridge.py
+  dimos/robot/robot.py
+  #dimos/robot/unitree_webrtc/depth_module.py
+  #dimos/robot/unitree_webrtc/modular/ivan_unitree.py
+  dimos/robot/unitree_webrtc/run_agents2.py
+  dimos/robot/unitree_webrtc/run.py
+  dimos/robot/utils/robot_debugger.py
+  #dimos/simulation/mujoco/policy.py
+  dimos/simulation/mujoco/types.py
+  #dimos/skills/navigation.py
+  #dimos/skills/skills.py
+  dimos/types/robot_location.py
+  dimos/utils/deprecation.py
+  dimos/utils/generic.py
+  #dimos/web/websocket_vis/websocket_vis_module.py
+)
+
+exec uvx ty check "${files[@]}"

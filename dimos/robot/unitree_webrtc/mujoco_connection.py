@@ -28,10 +28,6 @@ from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 
-try:
-    from dimos.simulation.mujoco.mujoco import MujocoThread
-except ImportError:
-    MujocoThread = None
 
 LIDAR_FREQUENCY = 10
 ODOM_FREQUENCY = 50
@@ -42,7 +38,9 @@ logger = logging.getLogger(__name__)
 
 class MujocoConnection:
     def __init__(self, *args, **kwargs):
-        if MujocoThread is None:
+        try:
+            from dimos.simulation.mujoco.mujoco import MujocoThread
+        except ImportError:
             raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
         get_data("mujoco_sim")
         self.mujoco_thread = MujocoThread()
@@ -99,8 +97,6 @@ class MujocoConnection:
 
     @functools.cache
     def odom_stream(self):
-        print("odom stream start")
-
         def on_subscribe(observer, scheduler):
             if self._is_cleaned_up:
                 observer.on_completed()
@@ -135,8 +131,6 @@ class MujocoConnection:
 
     @functools.cache
     def video_stream(self):
-        print("video stream start")
-
         def on_subscribe(observer, scheduler):
             if self._is_cleaned_up:
                 observer.on_completed()
@@ -172,6 +166,9 @@ class MujocoConnection:
     def move(self, twist: Twist, duration: float = 0.0):
         if not self._is_cleaned_up:
             self.mujoco_thread.move(twist, duration)
+
+    def publish_request(self, topic: str, data: dict):
+        pass
 
     def stop(self):
         """Stop the MuJoCo connection gracefully."""

@@ -734,6 +734,10 @@ class WavefrontFrontierExplorer(Module):
         logger.info("Stopped autonomous frontier exploration")
         return True
 
+    @rpc
+    def is_exploration_active(self) -> bool:
+        return self.exploration_active
+
     def _exploration_loop(self):
         """Main exploration loop running in separate thread."""
         # Track number of goals published

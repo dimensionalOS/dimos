@@ -20,14 +20,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, List, Literal, Optional, Union
 
-from langchain_core.messages import (
-    AIMessage,
-    HumanMessage,
-    MessageLikeRepresentation,
-    SystemMessage,
-    ToolCall,
-    ToolMessage,
-)
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool as langchain_tool
 from rich.console import Console
 from rich.table import Table
@@ -38,6 +31,7 @@ from dimos.core.module import get_loop
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
 from dimos.protocol.skill.type import MsgType, Output, Reducer, Return, SkillMsg, Stream
+from dimos.protocol.skill.utils import interpret_tool_call_args
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.protocol.skill.coordinator")
@@ -379,6 +373,8 @@ class SkillCoordinator(Module):
         if isinstance(arg_keywords, list):
             arg_list = arg_keywords
             arg_keywords = {}
+
+        arg_list, arg_keywords = interpret_tool_call_args(args)
 
         return skill_config.call(
             call_id,

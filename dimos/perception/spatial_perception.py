@@ -631,3 +631,18 @@ class SpatialMemory(Module):
         # Log cleanup
         if self.vector_db:
             logger.info(f"Cleaning up SpatialMemory, stored {self.stored_frame_count} frames")
+
+    @rpc
+    def tag_location(self, robot_location: RobotLocation) -> bool:
+        try:
+            self.vector_db.tag_location(robot_location)
+        except Exception:
+            return False
+        return True
+
+    @rpc
+    def query_tagged_location(self, query: str) -> Optional[RobotLocation]:
+        location, semantic_distance = self.vector_db.query_tagged_location(query)
+        if semantic_distance < 0.3:
+            return location
+        return None

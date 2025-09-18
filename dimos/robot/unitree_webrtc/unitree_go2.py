@@ -60,7 +60,7 @@ from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.transform_utils import offset_distance
 from dimos.perception.object_tracker import ObjectTracking
 from dimos_lcm.std_msgs import Bool
-from dimos.robot.robot import Robot
+from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_capabilities import RobotCapability
 
 
@@ -304,12 +304,12 @@ class ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
 
-class UnitreeGo2(Robot):
+class UnitreeGo2(UnitreeRobot):
     """Full Unitree Go2 robot with navigation and perception capabilities."""
 
     def __init__(
         self,
-        ip: str,
+        ip: Optional[str],
         output_dir: str = None,
         websocket_port: int = 7779,
         skill_library: Optional[SkillLibrary] = None,
@@ -355,6 +355,14 @@ class UnitreeGo2(Robot):
         self.object_tracker = None
 
         self._setup_directories()
+
+    def __enter__(self) -> "UnitreeGo2":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # self.stop()
+        return False
 
     def _setup_directories(self):
         """Setup directories for spatial memory storage."""
@@ -614,6 +622,9 @@ class UnitreeGo2(Robot):
         """
         self.navigator.cancel_goal()
         return self.frontier_explorer.stop_exploration()
+
+    def is_exploration_active(self) -> bool:
+        return self.frontier_explorer.is_exploration_active()
 
     def cancel_navigation(self) -> bool:
         """Cancel the current navigation goal.

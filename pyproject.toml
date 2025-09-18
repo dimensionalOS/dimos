@@ -171,6 +171,7 @@ dev = [
     "pre_commit==4.2.0",
     "pytest==8.3.5",
     "pytest-asyncio==0.26.0",
+    "pytest-mock==3.15.0",
     "textual==3.7.1"
 ]
 

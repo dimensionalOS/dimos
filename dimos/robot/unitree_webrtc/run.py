@@ -24,15 +24,15 @@ import time
 from dotenv import load_dotenv
 
 import reactivex as rx
+from reactivex.subject import Subject
 import reactivex.operators as ops
 
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.agents.claude_agent import ClaudeAgent
 from dimos.skills.kill_skill import KillSkill
 from dimos.skills.navigation import NavigateWithText, GetPose, NavigateToGoal, Explore
-from dimos.skills.unitree.unitree_speak import UnitreeSpeak
 from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.stream.audio.pipelines import stt, tts
+from dimos.stream.audio.pipelines import tts
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree_webrtc.run")
@@ -106,9 +106,9 @@ def main():
         logger.info(f"Skills registered: {[skill.__name__ for skill in skills.get_class_skills()]}")
 
         # Set up streams for agent and web interface
-        agent_response_subject = rx.subject.Subject()
+        agent_response_subject = Subject()
         agent_response_stream = agent_response_subject.pipe(ops.share())
-        audio_subject = rx.subject.Subject()
+        audio_subject = Subject()
 
         # Set up streams for web interface
         streams = {}
@@ -128,8 +128,8 @@ def main():
             raise
 
         # Set up speech-to-text
-        stt_node = stt()
-        stt_node.consume_audio(audio_subject.pipe(ops.share()))
+        # stt_node = stt()
+        # stt_node.consume_audio(audio_subject.pipe(ops.share()))
 
         # Create Claude agent
         agent = ClaudeAgent(
