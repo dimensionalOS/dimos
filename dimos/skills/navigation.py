@@ -33,7 +33,7 @@ from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 
-logger = setup_logger("dimos.skills.semantic_map_skills")
+logger = setup_logger(__file__)
 
 
 def get_dimos_base_path():
