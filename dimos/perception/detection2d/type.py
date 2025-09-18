@@ -327,22 +327,19 @@ class Detection3D(Detection2D):
         """Calculate the center of the pointcloud in world frame."""
         points = np.asarray(self.pointcloud.pointcloud.points)
         center = points.mean(axis=0)
-
-        return Vector3(center[0], center[1], center[2])
+        return Vector3(*center)
 
     @functools.cached_property
-    def to_pose(self) -> PoseStamped:
+    def pose(self) -> PoseStamped:
         """Convert detection to a PoseStamped using pointcloud center.
 
         Returns pose in world frame with identity rotation.
         The pointcloud is already in world frame.
         """
-        center_world = self.center
-
         return PoseStamped(
             ts=self.ts,
             frame_id="world",
-            position=center_world,
+            position=self.center,
             orientation=(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
         )
 

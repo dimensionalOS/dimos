@@ -14,6 +14,7 @@
 
 import hashlib
 import os
+import re
 import subprocess
 
 import reactivex as rx
@@ -205,16 +206,26 @@ def test_duration_with_loop():
 
 def test_first_methods():
     """Test first() and first_timestamp() methods"""
+
     # Test SensorReplay.first()
     lidar_replay = testing.SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
+
+    print("first file", lidar_replay.files[0])
+    # Verify the first file ends with 000.pickle using regex
+    assert re.search(r"000\.pickle$", str(lidar_replay.files[0])), (
+        f"Expected first file to end with 000.pickle, got {lidar_replay.files[0]}"
+    )
+
     first_msg = lidar_replay.first()
     assert first_msg is not None
     assert isinstance(first_msg, LidarMessage)
 
     # Verify it's the same type as first item from iterate()
     first_from_iterate = next(lidar_replay.iterate())
-    assert type(first_msg) == type(first_from_iterate)
-    assert first_msg.ts == first_from_iterate.ts  # Compare timestamps
+    print("DONE")
+    assert type(first_msg) is type(first_from_iterate)
+    # Since LidarMessage.from_msg uses time.time(), timestamps will be slightly different
+    assert abs(first_msg.ts - first_from_iterate.ts) < 1.0  # Within 1 second tolerance
 
     # Test TimedSensorReplay.first_timestamp()
     odom_store = testing.TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)

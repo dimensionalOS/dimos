@@ -11,11 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import functools
 import glob
 import logging
 import os
 import pickle
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
@@ -42,12 +43,9 @@ class SensorReplay(Generic[T]):
                   For example: lambda data: LidarMessage.from_msg(data)
     """
 
-    debug: Optional[str]
-
-    def __init__(self, name: str, autocast: Optional[Callable[[Any], T]] = None, debug=None):
+    def __init__(self, name: str, autocast: Optional[Callable[[Any], T]] = None):
         self.root_dir = get_data(name)
         self.autocast = autocast
-        self.debug = debug
 
     def load(self, *names: Union[int, str]) -> Union[T, Any, list[T], list[Any]]:
         if len(names) == 1:
@@ -55,8 +53,6 @@ class SensorReplay(Generic[T]):
         return list(map(lambda name: self.load_one(name), names))
 
     def load_one(self, name: Union[int, str, Path]) -> Union[T, Any]:
-        if self.debug:
-            print(f"{self.debug} load {name}")
         if isinstance(name, int):
             full_path = self.root_dir / f"/{name:03d}.pickle"
         elif isinstance(name, Path):
@@ -76,15 +72,25 @@ class SensorReplay(Generic[T]):
         except StopIteration:
             return None
 
-    def iterate(self) -> Iterator[Union[T, Any]]:
-        pattern = os.path.join(self.root_dir, "*")
-        for file_path in sorted(
-            glob.glob(pattern),
-            key=lambda x: int(os.path.basename(x).split(".")[0])
-            if os.path.basename(x).split(".")[0].isdigit()
-            else 0,
-        ):
-            yield self.load_one(Path(file_path))
+    @functools.cached_property
+    def files(self) -> list[Path]:
+        def extract_number(filepath):
+            """Extract last digits before .pickle extension"""
+            basename = os.path.basename(filepath)
+            match = re.search(r"(\d+)\.pickle$", basename)
+            return int(match.group(1)) if match else 0
+
+        return sorted(
+            glob.glob(os.path.join(self.root_dir, "*")),
+            key=extract_number,
+        )
+
+    def iterate(self, loop: bool = False) -> Iterator[Union[T, Any]]:
+        while True:
+            for file_path in self.files:
+                yield self.load_one(Path(file_path))
+            if not loop:
+                break
 
     def stream(
         self, rate_hz: Optional[float] = None, loop: bool = False
@@ -170,9 +176,6 @@ class TimedSensorStorage(SensorStorage[T]):
 
 class TimedSensorReplay(SensorReplay[T]):
     def load_one(self, name: Union[int, str, Path]) -> Union[T, Any]:
-        if self.debug:
-            print(f"{self.debug} load {name}")
-
         if isinstance(name, int):
             full_path = self.root_dir / f"/{name:03d}.pickle"
         elif isinstance(name, Path):

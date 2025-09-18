@@ -46,6 +46,7 @@ def test_module3d(moment: Moment):
     detections3d = Detection3DModule(camera_info=moment.get("camera_info")).process_frame(
         detections2d, pointcloud, camera_transform
     )
+
     publish_lcm(
         {
             **moment,

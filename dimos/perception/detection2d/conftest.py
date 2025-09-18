@@ -50,7 +50,7 @@ def dimos_cluster():
         yield dimos
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def moment():
     data_dir = "unitree_go2_lidar_corrected"
     get_data(data_dir)
@@ -116,16 +116,14 @@ def publish_lcm(moment: Moment):
             detections_image_transport.publish(detection.cropped_image())
 
 
-@functools.cache
-@pytest.fixture
+@pytest.fixture(scope="session")
 def detections2d(moment: Moment):
-    return Detection2DModule().process_frame(moment.get("image_frame"))
+    return Detection2DModule().process_image_frame(moment.get("image_frame"))
 
 
-@functools.cache
-@pytest.fixture
+@pytest.fixture(scope="session")
 def detections3d(moment: Moment):
-    detections2d = Detection2DModule().process_frame(moment.get("image_frame"))
+    detections2d = Detection2DModule().process_image_frame(moment.get("image_frame"))
     pointcloud = moment.get("lidar_frame")
     camera_transform = moment.get("tf").get("camera_optical", "world")
 
