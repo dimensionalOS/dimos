@@ -27,13 +27,8 @@ from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.tf2_msgs import TFMessage
 
 
-@pytest.mark.ros
 def test_tfmessage_initialization():
     """Test TFMessage initialization with Transform objects."""
-    if ROSTFMessage is None:
-        pytest.skip("ROS not available")
-    if ROSTransformStamped is None:
-        pytest.skip("ROS not available")
     # Create some transforms
     tf1 = Transform(
         translation=Vector3(1, 2, 3), rotation=Quaternion(0, 0, 0, 1), frame_id="world", ts=100.0
@@ -57,7 +52,6 @@ def test_tfmessage_initialization():
     assert transforms == [tf1, tf2]
 
 
-@pytest.mark.ros
 def test_tfmessage_empty():
     """Test empty TFMessage."""
     msg = TFMessage()
@@ -65,7 +59,6 @@ def test_tfmessage_empty():
     assert list(msg) == []
 
 
-@pytest.mark.ros
 def test_tfmessage_add_transform():
     """Test adding transforms to TFMessage."""
     msg = TFMessage()
@@ -77,7 +70,6 @@ def test_tfmessage_add_transform():
     assert msg[0] == tf
 
 
-@pytest.mark.ros
 def test_tfmessage_lcm_encode_decode():
     """Test encoding TFMessage to LCM bytes."""
     # Create transforms

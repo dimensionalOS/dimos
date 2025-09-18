@@ -35,15 +35,8 @@ except ImportError:
     ROS_AVAILABLE = False
 
 
-@pytest.mark.ros
 def test_lcm_encode_decode():
     """Test LCM encode/decode preserves CameraInfo data."""
-    if ROSHeader is None:
-        pytest.skip("ROS not available")
-    if ROSRegionOfInterest is None:
-        pytest.skip("ROS not available")
-    if ROSCameraInfo is None:
-        pytest.skip("ROS not available")
     print("Testing CameraInfo LCM encode/decode...")
 
     # Create test camera info with sample calibration data
@@ -163,7 +156,6 @@ def test_lcm_encode_decode():
     print("✓ LCM encode/decode test passed - all properties preserved!")
 
 
-@pytest.mark.ros
 def test_numpy_matrix_operations():
     """Test numpy matrix getter/setter operations."""
     print("\nTesting numpy matrix operations...")
@@ -374,7 +366,6 @@ def test_ros_conversion():
     print("\n✓ All ROS conversion tests passed!")
 
 
-@pytest.mark.ros
 def test_equality():
     """Test CameraInfo equality comparison."""
     print("\nTesting CameraInfo equality...")

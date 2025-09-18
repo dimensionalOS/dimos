@@ -51,7 +51,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
 
-@pytest.mark.ros
 def test_odometry_default_init():
     """Test default initialization."""
     if ROSVector3 is None:
@@ -100,7 +99,6 @@ def test_odometry_default_init():
     assert np.all(odom.twist.covariance == 0.0)
 
 
-@pytest.mark.ros
 def test_odometry_with_frames():
     """Test initialization with frame IDs."""
     ts = 1234567890.123456
@@ -114,7 +112,6 @@ def test_odometry_with_frames():
     assert odom.child_frame_id == child_frame_id
 
 
-@pytest.mark.ros
 def test_odometry_with_pose_and_twist():
     """Test initialization with pose and twist."""
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -129,7 +126,6 @@ def test_odometry_with_pose_and_twist():
     assert odom.twist.twist.angular.z == 0.1
 
 
-@pytest.mark.ros
 def test_odometry_with_covariances():
     """Test initialization with pose and twist with covariances."""
     pose = Pose(1.0, 2.0, 3.0)
@@ -154,7 +150,6 @@ def test_odometry_with_covariances():
     assert np.array_equal(odom.twist.covariance, twist_cov)
 
 
-@pytest.mark.ros
 def test_odometry_copy_constructor():
     """Test copy constructor."""
     original = Odometry(
@@ -173,7 +168,6 @@ def test_odometry_copy_constructor():
     assert copy.twist is not original.twist
 
 
-@pytest.mark.ros
 def test_odometry_dict_init():
     """Test initialization from dictionary."""
     odom_dict = {
@@ -193,7 +187,6 @@ def test_odometry_dict_init():
     assert odom.twist.linear.x == 0.5
 
 
-@pytest.mark.ros
 def test_odometry_properties():
     """Test convenience properties."""
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -237,7 +230,6 @@ def test_odometry_properties():
     assert odom.yaw == pose.yaw
 
 
-@pytest.mark.ros
 def test_odometry_str_repr():
     """Test string representations."""
     odom = Odometry(
@@ -261,7 +253,6 @@ def test_odometry_str_repr():
     assert "0.500" in str_repr
 
 
-@pytest.mark.ros
 def test_odometry_equality():
     """Test equality comparison."""
     odom1 = Odometry(
@@ -293,7 +284,6 @@ def test_odometry_equality():
     assert odom1 != "not an odometry"
 
 
-@pytest.mark.ros
 def test_odometry_lcm_encode_decode():
     """Test LCM encoding and decoding."""
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -430,7 +420,6 @@ def test_odometry_ros_roundtrip():
     assert restored.twist == original.twist
 
 
-@pytest.mark.ros
 def test_odometry_zero_timestamp():
     """Test that zero timestamp gets replaced with current time."""
     odom = Odometry(ts=0.0)
@@ -440,7 +429,6 @@ def test_odometry_zero_timestamp():
     assert odom.ts <= time.time()
 
 
-@pytest.mark.ros
 def test_odometry_with_just_pose():
     """Test initialization with just a Pose (no covariance)."""
     pose = Pose(1.0, 2.0, 3.0)
@@ -454,7 +442,6 @@ def test_odometry_with_just_pose():
     assert np.all(odom.twist.covariance == 0.0)  # Twist should also be zero
 
 
-@pytest.mark.ros
 def test_odometry_with_just_twist():
     """Test initialization with just a Twist (no covariance)."""
     twist = Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.1))
@@ -467,6 +454,7 @@ def test_odometry_with_just_twist():
     assert np.all(odom.pose.covariance == 0.0)  # Pose should also be zero
 
 
+@pytest.mark.ros
 @pytest.mark.parametrize(
     "frame_id,child_frame_id",
     [
@@ -477,7 +465,6 @@ def test_odometry_with_just_twist():
         ("", ""),  # Empty frames
     ],
 )
-@pytest.mark.ros
 def test_odometry_frame_combinations(frame_id, child_frame_id):
     """Test various frame ID combinations."""
     odom = Odometry(frame_id=frame_id, child_frame_id=child_frame_id)
@@ -495,7 +482,6 @@ def test_odometry_frame_combinations(frame_id, child_frame_id):
     assert restored.child_frame_id == child_frame_id
 
 
-@pytest.mark.ros
 def test_odometry_typical_robot_scenario():
     """Test a typical robot odometry scenario."""
     # Robot moving forward at 0.5 m/s with slight rotation
