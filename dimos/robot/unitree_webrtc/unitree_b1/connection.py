@@ -72,7 +72,9 @@ class B1ConnectionModule(Module):
         self.packet_count = 0
         self.last_command_time = time.time()
         self.command_timeout = 0.2  # 200ms safety timeout
-        self.stop_timer = None
+        self.watchdog_thread = None
+        self.watchdog_running = False
+        self.timeout_active = False
 
     @rpc
     def start(self):
@@ -93,10 +95,17 @@ class B1ConnectionModule(Module):
         if self.odom_in:
             self.odom_in.subscribe(self._publish_odom_pose)
 
-        # Start 50Hz sending thread
+        # Start threads
         self.running = True
+        self.watchdog_running = True
+
+        # Start 50Hz sending thread
         self.send_thread = threading.Thread(target=self._send_loop, daemon=True)
         self.send_thread.start()
+
+        # Start watchdog thread
+        self.watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
+        self.watchdog_thread.start()
 
         return True
 
@@ -120,8 +129,12 @@ class B1ConnectionModule(Module):
                 time.sleep(0.02)
 
         self.running = False
+        self.watchdog_running = False
+
         if self.send_thread:
             self.send_thread.join(timeout=0.5)
+        if self.watchdog_thread:
+            self.watchdog_thread.join(timeout=0.5)
 
         if self.socket:
             self.socket.close()
@@ -162,13 +175,7 @@ class B1ConnectionModule(Module):
         logger.debug(f"Converted to B1Command: {self._current_cmd}")
 
         self.last_command_time = time.time()
-
-        if self.stop_timer:
-            self.stop_timer.cancel()
-
-        self.stop_timer = threading.Timer(self.command_timeout, self._safety_stop)
-        self.stop_timer.daemon = True
-        self.stop_timer.start()
+        self.timeout_active = False  # Reset timeout state since we got a new command
 
     def handle_mode(self, mode_msg: Int32):
         """Handle mode change message.
@@ -201,41 +208,15 @@ class B1ConnectionModule(Module):
         return True
 
     def _send_loop(self):
-        """Continuously send current command at 50Hz with safety timeout."""
-        timeout_warned = False
+        """Continuously send current command at 50Hz.
 
+        The watchdog thread handles timeout and zeroing commands, so this loop
+        just sends whatever is in self._current_cmd at 50Hz.
+        """
         while self.running:
             try:
-                # Safety check: If no command received recently, send zeros
-                time_since_last_cmd = time.time() - self.last_command_time
-
-                if time_since_last_cmd > self.command_timeout:
-                    # Command is stale - send zero velocities for safety
-                    if not timeout_warned:
-                        logger.warning(
-                            f"Command timeout ({time_since_last_cmd:.1f}s) - sending zeros for safety"
-                        )
-                        if self.test_mode:
-                            logger.info(
-                                f"[TEST] Command timeout ({time_since_last_cmd:.1f}s) - sending zeros"
-                            )
-                        timeout_warned = True
-
-                    # Create safe idle command
-                    safe_cmd = B1Command(mode=self.current_mode)
-                    safe_cmd.lx = 0.0
-                    safe_cmd.ly = 0.0
-                    safe_cmd.rx = 0.0
-                    safe_cmd.ry = 0.0
-                    cmd_to_send = safe_cmd
-                else:
-                    # Send command if fresh
-                    if timeout_warned:
-                        logger.info("Commands resumed - control restored")
-                        if self.test_mode:
-                            logger.info("[TEST] Commands resumed - control restored")
-                        timeout_warned = False
-                    cmd_to_send = self._current_cmd
+                # Watchdog handles timeout, we just send current command
+                cmd_to_send = self._current_cmd
 
                 # Log status every second (50 packets)
                 if self.packet_count % 50 == 0:
@@ -275,19 +256,46 @@ class B1ConnectionModule(Module):
             )
             self.odom_pose.publish(pose_stamped)
 
-    def _safety_stop(self):
-        """Safety stop called by timer if no commands received."""
-        logger.warning("Safety timeout - sending stop command")
-        if self.test_mode:
-            logger.info("[TEST] Safety timeout - sending stop command")
+    def _watchdog_loop(self):
+        """Single watchdog thread that monitors command freshness.
 
-        # Zero velocities but maintain current mode
-        safe_cmd = B1Command(mode=self.current_mode)
-        safe_cmd.lx = 0.0
-        safe_cmd.ly = 0.0
-        safe_cmd.rx = 0.0
-        safe_cmd.ry = 0.0
-        self._current_cmd = safe_cmd
+        This is more efficient than creating Timer threads for every command.
+        Checks every 50ms if commands are stale and zeros them if needed.
+        """
+        while self.watchdog_running:
+            try:
+                time_since_last_cmd = time.time() - self.last_command_time
+
+                if time_since_last_cmd > self.command_timeout:
+                    if not self.timeout_active:
+                        # First time detecting timeout
+                        logger.warning(
+                            f"Watchdog timeout ({time_since_last_cmd:.1f}s) - zeroing commands"
+                        )
+                        if self.test_mode:
+                            logger.info(f"[TEST] Watchdog timeout - zeroing commands")
+
+                        # Zero velocities but maintain mode
+                        self._current_cmd.lx = 0.0
+                        self._current_cmd.ly = 0.0
+                        self._current_cmd.rx = 0.0
+                        self._current_cmd.ry = 0.0
+
+                        self.timeout_active = True
+                else:
+                    if self.timeout_active:
+                        # Commands resumed
+                        logger.info("Watchdog: Commands resumed - control restored")
+                        if self.test_mode:
+                            logger.info("[TEST] Watchdog: Commands resumed")
+                        self.timeout_active = False
+
+                # Check every 50ms
+                time.sleep(0.05)
+
+            except Exception as e:
+                if self.watchdog_running:
+                    logger.error(f"Watchdog error: {e}")
 
     @rpc
     def idle(self):
