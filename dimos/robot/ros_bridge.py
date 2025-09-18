@@ -18,10 +18,19 @@ import time
 from typing import Dict, Any, Type, Literal, Optional
 from enum import Enum
 
-import rclpy
-from rclpy.executors import SingleThreadedExecutor
-from rclpy.node import Node
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
+try:
+    import rclpy
+    from rclpy.executors import SingleThreadedExecutor
+    from rclpy.node import Node
+    from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
+except ImportError:
+    rclpy = None
+    SingleThreadedExecutor = None
+    Node = None
+    QoSProfile = None
+    QoSReliabilityPolicy = None
+    QoSHistoryPolicy = None
+    QoSDurabilityPolicy = None
 
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.utils.logging_config import setup_logger
