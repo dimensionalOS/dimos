@@ -44,7 +44,8 @@ def test_module():
     dimos = start(1)
     # Deploy ColorCameraModule, not Webcam directly
     camera_module = dimos.deploy(
-        ColorCameraModule, hardware=lambda: Webcam(camera_index=4, frequency=30, stereo_slice=1)
+        ColorCameraModule,
+        hardware=lambda: Webcam(camera_index=4, frequency=30, stereo_slice="left"),
     )
     camera_module.image.transport = LCMTransport("/image", Image)
     camera_module.start()

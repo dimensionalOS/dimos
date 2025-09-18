@@ -18,7 +18,7 @@ import time
 from abc import ABC, abstractmethod, abstractproperty
 from dataclasses import dataclass, field
 from functools import cache
-from typing import Any, Callable, Generic, Optional, Protocol, TypeVar
+from typing import Any, Callable, Generic, Optional, Protocol, TypeVar, Literal
 
 import cv2
 import numpy as np
