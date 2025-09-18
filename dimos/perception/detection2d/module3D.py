@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import functools
+
 import time
 from typing import List, Optional, Tuple
 
@@ -20,7 +20,6 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
 from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D
 from reactivex import operators as ops
 
 from dimos.core import In, Out, rpc
@@ -35,7 +34,6 @@ from dimos.perception.detection2d.type import (
     ImageDetections2D,
     ImageDetections3D,
 )
-from dimos.types.timestamped import TimestampedBufferCollection, to_human_readable
 
 # Type aliases for clarity
 ImageDetections = Tuple[Image, List[Detection2D]]
@@ -209,22 +207,6 @@ class Detection3DModule(Detection2DModule):
         pointcloud: PointCloud2,
         transform: Transform,
     ) -> ImageDetections3D:
-        # print(
-        #     "PROCESS FRAME 3D\n"
-        #     + "\n".join(
-        #         map(
-        #             str,
-        #             [
-        #                 detections,
-        #                 "PC " + str(pointcloud),
-        #                 "IMAGE" + str(detections.image),
-        #                 "CAM INFO " + str(camera_info),
-        #                 "TF " + str(transform),
-        #             ],
-        #         )
-        #     )
-        # )
-
         if not transform:
             return ImageDetections3D(detections.image, [])
 
@@ -242,37 +224,15 @@ class Detection3DModule(Detection2DModule):
 
         return ImageDetections3D(detections.image, detection3d_list)
 
-    # @functools.cache
-    # def pointcloud_stream(self):
-    #     # Returns stream of List[Detection3D]
-    #     # Buffer Detection2D objects by image timestamp to process them together
-    #     return self.detection_stream().pipe(
-    #         ops.buffer_with_time(0.1),  # Buffer detections within 100ms window
-    #         ops.filter(lambda detections: len(detections) > 0),
-    #         ops.with_latest_from(self.pointcloud.observable(), self.camera_info.observable()),
-    #         ops.map(
-    #             lambda args: self.process_frame(
-    #                 *args,  # [List[Detection2D], PointCloud2, CameraInfo]
-    #                 self.tf.get("camera_optical", "world"),
-    #             )
-    #         ),
-    #         ops.filter(lambda detection3d_list: len(detection3d_list) > 0),
-    #     )
-
     @rpc
     def start(self):
         time_tolerance = 5.0  # seconds
-        # pointcloud_buffer = TimestampedBufferCollection[PointCloud2](window_duration=time_tolerance)
-        # self.pointcloud.observable().subscribe(pointcloud_buffer.add)
 
-        # get latest from mapper
         def detection2d_to_3d(args):
             detections, pc = args
-            # pc = pointcloud_buffer.find_closest(detections.image.ts)
             transform = self.tf.get("camera_optical", "world", detections.image.ts, time_tolerance)
             return self.process_frame(detections, pc, transform)
 
-        # combined_stream = self.detection_stream().pipe(ops.map(detection2d_to_3d))
         combined_stream = self.detection_stream().pipe(
             ops.with_latest_from(self.pointcloud.observable()), ops.map(detection2d_to_3d)
         )
