@@ -9,3 +9,5 @@ from langchain_core.messages import (
 
 from dimos.agents2.agent import Agent
 from dimos.agents2.spec import AgentSpec
+from dimos.protocol.skill.skill import skill
+from dimos.protocol.skill.type import Output, Reducer, Stream

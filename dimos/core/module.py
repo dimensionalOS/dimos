@@ -36,22 +36,32 @@ from dimos.protocol.tf import LCMTF, TFSpec
 
 
 def get_loop() -> asyncio.AbstractEventLoop:
-    try:
-        # here we attempt to figure out if we are running on a dask worker
-        # if so we use the dask worker _loop as ours,
-        # and we register our RPC server
-        worker = get_worker()
-        if worker.loop:
-            return worker.loop
+    # we are actually instantiating a new loop here
+    # to not interfere with an existing dask loop
 
-    except ValueError:
-        ...
+    # try:
+    #     # here we attempt to figure out if we are running on a dask worker
+    #     # if so we use the dask worker _loop as ours,
+    #     # and we register our RPC server
+    #     worker = get_worker()
+    #     if worker.loop:
+    #         print("using dask worker loop")
+    #         return worker.loop.asyncio_loop
+
+    # except ValueError:
+    #     ...
 
     try:
-        return asyncio.get_running_loop()
+        running_loop = asyncio.get_running_loop()
+        return running_loop
     except RuntimeError:
+        import threading
+
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+
+        thr = threading.Thread(target=loop.run_forever, daemon=True)
+        thr.start()
         return loop
 
 
@@ -76,22 +86,16 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer):
             # here we attempt to figure out if we are running on a dask worker
             # if so we use the dask worker _loop as ours,
             # and we register our RPC server
-            worker = get_worker()
-            self._loop = worker.loop if worker else None
             self.rpc = self.config.rpc_transport()
             self.rpc.serve_module_rpc(self)
             self.rpc.start()
         except ValueError:
             ...
 
-        # assuming we are not running on a dask worker,
-        # it's our job to determine or create the event loop
-        if not self._loop:
-            try:
-                self._loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self._loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._loop)
+    def close_rpc(self):
+        if self.rpc:
+            self.rpc.stop()
+            self.rpc = None
 
     @property
     def tf(self):

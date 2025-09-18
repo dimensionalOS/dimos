@@ -1,0 +1,25 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "take_photo",
+          "args": {
+            "args": null
+          },
+          "id": "call_o6ikJtK3vObuEFD6hDtLoyGQ",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I took a photo, but as an AI, I can't see or interpret images. If there's anything specific you need to know, feel free to ask!",
+      "tool_calls": []
+    },
+    {
+      "content": "It looks like a cozy outdoor cafe where people are sitting and enjoying a meal. There are flowers and a nice, sunny ambiance. If you have any specific questions about the image, let me know!",
+      "tool_calls": []
+    }
+  ]
+}

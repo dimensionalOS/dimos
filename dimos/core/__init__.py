@@ -35,6 +35,20 @@ class RPCClient:
         self.actor_instance = actor_instance
         self.rpcs = actor_class.rpcs.keys()
         self.rpc.start()
+        self._unsub_fns = []
+
+    def stop_client(self):
+        for unsub in self._unsub_fns:
+            try:
+                unsub()
+            except Exception:
+                pass
+
+        self._unsub_fns = []
+
+        if self.rpc:
+            self.rpc.stop()
+            self.rpc = None
 
     def __reduce__(self):
         # Return the class and the arguments needed to reconstruct the object
@@ -63,7 +77,14 @@ class RPCClient:
             original_method = getattr(self.actor_class, name, None)
 
             def rpc_call(*args, **kwargs):
-                return self.rpc.call_sync(f"{self.remote_name}/{name}", (args, kwargs))
+                result, unsub_fn = self.rpc.call_sync(f"{self.remote_name}/{name}", (args, kwargs))
+                self._unsub_fns.append(unsub_fn)
+
+                # TODO: This is ugly.
+                if name in ("stop", "close", "shutdown"):
+                    self.stop_client()
+
+                return result
 
             # Copy docstring and other attributes from original method
             if original_method:
@@ -78,7 +99,7 @@ class RPCClient:
         return self.actor_instance.__getattr__(name)
 
 
-def patchdask(dask_client: Client):
+def patchdask(dask_client: Client, local_cluster: LocalCluster) -> Client:
     def deploy(
         actor_class,
         *args,
@@ -151,9 +172,14 @@ def patchdask(dask_client: Client):
                 f"[bold]Total: {total_used_gb:.2f}/{total_limit_gb:.2f}GB ({total_percentage:.1f}%) across {total_workers} workers[/bold]"
             )
 
+    def close_all():
+        dask_client.shutdown()
+        local_cluster.close()
+
     dask_client.deploy = deploy
     dask_client.check_worker_memory = check_worker_memory
-    dask_client.stop = lambda: dask_client.shutdown()
+    dask_client.stop = lambda: dask_client.close()
+    dask_client.close_all = close_all
     return dask_client
 
 
@@ -180,11 +206,4 @@ def start(n: Optional[int] = None, memory_limit: str = "auto") -> Client:
     console.print(
         f"[green]Initialized dimos local cluster with [bright_blue]{n} workers, memory limit: {memory_limit}"
     )
-    return patchdask(client)
-
-
-# this needs to go away
-# client.shutdown() is the correct shutdown method
-def stop(client: Client):
-    client.close()
-    client.cluster.close()
+    return patchdask(client, cluster)

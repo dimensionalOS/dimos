@@ -13,49 +13,157 @@
 # limitations under the License.
 
 import pytest
+import pytest_asyncio
 
 from dimos.agents2.agent import Agent
 from dimos.core import start
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 
+system_prompt = (
+    "Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
+)
 
+
+@pytest.fixture(scope="session")
+def dimos_cluster():
+    """Session-scoped fixture to initialize dimos cluster once."""
+    dimos = start(2)
+    try:
+        yield dimos
+    finally:
+        dimos.shutdown()
+
+
+@pytest_asyncio.fixture
+async def local():
+    """Local context: both agent and testcontainer run locally"""
+    testcontainer = SkillContainerTest()
+    agent = Agent(system_prompt=system_prompt)
+    try:
+        yield agent, testcontainer
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise e
+    finally:
+        # Ensure cleanup happens while event loop is still active
+        try:
+            agent.stop()
+        except Exception:
+            pass
+        try:
+            testcontainer.stop()
+        except Exception:
+            pass
+
+
+@pytest_asyncio.fixture
+async def dask_mixed(dimos_cluster):
+    """Dask context: testcontainer on dimos, agent local"""
+    testcontainer = dimos_cluster.deploy(SkillContainerTest)
+    agent = Agent(system_prompt=system_prompt)
+    try:
+        yield agent, testcontainer
+    finally:
+        try:
+            agent.stop()
+        except Exception:
+            pass
+        try:
+            testcontainer.stop()
+        except Exception:
+            pass
+
+
+@pytest_asyncio.fixture
+async def dask_full(dimos_cluster):
+    """Dask context: both agent and testcontainer deployed on dimos"""
+    testcontainer = dimos_cluster.deploy(SkillContainerTest)
+    agent = dimos_cluster.deploy(Agent, system_prompt=system_prompt)
+    try:
+        yield agent, testcontainer
+    finally:
+        try:
+            agent.stop()
+        except Exception:
+            pass
+        try:
+            testcontainer.stop()
+        except Exception:
+            pass
+
+
+@pytest_asyncio.fixture(params=["local", "dask_mixed", "dask_full"])
+async def agent_context(request):
+    """Parametrized fixture that runs tests with different agent configurations"""
+    param = request.param
+
+    if param == "local":
+        testcontainer = SkillContainerTest()
+        agent = Agent(system_prompt=system_prompt)
+        try:
+            yield agent, testcontainer
+        finally:
+            try:
+                agent.stop()
+            except Exception:
+                pass
+            try:
+                testcontainer.stop()
+            except Exception:
+                pass
+    elif param == "dask_mixed":
+        dimos_cluster = request.getfixturevalue("dimos_cluster")
+        testcontainer = dimos_cluster.deploy(SkillContainerTest)
+        agent = Agent(system_prompt=system_prompt)
+        try:
+            yield agent, testcontainer
+        finally:
+            try:
+                agent.stop()
+            except Exception:
+                pass
+            try:
+                testcontainer.stop()
+            except Exception:
+                pass
+    elif param == "dask_full":
+        dimos_cluster = request.getfixturevalue("dimos_cluster")
+        testcontainer = dimos_cluster.deploy(SkillContainerTest)
+        agent = dimos_cluster.deploy(Agent, system_prompt=system_prompt)
+        try:
+            yield agent, testcontainer
+        finally:
+            try:
+                agent.stop()
+            except Exception:
+                pass
+            try:
+                testcontainer.stop()
+            except Exception:
+                pass
+
+
+# @pytest.mark.timeout(40)
 @pytest.mark.tool
 @pytest.mark.asyncio
-async def test_agent_init():
-    system_prompt = (
-        "Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
-    )
-
-    # # Uncomment the following lines to use a dimos module system
-    dimos = start(2)
-    testcontainer = dimos.deploy(SkillContainerTest)
-    agent = Agent(system_prompt=system_prompt)
-
-    ## uncomment the following lines to run agents in a main loop without a module system
-    # testcontainer = SkillContainerTest()
-    # agent = Agent(system_prompt=system_prompt)
+async def test_agent_init(agent_context):
+    """Test agent initialization and basic functionality across different configurations"""
+    agent, testcontainer = agent_context
 
     agent.register_skills(testcontainer)
     agent.start()
 
-    agent.run_implicit_skill("uptime_seconds")
+    # agent.run_implicit_skill("uptime_seconds")
 
-    await agent.query_async(
+    print("query agent")
+    # When running locally, call the async method directly
+    agent.query(
         "hi there, please tell me what's your name and current date, and how much is 124181112 + 124124?"
     )
-
-    # agent loop is considered finished once no active skills remain,
-    # agent will stop it's loop if passive streams are active
     print("Agent loop finished, asking about camera")
-
-    # we query again (this shows subsequent querying, but we could have asked for camera image in the original query,
-    # it all runs in parallel, and agent might get called once or twice depending on timing of skill responses)
-    await agent.query_async("tell me what you see on the camera?")
+    agent.query("tell me what you see on the camera?")
 
     # you can run skillspy and agentspy in parallel with this test for a better observation of what's happening
-
-    print("Agent loop finished")
-
-    agent.stop()
-    testcontainer.stop()
-    dimos.stop()

@@ -165,6 +165,9 @@ class SkillContainer:
             self._skill_thread_pool.shutdown(wait=True)
             self._skill_thread_pool = None
 
+        if hasattr(self, "close_rpc"):
+            self.close_rpc()
+
     # TODO: figure out standard args/kwargs passing format,
     # use same interface as skill coordinator call_skill method
     @threaded

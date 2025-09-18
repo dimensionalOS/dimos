@@ -154,7 +154,7 @@ def test_sync(rpc_context):
         print("\n")
 
         server.serve_module_rpc(module)
-        assert 3 == client.call_sync("MyModule/add", ([1, 2], {}))
+        assert 3 == client.call_sync("MyModule/add", ([1, 2], {}))[0]
 
 
 # Default rpc.call() either doesn't wait for response or accepts a callback
@@ -169,7 +169,7 @@ def test_kwargs(rpc_context):
 
         server.serve_module_rpc(module)
 
-        assert 3 == client.call_sync("MyModule/add", ([1, 2], {}))
+        assert 3 == client.call_sync("MyModule/add", ([1, 2], {}))[0]
 
 
 # or async calls as well
