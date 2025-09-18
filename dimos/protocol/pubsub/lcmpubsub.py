@@ -127,6 +127,10 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
                 message_event.set()
             except Exception as e:
                 print(f"Error decoding message: {e}")
+                print(f"config: {self.config}, topic: {topic}, channel: {channel}, data: {data}")
+                import traceback
+
+                traceback.print_exc()
                 message_event.set()
 
         # Subscribe to the topic
