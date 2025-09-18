@@ -14,18 +14,30 @@
 
 import numpy as np
 import pytest
+
+try:
+    from geometry_msgs.msg import TwistWithCovariance as ROSTwistWithCovariance
+    from geometry_msgs.msg import Twist as ROSTwist
+    from geometry_msgs.msg import Vector3 as ROSVector3
+except ImportError:
+    ROSTwist = None
+    ROSTwistWithCovariance = None
+    ROSVector3 = None
+
 from dimos_lcm.geometry_msgs import TwistWithCovariance as LCMTwistWithCovariance
-from geometry_msgs.msg import TwistWithCovariance as ROSTwistWithCovariance
-from geometry_msgs.msg import Twist as ROSTwist
-from geometry_msgs.msg import Vector3 as ROSVector3
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_default_init():
     """Test that default initialization creates a zero twist with zero covariance."""
+    if ROSVector3 is None:
+        pytest.skip("ROS not available")
+    if ROSTwistWithCovariance is None:
+        pytest.skip("ROS not available")
     twist_cov = TwistWithCovariance()
 
     # Twist should be zero
@@ -41,6 +53,7 @@ def test_twist_with_covariance_default_init():
     assert twist_cov.covariance.shape == (36,)
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_twist_init():
     """Test initialization with a Twist object."""
     linear = Vector3(1.0, 2.0, 3.0)
@@ -60,6 +73,7 @@ def test_twist_with_covariance_twist_init():
     assert np.all(twist_cov.covariance == 0.0)
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_twist_and_covariance_init():
     """Test initialization with twist and covariance."""
     twist = Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))
@@ -75,6 +89,7 @@ def test_twist_with_covariance_twist_and_covariance_init():
     assert np.array_equal(twist_cov.covariance, covariance)
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_tuple_init():
     """Test initialization with tuple of (linear, angular) velocities."""
     linear = [1.0, 2.0, 3.0]
@@ -94,6 +109,7 @@ def test_twist_with_covariance_tuple_init():
     assert np.array_equal(twist_cov.covariance, covariance)
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_list_covariance():
     """Test initialization with covariance as a list."""
     twist = Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))
@@ -105,6 +121,7 @@ def test_twist_with_covariance_list_covariance():
     assert np.array_equal(twist_cov.covariance, np.array(covariance_list))
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_copy_init():
     """Test copy constructor."""
     twist = Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))
@@ -123,6 +140,7 @@ def test_twist_with_covariance_copy_init():
     assert copy.covariance[0] != 999.0
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_lcm_init():
     """Test initialization from LCM message."""
     lcm_msg = LCMTwistWithCovariance()
@@ -148,6 +166,7 @@ def test_twist_with_covariance_lcm_init():
     assert np.array_equal(twist_cov.covariance, np.arange(36))
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_dict_init():
     """Test initialization from dictionary."""
     twist_dict = {
@@ -162,6 +181,7 @@ def test_twist_with_covariance_dict_init():
     assert np.array_equal(twist_cov.covariance, np.arange(36))
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_dict_init_no_covariance():
     """Test initialization from dictionary without covariance."""
     twist_dict = {"twist": Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))}
@@ -171,6 +191,7 @@ def test_twist_with_covariance_dict_init_no_covariance():
     assert np.all(twist_cov.covariance == 0.0)
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_tuple_of_tuple_init():
     """Test initialization from tuple of (twist_tuple, covariance)."""
     twist_tuple = ([1.0, 2.0, 3.0], [0.1, 0.2, 0.3])
@@ -186,6 +207,7 @@ def test_twist_with_covariance_tuple_of_tuple_init():
     assert np.array_equal(twist_cov.covariance, covariance)
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_properties():
     """Test convenience properties."""
     twist = Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))
@@ -200,6 +222,7 @@ def test_twist_with_covariance_properties():
     assert twist_cov.angular.z == 0.3
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_matrix_property():
     """Test covariance matrix property."""
     twist = Twist()
@@ -218,6 +241,7 @@ def test_twist_with_covariance_matrix_property():
     assert np.array_equal(twist_cov.covariance[:6], [2.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_repr():
     """Test string representation."""
     twist = Twist(Vector3(1.234, 2.567, 3.891), Vector3(0.1, 0.2, 0.3))
@@ -230,6 +254,7 @@ def test_twist_with_covariance_repr():
     assert "36 elements" in repr_str
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_str():
     """Test string formatting."""
     twist = Twist(Vector3(1.234, 2.567, 3.891), Vector3(0.1, 0.2, 0.3))
@@ -245,6 +270,7 @@ def test_twist_with_covariance_str():
     assert "6.000" in str_repr  # Trace of identity matrix is 6
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_equality():
     """Test equality comparison."""
     twist1 = Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))
@@ -273,6 +299,7 @@ def test_twist_with_covariance_equality():
     assert twist_cov1 != None
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_is_zero():
     """Test is_zero method."""
     # Zero twist
@@ -287,6 +314,7 @@ def test_twist_with_covariance_is_zero():
     assert twist_cov2  # Boolean conversion
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_lcm_encode_decode():
     """Test LCM encoding and decoding."""
     twist = Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))
@@ -304,6 +332,7 @@ def test_twist_with_covariance_lcm_encode_decode():
     assert isinstance(decoded.covariance, np.ndarray)
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_from_ros_msg():
     """Test creating from ROS message."""
     ros_msg = ROSTwistWithCovariance()
@@ -322,6 +351,7 @@ def test_twist_with_covariance_from_ros_msg():
     assert np.array_equal(twist_cov.covariance, np.arange(36))
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_to_ros_msg():
     """Test converting to ROS message."""
     twist = Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))
@@ -340,6 +370,7 @@ def test_twist_with_covariance_to_ros_msg():
     assert list(ros_msg.covariance) == list(range(36))
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_ros_roundtrip():
     """Test round-trip conversion with ROS messages."""
     twist = Twist(Vector3(1.5, 2.5, 3.5), Vector3(0.15, 0.25, 0.35))
@@ -352,6 +383,7 @@ def test_twist_with_covariance_ros_roundtrip():
     assert restored == original
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_zero_covariance():
     """Test with zero covariance matrix."""
     twist = Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))
@@ -361,6 +393,7 @@ def test_twist_with_covariance_zero_covariance():
     assert np.trace(twist_cov.covariance_matrix) == 0.0
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_diagonal_covariance():
     """Test with diagonal covariance matrix."""
     twist = Twist()
@@ -394,6 +427,7 @@ def test_twist_with_covariance_diagonal_covariance():
         ([100.0, -100.0, 0.0], [3.14, -3.14, 0.0]),
     ],
 )
+@pytest.mark.ros
 def test_twist_with_covariance_parametrized_velocities(linear, angular):
     """Parametrized test for various velocity values."""
     twist = Twist(linear, angular)

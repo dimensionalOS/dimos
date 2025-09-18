@@ -16,15 +16,25 @@ import time
 
 import numpy as np
 import pytest
+
+try:
+    from geometry_msgs.msg import TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped
+    from geometry_msgs.msg import TwistWithCovariance as ROSTwistWithCovariance
+    from geometry_msgs.msg import Twist as ROSTwist
+    from geometry_msgs.msg import Vector3 as ROSVector3
+    from std_msgs.msg import Header as ROSHeader
+    from builtin_interfaces.msg import Time as ROSTime
+except ImportError:
+    ROSTwistWithCovarianceStamped = None
+    ROSTwist = None
+    ROSHeader = None
+    ROSTime = None
+    ROSTwistWithCovariance = None
+    ROSVector3 = None
+
 from dimos_lcm.geometry_msgs import TwistWithCovarianceStamped as LCMTwistWithCovarianceStamped
 from dimos_lcm.std_msgs import Header as LCMHeader
 from dimos_lcm.std_msgs import Time as LCMTime
-from geometry_msgs.msg import TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped
-from geometry_msgs.msg import TwistWithCovariance as ROSTwistWithCovariance
-from geometry_msgs.msg import Twist as ROSTwist
-from geometry_msgs.msg import Vector3 as ROSVector3
-from std_msgs.msg import Header as ROSHeader
-from builtin_interfaces.msg import Time as ROSTime
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
@@ -32,8 +42,21 @@ from dimos.msgs.geometry_msgs.TwistWithCovarianceStamped import TwistWithCovaria
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_default_init():
     """Test default initialization."""
+    if ROSVector3 is None:
+        pytest.skip("ROS not available")
+    if ROSTwistWithCovariance is None:
+        pytest.skip("ROS not available")
+    if ROSTime is None:
+        pytest.skip("ROS not available")
+    if ROSHeader is None:
+        pytest.skip("ROS not available")
+    if ROSTwist is None:
+        pytest.skip("ROS not available")
+    if ROSTwistWithCovarianceStamped is None:
+        pytest.skip("ROS not available")
     twist_cov_stamped = TwistWithCovarianceStamped()
 
     # Should have current timestamp
@@ -52,6 +75,7 @@ def test_twist_with_covariance_stamped_default_init():
     assert np.all(twist_cov_stamped.covariance == 0.0)
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_with_timestamp():
     """Test initialization with specific timestamp."""
     ts = 1234567890.123456
@@ -62,6 +86,7 @@ def test_twist_with_covariance_stamped_with_timestamp():
     assert twist_cov_stamped.frame_id == frame_id
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_with_twist():
     """Test initialization with twist."""
     ts = 1234567890.123456
@@ -81,6 +106,7 @@ def test_twist_with_covariance_stamped_with_twist():
     assert np.array_equal(twist_cov_stamped.covariance, covariance)
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_with_tuple():
     """Test initialization with tuple of velocities."""
     ts = 1234567890.123456
@@ -100,6 +126,7 @@ def test_twist_with_covariance_stamped_with_tuple():
     assert np.array_equal(twist_cov_stamped.covariance, covariance)
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_properties():
     """Test convenience properties."""
     twist = Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))
@@ -122,6 +149,7 @@ def test_twist_with_covariance_stamped_properties():
     assert np.trace(cov_matrix) == 6.0
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_str():
     """Test string representation."""
     twist = Twist(Vector3(1.234, 2.567, 3.891), Vector3(0.111, 0.222, 0.333))
@@ -139,6 +167,7 @@ def test_twist_with_covariance_stamped_str():
     assert "12.000" in str_repr  # Trace of 2*identity is 12
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_lcm_encode_decode():
     """Test LCM encoding and decoding."""
     ts = 1234567890.123456
@@ -170,6 +199,7 @@ def test_twist_with_covariance_stamped_lcm_encode_decode():
     assert np.array_equal(decoded.covariance, covariance)
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_from_ros_msg():
     """Test creating from ROS message."""
     ros_msg = ROSTwistWithCovarianceStamped()
@@ -201,6 +231,7 @@ def test_twist_with_covariance_stamped_from_ros_msg():
     assert np.array_equal(twist_cov_stamped.covariance, np.arange(36))
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_to_ros_msg():
     """Test converting to ROS message."""
     ts = 1234567890.567890
@@ -228,6 +259,7 @@ def test_twist_with_covariance_stamped_to_ros_msg():
     assert list(ros_msg.twist.covariance) == list(range(36))
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_ros_roundtrip():
     """Test round-trip conversion with ROS messages."""
     ts = 2147483647.987654  # Max int32 value for ROS Time.sec
@@ -258,6 +290,7 @@ def test_twist_with_covariance_stamped_ros_roundtrip():
     assert np.allclose(restored.covariance, original.covariance)
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_zero_timestamp():
     """Test that zero timestamp gets replaced with current time."""
     twist_cov_stamped = TwistWithCovarianceStamped(ts=0.0)
@@ -267,6 +300,7 @@ def test_twist_with_covariance_stamped_zero_timestamp():
     assert twist_cov_stamped.ts <= time.time()
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_inheritance():
     """Test that it properly inherits from TwistWithCovariance and Timestamped."""
     twist = Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))
@@ -287,6 +321,7 @@ def test_twist_with_covariance_stamped_inheritance():
     assert hasattr(twist_cov_stamped, "covariance")
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_is_zero():
     """Test is_zero method inheritance."""
     # Zero twist
@@ -301,6 +336,7 @@ def test_twist_with_covariance_stamped_is_zero():
     assert twist_cov_stamped2  # Boolean conversion
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_sec_nsec():
     """Test the sec_nsec helper function."""
     from dimos.msgs.geometry_msgs.TwistWithCovarianceStamped import sec_nsec
@@ -334,6 +370,7 @@ def test_twist_with_covariance_stamped_sec_nsec():
     "frame_id",
     ["", "map", "odom", "base_link", "cmd_vel", "sensor/velocity/front"],
 )
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_frame_ids(frame_id):
     """Test various frame ID values."""
     twist_cov_stamped = TwistWithCovarianceStamped(frame_id=frame_id)
@@ -347,6 +384,7 @@ def test_twist_with_covariance_stamped_frame_ids(frame_id):
     assert restored.frame_id == frame_id
 
 
+@pytest.mark.ros
 def test_twist_with_covariance_stamped_different_covariances():
     """Test with different covariance patterns."""
     twist = Twist(Vector3(1.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.5))

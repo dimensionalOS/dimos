@@ -13,8 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import numpy as np
 import struct
+
+
+try:
+    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+    from sensor_msgs.msg import PointField as ROSPointField
+    from std_msgs.msg import Header as ROSHeader
+except ImportError:
+    ROSPointCloud2 = None
+    ROSPointField = None
+    ROSHeader = None
 
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -22,17 +33,20 @@ from dimos.utils.testing import SensorReplay
 
 # Try to import ROS types for testing
 try:
-    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-    from sensor_msgs.msg import PointField as ROSPointField
-    from std_msgs.msg import Header as ROSHeader
-
     ROS_AVAILABLE = True
 except ImportError:
     ROS_AVAILABLE = False
 
 
+@pytest.mark.ros
 def test_lcm_encode_decode():
     """Test LCM encode/decode preserves pointcloud data."""
+    if ROSHeader is None:
+        pytest.skip("ROS not available")
+    if ROSPointField is None:
+        pytest.skip("ROS not available")
+    if ROSPointCloud2 is None:
+        pytest.skip("ROS not available")
     replay = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
     lidar_msg: LidarMessage = replay.load_one("lidar_data_021")
 
@@ -92,6 +106,7 @@ def test_lcm_encode_decode():
     print("✓ LCM encode/decode test passed - all properties preserved!")
 
 
+@pytest.mark.ros
 def test_ros_conversion():
     """Test ROS message conversion preserves pointcloud data."""
     if not ROS_AVAILABLE:

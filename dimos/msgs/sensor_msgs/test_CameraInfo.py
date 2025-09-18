@@ -13,23 +13,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import numpy as np
+
+
+try:
+    from sensor_msgs.msg import CameraInfo as ROSCameraInfo
+    from sensor_msgs.msg import RegionOfInterest as ROSRegionOfInterest
+    from std_msgs.msg import Header as ROSHeader
+except ImportError:
+    ROSCameraInfo = None
+    ROSRegionOfInterest = None
+    ROSHeader = None
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
 # Try to import ROS types for testing
 try:
-    from sensor_msgs.msg import CameraInfo as ROSCameraInfo
-    from sensor_msgs.msg import RegionOfInterest as ROSRegionOfInterest
-    from std_msgs.msg import Header as ROSHeader
-
     ROS_AVAILABLE = True
 except ImportError:
     ROS_AVAILABLE = False
 
 
+@pytest.mark.ros
 def test_lcm_encode_decode():
     """Test LCM encode/decode preserves CameraInfo data."""
+    if ROSHeader is None:
+        pytest.skip("ROS not available")
+    if ROSRegionOfInterest is None:
+        pytest.skip("ROS not available")
+    if ROSCameraInfo is None:
+        pytest.skip("ROS not available")
     print("Testing CameraInfo LCM encode/decode...")
 
     # Create test camera info with sample calibration data
@@ -149,6 +163,7 @@ def test_lcm_encode_decode():
     print("✓ LCM encode/decode test passed - all properties preserved!")
 
 
+@pytest.mark.ros
 def test_numpy_matrix_operations():
     """Test numpy matrix getter/setter operations."""
     print("\nTesting numpy matrix operations...")
@@ -186,6 +201,7 @@ def test_numpy_matrix_operations():
     print("✓ All numpy matrix operations passed!")
 
 
+@pytest.mark.ros
 def test_ros_conversion():
     """Test ROS message conversion preserves CameraInfo data."""
     if not ROS_AVAILABLE:
@@ -358,6 +374,7 @@ def test_ros_conversion():
     print("\n✓ All ROS conversion tests passed!")
 
 
+@pytest.mark.ros
 def test_equality():
     """Test CameraInfo equality comparison."""
     print("\nTesting CameraInfo equality...")

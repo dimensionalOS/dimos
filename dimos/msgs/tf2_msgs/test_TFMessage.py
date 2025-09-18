@@ -13,15 +13,27 @@
 # limitations under the License.
 
 import pytest
+
+try:
+    from tf2_msgs.msg import TFMessage as ROSTFMessage
+    from geometry_msgs.msg import TransformStamped as ROSTransformStamped
+except ImportError:
+    ROSTransformStamped = None
+    ROSTFMessage = None
+
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
-from tf2_msgs.msg import TFMessage as ROSTFMessage
 
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.tf2_msgs import TFMessage
 
 
+@pytest.mark.ros
 def test_tfmessage_initialization():
     """Test TFMessage initialization with Transform objects."""
+    if ROSTFMessage is None:
+        pytest.skip("ROS not available")
+    if ROSTransformStamped is None:
+        pytest.skip("ROS not available")
     # Create some transforms
     tf1 = Transform(
         translation=Vector3(1, 2, 3), rotation=Quaternion(0, 0, 0, 1), frame_id="world", ts=100.0
@@ -45,6 +57,7 @@ def test_tfmessage_initialization():
     assert transforms == [tf1, tf2]
 
 
+@pytest.mark.ros
 def test_tfmessage_empty():
     """Test empty TFMessage."""
     msg = TFMessage()
@@ -52,6 +65,7 @@ def test_tfmessage_empty():
     assert list(msg) == []
 
 
+@pytest.mark.ros
 def test_tfmessage_add_transform():
     """Test adding transforms to TFMessage."""
     msg = TFMessage()
@@ -63,6 +77,7 @@ def test_tfmessage_add_transform():
     assert msg[0] == tf
 
 
+@pytest.mark.ros
 def test_tfmessage_lcm_encode_decode():
     """Test encoding TFMessage to LCM bytes."""
     # Create transforms
@@ -110,9 +125,9 @@ def test_tfmessage_lcm_encode_decode():
     assert ts2.transform.rotation.w == 0.707
 
 
+@pytest.mark.ros
 def test_tfmessage_from_ros_msg():
     """Test creating a TFMessage from a ROS TFMessage message."""
-    from geometry_msgs.msg import TransformStamped as ROSTransformStamped
 
     ros_msg = ROSTFMessage()
 
@@ -171,6 +186,7 @@ def test_tfmessage_from_ros_msg():
     assert tfmsg[1].rotation.w == 0.707
 
 
+@pytest.mark.ros
 def test_tfmessage_to_ros_msg():
     """Test converting a TFMessage to a ROS TFMessage message."""
     # Create transforms
@@ -221,6 +237,7 @@ def test_tfmessage_to_ros_msg():
     assert ros_msg.transforms[1].transform.rotation.w == 0.9
 
 
+@pytest.mark.ros
 def test_tfmessage_ros_roundtrip():
     """Test round-trip conversion between TFMessage and ROS TFMessage."""
     # Create transforms with various properties

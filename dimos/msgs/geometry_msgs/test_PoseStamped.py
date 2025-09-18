@@ -15,11 +15,17 @@
 import pickle
 import time
 
-from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+import pytest
+
+try:
+    from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+except ImportError:
+    ROSPoseStamped = None
 
 from dimos.msgs.geometry_msgs import PoseStamped
 
 
+@pytest.mark.ros
 def test_lcm_encode_decode():
     """Test encoding and decoding of Pose to/from binary LCM format."""
 
@@ -42,6 +48,7 @@ def test_lcm_encode_decode():
     assert pose_dest == pose_source
 
 
+@pytest.mark.ros
 def test_pickle_encode_decode():
     """Test encoding and decoding of PoseStamped to/from binary LCM format."""
 
@@ -57,8 +64,11 @@ def test_pickle_encode_decode():
     assert pose_dest == pose_source
 
 
+@pytest.mark.ros
 def test_pose_stamped_from_ros_msg():
     """Test creating a PoseStamped from a ROS PoseStamped message."""
+    if ROSPoseStamped is None:
+        pytest.skip("ROS not available")
     ros_msg = ROSPoseStamped()
     ros_msg.header.frame_id = "world"
     ros_msg.header.stamp.sec = 123
@@ -84,8 +94,11 @@ def test_pose_stamped_from_ros_msg():
     assert pose_stamped.orientation.w == 0.9
 
 
+@pytest.mark.ros
 def test_pose_stamped_to_ros_msg():
     """Test converting a PoseStamped to a ROS PoseStamped message."""
+    if ROSPoseStamped is None:
+        pytest.skip("ROS not available")
     pose_stamped = PoseStamped(
         ts=123.456,
         frame_id="base_link",
@@ -108,8 +121,11 @@ def test_pose_stamped_to_ros_msg():
     assert ros_msg.pose.orientation.w == 0.9
 
 
+@pytest.mark.ros
 def test_pose_stamped_ros_roundtrip():
     """Test round-trip conversion between PoseStamped and ROS PoseStamped."""
+    if ROSPoseStamped is None:
+        pytest.skip("ROS not available")
     original = PoseStamped(
         ts=123.789,
         frame_id="odom",

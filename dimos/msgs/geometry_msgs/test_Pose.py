@@ -17,15 +17,22 @@ import pickle
 import numpy as np
 import pytest
 from dimos_lcm.geometry_msgs import Pose as LCMPose
-from geometry_msgs.msg import Pose as ROSPose
-from geometry_msgs.msg import Point as ROSPoint
-from geometry_msgs.msg import Quaternion as ROSQuaternion
+
+try:
+    from geometry_msgs.msg import Pose as ROSPose
+    from geometry_msgs.msg import Point as ROSPoint
+    from geometry_msgs.msg import Quaternion as ROSQuaternion
+except ImportError:
+    ROSPose = None
+    ROSPoint = None
+    ROSQuaternion = None
 
 from dimos.msgs.geometry_msgs.Pose import Pose, to_pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
+@pytest.mark.ros
 def test_pose_default_init():
     """Test that default initialization creates a pose at origin with identity orientation."""
     pose = Pose()
@@ -47,6 +54,7 @@ def test_pose_default_init():
     assert pose.z == 0.0
 
 
+@pytest.mark.ros
 def test_pose_pose_init():
     """Test initialization with position coordinates only (identity orientation)."""
     pose_data = Pose(1.0, 2.0, 3.0)
@@ -70,6 +78,7 @@ def test_pose_pose_init():
     assert pose.z == 3.0
 
 
+@pytest.mark.ros
 def test_pose_position_init():
     """Test initialization with position coordinates only (identity orientation)."""
     pose = Pose(1.0, 2.0, 3.0)
@@ -91,6 +100,7 @@ def test_pose_position_init():
     assert pose.z == 3.0
 
 
+@pytest.mark.ros
 def test_pose_full_init():
     """Test initialization with position and orientation coordinates."""
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -112,6 +122,7 @@ def test_pose_full_init():
     assert pose.z == 3.0
 
 
+@pytest.mark.ros
 def test_pose_vector_position_init():
     """Test initialization with Vector3 position (identity orientation)."""
     position = Vector3(4.0, 5.0, 6.0)
@@ -129,6 +140,7 @@ def test_pose_vector_position_init():
     assert pose.orientation.w == 1.0
 
 
+@pytest.mark.ros
 def test_pose_vector_quaternion_init():
     """Test initialization with Vector3 position and Quaternion orientation."""
     position = Vector3(1.0, 2.0, 3.0)
@@ -147,6 +159,7 @@ def test_pose_vector_quaternion_init():
     assert pose.orientation.w == 0.9
 
 
+@pytest.mark.ros
 def test_pose_list_init():
     """Test initialization with lists for position and orientation."""
     position_list = [1.0, 2.0, 3.0]
@@ -165,6 +178,7 @@ def test_pose_list_init():
     assert pose.orientation.w == 0.9
 
 
+@pytest.mark.ros
 def test_pose_tuple_init():
     """Test initialization from a tuple of (position, orientation)."""
     position = [1.0, 2.0, 3.0]
@@ -184,6 +198,7 @@ def test_pose_tuple_init():
     assert pose.orientation.w == 0.9
 
 
+@pytest.mark.ros
 def test_pose_dict_init():
     """Test initialization from a dictionary with 'position' and 'orientation' keys."""
     pose_dict = {"position": [1.0, 2.0, 3.0], "orientation": [0.1, 0.2, 0.3, 0.9]}
@@ -201,6 +216,7 @@ def test_pose_dict_init():
     assert pose.orientation.w == 0.9
 
 
+@pytest.mark.ros
 def test_pose_copy_init():
     """Test initialization from another Pose (copy constructor)."""
     original = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -222,6 +238,7 @@ def test_pose_copy_init():
     assert copy == original
 
 
+@pytest.mark.ros
 def test_pose_lcm_init():
     """Test initialization from an LCM Pose."""
     # Create LCM pose
@@ -248,6 +265,7 @@ def test_pose_lcm_init():
     assert pose.orientation.w == 0.9
 
 
+@pytest.mark.ros
 def test_pose_properties():
     """Test pose property access."""
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -264,6 +282,7 @@ def test_pose_properties():
     assert pose.yaw == euler.z
 
 
+@pytest.mark.ros
 def test_pose_euler_properties_identity():
     """Test pose Euler angle properties with identity orientation."""
     pose = Pose(1.0, 2.0, 3.0)  # Identity orientation
@@ -279,6 +298,7 @@ def test_pose_euler_properties_identity():
     assert np.isclose(pose.orientation.euler.z, 0.0, atol=1e-10)
 
 
+@pytest.mark.ros
 def test_pose_repr():
     """Test pose string representation."""
     pose = Pose(1.234, 2.567, 3.891, 0.1, 0.2, 0.3, 0.9)
@@ -295,6 +315,7 @@ def test_pose_repr():
     assert "2.567" in repr_str or "2.57" in repr_str
 
 
+@pytest.mark.ros
 def test_pose_str():
     """Test pose string formatting."""
     pose = Pose(1.234, 2.567, 3.891, 0.1, 0.2, 0.3, 0.9)
@@ -313,6 +334,7 @@ def test_pose_str():
     assert str_repr.count("Pose") == 1
 
 
+@pytest.mark.ros
 def test_pose_equality():
     """Test pose equality comparison."""
     pose1 = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -335,6 +357,7 @@ def test_pose_equality():
     assert pose1 != None
 
 
+@pytest.mark.ros
 def test_pose_with_numpy_arrays():
     """Test pose initialization with numpy arrays."""
     position_array = np.array([1.0, 2.0, 3.0])
@@ -354,6 +377,7 @@ def test_pose_with_numpy_arrays():
     assert pose.orientation.w == 0.9
 
 
+@pytest.mark.ros
 def test_pose_with_mixed_types():
     """Test pose initialization with mixed input types."""
     # Position as tuple, orientation as list
@@ -374,6 +398,7 @@ def test_pose_with_mixed_types():
     assert pose1.orientation.w == pose2.orientation.w
 
 
+@pytest.mark.ros
 def test_to_pose_passthrough():
     """Test to_pose function with Pose input (passthrough)."""
     original = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -383,6 +408,7 @@ def test_to_pose_passthrough():
     assert result is original
 
 
+@pytest.mark.ros
 def test_to_pose_conversion():
     """Test to_pose function with convertible inputs."""
     # Note: The to_pose conversion function has type checking issues in the current implementation
@@ -415,6 +441,7 @@ def test_to_pose_conversion():
     assert result2.orientation.w == 0.9
 
 
+@pytest.mark.ros
 def test_pose_euler_roundtrip():
     """Test conversion from Euler angles to quaternion and back."""
     # Start with known Euler angles (small angles to avoid gimbal lock)
@@ -438,6 +465,7 @@ def test_pose_euler_roundtrip():
     assert np.isclose(result_euler.z, yaw, atol=1e-6)
 
 
+@pytest.mark.ros
 def test_pose_zero_position():
     """Test pose with zero position vector."""
     # Use manual construction since Vector3.zeros has signature issues
@@ -451,6 +479,7 @@ def test_pose_zero_position():
     assert np.isclose(pose.yaw, 0.0, atol=1e-10)
 
 
+@pytest.mark.ros
 def test_pose_unit_vectors():
     """Test pose with unit vector positions."""
     # Test unit x vector position
@@ -472,6 +501,7 @@ def test_pose_unit_vectors():
     assert pose_z.z == 1.0
 
 
+@pytest.mark.ros
 def test_pose_negative_coordinates():
     """Test pose with negative coordinates."""
     pose = Pose(-1.0, -2.0, -3.0, -0.1, -0.2, -0.3, 0.9)
@@ -488,6 +518,7 @@ def test_pose_negative_coordinates():
     assert pose.orientation.w == 0.9
 
 
+@pytest.mark.ros
 def test_pose_large_coordinates():
     """Test pose with large coordinate values."""
     large_value = 1000.0
@@ -508,6 +539,7 @@ def test_pose_large_coordinates():
     "x,y,z",
     [(0.0, 0.0, 0.0), (1.0, 2.0, 3.0), (-1.0, -2.0, -3.0), (0.5, -0.5, 1.5), (100.0, -100.0, 0.0)],
 )
+@pytest.mark.ros
 def test_pose_parametrized_positions(x, y, z):
     """Parametrized test for various position values."""
     pose = Pose(x, y, z)
@@ -533,6 +565,7 @@ def test_pose_parametrized_positions(x, y, z):
         (0.5, 0.5, 0.5, 0.5),  # Equal components
     ],
 )
+@pytest.mark.ros
 def test_pose_parametrized_orientations(qx, qy, qz, qw):
     """Parametrized test for various orientation values."""
     pose = Pose(0.0, 0.0, 0.0, qx, qy, qz, qw)
@@ -549,6 +582,7 @@ def test_pose_parametrized_orientations(qx, qy, qz, qw):
     assert pose.orientation.w == qw
 
 
+@pytest.mark.ros
 def test_lcm_encode_decode():
     """Test encoding and decoding of Pose to/from binary LCM format."""
 
@@ -568,6 +602,7 @@ def test_lcm_encode_decode():
     print(f"{timeit.timeit(encodepass, number=1000)} ms per cycle")
 
 
+@pytest.mark.ros
 def test_pickle_encode_decode():
     """Test encoding and decoding of Pose to/from binary LCM format."""
 
@@ -584,6 +619,7 @@ def test_pickle_encode_decode():
     print(f"{timeit.timeit(encodepass, number=1000)} ms per cycle")
 
 
+@pytest.mark.ros
 def test_pose_addition_translation_only():
     """Test pose addition with translation only (identity rotations)."""
     # Two poses with only translations
@@ -604,6 +640,7 @@ def test_pose_addition_translation_only():
     assert result.orientation.w == 1.0
 
 
+@pytest.mark.ros
 def test_pose_addition_with_rotation():
     """Test pose addition with rotation applied to translation."""
     # First pose: at origin, rotated 90 degrees around Z (yaw)
@@ -629,6 +666,7 @@ def test_pose_addition_with_rotation():
     assert np.isclose(result.orientation.w, np.cos(angle / 2), atol=1e-10)
 
 
+@pytest.mark.ros
 def test_pose_addition_rotation_composition():
     """Test that rotations are properly composed."""
     # First pose: 45 degrees around Z
@@ -651,6 +689,7 @@ def test_pose_addition_rotation_composition():
     assert np.isclose(result.orientation.w, expected_qw, atol=1e-10)
 
 
+@pytest.mark.ros
 def test_pose_addition_full_transform():
     """Test full pose composition with translation and rotation."""
     # Robot pose: at (2, 1, 0), facing 90 degrees left (positive yaw)
@@ -676,6 +715,7 @@ def test_pose_addition_full_transform():
     assert np.isclose(object_in_world.yaw, robot_yaw, atol=1e-10)
 
 
+@pytest.mark.ros
 def test_pose_addition_chain():
     """Test chaining multiple pose additions."""
     # Create a chain of transformations
@@ -692,6 +732,7 @@ def test_pose_addition_chain():
     assert result.position.z == 1.0
 
 
+@pytest.mark.ros
 def test_pose_addition_with_convertible():
     """Test pose addition with convertible types."""
     pose1 = Pose(1.0, 2.0, 3.0)
@@ -711,6 +752,7 @@ def test_pose_addition_with_convertible():
     assert result2.position.z == 3.0
 
 
+@pytest.mark.ros
 def test_pose_identity_addition():
     """Test that adding identity pose leaves pose unchanged."""
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -728,6 +770,7 @@ def test_pose_identity_addition():
     assert result.orientation.w == pose.orientation.w
 
 
+@pytest.mark.ros
 def test_pose_addition_3d_rotation():
     """Test pose addition with 3D rotations."""
     # First pose: rotated around X axis (roll)
@@ -752,8 +795,11 @@ def test_pose_addition_3d_rotation():
     assert np.isclose(result.position.z, sin45 + cos45, atol=1e-10)
 
 
+@pytest.mark.ros
 def test_pose_from_ros_msg():
     """Test creating a Pose from a ROS Pose message."""
+    if ROSPose is None:
+        pytest.skip("ROS not available")
     ros_msg = ROSPose()
     ros_msg.position = ROSPoint(x=1.0, y=2.0, z=3.0)
     ros_msg.orientation = ROSQuaternion(x=0.1, y=0.2, z=0.3, w=0.9)
@@ -769,8 +815,11 @@ def test_pose_from_ros_msg():
     assert pose.orientation.w == 0.9
 
 
+@pytest.mark.ros
 def test_pose_to_ros_msg():
     """Test converting a Pose to a ROS Pose message."""
+    if ROSPose is None:
+        pytest.skip("ROS not available")
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
 
     ros_msg = pose.to_ros_msg()
@@ -785,8 +834,11 @@ def test_pose_to_ros_msg():
     assert ros_msg.orientation.w == 0.9
 
 
+@pytest.mark.ros
 def test_pose_ros_roundtrip():
     """Test round-trip conversion between Pose and ROS Pose."""
+    if ROSPose is None:
+        pytest.skip("ROS not available")
     original = Pose(1.5, 2.5, 3.5, 0.15, 0.25, 0.35, 0.85)
 
     ros_msg = original.to_ros_msg()

@@ -17,13 +17,24 @@ import threading
 import unittest
 import numpy as np
 
-import rclpy
-from rclpy.node import Node
-from geometry_msgs.msg import TwistStamped as ROSTwistStamped
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-from sensor_msgs.msg import PointField
-from tf2_msgs.msg import TFMessage as ROSTFMessage
-from geometry_msgs.msg import TransformStamped
+import pytest
+
+try:
+    import rclpy
+    from rclpy.node import Node
+    from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+    from sensor_msgs.msg import PointField
+    from tf2_msgs.msg import TFMessage as ROSTFMessage
+    from geometry_msgs.msg import TransformStamped
+except ImportError:
+    rclpy = None
+    Node = None
+    ROSTwistStamped = None
+    ROSPointCloud2 = None
+    PointField = None
+    ROSTFMessage = None
+    TransformStamped = None
 
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.msgs.geometry_msgs import TwistStamped
@@ -32,11 +43,16 @@ from dimos.msgs.tf2_msgs import TFMessage
 from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
 
 
+@pytest.mark.ros
 class TestROSBridge(unittest.TestCase):
     """Test suite for ROS-DIMOS bridge."""
 
     def setUp(self):
         """Set up test fixtures."""
+        # Skip if ROS is not available
+        if rclpy is None:
+            self.skipTest("ROS not available")
+
         # Initialize ROS if not already done
         if not rclpy.ok():
             rclpy.init()
