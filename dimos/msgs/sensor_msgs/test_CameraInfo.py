@@ -235,7 +235,7 @@ def test_ros_conversion():
         binning_x=1,
         binning_y=1,
         frame_id="left_camera_optical",
-        ts=9876543210.987654,
+        ts=1234567890.987654,
     )
 
     # Set ROI
