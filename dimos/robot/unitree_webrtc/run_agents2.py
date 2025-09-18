@@ -119,8 +119,8 @@ class UnitreeAgents2Runner:
 
         agent = Agent(
             system_prompt=system_prompt,
-            model=Model.CLAUDE_35_SONNET_LATEST,
-            provider=Provider.ANTHROPIC,
+            # model=Model.CLAUDE_35_SONNET_LATEST,
+            # provider=Provider.ANTHROPIC,
         )
 
         for container in skillcontainers:
