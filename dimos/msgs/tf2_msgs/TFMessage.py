@@ -35,6 +35,13 @@ from dimos_lcm.std_msgs import Header as LCMHeader
 from dimos_lcm.std_msgs import Time as LCMTime
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
+try:
+    from tf2_msgs.msg import TFMessage as ROSTFMessage
+    from geometry_msgs.msg import TransformStamped as ROSTransformStamped
+except ImportError:
+    ROSTFMessage = None
+    ROSTransformStamped = None
+
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -119,3 +126,35 @@ class TFMessage:
         for i, transform in enumerate(self.transforms):
             lines.append(f"  [{i}] {transform.frame_id} @ {transform.ts:.3f}")
         return "\n".join(lines)
+
+    @classmethod
+    def from_ros_msg(cls, ros_msg: ROSTFMessage) -> "TFMessage":
+        """Create a TFMessage from a ROS tf2_msgs/TFMessage message.
+
+        Args:
+            ros_msg: ROS TFMessage message
+
+        Returns:
+            TFMessage instance
+        """
+        transforms = []
+        for ros_transform_stamped in ros_msg.transforms:
+            # Convert from ROS TransformStamped to our Transform
+            transform = Transform.from_ros_transform_stamped(ros_transform_stamped)
+            transforms.append(transform)
+
+        return cls(*transforms)
+
+    def to_ros_msg(self) -> ROSTFMessage:
+        """Convert to a ROS tf2_msgs/TFMessage message.
+
+        Returns:
+            ROS TFMessage message
+        """
+        ros_msg = ROSTFMessage()
+
+        # Convert each Transform to ROS TransformStamped
+        for transform in self.transforms:
+            ros_msg.transforms.append(transform.to_ros_transform_stamped())
+
+        return ros_msg

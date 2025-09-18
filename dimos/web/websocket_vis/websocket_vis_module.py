@@ -20,6 +20,7 @@ WebSocket Visualization Module for Dimos navigation and mapping.
 
 import asyncio
 import threading
+import time
 from typing import Any, Dict, Optional
 import base64
 import numpy as np
@@ -32,7 +33,7 @@ from starlette.routing import Route
 
 from dimos.core import Module, In, Out, rpc
 from dimos_lcm.std_msgs import Bool
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 
@@ -68,6 +69,7 @@ class WebsocketVisModule(Module):
     explore_cmd: Out[Bool] = None
     stop_explore_cmd: Out[Bool] = None
     movecmd: Out[Twist] = None
+    movecmd_stamped: Out[TwistStamped] = None
 
     def __init__(self, port: int = 7779, **kwargs):
         """Initialize the WebSocket visualization module.
@@ -111,9 +113,13 @@ class WebsocketVisModule(Module):
         self.server_thread = threading.Thread(target=self._run_server, daemon=True)
         self.server_thread.start()
 
-        self.robot_pose.subscribe(self._on_robot_pose)
-        self.path.subscribe(self._on_path)
-        self.global_costmap.subscribe(self._on_global_costmap)
+        # Only subscribe to connected topics
+        if self.robot_pose.connection is not None:
+            self.robot_pose.subscribe(self._on_robot_pose)
+        if self.path.connection is not None:
+            self.path.subscribe(self._on_path)
+        if self.global_costmap.connection is not None:
+            self.global_costmap.subscribe(self._on_global_costmap)
 
         logger.info(f"WebSocket server started on http://localhost:{self.port}")
 
@@ -167,11 +173,27 @@ class WebsocketVisModule(Module):
 
         @self.sio.event
         async def move_command(sid, data):
-            twist = Twist(
-                linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
-                angular=Vector3(data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]),
-            )
-            self.movecmd.publish(twist)
+            # Publish Twist if transport is configured
+            if self.movecmd and self.movecmd.transport:
+                twist = Twist(
+                    linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
+                    angular=Vector3(
+                        data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]
+                    ),
+                )
+                self.movecmd.publish(twist)
+
+            # Publish TwistStamped if transport is configured
+            if self.movecmd_stamped and self.movecmd_stamped.transport:
+                twist_stamped = TwistStamped(
+                    ts=time.time(),
+                    frame_id="base_link",
+                    linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
+                    angular=Vector3(
+                        data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]
+                    ),
+                )
+                self.movecmd_stamped.publish(twist_stamped)
 
     def _run_server(self):
         uvicorn.run(

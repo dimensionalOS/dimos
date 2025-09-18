@@ -14,6 +14,14 @@
 
 import numpy as np
 import pytest
+
+try:
+    from geometry_msgs.msg import Twist as ROSTwist
+    from geometry_msgs.msg import Vector3 as ROSVector3
+except ImportError:
+    ROSTwist = None
+    ROSVector3 = None
+
 from dimos_lcm.geometry_msgs import Twist as LCMTwist
 
 from dimos.msgs.geometry_msgs import Quaternion, Twist, Vector3
@@ -198,3 +206,97 @@ def test_twist_with_lists():
     tw2 = Twist(linear=np.array([4, 5, 6]), angular=np.array([0.4, 0.5, 0.6]))
     assert tw2.linear == Vector3(4, 5, 6)
     assert tw2.angular == Vector3(0.4, 0.5, 0.6)
+
+
+@pytest.mark.ros
+def test_twist_from_ros_msg():
+    """Test Twist.from_ros_msg conversion."""
+    # Create ROS message
+    ros_msg = ROSTwist()
+    ros_msg.linear = ROSVector3(x=10.0, y=20.0, z=30.0)
+    ros_msg.angular = ROSVector3(x=1.0, y=2.0, z=3.0)
+
+    # Convert to LCM
+    lcm_msg = Twist.from_ros_msg(ros_msg)
+
+    assert isinstance(lcm_msg, Twist)
+    assert lcm_msg.linear.x == 10.0
+    assert lcm_msg.linear.y == 20.0
+    assert lcm_msg.linear.z == 30.0
+    assert lcm_msg.angular.x == 1.0
+    assert lcm_msg.angular.y == 2.0
+    assert lcm_msg.angular.z == 3.0
+
+
+@pytest.mark.ros
+def test_twist_to_ros_msg():
+    """Test Twist.to_ros_msg conversion."""
+    # Create LCM message
+    lcm_msg = Twist(linear=Vector3(40.0, 50.0, 60.0), angular=Vector3(4.0, 5.0, 6.0))
+
+    # Convert to ROS
+    ros_msg = lcm_msg.to_ros_msg()
+
+    assert isinstance(ros_msg, ROSTwist)
+    assert ros_msg.linear.x == 40.0
+    assert ros_msg.linear.y == 50.0
+    assert ros_msg.linear.z == 60.0
+    assert ros_msg.angular.x == 4.0
+    assert ros_msg.angular.y == 5.0
+    assert ros_msg.angular.z == 6.0
+
+
+@pytest.mark.ros
+def test_ros_zero_twist_conversion():
+    """Test conversion of zero twist messages between ROS and LCM."""
+    # Test ROS to LCM with zero twist
+    ros_zero = ROSTwist()
+    lcm_zero = Twist.from_ros_msg(ros_zero)
+    assert lcm_zero.is_zero()
+
+    # Test LCM to ROS with zero twist
+    lcm_zero2 = Twist.zero()
+    ros_zero2 = lcm_zero2.to_ros_msg()
+    assert ros_zero2.linear.x == 0.0
+    assert ros_zero2.linear.y == 0.0
+    assert ros_zero2.linear.z == 0.0
+    assert ros_zero2.angular.x == 0.0
+    assert ros_zero2.angular.y == 0.0
+    assert ros_zero2.angular.z == 0.0
+
+
+@pytest.mark.ros
+def test_ros_negative_values_conversion():
+    """Test ROS conversion with negative values."""
+    # Create ROS message with negative values
+    ros_msg = ROSTwist()
+    ros_msg.linear = ROSVector3(x=-1.5, y=-2.5, z=-3.5)
+    ros_msg.angular = ROSVector3(x=-0.1, y=-0.2, z=-0.3)
+
+    # Convert to LCM and back
+    lcm_msg = Twist.from_ros_msg(ros_msg)
+    ros_msg2 = lcm_msg.to_ros_msg()
+
+    assert ros_msg2.linear.x == -1.5
+    assert ros_msg2.linear.y == -2.5
+    assert ros_msg2.linear.z == -3.5
+    assert ros_msg2.angular.x == -0.1
+    assert ros_msg2.angular.y == -0.2
+    assert ros_msg2.angular.z == -0.3
+
+
+@pytest.mark.ros
+def test_ros_roundtrip_conversion():
+    """Test round-trip conversion maintains data integrity."""
+    # LCM -> ROS -> LCM
+    original_lcm = Twist(linear=Vector3(1.234, 5.678, 9.012), angular=Vector3(0.111, 0.222, 0.333))
+    ros_intermediate = original_lcm.to_ros_msg()
+    final_lcm = Twist.from_ros_msg(ros_intermediate)
+
+    assert final_lcm == original_lcm
+    assert final_lcm.linear.x == 1.234
+    assert final_lcm.linear.y == 5.678
+    assert final_lcm.linear.z == 9.012
+    assert final_lcm.angular.x == 0.111
+    assert final_lcm.angular.y == 0.222
+    assert final_lcm.angular.z == 0.333

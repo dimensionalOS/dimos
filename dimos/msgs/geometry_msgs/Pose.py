@@ -14,13 +14,20 @@
 
 from __future__ import annotations
 
-import struct
-import traceback
-from io import BytesIO
-from typing import BinaryIO, TypeAlias
+from typing import TypeAlias
 
 from dimos_lcm.geometry_msgs import Pose as LCMPose
 from dimos_lcm.geometry_msgs import Transform as LCMTransform
+
+try:
+    from geometry_msgs.msg import Pose as ROSPose
+    from geometry_msgs.msg import Point as ROSPoint
+    from geometry_msgs.msg import Quaternion as ROSQuaternion
+except ImportError:
+    ROSPose = None
+    ROSPoint = None
+    ROSQuaternion = None
+
 from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
@@ -206,6 +213,43 @@ class Pose(LCMPose):
         new_position = self.position + rotated_position
 
         return Pose(new_position, new_orientation)
+
+    @classmethod
+    def from_ros_msg(cls, ros_msg: ROSPose) -> "Pose":
+        """Create a Pose from a ROS geometry_msgs/Pose message.
+
+        Args:
+            ros_msg: ROS Pose message
+
+        Returns:
+            Pose instance
+        """
+        position = Vector3(ros_msg.position.x, ros_msg.position.y, ros_msg.position.z)
+        orientation = Quaternion(
+            ros_msg.orientation.x,
+            ros_msg.orientation.y,
+            ros_msg.orientation.z,
+            ros_msg.orientation.w,
+        )
+        return cls(position, orientation)
+
+    def to_ros_msg(self) -> ROSPose:
+        """Convert to a ROS geometry_msgs/Pose message.
+
+        Returns:
+            ROS Pose message
+        """
+        ros_msg = ROSPose()
+        ros_msg.position = ROSPoint(
+            x=float(self.position.x), y=float(self.position.y), z=float(self.position.z)
+        )
+        ros_msg.orientation = ROSQuaternion(
+            x=float(self.orientation.x),
+            y=float(self.orientation.y),
+            z=float(self.orientation.z),
+            w=float(self.orientation.w),
+        )
+        return ros_msg
 
 
 @dispatch
