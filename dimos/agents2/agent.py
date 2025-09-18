@@ -278,9 +278,7 @@ class Agent(AgentSpec):
                     is_final_assistant = i == len(current_history) - 1 and isinstance(
                         message, AIMessage
                     )
-                    has_content = (
-                        hasattr(message, "content") and message.content and message.content.strip()
-                    )
+                    has_content = hasattr(message, "content") and bool(message.content)
 
                     if has_content or is_final_assistant:
                         filtered_history.append(message)
