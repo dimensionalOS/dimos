@@ -19,8 +19,12 @@ from typing import TypeAlias
 
 import numpy as np
 from dimos_lcm.geometry_msgs import TwistWithCovarianceStamped as LCMTwistWithCovarianceStamped
-from geometry_msgs.msg import TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped
 from plum import dispatch
+
+try:
+    from geometry_msgs.msg import TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped
+except ImportError:
+    ROSTwistWithCovarianceStamped = None
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
@@ -126,6 +130,7 @@ class TwistWithCovarianceStamped(TwistWithCovariance, Timestamped):
         Returns:
             TwistWithCovarianceStamped instance
         """
+
         # Convert timestamp from ROS header
         ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
 
@@ -145,6 +150,7 @@ class TwistWithCovarianceStamped(TwistWithCovariance, Timestamped):
         Returns:
             ROS TwistWithCovarianceStamped message
         """
+
         ros_msg = ROSTwistWithCovarianceStamped()
 
         # Set header

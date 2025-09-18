@@ -22,8 +22,12 @@ from typing import BinaryIO, TypeAlias
 from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
 from dimos_lcm.std_msgs import Header as LCMHeader
 from dimos_lcm.std_msgs import Time as LCMTime
-from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from plum import dispatch
+
+try:
+    from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+except ImportError:
+    ROSTwistStamped = None
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
@@ -84,6 +88,7 @@ class TwistStamped(Twist, Timestamped):
         Returns:
             TwistStamped instance
         """
+
         # Convert timestamp from ROS header
         ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
 
@@ -103,6 +108,7 @@ class TwistStamped(Twist, Timestamped):
         Returns:
             ROS TwistStamped message
         """
+
         ros_msg = ROSTwistStamped()
 
         # Set header

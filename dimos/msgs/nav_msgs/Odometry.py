@@ -19,8 +19,12 @@ from typing import TypeAlias
 
 import numpy as np
 from dimos_lcm.nav_msgs import Odometry as LCMOdometry
-from nav_msgs.msg import Odometry as ROSOdometry
 from plum import dispatch
+
+try:
+    from nav_msgs.msg import Odometry as ROSOdometry
+except ImportError:
+    ROSOdometry = None
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
@@ -333,6 +337,7 @@ class Odometry(LCMOdometry, Timestamped):
         Returns:
             Odometry instance
         """
+
         # Convert timestamp from ROS header
         ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
 
@@ -354,6 +359,7 @@ class Odometry(LCMOdometry, Timestamped):
         Returns:
             ROS Odometry message
         """
+
         ros_msg = ROSOdometry()
 
         # Set header

@@ -19,9 +19,14 @@ from io import BytesIO
 from typing import BinaryIO
 
 from dimos_lcm.geometry_msgs import Twist as LCMTwist
-from geometry_msgs.msg import Twist as ROSTwist
-from geometry_msgs.msg import Vector3 as ROSVector3
 from plum import dispatch
+
+try:
+    from geometry_msgs.msg import Twist as ROSTwist
+    from geometry_msgs.msg import Vector3 as ROSVector3
+except ImportError:
+    ROSTwist = None
+    ROSVector3 = None
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
@@ -113,6 +118,7 @@ class Twist(LCMTwist):
         Returns:
             Twist instance
         """
+
         linear = Vector3(ros_msg.linear.x, ros_msg.linear.y, ros_msg.linear.z)
         angular = Vector3(ros_msg.angular.x, ros_msg.angular.y, ros_msg.angular.z)
         return cls(linear, angular)
@@ -123,6 +129,7 @@ class Twist(LCMTwist):
         Returns:
             ROS Twist message
         """
+
         ros_msg = ROSTwist()
         ros_msg.linear = ROSVector3(x=self.linear.x, y=self.linear.y, z=self.linear.z)
         ros_msg.angular = ROSVector3(x=self.angular.x, y=self.angular.y, z=self.angular.z)
