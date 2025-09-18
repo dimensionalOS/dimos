@@ -154,11 +154,20 @@ class B1ConnectionModule(Module):
             f"Received cmd_vel: linear=({twist.linear.x:.3f}, {twist.linear.y:.3f}, {twist.linear.z:.3f}), angular=({twist.angular.x:.3f}, {twist.angular.y:.3f}, {twist.angular.z:.3f})"
         )
 
-        has_movement = (
-            abs(twist.linear.x) > 0.01 or abs(twist.linear.y) > 0.01 or abs(twist.angular.z) > 0.01
-        )
+        # In STAND mode (1), all twist values control body pose, not movement
+        # W/S: height (linear.z), A/D: yaw (angular.z), J/L: roll (angular.x), I/K: pitch (angular.y)
+        if self.current_mode == 1:
+            # In STAND mode, don't auto-switch since all inputs are valid body pose controls
+            has_movement = False
+        else:
+            # In other modes, consider linear x/y and angular.z as movement
+            has_movement = (
+                abs(twist.linear.x) > 0.01
+                or abs(twist.linear.y) > 0.01
+                or abs(twist.angular.z) > 0.01
+            )
 
-        if has_movement and self.current_mode != 2:
+        if has_movement and self.current_mode not in (1, 2):
             logger.info("Auto-switching to WALK mode for ROS control")
             self.set_mode(2)
         elif not has_movement and self.current_mode == 2:
