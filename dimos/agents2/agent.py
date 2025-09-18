@@ -14,6 +14,7 @@
 import asyncio
 import json
 import datetime
+import os
 import uuid
 from operator import itemgetter
 from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
@@ -292,6 +293,8 @@ class Agent(AgentSpec):
                 print(self)
                 print(self.coordinator)
 
+                self._write_debug_history_file()
+
                 if not self.coordinator.has_active_skills():
                     logger.info("No active tasks, exiting agent loop.")
                     return msg.content
@@ -342,3 +345,13 @@ class Agent(AgentSpec):
 
     def get_tools(self):
         return self.coordinator.get_tools()
+
+    def _write_debug_history_file(self):
+        file_path = os.getenv("DEBUG_AGENT_HISTORY_FILE")
+        if not file_path:
+            return
+
+        history = [x.__dict__ for x in self.history()]
+
+        with open(file_path, "w") as f:
+            json.dump(history, f, default=lambda x: repr(x), indent=2)
