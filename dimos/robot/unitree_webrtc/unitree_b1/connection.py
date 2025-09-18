@@ -34,6 +34,15 @@ from .b1_command import B1Command
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_b1.connection", level=logging.DEBUG)
 
 
+class RobotMode:
+    """Constants for B1 robot modes."""
+
+    IDLE = 0
+    STAND = 1
+    WALK = 2
+    RECOVERY = 6
+
+
 class B1ConnectionModule(Module):
     """UDP connection module for B1 robot with standard Twist interface.
 
@@ -62,8 +71,9 @@ class B1ConnectionModule(Module):
         self.ip = ip
         self.port = port
         self.test_mode = test_mode
-        self.current_mode = 0  # Start in IDLE mode
-        self._current_cmd = B1Command(mode=0)
+        self.current_mode = RobotMode.IDLE  # Start in IDLE mode
+        self._current_cmd = B1Command(mode=RobotMode.IDLE)
+        self.cmd_lock = threading.Lock()  # Thread lock for _current_cmd access
         # Thread control
         self.running = False
         self.send_thread = None
@@ -111,17 +121,13 @@ class B1ConnectionModule(Module):
     @rpc
     def stop(self):
         """Stop the connection and send stop commands."""
-        # Cancel timer since we're explicitly stopping
-        if self.stop_timer:
-            self.stop_timer.cancel()
-            self.stop_timer = None
-
-        self.set_mode(0)  # IDLE
-        self._current_cmd = B1Command(mode=0)  # Zero all velocities
+        self.set_mode(RobotMode.IDLE)  # IDLE
+        with self.cmd_lock:
+            self._current_cmd = B1Command(mode=RobotMode.IDLE)  # Zero all velocities
 
         # Send multiple stop packets
         if not self.test_mode and self.socket:
-            stop_cmd = B1Command(mode=0)
+            stop_cmd = B1Command(mode=RobotMode.IDLE)
             for _ in range(5):
                 data = stop_cmd.to_bytes()
                 self.socket.sendto(data, (self.ip, self.port))
@@ -153,9 +159,9 @@ class B1ConnectionModule(Module):
             f"Received cmd_vel: linear=({twist.linear.x:.3f}, {twist.linear.y:.3f}, {twist.linear.z:.3f}), angular=({twist.angular.x:.3f}, {twist.angular.y:.3f}, {twist.angular.z:.3f})"
         )
 
-        # In STAND mode (1), all twist values control body pose, not movement
+        # In STAND mode, all twist values control body pose, not movement
         # W/S: height (linear.z), A/D: yaw (angular.z), J/L: roll (angular.x), I/K: pitch (angular.y)
-        if self.current_mode == 1:
+        if self.current_mode == RobotMode.STAND:
             # In STAND mode, don't auto-switch since all inputs are valid body pose controls
             has_movement = False
         else:
@@ -166,19 +172,20 @@ class B1ConnectionModule(Module):
                 or abs(twist.angular.z) > 0.01
             )
 
-        if has_movement and self.current_mode not in (1, 2):
+        if has_movement and self.current_mode not in (RobotMode.STAND, RobotMode.WALK):
             logger.info("Auto-switching to WALK mode for ROS control")
-            self.set_mode(2)
-        elif not has_movement and self.current_mode == 2:
+            self.set_mode(RobotMode.WALK)
+        elif not has_movement and self.current_mode == RobotMode.WALK:
             logger.info("Auto-switching to IDLE mode (zero velocities)")
-            self.set_mode(0)
+            self.set_mode(RobotMode.IDLE)
 
         if self.test_mode:
             logger.info(
                 f"[TEST] Received TwistStamped: linear=({twist.linear.x:.2f}, {twist.linear.y:.2f}), angular.z={twist.angular.z:.2f}"
             )
 
-        self._current_cmd = B1Command.from_twist(twist, self.current_mode)
+        with self.cmd_lock:
+            self._current_cmd = B1Command.from_twist(twist, self.current_mode)
 
         logger.debug(f"Converted to B1Command: {self._current_cmd}")
 
@@ -199,16 +206,22 @@ class B1ConnectionModule(Module):
     def set_mode(self, mode: int):
         """Set robot mode (0=idle, 1=stand, 2=walk, 6=recovery)."""
         self.current_mode = mode
-        self._current_cmd.mode = mode
+        with self.cmd_lock:
+            self._current_cmd.mode = mode
 
-        # Clear velocities when not in walk mode
-        if mode != 2:
-            self._current_cmd.lx = 0.0
-            self._current_cmd.ly = 0.0
-            self._current_cmd.rx = 0.0
-            self._current_cmd.ry = 0.0
+            # Clear velocities when not in walk mode
+            if mode != RobotMode.WALK:
+                self._current_cmd.lx = 0.0
+                self._current_cmd.ly = 0.0
+                self._current_cmd.rx = 0.0
+                self._current_cmd.ry = 0.0
 
-        mode_names = {0: "IDLE", 1: "STAND", 2: "WALK", 6: "RECOVERY"}
+        mode_names = {
+            RobotMode.IDLE: "IDLE",
+            RobotMode.STAND: "STAND",
+            RobotMode.WALK: "WALK",
+            RobotMode.RECOVERY: "RECOVERY",
+        }
         logger.info(f"Mode changed to: {mode_names.get(mode, mode)}")
         if self.test_mode:
             logger.info(f"[TEST] Mode changed to: {mode_names.get(mode, mode)}")
@@ -224,7 +237,8 @@ class B1ConnectionModule(Module):
         while self.running:
             try:
                 # Watchdog handles timeout, we just send current command
-                cmd_to_send = self._current_cmd
+                with self.cmd_lock:
+                    cmd_to_send = self._current_cmd
 
                 # Log status every second (50 packets)
                 if self.packet_count % 50 == 0:
@@ -277,12 +291,13 @@ class B1ConnectionModule(Module):
                             f"Watchdog timeout ({time_since_last_cmd:.1f}s) - zeroing commands"
                         )
                         if self.test_mode:
-                            logger.info(f"[TEST] Watchdog timeout - zeroing commands")
+                            logger.info("[TEST] Watchdog timeout - zeroing commands")
 
-                        self._current_cmd.lx = 0.0
-                        self._current_cmd.ly = 0.0
-                        self._current_cmd.rx = 0.0
-                        self._current_cmd.ry = 0.0
+                        with self.cmd_lock:
+                            self._current_cmd.lx = 0.0
+                            self._current_cmd.ly = 0.0
+                            self._current_cmd.rx = 0.0
+                            self._current_cmd.ry = 0.0
 
                         self.timeout_active = True
                 else:
@@ -302,25 +317,25 @@ class B1ConnectionModule(Module):
     @rpc
     def idle(self):
         """Set robot to idle mode."""
-        self.set_mode(0)
+        self.set_mode(RobotMode.IDLE)
         return True
 
     @rpc
     def pose(self):
         """Set robot to stand/pose mode for reaching ground objects with manipulator."""
-        self.set_mode(1)
+        self.set_mode(RobotMode.STAND)
         return True
 
     @rpc
     def walk(self):
         """Set robot to walk mode."""
-        self.set_mode(2)
+        self.set_mode(RobotMode.WALK)
         return True
 
     @rpc
     def recovery(self):
         """Set robot to recovery mode."""
-        self.set_mode(6)
+        self.set_mode(RobotMode.RECOVERY)
         return True
 
     @rpc
@@ -336,9 +351,6 @@ class B1ConnectionModule(Module):
 
     def cleanup(self):
         """Clean up resources when module is destroyed."""
-        if self.stop_timer:
-            self.stop_timer.cancel()
-            self.stop_timer = None
         self.stop()
 
 
