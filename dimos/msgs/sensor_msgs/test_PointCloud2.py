@@ -38,15 +38,8 @@ except ImportError:
     ROS_AVAILABLE = False
 
 
-@pytest.mark.ros
 def test_lcm_encode_decode():
     """Test LCM encode/decode preserves pointcloud data."""
-    if ROSHeader is None:
-        pytest.skip("ROS not available")
-    if ROSPointField is None:
-        pytest.skip("ROS not available")
-    if ROSPointCloud2 is None:
-        pytest.skip("ROS not available")
     replay = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
     lidar_msg: LidarMessage = replay.load_one("lidar_data_021")
 

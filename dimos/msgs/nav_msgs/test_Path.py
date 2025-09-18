@@ -38,13 +38,8 @@ def create_test_pose(x: float, y: float, z: float, frame_id: str = "map") -> Pos
     )
 
 
-@pytest.mark.ros
 def test_init_empty():
     """Test creating an empty path."""
-    if ROSPath is None:
-        pytest.skip("ROS not available")
-    if ROSPoseStamped is None:
-        pytest.skip("ROS not available")
     path = Path(frame_id="map")
     assert path.frame_id == "map"
     assert len(path) == 0
@@ -52,7 +47,6 @@ def test_init_empty():
     assert path.poses == []
 
 
-@pytest.mark.ros
 def test_init_with_poses():
     """Test creating a path with initial poses."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
@@ -62,7 +56,6 @@ def test_init_with_poses():
     assert path.poses == poses
 
 
-@pytest.mark.ros
 def test_head():
     """Test getting the first pose."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
@@ -74,7 +67,6 @@ def test_head():
     assert empty_path.head() is None
 
 
-@pytest.mark.ros
 def test_last():
     """Test getting the last pose."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
@@ -86,7 +78,6 @@ def test_last():
     assert empty_path.last() is None
 
 
-@pytest.mark.ros
 def test_tail():
     """Test getting all poses except the first."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
@@ -105,7 +96,6 @@ def test_tail():
     assert len(empty_path.tail()) == 0
 
 
-@pytest.mark.ros
 def test_push_immutable():
     """Test immutable push operation."""
     path = Path(frame_id="map")
@@ -125,7 +115,6 @@ def test_push_immutable():
     assert path3.poses == [pose1, pose2]
 
 
-@pytest.mark.ros
 def test_push_mutable():
     """Test mutable push operation."""
     path = Path(frame_id="map")
@@ -142,7 +131,6 @@ def test_push_mutable():
     assert path.poses == [pose1, pose2]
 
 
-@pytest.mark.ros
 def test_indexing():
     """Test indexing and slicing."""
     poses = [create_test_pose(i, i, 0) for i in range(5)]
@@ -158,7 +146,6 @@ def test_indexing():
     assert path[3:] == poses[3:]
 
 
-@pytest.mark.ros
 def test_iteration():
     """Test iterating over poses."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
@@ -170,7 +157,6 @@ def test_iteration():
     assert collected == poses
 
 
-@pytest.mark.ros
 def test_slice_method():
     """Test slice method."""
     poses = [create_test_pose(i, i, 0) for i in range(5)]
@@ -186,7 +172,6 @@ def test_slice_method():
     assert sliced2.poses == poses[2:]
 
 
-@pytest.mark.ros
 def test_extend_immutable():
     """Test immutable extend operation."""
     poses1 = [create_test_pose(i, i, 0) for i in range(2)]
@@ -202,7 +187,6 @@ def test_extend_immutable():
     assert extended.frame_id == "map"  # Keeps first path's frame
 
 
-@pytest.mark.ros
 def test_extend_mutable():
     """Test mutable extend operation."""
     poses1 = [create_test_pose(i, i, 0) for i in range(2)]
@@ -220,7 +204,6 @@ def test_extend_mutable():
         assert p1.z == p2.z
 
 
-@pytest.mark.ros
 def test_reverse():
     """Test reverse operation."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
@@ -231,7 +214,6 @@ def test_reverse():
     assert reversed_path.poses == list(reversed(poses))
 
 
-@pytest.mark.ros
 def test_clear():
     """Test clear operation."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
@@ -242,7 +224,6 @@ def test_clear():
     assert path.poses == []
 
 
-@pytest.mark.ros
 def test_lcm_encode_decode():
     """Test encoding and decoding of Path to/from binary LCM format."""
     # Create path with poses
@@ -295,7 +276,6 @@ def test_lcm_encode_decode():
         assert decoded.orientation.w == orig.orientation.w
 
 
-@pytest.mark.ros
 def test_lcm_encode_decode_empty():
     """Test encoding and decoding of empty Path."""
     path_source = Path(frame_id="base_link")
@@ -308,7 +288,6 @@ def test_lcm_encode_decode_empty():
     assert len(path_dest.poses) == 0
 
 
-@pytest.mark.ros
 def test_str_representation():
     """Test string representation."""
     path = Path(frame_id="map")

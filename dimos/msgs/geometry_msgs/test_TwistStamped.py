@@ -25,12 +25,8 @@ except ImportError:
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 
 
-@pytest.mark.ros
 def test_lcm_encode_decode():
     """Test encoding and decoding of TwistStamped to/from binary LCM format."""
-    if ROSTwistStamped is None:
-        pytest.skip("ROS not available")
-
     twist_source = TwistStamped(
         ts=time.time(),
         linear=(1.0, 2.0, 3.0),
@@ -50,7 +46,6 @@ def test_lcm_encode_decode():
     assert twist_dest == twist_source
 
 
-@pytest.mark.ros
 def test_pickle_encode_decode():
     """Test encoding and decoding of TwistStamped to/from binary pickle format."""
 

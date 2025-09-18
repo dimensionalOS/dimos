@@ -45,7 +45,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_stamped_default_init():
     """Test default initialization."""
     if ROSPoseWithCovariance is None:
@@ -78,7 +77,6 @@ def test_pose_with_covariance_stamped_default_init():
     assert np.all(pose_cov_stamped.covariance == 0.0)
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_stamped_with_timestamp():
     """Test initialization with specific timestamp."""
     ts = 1234567890.123456
@@ -89,7 +87,6 @@ def test_pose_with_covariance_stamped_with_timestamp():
     assert pose_cov_stamped.frame_id == frame_id
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_stamped_with_pose():
     """Test initialization with pose."""
     ts = 1234567890.123456
@@ -109,7 +106,6 @@ def test_pose_with_covariance_stamped_with_pose():
     assert np.array_equal(pose_cov_stamped.covariance, covariance)
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_stamped_properties():
     """Test convenience properties."""
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -140,7 +136,6 @@ def test_pose_with_covariance_stamped_properties():
     assert np.trace(cov_matrix) == 6.0
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_stamped_str():
     """Test string representation."""
     pose = Pose(1.234, 2.567, 3.891)
@@ -158,7 +153,6 @@ def test_pose_with_covariance_stamped_str():
     assert "12.000" in str_repr  # Trace of 2*identity is 12
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_stamped_lcm_encode_decode():
     """Test LCM encoding and decoding."""
     ts = 1234567890.123456
@@ -281,7 +275,6 @@ def test_pose_with_covariance_stamped_ros_roundtrip():
     assert np.allclose(restored.covariance, original.covariance)
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_stamped_zero_timestamp():
     """Test that zero timestamp gets replaced with current time."""
     pose_cov_stamped = PoseWithCovarianceStamped(ts=0.0)
@@ -291,7 +284,6 @@ def test_pose_with_covariance_stamped_zero_timestamp():
     assert pose_cov_stamped.ts <= time.time()
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_stamped_inheritance():
     """Test that it properly inherits from PoseWithCovariance and Timestamped."""
     pose = Pose(1.0, 2.0, 3.0)
@@ -312,7 +304,6 @@ def test_pose_with_covariance_stamped_inheritance():
     assert hasattr(pose_cov_stamped, "covariance")
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_stamped_sec_nsec():
     """Test the sec_nsec helper function."""
     from dimos.msgs.geometry_msgs.PoseWithCovarianceStamped import sec_nsec
@@ -342,11 +333,11 @@ def test_pose_with_covariance_stamped_sec_nsec():
         assert ns == 0
 
 
+@pytest.mark.ros
 @pytest.mark.parametrize(
     "frame_id",
     ["", "map", "odom", "base_link", "camera_optical_frame", "sensor/lidar/front"],
 )
-@pytest.mark.ros
 def test_pose_with_covariance_stamped_frame_ids(frame_id):
     """Test various frame ID values."""
     pose_cov_stamped = PoseWithCovarianceStamped(frame_id=frame_id)
@@ -360,7 +351,6 @@ def test_pose_with_covariance_stamped_frame_ids(frame_id):
     assert restored.frame_id == frame_id
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_stamped_different_covariances():
     """Test with different covariance patterns."""
     pose = Pose(1.0, 2.0, 3.0)

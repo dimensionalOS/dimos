@@ -33,7 +33,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_default_init():
     """Test that default initialization creates a pose at origin with zero covariance."""
     pose_cov = PoseWithCovariance()
@@ -52,7 +51,6 @@ def test_pose_with_covariance_default_init():
     assert pose_cov.covariance.shape == (36,)
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_pose_init():
     """Test initialization with a Pose object."""
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -71,7 +69,6 @@ def test_pose_with_covariance_pose_init():
     assert np.all(pose_cov.covariance == 0.0)
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_pose_and_covariance_init():
     """Test initialization with pose and covariance."""
     pose = Pose(1.0, 2.0, 3.0)
@@ -87,7 +84,6 @@ def test_pose_with_covariance_pose_and_covariance_init():
     assert np.array_equal(pose_cov.covariance, covariance)
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_list_covariance():
     """Test initialization with covariance as a list."""
     pose = Pose(1.0, 2.0, 3.0)
@@ -99,7 +95,6 @@ def test_pose_with_covariance_list_covariance():
     assert np.array_equal(pose_cov.covariance, np.array(covariance_list))
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_copy_init():
     """Test copy constructor."""
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -118,7 +113,6 @@ def test_pose_with_covariance_copy_init():
     assert copy.covariance[0] != 999.0
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_lcm_init():
     """Test initialization from LCM message."""
     lcm_msg = LCMPoseWithCovariance()
@@ -146,7 +140,6 @@ def test_pose_with_covariance_lcm_init():
     assert np.array_equal(pose_cov.covariance, np.arange(36))
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_dict_init():
     """Test initialization from dictionary."""
     pose_dict = {"pose": Pose(1.0, 2.0, 3.0), "covariance": list(range(36))}
@@ -158,7 +151,6 @@ def test_pose_with_covariance_dict_init():
     assert np.array_equal(pose_cov.covariance, np.arange(36))
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_dict_init_no_covariance():
     """Test initialization from dictionary without covariance."""
     pose_dict = {"pose": Pose(1.0, 2.0, 3.0)}
@@ -168,7 +160,6 @@ def test_pose_with_covariance_dict_init_no_covariance():
     assert np.all(pose_cov.covariance == 0.0)
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_tuple_init():
     """Test initialization from tuple."""
     pose = Pose(1.0, 2.0, 3.0)
@@ -182,7 +173,6 @@ def test_pose_with_covariance_tuple_init():
     assert np.array_equal(pose_cov.covariance, covariance)
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_properties():
     """Test convenience properties."""
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -208,7 +198,6 @@ def test_pose_with_covariance_properties():
     assert pose_cov.yaw == pose.yaw
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_matrix_property():
     """Test covariance matrix property."""
     pose = Pose()
@@ -227,7 +216,6 @@ def test_pose_with_covariance_matrix_property():
     assert np.array_equal(pose_cov.covariance[:6], [2.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_repr():
     """Test string representation."""
     pose = Pose(1.234, 2.567, 3.891)
@@ -240,7 +228,6 @@ def test_pose_with_covariance_repr():
     assert "36 elements" in repr_str
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_str():
     """Test string formatting."""
     pose = Pose(1.234, 2.567, 3.891)
@@ -256,7 +243,6 @@ def test_pose_with_covariance_str():
     assert "6.000" in str_repr  # Trace of identity matrix is 6
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_equality():
     """Test equality comparison."""
     pose1 = Pose(1.0, 2.0, 3.0)
@@ -285,7 +271,6 @@ def test_pose_with_covariance_equality():
     assert pose_cov1 != None
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_lcm_encode_decode():
     """Test LCM encoding and decoding."""
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
@@ -306,8 +291,6 @@ def test_pose_with_covariance_lcm_encode_decode():
 @pytest.mark.ros
 def test_pose_with_covariance_from_ros_msg():
     """Test creating from ROS message."""
-    if ROSPoseWithCovariance is None:
-        pytest.skip("ROS not available")
     ros_msg = ROSPoseWithCovariance()
     ros_msg.pose.position = ROSPoint(x=1.0, y=2.0, z=3.0)
     ros_msg.pose.orientation = ROSQuaternion(x=0.1, y=0.2, z=0.3, w=0.9)
@@ -328,8 +311,6 @@ def test_pose_with_covariance_from_ros_msg():
 @pytest.mark.ros
 def test_pose_with_covariance_to_ros_msg():
     """Test converting to ROS message."""
-    if ROSPoseWithCovariance is None:
-        pytest.skip("ROS not available")
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
     covariance = np.arange(36, dtype=float)
     pose_cov = PoseWithCovariance(pose, covariance)
@@ -350,8 +331,6 @@ def test_pose_with_covariance_to_ros_msg():
 @pytest.mark.ros
 def test_pose_with_covariance_ros_roundtrip():
     """Test round-trip conversion with ROS messages."""
-    if ROSPoseWithCovariance is None:
-        pytest.skip("ROS not available")
     pose = Pose(1.5, 2.5, 3.5, 0.15, 0.25, 0.35, 0.85)
     covariance = np.random.rand(36)
     original = PoseWithCovariance(pose, covariance)
@@ -362,7 +341,6 @@ def test_pose_with_covariance_ros_roundtrip():
     assert restored == original
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_zero_covariance():
     """Test with zero covariance matrix."""
     pose = Pose(1.0, 2.0, 3.0)
@@ -372,7 +350,6 @@ def test_pose_with_covariance_zero_covariance():
     assert np.trace(pose_cov.covariance_matrix) == 0.0
 
 
-@pytest.mark.ros
 def test_pose_with_covariance_diagonal_covariance():
     """Test with diagonal covariance matrix."""
     pose = Pose()
@@ -401,7 +378,6 @@ def test_pose_with_covariance_diagonal_covariance():
     "x,y,z",
     [(0.0, 0.0, 0.0), (1.0, 2.0, 3.0), (-1.0, -2.0, -3.0), (100.0, -100.0, 0.0)],
 )
-@pytest.mark.ros
 def test_pose_with_covariance_parametrized_positions(x, y, z):
     """Parametrized test for various position values."""
     pose = Pose(x, y, z)

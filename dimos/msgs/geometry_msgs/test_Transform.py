@@ -29,7 +29,6 @@ from dimos_lcm.geometry_msgs import TransformStamped as LCMTransformStamped
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Transform, Vector3
 
 
-@pytest.mark.ros
 def test_transform_initialization():
     # Test default initialization (identity transform)
     tf = Transform()
@@ -76,7 +75,6 @@ def test_transform_initialization():
     assert tf9.rotation == Quaternion(0, 0, 1, 0)
 
 
-@pytest.mark.ros
 def test_transform_identity():
     # Test identity class method
     tf = Transform.identity()
@@ -90,7 +88,6 @@ def test_transform_identity():
     assert tf == Transform()
 
 
-@pytest.mark.ros
 def test_transform_equality():
     tf1 = Transform(translation=Vector3(1, 2, 3), rotation=Quaternion(0, 0, 0, 1))
     tf2 = Transform(translation=Vector3(1, 2, 3), rotation=Quaternion(0, 0, 0, 1))
@@ -105,7 +102,6 @@ def test_transform_equality():
     assert tf1 != "not a transform"
 
 
-@pytest.mark.ros
 def test_transform_string_representations():
     tf = Transform(
         translation=Vector3(1.5, -2.0, 3.14), rotation=Quaternion(0, 0, 0.707107, 0.707107)
@@ -125,7 +121,6 @@ def test_transform_string_representations():
     assert "Rotation:" in str_str
 
 
-@pytest.mark.ros
 def test_pose_add_transform():
     initial_pose = Pose(1.0, 0.0, 0.0)
 
@@ -173,7 +168,6 @@ def test_pose_add_transform():
     print(found_tf.rotation, found_tf.translation)
 
 
-@pytest.mark.ros
 def test_pose_add_transform_with_rotation():
     # Create a pose at (0, 0, 0) rotated 90 degrees around Z
     angle = np.pi / 2
@@ -236,7 +230,6 @@ def test_pose_add_transform_with_rotation():
     assert np.isclose(transformed_pose2.orientation.w, np.cos(total_angle2 / 2), atol=1e-10)
 
 
-@pytest.mark.ros
 def test_lcm_encode_decode():
     angle = np.pi / 2
     transform = Transform(
@@ -251,7 +244,6 @@ def test_lcm_encode_decode():
     assert decoded_transform == transform
 
 
-@pytest.mark.ros
 def test_transform_addition():
     # Test 1: Simple translation addition (no rotation)
     t1 = Transform(
@@ -328,11 +320,8 @@ def test_transform_addition():
         t1 + "not a transform"
 
 
-@pytest.mark.ros
 def test_transform_from_pose():
     """Test converting Pose to Transform"""
-    if ROSTransformStamped is None:
-        pytest.skip("ROS not available")
     # Create a Pose with position and orientation
     pose = Pose(
         position=Vector3(1.0, 2.0, 3.0),
@@ -351,7 +340,6 @@ def test_transform_from_pose():
 
 # validating results from example @
 # https://foxglove.dev/blog/understanding-ros-transforms
-@pytest.mark.ros
 def test_transform_from_ros():
     """Test converting PoseStamped to Transform"""
     test_time = time.time()
@@ -382,7 +370,6 @@ def test_transform_from_ros():
     assert end_effector_global_pose.translation.y == pytest.approx(0.366, abs=1e-3)
 
 
-@pytest.mark.ros
 def test_transform_from_pose_stamped():
     """Test converting PoseStamped to Transform"""
     # Create a PoseStamped with position, orientation, timestamp and frame
@@ -405,7 +392,6 @@ def test_transform_from_pose_stamped():
     assert transform.child_frame_id == "robot_base"  # passed as first argument
 
 
-@pytest.mark.ros
 def test_transform_from_pose_variants():
     """Test from_pose with different Pose initialization methods"""
     # Test with Pose created from x,y,z
@@ -431,7 +417,6 @@ def test_transform_from_pose_variants():
     assert transform3.translation.z == 12.0
 
 
-@pytest.mark.ros
 def test_transform_from_pose_invalid_type():
     """Test that from_pose raises TypeError for invalid types"""
     with pytest.raises(TypeError):
