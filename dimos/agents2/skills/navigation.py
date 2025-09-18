@@ -17,7 +17,6 @@ Navigation skills for agents2 framework.
 These provide navigation capabilities using the new @skill decorator.
 """
 
-import asyncio
 import os
 import time
 from typing import Optional, Tuple
@@ -34,6 +33,21 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger("dimos.agents2.skills.navigation")
 
 
+def get_dimos_base_path():
+    """
+    Get the DiMOS base path from DIMOS_PATH environment variable or default to user's home directory.
+
+    Returns:
+        Base path to use for DiMOS assets
+    """
+    dimos_path = os.environ.get("DIMOS_PATH")
+    if dimos_path:
+        return dimos_path
+    # Get the current user's username
+    user = os.environ.get("USER", os.path.basename(os.path.expanduser("~")))
+    return f"/home/{user}/dimos"
+
+
 class NavigationSkillContainer(SkillContainer):
     """Container for navigation skills using the agents2 framework."""
 
@@ -48,9 +62,9 @@ class NavigationSkillContainer(SkillContainer):
         self._spatial_memory = None
         self._similarity_threshold = 0.23
 
-    async def _navigate_to_object_async(self, query: str, distance: float, timeout: float):
+    def _navigate_to_object_sync(self, query: str, distance: float, timeout: float):
         """
-        Async helper method that attempts to navigate to an object visible in the camera view.
+        Helper method that attempts to navigate to an object visible in the camera view.
 
         Returns:
             dict: Result dictionary with success status and details
@@ -109,9 +123,9 @@ class NavigationSkillContainer(SkillContainer):
                 "error": f"Failed to reach {query} within timeout",
             }
 
-    async def _navigate_using_semantic_map_async(self, query: str, limit: int):
+    def _navigate_using_semantic_map_sync(self, query: str, limit: int):
         """
-        Async helper method that attempts to navigate using the semantic map query.
+        Helper method that attempts to navigate using the semantic map query.
 
         Returns:
             dict: Result dictionary with success status and details
@@ -247,57 +261,36 @@ class NavigationSkillContainer(SkillContainer):
             skip_visual_search: Skip visual search for object in view
             timeout: Maximum time to spend navigating in seconds
         """
-
-        async def navigate_task():
+        try:
             if not query:
                 error_msg = "No query provided to navigate_with_text skill"
                 logger.error(error_msg)
-                return {"success": False, "error": error_msg}
+                return str({"success": False, "error": error_msg})
 
             # First, try to find and navigate to the object in camera view
             logger.info(f"First attempting to find and navigate to visible object: '{query}'")
 
             if not skip_visual_search:
-                object_result = await self._navigate_to_object_async(query, distance, timeout)
+                object_result = self._navigate_to_object_sync(query, distance, timeout)
 
                 if object_result and object_result["success"]:
                     logger.info(f"Successfully navigated to {query} in view")
-                    return object_result
+                    return str(object_result)
 
                 elif object_result and object_result["failure_reason"] == "Navigation":
                     logger.info(
                         f"Failed to navigate to {query} in view: {object_result.get('error', 'Unknown error')}"
                     )
-                    return object_result
+                    return str(object_result)
 
                 # If object navigation failed, fall back to semantic map
                 logger.info(
                     f"Object not found in view. Falling back to semantic map query for: '{query}'"
                 )
 
-            return await self._navigate_using_semantic_map_async(query, limit)
+            result = self._navigate_using_semantic_map_sync(query, limit)
+            return str(result)
 
-        # Run the async task
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Create a new task and return a "running" status
-                task = loop.create_task(navigate_task())
-
-                # Schedule the result to be delivered when complete
-                def on_done(future):
-                    try:
-                        result = future.result()
-                        logger.info(f"Navigation completed with result: {result}")
-                    except Exception as e:
-                        logger.error(f"Navigation task failed: {e}")
-
-                task.add_done_callback(on_done)
-                return "Navigation in progress..."
-            else:
-                # If no event loop, run synchronously
-                result = asyncio.run(navigate_task())
-                return str(result)
         except Exception as e:
             logger.error(f"Error in navigate_with_text: {e}")
             return f"Error navigating with text: {str(e)}"
@@ -378,74 +371,53 @@ class NavigationSkillContainer(SkillContainer):
             theta: Orientation at goal in radians (optional)
             timeout: Maximum time to spend navigating in seconds
         """
-
-        async def navigate_goal_task():
+        try:
             logger.info(
                 f"Starting navigation to position=({x:.2f}, {y:.2f}) "
                 f"with rotation={theta if theta is not None else 'None'}"
             )
 
-            try:
-                # Create a PoseStamped for navigation
-                goal_pose = PoseStamped(
-                    position=Vector3(x, y, 0),
-                    orientation=euler_to_quaternion(Vector3(0, 0, theta or 0)),
-                )
+            # Create a PoseStamped for navigation
+            goal_pose = PoseStamped(
+                position=Vector3(x, y, 0),
+                orientation=euler_to_quaternion(Vector3(0, 0, theta or 0)),
+            )
 
-                # Use the robot's navigate_to method
-                result = self._robot.navigate_to(goal_pose, blocking=True)
+            # Use the robot's navigate_to method
+            result = self._robot.navigate_to(goal_pose, blocking=True)
 
-                if result:
-                    logger.info("Navigation completed successfully")
-                    return {
+            if result:
+                logger.info("Navigation completed successfully")
+                return str(
+                    {
                         "success": True,
                         "position": (x, y),
                         "rotation": theta,
                         "message": "Goal reached successfully",
                     }
-                else:
-                    logger.warning("Navigation did not complete successfully")
-                    return {
+                )
+            else:
+                logger.warning("Navigation did not complete successfully")
+                return str(
+                    {
                         "success": False,
                         "position": (x, y),
                         "rotation": theta,
                         "message": "Goal could not be reached",
                     }
+                )
 
-            except Exception as e:
-                error_msg = f"Error during navigation: {e}"
-                logger.error(error_msg)
-                return {
+        except Exception as e:
+            error_msg = f"Error during navigation: {e}"
+            logger.error(error_msg)
+            return str(
+                {
                     "success": False,
                     "position": (x, y),
                     "rotation": theta,
                     "error": error_msg,
                 }
-
-        # Run the async task
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Create a new task and return a "running" status
-                task = loop.create_task(navigate_goal_task())
-
-                # Schedule the result to be delivered when complete
-                def on_done(future):
-                    try:
-                        result = future.result()
-                        logger.info(f"Goal navigation completed with result: {result}")
-                    except Exception as e:
-                        logger.error(f"Goal navigation task failed: {e}")
-
-                task.add_done_callback(on_done)
-                return "Navigation to goal in progress..."
-            else:
-                # If no event loop, run synchronously
-                result = asyncio.run(navigate_goal_task())
-                return str(result)
-        except Exception as e:
-            logger.error(f"Error in navigate_to_goal: {e}")
-            return f"Error navigating to goal: {str(e)}"
+            )
 
     @skill(ret=Return.call_agent, stream=Stream.none)
     def explore(self, strategy: str = "random", duration: float = 30.0) -> str:
@@ -457,65 +429,44 @@ class NavigationSkillContainer(SkillContainer):
             strategy: Exploration strategy ('random', 'frontier', 'systematic')
             duration: How long to explore in seconds
         """
-
-        async def explore_task():
+        try:
             logger.info("Starting autonomous frontier exploration")
 
-            try:
-                # Start exploration using the robot's explore method
-                result = self._robot.explore()
+            # Start exploration using the robot's explore method
+            result = self._robot.explore()
 
-                if result:
-                    logger.info("Exploration started successfully")
+            if result:
+                logger.info("Exploration started successfully")
 
-                    # Wait for exploration to complete or timeout
-                    start_time = time.time()
-                    while time.time() - start_time < duration:
-                        await asyncio.sleep(0.5)
+                # Wait for exploration to complete or timeout
+                start_time = time.time()
+                while time.time() - start_time < duration:
+                    time.sleep(0.5)
 
-                    # Timeout reached, stop exploration
-                    logger.info(f"Exploration timeout reached after {duration} seconds")
-                    self._robot.stop_exploration()
-                    return {
+                # Timeout reached, stop exploration
+                logger.info(f"Exploration timeout reached after {duration} seconds")
+                self._robot.stop_exploration()
+                return str(
+                    {
                         "success": True,
                         "message": f"Exploration ran for {duration} seconds",
                     }
-                else:
-                    logger.warning("Failed to start exploration")
-                    return {
+                )
+            else:
+                logger.warning("Failed to start exploration")
+                return str(
+                    {
                         "success": False,
                         "message": "Failed to start exploration",
                     }
+                )
 
-            except Exception as e:
-                error_msg = f"Error during exploration: {e}"
-                logger.error(error_msg)
-                return {
+        except Exception as e:
+            error_msg = f"Error during exploration: {e}"
+            logger.error(error_msg)
+            return str(
+                {
                     "success": False,
                     "error": error_msg,
                 }
-
-        # Run the async task
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Create a new task and return a "running" status
-                task = loop.create_task(explore_task())
-
-                # Schedule the result to be delivered when complete
-                def on_done(future):
-                    try:
-                        result = future.result()
-                        logger.info(f"Exploration completed with result: {result}")
-                    except Exception as e:
-                        logger.error(f"Exploration task failed: {e}")
-
-                task.add_done_callback(on_done)
-                return "Exploration in progress..."
-            else:
-                # If no event loop, run synchronously
-                result = asyncio.run(explore_task())
-                return str(result)
-        except Exception as e:
-            logger.error(f"Error in explore: {e}")
-            return f"Error exploring: {str(e)}"
+            )
