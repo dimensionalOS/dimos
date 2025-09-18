@@ -289,6 +289,8 @@ class Agent(AgentSpec):
                     # No LLM invocation needed yet, but still need to handle any updates
                     msg = AIMessage(content="", tool_calls=[])
                     state = _get_state()
+                    # Yield control to prevent tight loop when waiting for messages
+                    await asyncio.sleep(0.1)
 
                 print(self)
                 print(self.coordinator)
