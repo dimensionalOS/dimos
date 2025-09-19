@@ -33,18 +33,7 @@ from dataclasses import dataclass, field
 
 from dimos.core import Module, Out, rpc
 from dimos.msgs.geometry_msgs import Vector3
-
-
-@dataclass
-class ForceTorqueData:
-    """Data structure for force-torque sensor output."""
-
-    forces: Vector3 = field(default_factory=lambda: Vector3(0, 0, 0))
-    torques: Vector3 = field(default_factory=lambda: Vector3(0, 0, 0))
-    force_magnitude: float = 0.0
-    torque_magnitude: float = 0.0
-    timestamp: float = 0.0
-    raw_sensors: list = field(default_factory=list)
+from dimos.msgs.std_msgs import Header
 
 
 @dataclass
@@ -58,9 +47,10 @@ class RawSensorData:
 class FTDriverModule(Module):
     """Force-Torque sensor driver module with calibration."""
 
-    # Output ports
-    raw_sensor_data: Out[RawSensorData] = None  # Raw sensor values with moving average
-    calibrated_data: Out[ForceTorqueData] = None  # Calibrated force-torque data
+    # Output ports - separate force and torque as Vector3
+    force: Out[Vector3] = None  # Force vector in Newtons
+    torque: Out[Vector3] = None  # Torque vector in Newton-meters
+    raw_sensor_data: Out[RawSensorData] = None  # Raw sensor values (optional)
 
     def __init__(
         self,
@@ -69,6 +59,7 @@ class FTDriverModule(Module):
         window_size: int = 3,
         calibration_file: Optional[str] = None,
         verbose: bool = False,
+        frame_id: str = "ft_sensor",
     ):
         """
         Initialize the FT driver module.
@@ -79,6 +70,7 @@ class FTDriverModule(Module):
             window_size: Moving average window size
             calibration_file: Path to calibration JSON/NPZ file
             verbose: Enable verbose output
+            frame_id: Frame ID for published messages
         """
         super().__init__()
 
@@ -87,6 +79,7 @@ class FTDriverModule(Module):
         self.window_size = window_size
         self.calibration_file = calibration_file
         self.verbose = verbose
+        self.frame_id = frame_id
 
         # Serial connection
         self.ser = None
@@ -101,10 +94,15 @@ class FTDriverModule(Module):
         # Statistics
         self.message_count = 0
         self.error_count = 0
+        self.calibrated_count = 0
 
         # Running flag and thread
         self.running = False
         self._thread = None
+
+        # Store latest values for stats
+        self.latest_force_mag = 0.0
+        self.latest_torque_mag = 0.0
 
     def load_calibration(self):
         """Load calibration matrix and bias from file."""
@@ -199,9 +197,10 @@ class FTDriverModule(Module):
 
             timestamp = time.time()
 
-            # Publish raw sensor data with moving averages
-            raw_data = RawSensorData(sensor_values=moving_averages, timestamp=timestamp)
-            self.raw_sensor_data.publish(raw_data)
+            # Optionally publish raw sensor data with moving averages
+            if self.raw_sensor_data is not None:
+                raw_data = RawSensorData(sensor_values=moving_averages, timestamp=timestamp)
+                self.raw_sensor_data.publish(raw_data)
 
             # Apply calibration if available
             if self.calibration_matrix is not None:
@@ -209,27 +208,25 @@ class FTDriverModule(Module):
                 force_torque = self.apply_calibration(sensor_array)
 
                 if force_torque is not None:
-                    # Calculate magnitudes
-                    force_mag = np.linalg.norm(force_torque[:3])
-                    torque_mag = np.linalg.norm(force_torque[3:])
+                    # Extract force and torque components
+                    force_vec = Vector3(force_torque[0], force_torque[1], force_torque[2])
+                    torque_vec = Vector3(force_torque[3], force_torque[4], force_torque[5])
 
-                    # Create calibrated data message
-                    calibrated = ForceTorqueData(
-                        forces=Vector3(force_torque[0], force_torque[1], force_torque[2]),
-                        torques=Vector3(force_torque[3], force_torque[4], force_torque[5]),
-                        force_magnitude=force_mag,
-                        torque_magnitude=torque_mag,
-                        timestamp=timestamp,
-                        raw_sensors=moving_averages,
-                    )
-                    self.calibrated_data.publish(calibrated)
+                    # Calculate magnitudes for display
+                    self.latest_force_mag = np.linalg.norm(force_torque[:3])
+                    self.latest_torque_mag = np.linalg.norm(force_torque[3:])
+
+                    # Publish force and torque as separate Vector3 messages
+                    self.force.publish(force_vec)
+                    self.torque.publish(torque_vec)
+                    self.calibrated_count += 1
 
                     if self.verbose:
                         print(
                             f"\r{time.strftime('%H:%M:%S')} "
                             f"F:({force_torque[0]:7.2f},{force_torque[1]:7.2f},{force_torque[2]:7.2f}) "
                             f"T:({force_torque[3]:7.4f},{force_torque[4]:7.4f},{force_torque[5]:7.4f}) "
-                            f"|F|:{force_mag:7.2f} |T|:{torque_mag:7.4f}",
+                            f"|F|:{self.latest_force_mag:7.2f} |T|:{self.latest_torque_mag:7.4f}",
                             end="",
                             flush=True,
                         )
@@ -310,7 +307,7 @@ class FTDriverModule(Module):
         if self.ser and self.ser.is_open:
             self.ser.close()
 
-        print(f"FT driver stopped. Messages: {self.message_count}, Errors: {self.error_count}")
+        print(f"FT driver stopped. Messages: {self.message_count}, Errors: {self.error_count}, Calibrated: {self.calibrated_count}")
 
     @rpc
     def get_stats(self) -> Dict[str, Any]:
@@ -318,8 +315,11 @@ class FTDriverModule(Module):
         return {
             "message_count": self.message_count,
             "error_count": self.error_count,
+            "calibrated_count": self.calibrated_count,
             "calibration_loaded": self.calibration_matrix is not None,
             "serial_connected": self.ser is not None and self.ser.is_open,
+            "latest_force_magnitude": self.latest_force_mag,
+            "latest_torque_magnitude": self.latest_torque_mag,
         }
 
 

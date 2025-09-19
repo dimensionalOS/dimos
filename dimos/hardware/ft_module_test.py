@@ -17,15 +17,16 @@
 Force-Torque Module Test/Deployment Script
 
 Deploys and connects the FT driver and visualizer modules using Dimos.
-Completely replaces ZMQ communication with LCM transport.
+Uses LCM transport for Vector3 force and torque messages.
 """
 
 import time
 import argparse
 from pathlib import Path
 
-from dimos.core import start, pLCMTransport
-from dimos.hardware.ft_driver_module import FTDriverModule, ForceTorqueData, RawSensorData
+from dimos.core import start, LCMTransport, pLCMTransport
+from dimos.msgs.geometry_msgs import Vector3
+from dimos.hardware.ft_driver_module import FTDriverModule, RawSensorData
 from dimos.hardware.ft_visualizer_module import FTVisualizerModule
 
 
@@ -40,21 +41,21 @@ Examples:
   python ft_module_test.py
 
   # Run with calibration file
-  python ft_module_test.py --calibration calibration.json
+  python ft_module_test.py --calibration ft_calibration.json
 
   # Run with custom serial port and verbose output
-  python ft_module_test.py --port /dev/ttyUSB0 --calibration cal.json --verbose
+  python ft_module_test.py --port /dev/ttyUSB0 --calibration ft_cal.json --verbose
 
   # Run with custom dashboard port
-  python ft_module_test.py --dash-port 8080 --calibration calibration.npz
+  python ft_module_test.py --dash-port 8080 --calibration ft_calibration.npz
         """,
     )
 
     # Driver arguments
     parser.add_argument(
         "--port",
-        default="/dev/tty.usbserial-0001",
-        help="Serial port for sensor (default: /dev/tty.usbserial-0001)",
+        default="/dev/ttyACM0",
+        help="Serial port for sensor (default: /dev/ttyACM0)",
     )
     parser.add_argument(
         "--baud", type=int, default=115200, help="Serial baud rate (default: 115200)"
@@ -62,7 +63,12 @@ Examples:
     parser.add_argument(
         "--window", type=int, default=3, help="Moving average window size (default: 3)"
     )
-    parser.add_argument("--calibration", type=str, help="Path to calibration file (.json or .npz)")
+    parser.add_argument(
+        "--calibration",
+        type=str,
+        default="dimos/hardware/ft_calibration.json",
+        help="Path to calibration file (default: dimos/hardware/ft_calibration.json)"
+    )
 
     # Visualizer arguments
     parser.add_argument(
@@ -83,14 +89,19 @@ Examples:
 
     # LCM transport arguments
     parser.add_argument(
+        "--lcm-force-channel",
+        default="/ft/force",
+        help="LCM channel for force Vector3 data (default: /ft/force)",
+    )
+    parser.add_argument(
+        "--lcm-torque-channel",
+        default="/ft/torque",
+        help="LCM channel for torque Vector3 data (default: /ft/torque)",
+    )
+    parser.add_argument(
         "--lcm-raw-channel",
         default="/ft/raw_sensors",
         help="LCM channel for raw sensor data (default: /ft/raw_sensors)",
-    )
-    parser.add_argument(
-        "--lcm-calibrated-channel",
-        default="/ft/calibrated",
-        help="LCM channel for calibrated data (default: /ft/calibrated)",
     )
 
     # General arguments
@@ -100,6 +111,9 @@ Examples:
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     parser.add_argument(
         "--no-visualizer", action="store_true", help="Run driver only, without visualizer"
+    )
+    parser.add_argument(
+        "--no-raw", action="store_true", help="Don't publish raw sensor data"
     )
 
     args = parser.parse_args()
@@ -137,22 +151,23 @@ Examples:
     print("Driver deployment complete")
 
     # Set up LCM transport for driver outputs
-    print("Setting up LCM transports...")
-    try:
+    print("\nSetting up LCM transports...")
+
+    # Force and torque use proper LCMTransport with Vector3 type
+    driver.force.transport = LCMTransport(args.lcm_force_channel, Vector3)
+    print(f"  Force Vector3 channel: {args.lcm_force_channel}")
+
+    driver.torque.transport = LCMTransport(args.lcm_torque_channel, Vector3)
+    print(f"  Torque Vector3 channel: {args.lcm_torque_channel}")
+
+    # Raw sensor data (optional) uses pLCMTransport since it's a custom dataclass
+    if not args.no_raw:
         driver.raw_sensor_data.transport = pLCMTransport(args.lcm_raw_channel)
         print(f"  Raw sensor data channel: {args.lcm_raw_channel}")
 
-        driver.calibrated_data.transport = pLCMTransport(args.lcm_calibrated_channel)
-        print(f"  Calibrated data channel: {args.lcm_calibrated_channel}")
-    except Exception as e:
-        print(f"Error setting up transports: {e}")
-        import traceback
-
-        traceback.print_exc()
-
     # Deploy visualizer if requested
     visualizer = None
-    if not args.no_visualizer:
+    if not args.no_visualizer and args.calibration:
         print(f"\nDeploying FT visualizer module...")
         print(f"  Dashboard port: {args.dash_port}")
         print(f"  Dashboard host: {args.dash_host}")
@@ -169,19 +184,13 @@ Examples:
         )
 
         # Connect visualizer inputs to driver outputs
-        if args.calibration:
-            # If calibration is available, connect to calibrated data
-            visualizer.calibrated_data.connect(driver.calibrated_data)
-            print(f"  Connected to calibrated data stream")
-        else:
-            # If no calibration, we'll need to modify visualizer to handle raw data
-            # For now, just connect to calibrated port (which won't have data)
-            visualizer.calibrated_data.connect(driver.calibrated_data)
-            print(f"  Warning: No calibration file, visualizer waiting for calibrated data")
+        visualizer.force.connect(driver.force)
+        visualizer.torque.connect(driver.torque)
+        print(f"  Connected to force and torque streams")
 
-        # Optionally connect raw sensor data for display
-        visualizer.raw_sensor_data.connect(driver.raw_sensor_data)
-        print(f"  Connected to raw sensor data stream")
+    elif not args.no_visualizer and not args.calibration:
+        print("\n⚠ Visualizer requires calibration file to run")
+        print("  Please provide a calibration file with --calibration flag")
 
     # Start modules
     print("\n" + "=" * 60)
@@ -213,13 +222,21 @@ Examples:
                 print(
                     f"\nDriver Stats: Messages={driver_stats['message_count']}, "
                     f"Errors={driver_stats['error_count']}, "
+                    f"Calibrated={driver_stats['calibrated_count']}, "
                     f"Calibration={'Yes' if driver_stats['calibration_loaded'] else 'No'}"
                 )
+
+                if driver_stats['calibration_loaded']:
+                    print(
+                        f"  Latest |F|={driver_stats['latest_force_magnitude']:.2f} N, "
+                        f"|T|={driver_stats['latest_torque_magnitude']:.4f} N⋅m"
+                    )
 
                 if visualizer:
                     viz_stats = visualizer.get_stats()
                     print(
-                        f"Visualizer Stats: Messages={viz_stats['message_count']}, "
+                        f"Visualizer Stats: Force msgs={viz_stats['force_count']}, "
+                        f"Torque msgs={viz_stats['torque_count']}, "
                         f"Data points={viz_stats['data_points']}"
                     )
 

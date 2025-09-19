@@ -17,7 +17,7 @@
 Force-Torque Sensor Visualization Module for Dimos
 
 Visualizes calibrated force-torque sensor data using Dash and Plotly.
-Receives data via LCM transport from the FT driver module.
+Receives force and torque Vector3 messages via LCM transport.
 """
 
 import dash
@@ -25,27 +25,20 @@ from dash import dcc, html, Input, Output
 import plotly.graph_objs as go
 import time
 import threading
-import queue
 import numpy as np
 from collections import deque
-from datetime import datetime
 from typing import Dict, Any
-from dataclasses import dataclass, field
 
 from dimos.core import Module, In, rpc
 from dimos.msgs.geometry_msgs import Vector3
 
 
-# Import data structures from driver module
-from dimos.hardware.ft_driver_module import ForceTorqueData, RawSensorData
-
-
 class FTVisualizerModule(Module):
     """Force-Torque sensor visualization module using Dash."""
 
-    # Input ports
-    calibrated_data: In[ForceTorqueData] = None  # Calibrated force-torque data
-    raw_sensor_data: In[RawSensorData] = None  # Raw sensor values (optional)
+    # Input ports - separate force and torque Vector3 streams
+    force: In[Vector3] = None  # Force vector in Newtons
+    torque: In[Vector3] = None  # Torque vector in Newton-meters
 
     def __init__(
         self,
@@ -88,31 +81,28 @@ class FTVisualizerModule(Module):
         self.force_magnitudes = deque(maxlen=max_history)
         self.torque_magnitudes = deque(maxlen=max_history)
 
-        # Raw sensor data storage (optional)
-        self.raw_sensors = deque(maxlen=max_history)
-
         # Latest values for display
-        self.latest_forces = [0, 0, 0]
-        self.latest_torques = [0, 0, 0]
+        self.latest_force = [0, 0, 0]
+        self.latest_torque = [0, 0, 0]
         self.latest_force_mag = 0
         self.latest_torque_mag = 0
-        self.latest_raw_sensors = []
 
         # Statistics
-        self.message_count = 0
+        self.force_count = 0
+        self.torque_count = 0
         self.start_time = None
 
-        # Thread-safe queue for data exchange with Dash
-        self.data_queue = queue.Queue(maxsize=100)
-
-        # Dash app
+        # Dash app - initialize immediately to ensure callbacks are registered
         self.app = None
         self.dash_thread = None
         self.running = False
 
-    def handle_calibrated_data(self, msg: ForceTorqueData):
-        """Handle incoming calibrated force-torque data."""
-        self.message_count += 1
+        # Lock for thread-safe data access
+        self.data_lock = threading.Lock()
+
+    def handle_force(self, msg: Vector3):
+        """Handle incoming force Vector3 data."""
+        self.force_count += 1
 
         if self.start_time is None:
             self.start_time = time.time()
@@ -120,89 +110,100 @@ class FTVisualizerModule(Module):
         # Calculate relative timestamp
         rel_time = time.time() - self.start_time
 
-        # Store data
-        self.timestamps.append(rel_time)
+        # Extract force values
+        force = [msg.x, msg.y, msg.z]
+        force_mag = np.linalg.norm(force)
 
-        # Extract force and torque values
-        forces = [msg.forces.x, msg.forces.y, msg.forces.z]
-        torques = [msg.torques.x, msg.torques.y, msg.torques.z]
+        with self.data_lock:
+            # Store data
+            self.timestamps.append(rel_time)
+            self.forces["x"].append(force[0])
+            self.forces["y"].append(force[1])
+            self.forces["z"].append(force[2])
+            self.force_magnitudes.append(force_mag)
 
-        self.forces["x"].append(forces[0])
-        self.forces["y"].append(forces[1])
-        self.forces["z"].append(forces[2])
-
-        self.torques["x"].append(torques[0])
-        self.torques["y"].append(torques[1])
-        self.torques["z"].append(torques[2])
-
-        self.force_magnitudes.append(msg.force_magnitude)
-        self.torque_magnitudes.append(msg.torque_magnitude)
-
-        # Update latest values
-        self.latest_forces = forces
-        self.latest_torques = torques
-        self.latest_force_mag = msg.force_magnitude
-        self.latest_torque_mag = msg.torque_magnitude
-        if hasattr(msg, "raw_sensors"):
-            self.latest_raw_sensors = msg.raw_sensors
-
-        # Update queue for dashboard
-        try:
-            self.data_queue.put_nowait(
-                {
-                    "timestamp": rel_time,
-                    "forces": forces,
-                    "torques": torques,
-                    "force_magnitude": msg.force_magnitude,
-                    "torque_magnitude": msg.torque_magnitude,
-                }
-            )
-        except queue.Full:
-            # Remove old item if queue is full
-            try:
-                self.data_queue.get_nowait()
-                self.data_queue.put_nowait(
-                    {
-                        "timestamp": rel_time,
-                        "forces": forces,
-                        "torques": torques,
-                        "force_magnitude": msg.force_magnitude,
-                        "torque_magnitude": msg.torque_magnitude,
-                    }
-                )
-            except:
-                pass
+            # Update latest values
+            self.latest_force = force
+            self.latest_force_mag = force_mag
 
         if self.verbose:
-            print(
-                f"Received FT data: F={forces}, T={torques}, |F|={msg.force_magnitude:.3f}, |T|={msg.torque_magnitude:.4f}"
-            )
+            print(f"Force: F=({force[0]:.2f}, {force[1]:.2f}, {force[2]:.2f}) N, |F|={force_mag:.2f} N")
 
-    def handle_raw_sensor_data(self, msg: RawSensorData):
-        """Handle incoming raw sensor data (optional)."""
-        if hasattr(msg, "sensor_values"):
-            self.raw_sensors.append(msg.sensor_values)
-            self.latest_raw_sensors = msg.sensor_values
+    def handle_torque(self, msg: Vector3):
+        """Handle incoming torque Vector3 data."""
+        self.torque_count += 1
+
+        if self.start_time is None:
+            self.start_time = time.time()
+
+        # Calculate relative timestamp
+        rel_time = time.time() - self.start_time
+
+        # Extract torque values
+        torque = [msg.x, msg.y, msg.z]
+        torque_mag = np.linalg.norm(torque)
+
+        with self.data_lock:
+            # Store torque data (align with force timestamps if needed)
+            if len(self.torques["x"]) < len(self.forces["x"]):
+                self.torques["x"].append(torque[0])
+                self.torques["y"].append(torque[1])
+                self.torques["z"].append(torque[2])
+                self.torque_magnitudes.append(torque_mag)
+            else:
+                # If we get more torques than forces, update the last one
+                if len(self.torques["x"]) > 0:
+                    self.torques["x"][-1] = torque[0]
+                    self.torques["y"][-1] = torque[1]
+                    self.torques["z"][-1] = torque[2]
+                    self.torque_magnitudes[-1] = torque_mag
+
+            # Update latest values
+            self.latest_torque = torque
+            self.latest_torque_mag = torque_mag
+
+        if self.verbose:
+            print(f"Torque: T=({torque[0]:.4f}, {torque[1]:.4f}, {torque[2]:.4f}) N⋅m, |T|={torque_mag:.4f} N⋅m")
 
     def get_plot_data(self) -> Dict[str, Any]:
         """Get data formatted for plotting."""
-        return {
-            "timestamps": list(self.timestamps),
-            "forces": {k: list(v) for k, v in self.forces.items()},
-            "torques": {k: list(v) for k, v in self.torques.items()},
-            "force_magnitudes": list(self.force_magnitudes),
-            "torque_magnitudes": list(self.torque_magnitudes),
-            "latest_forces": self.latest_forces,
-            "latest_torques": self.latest_torques,
-            "latest_force_mag": self.latest_force_mag,
-            "latest_torque_mag": self.latest_torque_mag,
-            "latest_raw_sensors": self.latest_raw_sensors,
-            "message_count": self.message_count,
-        }
+        with self.data_lock:
+            # Ensure torques have same length as forces by padding with zeros
+            while len(self.torques["x"]) < len(self.forces["x"]):
+                self.torques["x"].append(self.latest_torque[0] if self.latest_torque else 0)
+                self.torques["y"].append(self.latest_torque[1] if self.latest_torque else 0)
+                self.torques["z"].append(self.latest_torque[2] if self.latest_torque else 0)
+                self.torque_magnitudes.append(self.latest_torque_mag)
 
-    def create_dash_app(self):
-        """Create and configure the Dash application."""
-        self.app = dash.Dash(__name__)
+            return {
+                "timestamps": list(self.timestamps),
+                "forces": {k: list(v) for k, v in self.forces.items()},
+                "torques": {k: list(v) for k, v in self.torques.items()},
+                "force_magnitudes": list(self.force_magnitudes),
+                "torque_magnitudes": list(self.torque_magnitudes),
+                "latest_force": self.latest_force,
+                "latest_torque": self.latest_torque,
+                "latest_force_mag": self.latest_force_mag,
+                "latest_torque_mag": self.latest_torque_mag,
+                "force_count": self.force_count,
+                "torque_count": self.torque_count,
+            }
+
+    def _initialize_dash_app(self):
+        """Initialize and configure the Dash application with callbacks."""
+        # Suppress Dash/Flask logging
+        import logging
+        import os
+        os.environ['WERKZEUG_RUN_MAIN'] = 'true'  # Suppress reloader messages
+
+        log = logging.getLogger('werkzeug')
+        log.setLevel(logging.ERROR)
+
+        # Suppress Dash warnings
+        dash_logger = logging.getLogger('dash')
+        dash_logger.setLevel(logging.ERROR)
+
+        self.app = dash.Dash(__name__, suppress_callback_exceptions=True)
 
         self.app.layout = html.Div(
             [
@@ -223,7 +224,7 @@ class FTVisualizerModule(Module):
                         html.Div(
                             [
                                 html.H3("Current Forces (N)", style={"text-align": "center"}),
-                                html.Div(
+                                html.Pre(
                                     id="current-forces",
                                     style={
                                         "font-family": "monospace",
@@ -240,7 +241,7 @@ class FTVisualizerModule(Module):
                         html.Div(
                             [
                                 html.H3("Current Torques (N⋅m)", style={"text-align": "center"}),
-                                html.Div(
+                                html.Pre(
                                     id="current-torques",
                                     style={
                                         "font-family": "monospace",
@@ -268,19 +269,11 @@ class FTVisualizerModule(Module):
                             [
                                 dcc.Graph(
                                     id="force-magnitude-plot",
-                                    style={
-                                        "width": "50%",
-                                        "display": "inline-block",
-                                        "height": "300px",
-                                    },
+                                    style={"width": "50%", "display": "inline-block", "height": "300px"},
                                 ),
                                 dcc.Graph(
                                     id="torque-magnitude-plot",
-                                    style={
-                                        "width": "50%",
-                                        "display": "inline-block",
-                                        "height": "300px",
-                                    },
+                                    style={"width": "50%", "display": "inline-block", "height": "300px"},
                                 ),
                             ]
                         ),
@@ -290,7 +283,7 @@ class FTVisualizerModule(Module):
                 html.Div(
                     [
                         html.H3("Statistics", style={"text-align": "center"}),
-                        html.Div(
+                        html.Pre(
                             id="statistics",
                             style={
                                 "font-family": "monospace",
@@ -302,35 +295,17 @@ class FTVisualizerModule(Module):
                     ],
                     style={"padding": "20px"},
                 ),
-                # Raw sensor values (optional)
-                html.Div(
-                    [
-                        html.H3("Raw Sensor Values", style={"text-align": "center"}),
-                        html.Div(
-                            id="raw-sensors",
-                            style={
-                                "font-family": "monospace",
-                                "padding": "10px",
-                                "background-color": "#f9f9f9",
-                                "border-radius": "5px",
-                                "max-height": "150px",
-                                "overflow-y": "auto",
-                            },
-                        ),
-                    ],
-                    style={
-                        "padding": "20px",
-                        "display": "none" if not self.latest_raw_sensors else "block",
-                    },
-                ),
                 # Update interval
                 dcc.Interval(
-                    id="interval-component", interval=self.update_interval_ms, n_intervals=0
+                    id="interval-component",
+                    interval=self.update_interval_ms,
+                    n_intervals=0
                 ),
             ]
         )
 
-        @self.app.callback(
+        # Register callback using explicit method for better multiprocess support
+        self.app.callback(
             [
                 Output("force-plot", "figure"),
                 Output("torque-plot", "figure"),
@@ -339,228 +314,222 @@ class FTVisualizerModule(Module):
                 Output("current-forces", "children"),
                 Output("current-torques", "children"),
                 Output("statistics", "children"),
-                Output("raw-sensors", "children"),
                 Output("status", "children"),
             ],
             [Input("interval-component", "n_intervals")],
-        )
-        def update_plots(n):
-            """Update all plots and displays."""
-            data = self.get_plot_data()
+        )(self.update_plots)
 
-            # Status
-            status = (
-                f"Messages: {data['message_count']} | Running: {'Yes' if self.running else 'No'}"
-            )
+    def update_plots(self, n):
+        """Update all plots and displays."""
+        data = self.get_plot_data()
 
-            if not data["timestamps"]:
-                empty_fig = {"data": [], "layout": {"title": "Waiting for data..."}}
-                return (
-                    empty_fig,
-                    empty_fig,
-                    empty_fig,
-                    empty_fig,
-                    "Waiting for data...",
-                    "Waiting for data...",
-                    "No data yet",
-                    "No sensor data",
-                    status,
-                )
+        # Status
+        status = f"Force messages: {data['force_count']} | Torque messages: {data['torque_count']} | Running: {'Yes' if self.running else 'No'}"
 
-            # Force components plot
-            force_fig = go.Figure()
-            force_fig.add_trace(
-                go.Scatter(
-                    x=data["timestamps"],
-                    y=data["forces"]["x"],
-                    mode="lines",
-                    name="Fx",
-                    line=dict(color="red", width=2),
-                )
-            )
-            force_fig.add_trace(
-                go.Scatter(
-                    x=data["timestamps"],
-                    y=data["forces"]["y"],
-                    mode="lines",
-                    name="Fy",
-                    line=dict(color="green", width=2),
-                )
-            )
-            force_fig.add_trace(
-                go.Scatter(
-                    x=data["timestamps"],
-                    y=data["forces"]["z"],
-                    mode="lines",
-                    name="Fz",
-                    line=dict(color="blue", width=2),
-                )
-            )
-            force_fig.update_layout(
-                title="Force Components",
-                xaxis_title="Time (s)",
-                yaxis_title="Force (N)",
-                hovermode="x unified",
-                showlegend=True,
-                margin=dict(l=50, r=50, t=50, b=50),
-            )
-
-            # Torque components plot
-            torque_fig = go.Figure()
-            torque_fig.add_trace(
-                go.Scatter(
-                    x=data["timestamps"],
-                    y=data["torques"]["x"],
-                    mode="lines",
-                    name="Mx",
-                    line=dict(color="red", width=2),
-                )
-            )
-            torque_fig.add_trace(
-                go.Scatter(
-                    x=data["timestamps"],
-                    y=data["torques"]["y"],
-                    mode="lines",
-                    name="My",
-                    line=dict(color="green", width=2),
-                )
-            )
-            torque_fig.add_trace(
-                go.Scatter(
-                    x=data["timestamps"],
-                    y=data["torques"]["z"],
-                    mode="lines",
-                    name="Mz",
-                    line=dict(color="blue", width=2),
-                )
-            )
-            torque_fig.update_layout(
-                title="Torque Components",
-                xaxis_title="Time (s)",
-                yaxis_title="Torque (N⋅m)",
-                hovermode="x unified",
-                showlegend=True,
-                margin=dict(l=50, r=50, t=50, b=50),
-            )
-
-            # Force magnitude plot
-            force_mag_fig = go.Figure()
-            force_mag_fig.add_trace(
-                go.Scatter(
-                    x=data["timestamps"],
-                    y=data["force_magnitudes"],
-                    mode="lines",
-                    name="|F|",
-                    line=dict(color="purple", width=2),
-                    fill="tozeroy",
-                    fillcolor="rgba(128, 0, 128, 0.2)",
-                )
-            )
-            force_mag_fig.update_layout(
-                title="Force Magnitude",
-                xaxis_title="Time (s)",
-                yaxis_title="|F| (N)",
-                showlegend=False,
-                margin=dict(l=50, r=50, t=50, b=50),
-            )
-
-            # Torque magnitude plot
-            torque_mag_fig = go.Figure()
-            torque_mag_fig.add_trace(
-                go.Scatter(
-                    x=data["timestamps"],
-                    y=data["torque_magnitudes"],
-                    mode="lines",
-                    name="|M|",
-                    line=dict(color="orange", width=2),
-                    fill="tozeroy",
-                    fillcolor="rgba(255, 165, 0, 0.2)",
-                )
-            )
-            torque_mag_fig.update_layout(
-                title="Torque Magnitude",
-                xaxis_title="Time (s)",
-                yaxis_title="|M| (N⋅m)",
-                showlegend=False,
-                margin=dict(l=50, r=50, t=50, b=50),
-            )
-
-            # Current values display
-            current_forces = (
-                f"Fx: {data['latest_forces'][0]:8.3f} N\n"
-                f"Fy: {data['latest_forces'][1]:8.3f} N\n"
-                f"Fz: {data['latest_forces'][2]:8.3f} N\n"
-                f"|F|: {data['latest_force_mag']:8.3f} N"
-            )
-
-            current_torques = (
-                f"Mx: {data['latest_torques'][0]:8.4f} N⋅m\n"
-                f"My: {data['latest_torques'][1]:8.4f} N⋅m\n"
-                f"Mz: {data['latest_torques'][2]:8.4f} N⋅m\n"
-                f"|M|: {data['latest_torque_mag']:8.4f} N⋅m"
-            )
-
-            # Calculate statistics
-            statistics = ""
-            if len(data["force_magnitudes"]) > 0:
-                force_data = np.array(
-                    [data["forces"]["x"], data["forces"]["y"], data["forces"]["z"]]
-                )
-                force_mean = np.mean(force_data, axis=1)
-                force_std = np.std(force_data, axis=1)
-                force_max = np.max(np.abs(force_data), axis=1)
-
-                torque_data = np.array(
-                    [data["torques"]["x"], data["torques"]["y"], data["torques"]["z"]]
-                )
-                torque_mean = np.mean(torque_data, axis=1)
-                torque_std = np.std(torque_data, axis=1)
-                torque_max = np.max(np.abs(torque_data), axis=1)
-
-                statistics = (
-                    "Force Statistics:\n"
-                    f"  Mean: Fx={force_mean[0]:.3f}, Fy={force_mean[1]:.3f}, Fz={force_mean[2]:.3f} N\n"
-                    f"  Std:  Fx={force_std[0]:.3f}, Fy={force_std[1]:.3f}, Fz={force_std[2]:.3f} N\n"
-                    f"  Max:  Fx={force_max[0]:.3f}, Fy={force_max[1]:.3f}, Fz={force_max[2]:.3f} N\n"
-                    f"  Mean |F|: {np.mean(data['force_magnitudes']):.3f} N\n\n"
-                    "Torque Statistics:\n"
-                    f"  Mean: Mx={torque_mean[0]:.4f}, My={torque_mean[1]:.4f}, Mz={torque_mean[2]:.4f} N⋅m\n"
-                    f"  Std:  Mx={torque_std[0]:.4f}, My={torque_std[1]:.4f}, Mz={torque_std[2]:.4f} N⋅m\n"
-                    f"  Max:  Mx={torque_max[0]:.4f}, My={torque_max[1]:.4f}, Mz={torque_max[2]:.4f} N⋅m\n"
-                    f"  Mean |M|: {np.mean(data['torque_magnitudes']):.4f} N⋅m"
-                )
-
-            # Raw sensor values
-            raw_sensors_text = ""
-            if data["latest_raw_sensors"]:
-                raw_sensors_text = "Sensor Values (with moving average):\n"
-                for i, val in enumerate(data["latest_raw_sensors"]):
-                    magnet = i // 4 + 1
-                    sensor = i % 4 + 1
-                    raw_sensors_text += f"  S{i + 1:02d} (M{magnet}S{sensor}): {val:8.3f}\n"
-                    if (i + 1) % 4 == 0 and i < 15:
-                        raw_sensors_text += ""
-
+        if not data["timestamps"]:
+            empty_fig = {"data": [], "layout": {"title": "Waiting for data..."}}
             return (
-                force_fig,
-                torque_fig,
-                force_mag_fig,
-                torque_mag_fig,
-                current_forces,
-                current_torques,
-                statistics,
-                raw_sensors_text,
+                empty_fig,
+                empty_fig,
+                empty_fig,
+                empty_fig,
+                "Waiting for data...",
+                "Waiting for data...",
+                "No data yet",
                 status,
             )
 
+        # Force components plot
+        force_fig = go.Figure()
+        force_fig.add_trace(
+            go.Scatter(
+                x=data["timestamps"],
+                y=data["forces"]["x"],
+                mode="lines",
+                name="Fx",
+                line=dict(color="red", width=2),
+            )
+        )
+        force_fig.add_trace(
+            go.Scatter(
+                x=data["timestamps"],
+                y=data["forces"]["y"],
+                mode="lines",
+                name="Fy",
+                line=dict(color="green", width=2),
+            )
+        )
+        force_fig.add_trace(
+            go.Scatter(
+                x=data["timestamps"],
+                y=data["forces"]["z"],
+                mode="lines",
+                name="Fz",
+                line=dict(color="blue", width=2),
+            )
+        )
+        force_fig.update_layout(
+            title="Force Components",
+            xaxis_title="Time (s)",
+            yaxis_title="Force (N)",
+            hovermode="x unified",
+            showlegend=True,
+            margin=dict(l=50, r=50, t=50, b=50),
+        )
+
+        # Torque components plot
+        torque_fig = go.Figure()
+        torque_fig.add_trace(
+            go.Scatter(
+                x=data["timestamps"],
+                y=data["torques"]["x"],
+                mode="lines",
+                name="Mx",
+                line=dict(color="red", width=2),
+            )
+        )
+        torque_fig.add_trace(
+            go.Scatter(
+                x=data["timestamps"],
+                y=data["torques"]["y"],
+                mode="lines",
+                name="My",
+                line=dict(color="green", width=2),
+            )
+        )
+        torque_fig.add_trace(
+            go.Scatter(
+                x=data["timestamps"],
+                y=data["torques"]["z"],
+                mode="lines",
+                name="Mz",
+                line=dict(color="blue", width=2),
+            )
+        )
+        torque_fig.update_layout(
+            title="Torque Components",
+            xaxis_title="Time (s)",
+            yaxis_title="Torque (N⋅m)",
+            hovermode="x unified",
+            showlegend=True,
+            margin=dict(l=50, r=50, t=50, b=50),
+        )
+
+        # Force magnitude plot
+        force_mag_fig = go.Figure()
+        force_mag_fig.add_trace(
+            go.Scatter(
+                x=data["timestamps"],
+                y=data["force_magnitudes"],
+                mode="lines",
+                name="|F|",
+                line=dict(color="purple", width=2),
+                fill="tozeroy",
+                fillcolor="rgba(128, 0, 128, 0.2)",
+            )
+        )
+        force_mag_fig.update_layout(
+            title="Force Magnitude",
+            xaxis_title="Time (s)",
+            yaxis_title="|F| (N)",
+            showlegend=False,
+            margin=dict(l=50, r=50, t=50, b=50),
+        )
+
+        # Torque magnitude plot
+        torque_mag_fig = go.Figure()
+        torque_mag_fig.add_trace(
+            go.Scatter(
+                x=data["timestamps"],
+                y=data["torque_magnitudes"],
+                mode="lines",
+                name="|M|",
+                line=dict(color="orange", width=2),
+                fill="tozeroy",
+                fillcolor="rgba(255, 165, 0, 0.2)",
+            )
+        )
+        torque_mag_fig.update_layout(
+            title="Torque Magnitude",
+            xaxis_title="Time (s)",
+            yaxis_title="|M| (N⋅m)",
+            showlegend=False,
+            margin=dict(l=50, r=50, t=50, b=50),
+        )
+
+        # Current values display
+        current_forces = (
+            f"Fx: {data['latest_force'][0]:8.3f} N\n"
+            f"Fy: {data['latest_force'][1]:8.3f} N\n"
+            f"Fz: {data['latest_force'][2]:8.3f} N\n"
+            f"|F|: {data['latest_force_mag']:8.3f} N"
+        )
+
+        current_torques = (
+            f"Mx: {data['latest_torque'][0]:8.4f} N⋅m\n"
+            f"My: {data['latest_torque'][1]:8.4f} N⋅m\n"
+            f"Mz: {data['latest_torque'][2]:8.4f} N⋅m\n"
+            f"|M|: {data['latest_torque_mag']:8.4f} N⋅m"
+        )
+
+        # Calculate statistics
+        statistics = ""
+        if len(data["force_magnitudes"]) > 0:
+            force_data = np.array([data["forces"]["x"], data["forces"]["y"], data["forces"]["z"]])
+            force_mean = np.mean(force_data, axis=1)
+            force_std = np.std(force_data, axis=1)
+            force_max = np.max(np.abs(force_data), axis=1)
+
+            torque_data = np.array([data["torques"]["x"], data["torques"]["y"], data["torques"]["z"]])
+            torque_mean = np.mean(torque_data, axis=1)
+            torque_std = np.std(torque_data, axis=1)
+            torque_max = np.max(np.abs(torque_data), axis=1)
+
+            statistics = (
+                "Force Statistics:\n"
+                f"  Mean: Fx={force_mean[0]:.3f}, Fy={force_mean[1]:.3f}, Fz={force_mean[2]:.3f} N\n"
+                f"  Std:  Fx={force_std[0]:.3f}, Fy={force_std[1]:.3f}, Fz={force_std[2]:.3f} N\n"
+                f"  Max:  Fx={force_max[0]:.3f}, Fy={force_max[1]:.3f}, Fz={force_max[2]:.3f} N\n"
+                f"  Mean |F|: {np.mean(data['force_magnitudes']):.3f} N\n\n"
+                "Torque Statistics:\n"
+                f"  Mean: Mx={torque_mean[0]:.4f}, My={torque_mean[1]:.4f}, Mz={torque_mean[2]:.4f} N⋅m\n"
+                f"  Std:  Mx={torque_std[0]:.4f}, My={torque_std[1]:.4f}, Mz={torque_std[2]:.4f} N⋅m\n"
+                f"  Max:  Mx={torque_max[0]:.4f}, My={torque_max[1]:.4f}, Mz={torque_max[2]:.4f} N⋅m\n"
+                f"  Mean |M|: {np.mean(data['torque_magnitudes']):.4f} N⋅m"
+            )
+
+        return (
+            force_fig,
+            torque_fig,
+            force_mag_fig,
+            torque_mag_fig,
+            current_forces,
+            current_torques,
+            statistics,
+            status,
+        )
+
     def run_dash(self):
         """Run the Dash web server in a separate thread."""
-        self.create_dash_app()
-        print(f"Starting Force-Torque Visualization Dashboard...")
-        print(
-            f"Open http://{self.dash_host if self.dash_host != '0.0.0.0' else '127.0.0.1'}:{self.dash_port} in your browser"
-        )
-        self.app.run(debug=False, port=self.dash_port, host=self.dash_host, use_reloader=False)
+        try:
+            # Initialize Dash app here, in the worker thread
+            if not self.app:
+                self._initialize_dash_app()
+
+            print(f"Starting Force-Torque Visualization Dashboard...")
+            print(f"Open http://{self.dash_host if self.dash_host != '0.0.0.0' else '127.0.0.1'}:{self.dash_port} in your browser")
+
+            # Run server with suppressed output
+            self.app.run_server(
+                debug=False,
+                port=self.dash_port,
+                host=self.dash_host,
+                use_reloader=False,
+                dev_tools_silence_routes_logging=True
+            )
+        except Exception as e:
+            if "KeyError" not in str(e):  # Suppress callback KeyErrors
+                print(f"Error in Dash app: {e}")
 
     @rpc
     def start(self):
@@ -573,15 +542,15 @@ class FTVisualizerModule(Module):
         self.running = True
         self.start_time = time.time()
 
-        # Subscribe to calibrated data
-        if self.calibrated_data:
-            self.calibrated_data.subscribe(self.handle_calibrated_data)
-            print("Subscribed to calibrated force-torque data")
+        # Subscribe to force data
+        if self.force:
+            self.force.subscribe(self.handle_force)
+            print("Subscribed to force data")
 
-        # Optionally subscribe to raw sensor data
-        if self.raw_sensor_data:
-            self.raw_sensor_data.subscribe(self.handle_raw_sensor_data)
-            print("Subscribed to raw sensor data")
+        # Subscribe to torque data
+        if self.torque:
+            self.torque.subscribe(self.handle_torque)
+            print("Subscribed to torque data")
 
         # Start Dash in a separate thread
         self.dash_thread = threading.Thread(target=self.run_dash, daemon=True)
@@ -592,15 +561,19 @@ class FTVisualizerModule(Module):
     @rpc
     def stop(self):
         """Stop the visualization module."""
+        if not self.running:
+            return
+
         print("\nStopping FT visualizer...")
         self.running = False
-        print(f"Total messages received: {self.message_count}")
+        print(f"Total messages received - Force: {self.force_count}, Torque: {self.torque_count}")
 
     @rpc
     def get_stats(self) -> Dict[str, Any]:
         """Get visualizer statistics."""
         return {
-            "message_count": self.message_count,
+            "force_count": self.force_count,
+            "torque_count": self.torque_count,
             "running": self.running,
             "data_points": len(self.timestamps),
             "dash_url": f"http://{self.dash_host if self.dash_host != '0.0.0.0' else '127.0.0.1'}:{self.dash_port}",
