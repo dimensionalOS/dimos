@@ -26,8 +26,8 @@ from dimos_lcm.std_msgs.Header import Header
 # Import ROS types
 try:
     from sensor_msgs.msg import CameraInfo as ROSCameraInfo
-    from std_msgs.msg import Header as ROSHeader
     from sensor_msgs.msg import RegionOfInterest as ROSRegionOfInterest
+    from std_msgs.msg import Header as ROSHeader
 
     ROS_AVAILABLE = True
 except ImportError:
@@ -97,6 +97,51 @@ class CameraInfo(Timestamped):
         self.roi_height = 0
         self.roi_width = 0
         self.roi_do_rectify = False
+
+    @classmethod
+    def from_yaml(cls, yaml_file: str) -> CameraInfo:
+        """Create CameraInfo from YAML file.
+
+        Args:
+            yaml_file: Path to YAML file containing camera calibration data
+
+        Returns:
+            CameraInfo instance with loaded calibration data
+        """
+        import yaml
+
+        with open(yaml_file, "r") as f:
+            data = yaml.safe_load(f)
+
+        # Extract basic parameters
+        width = data.get("image_width", 0)
+        height = data.get("image_height", 0)
+        distortion_model = data.get("distortion_model", "")
+
+        # Extract matrices
+        camera_matrix = data.get("camera_matrix", {})
+        K = camera_matrix.get("data", [0.0] * 9)
+
+        distortion_coeffs = data.get("distortion_coefficients", {})
+        D = distortion_coeffs.get("data", [])
+
+        rect_matrix = data.get("rectification_matrix", {})
+        R = rect_matrix.get("data", [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0])
+
+        proj_matrix = data.get("projection_matrix", {})
+        P = proj_matrix.get("data", [0.0] * 12)
+
+        # Create CameraInfo instance
+        return cls(
+            height=height,
+            width=width,
+            distortion_model=distortion_model,
+            D=D,
+            K=K,
+            R=R,
+            P=P,
+            frame_id="camera_optical",
+        )
 
     def get_K_matrix(self) -> np.ndarray:
         """Get intrinsic matrix as numpy array."""
@@ -326,3 +371,103 @@ class CameraInfo(Timestamped):
             and self.binning_y == other.binning_y
             and self.frame_id == other.frame_id
         )
+
+
+class CalibrationProvider:
+    """Provides lazy-loaded access to camera calibration YAML files in a directory."""
+
+    def __init__(self, calibration_dir):
+        """Initialize with a directory containing calibration YAML files.
+
+        Args:
+            calibration_dir: Path to directory containing .yaml calibration files
+        """
+        from pathlib import Path
+
+        self._calibration_dir = Path(calibration_dir)
+        self._cache = {}
+
+    def _to_snake_case(self, name: str) -> str:
+        """Convert PascalCase to snake_case."""
+        import re
+
+        # Insert underscore before capital letters (except first char)
+        s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
+        # Insert underscore before capital letter followed by lowercase
+        return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+
+    def _find_yaml_file(self, name: str):
+        """Find YAML file matching the given name (tries both snake_case and exact match).
+
+        Args:
+            name: Attribute name to look for
+
+        Returns:
+            Path to YAML file if found, None otherwise
+        """
+        # Try exact match first
+        yaml_file = self._calibration_dir / f"{name}.yaml"
+        if yaml_file.exists():
+            return yaml_file
+
+        # Try snake_case conversion for PascalCase names
+        snake_name = self._to_snake_case(name)
+        if snake_name != name:
+            yaml_file = self._calibration_dir / f"{snake_name}.yaml"
+            if yaml_file.exists():
+                return yaml_file
+
+        return None
+
+    def __getattr__(self, name: str) -> CameraInfo:
+        """Load calibration YAML file on first access.
+
+        Supports both snake_case and PascalCase attribute names.
+        For example, both 'single_webcam' and 'SingleWebcam' will load 'single_webcam.yaml'.
+
+        Args:
+            name: Attribute name (can be PascalCase or snake_case)
+
+        Returns:
+            CameraInfo object loaded from the YAML file
+
+        Raises:
+            AttributeError: If no matching YAML file exists
+        """
+        # Check cache first
+        if name in self._cache:
+            return self._cache[name]
+
+        # Also check if the snake_case version is cached (for PascalCase access)
+        snake_name = self._to_snake_case(name)
+        if snake_name != name and snake_name in self._cache:
+            return self._cache[snake_name]
+
+        # Find matching YAML file
+        yaml_file = self._find_yaml_file(name)
+        if not yaml_file:
+            raise AttributeError(f"No calibration file found for: {name}")
+
+        # Load and cache the CameraInfo
+        camera_info = CameraInfo.from_yaml(str(yaml_file))
+
+        # Cache both the requested name and the snake_case version
+        self._cache[name] = camera_info
+        if snake_name != name:
+            self._cache[snake_name] = camera_info
+
+        return camera_info
+
+    def __dir__(self):
+        """List available calibrations in both snake_case and PascalCase."""
+        calibrations = []
+        if self._calibration_dir.exists() and self._calibration_dir.is_dir():
+            yaml_files = self._calibration_dir.glob("*.yaml")
+            for f in yaml_files:
+                stem = f.stem
+                calibrations.append(stem)
+                # Add PascalCase version
+                pascal = "".join(word.capitalize() for word in stem.split("_"))
+                if pascal != stem:
+                    calibrations.append(pascal)
+        return calibrations

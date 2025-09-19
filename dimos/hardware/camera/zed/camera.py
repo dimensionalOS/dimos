@@ -12,145 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
+from typing import Any, Dict, Optional, Tuple
+
 import cv2
+import numpy as np
 import open3d as o3d
-from typing import Optional, Tuple, Dict, Any
-import logging
-import time
-import threading
+import pyzed.sl as sl
+from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import interval
-from reactivex import operators as ops
 
-try:
-    import pyzed.sl as sl
-except ImportError:
-    sl = None
-    # Default enums if pyzed is not installed
-    sl = type("sl", (), {})()
-    sl.RESOLUTION = type("RESOLUTION", (), {"HD720": 0, "HD1080": 1, "HD2K": 2, "VGA": 3})
-    sl.DEPTH_MODE = type(
-        "DEPTH_MODE", (), {"NEURAL": 0, "ULTRA": 1, "QUALITY": 2, "PERFORMANCE": 3}
-    )
-    sl.REFERENCE_FRAME = type("REFERENCE_FRAME", (), {"WORLD": 0, "CAMERA": 1})
-    sl.Transform = None
-
-    logging.warning("ZED SDK not found. Please install pyzed to use ZED camera functionality.")
-
-from dimos.hardware.stereo_camera import StereoCamera
 from dimos.core import Module, Out, rpc
-from dimos.utils.logging_config import setup_logger
-from dimos.protocol.tf import TF
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 
 # Import LCM message types
 from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.std_msgs import Header
+from dimos.protocol.tf import TF
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
 
 
-def build_camera_info() -> CameraInfo:
-    info = {
-        "model": "ZED-M",
-        "serial_number": 123456789,
-        "firmware": 1523,
-        "resolution": {"width": 672, "height": 376},
-        "fps": 30.0,
-        "left_cam": {
-            "fx": 733.3421630859375,
-            "fy": 733.3421630859375,
-            "cx": 644.3364868164062,
-            "cy": 355.9999084472656,
-            "k1": 0.0,
-            "k2": 0.0,
-            "p1": 0.0,
-            "p2": 0.0,
-            "k3": 0.0,
-        },
-        "right_cam": {
-            "fx": 733.3421630859375,
-            "fy": 733.3421630859375,
-            "cx": 644.3364868164062,
-            "cy": 355.9999084472656,
-            "k1": 0.0,
-            "k2": 0.0,
-            "p1": 0.0,
-            "p2": 0.0,
-            "k3": 0.0,
-        },
-        "baseline": 0.12,
-    }
-
-    # Get calibration parameters
-    left_cam = info.get("left_cam", {})
-    resolution = info.get("resolution", {})
-
-    # Create CameraInfo message
-    header = Header("camera_optical")
-
-    # Create camera matrix K (3x3)
-    K = [
-        left_cam.get("fx", 0),
-        0,
-        left_cam.get("cx", 0),
-        0,
-        left_cam.get("fy", 0),
-        left_cam.get("cy", 0),
-        0,
-        0,
-        1,
-    ]
-
-    # Distortion coefficients
-    D = [
-        left_cam.get("k1", 0),
-        left_cam.get("k2", 0),
-        left_cam.get("p1", 0),
-        left_cam.get("p2", 0),
-        left_cam.get("k3", 0),
-    ]
-
-    # Identity rotation matrix
-    R = [1, 0, 0, 0, 1, 0, 0, 0, 1]
-
-    # Projection matrix P (3x4)
-    P = [
-        left_cam.get("fx", 0),
-        0,
-        left_cam.get("cx", 0),
-        0,
-        0,
-        left_cam.get("fy", 0),
-        left_cam.get("cy", 0),
-        0,
-        0,
-        0,
-        1,
-        0,
-    ]
-
-    return CameraInfo(
-        D_length=len(D),
-        header=header,
-        height=resolution.get("height", 0),
-        width=resolution.get("width", 0),
-        distortion_model="plumb_bob",
-        D=D,
-        K=K,
-        R=R,
-        P=P,
-        binning_x=0,
-        binning_y=0,
-    )
-
-
-camera_info = build_camera_info()
-
-
-class ZEDCamera(StereoCamera):
+class ZEDCamera:
     """ZED Camera capture node with neural depth processing."""
 
     def __init__(

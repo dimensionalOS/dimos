@@ -45,7 +45,7 @@ from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
 from dimos.hardware.webcam import ColorCameraModule, Webcam
 from dimos.perception.detection2d import Detection3DModule
-from dimos.hardware.zed_camera import camera_info
+from dimos.hardware.camera import zed
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 
@@ -249,9 +249,13 @@ class UnitreeG1(Robot):
                 child_frame_id="camera_link",
             ),
             hardware=lambda: Webcam(
-                camera_index=1, frequency=15, stereo_slice="left", camera_info=camera_info
+                camera_index=1,
+                frequency=15,
+                stereo_slice="left",
+                camera_info=zed.CameraInfo.SingleWebcam,
             ),
         )
+
         self.camera.image.transport = core.LCMTransport("/image", Image)
         self.camera.camera_info.transport = core.LCMTransport("/image/camera_info", CameraInfo)
         logger.info("Webcam module configured")
