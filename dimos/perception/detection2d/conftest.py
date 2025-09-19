@@ -48,8 +48,9 @@ class Moment(TypedDict, total=False):
 
 @pytest.fixture
 def dimos_cluster():
-    with start(5) as dimos:
-        yield dimos
+    dimos = start(5)
+    yield dimos
+    dimos.stop()
 
 
 @pytest.fixture(scope="session")
@@ -86,36 +87,42 @@ def moment():
     }
 
 
-def publish_lcm(moment: Moment):
-    lcm.autoconf()
+@pytest.fixture(scope="session")
+def publish_lcm():
+    def publish(moment: Moment):
+        lcm.autoconf()
 
-    lidar_frame_transport: LCMTransport = LCMTransport("/lidar", LidarMessage)
-    lidar_frame_transport.publish(moment.get("lidar_frame"))
+        lidar_frame_transport: LCMTransport = LCMTransport("/lidar", LidarMessage)
+        lidar_frame_transport.publish(moment.get("lidar_frame"))
 
-    image_frame_transport: LCMTransport = LCMTransport("/image", Image)
-    image_frame_transport.publish(moment.get("image_frame"))
+        image_frame_transport: LCMTransport = LCMTransport("/image", Image)
+        image_frame_transport.publish(moment.get("image_frame"))
 
-    odom_frame_transport: LCMTransport = LCMTransport("/odom", Odometry)
-    odom_frame_transport.publish(moment.get("odom_frame"))
+        odom_frame_transport: LCMTransport = LCMTransport("/odom", Odometry)
+        odom_frame_transport.publish(moment.get("odom_frame"))
 
-    camera_info_transport: LCMTransport = LCMTransport("/camera_info", CameraInfo)
-    camera_info_transport.publish(moment.get("camera_info"))
+        camera_info_transport: LCMTransport = LCMTransport("/camera_info", CameraInfo)
+        camera_info_transport.publish(moment.get("camera_info"))
 
-    annotations = moment.get("annotations")
-    if annotations:
-        annotations_transport: LCMTransport = LCMTransport("/annotations", ImageAnnotations)
-        annotations_transport.publish(annotations)
+        annotations = moment.get("annotations")
+        if annotations:
+            annotations_transport: LCMTransport = LCMTransport("/annotations", ImageAnnotations)
+            annotations_transport.publish(annotations)
 
-    detections = moment.get("detections")
-    if detections:
-        for i, detection in enumerate(detections):
-            detections_transport: LCMTransport = LCMTransport(
-                f"/detected/pointcloud/{i}", PointCloud2
-            )
-            detections_transport.publish(detection.pointcloud)
+        detections = moment.get("detections")
+        if detections:
+            for i, detection in enumerate(detections):
+                detections_transport: LCMTransport = LCMTransport(
+                    f"/detected/pointcloud/{i}", PointCloud2
+                )
+                detections_transport.publish(detection.pointcloud)
 
-            detections_image_transport: LCMTransport = LCMTransport(f"/detected/image/{i}", Image)
-            detections_image_transport.publish(detection.cropped_image())
+                detections_image_transport: LCMTransport = LCMTransport(
+                    f"/detected/image/{i}", Image
+                )
+                detections_image_transport.publish(detection.cropped_image())
+
+    return publish
 
 
 @pytest.fixture(scope="session")
