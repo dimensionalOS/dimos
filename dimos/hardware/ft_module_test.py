@@ -25,9 +25,12 @@ import argparse
 from pathlib import Path
 
 from dimos.core import start, LCMTransport, pLCMTransport
+from dimos.utils.logging_config import setup_logger
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.hardware.ft_driver_module import FTDriverModule, RawSensorData
 from dimos.hardware.ft_visualizer_module import FTVisualizerModule
+
+logger = setup_logger(__name__)
 
 
 def main():
@@ -122,23 +125,23 @@ Examples:
     if args.calibration:
         cal_path = Path(args.calibration)
         if not cal_path.exists():
-            print(f"Warning: Calibration file {cal_path} not found")
-            print("Will run without calibration (raw sensor values only)")
+            logger.warning(f"Calibration file {cal_path} not found")
+            logger.warning("Will run without calibration (raw sensor values only)")
             args.calibration = None
 
     # Start Dimos
-    print("=" * 60)
-    print("Force-Torque Sensor Module Deployment")
-    print("=" * 60)
-    print(f"Starting Dimos with {args.processes} processes...")
+    logger.info("=" * 60)
+    logger.info("Force-Torque Sensor Module Deployment")
+    logger.info("=" * 60)
+    logger.info(f"Starting Dimos with {args.processes} processes...")
     dimos = start(args.processes)
 
     # Deploy FT driver module
-    print(f"\nDeploying FT driver module...")
-    print(f"  Serial port: {args.port}")
-    print(f"  Baud rate: {args.baud}")
-    print(f"  Moving average window: {args.window}")
-    print(f"  Calibration file: {args.calibration or 'None (raw data only)'}")
+    logger.info("Deploying FT driver module...")
+    logger.info(f"  Serial port: {args.port}")
+    logger.info(f"  Baud rate: {args.baud}")
+    logger.info(f"  Moving average window: {args.window}")
+    logger.info(f"  Calibration file: {args.calibration or 'None (raw data only)'}")
 
     driver = dimos.deploy(
         FTDriverModule,
@@ -148,31 +151,33 @@ Examples:
         calibration_file=args.calibration,
         verbose=args.verbose,
     )
-    print("Driver deployment complete")
+    logger.info("Driver deployment complete")
 
     # Set up LCM transport for driver outputs
-    print("\nSetting up LCM transports...")
+    logger.info("Setting up LCM transports...")
 
     # Force and torque use proper LCMTransport with Vector3 type
     driver.force.transport = LCMTransport(args.lcm_force_channel, Vector3)
-    print(f"  Force Vector3 channel: {args.lcm_force_channel}")
+    logger.info(f"  Force Vector3 channel: {args.lcm_force_channel}")
 
     driver.torque.transport = LCMTransport(args.lcm_torque_channel, Vector3)
-    print(f"  Torque Vector3 channel: {args.lcm_torque_channel}")
+    logger.info(f"  Torque Vector3 channel: {args.lcm_torque_channel}")
 
     # Raw sensor data (optional) uses pLCMTransport since it's a custom dataclass
     if not args.no_raw:
         driver.raw_sensor_data.transport = pLCMTransport(args.lcm_raw_channel)
-        print(f"  Raw sensor data channel: {args.lcm_raw_channel}")
+        logger.info(f"  Raw sensor data channel: {args.lcm_raw_channel}")
 
     # Deploy visualizer if requested
     visualizer = None
     if not args.no_visualizer and args.calibration:
-        print(f"\nDeploying FT visualizer module...")
-        print(f"  Dashboard port: {args.dash_port}")
-        print(f"  Dashboard host: {args.dash_host}")
-        print(f"  History points: {args.history}")
-        print(f"  Update interval: {args.update_interval}ms")
+        logger.info("Deploying FT visualizer module...")
+        logger.info(f"  Dashboard port: {args.dash_port}")
+        logger.info(f"  Dashboard host: {args.dash_host}")
+        logger.info(f"  History points: {args.history}")
+        logger.info(f"  Update interval: {args.update_interval}ms")
+        logger.warning("Note: Visualizer may have issues in multiprocess environment")
+        logger.warning("  Consider using --no-visualizer flag to disable if not needed")
 
         visualizer = dimos.deploy(
             FTVisualizerModule,
@@ -186,16 +191,16 @@ Examples:
         # Connect visualizer inputs to driver outputs
         visualizer.force.connect(driver.force)
         visualizer.torque.connect(driver.torque)
-        print(f"  Connected to force and torque streams")
+        logger.info(f"  Connected to force and torque streams")
 
     elif not args.no_visualizer and not args.calibration:
-        print("\n⚠ Visualizer requires calibration file to run")
-        print("  Please provide a calibration file with --calibration flag")
+        logger.warning("Visualizer requires calibration file to run")
+        logger.warning("  Please provide a calibration file with --calibration flag")
 
     # Start modules
-    print("\n" + "=" * 60)
-    print("Starting modules...")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("Starting modules...")
+    logger.info("=" * 60)
 
     # Start driver
     driver.start()
@@ -203,12 +208,12 @@ Examples:
     # Start visualizer
     if visualizer:
         visualizer.start()
-        print(
-            f"\n✓ Dashboard running at http://{'127.0.0.1' if args.dash_host == '0.0.0.0' else args.dash_host}:{args.dash_port}"
+        logger.info(
+            f"Dashboard running at http://{'127.0.0.1' if args.dash_host == '0.0.0.0' else args.dash_host}:{args.dash_port}"
         )
 
-    print("\n✓ All modules started successfully!")
-    print("\nPress Ctrl+C to stop...\n")
+    logger.info("All modules started successfully!")
+    logger.info("Press Ctrl+C to stop...")
 
     # Main loop - print statistics periodically
     try:
@@ -219,22 +224,22 @@ Examples:
             # Print stats every 10 seconds
             if time.time() - last_print_time > 10:
                 driver_stats = driver.get_stats()
-                print(
-                    f"\nDriver Stats: Messages={driver_stats['message_count']}, "
+                logger.info(
+                    f"Driver Stats: Messages={driver_stats['message_count']}, "
                     f"Errors={driver_stats['error_count']}, "
                     f"Calibrated={driver_stats['calibrated_count']}, "
                     f"Calibration={'Yes' if driver_stats['calibration_loaded'] else 'No'}"
                 )
 
                 if driver_stats['calibration_loaded']:
-                    print(
+                    logger.info(
                         f"  Latest |F|={driver_stats['latest_force_magnitude']:.2f} N, "
                         f"|T|={driver_stats['latest_torque_magnitude']:.4f} N⋅m"
                     )
 
                 if visualizer:
                     viz_stats = visualizer.get_stats()
-                    print(
+                    logger.info(
                         f"Visualizer Stats: Force msgs={viz_stats['force_count']}, "
                         f"Torque msgs={viz_stats['torque_count']}, "
                         f"Data points={viz_stats['data_points']}"
@@ -243,9 +248,9 @@ Examples:
                 last_print_time = time.time()
 
     except KeyboardInterrupt:
-        print("\n\n" + "=" * 60)
-        print("Shutting down...")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("Shutting down...")
+        logger.info("=" * 60)
 
         # Stop modules
         driver.stop()
@@ -256,7 +261,7 @@ Examples:
         time.sleep(0.5)  # Give modules time to clean up
         dimos.shutdown()
 
-        print("\n✓ Shutdown complete")
+        logger.info("Shutdown complete")
 
 
 if __name__ == "__main__":

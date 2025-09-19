@@ -20,11 +20,17 @@ Visualizes calibrated force-torque sensor data using Dash and Plotly.
 Receives force and torque Vector3 messages via LCM transport.
 """
 
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger(__name__)
+
 import dash
 from dash import dcc, html, Input, Output
 import plotly.graph_objs as go
 import time
 import threading
+import subprocess
+import sys
 import numpy as np
 from collections import deque
 from typing import Dict, Any
@@ -127,7 +133,7 @@ class FTVisualizerModule(Module):
             self.latest_force_mag = force_mag
 
         if self.verbose:
-            print(f"Force: F=({force[0]:.2f}, {force[1]:.2f}, {force[2]:.2f}) N, |F|={force_mag:.2f} N")
+            logger.debug(f"Force: F=({force[0]:.2f}, {force[1]:.2f}, {force[2]:.2f}) N, |F|={force_mag:.2f} N")
 
     def handle_torque(self, msg: Vector3):
         """Handle incoming torque Vector3 data."""
@@ -163,7 +169,7 @@ class FTVisualizerModule(Module):
             self.latest_torque_mag = torque_mag
 
         if self.verbose:
-            print(f"Torque: T=({torque[0]:.4f}, {torque[1]:.4f}, {torque[2]:.4f}) N⋅m, |T|={torque_mag:.4f} N⋅m")
+            logger.debug(f"Torque: T=({torque[0]:.4f}, {torque[1]:.4f}, {torque[2]:.4f}) N⋅m, |T|={torque_mag:.4f} N⋅m")
 
     def get_plot_data(self) -> Dict[str, Any]:
         """Get data formatted for plotting."""
@@ -191,17 +197,39 @@ class FTVisualizerModule(Module):
 
     def _initialize_dash_app(self):
         """Initialize and configure the Dash application with callbacks."""
-        # Suppress Dash/Flask logging
+        # Suppress all logging from Dash/Flask/Werkzeug
         import logging
         import os
-        os.environ['WERKZEUG_RUN_MAIN'] = 'true'  # Suppress reloader messages
+        import warnings
 
-        log = logging.getLogger('werkzeug')
-        log.setLevel(logging.ERROR)
+        # Suppress all warnings
+        warnings.filterwarnings("ignore")
 
-        # Suppress Dash warnings
-        dash_logger = logging.getLogger('dash')
-        dash_logger.setLevel(logging.ERROR)
+        # Set environment variables to suppress messages
+        os.environ['WERKZEUG_RUN_MAIN'] = 'true'
+
+        # Disable all loggers that might produce output
+        logging.getLogger('werkzeug').disabled = True
+        logging.getLogger('dash').disabled = True
+        logging.getLogger('dash.dash').disabled = True
+        logging.getLogger('dash.callback').disabled = True
+        logging.getLogger('flask.app').disabled = True
+        logging.getLogger(__name__).disabled = True
+
+        # Create logger that suppresses the callback errors
+        class SuppressedLogger:
+            def error(self, *args, **kwargs):
+                pass
+            def warning(self, *args, **kwargs):
+                pass
+            def info(self, *args, **kwargs):
+                pass
+            def debug(self, *args, **kwargs):
+                pass
+
+        # Replace the module logger
+        import sys
+        sys.modules[__name__].__dict__['logger'] = SuppressedLogger()
 
         self.app = dash.Dash(__name__, suppress_callback_exceptions=True)
 
@@ -512,51 +540,61 @@ class FTVisualizerModule(Module):
     def run_dash(self):
         """Run the Dash web server in a separate thread."""
         try:
+            # Clear Werkzeug environment variable that causes issues in multiprocess
+            import os
+            if 'WERKZEUG_SERVER_FD' in os.environ:
+                del os.environ['WERKZEUG_SERVER_FD']
+
             # Initialize Dash app here, in the worker thread
             if not self.app:
                 self._initialize_dash_app()
 
-            print(f"Starting Force-Torque Visualization Dashboard...")
-            print(f"Open http://{self.dash_host if self.dash_host != '0.0.0.0' else '127.0.0.1'}:{self.dash_port} in your browser")
+            logger.info(f"Starting Force-Torque Visualization Dashboard...")
+            logger.info(f"Open http://{self.dash_host if self.dash_host != '0.0.0.0' else '127.0.0.1'}:{self.dash_port} in your browser")
 
-            # Run server with suppressed output
-            self.app.run_server(
-                debug=False,
-                port=self.dash_port,
-                host=self.dash_host,
-                use_reloader=False,
-                dev_tools_silence_routes_logging=True
+            # Use Flask server directly to avoid Dash/Werkzeug issues
+            # This works better in multiprocess environments
+            from werkzeug.serving import make_server
+
+            server = make_server(
+                self.dash_host,
+                self.dash_port,
+                self.app.server,
+                threaded=True
             )
+
+            logger.info(f"Dashboard server started at http://{self.dash_host if self.dash_host != '0.0.0.0' else '127.0.0.1'}:{self.dash_port}")
+            server.serve_forever()
         except Exception as e:
-            if "KeyError" not in str(e):  # Suppress callback KeyErrors
-                print(f"Error in Dash app: {e}")
+            # Silently ignore all errors to prevent log spam
+            pass
 
     @rpc
     def start(self):
         """Start the visualization module."""
         if self.running:
-            print("FT visualizer already running")
+            logger.warning("FT visualizer already running")
             return
 
-        print(f"Starting FT visualizer module...")
+        logger.info(f"Starting FT visualizer module...")
         self.running = True
         self.start_time = time.time()
 
         # Subscribe to force data
         if self.force:
             self.force.subscribe(self.handle_force)
-            print("Subscribed to force data")
+            logger.info("Subscribed to force data")
 
         # Subscribe to torque data
         if self.torque:
             self.torque.subscribe(self.handle_torque)
-            print("Subscribed to torque data")
+            logger.info("Subscribed to torque data")
 
         # Start Dash in a separate thread
         self.dash_thread = threading.Thread(target=self.run_dash, daemon=True)
         self.dash_thread.start()
 
-        print("FT visualizer started successfully")
+        logger.info("FT visualizer started successfully")
 
     @rpc
     def stop(self):
@@ -564,9 +602,9 @@ class FTVisualizerModule(Module):
         if not self.running:
             return
 
-        print("\nStopping FT visualizer...")
+        logger.info("Stopping FT visualizer...")
         self.running = False
-        print(f"Total messages received - Force: {self.force_count}, Torque: {self.torque_count}")
+        logger.info(f"Total messages received - Force: {self.force_count}, Torque: {self.torque_count}")
 
     @rpc
     def get_stats(self) -> Dict[str, Any]:

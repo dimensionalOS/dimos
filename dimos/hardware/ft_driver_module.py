@@ -34,6 +34,9 @@ from dataclasses import dataclass, field
 from dimos.core import Module, Out, rpc
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.std_msgs import Header
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger(__name__)
 
 
 @dataclass
@@ -107,12 +110,12 @@ class FTDriverModule(Module):
     def load_calibration(self):
         """Load calibration matrix and bias from file."""
         if not self.calibration_file:
-            print("No calibration file specified, outputting raw sensor values only")
+            logger.info("No calibration file specified, outputting raw sensor values only")
             return
 
         filepath = Path(self.calibration_file)
         if not filepath.exists():
-            print(f"Warning: Calibration file {filepath} not found")
+            logger.warning(f"Calibration file {filepath} not found")
             return
 
         try:
@@ -130,11 +133,11 @@ class FTDriverModule(Module):
                     np.array(data["bias_vector"]) if data["bias_vector"] is not None else None
                 )
 
-            print(f"Calibration loaded from: {filepath}")
-            print(f"  Calibration matrix shape: {self.calibration_matrix.shape}")
-            print(f"  Has bias: {self.bias_vector is not None}")
+            logger.info(f"Calibration loaded from: {filepath}")
+            logger.info(f"  Calibration matrix shape: {self.calibration_matrix.shape}")
+            logger.info(f"  Has bias: {self.bias_vector is not None}")
         except Exception as e:
-            print(f"Error loading calibration: {e}")
+            logger.error(f"Error loading calibration: {e}")
 
     def apply_calibration(self, sensor_data: np.ndarray) -> Optional[np.ndarray]:
         """
@@ -161,10 +164,10 @@ class FTDriverModule(Module):
         """Connect to serial port."""
         try:
             self.ser = serial.Serial(self.serial_port, self.baud_rate, timeout=1)
-            print(f"Connected to {self.serial_port} at {self.baud_rate} baud")
+            logger.info(f"Connected to {self.serial_port} at {self.baud_rate} baud")
             return True
         except serial.SerialException as e:
-            print(f"Failed to open serial port: {e}")
+            logger.error(f"Failed to open serial port: {e}")
             return False
 
     def read_and_process(self):
@@ -185,7 +188,7 @@ class FTDriverModule(Module):
 
             if len(values) != 16:
                 if self.verbose:
-                    print(f"Warning: Expected 16 values, got {len(values)}")
+                    logger.warning(f"Expected 16 values, got {len(values)}")
                 self.error_count += 1
                 return
 
@@ -222,39 +225,37 @@ class FTDriverModule(Module):
                     self.calibrated_count += 1
 
                     if self.verbose:
-                        print(
-                            f"\r{time.strftime('%H:%M:%S')} "
+                        logger.debug(
+                            f"{time.strftime('%H:%M:%S')} "
                             f"F:({force_torque[0]:7.2f},{force_torque[1]:7.2f},{force_torque[2]:7.2f}) "
                             f"T:({force_torque[3]:7.4f},{force_torque[4]:7.4f},{force_torque[5]:7.4f}) "
-                            f"|F|:{self.latest_force_mag:7.2f} |T|:{self.latest_torque_mag:7.4f}",
-                            end="",
-                            flush=True,
+                            f"|F|:{self.latest_force_mag:7.2f} |T|:{self.latest_torque_mag:7.4f}"
                         )
 
             self.message_count += 1
 
         except ValueError as e:
             if self.verbose:
-                print(f"Parse error: {e}")
+                logger.warning(f"Parse error: {e}")
             self.error_count += 1
         except Exception as e:
             if self.verbose:
-                print(f"Error: {e}")
+                logger.error(f"Error processing data: {e}")
             self.error_count += 1
 
     def _run_loop(self):
         """Main loop that reads from serial port - runs in background thread."""
         if self.verbose:
-            print("\nSensor readings:")
-            print("-" * 80)
+            logger.debug("Sensor readings:")
+            logger.debug("-" * 80)
 
         try:
             while self.running:
                 self.read_and_process()
         except KeyboardInterrupt:
-            print("\nShutting down...")
+            logger.info("Shutting down...")
         except Exception as e:
-            print(f"Error in driver loop: {e}")
+            logger.error(f"Error in driver loop: {e}")
         finally:
             self.running = False
             if self.ser:
@@ -264,21 +265,21 @@ class FTDriverModule(Module):
     def start(self):
         """Start the sensor driver."""
         if self.running:
-            print("FT driver already running")
+            logger.warning("FT driver already running")
             return
 
-        print(f"Starting FT driver module...")
-        print(f"  Serial port: {self.serial_port}")
-        print(f"  Baud rate: {self.baud_rate}")
-        print(f"  Moving average window: {self.window_size}")
-        print(f"  Calibration file: {self.calibration_file or 'None'}")
+        logger.info(f"Starting FT driver module...")
+        logger.info(f"  Serial port: {self.serial_port}")
+        logger.info(f"  Baud rate: {self.baud_rate}")
+        logger.info(f"  Moving average window: {self.window_size}")
+        logger.info(f"  Calibration file: {self.calibration_file or 'None'}")
 
         # Load calibration if available
         self.load_calibration()
 
         # Connect to serial
         if not self.connect_serial():
-            print("Failed to connect to serial port")
+            logger.error("Failed to connect to serial port")
             return
 
         # Set running flag
@@ -288,7 +289,7 @@ class FTDriverModule(Module):
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
 
-        print("FT driver started successfully")
+        logger.info("FT driver started successfully")
 
     @rpc
     def stop(self):
@@ -296,7 +297,7 @@ class FTDriverModule(Module):
         if not self.running:
             return
 
-        print("Stopping FT driver...")
+        logger.info("Stopping FT driver...")
         self.running = False
 
         # Wait for thread to finish
@@ -307,7 +308,7 @@ class FTDriverModule(Module):
         if self.ser and self.ser.is_open:
             self.ser.close()
 
-        print(f"FT driver stopped. Messages: {self.message_count}, Errors: {self.error_count}, Calibrated: {self.calibrated_count}")
+        logger.info(f"FT driver stopped. Messages: {self.message_count}, Errors: {self.error_count}, Calibrated: {self.calibrated_count}")
 
     @rpc
     def get_stats(self) -> Dict[str, Any]:
