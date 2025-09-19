@@ -106,12 +106,14 @@ class XArmRobot(Robot):
             ee_to_camera_6dof=[
                 0.115,
                 0.0,
-                -0.10,
+                -0.155,
                 3.14,
                 -1.57,
                 0,
             ],  # EE to camera transform for xArm
         )
+
+        self.xarm.enable_gripper()
 
         # Configure xArm output
         self.xarm.ee_pose.transport = core.LCMTransport("/xarm/ee_pose", PoseStamped)
@@ -131,6 +133,11 @@ class XArmRobot(Robot):
             track_frame_id=track_frame,  # Use world frame if mobile base enabled
             reach_timeout=10.0,  # Simple timeout for reaching poses
             enable_mobile_base=self.enable_mobile_base_control,  # Pass mobile base flag
+            pregrasp_distance=0.15,
+            grasp_distance_range=0.02,
+            grasp_width_offset=0.04,
+            gripper_max_opening=0.1,
+            retract_distance=0.18,
         )
 
         # Connect manipulation inputs
@@ -260,7 +267,11 @@ class XArmRobot(Robot):
 
 def main():
     """Main entry point."""
-    robot = XArmRobot(arm_ip="10.0.0.197", arm_type="xarm7", enable_mobile_base_control=False)
+    robot = XArmRobot(
+        arm_ip="10.0.0.197",
+        arm_type="xarm7",
+        enable_mobile_base_control=False,
+    )
     robot.start()
 
     try:
