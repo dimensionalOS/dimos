@@ -30,10 +30,10 @@ from dimos.protocol.service.lcmservice import autoconf
 from dimos.msgs.geometry_msgs import Pose, Vector3, Twist, PoseStamped, Transform, Quaternion
 import dimos.protocol.service.lcmservice as lcmservice
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.geometry_msgs.Vector3 import Vector3 as MsgVector3
 from dimos.msgs.std_msgs import Header
 from dimos.protocol.tf import TF
 from dimos.utils.transform_utils import (
+    invert_transform,
     apply_transform,
     quaternion_to_euler,
     euler_to_quaternion,
@@ -68,6 +68,15 @@ class xArm:
             self.xarm_type = input("Enter the type of xArm: ")
         else:
             self.xarm_type = xarm_type
+
+        ee_to_rep103_frame_rotation = [3.14, 0.0, 0.0]
+        pos = Vector3(0, 0, 0)
+        rot = Vector3(
+            ee_to_rep103_frame_rotation[0],
+            ee_to_rep103_frame_rotation[1],
+            ee_to_rep103_frame_rotation[2],
+        )
+        self.T_ee_to_rep103_rotation = create_transform_from_6dof(pos, rot)
 
         # To be used in future for changing between different xArm types
         # from configparser import ConfigParser
@@ -169,6 +178,10 @@ class xArm:
     def cmd_ee_pose(self, pose: Pose, line_mode=False):
         """Command end-effector to target pose using Pose message"""
         # Convert quaternion to euler angles
+        inv = invert_transform(self.T_ee_to_rep103_rotation)
+        post_rot_pose = Pose(Vector3(0, 0, 0), pose.orientation)
+        post_rot_pose = apply_transform(post_rot_pose, inv)
+        pose = Pose(pose.position, post_rot_pose.orientation)
         euler = quaternion_to_euler(pose.orientation, degrees=True)
 
         # Command the pose
@@ -177,8 +190,8 @@ class xArm:
             pose.position.y,
             pose.position.z,
             euler.x,
-            euler.y,
-            euler.z,
+            180 - euler.y,
+            -euler.z,
             line_mode,
         )
 
@@ -195,16 +208,18 @@ class xArm:
         y = pose_values[1] / 1000.0  # Convert mm to m
         z = pose_values[2] / 1000.0  # Convert mm to m
         rx = pose_values[3]  # degrees
-        ry = pose_values[4]  # degrees
-        rz = pose_values[5]  # degrees
+        ry = 180 - pose_values[4]  # degrees
+        rz = -pose_values[5]  # degrees
 
         # Create position vector (already in meters)
         position = Vector3(x, y, z)
 
         # Convert Euler angles to quaternion
         orientation = euler_to_quaternion(Vector3(rx, ry, rz), degrees=True)
+        pre_rot_pose = Pose(Vector3(0, 0, 0), orientation)
+        pre_rot_pose = apply_transform(pre_rot_pose, self.T_ee_to_rep103_rotation)
 
-        return Pose(position, orientation)
+        return Pose(position, pre_rot_pose.orientation)
 
     def cmd_gripper_ctrl(self, position, effort=0.25):
         """Command end-effector gripper"""
@@ -386,69 +401,12 @@ class XArmModule(Module):
         self._running = False
         self._subscription = None
         self._sequence = 0
-
-        # Store the last command correction for consistent feedback
-        self._last_command_correction_inverse = None
+        self.last_commanded_pose = None
 
         # Initialize TF publisher
         self.tf = TF()
 
         logger.info(f"XArmModule initialized, will publish at {publish_rate} Hz")
-
-    def _command_to_arm_frame(self, pose: Pose) -> Pose:
-        """
-        Transform pose from command frame to arm frame.
-        Applies 180° X flip and pitch-dependent Y rotation.
-        Stores the correction for consistent feedback.
-
-        Args:
-            pose: Target pose to transform
-        """
-        # Extract pitch from quaternion
-        euler = quaternion_to_euler(pose.orientation, degrees=False)
-        pitch = np.pi / 2 + euler.y
-        print(f"Using quaternion-extracted pitch: {np.rad2deg(euler.y):.2f}° -> {pitch:.3f} rad")
-
-        # 180° X flip transformation matrix
-        rotation_transform1 = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
-
-        # Pitch-dependent Y rotation (opposite of command pitch)
-        print("Applying pitch rotation of:", pitch)
-        cos_pitch = np.cos(pitch)
-        sin_pitch = np.sin(pitch)
-        rotation_transform2 = np.array(
-            [
-                [cos_pitch, 0.0, sin_pitch, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [-sin_pitch, 0.0, cos_pitch, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ]
-        )
-
-        # Combined transformation
-        rotation_transform = rotation_transform1 @ rotation_transform2
-
-        # Store the inverse transformation for feedback consistency
-        self._last_command_correction_inverse = np.linalg.inv(rotation_transform)
-
-        # Use quaternion-aware matrix operations
-        pose_matrix = pose_to_matrix(pose)
-        transformed = pose_matrix @ rotation_transform
-        return matrix_to_pose(transformed)
-
-    def _arm_to_command_frame(self, pose: Pose) -> Pose:
-        """
-        Transform pose from arm frame to command frame.
-        Uses the stored inverse transformation from the last command for consistency.
-        """
-        # If no command correction has been stored yet, return the raw pose
-        if self._last_command_correction_inverse is None:
-            return pose
-
-        # Use quaternion-aware matrix operations
-        pose_matrix = pose_to_matrix(pose)
-        corrected = pose_matrix @ self._last_command_correction_inverse
-        return matrix_to_pose(corrected)
 
     def _reset_command_correction(self):
         """Reset cached command-to-arm correction after direct-arm motions."""
@@ -534,6 +492,15 @@ class XArmModule(Module):
                     child_frame_id=self.ee_frame_id,
                     ts=header.ts,
                 )
+                if self.last_commanded_pose:
+                    target_tf = Transform(
+                        translation=self.last_commanded_pose.position,
+                        rotation=self.last_commanded_pose.orientation,
+                        frame_id=self.base_frame_id,
+                        child_frame_id="target_pose",
+                        ts=header.ts,
+                    )
+                    self.tf.publish(target_tf)
 
                 self.tf.publish(ee_transform)
 
@@ -598,11 +565,7 @@ class XArmModule(Module):
             line_mode: Whether to use line mode for movement
         """
         if self.arm:
-            # Transform from command frame to arm frame
-            # target_pose = self._command_to_arm_frame(pose)
-            # print("Original pose:", pose)
-            # print(f"Commanding rotated pose: {target_pose}")
-
+            self.last_commanded_pose = pose
             self.arm.cmd_ee_pose(pose, line_mode)
 
     @rpc
@@ -614,14 +577,7 @@ class XArmModule(Module):
             Current EE pose transformed from arm frame to command frame
         """
         if self.arm:
-            # Get raw pose from arm
-            raw_pose = self.arm.get_ee_pose()
-            # Transform from arm frame to command frame
-            # print("Raw EE pose from arm:", raw_pose)
-            # return self._arm_to_command_frame(raw_pose)
-            return raw_pose
-        # Return a default pose if arm not initialized
-        return Pose(position=MsgVector3(0.5, 0.0, 0.2), orientation=Quaternion(0.0, 0.0, 0.0, 1.0))
+            return self.arm.get_ee_pose()
 
     @rpc
     def cmd_gripper_ctrl(self, position: float, effort: float = 0.25):
