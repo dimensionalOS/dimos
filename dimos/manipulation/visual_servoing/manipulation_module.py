@@ -35,6 +35,7 @@ from dimos.msgs.geometry_msgs import Vector3, Pose, Quaternion, Transform, Twist
 from dimos_lcm.vision_msgs import Detection3D, Detection3DArray, Detection2DArray
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.std_msgs import String
+from dimos.msgs.std_msgs import Header
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.protocol.tf import TF
 from dimos.manipulation.visual_servoing.pbvs import PBVS
@@ -562,15 +563,6 @@ class ManipulationModule(Module):
             _, target_reached = is_target_reached(
                 self.current_executed_pose, ee_pose, position_tolerance=self.pbvs.target_tolerance
             )
-            print(f"Waiting for reach - ee_transform available: {ee_transform is not None}")
-            if ee_transform:
-                print(
-                    f"Current EE pose: {ee_pose.position.x:.3f}, {ee_pose.position.y:.3f}, {ee_pose.position.z:.3f}"
-                )
-                print(
-                    f"Target pose:{self.current_executed_pose.position.x:.3f}, {self.current_executed_pose.position.y:.3f}, {self.current_executed_pose.position.z:.3f}"
-                )
-                print(f"Target reached: {target_reached}")
 
             if target_reached:
                 self.waiting_for_reach = False
@@ -590,12 +582,6 @@ class ManipulationModule(Module):
         """Get the tracked target transformed to base_link frame for grasp generation."""
         if not self.pbvs or not self.pbvs.current_target:
             return None
-
-        if self.track_frame_id == self.base_frame_id:
-            return Pose(
-                position=self.pbvs.current_target.bbox.center.position,
-                orientation=self.pbvs.current_target.bbox.center.orientation,
-            )
 
         base_to_target = self.tf.get(
             parent_frame=self.base_frame_id,
@@ -632,32 +618,16 @@ class ManipulationModule(Module):
             self.last_valid_target = self.pbvs.current_target
 
             # Publish TF for tracked object
-            if (
-                self.last_valid_target
-                and self.last_valid_target.bbox
-                and self.last_valid_target.bbox.center
-            ):
-                self.tf.publish(
-                    Transform(
-                        translation=self.last_valid_target.bbox.center.position,
-                        rotation=self.last_valid_target.bbox.center.orientation,
-                        frame_id=self.track_frame_id,
-                        child_frame_id="tracked_object",
-                        ts=time.time(),
-                    )
+            self.tf.publish(
+                Transform(
+                    translation=self.last_valid_target.bbox.center.position,
+                    rotation=self.last_valid_target.bbox.center.orientation,
+                    frame_id=self.track_frame_id,
+                    child_frame_id="tracked_object",
+                    ts=Header(self.last_valid_target.header).ts,
                 )
-                logger.info(
-                    f"self.last_valid_target: {self.last_valid_target.results[0].pose.pose}"
-                )
-                self.tf.publish(
-                    Transform(
-                        translation=self.last_valid_target.results[0].pose.pose.position,
-                        rotation=self.last_valid_target.results[0].pose.pose.orientation,
-                        frame_id=self.camera_frame_id,
-                        child_frame_id="tracked_object_optical",
-                        ts=time.time(),
-                    )
-                )
+            )
+
         return target_tracked
 
     def calculate_dynamic_grasp_pitch(self, target_pose: Pose) -> float:
@@ -1005,7 +975,7 @@ class ManipulationModule(Module):
                     rotation=target_detection.bbox.center.orientation,
                     frame_id=self.track_frame_id,
                     child_frame_id="tracked_object",
-                    ts=time.time(),
+                    ts=Header(target_detection.header).ts,
                 )
             )
 

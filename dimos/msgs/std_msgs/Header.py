@@ -71,6 +71,7 @@ class Header(LCMHeader):
     @dispatch
     def __init__(self, header: LCMHeader) -> None:
         """Initialize from another Header (copy constructor)."""
+        self.ts = header.stamp.sec + (header.stamp.nsec / 1_000_000_000)
         super().__init__(seq=header.seq, stamp=header.stamp, frame_id=header.frame_id)
 
     @dispatch
