@@ -237,7 +237,6 @@ class ManipulationModule(Module):
         self.pose_publisher_thread = None
         self.pose_publisher_stop = threading.Event()
 
-
     @rpc
     def start(self):
         """Start the manipulation module."""
@@ -520,7 +519,6 @@ class ManipulationModule(Module):
         if self.grasp_state:
             self.grasp_state.publish(String(data=stage.value))
 
-
     def check_within_workspace(self, target_pose: Pose) -> bool:
         """Check if pose is within workspace limits."""
         position = target_pose.position
@@ -566,8 +564,12 @@ class ManipulationModule(Module):
             )
             print(f"Waiting for reach - ee_transform available: {ee_transform is not None}")
             if ee_transform:
-                print(f"Current EE pose: {ee_pose.position.x:.3f}, {ee_pose.position.y:.3f}, {ee_pose.position.z:.3f}")
-                print(f"Target pose:{self.current_executed_pose.position.x:.3f}, {self.current_executed_pose.position.y:.3f}, {self.current_executed_pose.position.z:.3f}")
+                print(
+                    f"Current EE pose: {ee_pose.position.x:.3f}, {ee_pose.position.y:.3f}, {ee_pose.position.z:.3f}"
+                )
+                print(
+                    f"Target pose:{self.current_executed_pose.position.x:.3f}, {self.current_executed_pose.position.y:.3f}, {self.current_executed_pose.position.z:.3f}"
+                )
                 print(f"Target reached: {target_reached}")
 
             if target_reached:
@@ -798,7 +800,9 @@ class ManipulationModule(Module):
 
         dynamic_pitch = self.calculate_dynamic_grasp_pitch(target_in_base)
         self.current_dynamic_pitch = dynamic_pitch  # Store for direct arm application
-        print(f"Dynamic grasp pitch: {dynamic_pitch:.2f} degrees, {np.deg2rad(dynamic_pitch):.2f} radians")
+        print(
+            f"Dynamic grasp pitch: {dynamic_pitch:.2f} degrees, {np.deg2rad(dynamic_pitch):.2f} radians"
+        )
         target_pose = self.pbvs.compute_control(
             target_in_base, ee_pose, self.pregrasp_distance, dynamic_pitch
         )
