@@ -13,13 +13,13 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod, abstractproperty
-from typing import Any, Callable, Generic, Literal, Optional, Protocol, TypeVar
+from typing import Generic, Optional, Protocol, TypeVar
 
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex.observable import Observable
 
 from dimos.msgs.sensor_msgs import Image
-from dimos.protocol.service import Configurable, Service
+from dimos.protocol.service import Configurable
 
 
 class CameraConfig(Protocol):
@@ -29,10 +29,23 @@ class CameraConfig(Protocol):
 CameraConfigT = TypeVar("CameraConfigT", bound=CameraConfig)
 
 
-# Camera driver interface, for cameras that provide standard
-class CameraHardware(Configurable[CameraConfigT], Generic[CameraConfigT]):
+class CameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
     @abstractmethod
     def image_stream(self) -> Observable[Image]:
+        pass
+
+    @abstractproperty
+    def camera_info(self) -> CameraInfo:
+        pass
+
+
+class StereoCameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
+    @abstractmethod
+    def image_stream(self) -> Observable[Image]:
+        pass
+
+    @abstractmethod
+    def depth_stream(self) -> Observable[Image]:
         pass
 
     @abstractproperty

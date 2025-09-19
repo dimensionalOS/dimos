@@ -25,7 +25,39 @@ from dimos.msgs.sensor_msgs import CameraInfo, Image
 
 
 @pytest.mark.tool
-def test_streaming():
+def test_streaming_single():
+    dimos = core.start(1)
+
+    camera = dimos.deploy(
+        CameraModule,
+        transform=Transform(
+            translation=Vector3(0.05, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="sensor",
+            child_frame_id="camera_link",
+        ),
+        hardware=lambda: Webcam(
+            stereo_slice="left",
+            camera_index=0,
+            frequency=15,
+            camera_info=zed.CameraInfo.SingleWebcam,
+        ),
+    )
+
+    camera.image.transport = core.LCMTransport("/image1", Image)
+    camera.camera_info.transport = core.LCMTransport("/image1/camera_info", CameraInfo)
+    camera.start()
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        camera.stop()
+        dimos.stop()
+
+
+@pytest.mark.tool
+def test_streaming_double():
     dimos = core.start(2)
 
     camera1 = dimos.deploy(

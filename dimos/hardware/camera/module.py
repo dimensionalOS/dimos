@@ -75,7 +75,6 @@ class CameraModule(Module):
 
     @rpc
     def start(self):
-        print("Starting CameraModule...")
         if callable(self.config.hardware):
             self.hardware = self.config.hardware()
         else:
@@ -86,13 +85,7 @@ class CameraModule(Module):
 
         stream = self.hardware.image_stream()
 
-        print("Starting camera info stream")
         camera_info_stream = self.camera_info_stream(frequency=1.0)
-
-        print(self.hardware.camera_info)
-
-        # take one from the stream
-        print("starting cam info sub")
 
         def publish_info(camera_info: CameraInfo):
             self.camera_info.publish(camera_info)
@@ -114,9 +107,7 @@ class CameraModule(Module):
             self.tf.publish(camera_link, camera_optical)
 
         self._camera_info_subscription = camera_info_stream.subscribe(publish_info)
-        print("starting image sub")
         self._module_subscription = stream.subscribe(self.image.publish)
-        print("ColorCameraModule started")
 
     @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
     def video_stream(self) -> Image:
