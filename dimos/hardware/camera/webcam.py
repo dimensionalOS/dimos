@@ -15,61 +15,36 @@
 import queue
 import threading
 import time
-from abc import ABC, abstractmethod, abstractproperty
 from dataclasses import dataclass, field
 from functools import cache
 from typing import Any, Callable, Generic, Literal, Optional, Protocol, TypeVar
 
 import cv2
-import numpy as np
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import create
 from reactivex.observable import Observable
-from reactivex.disposable import Disposable
-import reactivex as rx
-from reactivex import operators as ops
 
-from dimos.agents2 import Output, Reducer, Stream, skill
-from dimos.core import Module, Out, rpc
-from dimos.core.module import DaskModule, ModuleConfig
+from dimos.hardware.camera.spec import (
+    CameraConfig,
+    CameraHardware,
+)
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
 from dimos.msgs.sensor_msgs.Image import ImageFormat
-from dimos.protocol.service import Configurable, Service
 from dimos.utils.reactive import backpressure
-
-
-class CameraConfig(Protocol):
-    frame_id_prefix: Optional[str]
-
-
-CameraConfigT = TypeVar("CameraConfigT", bound=CameraConfig)
-
-
-# StereoCamera interface, for cameras that provide standard
-# color, depth, pointcloud, and pose messages
-class ColorCameraHardware(Configurable[CameraConfigT], Generic[CameraConfigT]):
-    @abstractmethod
-    def color_stream(self) -> Observable[Image]:
-        pass
-
-    @abstractproperty
-    def camera_info(self) -> CameraInfo:
-        pass
 
 
 @dataclass
 class WebcamConfig(CameraConfig):
-    camera_index: int = 0
+    camera_index: int = 0  # /dev/videoN
     frame_width: int = 640
     frame_height: int = 480
-    frequency: int = 10
+    frequency: int = 15
     camera_info: CameraInfo = field(default_factory=CameraInfo)
     frame_id_prefix: Optional[str] = None
     stereo_slice: Optional[Literal["left", "right"]] = None  # For stereo cameras
 
 
-class Webcam(ColorCameraHardware[WebcamConfig]):
+class Webcam(CameraHardware[WebcamConfig]):
     default_config = WebcamConfig
 
     def __init__(self, *args, **kwargs):
@@ -80,7 +55,7 @@ class Webcam(ColorCameraHardware[WebcamConfig]):
         self._observer = None
 
     @cache
-    def color_stream(self) -> Observable[Image]:
+    def image_stream(self) -> Observable[Image]:
         """Create an observable that starts/stops camera on subscription"""
 
         def subscribe(observer, scheduler=None):
@@ -121,7 +96,6 @@ class Webcam(ColorCameraHardware[WebcamConfig]):
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._capture_thread.start()
 
-    @rpc
     def stop(self):
         """Stop capturing frames"""
         # Signal thread to stop
@@ -195,104 +169,6 @@ class Webcam(ColorCameraHardware[WebcamConfig]):
 
     @property
     def camera_info(self) -> CameraInfo:
-        """Return the camera info from config"""
         return self.config.camera_info
 
     def emit(self, image: Image): ...
-
-    def image_stream(self):
-        return self.image.observable()
-
-
-@dataclass
-class ColorCameraModuleConfig(ModuleConfig):
-    hardware: Callable[[], ColorCameraHardware] | ColorCameraHardware = Webcam
-    transform: Transform = field(
-        default_factory=lambda: Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="base_link",
-            child_frame_id="camera_link",
-        )
-    )
-
-
-class ColorCameraModule(DaskModule):
-    image: Out[Image] = None
-    camera_info: Out[CameraInfo] = None
-
-    hardware: ColorCameraHardware = None
-    _module_subscription: Optional[Disposable] = None
-    _camera_info_subscription: Optional[Disposable] = None
-    _skill_stream: Optional[Observable[Image]] = None
-    default_config = ColorCameraModuleConfig
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    @rpc
-    def start(self):
-        if callable(self.config.hardware):
-            self.hardware = self.config.hardware()
-        else:
-            self.hardware = self.config.hardware
-
-        if self._module_subscription:
-            return "already started"
-        stream = self.hardware.color_stream()
-
-        camera_info_stream = self.camera_info_stream(frequency=1.0)
-
-        print("Starting ColorCameraModule with hardware:", camera_info_stream)
-        print(self.hardware.camera_info)
-
-        # take one from the stream
-        print("starting cam info sub")
-
-        def publish_info(camera_info: CameraInfo):
-            self.camera_info.publish(camera_info)
-
-            if self.config.transform is None:
-                return
-
-            camera_link = self.config.transform
-
-            camera_link.ts = time.time()
-            camera_optical = Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-                frame_id="camera_link",
-                child_frame_id="camera_optical",
-                ts=camera_link.ts,
-            )
-
-            self.tf.publish(camera_link, camera_optical)
-
-        self._camera_info_subscription = camera_info_stream.subscribe(publish_info)
-        print("starting image sub")
-        self._module_subscription = stream.subscribe(self.image.publish)
-        print("ColorCameraModule started")
-
-    @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
-    def video_stream(self) -> Image:
-        """implicit video stream skill"""
-        _queue = queue.Queue(maxsize=1)
-        self.hardware.color_stream().subscribe(_queue.put)
-
-        for image in iter(_queue.get, None):
-            yield image
-
-    def camera_info_stream(self, frequency: float = 1.0) -> Observable[CameraInfo]:
-        return rx.interval(1.0 / frequency).pipe(ops.map(lambda _: self.hardware.camera_info))
-
-    def stop(self):
-        if self._module_subscription:
-            self._module_subscription.dispose()
-            self._module_subscription = None
-        if self._camera_info_subscription:
-            self._camera_info_subscription.dispose()
-            self._camera_info_subscription = None
-        # Also stop the hardware if it has a stop method
-        if self.hardware and hasattr(self.hardware, "stop"):
-            self.hardware.stop()
-        super().stop()
