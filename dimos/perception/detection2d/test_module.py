@@ -18,11 +18,11 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
 from dimos_lcm.sensor_msgs import Image, PointCloud2
 
 from dimos.core import LCMTransport
-from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
+from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2 as PointCloud2Msg
-from dimos.msgs.geometry_msgs import Transform, Vector3, PoseStamped
-from dimos.perception.detection2d.conftest import Moment, dimos_cluster, publish_lcm
+from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.perception.detection2d.conftest import Moment
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.perception.detection2d.type import (
@@ -37,26 +37,10 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 
 
-def test_module2d(moment: Moment):
+def test_module2d(moment: Moment, publish_lcm):
     detections2d = Detection2DModule().process_image_frame(moment["image_frame"])
+
     print(detections2d)
-
-    # Print actual values for inspection
-    print(f"\n=== test_module2d Output ===")
-    print(f"Type: {type(detections2d)}")
-    print(f"Number of detections: {len(detections2d)}")
-    print(f"Image timestamp: {detections2d.image.ts}")
-    print(f"Image shape: {detections2d.image.shape}")
-    print(f"Image frame_id: {detections2d.image.frame_id}")
-
-    if len(detections2d) > 0:
-        det = detections2d.detections[0]
-        print(f"\n--- First detection ---")
-        print(f"Name: {det.name}")
-        print(f"Class ID: {det.class_id}")
-        print(f"Track ID: {det.track_id}")
-        print(f"Confidence: {det.confidence}")
-        print(f"Bbox: {det.bbox}")
 
     # Assertions for test_module2d
     assert isinstance(detections2d, ImageDetections2D)
@@ -80,7 +64,7 @@ def test_module2d(moment: Moment):
     publish_lcm({"annotations": annotations, **moment})
 
 
-def test_module3d(moment: Moment):
+def test_module3d(moment: Moment, publish_lcm):
     detections2d = Detection2DModule().process_image_frame(moment["image_frame"])
     pointcloud = moment["lidar_frame"]
     camera_transform = moment["tf"].get("camera_optical", "world")
@@ -101,32 +85,6 @@ def test_module3d(moment: Moment):
     )
 
     print(detections3d)
-
-    # Print actual values for inspection
-    print(f"\n=== test_module3d Output ===")
-    print(f"Type: {type(detections3d)}")
-    print(f"Number of detections: {len(detections3d)}")
-    print(f"Image timestamp: {detections3d.image.ts}")
-    print(f"Image shape: {detections3d.image.shape}")
-    print(f"Image frame_id: {detections3d.image.frame_id}")
-
-    if len(detections3d) > 0:
-        det = detections3d.detections[0]
-        print(f"\n--- First 3D detection ---")
-        print(f"Name: {det.name}")
-        print(f"Class ID: {det.class_id}")
-        print(f"Track ID: {det.track_id}")
-        print(f"Confidence: {det.confidence}")
-        print(f"Bbox: {det.bbox}")
-        print(f"Pointcloud points: {len(det.pointcloud)}")
-        print(f"Pointcloud frame_id: {det.pointcloud.frame_id}")
-        print(f"Center: {det.center}")
-        print(f"Pose: {det.pose}")
-
-        # Check distance from repr_dict
-        repr_dict = det.to_repr_dict()
-        print(f"Distance: {repr_dict.get('dist', 'N/A')}")
-        print(f"Points in repr: {repr_dict.get('points', 'N/A')}")
 
     # Assertions for test_module3d
     assert isinstance(detections3d, ImageDetections3D)

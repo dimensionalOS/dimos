@@ -28,7 +28,7 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.core import In, LCMTransport, Module, ModuleConfig, Out, rpc
+from dimos.core import In, LCMTransport, Module, ModuleConfig, Out, rpc, DimosCluster
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
@@ -277,7 +277,7 @@ class ConnectionModule(Module):
         return rx.interval(1).pipe(ops.map(lambda _: self._camera_info()))
 
 
-def deploy_connection(dimos, **kwargs):
+def deploy_connection(dimos: DimosCluster, **kwargs):
     # foxglove_bridge = dimos.deploy(FoxgloveBridge)
     # foxglove_bridge.start()
 
