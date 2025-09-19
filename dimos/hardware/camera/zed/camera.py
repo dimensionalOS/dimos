@@ -28,7 +28,7 @@ except ImportError:
     sl = None
     logging.warning("ZED SDK not found. Please install pyzed to use ZED camera functionality.")
 
-from dimos.hardware.stereo_camera import StereoCamera
+# Removed unused StereoCamera import
 from dimos.core import Module, Out, rpc
 from dimos.utils.logging_config import setup_logger
 from dimos.protocol.tf import TF
@@ -43,7 +43,7 @@ from dimos.msgs.std_msgs import Header
 logger = setup_logger(__name__)
 
 
-class ZEDCamera(StereoCamera):
+class ZEDCamera:
     """ZED Camera capture node with neural depth processing."""
 
     def __init__(

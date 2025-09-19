@@ -13,9 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 import numpy as np
-
+import pytest
 
 try:
     from sensor_msgs.msg import CameraInfo as ROSCameraInfo
@@ -26,13 +25,8 @@ except ImportError:
     ROSRegionOfInterest = None
     ROSHeader = None
 
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-
-# Try to import ROS types for testing
-try:
-    ROS_AVAILABLE = True
-except ImportError:
-    ROS_AVAILABLE = False
+from dimos.msgs.sensor_msgs.CameraInfo import CalibrationProvider, CameraInfo
+from dimos.utils.path_utils import get_project_root
 
 
 def test_lcm_encode_decode():
@@ -196,10 +190,6 @@ def test_numpy_matrix_operations():
 @pytest.mark.ros
 def test_ros_conversion():
     """Test ROS message conversion preserves CameraInfo data."""
-    if not ROS_AVAILABLE:
-        print("\nROS packages not available - skipping ROS conversion test")
-        return
-
     print("\nTesting ROS CameraInfo conversion...")
 
     # Create test camera info
@@ -401,9 +391,68 @@ def test_equality():
     print("✓ Equality comparison works correctly")
 
 
-if __name__ == "__main__":
-    test_lcm_encode_decode()
-    test_numpy_matrix_operations()
-    test_ros_conversion()
-    test_equality()
-    print("\n✓✓✓ All CameraInfo tests passed! ✓✓✓")
+def test_camera_info_from_yaml():
+    """Test loading CameraInfo from YAML file."""
+
+    # Get path to the single webcam YAML file
+    yaml_path = get_project_root() / "dimos" / "hardware" / "camera" / "zed" / "single_webcam.yaml"
+
+    # Load CameraInfo from YAML
+    camera_info = CameraInfo.from_yaml(str(yaml_path))
+
+    # Verify loaded values
+    assert camera_info.width == 640
+    assert camera_info.height == 376
+    assert camera_info.distortion_model == "plumb_bob"
+    assert camera_info.frame_id == "camera_optical"
+
+    # Check camera matrix K
+    K = camera_info.get_K_matrix()
+    assert K.shape == (3, 3)
+    assert np.isclose(K[0, 0], 379.45267)  # fx
+    assert np.isclose(K[1, 1], 380.67871)  # fy
+    assert np.isclose(K[0, 2], 302.43516)  # cx
+    assert np.isclose(K[1, 2], 228.00954)  # cy
+
+    # Check distortion coefficients
+    D = camera_info.get_D_coeffs()
+    assert len(D) == 5
+    assert np.isclose(D[0], -0.309435)
+
+    # Check projection matrix P
+    P = camera_info.get_P_matrix()
+    assert P.shape == (3, 4)
+    assert np.isclose(P[0, 0], 291.12888)
+
+    print("✓ CameraInfo loaded successfully from YAML file")
+
+
+def test_calibration_provider():
+    """Test CalibrationProvider lazy loading of YAML files."""
+    # Get the directory containing calibration files (not the file itself)
+    calibration_dir = get_project_root() / "dimos" / "hardware" / "camera" / "zed"
+
+    # Create CalibrationProvider instance
+    Calibrations = CalibrationProvider(calibration_dir)
+
+    # Test lazy loading of single_webcam.yaml using snake_case
+    camera_info = Calibrations.single_webcam
+    assert isinstance(camera_info, CameraInfo)
+    assert camera_info.width == 640
+    assert camera_info.height == 376
+
+    # Test PascalCase access to same calibration
+    camera_info2 = Calibrations.SingleWebcam
+    assert isinstance(camera_info2, CameraInfo)
+    assert camera_info2.width == 640
+    assert camera_info2.height == 376
+
+    # Test caching - both access methods should return same object
+    assert camera_info is camera_info2  # Same object reference
+
+    # Test __dir__ lists available calibrations in both cases
+    available = dir(Calibrations)
+    assert "single_webcam" in available
+    assert "SingleWebcam" in available
+
+    print("✓ CalibrationProvider test passed with both naming conventions!")
