@@ -65,7 +65,7 @@ class DJIDroneVideoStream:
                 "!",
                 "videoconvert",
                 "!",
-                "video/x-raw,format=RGB",
+                "video/x-raw,format=BGR",
                 "!",
                 "filesink",
                 "location=/dev/stdout",
@@ -131,7 +131,7 @@ class DJIDroneVideoStream:
                     frame = np.frombuffer(frame_data, dtype=np.uint8)
                     frame = frame.reshape((height, width, channels))
 
-                    # Create Image message (BGR format)
+                    # Create Image message (BGR format - matches GStreamer pipeline output)
                     img_msg = Image.from_numpy(frame, format=ImageFormat.BGR)
 
                     # Publish

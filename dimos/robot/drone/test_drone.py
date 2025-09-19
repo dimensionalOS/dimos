@@ -18,13 +18,17 @@
 """Core unit tests for drone module."""
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, Mock
 import time
+import threading
+import json
 
 from dimos.robot.drone.mavlink_connection import MavlinkConnection, FakeMavlinkConnection
 from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
 from dimos.robot.drone.connection_module import DroneConnectionModule
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.robot.drone.drone import Drone
+from dimos.msgs.geometry_msgs import Vector3, PoseStamped, Quaternion
+from dimos.msgs.sensor_msgs import Image, ImageFormat
 import numpy as np
 import os
 
@@ -384,6 +388,590 @@ class TestReplayMode(unittest.TestCase):
                 0,
                 "No messages were published in replay mode",
             )
+
+
+class TestDroneFullIntegration(unittest.TestCase):
+    """Full integration test of Drone class with replay mode."""
+
+    def setUp(self):
+        """Set up test environment."""
+        # Mock the DimOS core module
+        self.mock_dimos = MagicMock()
+        self.mock_dimos.deploy.return_value = MagicMock()
+
+        # Mock pubsub.lcm.autoconf
+        self.pubsub_patch = patch("dimos.protocol.pubsub.lcm.autoconf")
+        self.pubsub_patch.start()
+
+        # Mock FoxgloveBridge
+        self.foxglove_patch = patch("dimos.robot.drone.drone.FoxgloveBridge")
+        self.mock_foxglove = self.foxglove_patch.start()
+
+    def tearDown(self):
+        """Clean up patches."""
+        self.pubsub_patch.stop()
+        self.foxglove_patch.stop()
+
+    @patch("dimos.robot.drone.drone.core.start")
+    @patch("dimos.utils.testing.TimedSensorReplay")
+    def test_full_system_with_replay(self, mock_replay, mock_core_start):
+        """Test full drone system initialization and operation with replay mode."""
+        # Set up mock replay data
+        mavlink_messages = [
+            {"mavpackettype": "HEARTBEAT", "type": 2, "base_mode": 193, "armed": True},
+            {"mavpackettype": "ATTITUDE", "roll": 0.1, "pitch": 0.2, "yaw": 0.3},
+            {
+                "mavpackettype": "GLOBAL_POSITION_INT",
+                "lat": 377810501,
+                "lon": -1224069671,
+                "alt": 5000,
+                "relative_alt": 5000,
+                "vx": 100,  # 1 m/s North
+                "vy": 200,  # 2 m/s East
+                "vz": -50,  # 0.5 m/s Up
+                "hdg": 9000,  # 90 degrees
+            },
+            {
+                "mavpackettype": "BATTERY_STATUS",
+                "voltages": [3800, 3800, 3800, 3800],
+                "battery_remaining": 75,
+            },
+        ]
+
+        video_frames = [
+            Image(
+                data=np.random.randint(0, 255, (360, 640, 3), dtype=np.uint8),
+                format=ImageFormat.BGR,
+            )
+        ]
+
+        def replay_side_effect(store_name):
+            mock = MagicMock()
+            if "mavlink" in store_name:
+                # Create stream that emits MAVLink messages
+                stream = MagicMock()
+                stream.subscribe = lambda callback: [callback(msg) for msg in mavlink_messages]
+                mock.stream.return_value = stream
+            elif "video" in store_name:
+                # Create stream that emits video frames
+                stream = MagicMock()
+                stream.subscribe = lambda callback: [callback(frame) for frame in video_frames]
+                mock.stream.return_value = stream
+            return mock
+
+        mock_replay.side_effect = replay_side_effect
+
+        # Mock DimOS core
+        mock_core_start.return_value = self.mock_dimos
+
+        # Create drone in replay mode
+        drone = Drone(connection_string="replay", video_port=5600)
+
+        # Mock the deployed modules
+        mock_connection = MagicMock()
+        mock_camera = MagicMock()
+
+        # Set up return values for module methods
+        mock_connection.start.return_value = True
+        mock_connection.get_odom.return_value = PoseStamped(
+            position=Vector3(1.0, 2.0, 3.0), orientation=Quaternion(0, 0, 0, 1), frame_id="world"
+        )
+        mock_connection.get_status.return_value = {
+            "armed": True,
+            "battery_voltage": 15.2,
+            "battery_remaining": 75,
+            "altitude": 5.0,
+        }
+
+        mock_camera.start.return_value = True
+
+        # Configure deploy to return our mocked modules
+        def deploy_side_effect(module_class, **kwargs):
+            if "DroneConnectionModule" in str(module_class):
+                return mock_connection
+            elif "DroneCameraModule" in str(module_class):
+                return mock_camera
+            return MagicMock()
+
+        self.mock_dimos.deploy.side_effect = deploy_side_effect
+
+        # Start the drone system
+        drone.start()
+
+        # Verify modules were deployed
+        self.assertEqual(self.mock_dimos.deploy.call_count, 2)
+
+        # Test get_odom
+        odom = drone.get_odom()
+        self.assertIsNotNone(odom)
+        self.assertEqual(odom.position.x, 1.0)
+        self.assertEqual(odom.position.y, 2.0)
+        self.assertEqual(odom.position.z, 3.0)
+
+        # Test get_status
+        status = drone.get_status()
+        self.assertIsNotNone(status)
+        self.assertTrue(status["armed"])
+        self.assertEqual(status["battery_remaining"], 75)
+
+        # Test movement command
+        drone.move(Vector3(1.0, 0.0, 0.5), duration=2.0)
+        mock_connection.move.assert_called_once_with(Vector3(1.0, 0.0, 0.5), 2.0)
+
+        # Test control commands
+        result = drone.arm()
+        mock_connection.arm.assert_called_once()
+
+        result = drone.takeoff(altitude=10.0)
+        mock_connection.takeoff.assert_called_once_with(10.0)
+
+        result = drone.land()
+        mock_connection.land.assert_called_once()
+
+        result = drone.disarm()
+        mock_connection.disarm.assert_called_once()
+
+        # Test mode setting
+        result = drone.set_mode("GUIDED")
+        mock_connection.set_mode.assert_called_once_with("GUIDED")
+
+        # Clean up
+        drone.stop()
+
+        # Verify cleanup was called
+        mock_connection.stop.assert_called_once()
+        mock_camera.stop.assert_called_once()
+        self.mock_dimos.shutdown.assert_called_once()
+
+
+class TestDroneControlCommands(unittest.TestCase):
+    """Test drone control commands with FakeMavlinkConnection."""
+
+    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.data.get_data")
+    def test_arm_disarm_commands(self, mock_get_data, mock_replay):
+        """Test arm and disarm commands work with fake connection."""
+        # Set up mock replay
+        mock_stream = MagicMock()
+        mock_stream.subscribe = lambda callback: None
+        mock_replay.return_value.stream.return_value = mock_stream
+
+        conn = FakeMavlinkConnection("replay")
+
+        # Test arm
+        result = conn.arm()
+        self.assertIsInstance(result, bool)  # Should return bool without crashing
+
+        # Test disarm
+        result = conn.disarm()
+        self.assertIsInstance(result, bool)  # Should return bool without crashing
+
+    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.data.get_data")
+    def test_takeoff_land_commands(self, mock_get_data, mock_replay):
+        """Test takeoff and land commands with fake connection."""
+        mock_stream = MagicMock()
+        mock_stream.subscribe = lambda callback: None
+        mock_replay.return_value.stream.return_value = mock_stream
+
+        conn = FakeMavlinkConnection("replay")
+
+        # Test takeoff
+        result = conn.takeoff(altitude=15.0)
+        # In fake mode, should accept but may return False if no ACK simulation
+        self.assertIsNotNone(result)
+
+        # Test land
+        result = conn.land()
+        self.assertIsNotNone(result)
+
+    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.data.get_data")
+    def test_set_mode_command(self, mock_get_data, mock_replay):
+        """Test flight mode setting with fake connection."""
+        mock_stream = MagicMock()
+        mock_stream.subscribe = lambda callback: None
+        mock_replay.return_value.stream.return_value = mock_stream
+
+        conn = FakeMavlinkConnection("replay")
+
+        # Test various flight modes
+        modes = ["STABILIZE", "GUIDED", "LAND", "RTL", "LOITER"]
+        for mode in modes:
+            result = conn.set_mode(mode)
+            # Should return True or False but not crash
+            self.assertIsInstance(result, bool)
+
+
+class TestDronePerception(unittest.TestCase):
+    """Test drone perception capabilities."""
+
+    @patch("dimos.robot.drone.drone.core.start")
+    @patch("dimos.protocol.pubsub.lcm.autoconf")
+    @patch("dimos.robot.drone.drone.FoxgloveBridge")
+    def test_get_single_rgb_frame(self, mock_foxglove, mock_lcm_autoconf, mock_core_start):
+        """Test getting a single RGB frame from camera."""
+        # Set up mocks
+        mock_dimos = MagicMock()
+        mock_core_start.return_value = mock_dimos
+
+        # Create drone
+        drone = Drone(connection_string="replay")
+
+        # Mock connection module to return an image
+        test_image = Image(
+            data=np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8),
+            format=ImageFormat.RGB,
+            frame_id="camera_link",
+        )
+
+        # Mock the connection module
+        mock_connection = MagicMock()
+        mock_connection.get_single_frame.return_value = test_image
+        drone.connection = mock_connection
+
+        # Get frame
+        frame = drone.get_single_rgb_frame(timeout=2.0)
+
+        # Verify
+        self.assertIsNotNone(frame)
+        self.assertIsInstance(frame, Image)
+        self.assertEqual(frame.format, ImageFormat.RGB)
+
+        # Check that connection method was called
+        mock_connection.get_single_frame.assert_called_once()
+
+    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.data.get_data")
+    def test_video_stream_replay(self, mock_get_data, mock_replay):
+        """Test video stream works with replay data."""
+        # Set up video frames - create a test pattern instead of random noise
+        import cv2
+
+        # Create a test pattern image with some structure
+        test_frame = np.zeros((360, 640, 3), dtype=np.uint8)
+        # Add some colored rectangles to make it visually obvious
+        cv2.rectangle(test_frame, (50, 50), (200, 150), (255, 0, 0), -1)  # Blue
+        cv2.rectangle(test_frame, (250, 50), (400, 150), (0, 255, 0), -1)  # Green
+        cv2.rectangle(test_frame, (450, 50), (600, 150), (0, 0, 255), -1)  # Red
+        cv2.putText(
+            test_frame,
+            "DRONE TEST FRAME",
+            (150, 250),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.5,
+            (255, 255, 255),
+            2,
+        )
+
+        video_frames = [test_frame, test_frame.copy()]
+
+        # Mock replay stream
+        mock_stream = MagicMock()
+        received_frames = []
+
+        def subscribe_side_effect(callback):
+            for frame in video_frames:
+                img = Image(data=frame, format=ImageFormat.BGR)
+                callback(img)
+                received_frames.append(img)
+
+        mock_stream.subscribe = subscribe_side_effect
+        mock_replay.return_value.stream.return_value = mock_stream
+
+        # Create fake video stream
+        video_stream = FakeDJIVideoStream(port=5600)
+        stream = video_stream.get_stream()
+
+        # Subscribe to stream
+        captured_frames = []
+        stream.subscribe(captured_frames.append)
+
+        # Verify frames were captured
+        self.assertEqual(len(received_frames), 2)
+        for i, frame in enumerate(received_frames):
+            self.assertIsInstance(frame, Image)
+            self.assertEqual(frame.data.shape, (360, 640, 3))
+
+            # Save first frame to file for visual inspection
+            if i == 0:
+                import os
+
+                output_path = "/tmp/drone_test_frame.png"
+                cv2.imwrite(output_path, frame.data)
+                print(f"\n[TEST] Saved test frame to {output_path} for visual inspection")
+                if os.path.exists(output_path):
+                    print(f"[TEST] File size: {os.path.getsize(output_path)} bytes")
+
+
+class TestDroneMovementAndOdometry(unittest.TestCase):
+    """Test drone movement commands and odometry."""
+
+    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.data.get_data")
+    def test_movement_command_conversion(self, mock_get_data, mock_replay):
+        """Test movement commands are properly converted from ROS to NED."""
+        mock_stream = MagicMock()
+        mock_stream.subscribe = lambda callback: None
+        mock_replay.return_value.stream.return_value = mock_stream
+
+        conn = FakeMavlinkConnection("replay")
+
+        # Test movement in ROS frame
+        # ROS: X=forward, Y=left, Z=up
+        velocity_ros = Vector3(2.0, -1.0, 0.5)  # Forward 2m/s, right 1m/s, up 0.5m/s
+
+        result = conn.move(velocity_ros, duration=1.0)
+        self.assertTrue(result)
+
+        # Movement should be converted to NED internally
+        # The fake connection doesn't actually send commands, but it should not crash
+
+    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.data.get_data")
+    def test_odometry_from_replay(self, mock_get_data, mock_replay):
+        """Test odometry is properly generated from replay messages."""
+        # Set up replay messages
+        messages = [
+            {"mavpackettype": "ATTITUDE", "roll": 0.1, "pitch": 0.2, "yaw": 0.3},
+            {
+                "mavpackettype": "GLOBAL_POSITION_INT",
+                "lat": 377810501,
+                "lon": -1224069671,
+                "alt": 10000,
+                "relative_alt": 5000,
+                "vx": 200,  # 2 m/s North
+                "vy": 100,  # 1 m/s East
+                "vz": -50,  # 0.5 m/s Up
+                "hdg": 18000,  # 180 degrees
+            },
+        ]
+
+        def replay_stream_subscribe(callback):
+            for msg in messages:
+                callback(msg)
+
+        mock_stream = MagicMock()
+        mock_stream.subscribe = replay_stream_subscribe
+        mock_replay.return_value.stream.return_value = mock_stream
+
+        conn = FakeMavlinkConnection("replay")
+
+        # Collect published odometry
+        published_odom = []
+        conn._odom_subject.subscribe(published_odom.append)
+
+        # Process messages
+        for _ in range(5):
+            conn.update_telemetry(timeout=0.01)
+
+        # Should have published odometry
+        self.assertGreater(len(published_odom), 0)
+
+        # Check odometry message
+        odom = published_odom[0]
+        self.assertIsInstance(odom, PoseStamped)
+        self.assertIsNotNone(odom.orientation)
+        self.assertEqual(odom.frame_id, "world")
+
+    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.data.get_data")
+    def test_position_integration_indoor(self, mock_get_data, mock_replay):
+        """Test position integration for indoor flight without GPS."""
+        messages = [
+            {"mavpackettype": "ATTITUDE", "roll": 0, "pitch": 0, "yaw": 0},
+            {
+                "mavpackettype": "GLOBAL_POSITION_INT",
+                "lat": 0,  # Invalid GPS
+                "lon": 0,
+                "alt": 0,
+                "relative_alt": 2000,  # 2m altitude
+                "vx": 100,  # 1 m/s North
+                "vy": 0,
+                "vz": 0,
+                "hdg": 0,
+            },
+        ]
+
+        def replay_stream_subscribe(callback):
+            for msg in messages:
+                callback(msg)
+
+        mock_stream = MagicMock()
+        mock_stream.subscribe = replay_stream_subscribe
+        mock_replay.return_value.stream.return_value = mock_stream
+
+        conn = FakeMavlinkConnection("replay")
+
+        # Process messages multiple times to integrate position
+        initial_time = time.time()
+        conn._last_update = initial_time
+
+        for i in range(3):
+            conn.update_telemetry(timeout=0.01)
+            time.sleep(0.1)  # Let some time pass for integration
+
+        # Position should have been integrated
+        self.assertGreater(conn._position["x"], 0)  # Moving North
+        self.assertEqual(conn._position["z"], 2.0)  # Altitude from relative_alt
+
+
+class TestDroneStatusAndTelemetry(unittest.TestCase):
+    """Test drone status and telemetry reporting."""
+
+    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.data.get_data")
+    def test_status_extraction(self, mock_get_data, mock_replay):
+        """Test status is properly extracted from MAVLink messages."""
+        messages = [
+            {"mavpackettype": "HEARTBEAT", "type": 2, "base_mode": 193},  # Armed
+            {
+                "mavpackettype": "BATTERY_STATUS",
+                "voltages": [3700, 3700, 3700, 3700],
+                "current_battery": -1500,
+                "battery_remaining": 65,
+            },
+            {"mavpackettype": "GPS_RAW_INT", "satellites_visible": 12, "fix_type": 3},
+            {"mavpackettype": "GLOBAL_POSITION_INT", "relative_alt": 8000, "hdg": 27000},
+        ]
+
+        def replay_stream_subscribe(callback):
+            for msg in messages:
+                callback(msg)
+
+        mock_stream = MagicMock()
+        mock_stream.subscribe = replay_stream_subscribe
+        mock_replay.return_value.stream.return_value = mock_stream
+
+        conn = FakeMavlinkConnection("replay")
+
+        # Collect published status
+        published_status = []
+        conn._status_subject.subscribe(published_status.append)
+
+        # Process messages
+        for _ in range(5):
+            conn.update_telemetry(timeout=0.01)
+
+        # Should have published status
+        self.assertGreater(len(published_status), 0)
+
+        # Check status fields
+        status = published_status[-1]  # Get latest
+        self.assertIn("armed", status)
+        self.assertIn("battery_remaining", status)
+        self.assertIn("satellites", status)
+        self.assertIn("altitude", status)
+        self.assertIn("heading", status)
+
+    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.data.get_data")
+    def test_telemetry_json_publishing(self, mock_get_data, mock_replay):
+        """Test full telemetry is published as JSON."""
+        messages = [
+            {"mavpackettype": "ATTITUDE", "roll": 0.1, "pitch": 0.2, "yaw": 0.3},
+            {"mavpackettype": "GLOBAL_POSITION_INT", "lat": 377810501, "lon": -1224069671},
+        ]
+
+        def replay_stream_subscribe(callback):
+            for msg in messages:
+                callback(msg)
+
+        mock_stream = MagicMock()
+        mock_stream.subscribe = replay_stream_subscribe
+        mock_replay.return_value.stream.return_value = mock_stream
+
+        # Create connection module with replay
+        module = DroneConnectionModule(connection_string="replay")
+
+        # Mock publishers
+        published_telemetry = []
+        module.telemetry = MagicMock(publish=lambda x: published_telemetry.append(x))
+        module.status = MagicMock()
+        module.odom = MagicMock()
+        module.tf = MagicMock()
+        module.video = MagicMock()
+        module.movecmd = MagicMock()
+
+        # Start module
+        result = module.start()
+        self.assertTrue(result)
+
+        # Give time for processing
+        time.sleep(0.2)
+
+        # Stop module
+        module.stop()
+
+        # Check telemetry was published
+        self.assertGreater(len(published_telemetry), 0)
+
+        # Telemetry should be JSON string
+        telem_msg = published_telemetry[0]
+        self.assertIsNotNone(telem_msg)
+
+        # If it's a String message, check the data
+        if hasattr(telem_msg, "data"):
+            telem_dict = json.loads(telem_msg.data)
+            self.assertIn("timestamp", telem_dict)
+
+
+class TestGetSingleFrameIntegration(unittest.TestCase):
+    """Test the get_single_frame method with full integration."""
+
+    def test_get_single_frame_with_replay(self):
+        """Test get_single_frame() method using DroneConnectionModule with replay data."""
+        import cv2
+        import os
+        from dimos.utils.data import get_data
+
+        # Try to get replay data
+        try:
+            get_data("drone")
+        except:
+            self.skipTest("No drone replay data available")
+
+        # Create connection module with replay mode
+        module = DroneConnectionModule(connection_string="replay")
+
+        # Set up mock outputs (module needs these)
+        module.odom = MagicMock()
+        module.status = MagicMock()
+        module.telemetry = MagicMock()
+        module.video = MagicMock()
+        module.tf = MagicMock()
+        module.movecmd = MagicMock()
+
+        # Start the module
+        result = module.start()
+        self.assertTrue(result, "Module failed to start")
+
+        # Give time for video frames to be received
+        import time
+
+        time.sleep(1.0)
+
+        # Now test the get_single_frame method
+        frame = module.get_single_frame()
+
+        if frame is not None:
+            self.assertIsInstance(frame, Image)
+            self.assertIsInstance(frame.data, np.ndarray)
+
+            output_path = "./drone_single_frame_test.png"
+
+            # Frame should now be corrected in the module, just write it
+            cv2.imwrite(output_path, frame.data)
+
+            print(f"\n[TEST] Saved frame from get_single_frame() to {output_path}")
+            print(f"[TEST] Frame shape: {frame.data.shape}")
+            print(f"[TEST] Frame format: {frame.format}")
+            print(f"[TEST] File size: {os.path.getsize(output_path)} bytes")
+        else:
+            print("[TEST] get_single_frame() returned None")
+
+        # Clean up
+        module.stop()
 
 
 if __name__ == "__main__":

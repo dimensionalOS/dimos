@@ -28,7 +28,8 @@ from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.std_msgs import String
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.protocol import pubsub
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+
+# LCM not needed in orchestrator - modules handle communication
 from dimos.robot.robot import Robot
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.camera_module import DroneCameraModule
@@ -242,13 +243,14 @@ class Drone(Robot):
         """Get a single RGB frame from camera.
 
         Args:
-            timeout: Timeout in seconds
+            timeout: Timeout in seconds (currently unused as we get latest frame)
 
         Returns:
             Image message or None
         """
-        topic = Topic("/drone/color_image", Image)
-        return self.lcm.wait_for_message(topic, timeout=timeout)
+        if self.connection:
+            return self.connection.get_single_frame()
+        return None
 
     def stop(self):
         """Stop the drone system."""
@@ -275,6 +277,9 @@ def main():
 
     parser = argparse.ArgumentParser(description="DimOS Drone System")
     parser.add_argument("--replay", action="store_true", help="Use recorded data for testing")
+    parser.add_argument(
+        "--test", action="store_true", help="Run test commands (takeoff, land, capture frame)"
+    )
     args = parser.parse_args()
 
     # Configure logging

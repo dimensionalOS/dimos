@@ -20,9 +20,11 @@ from typing import Optional
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos_lcm.std_msgs import String
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
+from dimos.protocol.skill.skill import skill
+from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -48,6 +50,7 @@ class DroneConnectionModule(Module):
     # Internal state
     _odom: Optional[PoseStamped] = None
     _status: dict = {}
+    _latest_video_frame: Optional[Image] = None
 
     def __init__(
         self, connection_string: str = "udp:0.0.0.0:14550", video_port: int = 5600, *args, **kwargs
@@ -62,6 +65,7 @@ class DroneConnectionModule(Module):
         self.video_port = video_port
         self.connection = None
         self.video_stream = None
+        self._latest_video_frame = None
         Module.__init__(self, *args, **kwargs)
 
     @rpc
@@ -87,9 +91,10 @@ class DroneConnectionModule(Module):
         # Start video stream (already created above)
         if self.video_stream.start():
             logger.info("Video stream started")
-            # Subscribe to video and publish it - pass method directly like Unitree does
-            self._video_subscription = self.video_stream.get_stream().subscribe(self.video.publish)
-
+            # Subscribe to video, store latest frame and publish it
+            self._video_subscription = self.video_stream.get_stream().subscribe(
+                self._store_and_publish_frame
+            )
             # # TEMPORARY - DELETE AFTER RECORDING
             # from dimos.utils.testing import TimedSensorStorage
             # self._video_storage = TimedSensorStorage("drone/video")
@@ -115,6 +120,18 @@ class DroneConnectionModule(Module):
 
         logger.info("Drone connection module started")
         return True
+
+    def _store_and_publish_frame(self, frame: Image):
+        """Store the latest video frame and publish it."""
+        if self.connection_string == "replay" and frame.format == ImageFormat.BGR:
+            # Replay data is RGB mislabeled as BGR, need to swap channels
+            import cv2
+
+            frame_data_corrected = cv2.cvtColor(frame.data, cv2.COLOR_RGB2BGR)
+            frame = Image(data=frame_data_corrected, format=ImageFormat.BGR)
+
+        self._latest_video_frame = frame
+        self.video.publish(frame)
 
     def _publish_tf(self, msg: PoseStamped):
         """Publish odometry and TF transforms."""
@@ -284,3 +301,12 @@ class DroneConnectionModule(Module):
         if self.connection:
             self.connection.disconnect()
         logger.info("Drone connection module stopped")
+
+    @skill(output=Output.image)
+    def get_single_frame(self) -> Optional[Image]:
+        """Returns the latest video frame from the drone camera.
+
+        This skill provides the current camera view for perception tasks.
+        Returns None if no frame has been captured yet.
+        """
+        return self._latest_video_frame

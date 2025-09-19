@@ -28,7 +28,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.robot.connection_interface import ConnectionInterface
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__name__)
+logger = setup_logger(__name__, level=logging.DEBUG)
 
 
 class MavlinkConnection:
@@ -85,8 +85,8 @@ class MavlinkConnection:
                 continue
             msg_type = msg.get_type()
             msg_dict = msg.to_dict()
-            logger.debug("MESSAGE", msg_dict)
-            logger.debug("MESSAGE TYPE", msg_type)
+            print("MESSAGE", msg_dict)
+            print("MESSAGE TYPE", msg_type)
 
             # TEMPORARY - DELETE AFTER RECORDING
             # self._raw_mavlink_subject.on_next(msg_dict)
