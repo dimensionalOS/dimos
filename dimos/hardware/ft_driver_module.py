@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Force-Torque Sensor Driver Module for Dimos
 
@@ -24,6 +38,7 @@ from dimos.msgs.geometry_msgs import Vector3
 @dataclass
 class ForceTorqueData:
     """Data structure for force-torque sensor output."""
+
     forces: Vector3 = field(default_factory=lambda: Vector3(0, 0, 0))
     torques: Vector3 = field(default_factory=lambda: Vector3(0, 0, 0))
     force_magnitude: float = 0.0
@@ -35,6 +50,7 @@ class ForceTorqueData:
 @dataclass
 class RawSensorData:
     """Data structure for raw sensor values with moving averages."""
+
     sensor_values: list = field(default_factory=list)
     timestamp: float = 0.0
 
@@ -46,12 +62,14 @@ class FTDriverModule(Module):
     raw_sensor_data: Out[RawSensorData] = None  # Raw sensor values with moving average
     calibrated_data: Out[ForceTorqueData] = None  # Calibrated force-torque data
 
-    def __init__(self,
-                 serial_port: str = '/dev/tty.usbserial-0001',
-                 baud_rate: int = 115200,
-                 window_size: int = 3,
-                 calibration_file: Optional[str] = None,
-                 verbose: bool = False):
+    def __init__(
+        self,
+        serial_port: str = "/dev/tty.usbserial-0001",
+        baud_rate: int = 115200,
+        window_size: int = 3,
+        calibration_file: Optional[str] = None,
+        verbose: bool = False,
+    ):
         """
         Initialize the FT driver module.
 
@@ -100,15 +118,19 @@ class FTDriverModule(Module):
             return
 
         try:
-            if filepath.suffix == '.npz':
+            if filepath.suffix == ".npz":
                 data = np.load(filepath)
-                self.calibration_matrix = np.array(data['calibration_matrix'])
-                self.bias_vector = np.array(data['bias_vector']) if data['bias_vector'] is not None else None
+                self.calibration_matrix = np.array(data["calibration_matrix"])
+                self.bias_vector = (
+                    np.array(data["bias_vector"]) if data["bias_vector"] is not None else None
+                )
             else:
-                with open(filepath, 'r') as f:
+                with open(filepath, "r") as f:
                     data = json.load(f)
-                self.calibration_matrix = np.array(data['calibration_matrix'])
-                self.bias_vector = np.array(data['bias_vector']) if data['bias_vector'] is not None else None
+                self.calibration_matrix = np.array(data["calibration_matrix"])
+                self.bias_vector = (
+                    np.array(data["bias_vector"]) if data["bias_vector"] is not None else None
+                )
 
             print(f"Calibration loaded from: {filepath}")
             print(f"  Calibration matrix shape: {self.calibration_matrix.shape}")
@@ -154,14 +176,14 @@ class FTDriverModule(Module):
 
         try:
             # Read line from serial
-            line = self.ser.readline().decode('utf-8').strip()
+            line = self.ser.readline().decode("utf-8").strip()
             if not line:
                 return
 
             # Parse comma-separated values (remove trailing comma)
-            if line.endswith(','):
+            if line.endswith(","):
                 line = line[:-1]
-            values = [float(x) for x in line.split(',')]
+            values = [float(x) for x in line.split(",")]
 
             if len(values) != 16:
                 if self.verbose:
@@ -178,10 +200,7 @@ class FTDriverModule(Module):
             timestamp = time.time()
 
             # Publish raw sensor data with moving averages
-            raw_data = RawSensorData(
-                sensor_values=moving_averages,
-                timestamp=timestamp
-            )
+            raw_data = RawSensorData(sensor_values=moving_averages, timestamp=timestamp)
             self.raw_sensor_data.publish(raw_data)
 
             # Apply calibration if available
@@ -201,15 +220,19 @@ class FTDriverModule(Module):
                         force_magnitude=force_mag,
                         torque_magnitude=torque_mag,
                         timestamp=timestamp,
-                        raw_sensors=moving_averages
+                        raw_sensors=moving_averages,
                     )
                     self.calibrated_data.publish(calibrated)
 
                     if self.verbose:
-                        print(f"\r{time.strftime('%H:%M:%S')} "
-                              f"F:({force_torque[0]:7.2f},{force_torque[1]:7.2f},{force_torque[2]:7.2f}) "
-                              f"T:({force_torque[3]:7.4f},{force_torque[4]:7.4f},{force_torque[5]:7.4f}) "
-                              f"|F|:{force_mag:7.2f} |T|:{torque_mag:7.4f}", end="", flush=True)
+                        print(
+                            f"\r{time.strftime('%H:%M:%S')} "
+                            f"F:({force_torque[0]:7.2f},{force_torque[1]:7.2f},{force_torque[2]:7.2f}) "
+                            f"T:({force_torque[3]:7.4f},{force_torque[4]:7.4f},{force_torque[5]:7.4f}) "
+                            f"|F|:{force_mag:7.2f} |T|:{torque_mag:7.4f}",
+                            end="",
+                            flush=True,
+                        )
 
             self.message_count += 1
 
@@ -293,31 +316,33 @@ class FTDriverModule(Module):
     def get_stats(self) -> Dict[str, Any]:
         """Get driver statistics."""
         return {
-            'message_count': self.message_count,
-            'error_count': self.error_count,
-            'calibration_loaded': self.calibration_matrix is not None,
-            'serial_connected': self.ser is not None and self.ser.is_open
+            "message_count": self.message_count,
+            "error_count": self.error_count,
+            "calibration_loaded": self.calibration_matrix is not None,
+            "serial_connected": self.ser is not None and self.ser.is_open,
         }
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # For testing standalone
     parser = argparse.ArgumentParser(description="FT Driver Module")
-    parser.add_argument('--port', default='/dev/tty.usbserial-0001', help='Serial port')
-    parser.add_argument('--baud', type=int, default=115200, help='Baud rate')
-    parser.add_argument('--window', type=int, default=3, help='Moving average window size')
-    parser.add_argument('--calibration', type=str, help='Calibration file path')
-    parser.add_argument('--verbose', action='store_true', help='Verbose output')
+    parser.add_argument("--port", default="/dev/tty.usbserial-0001", help="Serial port")
+    parser.add_argument("--baud", type=int, default=115200, help="Baud rate")
+    parser.add_argument("--window", type=int, default=3, help="Moving average window size")
+    parser.add_argument("--calibration", type=str, help="Calibration file path")
+    parser.add_argument("--verbose", action="store_true", help="Verbose output")
     args = parser.parse_args()
 
     from dimos.core import start
 
     dimos = start(1)
-    driver = dimos.deploy(FTDriverModule,
-                         serial_port=args.port,
-                         baud_rate=args.baud,
-                         window_size=args.window,
-                         calibration_file=args.calibration,
-                         verbose=args.verbose)
+    driver = dimos.deploy(
+        FTDriverModule,
+        serial_port=args.port,
+        baud_rate=args.baud,
+        window_size=args.window,
+        calibration_file=args.calibration,
+        verbose=args.verbose,
+    )
 
     driver.start()

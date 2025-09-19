@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Force-Torque Module Test/Deployment Script
 
@@ -33,42 +47,60 @@ Examples:
 
   # Run with custom dashboard port
   python ft_module_test.py --dash-port 8080 --calibration calibration.npz
-        """
+        """,
     )
 
     # Driver arguments
-    parser.add_argument('--port', default='/dev/tty.usbserial-0001',
-                       help='Serial port for sensor (default: /dev/tty.usbserial-0001)')
-    parser.add_argument('--baud', type=int, default=115200,
-                       help='Serial baud rate (default: 115200)')
-    parser.add_argument('--window', type=int, default=3,
-                       help='Moving average window size (default: 3)')
-    parser.add_argument('--calibration', type=str,
-                       help='Path to calibration file (.json or .npz)')
+    parser.add_argument(
+        "--port",
+        default="/dev/tty.usbserial-0001",
+        help="Serial port for sensor (default: /dev/tty.usbserial-0001)",
+    )
+    parser.add_argument(
+        "--baud", type=int, default=115200, help="Serial baud rate (default: 115200)"
+    )
+    parser.add_argument(
+        "--window", type=int, default=3, help="Moving average window size (default: 3)"
+    )
+    parser.add_argument("--calibration", type=str, help="Path to calibration file (.json or .npz)")
 
     # Visualizer arguments
-    parser.add_argument('--dash-port', type=int, default=8052,
-                       help='Port for Dash web server (default: 8052)')
-    parser.add_argument('--dash-host', default='0.0.0.0',
-                       help='Host for Dash web server (default: 0.0.0.0)')
-    parser.add_argument('--history', type=int, default=500,
-                       help='Max history points to keep (default: 500)')
-    parser.add_argument('--update-interval', type=int, default=100,
-                       help='Dashboard update interval in ms (default: 100)')
+    parser.add_argument(
+        "--dash-port", type=int, default=8052, help="Port for Dash web server (default: 8052)"
+    )
+    parser.add_argument(
+        "--dash-host", default="0.0.0.0", help="Host for Dash web server (default: 0.0.0.0)"
+    )
+    parser.add_argument(
+        "--history", type=int, default=500, help="Max history points to keep (default: 500)"
+    )
+    parser.add_argument(
+        "--update-interval",
+        type=int,
+        default=100,
+        help="Dashboard update interval in ms (default: 100)",
+    )
 
     # LCM transport arguments
-    parser.add_argument('--lcm-raw-channel', default='/ft/raw_sensors',
-                       help='LCM channel for raw sensor data (default: /ft/raw_sensors)')
-    parser.add_argument('--lcm-calibrated-channel', default='/ft/calibrated',
-                       help='LCM channel for calibrated data (default: /ft/calibrated)')
+    parser.add_argument(
+        "--lcm-raw-channel",
+        default="/ft/raw_sensors",
+        help="LCM channel for raw sensor data (default: /ft/raw_sensors)",
+    )
+    parser.add_argument(
+        "--lcm-calibrated-channel",
+        default="/ft/calibrated",
+        help="LCM channel for calibrated data (default: /ft/calibrated)",
+    )
 
     # General arguments
-    parser.add_argument('--processes', type=int, default=3,
-                       help='Number of Dimos processes (default: 3)')
-    parser.add_argument('--verbose', action='store_true',
-                       help='Enable verbose output')
-    parser.add_argument('--no-visualizer', action='store_true',
-                       help='Run driver only, without visualizer')
+    parser.add_argument(
+        "--processes", type=int, default=3, help="Number of Dimos processes (default: 3)"
+    )
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument(
+        "--no-visualizer", action="store_true", help="Run driver only, without visualizer"
+    )
 
     args = parser.parse_args()
 
@@ -100,7 +132,7 @@ Examples:
         baud_rate=args.baud,
         window_size=args.window,
         calibration_file=args.calibration,
-        verbose=args.verbose
+        verbose=args.verbose,
     )
     print("Driver deployment complete")
 
@@ -115,6 +147,7 @@ Examples:
     except Exception as e:
         print(f"Error setting up transports: {e}")
         import traceback
+
         traceback.print_exc()
 
     # Deploy visualizer if requested
@@ -132,7 +165,7 @@ Examples:
             update_interval_ms=args.update_interval,
             dash_port=args.dash_port,
             dash_host=args.dash_host,
-            verbose=args.verbose
+            verbose=args.verbose,
         )
 
         # Connect visualizer inputs to driver outputs
@@ -161,7 +194,9 @@ Examples:
     # Start visualizer
     if visualizer:
         visualizer.start()
-        print(f"\n✓ Dashboard running at http://{'127.0.0.1' if args.dash_host == '0.0.0.0' else args.dash_host}:{args.dash_port}")
+        print(
+            f"\n✓ Dashboard running at http://{'127.0.0.1' if args.dash_host == '0.0.0.0' else args.dash_host}:{args.dash_port}"
+        )
 
     print("\n✓ All modules started successfully!")
     print("\nPress Ctrl+C to stop...\n")
@@ -175,14 +210,18 @@ Examples:
             # Print stats every 10 seconds
             if time.time() - last_print_time > 10:
                 driver_stats = driver.get_stats()
-                print(f"\nDriver Stats: Messages={driver_stats['message_count']}, "
-                     f"Errors={driver_stats['error_count']}, "
-                     f"Calibration={'Yes' if driver_stats['calibration_loaded'] else 'No'}")
+                print(
+                    f"\nDriver Stats: Messages={driver_stats['message_count']}, "
+                    f"Errors={driver_stats['error_count']}, "
+                    f"Calibration={'Yes' if driver_stats['calibration_loaded'] else 'No'}"
+                )
 
                 if visualizer:
                     viz_stats = visualizer.get_stats()
-                    print(f"Visualizer Stats: Messages={viz_stats['message_count']}, "
-                         f"Data points={viz_stats['data_points']}")
+                    print(
+                        f"Visualizer Stats: Messages={viz_stats['message_count']}, "
+                        f"Data points={viz_stats['data_points']}"
+                    )
 
                 last_print_time = time.time()
 
