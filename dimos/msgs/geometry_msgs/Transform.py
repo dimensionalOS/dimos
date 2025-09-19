@@ -267,6 +267,37 @@ class Transform(Timestamped):
             frame_id=self.frame_id,
         )
 
+    def to_matrix(self) -> "np.ndarray":
+        """Convert Transform to a 4x4 transformation matrix.
+
+        Returns a homogeneous transformation matrix that represents both
+        the rotation and translation of this transform.
+
+        Returns:
+            np.ndarray: A 4x4 homogeneous transformation matrix
+        """
+        import numpy as np
+
+        # Extract quaternion components
+        x, y, z, w = self.rotation.x, self.rotation.y, self.rotation.z, self.rotation.w
+
+        # Build rotation matrix from quaternion using standard formula
+        # This avoids numerical issues compared to converting to axis-angle first
+        rotation_matrix = np.array(
+            [
+                [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+            ]
+        )
+
+        # Build 4x4 homogeneous transformation matrix
+        matrix = np.eye(4)
+        matrix[:3, :3] = rotation_matrix
+        matrix[:3, 3] = [self.translation.x, self.translation.y, self.translation.z]
+
+        return matrix
+
     def lcm_encode(self) -> bytes:
         # we get a circular import otherwise
         from dimos.msgs.tf2_msgs.TFMessage import TFMessage

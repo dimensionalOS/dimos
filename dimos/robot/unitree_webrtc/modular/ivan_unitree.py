@@ -13,149 +13,64 @@
 # limitations under the License.
 
 import logging
-import os
 import time
-from typing import Optional
 
 from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.std_msgs import Bool, String
 
 from dimos.core import LCMTransport, start
+
+# from dimos.msgs.detection2d import Detection2DArray
 from dimos.msgs.foxglove_msgs import ImageAnnotations
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
-from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
-from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
-from dimos.navigation.global_planner import AstarPlanner
-from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.perception.detection2d import Detect2DModule
+from dimos.perception.detection2d import Detection3DModule
 from dimos.protocol.pubsub import lcm
-from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.utils.logging_config import setup_logger
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
 
 
-def deploy_foxglove(dimos, connection, mapper, global_planner):
-    """Deploy and configure visualization modules."""
-    websocket_vis = dimos.deploy(WebsocketVisModule, port=7779)
-    websocket_vis.click_goal.transport = LCMTransport("/goal_request", PoseStamped)
-    websocket_vis.explore_cmd.transport = LCMTransport("/explore_cmd", Bool)
-    websocket_vis.stop_explore_cmd.transport = LCMTransport("/stop_explore_cmd", Bool)
-    websocket_vis.movecmd.transport = LCMTransport("/cmd_vel", Twist)
+def detection_unitree():
+    dimos = start(6)
 
-    websocket_vis.robot_pose.connect(connection.odom)
-    websocket_vis.path.connect(global_planner.path)
-    websocket_vis.global_costmap.connect(mapper.global_costmap)
+    connection = deploy_connection(dimos)
+    connection.start()
+    # connection.record("unitree_go2_office_walk2")
+    # mapper = deploy_navigation(dimos, connection)
 
-    connection.movecmd.connect(websocket_vis.movecmd)
-    foxglove_bridge = FoxgloveBridge()
+    module3D = dimos.deploy(Detection3DModule, camera_info=ConnectionModule._camera_info())
 
-    websocket_vis.start()
-    foxglove_bridge.start()
-    return websocket_vis, foxglove_bridge
+    module3D.image.connect(connection.video)
+    module3D.pointcloud.connect(connection.lidar)
 
+    module3D.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
+    module3D.detections.transport = LCMTransport("/detections", Detection2DArray)
 
-def deploy_navigation(dimos, connection):
-    mapper = dimos.deploy(Map, voxel_size=0.5, cost_resolution=0.05, global_publish_interval=1.0)
-    mapper.lidar.connect(connection.lidar)
-    mapper.global_map.transport = LCMTransport("/global_map", LidarMessage)
-    mapper.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
-    mapper.local_costmap.transport = LCMTransport("/local_costmap", OccupancyGrid)
+    module3D.detected_pointcloud_0.transport = LCMTransport("/detected/pointcloud/0", PointCloud2)
+    module3D.detected_pointcloud_1.transport = LCMTransport("/detected/pointcloud/1", PointCloud2)
+    module3D.detected_pointcloud_2.transport = LCMTransport("/detected/pointcloud/2", PointCloud2)
 
-    """Deploy and configure navigation modules."""
-    global_planner = dimos.deploy(AstarPlanner)
-    local_planner = dimos.deploy(HolonomicLocalPlanner)
-    navigator = dimos.deploy(
-        BehaviorTreeNavigator,
-        reset_local_planner=local_planner.reset,
-        check_goal_reached=local_planner.is_goal_reached,
-    )
-    frontier_explorer = dimos.deploy(WavefrontFrontierExplorer)
-
-    navigator.goal.transport = LCMTransport("/navigation_goal", PoseStamped)
-    navigator.goal_request.transport = LCMTransport("/goal_request", PoseStamped)
-    navigator.goal_reached.transport = LCMTransport("/goal_reached", Bool)
-    navigator.navigation_state.transport = LCMTransport("/navigation_state", String)
-    navigator.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
-    global_planner.path.transport = LCMTransport("/global_path", Path)
-    local_planner.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
-    frontier_explorer.goal_request.transport = LCMTransport("/goal_request", PoseStamped)
-    frontier_explorer.goal_reached.transport = LCMTransport("/goal_reached", Bool)
-    frontier_explorer.explore_cmd.transport = LCMTransport("/explore_cmd", Bool)
-    frontier_explorer.stop_explore_cmd.transport = LCMTransport("/stop_explore_cmd", Bool)
-
-    global_planner.target.connect(navigator.goal)
-
-    global_planner.global_costmap.connect(mapper.global_costmap)
-    global_planner.odom.connect(connection.odom)
-
-    local_planner.path.connect(global_planner.path)
-    local_planner.local_costmap.connect(mapper.local_costmap)
-    local_planner.odom.connect(connection.odom)
-
-    connection.movecmd.connect(local_planner.cmd_vel)
-
-    navigator.odom.connect(connection.odom)
-
-    frontier_explorer.costmap.connect(mapper.global_costmap)
-    frontier_explorer.odometry.connect(connection.odom)
-    mapper.start()
-    global_planner.start()
-    local_planner.start()
-    navigator.start()
-
-    return mapper, global_planner
-
-
-class UnitreeGo2:
-    def __init__(
-        self,
-        ip: str,
-        connection_type: Optional[str] = "webrtc",
-    ):
-        dimos = start(3)
-
-        connection = dimos.deploy(ConnectionModule, ip, connection_type)
-        connection.lidar.transport = LCMTransport("/lidar", LidarMessage)
-        connection.odom.transport = LCMTransport("/odom", PoseStamped)
-        connection.video.transport = LCMTransport("/image", Image)
-        connection.movecmd.transport = LCMTransport("/cmd_vel", Twist)
-        connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
-        connection.start()
-
-        # connection.record("unitree_raw_webrtc_replay")
-
-        detection = dimos.deploy(Detect2DModule)
-        detection.image.connect(connection.video)
-        detection.detections.transport = LCMTransport("/detections", Detection2DArray)
-        detection.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
-        detection.start()
-
-        mapper, global_planner = deploy_navigation(dimos, connection)
-        deploy_foxglove(dimos, connection, mapper, global_planner)
-
-    def stop(): ...
-
-
-def main():
-    lcm.autoconf()
-    robot = UnitreeGo2(
-        ip=os.getenv("ROBOT_IP"), connection_type=os.getenv("CONNECTION_TYPE", "fake")
-    )
+    module3D.detected_image_0.transport = LCMTransport("/detected/image/0", Image)
+    module3D.detected_image_1.transport = LCMTransport("/detected/image/1", Image)
+    module3D.detected_image_2.transport = LCMTransport("/detected/image/2", Image)
+    module3D.start()
+    # detection.start()
 
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        robot.stop()
+        connection.stop()
+        # mapper.stop()
+        # detection.stop()
         logger.info("Shutting down...")
+
+
+def main():
+    lcm.autoconf()
+    detection_unitree()
 
 
 if __name__ == "__main__":

@@ -80,13 +80,12 @@ class TBuffer(TimestampedCollection[Transform]):
 
     def add(self, transform: Transform) -> None:
         super().add(transform)
-        self._prune_old_transforms()
+        self._prune_old_transforms(transform.ts)
 
-    def _prune_old_transforms(self) -> None:
+    def _prune_old_transforms(self, current_time) -> None:
         if not self._items:
             return
 
-        current_time = time.time()
         cutoff_time = current_time - self.buffer_size
 
         while self._items and self._items[0].ts < cutoff_time:
@@ -113,8 +112,10 @@ class TBuffer(TimestampedCollection[Transform]):
 
         time_range = self.time_range()
         if time_range:
-            start_time = time.strftime("%H:%M:%S", time.localtime(time_range[0]))
-            end_time = time.strftime("%H:%M:%S", time.localtime(time_range[1]))
+            from dimos.types.timestamped import to_human_readable
+
+            start_time = to_human_readable(time_range[0])
+            end_time = to_human_readable(time_range[1])
             duration = time_range[1] - time_range[0]
 
             frame_str = (
