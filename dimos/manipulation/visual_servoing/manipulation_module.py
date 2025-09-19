@@ -131,6 +131,12 @@ class ManipulationModule(Module):
         track_frame_id: str = "world",
         reach_timeout: float = 10.0,
         enable_mobile_base: bool = False,
+        pregrasp_distance: float = 0.25,
+        grasp_distance_range: float = 0.03,
+        grasp_width_offset: float = 0.03,
+        grasp_close_delay: float = 1.0,
+        gripper_max_opening: float = 0.07,
+        retract_distance: float = 0.12,
         **kwargs,
     ):
         """
@@ -147,6 +153,12 @@ class ManipulationModule(Module):
             track_frame_id: TF frame ID for tracking frame (world for mobile base)
             reach_timeout: Timeout for reaching poses
             enable_mobile_base: Enable mobile base control for pose adjustment
+            pregrasp_distance: Distance (m) to hold from target during pre-grasp
+            grasp_distance_range: Range (m) used when interpolating final grasp offset
+            grasp_width_offset: Additional opening (m) to apply when sizing the gripper
+            grasp_close_delay: Delay (s) between reaching grasp pose and closing the gripper
+            gripper_max_opening: Maximum gripper opening (m)
+            retract_distance: Distance (m) to retract after closing the gripper
         """
         super().__init__(**kwargs)
 
@@ -169,12 +181,12 @@ class ManipulationModule(Module):
         self.current_executed_pose = None
         self.waiting_start_time = None
         self.reach_timeout = reach_timeout
-        self.grasp_width_offset = 0.03
-        self.pregrasp_distance = 0.25
-        self.grasp_distance_range = 0.03
-        self.grasp_close_delay = 1.0
+        self.grasp_width_offset = grasp_width_offset
+        self.pregrasp_distance = pregrasp_distance
+        self.grasp_distance_range = grasp_distance_range
+        self.grasp_close_delay = grasp_close_delay
         self.grasp_reached_time = None
-        self.gripper_max_opening = 0.07
+        self.gripper_max_opening = gripper_max_opening
 
         self.workspace_min_radius = 0.2
         self.workspace_max_radius = 1.0
@@ -206,9 +218,12 @@ class ManipulationModule(Module):
         )
         self.place_target_position = None
         self.target_object_height = None
-        self.retract_distance = 0.12
+        self.retract_distance = retract_distance
         self.place_pose = None
         self.retract_pose = None
+
+        # Store current dynamic pitch for direct arm application
+        self.current_dynamic_pitch = 0.0
 
         self.enable_mobile_base = enable_mobile_base
         self.pose_adjusted = False
@@ -216,6 +231,7 @@ class ManipulationModule(Module):
         self.cmd_pitch = 0.0  # Pitch command for mobile base
         self.pose_publisher_thread = None
         self.pose_publisher_stop = threading.Event()
+
 
     @rpc
     def start(self):
@@ -488,18 +504,6 @@ class ManipulationModule(Module):
         if self.grasp_state:
             self.grasp_state.publish(String(data=stage.value))
 
-    def calculate_dynamic_grasp_pitch(self, target_pose: Pose) -> float:
-        """Calculate grasp pitch based on distance from robot base."""
-        position = target_pose.position
-        distance = np.sqrt(position.x**2 + position.y**2 + position.z**2)
-        distance = np.clip(distance, self.workspace_min_radius, self.workspace_max_radius)
-
-        normalized = (distance - self.workspace_min_radius) / (
-            self.workspace_max_radius - self.workspace_min_radius
-        )
-        return self.max_grasp_pitch_degrees - (
-            normalized * (self.max_grasp_pitch_degrees - self.min_grasp_pitch_degrees)
-        )
 
     def check_within_workspace(self, target_pose: Pose) -> bool:
         """Check if pose is within workspace limits."""
@@ -544,6 +548,11 @@ class ManipulationModule(Module):
             _, target_reached = is_target_reached(
                 self.current_executed_pose, ee_pose, position_tolerance=self.pbvs.target_tolerance
             )
+            print(f"Waiting for reach - ee_transform available: {ee_transform is not None}")
+            if ee_transform:
+                print(f"Current EE pose: {ee_pose.position.x:.3f}, {ee_pose.position.y:.3f}, {ee_pose.position.z:.3f}")
+                print(f"Target pose:{self.current_executed_pose.position.x:.3f}, {self.current_executed_pose.position.y:.3f}, {self.current_executed_pose.position.z:.3f}")
+                print(f"Target reached: {target_reached}")
 
             if target_reached:
                 self.waiting_for_reach = False
@@ -622,6 +631,19 @@ class ManipulationModule(Module):
                     )
                 )
         return target_tracked
+
+    def calculate_dynamic_grasp_pitch(self, target_pose: Pose) -> float:
+        """Calculate grasp pitch based on distance from robot base."""
+        position = target_pose.position
+        distance = np.sqrt(position.x**2 + position.y**2 + position.z**2)
+        distance = np.clip(distance, self.workspace_min_radius, self.workspace_max_radius)
+
+        normalized = (distance - self.workspace_min_radius) / (
+            self.workspace_max_radius - self.workspace_min_radius
+        )
+        return self.max_grasp_pitch_degrees - (
+            normalized * (self.max_grasp_pitch_degrees - self.min_grasp_pitch_degrees)
+        )
 
     def reset_to_idle(self):
         """Reset the manipulation system to IDLE state."""
@@ -729,6 +751,8 @@ class ManipulationModule(Module):
             return
 
         dynamic_pitch = self.calculate_dynamic_grasp_pitch(target_in_base)
+        self.current_dynamic_pitch = dynamic_pitch  # Store for direct arm application
+        print(f"Dynamic grasp pitch: {dynamic_pitch:.2f} degrees, {np.deg2rad(dynamic_pitch):.2f} radians")
         target_pose = self.pbvs.compute_control(
             target_in_base, ee_pose, self.pregrasp_distance, dynamic_pitch
         )
@@ -771,6 +795,7 @@ class ManipulationModule(Module):
             return
 
         dynamic_pitch = self.calculate_dynamic_grasp_pitch(target_in_base)
+        self.current_dynamic_pitch = dynamic_pitch  # Store for direct arm application
         normalized_pitch = dynamic_pitch / 90.0
         grasp_distance = -self.grasp_distance_range + (
             2 * self.grasp_distance_range * normalized_pitch
