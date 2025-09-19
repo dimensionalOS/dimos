@@ -100,7 +100,9 @@ class xArm:
     def gotoZero(self):
         self.enable_position_mode()
         # self.arm.move_gohome(wait=True)
-        self.arm.set_position(x=344, y=3.2, z=530, roll=180, pitch=-88.5, yaw=0, speed=50, is_radian=False, wait=True)
+        self.arm.set_position(
+            x=344, y=3.2, z=530, roll=180, pitch=-88.5, yaw=0, speed=50, is_radian=False, wait=True
+        )
 
     def gotoObserve(self):
         """Move to observation position similar to PiperArm"""
@@ -404,7 +406,7 @@ class XArmModule(Module):
         """
         # Extract pitch from quaternion
         euler = quaternion_to_euler(pose.orientation, degrees=False)
-        pitch = np.pi/2 + euler.y
+        pitch = np.pi / 2 + euler.y
         print(f"Using quaternion-extracted pitch: {np.rad2deg(euler.y):.2f}° -> {pitch:.3f} rad")
 
         # 180° X flip transformation matrix
