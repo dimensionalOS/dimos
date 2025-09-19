@@ -25,6 +25,9 @@ import numpy as np
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import create
 from reactivex.observable import Observable
+from reactivex.disposable import Disposable
+import reactivex as rx
+from reactivex import operators as ops
 
 from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.core import Module, Out, rpc
@@ -208,8 +211,11 @@ class ColorCameraModuleConfig(ModuleConfig):
 
 class ColorCameraModule(DaskModule):
     image: Out[Image] = None
+    camera_info: Out[CameraInfo] = None
+
     hardware: ColorCameraHardware = None
-    _module_subscription: Optional[Any] = None  # Subscription disposable
+    _module_subscription: Optional[Disposable] = None
+    _camera_info_subscription: Optional[Disposable] = None
     _skill_stream: Optional[Observable[Image]] = None
     default_config = ColorCameraModuleConfig
 
@@ -226,7 +232,18 @@ class ColorCameraModule(DaskModule):
         if self._module_subscription:
             return "already started"
         stream = self.hardware.color_stream()
+
+        camera_info_stream = self.camera_info_stream(frequency=1.0)
+
+        print("Starting ColorCameraModule with hardware:", camera_info_stream)
+        print(self.hardware.camera_info)
+
+        # take one from the stream
+        print("starting cam info sub")
+        self._camera_info_subscription = camera_info_stream.subscribe(self.camera_info.publish)
+        print("starting image sub")
         self._module_subscription = stream.subscribe(self.image.publish)
+        print("ColorCameraModule started")
 
     @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
     def video_stream(self) -> Image:
@@ -237,10 +254,16 @@ class ColorCameraModule(DaskModule):
         for image in iter(_queue.get, None):
             yield image
 
+    def camera_info_stream(self, frequency: float = 1.0) -> Observable[CameraInfo]:
+        return rx.interval(1.0 / frequency).pipe(ops.map(lambda _: self.hardware.camera_info))
+
     def stop(self):
         if self._module_subscription:
             self._module_subscription.dispose()
             self._module_subscription = None
+        if self._camera_info_subscription:
+            self._camera_info_subscription.dispose()
+            self._camera_info_subscription = None
         # Also stop the hardware if it has a stop method
         if self.hardware and hasattr(self.hardware, "stop"):
             self.hardware.stop()

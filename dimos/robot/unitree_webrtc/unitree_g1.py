@@ -42,17 +42,12 @@ from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
+from dimos.hardware.webcam import ColorCameraModule, Webcam
 
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1", level=logging.INFO)
-
-# try:
-#     from dimos.hardware.zed_camera import ZEDModule
-# except ImportError:
-#     logger.warning("ZEDModule not found. Please install pyzed to use ZED camera functionality.")
-#     ZEDModule = None
 
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
@@ -211,42 +206,16 @@ class UnitreeG1(Robot):
         self.connection.odom_pose.transport = core.LCMTransport("/odom", PoseStamped)
 
     def _deploy_camera(self):
-        """Deploy and configure the ZED camera module (real or fake based on replay_path)."""
-
-        if self.replay_path:
-            # Use FakeZEDModule for replay
-            from dimos.hardware.fake_zed_module import FakeZEDModule
-
-            logger.info(f"Deploying FakeZEDModule for replay from: {self.replay_path}")
-            self.zed_camera = self.dimos.deploy(
-                FakeZEDModule,
-                recording_path=self.replay_path,
-                frame_id="zed_camera",
-            )
-        else:
-            # Use real ZEDModule (with optional recording)
-            logger.info("Deploying ZED camera module...")
-            self.zed_camera = self.dimos.deploy(
-                ZEDModule,
-                camera_id=0,
-                resolution="HD720",
-                depth_mode="NEURAL",
-                fps=30,
-                enable_tracking=True,  # Enable for G1 pose estimation
-                enable_imu_fusion=True,
-                set_floor_as_origin=True,
-                publish_rate=30.0,
-                frame_id="zed_camera",
-                recording_path=self.recording_path,  # Pass recording path if provided
-            )
-
-        # Configure ZED LCM transports (same for both real and fake)
-        self.zed_camera.color_image.transport = core.LCMTransport("/zed/color_image", Image)
-        self.zed_camera.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
-        self.zed_camera.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
-        self.zed_camera.pose.transport = core.LCMTransport("/zed/pose", PoseStamped)
-
-        logger.info("ZED camera module configured")
+        """Deploy and configure a standard webcam module."""
+        logger.info("Deploying standard webcam module...")
+        self.webcam = self.dimos.deploy(
+            ColorCameraModule,
+            hardware=lambda: Webcam(camera_index=0, frequency=30, stereo_slice="left"),
+        )
+        self.webcam.image.transport = core.LCMTransport("/image", Image)
+        self.webcam.camera_info.transport = core.LCMTransport("/image/camera_info", CameraInfo)
+        self.webcam.start()
+        logger.info("Webcam module configured")
 
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
@@ -358,7 +327,7 @@ def main():
     parser = argparse.ArgumentParser(description="Unitree G1 Humanoid Robot Control")
     parser.add_argument("--ip", default=os.getenv("ROBOT_IP"), help="Robot IP address")
     parser.add_argument("--joystick", action="store_true", help="Enable pygame joystick control")
-    parser.add_argument("--camera", action="store_true", help="Enable ZED camera module")
+    parser.add_argument("--camera", action="store_true", help="Enable usb camera module")
     parser.add_argument("--output-dir", help="Output directory for logs/data")
     parser.add_argument("--record", help="Path to save recording")
     parser.add_argument("--replay", help="Path to replay recording from")
