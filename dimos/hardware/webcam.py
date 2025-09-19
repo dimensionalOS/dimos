@@ -33,6 +33,7 @@ from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.core import Module, Out, rpc
 from dimos.core.module import DaskModule, ModuleConfig
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
 from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.protocol.service import Configurable, Service
 from dimos.utils.reactive import backpressure
@@ -156,12 +157,11 @@ class Webcam(ColorCameraHardware[WebcamConfig]):
         image = Image.from_numpy(
             frame_rgb,
             format=ImageFormat.RGB,  # We converted to RGB above
-            frame_id=self._frame("camera"),  # Standard frame ID for camera images
+            frame_id=self._frame("camera_optical"),  # Standard frame ID for camera images
             ts=time.time(),  # Current timestamp
         )
 
         if self.config.stereo_slice in ("left", "right"):
-            image.frame_id = self._frame(f"camera_stereo_{self.config.stereo_slice}")
             half_width = image.width // 2
             if self.config.stereo_slice == "left":
                 image = image.crop(0, 0, half_width, image.height)
@@ -207,6 +207,14 @@ class Webcam(ColorCameraHardware[WebcamConfig]):
 @dataclass
 class ColorCameraModuleConfig(ModuleConfig):
     hardware: Callable[[], ColorCameraHardware] | ColorCameraHardware = Webcam
+    transform: Transform = field(
+        default_factory=lambda: Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="base_link",
+            child_frame_id="camera_link",
+        )
+    )
 
 
 class ColorCameraModule(DaskModule):
@@ -240,7 +248,27 @@ class ColorCameraModule(DaskModule):
 
         # take one from the stream
         print("starting cam info sub")
-        self._camera_info_subscription = camera_info_stream.subscribe(self.camera_info.publish)
+
+        def publish_info(camera_info: CameraInfo):
+            self.camera_info.publish(camera_info)
+
+            if self.config.transform is None:
+                return
+
+            camera_link = self.config.transform
+
+            camera_link.ts = time.time()
+            camera_optical = Transform(
+                translation=Vector3(0.0, 0.0, 0.0),
+                rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
+                frame_id="camera_link",
+                child_frame_id="camera_optical",
+                ts=camera_link.ts,
+            )
+
+            self.tf.publish(camera_link, camera_optical)
+
+        self._camera_info_subscription = camera_info_stream.subscribe(publish_info)
         print("starting image sub")
         self._module_subscription = stream.subscribe(self.image.publish)
         print("ColorCameraModule started")

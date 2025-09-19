@@ -163,7 +163,7 @@ class Detection3DModule(Detection2DModule):
         if not valid_pointclouds:
             # Return empty pointcloud if no valid pointclouds
             return PointCloud2.from_numpy(
-                np.array([]).reshape(0, 3), frame_id="world", timestamp=time.time()
+                np.array([]).reshape(0, 3), frame_id="map", timestamp=time.time()
             )
 
         # Combine all point arrays
@@ -230,7 +230,9 @@ class Detection3DModule(Detection2DModule):
 
         def detection2d_to_3d(args):
             detections, pc = args
-            transform = self.tf.get("camera_optical", "world", detections.image.ts, time_tolerance)
+            if len(detections):
+                print(detections[0].image)
+            transform = self.tf.get("camera_optical", "map", detections.image.ts, time_tolerance)
             return self.process_frame(detections, pc, transform)
 
         combined_stream = self.detection_stream().pipe(

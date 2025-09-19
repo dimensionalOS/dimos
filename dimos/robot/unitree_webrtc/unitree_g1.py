@@ -22,6 +22,7 @@ import os
 import time
 import logging
 from typing import Optional
+from dimos.msgs.geometry_msgs import Transform, Quaternion, Vector3
 
 from dimos import core
 from dimos.core import Module, In, Out, rpc
@@ -43,6 +44,12 @@ from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
 from dimos.hardware.webcam import ColorCameraModule, Webcam
+from dimos.perception.detection2d import Detection3DModule
+from dimos.hardware.zed_camera import camera_info
+
+from dimos.msgs.foxglove_msgs import ImageAnnotations
+
+from dimos.msgs.vision_msgs import Detection2DArray
 
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
@@ -131,7 +138,7 @@ class UnitreeG1(Robot):
             enable_joystick: Enable pygame joystick control
             enable_connection: Enable robot connection module
             enable_ros_bridge: Enable ROS bridge
-            enable_camera: Enable ZED camera module
+            enable_camera: Enable web camera module
         """
         super().__init__()
         self.ip = ip
@@ -162,14 +169,38 @@ class UnitreeG1(Robot):
         self.foxglove_bridge = None
         self.joystick = None
         self.ros_bridge = None
-        self.zed_camera = None
-
+        self.camera = None
         self._setup_directories()
 
     def _setup_directories(self):
         """Setup output directories."""
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
+
+    def _deploy_detection(self):
+        detection = self.dimos.deploy(Detection3DModule, camera_info=camera_info)
+
+        detection.image.connect(self.camera.image)
+        detection.pointcloud.transport = core.LCMTransport("/registered_scan", PointCloud2)
+
+        detection.annotations.transport = core.LCMTransport("/annotations", ImageAnnotations)
+        detection.detections.transport = core.LCMTransport("/detections", Detection2DArray)
+
+        detection.detected_pointcloud_0.transport = core.LCMTransport(
+            "/detected/pointcloud/0", PointCloud2
+        )
+        detection.detected_pointcloud_1.transport = core.LCMTransport(
+            "/detected/pointcloud/1", PointCloud2
+        )
+        detection.detected_pointcloud_2.transport = core.LCMTransport(
+            "/detected/pointcloud/2", PointCloud2
+        )
+
+        detection.detected_image_0.transport = core.LCMTransport("/detected/image/0", Image)
+        detection.detected_image_1.transport = core.LCMTransport("/detected/image/1", Image)
+        detection.detected_image_2.transport = core.LCMTransport("/detected/image/2", Image)
+
+        self.detection = detection
 
     def start(self):
         """Start the robot system with all modules."""
@@ -182,6 +213,7 @@ class UnitreeG1(Robot):
 
         if self.enable_camera:
             self._deploy_camera()
+            self._deploy_detection()
 
         if self.enable_joystick:
             self._deploy_joystick()
@@ -208,13 +240,20 @@ class UnitreeG1(Robot):
     def _deploy_camera(self):
         """Deploy and configure a standard webcam module."""
         logger.info("Deploying standard webcam module...")
-        self.webcam = self.dimos.deploy(
+        self.camera = self.dimos.deploy(
             ColorCameraModule,
-            hardware=lambda: Webcam(camera_index=0, frequency=30, stereo_slice="left"),
+            transform=Transform(
+                translation=Vector3(0.05, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="sensor",
+                child_frame_id="camera_link",
+            ),
+            hardware=lambda: Webcam(
+                camera_index=1, frequency=15, stereo_slice="left", camera_info=camera_info
+            ),
         )
-        self.webcam.image.transport = core.LCMTransport("/image", Image)
-        self.webcam.camera_info.transport = core.LCMTransport("/image/camera_info", CameraInfo)
-        self.webcam.start()
+        self.camera.image.transport = core.LCMTransport("/image", Image)
+        self.camera.camera_info.transport = core.LCMTransport("/image/camera_info", CameraInfo)
         logger.info("Webcam module configured")
 
     def _deploy_visualization(self):
@@ -274,6 +313,10 @@ class UnitreeG1(Robot):
 
         if self.joystick:
             self.joystick.start()
+
+        if self.camera:
+            self.camera.start()
+            self.detection.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
