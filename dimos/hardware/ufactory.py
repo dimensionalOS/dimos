@@ -81,7 +81,6 @@ class xArm:
         self.arm.motion_enable(enable=True)
         self.arm.set_mode(0)
         self.arm.set_state(state=0)
-        self.R_base_t0 = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
         # self.gotoZero()
 
     def get_arm_length(self):
@@ -100,7 +99,8 @@ class xArm:
 
     def gotoZero(self):
         self.enable_position_mode()
-        self.arm.move_gohome(wait=True)
+        # self.arm.move_gohome(wait=True)
+        self.arm.set_position(x=344, y=3.2, z=530, roll=180, pitch=-88.5, yaw=0, speed=50, is_radian=False, wait=True)
 
     def gotoObserve(self):
         """Move to observation position similar to PiperArm"""
@@ -234,6 +234,7 @@ class xArm:
             logger.error(f"Failed to enable gripper, code: {code}")
         else:
             logger.info("Gripper enabled")
+        code = self.arm.set_gripper_speed(5000)
 
     def release_gripper(self):
         """Release gripper by opening to 100mm (10cm)"""
@@ -397,10 +398,14 @@ class XArmModule(Module):
         Transform pose from command frame to arm frame.
         Applies 180° X flip and pitch-dependent Y rotation.
         Stores the correction for consistent feedback.
+
+        Args:
+            pose: Target pose to transform
         """
-        # Extract pitch from pose orientation
+        # Extract pitch from quaternion
         euler = quaternion_to_euler(pose.orientation, degrees=False)
-        pitch = np.pi - euler.y
+        pitch = np.pi/2 + euler.y
+        print(f"Using quaternion-extracted pitch: {np.rad2deg(euler.y):.2f}° -> {pitch:.3f} rad")
 
         # 180° X flip transformation matrix
         rotation_transform1 = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
@@ -442,6 +447,10 @@ class XArmModule(Module):
         pose_matrix = pose_to_matrix(pose)
         corrected = pose_matrix @ self._last_command_correction_inverse
         return matrix_to_pose(corrected)
+
+    def _reset_command_correction(self):
+        """Reset cached command-to-arm correction after direct-arm motions."""
+        self._last_command_correction_inverse = None
 
     @rpc
     def start(self):
@@ -546,6 +555,7 @@ class XArmModule(Module):
         """Enable the xArm."""
         if self.arm:
             self.arm.enable()
+            self.arm.enable_gripper()
 
     @rpc
     def disable(self):
@@ -558,12 +568,14 @@ class XArmModule(Module):
         """Move arm to zero position."""
         if self.arm:
             self.arm.gotoZero()
+            # self._reset_command_correction()
 
     @rpc
     def goto_observe(self):
         """Move arm to observe position."""
         if self.arm:
             self.arm.gotoObserve()
+            # self._reset_command_correction()
         else:
             logger.warning("Cannot go to observe position - arm not initialized yet")
 
@@ -572,6 +584,7 @@ class XArmModule(Module):
         """Perform soft stop."""
         if self.arm:
             self.arm.softStop()
+            # self._reset_command_correction()
 
     @rpc
     def cmd_ee_pose(self, pose: Pose, line_mode: bool = False):
@@ -584,11 +597,11 @@ class XArmModule(Module):
         """
         if self.arm:
             # Transform from command frame to arm frame
-            target_pose = self._command_to_arm_frame(pose)
-            print("Original pose:", pose)
-            print(f"Commanding rotated pose: {target_pose}")
+            # target_pose = self._command_to_arm_frame(pose)
+            # print("Original pose:", pose)
+            # print(f"Commanding rotated pose: {target_pose}")
 
-            self.arm.cmd_ee_pose(target_pose, line_mode)
+            self.arm.cmd_ee_pose(pose, line_mode)
 
     @rpc
     def get_ee_pose(self) -> Pose:
@@ -603,8 +616,8 @@ class XArmModule(Module):
             raw_pose = self.arm.get_ee_pose()
             # Transform from arm frame to command frame
             # print("Raw EE pose from arm:", raw_pose)
-            return self._arm_to_command_frame(raw_pose)
-            # return raw_pose
+            # return self._arm_to_command_frame(raw_pose)
+            return raw_pose
         # Return a default pose if arm not initialized
         return Pose(position=MsgVector3(0.5, 0.0, 0.2), orientation=Quaternion(0.0, 0.0, 0.0, 1.0))
 
@@ -675,6 +688,7 @@ class XArmModule(Module):
         """Reset the arm."""
         if self.arm:
             self.arm.resetArm()
+            # self._reset_command_correction()
 
     @rpc
     def cleanup(self):
@@ -765,9 +779,13 @@ def test_xarm():
     arm.enable()
     arm.gotoObserve()
     print(arm.get_ee_pose())
+    arm.enable_gripper()
+    time.sleep(2)
+    arm.cmd_gripper_ctrl(0.1)
     time.sleep(2)
     arm.gotoZero()
     print(arm.get_ee_pose())
+    arm.close_gripper()
     # arm.disconnect()
     print("disconnected")
 
