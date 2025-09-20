@@ -42,10 +42,11 @@ ImageDetection = Tuple[Image, Detection2D]
 
 class Detection3DModule(Detection2DModule):
     camera_info: CameraInfo
+    height_filter: Optional[float]
 
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
-    # type: ignore
+
     detections: Out[Detection2DArray] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
@@ -56,9 +57,13 @@ class Detection3DModule(Detection2DModule):
     detected_image_1: Out[Image] = None  # type: ignore
     detected_image_2: Out[Image] = None  # type: ignore
 
-    def __init__(self, camera_info: CameraInfo, *args, **kwargs):
+    def __init__(
+        self, camera_info: CameraInfo, height_filter: Optional[float] = -0.05, *args, **kwargs
+    ):
+        self.height_filter = height_filter
         self.camera_info = camera_info
-        super().__init__(*args, **kwargs)
+
+        Detection2DModule.__init__(self, *args, **kwargs)
 
     def detect(self, image: Image) -> ImageDetections:
         detections = Detection2D.from_detector(
@@ -194,7 +199,8 @@ class Detection3DModule(Detection2DModule):
             return pc
 
     def cleanup_pointcloud(self, pc: PointCloud2) -> PointCloud2:
-        # height = pc.filter_by_height(-0.05)
+        if self.height_filter is not None:
+            pc = pc.filter_by_height(self.height_filter)
         statistical, _ = pc.pointcloud.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
         return PointCloud2(statistical, pc.frame_id, pc.ts)
 

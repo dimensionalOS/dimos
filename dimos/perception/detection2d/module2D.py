@@ -23,7 +23,7 @@ from reactivex.observable import Observable
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.type import Detection2D, ImageDetections2D
+from dimos.perception.detection2d.type import ImageDetections2D
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.utils.reactive import backpressure
 
