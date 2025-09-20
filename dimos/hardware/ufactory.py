@@ -87,6 +87,9 @@ class xArm:
 
         self.arm = XArmAPI(self.ip)
         print("initializing arm")
+
+        # Initialize error/warn state tracking
+        self.current_code = None
         self.arm.motion_enable(enable=True)
         self.arm.set_mode(0)
         self.arm.set_state(state=0)
@@ -99,7 +102,8 @@ class xArm:
         self.arm.motion_enable(enable=True)
         self.arm.set_state(state=0)
         self.arm.arm.set_self_collision_detection(True)
-        self.arm.arm.set_collision_sensitivity(0)
+        self.arm.arm.set_collision_sensitivity(1)
+        self.enable_gripper()
 
     def disable(self):
         self.arm.motion_enable(enable=False)
@@ -174,9 +178,14 @@ class xArm:
             wait=False,
             radius=0 if line_mode else 2000,
         )
+
+        self.current_code = code
+
         if code != 0:
             logger.error(f"Failed to set position, code: {code}")
-
+            return code
+        return code
+    
     def cmd_ee_pose(self, pose: Pose, line_mode=False):
         """Command end-effector to target pose using Pose message"""
         # Convert quaternion to euler angles
@@ -187,7 +196,7 @@ class xArm:
         euler = quaternion_to_euler(pose.orientation, degrees=True)
 
         # Command the pose
-        self.cmd_ee_pose_values(
+        code = self.cmd_ee_pose_values(
             pose.position.x,
             pose.position.y,
             pose.position.z,
@@ -196,6 +205,7 @@ class xArm:
             -euler.z,
             line_mode,
         )
+        return code
 
     def get_ee_pose(self):
         """Return the current end-effector pose as Pose message with position in meters and quaternion orientation"""
@@ -227,6 +237,7 @@ class xArm:
         """Command end-effector gripper"""
         # xArm gripper position is 0-850 (0 = closed, 850 = open)
         # Convert from meters to gripper units
+        self.enable_gripper()
         gripper_pos = int(position * 8500)  # 0.1m = 850 units
         gripper_pos = max(0, min(850, gripper_pos))  # Clamp to valid range
 
@@ -331,6 +342,14 @@ class xArm:
 
         return object_present
 
+    def clear_errors(self):
+        """Clear arm errors using basic SDK methods."""
+        logger.info("Clearing arm errors...")
+        self.arm.clean_error()
+        self.enable()
+        # Reset our stored error codes after clearing
+        logger.info("Arm errors cleared")
+
     def resetArm(self):
         """Reset the arm to initial state"""
         logger.info("Resetting arm...")
@@ -338,6 +357,7 @@ class xArm:
         self.arm.set_mode(0)
         self.arm.set_state(0)
         logger.info("Arm reset complete")
+
 
 
 class XArmModule(Module):
@@ -575,7 +595,8 @@ class XArmModule(Module):
         """
         if self.arm:
             self.last_commanded_pose = pose
-            self.arm.cmd_ee_pose(pose, line_mode)
+            code = self.arm.cmd_ee_pose(pose, line_mode)
+            return code
 
     @rpc
     def get_ee_pose(self) -> Pose:
@@ -656,6 +677,23 @@ class XArmModule(Module):
         if self.arm:
             self.arm.resetArm()
             # self._reset_command_correction()
+
+    @rpc
+    def check_arm_errors(self) -> bool:
+        """Check if arm has any errors.
+
+        Returns:
+            True if errors detected, False if arm is normal
+        """
+        if self.arm:
+            return self.arm.current_code
+        return True  # Assume error if arm not initialized
+
+    @rpc
+    def clear_errors(self):
+        """Clear arm errors."""
+        if self.arm:
+            self.arm.clear_errors()
 
     @rpc
     def cleanup(self):
@@ -740,23 +778,61 @@ def TestXarmBridge(arm_ip: str = None, arm_type: str = "xArm7"):
         time.sleep(0.01)
 
 
+def test_simple_error_clearing():
+    """Simple test for basic error clearing functionality."""
+    print("=== Simple xArm Error Clearing Test ===")
+
+    arm = xArm(ip="10.0.0.197", xarm_type="xarm7")
+
+    try:
+        print("Enabling arm...")
+        arm.enable()
+
+        print("Going to observe position...")
+        arm.gotoObserve()
+
+        print("Testing error clearing...")
+        arm.clear_errors()
+
+        print("Going to zero position...")
+        arm.gotoZero()
+
+        print("Test completed successfully!")
+
+    except Exception as e:
+        print(f"Test error: {e}")
+        print("Attempting to clear errors...")
+        arm.clear_errors()
+
+
 def test_xarm():
     """Test function for xArm - moved to avoid circular imports."""
     arm = xArm(ip="10.0.0.197", xarm_type="xarm7")
-    arm.enable()
-    arm.gotoObserve()
-    print(arm.get_ee_pose())
-    arm.enable_gripper()
-    time.sleep(2)
+    # arm.enable()
+    # arm.gotoObserve()
+    # print(arm.get_ee_pose())
+    # arm.enable_gripper()
+    # time.sleep(2)
     arm.cmd_gripper_ctrl(0.1)
-    time.sleep(2)
-    arm.gotoZero()
-    print(arm.get_ee_pose())
+    # time.sleep(2)
+    # arm.gotoZero()
+    # print(arm.get_ee_pose())
     arm.close_gripper()
+    arm.arm.set_gripper_enable(False)
+    
+    
     # arm.disconnect()
     print("disconnected")
 
 
 if __name__ == "__main__":
-    # TestXarmBridge(arm_ip="192.168.1.197", arm_type="xarm7")
+    # Choose which test to run:
+
+    # Original basic test
     test_xarm()
+
+    # Simple error clearing test
+    # test_simple_error_clearing()
+
+    # Bridge test
+    # TestXarmBridge(arm_ip="192.168.1.197", arm_type="xarm7")
