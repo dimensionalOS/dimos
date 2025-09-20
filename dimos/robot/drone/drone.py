@@ -49,6 +49,7 @@ class Drone(Robot):
         video_port: int = 5600,
         camera_intrinsics: Optional[list] = None,
         output_dir: str = None,
+        outdoor: bool = False,
     ):
         """Initialize drone robot.
 
@@ -57,12 +58,14 @@ class Drone(Robot):
             video_port: UDP port for video stream
             camera_intrinsics: Camera intrinsics [fx, fy, cx, cy]
             output_dir: Directory for outputs
+            outdoor: Use GPS only mode (no velocity integration)
         """
         super().__init__()
 
         self.connection_string = connection_string
         self.video_port = video_port
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
+        self.outdoor = outdoor
 
         if camera_intrinsics is None:
             # Assuming 1920x1080 with typical FOV
@@ -113,6 +116,7 @@ class Drone(Robot):
             DroneConnectionModule,
             connection_string=self.connection_string,
             video_port=self.video_port,
+            outdoor=self.outdoor,
         )
 
         # Configure LCM transports
@@ -239,6 +243,19 @@ class Drone(Robot):
         """
         return self.connection.set_mode(mode)
 
+    def fly_to(self, lat: float, lon: float, alt: float) -> bool:
+        """Fly to GPS coordinates.
+
+        Args:
+            lat: Latitude in degrees
+            lon: Longitude in degrees
+            alt: Altitude in meters (relative to home)
+
+        Returns:
+            True if command sent successfully
+        """
+        return self.connection.fly_to(lat, lon, alt)
+
     def get_single_rgb_frame(self, timeout: float = 2.0) -> Optional[Image]:
         """Get a single RGB frame from camera.
 
@@ -280,6 +297,11 @@ def main():
     parser.add_argument(
         "--test", action="store_true", help="Run test commands (takeoff, land, capture frame)"
     )
+    parser.add_argument(
+        "--outdoor",
+        action="store_true",
+        help="Outdoor mode - use GPS only, no velocity integration",
+    )
     args = parser.parse_args()
 
     # Configure logging
@@ -309,7 +331,7 @@ def main():
     # Configure LCM
     pubsub.lcm.autoconf()
 
-    drone = Drone(connection_string=connection, video_port=video_port)
+    drone = Drone(connection_string=connection, video_port=video_port, outdoor=args.outdoor)
 
     drone.start()
 
@@ -323,8 +345,83 @@ def main():
     print("  • /drone/depth_colorized - Colorized depth (Image)")
     print("  • /drone/camera_info    - Camera calibration")
     print("  • /drone/cmd_vel        - Movement commands (Vector3)")
-    print("\nPress Ctrl+C to stop the system...")
 
+    # Start interactive command thread
+    import threading
+    import re
+
+    def command_loop():
+        """Interactive command loop for testing."""
+        print("\n" + "=" * 60)
+        print("INTERACTIVE MODE - Type commands:")
+        print("  fly_to(lat, lon, alt) - Fly to GPS coordinates")
+        print("  takeoff(alt) - Takeoff to altitude")
+        print("  land() - Land the drone")
+        print("  arm() - Arm the drone")
+        print("  disarm() - Disarm the drone")
+        print("  status - Show current status")
+        print("  quit - Exit the program")
+        print("=" * 60 + "\n")
+
+        while True:
+            try:
+                cmd = input("drone> ").strip()
+
+                if cmd.lower() == "quit":
+                    print("Exiting...")
+                    drone.stop()
+                    import sys
+
+                    sys.exit(0)
+
+                # Parse fly_to command
+                fly_to_match = re.match(
+                    r"fly_to\s*\(\s*([-.\d]+)\s*,\s*([-.\d]+)\s*,\s*([-.\d]+)\s*\)", cmd
+                )
+                if fly_to_match:
+                    lat = float(fly_to_match.group(1))
+                    lon = float(fly_to_match.group(2))
+                    alt = float(fly_to_match.group(3))
+                    print(f"Flying to: lat={lat}, lon={lon}, alt={alt}m")
+                    result = drone.fly_to(lat, lon, alt)
+                    print(f"Result: {result}")
+                    continue
+
+                # Parse takeoff command
+                takeoff_match = re.match(r"takeoff\s*\(\s*([-.\d]+)\s*\)", cmd)
+                if takeoff_match:
+                    alt = float(takeoff_match.group(1))
+                    print(f"Taking off to {alt}m")
+                    result = drone.takeoff(alt)
+                    print(f"Result: {result}")
+                    continue
+
+                # Parse simple commands
+                if cmd == "land()":
+                    print("Landing...")
+                    result = drone.land()
+                    print(f"Result: {result}")
+                elif cmd == "arm()":
+                    print("Arming...")
+                    result = drone.arm()
+                    print(f"Result: {result}")
+                elif cmd == "disarm()":
+                    print("Disarming...")
+                    result = drone.disarm()
+                    print(f"Result: {result}")
+                elif cmd == "status":
+                    print("Status:", drone.get_status())
+                elif cmd:
+                    print(f"Unknown command: {cmd}")
+
+            except Exception as e:
+                print(f"Error: {e}")
+
+    # Start command thread
+    cmd_thread = threading.Thread(target=command_loop, daemon=True)
+    cmd_thread.start()
+
+    # Keep main thread alive
     try:
         while True:
             time.sleep(1)
