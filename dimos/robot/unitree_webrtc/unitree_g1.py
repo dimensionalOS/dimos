@@ -18,25 +18,11 @@ Unitree G1 humanoid robot.
 Minimal implementation using WebRTC connection for robot control.
 """
 
+import logging
 import os
 import time
-import logging
 from typing import Optional
-from dimos.msgs.geometry_msgs import Transform, Quaternion, Vector3
 
-from dimos import core
-from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs import Image, CameraInfo, PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol import pubsub
-from dimos.protocol.pubsub.lcmpubsub import LCM
-from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from nav_msgs.msg import Odometry as ROSOdometry
 from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
@@ -49,11 +35,30 @@ from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
-
+from dimos.msgs.geometry_msgs import (
+    PoseStamped,
+    Quaternion,
+    Transform,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs import Detection2DArray
-
+from dimos.perception.detection2d import Detection3DModule
+from dimos.protocol import pubsub
+from dimos.protocol.pubsub.lcmpubsub import LCM
+from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.robot.robot import Robot
+from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
+from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
+from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1", level=logging.INFO)
 
@@ -241,6 +246,7 @@ class UnitreeG1(Robot):
     def _deploy_camera(self):
         """Deploy and configure a standard webcam module."""
         logger.info("Deploying standard webcam module...")
+
         self.camera = self.dimos.deploy(
             CameraModule,
             transform=Transform(
@@ -301,8 +307,12 @@ class UnitreeG1(Robot):
         )
 
         # Add /registered_scan topic from ROS to DIMOS
+        # self.ros_bridge.add_topic(
+        #    "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
+        # )
+
         self.ros_bridge.add_topic(
-            "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
+            "/explored_areas", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
         logger.info(
@@ -366,8 +376,9 @@ class UnitreeG1(Robot):
 
 def main():
     """Main entry point for testing."""
-    import os
     import argparse
+    import os
+
     from dotenv import load_dotenv
 
     load_dotenv()
