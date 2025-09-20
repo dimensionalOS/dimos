@@ -143,9 +143,7 @@ class xArm:
         target = np.array(angles)
         # self.enable_joint_mode()
         # Move to target position
-        self.arm.set_servo_angle(
-            angle=target.tolist(), speed=speed, wait=True, is_radian=is_radian
-        )
+        self.arm.set_servo_angle(angle=target.tolist(), speed=speed, wait=True, is_radian=is_radian)
 
     def enable_joint_mode(self):
         self.arm.set_mode(1)
@@ -433,7 +431,6 @@ class XArmModule(Module):
         self.arm = xArm(ip=self.arm_ip, xarm_type=self.arm_type)
         self.arm.enable()
         self.arm.enable_gripper()
-    
 
         # Start publishing EE pose
         self._running = True
