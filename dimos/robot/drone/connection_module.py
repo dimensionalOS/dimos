@@ -20,7 +20,7 @@ from typing import Optional
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.std_msgs import String
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.protocol.skill.skill import skill
@@ -53,16 +53,23 @@ class DroneConnectionModule(Module):
     _latest_video_frame: Optional[Image] = None
 
     def __init__(
-        self, connection_string: str = "udp:0.0.0.0:14550", video_port: int = 5600, *args, **kwargs
+        self,
+        connection_string: str = "udp:0.0.0.0:14550",
+        video_port: int = 5600,
+        outdoor: bool = False,
+        *args,
+        **kwargs,
     ):
         """Initialize drone connection module.
 
         Args:
             connection_string: MAVLink connection string
             video_port: UDP port for video stream
+            outdoor: Use GPS only mode (no velocity integration)
         """
         self.connection_string = connection_string
         self.video_port = video_port
+        self.outdoor = outdoor
         self.connection = None
         self.video_stream = None
         self._latest_video_frame = None
@@ -79,7 +86,7 @@ class DroneConnectionModule(Module):
             self.connection = FakeMavlinkConnection("replay")
             self.video_stream = FakeDJIVideoStream(port=self.video_port)
         else:
-            self.connection = MavlinkConnection(self.connection_string)
+            self.connection = MavlinkConnection(self.connection_string, outdoor=self.outdoor)
             self.connection.connect()
 
             self.video_stream = DJIDroneVideoStream(port=self.video_port)
@@ -123,13 +130,6 @@ class DroneConnectionModule(Module):
 
     def _store_and_publish_frame(self, frame: Image):
         """Store the latest video frame and publish it."""
-        if self.connection_string == "replay" and frame.format == ImageFormat.BGR:
-            # Replay data is RGB mislabeled as BGR, need to swap channels
-            import cv2
-
-            frame_data_corrected = cv2.cvtColor(frame.data, cv2.COLOR_RGB2BGR)
-            frame = Image(data=frame_data_corrected, format=ImageFormat.BGR)
-
         self._latest_video_frame = frame
         self.video.publish(frame)
 
@@ -220,7 +220,7 @@ class DroneConnectionModule(Module):
         """
         return self._status.copy()
 
-    @rpc
+    @skill()
     def move(self, vector: Vector3, duration: float = 0.0):
         """Send movement command to drone.
 
@@ -231,7 +231,7 @@ class DroneConnectionModule(Module):
         if self.connection:
             self.connection.move(vector, duration)
 
-    @rpc
+    @skill()
     def takeoff(self, altitude: float = 3.0) -> bool:
         """Takeoff to specified altitude.
 
@@ -245,7 +245,7 @@ class DroneConnectionModule(Module):
             return self.connection.takeoff(altitude)
         return False
 
-    @rpc
+    @skill()
     def land(self) -> bool:
         """Land the drone.
 
@@ -256,7 +256,7 @@ class DroneConnectionModule(Module):
             return self.connection.land()
         return False
 
-    @rpc
+    @skill()
     def arm(self) -> bool:
         """Arm the drone.
 
@@ -267,7 +267,7 @@ class DroneConnectionModule(Module):
             return self.connection.arm()
         return False
 
-    @rpc
+    @skill()
     def disarm(self) -> bool:
         """Disarm the drone.
 
@@ -278,7 +278,7 @@ class DroneConnectionModule(Module):
             return self.connection.disarm()
         return False
 
-    @rpc
+    @skill()
     def set_mode(self, mode: str) -> bool:
         """Set flight mode.
 
@@ -290,6 +290,22 @@ class DroneConnectionModule(Module):
         """
         if self.connection:
             return self.connection.set_mode(mode)
+        return False
+
+    @skill()
+    def fly_to(self, lat: float, lon: float, alt: float) -> bool:
+        """Fly drone to GPS coordinates.
+
+        Args:
+            lat: Latitude in degrees
+            lon: Longitude in degrees
+            alt: Altitude in meters (relative to home)
+
+        Returns:
+            True if command sent successfully
+        """
+        if self.connection:
+            return self.connection.fly_to(lat, lon, alt)
         return False
 
     @rpc
