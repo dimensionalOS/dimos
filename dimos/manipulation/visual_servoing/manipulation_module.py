@@ -63,6 +63,7 @@ class GraspStage(Enum):
     CLOSE_AND_RETRACT = "close_and_retract"
     PLACE = "place"
     RETRACT = "retract"
+    RECOVERY = "recovery"  # Error recovery state
 
 
 class Feedback:
@@ -205,6 +206,11 @@ class ManipulationModule(Module):
         self.task_failed = False
         self.overall_success = None
         self.task_running = False
+
+        # Retry logic for timeouts
+        self.retry_count = 0
+        self.max_retries = 1  # Retry once after going to recovery
+        self.current_retry_pose = None  # Store pose for retry
         self.latest_rgb = None
         self.latest_depth = None
         self.latest_camera_info = None
@@ -363,7 +369,11 @@ class ManipulationModule(Module):
             return "execute"
         elif key_code == ord("g"):
             logger.info("Opening gripper")
-            self.arm.release_gripper()
+            try:
+                self.arm.release_gripper()
+            except Exception as e:
+                logger.error(f"Failed to release gripper: {e}")
+                return "release_failed"
             return "release"
 
         return ""
@@ -559,8 +569,18 @@ class ManipulationModule(Module):
         if self.grasp_stage == GraspStage.RETRACT or self.grasp_stage == GraspStage.PLACE:
             return True
 
-        self.task_failed = True
-        return False
+        # Check if we should retry or fail
+        if self.retry_count < self.max_retries:
+            logger.info(f"Timeout occurred, will retry after recovery (attempt {self.retry_count + 1}/{self.max_retries + 1})")
+            self.current_retry_pose = self.current_executed_pose
+            self.retry_count += 1
+            self.waiting_for_reach = False
+            self.waiting_start_time = None
+            return False  # Indicates timeout, will trigger recovery
+        else:
+            logger.error(f"Max retries ({self.max_retries}) reached, failing task")
+            self.task_failed = True
+            return False
 
     def _get_target_in_base_frame(self) -> Optional[Pose]:
         """Get the tracked target transformed to base_link frame for grasp generation."""
@@ -639,6 +659,10 @@ class ManipulationModule(Module):
         self.reached_poses.clear()  # Clear pose history
         self.pose_adjusted = False
 
+        # Reset retry logic
+        self.retry_count = 0
+        self.current_retry_pose = None
+
         if self.enable_mobile_base and self.cmd_vel:
             stop_cmd = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0))
             self.cmd_vel.publish(stop_cmd)
@@ -696,6 +720,13 @@ class ManipulationModule(Module):
                 time.sleep(0.5)
                 self.reached_poses.append(self.current_executed_pose)
                 self.waiting_for_reach = False
+                # Reset retry count on successful reach
+                self.retry_count = 0
+            else:
+                # Timeout occurred, go to recovery to retry
+                if not self.task_failed:  # Only if we haven't exceeded max retries
+                    logger.info("Pre-grasp movement timed out, going to recovery for retry")
+                    self.set_grasp_stage(GraspStage.RECOVERY)
             return
 
         if not self.pbvs.current_target:
@@ -742,7 +773,12 @@ class ManipulationModule(Module):
         logger.info(
             f"Moving to pre-grasp position (sample {len(self.reached_poses) + 1}/{self.pose_history_size})"
         )
-        self.arm.cmd_ee_pose(target_pose)
+        code = self.arm.cmd_ee_pose(target_pose)
+        if code != 0:
+            # goto recover state on error
+            self.set_grasp_stage(GraspStage.RECOVERY)
+            return
+        logger.info(f"PRE_GRASP cmd_ee_pose returned code: {code}")
         self.current_executed_pose = target_pose
         self.waiting_for_reach = True
         self.waiting_start_time = time.time()
@@ -752,6 +788,13 @@ class ManipulationModule(Module):
         if self.waiting_for_reach:
             if self._wait_for_reach():
                 self.grasp_reached_time = time.time()
+                # Reset retry count on successful reach
+                self.retry_count = 0
+            else:
+                # Timeout occurred, go to recovery to retry
+                if not self.task_failed:  # Only if we haven't exceeded max retries
+                    logger.info("Grasp movement timed out, going to recovery for retry")
+                    self.set_grasp_stage(GraspStage.RECOVERY)
             return
 
         if self.grasp_reached_time:
@@ -801,8 +844,18 @@ class ManipulationModule(Module):
             )
 
             logger.info(f"Moving to grasp position, gripper={gripper_opening * 1000:.1f}mm")
-            self.arm.cmd_gripper_ctrl(gripper_opening)
-            self.arm.cmd_ee_pose(target_pose, line_mode=False)
+            try:
+                self.arm.cmd_gripper_ctrl(gripper_opening)
+            except Exception as e:
+                logger.error(f"Gripper control failed: {e}")
+                self.set_grasp_stage(GraspStage.RECOVERY)
+                return
+            code = self.arm.cmd_ee_pose(target_pose, line_mode=False)
+            if code != 0:
+                # goto recover state on error
+                self.set_grasp_stage(GraspStage.RECOVERY)
+                return
+            logger.info(f"GRASP cmd_ee_pose returned code: {code}")
             self.current_executed_pose = target_pose
             self.waiting_for_reach = True
             self.waiting_start_time = time.time()
@@ -811,7 +864,11 @@ class ManipulationModule(Module):
         """Execute the retraction sequence after gripper has been closed."""
         if self.waiting_for_reach:
             if self._wait_for_reach():
-                self.pick_success = self.arm.gripper_object_detected()
+                try:
+                    self.pick_success = self.arm.gripper_object_detected()
+                except Exception as e:
+                    logger.error(f"Gripper object detection failed: {e}")
+                    self.pick_success = False
                 if self.pick_success:
                     logger.info("Object successfully grasped")
                     if self.place_target_position is not None:
@@ -822,12 +879,29 @@ class ManipulationModule(Module):
                     logger.error("No object detected in gripper")
                     self.task_failed = True
                     self.overall_success = False
+                # Reset retry count on successful reach
+                self.retry_count = 0
+            else:
+                # Timeout occurred, go to recovery to retry
+                if not self.task_failed:  # Only if we haven't exceeded max retries
+                    logger.info("Close and retract movement timed out, going to recovery for retry")
+                    self.set_grasp_stage(GraspStage.RECOVERY)
             return
 
         if self.final_pregrasp_pose:
             logger.info("Closing gripper and retracting")
-            self.arm.close_gripper()
-            self.arm.cmd_ee_pose(self.final_pregrasp_pose, line_mode=True)
+            try:
+                self.arm.close_gripper()
+            except Exception as e:
+                logger.error(f"Gripper close failed: {e}")
+                self.set_grasp_stage(GraspStage.RECOVERY)
+                return
+            code = self.arm.cmd_ee_pose(self.final_pregrasp_pose, line_mode=True)
+            if code != 0:
+                # goto recover state on error
+                self.set_grasp_stage(GraspStage.RECOVERY)
+                return
+            logger.info(f"CLOSE_AND_RETRACT cmd_ee_pose returned code: {code}")
             self.current_executed_pose = self.final_pregrasp_pose
             self.waiting_for_reach = True
             self.waiting_start_time = time.time()
@@ -837,16 +911,33 @@ class ManipulationModule(Module):
         if self.waiting_for_reach:
             if self._wait_for_reach():
                 logger.info("Releasing object")
-                self.arm.release_gripper()
+                try:
+                    self.arm.release_gripper()
+                except Exception as e:
+                    logger.error(f"Gripper release failed: {e}")
+                    self.set_grasp_stage(GraspStage.RECOVERY)
+                    return
                 time.sleep(1.0)
                 self.place_pose = self.current_executed_pose
                 self.set_grasp_stage(GraspStage.RETRACT)
+                # Reset retry count on successful reach
+                self.retry_count = 0
+            else:
+                # Timeout occurred, go to recovery to retry
+                if not self.task_failed:  # Only if we haven't exceeded max retries
+                    logger.info("Place movement timed out, going to recovery for retry")
+                    self.set_grasp_stage(GraspStage.RECOVERY)
             return
 
         place_pose = self.get_place_target_pose()
         if place_pose:
             logger.info("Moving to place position")
-            self.arm.cmd_ee_pose(place_pose, line_mode=False)
+            code = self.arm.cmd_ee_pose(place_pose, line_mode=False)
+            if code != 0:
+                # goto recover state on error
+                self.set_grasp_stage(GraspStage.RECOVERY)
+                return
+            logger.info(f"PLACE cmd_ee_pose returned code: {code}")
             self.current_executed_pose = place_pose
             self.waiting_for_reach = True
             self.waiting_start_time = time.time()
@@ -860,8 +951,19 @@ class ManipulationModule(Module):
             if self._wait_for_reach():
                 logger.info("Retraction complete")
                 self.arm.goto_observe()
-                self.arm.close_gripper()
+                try:
+                    self.arm.close_gripper()
+                except Exception as e:
+                    logger.error(f"Gripper close failed during retract: {e}")
+                    # Don't go to recovery here, task is essentially complete
                 self.overall_success = True
+                # Reset retry count on successful reach
+                self.retry_count = 0
+            else:
+                # Timeout occurred, go to recovery to retry
+                if not self.task_failed:  # Only if we haven't exceeded max retries
+                    logger.info("Retract movement timed out, going to recovery for retry")
+                    self.set_grasp_stage(GraspStage.RECOVERY)
             return
 
         if self.place_pose:
@@ -870,13 +972,45 @@ class ManipulationModule(Module):
                 self.place_pose, self.home_pose, self.retract_distance, pose_pitch
             )
             logger.info("Retracting from place position")
-            self.arm.cmd_ee_pose(self.retract_pose, line_mode=True)
+            code = self.arm.cmd_ee_pose(self.retract_pose, line_mode=True)
+            if code != 0:
+                # goto recover state on error
+                self.set_grasp_stage(GraspStage.RECOVERY)
+                return
+            logger.info(f"RETRACT cmd_ee_pose returned code: {code}")
             self.current_executed_pose = self.retract_pose
             self.waiting_for_reach = True
             self.waiting_start_time = time.time()
         else:
             logger.error("No place pose for retraction")
             self.task_failed = True
+
+    def execute_recovery(self):
+        """Execute recovery state - clear errors and retry if applicable."""
+        logger.info("In recovery state")
+
+        self.arm.clear_errors()
+        # Go to observe position to clear any potential collision state
+        self.arm.goto_observe()
+
+        # If we have a stage to retry, go back to that stage
+        if self.current_retry_pose is not None:
+            logger.info("Recovery complete, returning to previous stage to retry")
+            # Clear the retry pose - the stage will handle movement with its own logic
+            self.current_retry_pose = None
+            # Reset waiting state so the stage can initiate new movement
+            # self.waiting_for_reach = False
+            # self.waiting_start_time = None
+            # self.current_executed_pose = None
+            # Return to the original stage that was being retried
+            # For now, default to PRE_GRASP - this could be enhanced to track the original stage
+            self.set_grasp_stage(GraspStage.IDLE)
+        else:
+            # No retry needed, just go back to idle
+            logger.info("No retry needed, going to IDLE")
+            self.retry_count = 0
+            self.set_grasp_stage(GraspStage.IDLE)
+
 
     def pick_target(self, target: Union[Tuple[int, int], Detection3D]) -> bool:
         """
@@ -969,6 +1103,8 @@ class ManipulationModule(Module):
             self.execute_place()
         elif self.grasp_stage == GraspStage.RETRACT:
             self.execute_retract()
+        elif self.grasp_stage == GraspStage.RECOVERY:
+            self.execute_recovery()
 
         target_tracked = self.pbvs.current_target is not None if self.pbvs else False
         ee_transform = self.tf.get(
