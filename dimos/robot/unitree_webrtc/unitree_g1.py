@@ -99,7 +99,6 @@ class UnitreeG1(Robot, NavBot):
         enable_joystick: bool = False,
         enable_connection: bool = True,
         enable_camera: bool = False,
-        sensor_to_base_link_transform=None,
     ):
         """Initialize the G1 robot.
 
@@ -113,10 +112,9 @@ class UnitreeG1(Robot, NavBot):
             enable_joystick: Enable pygame joystick control
             enable_connection: Enable robot connection module
             enable_camera: Enable ZED camera module
-            sensor_to_base_link_transform: Optional [x, y, z, roll, pitch, yaw] transform from sensor to base_link
         """
         Robot.__init__(self)
-        NavBot.__init__(self, sensor_to_base_link_transform=sensor_to_base_link_transform)
+        NavBot.__init__(self, sensor_to_base_link_transform=[0.0, 0.0, -0.04, 0.0, 0.0, 0.0])
         self.ip = ip
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.recording_path = recording_path
