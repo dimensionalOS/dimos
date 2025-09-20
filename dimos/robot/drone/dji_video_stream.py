@@ -65,7 +65,7 @@ class DJIDroneVideoStream:
                 "!",
                 "videoconvert",
                 "!",
-                "video/x-raw,format=BGR",
+                "video/x-raw,format=RGB",
                 "!",
                 "filesink",
                 "location=/dev/stdout",
@@ -131,17 +131,17 @@ class DJIDroneVideoStream:
                     frame = np.frombuffer(frame_data, dtype=np.uint8)
                     frame = frame.reshape((height, width, channels))
 
-                    # Create Image message (BGR format - matches GStreamer pipeline output)
-                    img_msg = Image.from_numpy(frame, format=ImageFormat.BGR)
+                    # Create Image message (RGB format - matches GStreamer pipeline output)
+                    img_msg = Image.from_numpy(frame, format=ImageFormat.RGB)
 
                     # Publish
                     self._video_subject.on_next(img_msg)
 
                     frame_count += 1
                     if frame_count == 1:
-                        logger.info(f"First frame captured! Shape: {frame.shape}")
+                        logger.debug(f"First frame captured! Shape: {frame.shape}")
                     elif frame_count % 100 == 0:
-                        logger.info(
+                        logger.debug(
                             f"Captured {frame_count} frames ({total_bytes / 1024 / 1024:.1f} MB)"
                         )
 
