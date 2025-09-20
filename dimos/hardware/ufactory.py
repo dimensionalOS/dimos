@@ -98,6 +98,8 @@ class xArm:
     def enable(self):
         self.arm.motion_enable(enable=True)
         self.arm.set_state(state=0)
+        self.arm.arm.set_self_collision_detection(True)
+        self.arm.arm.set_collision_sensitivity(0)
 
     def disable(self):
         self.arm.motion_enable(enable=False)
@@ -109,9 +111,10 @@ class xArm:
     def gotoZero(self):
         self.enable_position_mode()
         # self.arm.move_gohome(wait=True)
-        self.arm.set_position(
-            x=344, y=3.2, z=530, roll=180, pitch=-88.5, yaw=0, speed=50, is_radian=False, wait=True
-        )
+        # self.arm.set_position(
+        #     x=344, y=3.2, z=530, roll=180, pitch=-88.5, yaw=0, speed=50, is_radian=False, wait=True
+        # )
+        self.cmd_joint_angles([0, -75, 0, 13.5, 0, 0, 0], speed=50, is_radian=False)
 
     def gotoObserve(self):
         """Move to observation position similar to PiperArm"""
@@ -121,11 +124,12 @@ class xArm:
         logger.debug(
             f"Going to observe position: x={x}, y={y}, z={z}, roll={roll}, pitch={pitch}, yaw={yaw}"
         )
-        code = self.arm.set_position(
-            x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, speed=100, is_radian=False, wait=True
-        )
-        if code != 0:
-            logger.error(f"Failed to go to observe position, code: {code}")
+        # code = self.arm.set_position(
+        #     x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, speed=100, is_radian=False, wait=True
+        # )
+        self.cmd_joint_angles([0.2, -32.6, -0.6, 42.3, 0.5, 55, 0.1], speed=50, is_radian=False)
+        # if code != 0:
+        #     logger.error(f"Failed to go to observe position, code: {code}")
 
     def softStop(self):
         """Soft stop the arm by going to zero position and disabling motion"""
@@ -137,12 +141,11 @@ class xArm:
 
     def cmd_joint_angles(self, angles, speed, is_radian=False):
         target = np.array(angles)
-        self.enable_joint_mode()
+        # self.enable_joint_mode()
         # Move to target position
-        self.arm.set_servo_angle_j(
-            angles=target.tolist(), speed=speed, wait=True, is_radian=is_radian
+        self.arm.set_servo_angle(
+            angle=target.tolist(), speed=speed, wait=True, is_radian=is_radian
         )
-        print(f"Moved to angles: {target}")
 
     def enable_joint_mode(self):
         self.arm.set_mode(1)
@@ -170,7 +173,8 @@ class xArm:
             yaw=pose_mm[5],
             speed=100,
             is_radian=False,
-            wait=True,
+            wait=False,
+            radius=0 if line_mode else 2000,
         )
         if code != 0:
             logger.error(f"Failed to set position, code: {code}")
@@ -240,6 +244,11 @@ class xArm:
     def enable_gripper(self):
         """Enable the gripper"""
         logger.info("Enabling gripper...")
+        self.arm.motion_enable(True)
+        self.arm.clean_error()
+        self.arm.set_mode(0)
+        self.arm.set_state(0)
+        time.sleep(1)
         # Set gripper mode to position mode first
         code = self.arm.set_gripper_mode(0)  # 0 = location/position mode
         if code != 0:
@@ -422,6 +431,9 @@ class XArmModule(Module):
         # Initialize the actual xArm
         logger.info("Initializing xArm hardware...")
         self.arm = xArm(ip=self.arm_ip, xarm_type=self.arm_type)
+        self.arm.enable()
+        self.arm.enable_gripper()
+    
 
         # Start publishing EE pose
         self._running = True
