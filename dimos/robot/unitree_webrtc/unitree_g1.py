@@ -43,9 +43,10 @@ from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
-from dimos.hardware.webcam import ColorCameraModule, Webcam
+from dimos.hardware.camera.webcam import Webcam
 from dimos.perception.detection2d import Detection3DModule
 from dimos.hardware.camera import zed
+from dimos.hardware.camera.module import CameraModule
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 
@@ -178,7 +179,7 @@ class UnitreeG1(Robot):
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
 
     def _deploy_detection(self):
-        detection = self.dimos.deploy(Detection3DModule, camera_info=camera_info)
+        detection = self.dimos.deploy(Detection3DModule, camera_info=zed.CameraInfo.SingleWebcam)
 
         detection.image.connect(self.camera.image)
         detection.pointcloud.transport = core.LCMTransport("/registered_scan", PointCloud2)
@@ -204,7 +205,7 @@ class UnitreeG1(Robot):
 
     def start(self):
         """Start the robot system with all modules."""
-        self.dimos = core.start(4)  # 2 workers for connection and visualization
+        self.dimos = core.start(8)  # 2 workers for connection and visualization
 
         if self.enable_connection:
             self._deploy_connection()
@@ -241,7 +242,7 @@ class UnitreeG1(Robot):
         """Deploy and configure a standard webcam module."""
         logger.info("Deploying standard webcam module...")
         self.camera = self.dimos.deploy(
-            ColorCameraModule,
+            CameraModule,
             transform=Transform(
                 translation=Vector3(0.05, 0.0, 0.0),
                 rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -249,8 +250,8 @@ class UnitreeG1(Robot):
                 child_frame_id="camera_link",
             ),
             hardware=lambda: Webcam(
-                camera_index=1,
-                frequency=15,
+                camera_index=0,
+                frequency=30,
                 stereo_slice="left",
                 camera_info=zed.CameraInfo.SingleWebcam,
             ),

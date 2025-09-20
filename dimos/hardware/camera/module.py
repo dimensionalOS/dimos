@@ -13,18 +13,13 @@
 # limitations under the License.
 
 import queue
-import threading
 import time
-from abc import ABC, abstractmethod, abstractproperty
 from dataclasses import dataclass, field
-from functools import cache
 from typing import Any, Callable, Generic, Literal, Optional, Protocol, TypeVar
+from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
 
-import cv2
-import numpy as np
 import reactivex as rx
 from dimos_lcm.sensor_msgs import CameraInfo
-from reactivex import create
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
@@ -33,20 +28,17 @@ from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.core import Module, Out, rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.hardware.camera.spec import (
-    CameraConfig,
-    CameraConfigT,
     CameraHardware,
 )
 from dimos.hardware.camera.webcam import Webcam, WebcamConfig
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.sensor_msgs.Image import ImageFormat
-from dimos.protocol.service import Configurable, Service
-from dimos.utils.reactive import backpressure
 
 
 @dataclass
 class CameraModuleConfig(ModuleConfig):
+    frame_id: str = "camera_link"
+
     transform: Transform = (
         field(
             default_factory=lambda: Transform(
@@ -68,6 +60,7 @@ class CameraModule(Module):
     _module_subscription: Optional[Disposable] = None
     _camera_info_subscription: Optional[Disposable] = None
     _skill_stream: Optional[Observable[Image]] = None
+
     default_config = CameraModuleConfig
 
     def __init__(self, *args, **kwargs):
@@ -84,6 +77,7 @@ class CameraModule(Module):
             return "already started"
 
         stream = self.hardware.image_stream()
+        sharpness = sharpness_window(5, stream)
 
         camera_info_stream = self.camera_info_stream(frequency=1.0)
 
@@ -107,7 +101,7 @@ class CameraModule(Module):
             self.tf.publish(camera_link, camera_optical)
 
         self._camera_info_subscription = camera_info_stream.subscribe(publish_info)
-        self._module_subscription = stream.subscribe(self.image.publish)
+        self._module_subscription = sharpness.subscribe(self.image.publish)
 
     @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
     def video_stream(self) -> Image:

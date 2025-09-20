@@ -194,10 +194,8 @@ class Detection3DModule(Detection2DModule):
             return pc
 
     def cleanup_pointcloud(self, pc: PointCloud2) -> PointCloud2:
-        height = pc.filter_by_height(-0.05)
-        statistical, _ = height.pointcloud.remove_statistical_outlier(
-            nb_neighbors=20, std_ratio=2.0
-        )
+        # height = pc.filter_by_height(-0.05)
+        statistical, _ = pc.pointcloud.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
         return PointCloud2(statistical, pc.frame_id, pc.ts)
 
     def process_frame(
