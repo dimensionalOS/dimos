@@ -22,6 +22,8 @@ import logging
 import os
 import time
 from typing import Optional
+from dimos import core
+from dimos.core import In, Module, Out, rpc
 
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from nav_msgs.msg import Odometry as ROSOdometry
@@ -187,7 +189,7 @@ class UnitreeG1(Robot):
         detection = self.dimos.deploy(Detection3DModule, camera_info=zed.CameraInfo.SingleWebcam)
 
         detection.image.connect(self.camera.image)
-        detection.pointcloud.transport = core.LCMTransport("/registered_scan", PointCloud2)
+        detection.pointcloud.transport = core.LCMTransport("/explored_areas", PointCloud2)
 
         detection.annotations.transport = core.LCMTransport("/annotations", ImageAnnotations)
         detection.detections.transport = core.LCMTransport("/detections", Detection2DArray)
@@ -312,7 +314,11 @@ class UnitreeG1(Robot):
         # )
 
         self.ros_bridge.add_topic(
-            "/explored_areas", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
+            "/explored_areas",
+            PointCloud2,
+            ROSPointCloud2,
+            direction=BridgeDirection.ROS_TO_DIMOS,
+            remap_topic="/map",
         )
 
         logger.info(
