@@ -39,6 +39,8 @@ class CameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
         pass
 
 
+# This is an example, feel free to change spec for stereo cameras
+# e.g., separate camera_info or streams for left/right, etc.
 class StereoCameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
     @abstractmethod
     def image_stream(self) -> Observable[Image]:
