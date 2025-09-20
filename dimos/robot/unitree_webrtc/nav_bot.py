@@ -25,6 +25,7 @@ from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped, Transform, Vector3
 from dimos.msgs.nav_msgs import Odometry
 from dimos.msgs.sensor_msgs import PointCloud2
+from dimos_lcm.std_msgs import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf import TF
 from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
@@ -33,6 +34,7 @@ from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
 from nav_msgs.msg import Odometry as ROSOdometry
 from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+from std_msgs.msg import Bool as ROSBool
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -150,6 +152,17 @@ class NavBot:
         )
         self.ros_bridge.add_topic(
             "/odom_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
+        )
+
+        # Navigation control topics from autonomy stack
+        self.ros_bridge.add_topic(
+            "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+        self.ros_bridge.add_topic(
+            "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+        self.ros_bridge.add_topic(
+            "/goal_reached", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
         )
 
     def start_navigation_modules(self):
