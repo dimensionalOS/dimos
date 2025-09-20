@@ -571,7 +571,9 @@ class ManipulationModule(Module):
 
         # Check if we should retry or fail
         if self.retry_count < self.max_retries:
-            logger.info(f"Timeout occurred, will retry after recovery (attempt {self.retry_count + 1}/{self.max_retries + 1})")
+            logger.info(
+                f"Timeout occurred, will retry after recovery (attempt {self.retry_count + 1}/{self.max_retries + 1})"
+            )
             self.current_retry_pose = self.current_executed_pose
             self.retry_count += 1
             self.waiting_for_reach = False
@@ -1010,7 +1012,6 @@ class ManipulationModule(Module):
             logger.info("No retry needed, going to IDLE")
             self.retry_count = 0
             self.set_grasp_stage(GraspStage.IDLE)
-
 
     def pick_target(self, target: Union[Tuple[int, int], Detection3D]) -> bool:
         """

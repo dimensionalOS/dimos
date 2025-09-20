@@ -185,7 +185,7 @@ class xArm:
             logger.error(f"Failed to set position, code: {code}")
             return code
         return code
-    
+
     def cmd_ee_pose(self, pose: Pose, line_mode=False):
         """Command end-effector to target pose using Pose message"""
         # Convert quaternion to euler angles
@@ -357,7 +357,6 @@ class xArm:
         self.arm.set_mode(0)
         self.arm.set_state(0)
         logger.info("Arm reset complete")
-
 
 
 class XArmModule(Module):
@@ -819,8 +818,7 @@ def test_xarm():
     # print(arm.get_ee_pose())
     arm.close_gripper()
     arm.arm.set_gripper_enable(False)
-    
-    
+
     # arm.disconnect()
     print("disconnected")
 
