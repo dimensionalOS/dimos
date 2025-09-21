@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import functools
 import struct
 import time
 from typing import Optional
@@ -81,19 +82,44 @@ class PointCloud2(Timestamped):
         """Get points as numpy array."""
         return np.asarray(self.pointcloud.points)
 
+    @functools.cache
     def get_axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
         """Get axis-aligned bounding box of the point cloud."""
         return self.pointcloud.get_axis_aligned_bounding_box()
 
+    @functools.cache
     def get_oriented_bounding_box(self) -> o3d.geometry.OrientedBoundingBox:
         """Get oriented bounding box of the point cloud."""
         return self.pointcloud.get_oriented_bounding_box()
 
+    @functools.cache
     def get_bounding_box_dimensions(self) -> tuple[float, float, float]:
         """Get dimensions (width, height, depth) of axis-aligned bounding box."""
         bbox = self.get_axis_aligned_bounding_box()
         extent = bbox.get_extent()
         return tuple(extent)
+
+    def bounding_box_intersects(self, other: "PointCloud2") -> bool:
+        # Get axis-aligned bounding boxes
+        bbox1 = self.get_axis_aligned_bounding_box()
+        bbox2 = other.get_axis_aligned_bounding_box()
+
+        # Get min and max bounds
+        min1 = bbox1.get_min_bound()
+        max1 = bbox1.get_max_bound()
+        min2 = bbox2.get_min_bound()
+        max2 = bbox2.get_max_bound()
+
+        # Check overlap in all three dimensions
+        # Boxes intersect if they overlap in ALL dimensions
+        return (
+            min1[0] <= max2[0]
+            and max1[0] >= min2[0]
+            and min1[1] <= max2[1]
+            and max1[1] >= min2[1]
+            and min1[2] <= max2[2]
+            and max1[2] >= min2[2]
+        )
 
     def lcm_encode(self, frame_id: Optional[str] = None) -> bytes:
         """Convert to LCM PointCloud2 message."""
