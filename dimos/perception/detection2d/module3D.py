@@ -27,13 +27,13 @@ from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.module2D import Detection2DModule
-from dimos.perception.detection2d.type.detection2D import (
+from dimos.perception.detection2d.type.detection2d import (
     Detection2D,
 )
 
 # from dimos.perception.detection2d.detic import Detic2DDetector
-from dimos.perception.detection2d.type.detection3D import Detection3D
-from dimos.perception.detection2d.type.imageDetections import (
+from dimos.perception.detection2d.type.detection3d import Detection3D
+from dimos.perception.detection2d.type import (
     ImageDetections2D,
     ImageDetections3D,
 )
@@ -64,7 +64,7 @@ class Detection3DModule(Detection2DModule):
 
         Detection2DModule.__init__(self, *args, **kwargs)
 
-    def detect(self, image: Image) -> ImageDetections:
+    def detect(self, image: Image) -> ImageDetections2D:
         detections = Detection2D.from_detector(
             self.detector.process_image(image.to_opencv()), ts=image.ts
         )

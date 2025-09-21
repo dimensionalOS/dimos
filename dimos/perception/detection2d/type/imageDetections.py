@@ -25,10 +25,9 @@ from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.type.detection2d import Detection2D
 from dimos.types.timestamped import to_timestamp
 
-T = TypeVar("T", bound="Detection2D")
+T = TypeVar("T", bound="dimos.perception.detection2d.type.detection2d.Detection2D")
 
 
 def _hash_to_color(name: str) -> str:

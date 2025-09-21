@@ -89,10 +89,6 @@ class Detection2D(Timestamped):
             "bbox": f"[{x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}]",
         }
 
-    @property
-    def image(self) -> Image:
-        return self.image
-
     # return focused image, only on the bbox
     def cropped_image(self, padding: int = 20) -> Image:
         """Return a cropped version of the image focused on the bounding box.

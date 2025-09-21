@@ -35,10 +35,11 @@ from dimos.types.timestamped import to_timestamp
 
 @dataclass
 class Detection3D(Detection2D):
-    pointcloud: PointCloud2
-    transform: Transform
+    pointcloud: PointCloud2 = None
+    transform: Transform = None
 
-    def from_2d(self, det: Detection2D, **kwargs) -> "Detection3D":
+    @classmethod
+    def from_2d(cls, det: Detection2D, **kwargs) -> "Detection3D":
         return Detection3D(
             image=det.image,
             bbox=det.bbox,
