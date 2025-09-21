@@ -8,7 +8,7 @@ This document describes the xArm PBVS manipulation system with integrated error 
 - **xArm7 Robotic Arm**: 7-DOF collaborative robot arm from UFactory
   - IP Address: `10.0.0.197` (default configuration)
   - Gripper: xArm gripper with force/current sensing
-  - Collision sensitivity set to level 1 (most sensitive)
+  - Collision sensitivity set to level 1 (least sensitive)
 
 ### Camera System
 - **ZED Camera**: Stereo depth camera for RGB-D perception
