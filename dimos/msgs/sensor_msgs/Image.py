@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import base64
+import functools
 import time
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -297,6 +298,7 @@ class Image(Timestamped):
             ts=self.ts,
         )
 
+    @functools.cached_property
     def sharpness(self) -> float:
         """
         Compute the Tenengrad focus measure for an image.

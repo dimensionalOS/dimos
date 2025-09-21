@@ -27,17 +27,16 @@ from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.module2D import Detection2DModule
+from dimos.perception.detection2d.type.detection2D import (
+    Detection2D,
+)
 
 # from dimos.perception.detection2d.detic import Detic2DDetector
-from dimos.perception.detection2d.type import (
-    Detection2D,
+from dimos.perception.detection2d.type.detection3D import Detection3D
+from dimos.perception.detection2d.type.imageDetections import (
     ImageDetections2D,
     ImageDetections3D,
 )
-
-# Type aliases for clarity
-ImageDetections = Tuple[Image, List[Detection2D]]
-ImageDetection = Tuple[Image, Detection2D]
 
 
 class Detection3DModule(Detection2DModule):
@@ -224,7 +223,9 @@ class Detection3DModule(Detection2DModule):
             if pc is None:
                 continue
 
-            detection3d_list.append(detection.to_3d(pointcloud=pc, transform=transform))
+            detection3d_list.append(
+                Detection3D.from_2d(detection, pointcloud=pc, transform=transform)
+            )
 
         return ImageDetections3D(detections.image, detection3d_list)
 
@@ -234,8 +235,6 @@ class Detection3DModule(Detection2DModule):
 
         def detection2d_to_3d(args):
             detections, pc = args
-            if len(detections):
-                print(detections[0].image)
             transform = self.tf.get("camera_optical", "map", detections.image.ts, time_tolerance)
             return self.process_frame(detections, pc, transform)
 

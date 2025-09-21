@@ -36,9 +36,32 @@ from dimos.perception.detection2d.type import (
     ImageDetections3D,
 )
 from dimos.protocol.skill import skill
+from dimos.types.timestamped import TimestampedCollection
 
 
-class DetectionDBModule(Detection3DModule):
+# Represents an object in space, as collection of 3d detections over time
+class Object(Detection3D, TimestampedCollection[Detection3D]):
+    image: Image
+
+    def __init__(self, *detections: Detection3D):
+        Detection3D.__init__(self)
+        TimestampedCollection.__init__(self, *detections)
+
+    def add(self, detection: Detection3D):
+        super().add(detection)
+
+        if detection.image.sharpness() > self.image.sharpness():
+            self.image = detection.image
+
+        sharpness = detection.sharpness()
+        if sharpness and sharpness > self.best_sharpness:
+            self.best_sharpness = sharpness
+            self.class_id = detection.class_id
+            self.name = detection.name
+            self.track_id = detection.track_id
+
+
+class ObjectDBModule(Detection3DModule):
     @rpc
     def start(self):
         super().start()
@@ -49,7 +72,7 @@ class DetectionDBModule(Detection3DModule):
             self.add_detection(det)
 
     def add_detection(self, detection: Detection3D):
-        print("DETECTION", detection)
+        detection.center
 
     def lookup(self, label: str) -> List[Detection3D]:
         """Look up a detection by label."""
