@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Dict, Generic, List, Optional, Tuple, TypeVar
 
 from rich.console import Console
 from rich.table import Table
@@ -27,7 +27,10 @@ from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.types.timestamped import to_timestamp
 
-T = TypeVar("T", bound="dimos.perception.detection2d.type.detection2d.Detection2D")
+if TYPE_CHECKING:
+    from dimos.perception.detection2d.type.detection2d import Detection2D
+
+T = TypeVar("T", bound="Detection2D")
 
 
 def _hash_to_color(name: str) -> str:

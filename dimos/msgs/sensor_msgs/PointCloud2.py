@@ -81,6 +81,20 @@ class PointCloud2(Timestamped):
         """Get points as numpy array."""
         return np.asarray(self.pointcloud.points)
 
+    def get_axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
+        """Get axis-aligned bounding box of the point cloud."""
+        return self.pointcloud.get_axis_aligned_bounding_box()
+
+    def get_oriented_bounding_box(self) -> o3d.geometry.OrientedBoundingBox:
+        """Get oriented bounding box of the point cloud."""
+        return self.pointcloud.get_oriented_bounding_box()
+
+    def get_bounding_box_dimensions(self) -> tuple[float, float, float]:
+        """Get dimensions (width, height, depth) of axis-aligned bounding box."""
+        bbox = self.get_axis_aligned_bounding_box()
+        extent = bbox.get_extent()
+        return tuple(extent)
+
     def lcm_encode(self, frame_id: Optional[str] = None) -> bytes:
         """Convert to LCM PointCloud2 message."""
         msg = LCMPointCloud2()

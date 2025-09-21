@@ -11,68 +11,76 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import functools
-import time
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
-import numpy as np
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-)
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D
-from reactivex import operators as ops
-
-from dimos.core import In, Out, rpc
-from dimos.msgs.geometry_msgs import Transform
+from dimos.core import rpc
+from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
-from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.perception.detection2d.type import (
-    Detection2D,
     Detection3D,
-    ImageDetections2D,
-    ImageDetections3D,
 )
-from dimos.protocol.skill import skill
 from dimos.types.timestamped import TimestampedCollection
 
 
 # Represents an object in space, as collection of 3d detections over time
 class Object(Detection3D, TimestampedCollection[Detection3D]):
-    image: Image
+    image: Image = None
+    center: Vector3 = None
 
-    def __init__(self, *detections: Detection3D):
-        Detection3D.__init__(self)
-        TimestampedCollection.__init__(self, *detections)
+    def __init__(self, *detections: List[Detection3D]):
+        TimestampedCollection.__init__(self)
+        for det in detections:
+            self.add(det)
 
     def add(self, detection: Detection3D):
         super().add(detection)
 
-        if detection.image.sharpness() > self.image.sharpness():
-            self.image = detection.image
-
-        sharpness = detection.sharpness()
-        if sharpness and sharpness > self.best_sharpness:
-            self.best_sharpness = sharpness
-            self.class_id = detection.class_id
-            self.name = detection.name
+        # initial detection
+        if not self.image:
             self.track_id = detection.track_id
+            self.class_id = detection.class_id
+            self.confidence = detection.confidence  # TODO need to update properly
+            self.name = detection.name
+            self.image = detection.image
+            self.center = detection.center
+            return
+
+        if self.image:
+            self.center = (detection.center + self.center) / 2.0
+            if detection.image.sharpness > self.image.sharpness:
+                self.image = detection.image
 
 
 class ObjectDBModule(Detection3DModule):
-    @rpc
-    def start(self):
-        super().start()
-        self.pointcloud_stream().subscribe(self.add_detections)
+    objects: List[Object] = []
+    distance_threshold: float = 1.0  # meters
 
-    def add_detections(self, detections: List[Detection3DArray]):
-        for det in detections:
-            self.add_detection(det)
+    def find_closest_object(self, detection: Detection3D) -> Optional[Object]:
+        if not self.objects:
+            return None
+
+        closest_obj = None
+        min_distance = float("inf")
+
+        for obj in self.objects:
+            distance = detection.center.distance(obj.center)
+            if distance < min_distance and distance < self.distance_threshold:
+                min_distance = distance
+                closest_obj = obj
+
+        return closest_obj
 
     def add_detection(self, detection: Detection3D):
-        detection.center
+        """Add detection to existing object or create new one."""
+        closest = self.find_closest_object(detection)
+
+        if closest:
+            closest.add(detection)
+        else:
+            new_object = Object(detection)
+            self.objects.append(new_object)
 
     def lookup(self, label: str) -> List[Detection3D]:
         """Look up a detection by label."""

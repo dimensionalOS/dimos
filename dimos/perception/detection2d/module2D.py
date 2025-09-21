@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import functools
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Optional
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,

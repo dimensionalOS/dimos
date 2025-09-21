@@ -17,7 +17,10 @@ from typing import Optional, TypedDict
 
 import pytest
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
+from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
 from dimos_lcm.sensor_msgs import CameraInfo, PointCloud2
+from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
+from dimos_lcm.visualization_msgs.Marker import Marker
 
 from dimos.core import start
 from dimos.core.transport import LCMTransport
@@ -44,6 +47,8 @@ class Moment(TypedDict, total=False):
     tf: TF
     annotations: Optional[ImageAnnotations]
     detections: Optional[ImageDetections3D]
+    markers: Optional[MarkerArray]
+    scene_update: Optional[SceneUpdate]
 
 
 @pytest.fixture
@@ -121,6 +126,18 @@ def publish_lcm():
                     f"/detected/image/{i}", Image
                 )
                 detections_image_transport.publish(detection.cropped_image())
+
+        markers = moment.get("markers")
+        if markers:
+            markers_transport: LCMTransport = LCMTransport("/detection/markers", MarkerArray)
+            markers_transport.publish(markers)
+
+        scene_update = moment.get("scene_update")
+        if scene_update:
+            scene_update_transport: LCMTransport = LCMTransport(
+                "/foxglove/scene_update", SceneUpdate
+            )
+            scene_update_transport.publish(scene_update)
 
     return publish
 

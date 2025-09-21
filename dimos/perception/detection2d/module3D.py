@@ -27,16 +27,11 @@ from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.module2D import Detection2DModule
-from dimos.perception.detection2d.type.detection2d import (
-    Detection2D,
-)
-
-# from dimos.perception.detection2d.detic import Detic2DDetector
-from dimos.perception.detection2d.type.detection3d import Detection3D
 from dimos.perception.detection2d.type import (
     ImageDetections2D,
     ImageDetections3D,
 )
+from dimos.perception.detection2d.type.detection3d import Detection3D
 
 
 class Detection3DModule(Detection2DModule):
@@ -63,12 +58,6 @@ class Detection3DModule(Detection2DModule):
         self.camera_info = camera_info
 
         Detection2DModule.__init__(self, *args, **kwargs)
-
-    def detect(self, image: Image) -> ImageDetections2D:
-        detections = Detection2D.from_detector(
-            self.detector.process_image(image.to_opencv()), ts=image.ts
-        )
-        return (image, detections)
 
     def project_points_to_camera(
         self,
@@ -235,7 +224,9 @@ class Detection3DModule(Detection2DModule):
 
         def detection2d_to_3d(args):
             detections, pc = args
-            transform = self.tf.get("camera_optical", "map", detections.image.ts, time_tolerance)
+            transform = self.tf.get(
+                "camera_optical", pc.frame_id, detections.image.ts, time_tolerance
+            )
             return self.process_frame(detections, pc, transform)
 
         combined_stream = self.detection_stream().pipe(
@@ -255,6 +246,12 @@ class Detection3DModule(Detection2DModule):
     def _handle_combined_detections(self, detections: ImageDetections3D):
         if not detections:
             return
+
+        # for det in detections:
+        #     if (len(det.pointcloud) > 70) and det.name == "suitcase":
+        #         import pickle
+
+        #         pickle.dump(det, open(f"detection3d.pkl", "wb"))
 
         print(detections)
 
