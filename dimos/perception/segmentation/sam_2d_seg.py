@@ -41,7 +41,7 @@ class Sam2DSegmenter:
     def __init__(
         self,
         model_path="models_fastsam",
-        model_name="FastSAM-s.onnx",
+        model_name="FastSAM-x.onnx",
         min_analysis_interval=5.0,
         use_tracker=True,
         use_analyzer=True,
