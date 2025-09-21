@@ -29,6 +29,8 @@ from dimos_lcm.sensor_msgs.PointCloud2 import (
 from dimos_lcm.sensor_msgs.PointField import PointField
 from dimos_lcm.std_msgs.Header import Header
 
+from dimos.msgs.geometry_msgs import Vector3
+
 # Import ROS types
 try:
     from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
@@ -74,8 +76,35 @@ class PointCloud2(Timestamped):
         pcd.points = o3d.utility.Vector3dVector(points)
         return cls(pointcloud=pcd, ts=timestamp, frame_id=frame_id)
 
+    @functools.cached_property
+    def center(self) -> Vector3:
+        """Calculate the center of the pointcloud in world frame."""
+        center = np.asarray(self.pointcloud.points).mean(axis=0)
+        return Vector3(*center)
+
     def points(self):
         return self.pointcloud.points
+
+    def __add__(self, other: PointCloud2) -> PointCloud2:
+        """Combine two PointCloud2 instances into one.
+
+        The resulting point cloud contains points from both inputs.
+        The frame_id and timestamp are taken from the first point cloud.
+
+        Args:
+            other: Another PointCloud2 instance to combine with
+
+        Returns:
+            New PointCloud2 instance containing combined points
+        """
+        if not isinstance(other, PointCloud2):
+            raise ValueError("Can only add PointCloud2 to another PointCloud2")
+
+        return PointCloud2(
+            pointcloud=self.pointcloud + other.pointcloud,
+            frame_id=self.frame_id,
+            ts=max(self.ts, other.ts),
+        )
 
     # TODO what's the usual storage here? is it already numpy?
     def as_numpy(self) -> np.ndarray:

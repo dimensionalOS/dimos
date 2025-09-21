@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import pytest
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-)
+from dimos_lcm.foxglove_msgs import ImageAnnotations, SceneUpdate
 from dimos_lcm.sensor_msgs import Image, PointCloud2
 
 from dimos.core import LCMTransport
@@ -25,6 +23,7 @@ from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.conftest import Moment
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
+from dimos.perception.detection2d.moduleDB import ObjectDBModule
 from dimos.perception.detection2d.type import (
     Detection2D,
     Detection3D,
@@ -144,13 +143,14 @@ def test_module3d_replay(dimos_cluster):
 
     mapper.start()
 
-    module3D = dimos_cluster.deploy(Detection3DModule, camera_info=ConnectionModule._camera_info())
+    module3D = dimos_cluster.deploy(ObjectDBModule, camera_info=ConnectionModule._camera_info())
 
     module3D.image.connect(connection.video)
     module3D.pointcloud.connect(connection.lidar)
 
     module3D.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
     module3D.detections.transport = LCMTransport("/detections", Detection2DArray)
+    module3D.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
 
     module3D.detected_pointcloud_0.transport = LCMTransport("/detected/pointcloud/0", PointCloud2)
     module3D.detected_pointcloud_1.transport = LCMTransport("/detected/pointcloud/1", PointCloud2)

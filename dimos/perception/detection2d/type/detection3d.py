@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Generic, List, Optional, TypeVar
 
@@ -25,7 +26,7 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.std_msgs import ColorRGBA
 from dimos_lcm.visualization_msgs import Marker, MarkerArray
 from lcm_msgs.builtin_interfaces import Duration, Time
-from lcm_msgs.foxglove_msgs import Color, CubePrimitive, SceneEntity, TextPrimitive
+from lcm_msgs.foxglove_msgs import Color, CubePrimitive, SceneEntity, SceneUpdate, TextPrimitive
 from lcm_msgs.geometry_msgs import Point, Pose, Quaternion
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
 from rich.console import Console
@@ -188,10 +189,7 @@ class Detection3D(Detection2D):
 
     @functools.cached_property
     def center(self) -> Vector3:
-        """Calculate the center of the pointcloud in world frame."""
-        points = np.asarray(self.pointcloud.pointcloud.points)
-        center = points.mean(axis=0)
-        return Vector3(*center)
+        return self.pointcloud.center
 
     @functools.cached_property
     def pose(self) -> PoseStamped:
@@ -218,6 +216,10 @@ class Detection3D(Detection2D):
     def get_bounding_box_dimensions(self) -> tuple[float, float, float]:
         """Get dimensions (width, height, depth) of the detection's bounding box."""
         return self.pointcloud.get_bounding_box_dimensions()
+
+    def bounding_box_intersects(self, other: "Detection3D") -> bool:
+        """Check if this detection's bounding box intersects with another's."""
+        return self.pointcloud.bounding_box_intersects(other.pointcloud)
 
     def to_repr_dict(self) -> Dict[str, Any]:
         d = super().to_repr_dict()
@@ -302,13 +304,13 @@ class Detection3D(Detection2D):
         text.color.g = 1.0
         text.color.b = 1.0
         text.color.a = 1.0
-        text.text = f"{self.name} ({self.confidence:.0%})"
+        text.text = f"{self.track_id}/{self.name} ({self.confidence:.0%})"
 
         # Create scene entity
         entity = SceneEntity()
         entity.timestamp = to_ros_stamp(self.ts)
         entity.frame_id = "world"
-        entity.id = entity_id or f"detection_{self.name}_{hash(self) % 10000}"
+        entity.id = self.track_id
         entity.lifetime = Duration()
         entity.lifetime.sec = 0  # Persistent
         entity.lifetime.nanosec = 0

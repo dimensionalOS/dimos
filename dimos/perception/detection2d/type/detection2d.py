@@ -109,16 +109,15 @@ class Detection2D(Timestamped):
         d = self.to_repr_dict()
 
         # Create confidence text with color based on value
-        conf_color = "green" if d["conf"] > 0.8 else "yellow" if d["conf"] > 0.5 else "red"
-        conf_text = Text(f"{d['conf']:.1%}", style=conf_color)
+        # conf_color = "green" if d.get("conf") > 0.8 else "yellow" if d.get("conf") > 0.5 else "red"
+        # conf_text = Text(f"{d['conf']:.1%}", style=conf_color)
 
         # Build the string representation
         parts = [
             Text(f"{self.__class__.__name__}("),
-            Text(d["name"], style="bold cyan"),
-            Text(f" cls={d['class']} trk={d['track']} "),
-            conf_text,
-            Text(f" {d['bbox']}"),
+            #            Text(d["name"], style="bold cyan"),
+            #            Text(f" cls={d['class']} trk={d['track']} "),
+            #            Text(f" {d['bbox']}"),
         ]
 
         # Add any extra fields (e.g., points for Detection3D)

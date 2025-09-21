@@ -28,7 +28,7 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.core import In, LCMTransport, Module, ModuleConfig, Out, rpc, DimosCluster
+from dimos.core import DimosCluster, In, LCMTransport, Module, ModuleConfig, Out, rpc
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
@@ -183,8 +183,9 @@ class ConnectionModule(Module):
                 int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
             )
 
-        sharpness = sharpness_window(10, self.connection.video_stream())
-        sharpness.subscribe(self.video.publish)
+        self.connection.video_stream().subscribe(self.video.publish)
+        # sharpness = sharpness_window(10, self.connection.video_stream())
+        # sharpness.subscribe(self.video.publish)
         # self.connection.video_stream().subscribe(self.video.publish)
 
         # self.connection.video_stream().pipe(ops.map(resize)).subscribe(self.video.publish)
