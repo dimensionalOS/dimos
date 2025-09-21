@@ -643,6 +643,7 @@ class ManipulationModule(Module):
         """Reset the manipulation system to IDLE state."""
         if self.pbvs:
             self.pbvs.clear_target()
+        self.execute_recovery()
         self.grasp_stage = GraspStage.IDLE
         self.waiting_for_reach = False
         self.current_executed_pose = None
