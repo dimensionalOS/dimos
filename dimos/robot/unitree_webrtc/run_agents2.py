@@ -14,7 +14,6 @@
 # limitations under the License.
 
 import os
-import sys
 import time
 from dotenv import load_dotenv
 
@@ -36,12 +35,6 @@ load_dotenv()
 
 with open(AGENT_SYSTEM_PROMPT_PATH, "r") as f:
     SYSTEM_PROMPT = f.read()
-
-# Check for API key
-if not os.getenv("ANTHROPIC_API_KEY"):
-    print("WARNING: ANTHROPIC_API_KEY not found in environment")
-    print("Please set your API key in .env file or environment")
-    sys.exit(1)
 
 
 class UnitreeAgents2Runner:

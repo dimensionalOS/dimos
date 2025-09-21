@@ -23,7 +23,6 @@ import sys
 import time
 from dotenv import load_dotenv
 
-import reactivex as rx
 from reactivex.subject import Subject
 import reactivex.operators as ops
 
@@ -154,7 +153,7 @@ def main():
 
         logger.info("=" * 60)
         logger.info("Unitree Go2 Agent Ready!")
-        logger.info(f"Web interface available at: http://localhost:5555")
+        logger.info("Web interface available at: http://localhost:5555")
         logger.info("You can:")
         logger.info("  - Type commands in the web interface")
         logger.info("  - Use voice commands")

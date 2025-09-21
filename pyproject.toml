@@ -172,7 +172,8 @@ dev = [
     "pytest==8.3.5",
     "pytest-asyncio==0.26.0",
     "pytest-mock==3.15.0",
-    "textual==3.7.1"
+    "textual==3.7.1",
+    "requests-mock==1.12.1",
 ]
 
 sim = [
