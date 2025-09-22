@@ -163,7 +163,7 @@ class Detection2D(Timestamped):
         )
 
     def lcm_encode(self):
-        return self.to_imageannotations().lcm_encode()
+        return self.to_image_annotations().lcm_encode()
 
     def to_text_annotation(self) -> List[TextAnnotation]:
         x1, y1, x2, y2 = self.bbox
@@ -214,7 +214,7 @@ class Detection2D(Timestamped):
     # this is almost never called directly since this is a single detection
     # and ImageAnnotations message normally contains multiple detections annotations
     # so ImageDetections2D and ImageDetections3D normally implements this for whole image
-    def to_annotations(self) -> ImageAnnotations:
+    def to_image_annotations(self) -> ImageAnnotations:
         points = self.to_points_annotation()
         texts = self.to_text_annotation()
 
