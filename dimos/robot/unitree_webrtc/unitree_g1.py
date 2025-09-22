@@ -406,18 +406,19 @@ def main():
     )
     robot.start()
 
-    pose = PoseStamped(
-        ts=time.time(),
-        frame_id="map",
-        position=Vector3(1.0, 1.0, 0.0),
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    )
+    # # test navigation
+    # pose = PoseStamped(
+    #     ts=time.time(),
+    #     frame_id="map",
+    #     position=Vector3(1.0, 1.0, 0.0),
+    #     orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+    # )
 
-    time.sleep(2)
-    robot.navigate_to_goal(pose, blocking=False)
+    # time.sleep(2)
+    # robot.navigate_to_goal(pose, blocking=False)
 
-    time.sleep(5)
-    robot.cancel_navigation()
+    # time.sleep(5)
+    # robot.cancel_navigation()
 
     try:
         if args.joystick:
