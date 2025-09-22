@@ -19,13 +19,14 @@ Encapsulates ROS bridge and topic remapping for Unitree robots.
 """
 
 import logging
+import time
 
 from dimos import core
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped, Transform, Vector3
 from dimos.msgs.nav_msgs import Odometry
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos_lcm.std_msgs import Bool
+from dimos.msgs.std_msgs import Bool, Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf import TF
 from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
@@ -37,6 +38,7 @@ from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
 from std_msgs.msg import Bool as ROSBool
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.utils.logging_config import setup_logger
+from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 
 logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 
@@ -119,6 +121,15 @@ class NavBot:
         self.ros_bridge = None
         self.topic_remap_module = None
         self.tf = TF()
+        self.lcm = LCM()
+
+    def start(self):
+        if self.topic_remap_module:
+            self.topic_remap_module.start()
+            logger.info("Topic remap module started")
+
+        if self.ros_bridge:
+            logger.info("ROS bridge started")
 
     def deploy_navigation_modules(self, bridge_name="nav_bot_ros_bridge"):
         # Deploy topic remap module
@@ -150,30 +161,77 @@ class NavBot:
         self.ros_bridge.add_topic(
             "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
         )
-        self.ros_bridge.add_topic(
-            "/odom_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
-        )
 
         # Navigation control topics from autonomy stack
         self.ros_bridge.add_topic(
-            "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.ROS_TO_DIMOS
+            "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
         )
         self.ros_bridge.add_topic(
-            "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
+            "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
         )
         self.ros_bridge.add_topic(
-            "/goal_reached", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
+            "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
-    def start_navigation_modules(self):
-        if self.topic_remap_module:
-            self.topic_remap_module.start()
-            logger.info("Topic remap module started")
+    def navigate_to_goal(self, pose: PoseStamped, blocking: bool = True, timeout: float = 30.0):
+        """Navigate to a target pose using ROS topics.
 
-        if self.ros_bridge:
-            logger.info("ROS bridge started")
+        Args:
+            pose: Target pose to navigate to
+            blocking: If True, block until goal is reached. If False, return immediately.
+            timeout: Maximum time to wait for goal to be reached (seconds)
 
-    def shutdown_navigation(self):
+        Returns:
+            If blocking=True: True if navigation was successful, False otherwise
+            If blocking=False: True if goal was sent successfully
+        """
+        logger.info(
+            f"Navigating to goal: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
+        )
+
+        # Publish goal to /goal_pose topic
+        goal_topic = Topic("/goal_pose", PoseStamped)
+        self.lcm.publish(goal_topic, pose)
+
+        if not blocking:
+            return True
+
+        # Wait for goal_reached signal
+        goal_reached_topic = Topic("/goal_reached", Bool)
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            try:
+                msg = self.lcm.wait_for_message(goal_reached_topic, timeout=0.5)
+                if msg and msg.data:
+                    logger.info("Navigation goal reached")
+                    return True
+                elif msg and not msg.data:
+                    logger.info("Navigation was cancelled or failed")
+                    return False
+            except Exception:
+                # Timeout on wait_for_message, continue looping
+                pass
+
+        logger.warning(f"Navigation timed out after {timeout} seconds")
+        return False
+
+    def cancel_navigation(self) -> bool:
+        """Cancel the current navigation goal using ROS topics.
+
+        Returns:
+            True if cancel command was sent successfully
+        """
+        logger.info("Cancelling navigation goal")
+
+        # Publish cancel command to /cancel_goal topic
+        cancel_topic = Topic("/cancel_goal", Bool)
+        cancel_msg = Bool(data=True)
+        self.lcm.publish(cancel_topic, cancel_msg)
+
+        return True
+
+    def shutdown(self):
         logger.info("Shutting down navigation modules...")
 
         if self.ros_bridge is not None:

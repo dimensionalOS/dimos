@@ -25,16 +25,15 @@ from typing import Optional
 
 from dimos import core
 from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
-from dimos.msgs.sensor_msgs import Image, CameraInfo, PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3, Quaternion
+from dimos.msgs.sensor_msgs import Image, CameraInfo
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.unitree_webrtc.nav_bot import NavBot
+from dimos.robot.nav_bot import NavBot
 from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
 
@@ -127,8 +126,6 @@ class UnitreeG1(Robot, NavBot):
 
         # Initialize skill library with G1 robot type
         if skill_library is None:
-            from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-
             skill_library = MyUnitreeSkills(robot_type="g1")
         self.skill_library = skill_library
 
@@ -166,6 +163,7 @@ class UnitreeG1(Robot, NavBot):
         self.deploy_navigation_modules(bridge_name="g1_ros_bridge")
 
         self._start_modules()
+        NavBot.start(self)
 
         self.lcm.start()
 
@@ -245,8 +243,6 @@ class UnitreeG1(Robot, NavBot):
         if self.joystick:
             self.joystick.start()
 
-        self.start_navigation_modules()
-
         # Initialize skills after connection is established
         if self.skill_library is not None:
             for skill in self.skill_library:
@@ -270,7 +266,8 @@ class UnitreeG1(Robot, NavBot):
         """Shutdown the robot and clean up resources."""
         logger.info("Shutting down UnitreeG1...")
 
-        self.shutdown_navigation()
+        # Shutdown navigation modules from NavBot
+        NavBot.shutdown(self)
 
         if self.websocket_vis:
             try:
@@ -311,6 +308,19 @@ def main():
         enable_connection=os.getenv("ROBOT_IP") is not None,
     )
     robot.start()
+
+    pose = PoseStamped(
+        ts=time.time(),
+        frame_id="map",
+        position=Vector3(1.0, 1.0, 0.0),
+        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+    )
+
+    time.sleep(2)
+    robot.navigate_to_goal(pose, blocking=False)
+
+    time.sleep(5)
+    robot.cancel_navigation()
 
     try:
         if args.joystick:
