@@ -18,7 +18,7 @@ import time
 from abc import ABC, abstractmethod, abstractproperty
 from dataclasses import dataclass, field
 from functools import cache
-from typing import Any, Callable, Generic, Optional, Protocol, TypeVar, Literal
+from typing import Any, Callable, Generic, Literal, Optional, Protocol, TypeVar
 
 import cv2
 import numpy as np
@@ -153,12 +153,11 @@ class Webcam(ColorCameraHardware[WebcamConfig]):
         image = Image.from_numpy(
             frame_rgb,
             format=ImageFormat.RGB,  # We converted to RGB above
-            frame_id=self._frame("camera"),  # Standard frame ID for camera images
+            frame_id=self._frame("camera_optical"),  # Standard frame ID for camera images
             ts=time.time(),  # Current timestamp
         )
 
         if self.config.stereo_slice in ("left", "right"):
-            image.frame_id = self._frame(f"camera_stereo_{self.config.stereo_slice}")
             half_width = image.width // 2
             if self.config.stereo_slice == "left":
                 image = image.crop(0, 0, half_width, image.height)

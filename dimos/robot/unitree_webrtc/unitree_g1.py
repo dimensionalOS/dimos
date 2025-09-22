@@ -48,11 +48,11 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1", level=logging.INFO)
 
-# try:
-#     from dimos.hardware.zed_camera import ZEDModule
-# except ImportError:
-#     logger.warning("ZEDModule not found. Please install pyzed to use ZED camera functionality.")
-#     ZEDModule = None
+try:
+    from dimos.hardware.camera.zed import ZEDModule
+except ImportError:
+    logger.warning("ZEDModule not found. Please install pyzed to use ZED camera functionality.")
+    ZEDModule = None
 
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)

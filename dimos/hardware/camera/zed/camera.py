@@ -12,38 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
+from typing import Any, Dict, Optional, Tuple
+
 import cv2
+import numpy as np
 import open3d as o3d
-from typing import Optional, Tuple, Dict, Any
-import logging
-import time
-import threading
+import pyzed.sl as sl
+from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import interval
-from reactivex import operators as ops
 
-try:
-    import pyzed.sl as sl
-except ImportError:
-    sl = None
-    logging.warning("ZED SDK not found. Please install pyzed to use ZED camera functionality.")
-
-from dimos.hardware.stereo_camera import StereoCamera
 from dimos.core import Module, Out, rpc
-from dimos.utils.logging_config import setup_logger
-from dimos.protocol.tf import TF
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 
 # Import LCM message types
 from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.std_msgs import Header
+from dimos.protocol.tf import TF
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
 
 
-class ZEDCamera(StereoCamera):
+class ZEDCamera:
     """ZED Camera capture node with neural depth processing."""
 
     def __init__(
