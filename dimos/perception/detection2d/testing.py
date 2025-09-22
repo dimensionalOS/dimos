@@ -25,6 +25,7 @@ from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
+from dimos.perception.detection2d.moduleDB import ObjectDBModule
 from dimos.perception.detection2d.type import ImageDetections2D, ImageDetections3D
 from dimos.protocol.service import lcmservice as lcm
 from dimos.protocol.tf import TF
@@ -56,6 +57,9 @@ class Moment3D(Moment):
     detections3d: ImageDetections3D
 
 
+tf = TF()
+
+
 def get_moment(seek: float = 10):
     data_dir = "unitree_go2_lidar_corrected"
     get_data(data_dir)
@@ -74,7 +78,6 @@ def get_moment(seek: float = 10):
 
     transforms = ConnectionModule._odom_to_tf(odom_frame)
 
-    tf = TF()
     tf.publish(*transforms)
 
     return {
@@ -89,10 +92,12 @@ def get_moment(seek: float = 10):
 
 # Create a single instance of Detection2DModule
 _detection2d_module = None
+_objectdb_module = None
 
 
-def detections2d(get_moment: Moment, seek: float = 10.0) -> Moment2D:
+def detections2d(seek: float = 10.0) -> Moment2D:
     global _detection2d_module
+    moment = get_moment(seek=seek)
     if _detection2d_module is None:
         _detection2d_module = Detection2DModule()
 
@@ -110,7 +115,7 @@ _detection3d_module = None
 def detections3d(seek: float = 10.0) -> Moment3D:
     global _detection3d_module
 
-    moment = detections2d(get_moment, seek=seek)
+    moment = detections2d(seek=seek)
     camera_transform = moment["tf"].get("camera_optical", "world")
     if camera_transform is None:
         raise ValueError("No camera_optical transform in tf")
@@ -124,6 +129,23 @@ def detections3d(seek: float = 10.0) -> Moment3D:
             moment["detections2d"], moment["lidar_frame"], camera_transform
         ),
     }
+
+
+def objectdb(seek: float = 10.0) -> Moment3D:
+    global _objectdb_module
+
+    moment = detections3d(seek=seek)
+    camera_transform = moment["tf"].get("camera_optical", "world")
+    if camera_transform is None:
+        raise ValueError("No camera_optical transform in tf")
+
+    if _objectdb_module is None:
+        _objectdb_module = ObjectDBModule(camera_info=moment["camera_info"])
+
+    for detection in moment["detections3d"]:
+        _objectdb_module.add_detection(detection)
+
+    return {**moment, "objectdb": _objectdb_module}
 
 
 # Create transport instances once and reuse them
@@ -164,5 +186,11 @@ def publish_moment(moment: Union[Moment, Moment2D, Moment3D]):
             pointcloud_topic.publish(detection.pointcloud)
             image_topic.publish(detection.cropped_image())
 
+        # scene_entity_transport = _get_transport("/scene_update", SceneUpdate)
+        # scene_entity_transport.publish(detections3d.to_foxglove_scene_update())
+
+    objectdb: ObjectDBModule = moment.get("objectdb")
+    if objectdb:
+        print("PUB OBJECT DB", list(objectdb.objects.keys()))
         scene_entity_transport = _get_transport("/scene_update", SceneUpdate)
-        scene_entity_transport.publish(detections3d.to_foxglove_scene_update())
+        scene_entity_transport.publish(objectdb.to_foxglove_scene_update())

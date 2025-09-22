@@ -32,9 +32,10 @@ from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
 from dimos.hardware.camera.webcam import Webcam
-from dimos.perception.detection2d import Detection3DModule
+from dimos.perception.detection2d.moduleDB import ObjectDBModule
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
+from lcm_msgs.foxglove_msgs import SceneUpdate
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import (
@@ -186,13 +187,15 @@ class UnitreeG1(Robot):
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
 
     def _deploy_detection(self):
-        detection = self.dimos.deploy(Detection3DModule, camera_info=zed.CameraInfo.SingleWebcam)
+        detection = self.dimos.deploy(ObjectDBModule, camera_info=zed.CameraInfo.SingleWebcam)
 
         detection.image.connect(self.camera.image)
         detection.pointcloud.transport = core.LCMTransport("/explored_areas", PointCloud2)
 
         detection.annotations.transport = core.LCMTransport("/annotations", ImageAnnotations)
         detection.detections.transport = core.LCMTransport("/detections", Detection2DArray)
+
+        detection.scene_update.transport = core.LCMTransport("/scene_update", SceneUpdate)
 
         detection.detected_pointcloud_0.transport = core.LCMTransport(
             "/detected/pointcloud/0", PointCloud2

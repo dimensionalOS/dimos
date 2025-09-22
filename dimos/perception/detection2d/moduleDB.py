@@ -11,16 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+import threading
+import time
 from typing import Any, Dict, List, Optional
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-)
+from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
+
 from lcm_msgs.foxglove_msgs import SceneUpdate
 from reactivex.observable import Observable
 
 from dimos.core import In, Out, rpc
-from dimos.msgs.geometry_msgs import Transform, Vector3
+from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.module3D import Detection3DModule
@@ -52,6 +54,7 @@ class Object3D(Detection3D):
         self.image = detection.image
         self.bbox = detection.bbox
         self.transform = detection.transform
+        self.center = detection.center
 
     def __add__(self, detection: Detection3D) -> "Object3D":
         new_object = Object3D(self.track_id)
@@ -100,7 +103,6 @@ class ObjectDBModule(Detection3DModule):
         self.objects = {}
 
     def closest_object(self, detection: Detection3D) -> Optional[Object3D]:
-        return None
         distances = sorted(
             self.objects.values(), key=lambda obj: detection.center.distance(obj.center)
         )
@@ -108,23 +110,19 @@ class ObjectDBModule(Detection3DModule):
         if not distances:
             return None
 
-        print(f"Distances to existing objects: {distances}")
         return distances[0]
 
     def add_detection(self, detection: Detection3D):
         """Add detection to existing object or create new one."""
         closest = self.closest_object(detection)
         if closest and closest.bounding_box_intersects(detection):
-            new_obj = self.add_to_object(closest, detection)
+            return self.add_to_object(closest, detection)
         else:
-            new_obj = self.create_new_object(detection)
-
-        print(f"Adding/Updating object: {new_obj}")
-        self.scene_update.publish(new_obj.to_foxglove_scene_entity())
+            return self.create_new_object(detection)
 
     def add_to_object(self, closest: Object3D, detection: Detection3D):
         new_object = closest + detection
-        self[closest.track_id] = new_object
+        self.objects[closest.track_id] = new_object
         return new_object
 
     def create_new_object(self, detection: Detection3D):
@@ -141,15 +139,38 @@ class ObjectDBModule(Detection3DModule):
     def start(self):
         super().start()
 
-        def add_image_detections(imageDetections: ImageDetections3D):
-            print(self.objects)
+        def update_objects(imageDetections: ImageDetections3D):
             for detection in imageDetections.detections:
-                try:
-                    self.add_detection(detection)
-                except Exception as e:
-                    print(f"✗ Error adding detection to object: {e}")
-                    import traceback
+                return self.add_detection(detection)
 
-                    traceback.print_exc()
+        def scene_thread():
+            while True:
+                scene_update = self.to_foxglove_scene_update()
+                self.scene_update.publish(scene_update)
+                time.sleep(0.5)
 
-        self.detection_stream_3d.subscribe(add_image_detections)
+        threading.Thread(target=scene_thread, daemon=True).start()
+
+        self.detection_stream_3d.subscribe(update_objects)
+
+    def to_foxglove_scene_update(self) -> "SceneUpdate":
+        """Convert all detections to a Foxglove SceneUpdate message.
+
+        Returns:
+            SceneUpdate containing SceneEntity objects for all detections
+        """
+        from lcm_msgs.foxglove_msgs import SceneUpdate
+
+        # Create SceneUpdate message with all detections
+        scene_update = SceneUpdate()
+        scene_update.deletions_length = 0
+        scene_update.deletions = []
+        scene_update.entities = []
+
+        # Process each detection
+        for obj in self.objects.values():
+            entity = obj.to_foxglove_scene_entity(entity_id=f"object_{obj.name}_{obj.track_id}")
+            scene_update.entities.append(entity)
+
+        scene_update.entities_length = len(scene_update.entities)
+        return scene_update

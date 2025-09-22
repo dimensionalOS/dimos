@@ -55,7 +55,7 @@ class Detection3DModule(Detection2DModule):
     detection_3d_stream: Observable[ImageDetections3D] = None
 
     def __init__(
-        self, camera_info: CameraInfo, height_filter: Optional[float] = -0.05, *args, **kwargs
+        self, camera_info: CameraInfo, height_filter: Optional[float] = 0.1, *args, **kwargs
     ):
         self.height_filter = height_filter
         self.camera_info = camera_info
@@ -95,22 +95,20 @@ class Detection3DModule(Detection2DModule):
             transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
             return self.process_frame(detections, pc, transform)
 
-        self.detection_3d_stream = backpressure(
-            self.detection_2d_stream().pipe(
+        self.detection_stream_3d = backpressure(
+            self.detection_stream_2d().pipe(
                 ops.with_latest_from(self.pointcloud.observable()), ops.map(detection2d_to_3d)
             )
         )
 
-        self.detection_3d_stream.subscribe(self._publish_detections)
+        self.detection_stream_3d.subscribe(self._publish_detections)
 
     def _publish_detections(self, detections: ImageDetections3D):
         if not detections:
             return
 
-        print(detections)
-
         for index, detection in enumerate(detections[:3]):
-            pointcloud_topic = self.get("detected_pointcloud_" + str(index))
-            image_topic = self.get("detected_image_" + str(index))
+            pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
+            image_topic = getattr(self, "detected_image_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
             image_topic.publish(detection.cropped_image())

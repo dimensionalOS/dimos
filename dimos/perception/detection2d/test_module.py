@@ -20,10 +20,10 @@ from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2 as PointCloud2Msg
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.conftest import Moment
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.perception.detection2d.moduleDB import ObjectDBModule
+from dimos.perception.detection2d.testing import Moment
 from dimos.perception.detection2d.type import (
     Detection2D,
     Detection3D,

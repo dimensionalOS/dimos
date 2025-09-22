@@ -45,7 +45,7 @@ class Detection3D(Detection2D):
         world_pointcloud: PointCloud2,
         camera_info: CameraInfo,
         world_to_camera_transform: Transform,
-        height_filter: Optional[float] = None,
+        height_filter: Optional[float] = 0.2,
     ) -> Optional["Detection3D"]:
         """Create a Detection3D from a 2D detection by projecting world pointcloud.
 
@@ -183,7 +183,7 @@ class Detection3D(Detection2D):
 
     @functools.cached_property
     def center(self) -> Vector3:
-        return self.pointcloud.center
+        return Vector3(*self.pointcloud.center)
 
     @functools.cached_property
     def pose(self) -> PoseStamped:

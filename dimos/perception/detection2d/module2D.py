@@ -50,16 +50,16 @@ class Detection2DModule(Module):
         return detections
 
     @functools.cache
-    def detection_2d_stream(self) -> Observable[ImageDetections2D]:
+    def detection_stream_2d(self) -> Observable[ImageDetections2D]:
         return backpressure(self.image.observable().pipe(ops.map(self.process_image_frame)))
 
     @rpc
     def start(self):
-        self.detection_stream().subscribe(
+        self.detection_stream_2d().subscribe(
             lambda det: self.detections.publish(det.to_ros_detection2d_array())
         )
 
-        self.detection_stream().subscribe(
+        self.detection_stream_2d().subscribe(
             lambda det: self.annotations.publish(det.to_foxglove_annotations())
         )
 
