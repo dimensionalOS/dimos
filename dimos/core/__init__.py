@@ -8,13 +8,13 @@ from rich.console import Console
 
 import dimos.core.colors as colors
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleBase
+from dimos.core.module import Module, ModuleBase, ModuleConfig
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.core.transport import (
     LCMTransport,
+    SHMTransport,
     ZenohTransport,
     pLCMTransport,
-    SHMTransport,
     pSHMTransport,
 )
 from dimos.protocol.rpc.lcmrpc import LCMRPC
@@ -99,7 +99,10 @@ class RPCClient:
         return self.actor_instance.__getattr__(name)
 
 
-def patchdask(dask_client: Client, local_cluster: LocalCluster) -> Client:
+DimosCluster = Client
+
+
+def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
     def deploy(
         actor_class,
         *args,

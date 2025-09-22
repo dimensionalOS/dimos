@@ -11,26 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import functools
 import glob
+import logging
 import os
 import pickle
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
 
 from reactivex import (
-    concat,
-    concat_with_iterable,
-    empty,
     from_iterable,
     interval,
-    just,
-    merge,
-    timer,
 )
 from reactivex import operators as ops
-from reactivex import timer as rx_timer
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
@@ -71,23 +66,41 @@ class SensorReplay(Generic[T]):
                 return self.autocast(data)
             return data
 
-    def iterate(self) -> Iterator[Union[T, Any]]:
-        pattern = os.path.join(self.root_dir, "*")
-        for file_path in sorted(
-            glob.glob(pattern),
-            key=lambda x: int(os.path.basename(x).split(".")[0])
-            if os.path.basename(x).split(".")[0].isdigit()
-            else 0,
-        ):
-            yield self.load_one(Path(file_path))
+    def first(self) -> Optional[Union[T, Any]]:
+        try:
+            return next(self.iterate())
+        except StopIteration:
+            return None
 
-    def stream(self, rate_hz: Optional[float] = None) -> Observable[Union[T, Any]]:
+    @functools.cached_property
+    def files(self) -> list[Path]:
+        def extract_number(filepath):
+            """Extract last digits before .pickle extension"""
+            basename = os.path.basename(filepath)
+            match = re.search(r"(\d+)\.pickle$", basename)
+            return int(match.group(1)) if match else 0
+
+        return sorted(
+            glob.glob(os.path.join(self.root_dir, "*")),
+            key=extract_number,
+        )
+
+    def iterate(self, loop: bool = False) -> Iterator[Union[T, Any]]:
+        while True:
+            for file_path in self.files:
+                yield self.load_one(Path(file_path))
+            if not loop:
+                break
+
+    def stream(
+        self, rate_hz: Optional[float] = None, loop: bool = False
+    ) -> Observable[Union[T, Any]]:
         if rate_hz is None:
-            return from_iterable(self.iterate())
+            return from_iterable(self.iterate(loop=loop))
 
         sleep_time = 1.0 / rate_hz
 
-        return from_iterable(self.iterate()).pipe(
+        return from_iterable(self.iterate(loop=loop)).pipe(
             ops.zip(interval(sleep_time)),
             ops.map(lambda x: x[0] if isinstance(x, tuple) else x),
         )
@@ -176,19 +189,118 @@ class TimedSensorReplay(SensorReplay[T]):
                 return (data[0], self.autocast(data[1]))
             return data
 
-    def iterate(self) -> Iterator[Union[T, Any]]:
-        return (x[1] for x in super().iterate())
+    def find_closest(
+        self, timestamp: float, tolerance: Optional[float] = None
+    ) -> Optional[Union[T, Any]]:
+        """Find the frame closest to the given timestamp.
 
-    def iterate_ts(self) -> Iterator[Union[Tuple[float, T], Any]]:
-        return super().iterate()
+        Args:
+            timestamp: The target timestamp to search for
+            tolerance: Optional maximum time difference allowed
 
-    def stream(self, speed=1.0) -> Observable[Union[T, Any]]:
+        Returns:
+            The data frame closest to the timestamp, or None if no match within tolerance
+        """
+        closest_data = None
+        closest_diff = float("inf")
+
+        # Check frames before and after the timestamp
+        for ts, data in self.iterate_ts():
+            diff = abs(ts - timestamp)
+
+            if diff < closest_diff:
+                closest_diff = diff
+                closest_data = data
+            elif diff > closest_diff:
+                # We're moving away from the target, can stop
+                break
+
+        if tolerance is not None and closest_diff > tolerance:
+            return None
+
+        return closest_data
+
+    def find_closest_seek(
+        self, relative_seconds: float, tolerance: Optional[float] = None
+    ) -> Optional[Union[T, Any]]:
+        """Find the frame closest to a time relative to the start.
+
+        Args:
+            relative_seconds: Seconds from the start of the dataset
+            tolerance: Optional maximum time difference allowed
+
+        Returns:
+            The data frame closest to the relative timestamp, or None if no match within tolerance
+        """
+        # Get the first timestamp
+        first_ts = self.first_timestamp()
+        if first_ts is None:
+            return None
+
+        # Calculate absolute timestamp and use find_closest
+        target_timestamp = first_ts + relative_seconds
+        return self.find_closest(target_timestamp, tolerance)
+
+    def first_timestamp(self) -> Optional[float]:
+        """Get the timestamp of the first item in the dataset.
+
+        Returns:
+            The first timestamp, or None if dataset is empty
+        """
+        try:
+            ts, _ = next(self.iterate_ts())
+            return ts
+        except StopIteration:
+            return None
+
+    def iterate(self, loop: bool = False) -> Iterator[Union[T, Any]]:
+        return (x[1] for x in super().iterate(loop=loop))
+
+    def iterate_ts(
+        self,
+        seek: Optional[float] = None,
+        duration: Optional[float] = None,
+        from_timestamp: Optional[float] = None,
+        loop: bool = False,
+    ) -> Iterator[Union[Tuple[float, T], Any]]:
+        first_ts = None
+        if (seek is not None) or (duration is not None):
+            first_ts = self.first_timestamp()
+            if first_ts is None:
+                return
+
+        if seek is not None:
+            from_timestamp = first_ts + seek
+
+        end_timestamp = None
+        if duration is not None:
+            end_timestamp = (from_timestamp if from_timestamp else first_ts) + duration
+
+        while True:
+            for ts, data in super().iterate():
+                if from_timestamp is None or ts >= from_timestamp:
+                    if end_timestamp is not None and ts >= end_timestamp:
+                        break
+                    yield (ts, data)
+            if not loop:
+                break
+
+    def stream(
+        self,
+        speed=1.0,
+        seek: Optional[float] = None,
+        duration: Optional[float] = None,
+        from_timestamp: Optional[float] = None,
+        loop: bool = False,
+    ) -> Observable[Union[T, Any]]:
         def _subscribe(observer, scheduler=None):
             from reactivex.disposable import CompositeDisposable, Disposable
 
             scheduler = scheduler or TimeoutScheduler()  # default thread-based
 
-            iterator = self.iterate_ts()
+            iterator = self.iterate_ts(
+                seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
+            )
 
             try:
                 prev_ts, first_data = next(iterator)
