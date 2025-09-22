@@ -107,13 +107,13 @@ class SensorReplay(Generic[T]):
 
 
 class SensorStorage(Generic[T]):
-    """Generic sensor data storage utility.
+    """Generic sensor data storage utility
+    .
+        Creates a directory in the test data directory and stores pickled sensor data.
 
-    Creates a directory in the test data directory and stores pickled sensor data.
-
-    Args:
-        name: The name of the storage directory
-        autocast: Optional function that takes data and returns a processed result before storage.
+        Args:
+            name: The name of the storage directory
+            autocast: Optional function that takes data and returns a processed result before storage.
     """
 
     def __init__(self, name: str, autocast: Optional[Callable[[T], Any]] = None):
@@ -135,6 +135,10 @@ class SensorStorage(Generic[T]):
         else:
             # Create the directory
             self.root_dir.mkdir(parents=True, exist_ok=True)
+
+    def consume_stream(self, observable: Observable[Union[T, Any]]) -> None:
+        """Consume an observable stream of sensor data without saving."""
+        return observable.subscribe(self.save_one)
 
     def save_stream(self, observable: Observable[Union[T, Any]]) -> Observable[int]:
         """Save an observable stream of sensor data to pickle files."""
