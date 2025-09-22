@@ -139,9 +139,13 @@ class Detection3D(Detection2D):
         # Remove statistical outliers
         try:
             pcd = detection_pc.pointcloud
-            statistical, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+            statistical, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=0.5)
             detection_pc = PointCloud2(statistical, detection_pc.frame_id, detection_pc.ts)
-        except Exception:
+        except Exception as e:
+            print("Outlier removal failed, continuing without it.", 3)
+            import traceback
+
+            traceback.print_exc()
             # If outlier removal fails, continue with original
             pass
 

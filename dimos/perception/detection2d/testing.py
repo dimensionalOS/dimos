@@ -56,7 +56,6 @@ class Moment3D(Moment):
     detections3d: ImageDetections3D
 
 
-@functools.lru_cache
 def get_moment(seek: float = 10):
     data_dir = "unitree_go2_lidar_corrected"
     get_data(data_dir)
@@ -88,57 +87,82 @@ def get_moment(seek: float = 10):
     }
 
 
-@functools.lru_cache
+# Create a single instance of Detection2DModule
+_detection2d_module = None
+
+
 def detections2d(get_moment: Moment, seek: float = 10.0) -> Moment2D:
+    global _detection2d_module
+    if _detection2d_module is None:
+        _detection2d_module = Detection2DModule()
+
     moment = get_moment(seek=seek)
     return {
         **moment,
-        "detections2d": Detection2DModule().process_image_frame(moment["image_frame"]),
+        "detections2d": _detection2d_module.process_image_frame(moment["image_frame"]),
     }
 
 
-@functools.lru_cache
+# Create a single instance of Detection3DModule
+_detection3d_module = None
+
+
 def detections3d(seek: float = 10.0) -> Moment3D:
+    global _detection3d_module
+
     moment = detections2d(get_moment, seek=seek)
     camera_transform = moment["tf"].get("camera_optical", "world")
     if camera_transform is None:
         raise ValueError("No camera_optical transform in tf")
 
+    if _detection3d_module is None:
+        _detection3d_module = Detection3DModule(camera_info=moment["camera_info"])
+
     return {
         **moment,
-        "detections3d": Detection3DModule(camera_info=moment["camera_info"]).process_frame(
+        "detections3d": _detection3d_module.process_frame(
             moment["detections2d"], moment["lidar_frame"], camera_transform
         ),
     }
 
 
-def publish_moment(moment: Union[Moment, Moment2D, Moment3D]):
-    lcm.autoconf()
+# Create transport instances once and reuse them
+_transports = {}
 
-    lidar_frame_transport: LCMTransport = LCMTransport("/lidar", LidarMessage)
+
+def _get_transport(topic: str, msg_type):
+    """Get or create a transport for the given topic."""
+    key = (topic, msg_type)
+    if key not in _transports:
+        _transports[key] = LCMTransport(topic, msg_type)
+    return _transports[key]
+
+
+def publish_moment(moment: Union[Moment, Moment2D, Moment3D]):
+    lidar_frame_transport = _get_transport("/lidar", LidarMessage)
     lidar_frame_transport.publish(moment.get("lidar_frame"))
 
-    image_frame_transport: LCMTransport = LCMTransport("/image", Image)
+    image_frame_transport = _get_transport("/image", Image)
     image_frame_transport.publish(moment.get("image_frame"))
 
-    odom_frame_transport: LCMTransport = LCMTransport("/odom", Odometry)
+    odom_frame_transport = _get_transport("/odom", Odometry)
     odom_frame_transport.publish(moment.get("odom_frame"))
 
-    camera_info_transport: LCMTransport = LCMTransport("/camera_info", CameraInfo)
+    camera_info_transport = _get_transport("/camera_info", CameraInfo)
     camera_info_transport.publish(moment.get("camera_info"))
 
     detections2d: ImageDetections2D = moment.get("detections2d")
     if detections2d:
-        annotations_transport: LCMTransport = LCMTransport("/annotations", ImageAnnotations)
+        annotations_transport = _get_transport("/annotations", ImageAnnotations)
         annotations_transport.publish(detections2d.to_image_annotations())
 
     detections3d: ImageDetections3D = moment.get("detections3d")
     if detections3d:
         for index, detection in enumerate(detections3d[:3]):
-            pointcloud_topic = LCMTransport("/detected/pointcloud/" + str(index), PointCloud2)
-            image_topic = LCMTransport("/detected/image/" + str(index), Image)
+            pointcloud_topic = _get_transport(f"/detected/pointcloud/{index}", PointCloud2)
+            image_topic = _get_transport(f"/detected/image/{index}", Image)
             pointcloud_topic.publish(detection.pointcloud)
             image_topic.publish(detection.cropped_image())
 
-        scene_entity_transport: LCMTransport = LCMTransport("/scene_update", SceneUpdate)
+        scene_entity_transport = _get_transport("/scene_update", SceneUpdate)
         scene_entity_transport.publish(detections3d.to_foxglove_scene_update())
