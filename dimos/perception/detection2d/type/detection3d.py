@@ -16,31 +16,21 @@ from __future__ import annotations
 
 import functools
 import hashlib
-import time
 from dataclasses import dataclass
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+from typing import Any, Dict, Optional, TypeVar
 
 import numpy as np
-from dimos_lcm.geometry_msgs import Point
 from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.std_msgs import ColorRGBA
-from dimos_lcm.visualization_msgs import Marker, MarkerArray
-from lcm_msgs.builtin_interfaces import Duration, Time
+from lcm_msgs.builtin_interfaces import Duration
 from lcm_msgs.foxglove_msgs import Color, CubePrimitive, SceneEntity, SceneUpdate, TextPrimitive
 from lcm_msgs.geometry_msgs import Point, Pose, Quaternion
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
-from rich.console import Console
-from rich.table import Table
-from rich.text import Text
 
-from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.perception.detection2d.type.detection2d import Detection2D
 from dimos.perception.detection2d.type.imageDetections import ImageDetections
-from dimos.types.timestamped import to_ros_stamp, to_timestamp
+from dimos.types.timestamped import to_ros_stamp
 
 
 @dataclass

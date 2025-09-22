@@ -11,29 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
-from dimos_lcm.sensor_msgs import CameraInfo
 from lcm_msgs.foxglove_msgs import SceneUpdate
-from reactivex import operators as ops
+from reactivex.observable import Observable
 
 from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.perception.detection2d.type import (
     Detection3D,
-    ImageDetections2D,
     ImageDetections3D,
 )
 from dimos.perception.detection2d.type.detection3d import Detection3D
-from dimos.types.timestamped import TimestampedCollection
 
 
 # Represents an object in space, as collection of 3d detections over time
@@ -82,6 +77,7 @@ class Object3D(Detection3D):
 class ObjectDBModule(Detection3DModule):
     cnt: int = 0
     objects: dict[str, Object3D]
+    object_stream: Observable[Object3D] = None
 
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
@@ -92,6 +88,7 @@ class ObjectDBModule(Detection3DModule):
     detected_pointcloud_0: Out[PointCloud2] = None  # type: ignore
     detected_pointcloud_1: Out[PointCloud2] = None  # type: ignore
     detected_pointcloud_2: Out[PointCloud2] = None  # type: ignore
+
     detected_image_0: Out[Image] = None  # type: ignore
     detected_image_1: Out[Image] = None  # type: ignore
     detected_image_2: Out[Image] = None  # type: ignore
@@ -103,11 +100,14 @@ class ObjectDBModule(Detection3DModule):
         self.objects = {}
 
     def closest_object(self, detection: Detection3D) -> Optional[Object3D]:
+        return None
         distances = sorted(
             self.objects.values(), key=lambda obj: detection.center.distance(obj.center)
         )
+
         if not distances:
             return None
+
         print(f"Distances to existing objects: {distances}")
         return distances[0]
 
@@ -120,7 +120,6 @@ class ObjectDBModule(Detection3DModule):
             new_obj = self.create_new_object(detection)
 
         print(f"Adding/Updating object: {new_obj}")
-        print(self.objects)
         self.scene_update.publish(new_obj.to_foxglove_scene_entity())
 
     def add_to_object(self, closest: Object3D, detection: Detection3D):

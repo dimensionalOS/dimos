@@ -20,6 +20,7 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
 )
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
+from reactivex.observable import Observable
 
 from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import Transform
@@ -50,6 +51,8 @@ class Detection3DModule(Detection2DModule):
     detected_image_0: Out[Image] = None  # type: ignore
     detected_image_1: Out[Image] = None  # type: ignore
     detected_image_2: Out[Image] = None  # type: ignore
+
+    detection_3d_stream: Observable[ImageDetections3D] = None
 
     def __init__(
         self, camera_info: CameraInfo, height_filter: Optional[float] = -0.05, *args, **kwargs
@@ -85,51 +88,29 @@ class Detection3DModule(Detection2DModule):
 
     @rpc
     def start(self):
-        time_tolerance = 5.0  # seconds
+        super().start()
 
         def detection2d_to_3d(args):
             detections, pc = args
-            transform = self.tf.get(
-                "camera_optical", pc.frame_id, detections.image.ts, time_tolerance
-            )
+            transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
             return self.process_frame(detections, pc, transform)
 
-        self.detection_stream_3d = backpressure(
-            self.detection_stream().pipe(
+        self.detection_3d_stream = backpressure(
+            self.detection_2d_stream().pipe(
                 ops.with_latest_from(self.pointcloud.observable()), ops.map(detection2d_to_3d)
             )
         )
 
-        self.detection_stream().subscribe(
-            lambda det: self.detections.publish(det.to_ros_detection2d_array())
-        )
+        self.detection_3d_stream.subscribe(self._publish_detections)
 
-        self.detection_stream().subscribe(
-            lambda det: self.annotations.publish(det.to_image_annotations())
-        )
-
-        self.detection_stream_3d.subscribe(self._handle_combined_detections)
-
-    def _handle_combined_detections(self, detections: ImageDetections3D):
+    def _publish_detections(self, detections: ImageDetections3D):
         if not detections:
             return
 
-        # for det in detections:
-        #     if (len(det.pointcloud) > 70) and det.name == "suitcase":
-        #         import pickle
-
-        #         pickle.dump(det, open(f"detection3d.pkl", "wb"))
-
         print(detections)
 
-        if len(detections) > 0:
-            self.detected_pointcloud_0.publish(detections[0].pointcloud)
-            self.detected_image_0.publish(detections[0].cropped_image())
-
-        if len(detections) > 1:
-            self.detected_pointcloud_1.publish(detections[1].pointcloud)
-            self.detected_image_1.publish(detections[1].cropped_image())
-
-        if len(detections) > 3:
-            self.detected_pointcloud_2.publish(detections[2].pointcloud)
-            self.detected_image_2.publish(detections[2].cropped_image())
+        for index, detection in enumerate(detections[:3]):
+            pointcloud_topic = self.get("detected_pointcloud_" + str(index))
+            image_topic = self.get("detected_image_" + str(index))
+            pointcloud_topic.publish(detection.pointcloud)
+            image_topic.publish(detection.cropped_image())

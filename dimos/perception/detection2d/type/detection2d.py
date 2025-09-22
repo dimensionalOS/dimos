@@ -14,12 +14,9 @@
 
 from __future__ import annotations
 
-import functools
-import hashlib
 from dataclasses import dataclass
-from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar
+from typing import Any, Dict, List, Tuple
 
-import numpy as np
 from dimos_lcm.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
@@ -37,14 +34,11 @@ from dimos_lcm.vision_msgs import (
     Detection2D as ROSDetection2D,
 )
 from rich.console import Console
-from rich.table import Table
 from rich.text import Text
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
-from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.type.imageDetections import ImageDetections
 from dimos.types.timestamped import Timestamped, to_ros_stamp, to_timestamp
 
@@ -108,16 +102,9 @@ class Detection2D(Timestamped):
         console = Console(force_terminal=True, legacy_windows=False)
         d = self.to_repr_dict()
 
-        # Create confidence text with color based on value
-        # conf_color = "green" if d.get("conf") > 0.8 else "yellow" if d.get("conf") > 0.5 else "red"
-        # conf_text = Text(f"{d['conf']:.1%}", style=conf_color)
-
         # Build the string representation
         parts = [
             Text(f"{self.__class__.__name__}("),
-            #            Text(d["name"], style="bold cyan"),
-            #            Text(f" cls={d['class']} trk={d['track']} "),
-            #            Text(f" {d['bbox']}"),
         ]
 
         # Add any extra fields (e.g., points for Detection3D)

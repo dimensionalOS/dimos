@@ -50,7 +50,7 @@ class Detection2DModule(Module):
         return detections
 
     @functools.cache
-    def detection_stream(self) -> Observable[ImageDetections2D]:
+    def detection_2d_stream(self) -> Observable[ImageDetections2D]:
         return backpressure(self.image.observable().pipe(ops.map(self.process_image_frame)))
 
     @rpc

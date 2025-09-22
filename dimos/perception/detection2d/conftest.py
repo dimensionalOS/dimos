@@ -19,8 +19,8 @@ import pytest
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
 from dimos_lcm.sensor_msgs import CameraInfo, PointCloud2
-from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 from dimos_lcm.visualization_msgs.Marker import Marker
+from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 
 from dimos.core import start
 from dimos.core.transport import LCMTransport
@@ -58,12 +58,17 @@ def dimos_cluster():
     dimos.stop()
 
 
+@pytest.fixture
+def get_moment(seek: float, detection2d: bool = False, detection3d: bool = False):
+    if detection2d or detection3d:
+        moment = {"detections2d": detections2d(moment), **moment}
+    return moment(seek)
+
+
 @pytest.fixture(scope="session")
-def moment():
+def moment(seek: float = 10):
     data_dir = "unitree_go2_lidar_corrected"
     get_data(data_dir)
-
-    seek = 10
 
     lidar_frame = TimedSensorReplay(f"{data_dir}/lidar").find_closest_seek(seek)
 
