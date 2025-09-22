@@ -25,19 +25,15 @@ import time
 from dimos import core
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
 from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
-from dimos.msgs.sensor_msgs import Image, CameraInfo, PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.moduleDB import ObjectDBModule
-from dimos.perception.spatial_perception import SpatialMemory
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3, Quaternion
+from dimos.msgs.sensor_msgs import Image, CameraInfo
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.unitree_webrtc.nav_bot import NavBot
+from dimos.robot.nav_bot import NavBot
 from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
 from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
@@ -138,8 +134,6 @@ class UnitreeG1(Robot, NavBot):
 
         # Initialize skill library with G1 robot type
         if skill_library is None:
-            from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-
             skill_library = MyUnitreeSkills(robot_type="g1")
         self.skill_library = skill_library
 
@@ -220,15 +214,8 @@ class UnitreeG1(Robot, NavBot):
 
         self.deploy_navigation_modules(bridge_name="g1_ros_bridge")
 
-        self.nav = self._dimos.deploy(NavigationModule)
-        self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
-        self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
-        self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
-        self.nav.joy.transport = core.LCMTransport("/joy", Joy)
-        self.nav.start()
-
-        self._deploy_camera()
-        self._deploy_detection(self.nav.go_to)
+        self._start_modules()
+        NavBot.start(self)
 
         self.lcm.start()
 
@@ -348,8 +335,6 @@ class UnitreeG1(Robot, NavBot):
         """Start all deployed modules."""
         self._dimos.start_all_modules()
 
-        self.start_navigation_modules()
-
         # Initialize skills after connection is established
         if self.skill_library is not None:
             for skill in self.skill_library:
@@ -373,7 +358,8 @@ class UnitreeG1(Robot, NavBot):
         """Shutdown the robot and clean up resources."""
         logger.info("Shutting down UnitreeG1...")
 
-        self.shutdown_navigation()
+        # Shutdown navigation modules from NavBot
+        NavBot.shutdown(self)
 
         if self.websocket_vis:
             try:
@@ -420,19 +406,19 @@ def main():
     )
     robot.start()
 
-    # time.sleep(7)
-    # print("Starting navigation...")
-    # print(
-    #     robot.nav.go_to(
-    #         PoseStamped(
-    #             ts=time.time(),
-    #             frame_id="map",
-    #             position=Vector3(0.0, 0.0, 0.03),
-    #             orientation=Quaternion(0, 0, 0, 0),
-    #         ),
-    #         timeout=10,
-    #     ),
-    # )
+    pose = PoseStamped(
+        ts=time.time(),
+        frame_id="map",
+        position=Vector3(1.0, 1.0, 0.0),
+        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+    )
+
+    time.sleep(2)
+    robot.navigate_to_goal(pose, blocking=False)
+
+    time.sleep(5)
+    robot.cancel_navigation()
+
     try:
         if args.joystick:
             print("\n" + "=" * 50)

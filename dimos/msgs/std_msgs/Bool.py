@@ -16,7 +16,6 @@
 """Bool message type."""
 
 from typing import ClassVar
-
 from dimos_lcm.std_msgs import Bool as LCMBool
 
 try:
