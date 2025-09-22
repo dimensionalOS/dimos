@@ -128,7 +128,7 @@ class ImageDetections(Generic[T]):
             detections=[det.to_ros_detection2d() for det in self.detections],
         )
 
-    def to_image_annotations(self) -> ImageAnnotations:
+    def to_foxglove_annotations(self) -> ImageAnnotations:
         def flatten(xss):
             return [x for xs in xss for x in xs]
 

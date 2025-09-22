@@ -17,6 +17,7 @@ import logging
 import os
 import pickle
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union

@@ -136,6 +136,7 @@ def test_module3d_replay(dimos_cluster):
     mapper = dimos_cluster.deploy(
         Map, voxel_size=0.5, cost_resolution=0.05, global_publish_interval=1.0
     )
+
     mapper.lidar.connect(connection.lidar)
     mapper.global_map.transport = LCMTransport("/global_map", LidarMessage)
     mapper.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)

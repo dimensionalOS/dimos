@@ -31,7 +31,6 @@ def test_publish():
         recording_name = "test_play_recording"
         record_data_dir = _get_data_dir(recording_name)
 
-        # Delete old data directory if it exists
         if record_data_dir.exists():
             shutil.rmtree(record_data_dir)
 
