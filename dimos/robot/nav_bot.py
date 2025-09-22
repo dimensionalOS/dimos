@@ -88,14 +88,24 @@ class TopicRemapModule(Module):
         )
         rotation = euler_to_quaternion(euler_angles)
 
-        static_tf = Transform(
+        sensor_to_base_link_tf = Transform(
             translation=translation,
             rotation=rotation,
             frame_id="sensor",
             child_frame_id="base_link",
             ts=msg.ts,
         )
-        self.tf.publish(static_tf)
+
+        # map to world static transform
+        map_to_world_tf = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=euler_to_quaternion(Vector3(0.0, 0.0, 0.0)),
+            frame_id="map",
+            child_frame_id="world",
+            ts=msg.ts,
+        )
+
+        self.tf.publish(sensor_to_base_link_tf, map_to_world_tf)
 
 
 class NavBot:
