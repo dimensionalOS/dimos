@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Force-Torque Pull Skill Module for Dimos
 
@@ -47,6 +61,7 @@ logger = setup_logger(__name__)
 @dataclass
 class ForceState:
     """Container for force sensor state with history."""
+
     force: np.ndarray
     torque: np.ndarray
     timestamp: float
@@ -67,12 +82,7 @@ class FTPullModule(Module):
     force: In[Vector3] = None  # Force vector in Newtons
     torque: In[Vector3] = None  # Torque vector in Newton-meters
 
-    def __init__(
-        self,
-        xarm_ip: str = None,
-        enable_real_robot: bool = True,
-        verbose: bool = False
-    ):
+    def __init__(self, xarm_ip: str = None, enable_real_robot: bool = True, verbose: bool = False):
         """
         Initialize the FT pull module.
 
@@ -213,7 +223,7 @@ class FTPullModule(Module):
             if code == 0 and angles:
                 logger.info("Got xARM joint positions:")
                 for i, angle in enumerate(angles[:6]):
-                    logger.info(f"  joint{i+1}: {np.degrees(angle):.2f} deg")
+                    logger.info(f"  joint{i + 1}: {np.degrees(angle):.2f} deg")
 
                 # Try to get gripper position
                 try:
@@ -250,9 +260,7 @@ class FTPullModule(Module):
             builder = DiagramBuilder()
 
             # Create plant and scene graph
-            self.plant, scene_graph = AddMultibodyPlantSceneGraph(
-                builder, time_step=0.001
-            )
+            self.plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=0.001)
 
             # Parse URDF
             parser = Parser(self.plant)
@@ -278,9 +286,7 @@ class FTPullModule(Module):
 
             # Always add visualizer with meshcat
             if self.meshcat:
-                visualizer = MeshcatVisualizer.AddToBuilder(
-                    builder, scene_graph, self.meshcat
-                )
+                visualizer = MeshcatVisualizer.AddToBuilder(builder, scene_graph, self.meshcat)
 
             # Build the diagram
             self.diagram = builder.Build()
@@ -295,7 +301,7 @@ class FTPullModule(Module):
 
             if self.xarm_initial_positions is not None:
                 logger.info("Initializing Drake with xARM joint positions")
-                arm_joint_names = [f"joint{i+1}" for i in range(6)]
+                arm_joint_names = [f"joint{i + 1}" for i in range(6)]
                 for i, joint_name in enumerate(arm_joint_names):
                     try:
                         joint = self.plant.GetJointByName(joint_name)
@@ -331,8 +337,7 @@ class FTPullModule(Module):
             # Set camera view
             if self.meshcat:
                 self.meshcat.SetCameraPose(
-                    camera_in_world=[1.5, 1.5, 1.2],
-                    target_in_world=[0.0, 0.0, 0.3]
+                    camera_in_world=[1.5, 1.5, 1.2], target_in_world=[0.0, 0.0, 0.3]
                 )
 
             # Initial publish
@@ -351,8 +356,7 @@ class FTPullModule(Module):
             return
 
         self.diff_ik_params = DifferentialInverseKinematicsParameters(
-            self.plant.num_positions(),
-            self.plant.num_velocities()
+            self.plant.num_positions(), self.plant.num_velocities()
         )
 
         # Set timestep
@@ -382,7 +386,7 @@ class FTPullModule(Module):
             return ForceState(
                 force=self.latest_force.copy(),
                 torque=self.latest_torque.copy() if self.latest_torque is not None else np.zeros(3),
-                timestamp=time.time()
+                timestamp=time.time(),
             )
 
     def predict_current_force(self) -> Optional[ForceState]:
@@ -421,10 +425,12 @@ class FTPullModule(Module):
         return ForceState(
             force=predicted_force,
             torque=recent[-1].torque,  # Don't predict torque for now
-            timestamp=time.time()
+            timestamp=time.time(),
         )
 
-    def compute_combined_motion(self, force_state: ForceState, door_opens_clockwise: bool, rotation_axis: str) -> Tuple[np.ndarray, float]:
+    def compute_combined_motion(
+        self, force_state: ForceState, door_opens_clockwise: bool, rotation_axis: str
+    ) -> Tuple[np.ndarray, float]:
         """
         Compute combined pull + rotation motion based on force feedback.
         Matches the exact logic from continuous_door_opener.py.
@@ -439,9 +445,7 @@ class FTPullModule(Module):
             rotation_angle: Rotation angle around pivot (radians)
         """
         # Get current openft pose
-        openft_pose = self.plant.EvalBodyPoseInWorld(
-            self.plant_context, self.openft_body
-        )
+        openft_pose = self.plant.EvalBodyPoseInWorld(self.plant_context, self.openft_body)
         openft_rot = openft_pose.rotation()
 
         # Extract force components
@@ -480,7 +484,9 @@ class FTPullModule(Module):
                     oscillating = True
                     adaptive_gain *= self.oscillation_damping
                     if self.verbose:
-                        logger.debug(f"  Oscillation detected, reducing gain to {adaptive_gain:.4f}")
+                        logger.debug(
+                            f"  Oscillation detected, reducing gain to {adaptive_gain:.4f}"
+                        )
 
         # Check if in success zone
         in_success_zone = abs(force_x) <= self.force_threshold
@@ -490,13 +496,15 @@ class FTPullModule(Module):
             if force_x > self.force_threshold:
                 force_error = force_x - self.force_threshold
                 if force_error > 30:
-                    rotation_angle = -adaptive_gain * 15 * (1 - np.exp(-force_error/30))
+                    rotation_angle = -adaptive_gain * 15 * (1 - np.exp(-force_error / 30))
                 elif force_error > 15:
                     rotation_angle = -adaptive_gain * force_error * 0.7
                 else:
                     rotation_angle = -force_error * adaptive_gain
                 if self.verbose:
-                    logger.debug(f"  Wrong side! Force {force_x:.1f}N > {self.force_threshold}N, rotating CCW")
+                    logger.debug(
+                        f"  Wrong side! Force {force_x:.1f}N > {self.force_threshold}N, rotating CCW"
+                    )
             elif force_x < -self.force_threshold:
                 force_error = abs(force_x) - self.force_threshold
                 if force_error > 8:
@@ -507,11 +515,13 @@ class FTPullModule(Module):
             if force_x < -self.force_threshold:
                 force_error = abs(force_x) - self.force_threshold
                 if force_error > 20:
-                    rotation_angle = adaptive_gain * 20 * (1 - np.exp(-force_error/20))
+                    rotation_angle = adaptive_gain * 20 * (1 - np.exp(-force_error / 20))
                 else:
                     rotation_angle = force_error * adaptive_gain
                 if self.verbose:
-                    logger.debug(f"  Wrong side! Force {force_x:.1f}N < -{self.force_threshold}N, rotating CW")
+                    logger.debug(
+                        f"  Wrong side! Force {force_x:.1f}N < -{self.force_threshold}N, rotating CW"
+                    )
             elif force_x > self.force_threshold:
                 force_error = force_x - self.force_threshold
                 if force_error > 5:
@@ -540,7 +550,7 @@ class FTPullModule(Module):
         if in_success_zone and lateral_force < 10:
             pull_distance = self.pull_speed * 1.5  # 150% speed when aligned
             if self.verbose:
-                logger.debug(f"  Aligned! Boosting pull to {pull_distance*1000:.1f}mm")
+                logger.debug(f"  Aligned! Boosting pull to {pull_distance * 1000:.1f}mm")
         elif lateral_force < 15:
             pull_distance = self.pull_speed
         elif lateral_force < 25:
@@ -574,7 +584,9 @@ class FTPullModule(Module):
 
         return translation, rotation_angle
 
-    def compute_target_pose(self, translation: np.ndarray, rotation_angle: float, rotation_axis: str) -> RigidTransform:
+    def compute_target_pose(
+        self, translation: np.ndarray, rotation_angle: float, rotation_axis: str
+    ) -> RigidTransform:
         """
         Compute target pose combining translation and rotation around pivot.
 
@@ -587,9 +599,7 @@ class FTPullModule(Module):
             Target pose for link_openft
         """
         # Get current openft pose
-        current_pose = self.plant.EvalBodyPoseInWorld(
-            self.plant_context, self.openft_body
-        )
+        current_pose = self.plant.EvalBodyPoseInWorld(self.plant_context, self.openft_body)
         current_pos = current_pose.translation()
         current_rot = current_pose.rotation()
 
@@ -603,24 +613,12 @@ class FTPullModule(Module):
             c = np.cos(rotation_angle)
             s = np.sin(rotation_angle)
 
-            if rotation_axis == 'x':
-                rotation_matrix = np.array([
-                    [1, 0, 0],
-                    [0, c, -s],
-                    [0, s, c]
-                ])
-            elif rotation_axis == 'y':
-                rotation_matrix = np.array([
-                    [c, 0, s],
-                    [0, 1, 0],
-                    [-s, 0, c]
-                ])
+            if rotation_axis == "x":
+                rotation_matrix = np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
+            elif rotation_axis == "y":
+                rotation_matrix = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
             else:  # 'z'
-                rotation_matrix = np.array([
-                    [c, -s, 0],
-                    [s, c, 0],
-                    [0, 0, 1]
-                ])
+                rotation_matrix = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
 
             # Vector from pivot to current openft position
             pivot_to_openft = current_pos - pivot_point_world
@@ -651,11 +649,7 @@ class FTPullModule(Module):
 
         # Use differential IK to move towards target
         result = DoDifferentialInverseKinematics(
-            self.plant,
-            self.plant_context,
-            target_pose,
-            self.openft_frame,
-            self.diff_ik_params
+            self.plant, self.plant_context, target_pose, self.openft_frame, self.diff_ik_params
         )
 
         if result.status == DifferentialInverseKinematicsStatus.kSolutionFound:
@@ -700,7 +694,7 @@ class FTPullModule(Module):
         # Get current joint positions from simulation
         q = self.plant.GetPositions(self.plant_context)
 
-        arm_joint_names = [f"joint{i+1}" for i in range(6)]
+        arm_joint_names = [f"joint{i + 1}" for i in range(6)]
         positions = []
         for joint_name in arm_joint_names:
             joint = self.plant.GetJointByName(joint_name)
@@ -721,17 +715,19 @@ class FTPullModule(Module):
                 logger.error(f"Retry failed: code {code}")
 
     @skill()
-    def continuous_pull(self,
-                       pivot_distance: float = 0.2,
-                       force_threshold: float = 7.0,
-                       rotation_gain: float = 0.01,
-                       pull_speed: float = 0.015,
-                       sensor_delay: float = 0.2,
-                       prediction_gain: float = 0.3,
-                       door_opens_clockwise: bool = True,  # Most doors open clockwise
-                       rotation_axis: str = 'z',
-                       max_duration: float = 30.0,
-                       end_angle: Optional[float] = None) -> str:
+    def continuous_pull(
+        self,
+        pivot_distance: float = 0.2,
+        force_threshold: float = 7.0,
+        rotation_gain: float = 0.01,
+        pull_speed: float = 0.015,
+        sensor_delay: float = 0.2,
+        prediction_gain: float = 0.3,
+        door_opens_clockwise: bool = True,  # Most doors open clockwise
+        rotation_axis: str = "z",
+        max_duration: float = 30.0,
+        end_angle: Optional[float] = None,
+    ) -> str:
         """
         Execute continuous adaptive door pulling with force feedback.
         Matches the exact control logic from continuous_door_opener.py.
@@ -754,7 +750,7 @@ class FTPullModule(Module):
         logger.info(f"Starting continuous adaptive door pulling")
         logger.info(f"  Force threshold: {force_threshold}N")
         logger.info(f"  Rotation gain: {rotation_gain:.4f} rad/N")
-        logger.info(f"  Pull speed: {pull_speed*1000:.1f}mm per step")
+        logger.info(f"  Pull speed: {pull_speed * 1000:.1f}mm per step")
         logger.info(f"  Door type: {'CLOCKWISE' if door_opens_clockwise else 'COUNTER-CLOCKWISE'}")
         logger.info(f"  Rotation axis: {rotation_axis.upper()}-axis")
 
@@ -767,7 +763,7 @@ class FTPullModule(Module):
         self.prediction_gain = prediction_gain
 
         # Validate rotation axis
-        if rotation_axis.lower() not in ['x', 'y', 'z']:
+        if rotation_axis.lower() not in ["x", "y", "z"]:
             logger.error(f"Invalid rotation_axis '{rotation_axis}'. Must be 'x', 'y', or 'z'")
             return "ERROR: Invalid rotation axis"
         rotation_axis = rotation_axis.lower()
@@ -824,7 +820,9 @@ class FTPullModule(Module):
 
             # Check rotation limit
             if end_angle_rad and abs(self.total_rotation) >= end_angle_rad:
-                logger.info(f"Target angle reached! Total rotation: {np.degrees(abs(self.total_rotation)):.1f}°")
+                logger.info(
+                    f"Target angle reached! Total rotation: {np.degrees(abs(self.total_rotation)):.1f}°"
+                )
                 break
 
             # Get current force state
@@ -858,8 +856,8 @@ class FTPullModule(Module):
                     f"lateral={force_to_use.lateral_force():.1f}N | "
                     f"Rot: {np.degrees(rotation_angle):.1f}° "
                     f"(total: {np.degrees(self.total_rotation):.1f}°) | "
-                    f"Pull: {np.linalg.norm(translation)*1000:.1f}mm "
-                    f"(total: {self.total_pull_distance*100:.1f}cm)"
+                    f"Pull: {np.linalg.norm(translation) * 1000:.1f}mm "
+                    f"(total: {self.total_pull_distance * 100:.1f}cm)"
                 )
                 last_print_time = time.time()
 
@@ -871,7 +869,10 @@ class FTPullModule(Module):
                 # Update visualizations if meshcat available
                 if self.meshcat:
                     # Create target pose visualization if needed
-                    if not hasattr(self, 'visualizations_created') or not self.visualizations_created:
+                    if (
+                        not hasattr(self, "visualizations_created")
+                        or not self.visualizations_created
+                    ):
                         self.create_target_frame_visualization()
                         self.visualizations_created = True
                     # Update target pose visualization
@@ -884,11 +885,13 @@ class FTPullModule(Module):
                     self.last_motion_time = time.time()
 
                     # Store motion in history for prediction
-                    self.motion_history.append({
-                        'translation': translation,
-                        'rotation': rotation_angle,
-                        'timestamp': time.time()
-                    })
+                    self.motion_history.append(
+                        {
+                            "translation": translation,
+                            "rotation": rotation_angle,
+                            "timestamp": time.time(),
+                        }
+                    )
 
                 # Update visualization
                 if self.diagram:
@@ -898,15 +901,17 @@ class FTPullModule(Module):
                 code, current_angles = self.arm.get_servo_angle(is_radian=True)
                 if code == 0:
                     # Apply rotation to appropriate joint
-                    if rotation_axis == 'z':
+                    if rotation_axis == "z":
                         current_angles[5] += rotation_angle
-                    elif rotation_axis == 'y':
+                    elif rotation_axis == "y":
                         current_angles[4] += rotation_angle
-                    elif rotation_axis == 'x':
+                    elif rotation_axis == "x":
                         current_angles[3] += rotation_angle
 
                     # Execute movement
-                    code = self.arm.set_servo_angle(angle=current_angles[:6], speed=15, wait=True, is_radian=True)
+                    code = self.arm.set_servo_angle(
+                        angle=current_angles[:6], speed=15, wait=True, is_radian=True
+                    )
                     if code == 0:
                         self.motion_count += 1
                         self.last_motion_time = time.time()
@@ -928,16 +933,16 @@ class FTPullModule(Module):
         self.running = False
 
         # Print final statistics
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info("Final Statistics:")
         logger.info(f"  Total motion steps: {self.motion_count}")
         logger.info(f"  Total rotation: {np.degrees(self.total_rotation):.1f} degrees")
-        logger.info(f"  Total pull distance: {self.total_pull_distance*100:.1f} cm")
+        logger.info(f"  Total pull distance: {self.total_pull_distance * 100:.1f} cm")
         if self.motion_count > 0:
-            logger.info(f"  Average rate: {self.motion_count/(time.time()-start_time):.1f} Hz")
-        logger.info("="*60)
+            logger.info(f"  Average rate: {self.motion_count / (time.time() - start_time):.1f} Hz")
+        logger.info("=" * 60)
 
-        return f"Completed: {self.motion_count} steps, {np.degrees(self.total_rotation):.1f}°, {self.total_pull_distance*100:.1f}cm"
+        return f"Completed: {self.motion_count} steps, {np.degrees(self.total_rotation):.1f}°, {self.total_pull_distance * 100:.1f}cm"
 
     @skill()
     def stop_pull(self) -> str:
@@ -951,12 +956,12 @@ class FTPullModule(Module):
         """Get current statistics."""
         force_state = self.get_current_force_state()
         return {
-            'has_force_data': force_state is not None,
-            'lateral_force': force_state.lateral_force() if force_state else 0,
-            'total_rotation_deg': np.degrees(self.total_rotation),
-            'total_pull_cm': self.total_pull_distance * 100,
-            'motion_count': self.motion_count,
-            'running': self.running
+            "has_force_data": force_state is not None,
+            "lateral_force": force_state.lateral_force() if force_state else 0,
+            "total_rotation_deg": np.degrees(self.total_rotation),
+            "total_pull_cm": self.total_pull_distance * 100,
+            "motion_count": self.motion_count,
+            "running": self.running,
         }
 
     def create_target_frame_visualization(self):
@@ -971,34 +976,25 @@ class FTPullModule(Module):
         self.meshcat.SetObject(
             "target_pose/x_axis",
             Box([axis_length, axis_radius * 2, axis_radius * 2]),
-            Rgba(0.8, 0.2, 0.2, 0.7)
+            Rgba(0.8, 0.2, 0.2, 0.7),
         )
-        self.meshcat.SetTransform(
-            "target_pose/x_axis",
-            RigidTransform([axis_length/2, 0, 0])
-        )
+        self.meshcat.SetTransform("target_pose/x_axis", RigidTransform([axis_length / 2, 0, 0]))
 
         # Y-axis (green)
         self.meshcat.SetObject(
             "target_pose/y_axis",
             Box([axis_radius * 2, axis_length, axis_radius * 2]),
-            Rgba(0.2, 0.8, 0.2, 0.7)
+            Rgba(0.2, 0.8, 0.2, 0.7),
         )
-        self.meshcat.SetTransform(
-            "target_pose/y_axis",
-            RigidTransform([0, axis_length/2, 0])
-        )
+        self.meshcat.SetTransform("target_pose/y_axis", RigidTransform([0, axis_length / 2, 0]))
 
         # Z-axis (blue)
         self.meshcat.SetObject(
             "target_pose/z_axis",
             Box([axis_radius * 2, axis_radius * 2, axis_length]),
-            Rgba(0.2, 0.2, 0.8, 0.7)
+            Rgba(0.2, 0.2, 0.8, 0.7),
         )
-        self.meshcat.SetTransform(
-            "target_pose/z_axis",
-            RigidTransform([0, 0, axis_length/2])
-        )
+        self.meshcat.SetTransform("target_pose/z_axis", RigidTransform([0, 0, axis_length / 2]))
 
     def cleanup(self):
         """Clean up resources."""

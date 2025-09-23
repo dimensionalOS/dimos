@@ -133,7 +133,9 @@ class FTVisualizerModule(Module):
             self.latest_force_mag = force_mag
 
         if self.verbose:
-            logger.debug(f"Force: F=({force[0]:.2f}, {force[1]:.2f}, {force[2]:.2f}) N, |F|={force_mag:.2f} N")
+            logger.debug(
+                f"Force: F=({force[0]:.2f}, {force[1]:.2f}, {force[2]:.2f}) N, |F|={force_mag:.2f} N"
+            )
 
     def handle_torque(self, msg: Vector3):
         """Handle incoming torque Vector3 data."""
@@ -169,7 +171,9 @@ class FTVisualizerModule(Module):
             self.latest_torque_mag = torque_mag
 
         if self.verbose:
-            logger.debug(f"Torque: T=({torque[0]:.4f}, {torque[1]:.4f}, {torque[2]:.4f}) N⋅m, |T|={torque_mag:.4f} N⋅m")
+            logger.debug(
+                f"Torque: T=({torque[0]:.4f}, {torque[1]:.4f}, {torque[2]:.4f}) N⋅m, |T|={torque_mag:.4f} N⋅m"
+            )
 
     def get_plot_data(self) -> Dict[str, Any]:
         """Get data formatted for plotting."""
@@ -206,30 +210,34 @@ class FTVisualizerModule(Module):
         warnings.filterwarnings("ignore")
 
         # Set environment variables to suppress messages
-        os.environ['WERKZEUG_RUN_MAIN'] = 'true'
+        os.environ["WERKZEUG_RUN_MAIN"] = "true"
 
         # Disable all loggers that might produce output
-        logging.getLogger('werkzeug').disabled = True
-        logging.getLogger('dash').disabled = True
-        logging.getLogger('dash.dash').disabled = True
-        logging.getLogger('dash.callback').disabled = True
-        logging.getLogger('flask.app').disabled = True
+        logging.getLogger("werkzeug").disabled = True
+        logging.getLogger("dash").disabled = True
+        logging.getLogger("dash.dash").disabled = True
+        logging.getLogger("dash.callback").disabled = True
+        logging.getLogger("flask.app").disabled = True
         logging.getLogger(__name__).disabled = True
 
         # Create logger that suppresses the callback errors
         class SuppressedLogger:
             def error(self, *args, **kwargs):
                 pass
+
             def warning(self, *args, **kwargs):
                 pass
+
             def info(self, *args, **kwargs):
                 pass
+
             def debug(self, *args, **kwargs):
                 pass
 
         # Replace the module logger
         import sys
-        sys.modules[__name__].__dict__['logger'] = SuppressedLogger()
+
+        sys.modules[__name__].__dict__["logger"] = SuppressedLogger()
 
         self.app = dash.Dash(__name__, suppress_callback_exceptions=True)
 
@@ -297,11 +305,19 @@ class FTVisualizerModule(Module):
                             [
                                 dcc.Graph(
                                     id="force-magnitude-plot",
-                                    style={"width": "50%", "display": "inline-block", "height": "300px"},
+                                    style={
+                                        "width": "50%",
+                                        "display": "inline-block",
+                                        "height": "300px",
+                                    },
                                 ),
                                 dcc.Graph(
                                     id="torque-magnitude-plot",
-                                    style={"width": "50%", "display": "inline-block", "height": "300px"},
+                                    style={
+                                        "width": "50%",
+                                        "display": "inline-block",
+                                        "height": "300px",
+                                    },
                                 ),
                             ]
                         ),
@@ -325,9 +341,7 @@ class FTVisualizerModule(Module):
                 ),
                 # Update interval
                 dcc.Interval(
-                    id="interval-component",
-                    interval=self.update_interval_ms,
-                    n_intervals=0
+                    id="interval-component", interval=self.update_interval_ms, n_intervals=0
                 ),
             ]
         )
@@ -508,7 +522,9 @@ class FTVisualizerModule(Module):
             force_std = np.std(force_data, axis=1)
             force_max = np.max(np.abs(force_data), axis=1)
 
-            torque_data = np.array([data["torques"]["x"], data["torques"]["y"], data["torques"]["z"]])
+            torque_data = np.array(
+                [data["torques"]["x"], data["torques"]["y"], data["torques"]["z"]]
+            )
             torque_mean = np.mean(torque_data, axis=1)
             torque_std = np.std(torque_data, axis=1)
             torque_max = np.max(np.abs(torque_data), axis=1)
@@ -542,28 +558,28 @@ class FTVisualizerModule(Module):
         try:
             # Clear Werkzeug environment variable that causes issues in multiprocess
             import os
-            if 'WERKZEUG_SERVER_FD' in os.environ:
-                del os.environ['WERKZEUG_SERVER_FD']
+
+            if "WERKZEUG_SERVER_FD" in os.environ:
+                del os.environ["WERKZEUG_SERVER_FD"]
 
             # Initialize Dash app here, in the worker thread
             if not self.app:
                 self._initialize_dash_app()
 
             logger.info(f"Starting Force-Torque Visualization Dashboard...")
-            logger.info(f"Open http://{self.dash_host if self.dash_host != '0.0.0.0' else '127.0.0.1'}:{self.dash_port} in your browser")
+            logger.info(
+                f"Open http://{self.dash_host if self.dash_host != '0.0.0.0' else '127.0.0.1'}:{self.dash_port} in your browser"
+            )
 
             # Use Flask server directly to avoid Dash/Werkzeug issues
             # This works better in multiprocess environments
             from werkzeug.serving import make_server
 
-            server = make_server(
-                self.dash_host,
-                self.dash_port,
-                self.app.server,
-                threaded=True
-            )
+            server = make_server(self.dash_host, self.dash_port, self.app.server, threaded=True)
 
-            logger.info(f"Dashboard server started at http://{self.dash_host if self.dash_host != '0.0.0.0' else '127.0.0.1'}:{self.dash_port}")
+            logger.info(
+                f"Dashboard server started at http://{self.dash_host if self.dash_host != '0.0.0.0' else '127.0.0.1'}:{self.dash_port}"
+            )
             server.serve_forever()
         except Exception as e:
             # Silently ignore all errors to prevent log spam
@@ -604,7 +620,9 @@ class FTVisualizerModule(Module):
 
         logger.info("Stopping FT visualizer...")
         self.running = False
-        logger.info(f"Total messages received - Force: {self.force_count}, Torque: {self.torque_count}")
+        logger.info(
+            f"Total messages received - Force: {self.force_count}, Torque: {self.torque_count}"
+        )
 
     @rpc
     def get_stats(self) -> Dict[str, Any]:

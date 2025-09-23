@@ -70,7 +70,7 @@ Examples:
         "--calibration",
         type=str,
         default="dimos/hardware/ft_calibration.json",
-        help="Path to calibration file (default: dimos/hardware/ft_calibration.json)"
+        help="Path to calibration file (default: dimos/hardware/ft_calibration.json)",
     )
 
     # Visualizer arguments
@@ -115,9 +115,7 @@ Examples:
     parser.add_argument(
         "--no-visualizer", action="store_true", help="Run driver only, without visualizer"
     )
-    parser.add_argument(
-        "--no-raw", action="store_true", help="Don't publish raw sensor data"
-    )
+    parser.add_argument("--no-raw", action="store_true", help="Don't publish raw sensor data")
 
     args = parser.parse_args()
 
@@ -231,7 +229,7 @@ Examples:
                     f"Calibration={'Yes' if driver_stats['calibration_loaded'] else 'No'}"
                 )
 
-                if driver_stats['calibration_loaded']:
+                if driver_stats["calibration_loaded"]:
                     logger.info(
                         f"  Latest |F|={driver_stats['latest_force_magnitude']:.2f} N, "
                         f"|T|={driver_stats['latest_torque_magnitude']:.4f} N⋅m"

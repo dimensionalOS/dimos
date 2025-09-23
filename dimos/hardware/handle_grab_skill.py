@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Handle Grab Skill Module for Dimos
 
@@ -12,7 +26,8 @@ import torch
 import open3d as o3d
 from pathlib import Path
 import matplotlib
-matplotlib.use('Agg')
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import logging
 import sys
@@ -67,11 +82,13 @@ class HandleGrabModule(Module):
     depth_image: In[Image] = None
     camera_info: In[Any] = None  # Camera calibration info
 
-    def __init__(self,
-                 fastsam_model_path: str = "./weights/FastSAM-x.pt",
-                 xarm_ip: str = None,
-                 test_mode: bool = False,
-                 **kwargs):
+    def __init__(
+        self,
+        fastsam_model_path: str = "./weights/FastSAM-x.pt",
+        xarm_ip: str = None,
+        test_mode: bool = False,
+        **kwargs,
+    ):
         """Initialize the handle grab module.
 
         Args:
@@ -82,7 +99,7 @@ class HandleGrabModule(Module):
         super().__init__(**kwargs)
 
         self.fastsam_model_path = fastsam_model_path
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.xarm_ip = xarm_ip
         self.test_mode = test_mode
         self.arm = None
@@ -106,10 +123,10 @@ class HandleGrabModule(Module):
 
         # Get initial xARM positions if connected
         if self.xarm_ip:
-            logger.info(f"\n{'='*60}")
+            logger.info(f"\n{'=' * 60}")
             logger.info(f"Connecting to xARM at {self.xarm_ip}")
             logger.info(f"Test mode: {'ON' if self.test_mode else 'OFF'}")
-            logger.info(f"{'='*60}")
+            logger.info(f"{'=' * 60}")
             self.xarm_positions = self.get_xarm_positions()
             if self.xarm_positions is None:
                 logger.warning("Failed to get xARM positions, using default")
@@ -120,6 +137,7 @@ class HandleGrabModule(Module):
             if not self.test_mode:
                 try:
                     from xarm.wrapper import XArmAPI
+
                     self.arm = XArmAPI(self.xarm_ip, do_not_open=False, is_radian=True)
                     self.arm.clean_error()
                     self.arm.clean_warn()
@@ -199,18 +217,20 @@ class HandleGrabModule(Module):
         try:
             with self._data_lock:
                 # Extract camera intrinsics from CameraInfo message
-                if hasattr(msg, 'K'):
+                if hasattr(msg, "K"):
                     # K is a 9-element array for 3x3 intrinsic matrix
                     K = msg.K
                     self._camera_intrinsics = {
-                        'fx': K[0],  # Focal length x
-                        'fy': K[4],  # Focal length y
-                        'cx': K[2],  # Principal point x
-                        'cy': K[5],  # Principal point y
-                        'width': msg.width,
-                        'height': msg.height
+                        "fx": K[0],  # Focal length x
+                        "fy": K[4],  # Focal length y
+                        "cx": K[2],  # Principal point x
+                        "cy": K[5],  # Principal point y
+                        "width": msg.width,
+                        "height": msg.height,
                     }
-                    logger.debug(f"Updated camera intrinsics: fx={K[0]:.1f}, fy={K[4]:.1f}, cx={K[2]:.1f}, cy={K[5]:.1f}")
+                    logger.debug(
+                        f"Updated camera intrinsics: fx={K[0]:.1f}, fy={K[4]:.1f}, cx={K[2]:.1f}, cy={K[5]:.1f}"
+                    )
         except Exception as e:
             logger.error(f"Error processing camera info: {e}")
 
@@ -232,8 +252,10 @@ class HandleGrabModule(Module):
             Tuple of (rgb_image, depth_map) or (None, None) if no data
         """
         with self._data_lock:
-            return self._latest_rgb.copy() if self._latest_rgb is not None else None, \
-                   self._latest_depth.copy() if self._latest_depth is not None else None
+            return (
+                self._latest_rgb.copy() if self._latest_rgb is not None else None,
+                self._latest_depth.copy() if self._latest_depth is not None else None,
+            )
 
     def setup_drake_simulation(self):
         """Setup Drake simulation with the xarm6_openft_gripper robot."""
@@ -246,9 +268,7 @@ class HandleGrabModule(Module):
         self.builder = DiagramBuilder()
 
         # Create plant and scene graph
-        self.plant, self.scene_graph = AddMultibodyPlantSceneGraph(
-            self.builder, time_step=0.001
-        )
+        self.plant, self.scene_graph = AddMultibodyPlantSceneGraph(self.builder, time_step=0.001)
 
         # Parse URDF
         parser = Parser(self.plant)
@@ -308,7 +328,7 @@ class HandleGrabModule(Module):
         # Use xARM positions if available
         if self.xarm_positions is not None:
             logger.info("\nSetting Drake to actual xARM joint positions:")
-            arm_joint_names = [f"joint{i+1}" for i in range(6)]
+            arm_joint_names = [f"joint{i + 1}" for i in range(6)]
             for i, joint_name in enumerate(arm_joint_names):
                 try:
                     joint = self.plant.GetJointByName(joint_name)
@@ -336,8 +356,7 @@ class HandleGrabModule(Module):
         # Set camera view
         if self.meshcat:
             self.meshcat.SetCameraPose(
-                camera_in_world=[2.0, 2.0, 1.5],
-                target_in_world=[0.0, 0.0, 0.5]
+                camera_in_world=[2.0, 2.0, 1.5], target_in_world=[0.0, 0.0, 0.5]
             )
 
         # Initial publish (only if Meshcat enabled)
@@ -393,24 +412,19 @@ class HandleGrabModule(Module):
                     "content": [
                         {
                             "type": "text",
-                            "text": "Please identify a point on the center of the front face of the microwave handle in this image. Return ONLY a point in the center of the front camera facing face of the microwave handle as a tuple in the format (x, y) where x and y are pixel coordinates. Do not include any other text or explanation."
+                            "text": "Please identify a point on the center of the front face of the microwave handle in this image. Return ONLY a point in the center of the front camera facing face of the microwave handle as a tuple in the format (x, y) where x and y are pixel coordinates. Do not include any other text or explanation.",
                         },
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{img_base64}"
-                            }
-                        }
-                    ]
+                            "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"},
+                        },
+                    ],
                 }
             ]
 
             # Query the model
             response = qwen_client.chat.completions.create(
-                model="qwen2.5-vl-72b-instruct",
-                messages=messages,
-                max_tokens=100,
-                temperature=0.1
+                model="qwen2.5-vl-72b-instruct", messages=messages, max_tokens=100, temperature=0.1
             )
 
             response_text = response.choices[0].message.content
@@ -420,7 +434,7 @@ class HandleGrabModule(Module):
             coordinates = None
 
             # Try multiple parsing strategies
-            match = re.search(r'\((\d+),\s*(\d+)\)', response_text)
+            match = re.search(r"\((\d+),\s*(\d+)\)", response_text)
             if match:
                 x, y = int(match.group(1)), int(match.group(2))
                 coordinates = (x, y)
@@ -428,14 +442,14 @@ class HandleGrabModule(Module):
                 # Try to evaluate as Python literal
                 try:
                     clean_text = response_text.strip()
-                    if clean_text.startswith('(') and clean_text.endswith(')'):
+                    if clean_text.startswith("(") and clean_text.endswith(")"):
                         coordinates = ast.literal_eval(clean_text)
                 except:
                     pass
 
                 # Look for two numbers
                 if coordinates is None:
-                    numbers = re.findall(r'\d+', response_text)
+                    numbers = re.findall(r"\d+", response_text)
                     if len(numbers) >= 2:
                         coordinates = (int(numbers[0]), int(numbers[1]))
 
@@ -449,7 +463,9 @@ class HandleGrabModule(Module):
                     display_img = rgb_image.copy()
                     cv2.circle(display_img, (x, y), 10, (0, 255, 0), -1)
                     cv2.circle(display_img, (x, y), 15, (0, 255, 0), 2)
-                    cv2.imwrite("qwen_detected_point.jpg", cv2.cvtColor(display_img, cv2.COLOR_RGB2BGR))
+                    cv2.imwrite(
+                        "qwen_detected_point.jpg", cv2.cvtColor(display_img, cv2.COLOR_RGB2BGR)
+                    )
                     logger.info(f"Saved Qwen-detected handle point to qwen_detected_point.jpg")
 
                     return coordinates
@@ -502,7 +518,7 @@ class HandleGrabModule(Module):
             if code == 0 and angles:
                 logger.info(f"Got xARM joint positions:")
                 for i, angle in enumerate(angles[:6]):
-                    logger.info(f"  joint{i+1}: {angle:.4f} rad ({np.degrees(angle):.2f} deg)")
+                    logger.info(f"  joint{i + 1}: {angle:.4f} rad ({np.degrees(angle):.2f} deg)")
 
                 # Try to get gripper position
                 try:
@@ -540,7 +556,7 @@ class HandleGrabModule(Module):
 
         try:
             # Extract joint angles for xARM (first 6 joints)
-            arm_joint_names = [f"joint{i+1}" for i in range(6)]
+            arm_joint_names = [f"joint{i + 1}" for i in range(6)]
             positions = []
 
             for joint_name in arm_joint_names:
@@ -550,7 +566,7 @@ class HandleGrabModule(Module):
 
             logger.info("Sending joint angles to xARM:")
             for i, angle in enumerate(positions):
-                logger.info(f"  joint{i+1}: {np.degrees(angle):.2f} deg")
+                logger.info(f"  joint{i + 1}: {np.degrees(angle):.2f} deg")
 
             # Send command to xARM with specified speed
             logger.info("Sending servo angle command to xARM...")
@@ -589,11 +605,13 @@ class HandleGrabModule(Module):
 
         # Get camera intrinsics from stored calibration or use defaults
         if self._camera_intrinsics is not None:
-            fx = self._camera_intrinsics['fx']
-            fy = self._camera_intrinsics['fy']
-            cx = self._camera_intrinsics['cx']
-            cy = self._camera_intrinsics['cy']
-            logger.info(f"Using actual camera intrinsics: fx={fx:.1f}, fy={fy:.1f}, cx={cx:.1f}, cy={cy:.1f}")
+            fx = self._camera_intrinsics["fx"]
+            fy = self._camera_intrinsics["fy"]
+            cx = self._camera_intrinsics["cx"]
+            cy = self._camera_intrinsics["cy"]
+            logger.info(
+                f"Using actual camera intrinsics: fx={fx:.1f}, fy={fy:.1f}, cx={cx:.1f}, cy={cy:.1f}"
+            )
         else:
             # Fallback to approximate values for HD720 resolution
             fx = 700.0  # Approximate focal length in pixels
@@ -643,8 +661,9 @@ class HandleGrabModule(Module):
         logger.info("Computing normals for point cloud...")
 
         # Estimate normals
-        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(
-            radius=20.0, max_nn=30))
+        pcd.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=20.0, max_nn=30)
+        )
 
         # Orient normals consistently
         pcd.orient_normals_consistent_tangent_plane(100)
@@ -652,7 +671,8 @@ class HandleGrabModule(Module):
         # Poisson surface reconstruction
         logger.info("Performing Poisson surface reconstruction...")
         mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-            pcd, depth=9, width=0, scale=1.1, linear_fit=False)
+            pcd, depth=9, width=0, scale=1.1, linear_fit=False
+        )
 
         # Remove low density vertices to clean up the mesh
         vertices_to_remove = densities < np.quantile(densities, 0.1)
@@ -661,7 +681,9 @@ class HandleGrabModule(Module):
         # Compute mesh normals
         mesh.compute_vertex_normals()
 
-        logger.info(f"Mesh created with {len(mesh.vertices)} vertices and {len(mesh.triangles)} triangles")
+        logger.info(
+            f"Mesh created with {len(mesh.vertices)} vertices and {len(mesh.triangles)} triangles"
+        )
         return mesh
 
     def find_normal_at_point(self, mesh, selected_2d_point, depth_map):
@@ -705,8 +727,12 @@ class HandleGrabModule(Module):
 
         closest_point = mesh_vertices[closest_vertex_idx]
 
-        logger.info(f"Normal vector in camera frame: [{normal[0]:.3f}, {normal[1]:.3f}, {normal[2]:.3f}]")
-        logger.info(f"Normal points {'towards' if normal[2] < 0 else 'away from'} camera (z={normal[2]:.3f})")
+        logger.info(
+            f"Normal vector in camera frame: [{normal[0]:.3f}, {normal[1]:.3f}, {normal[2]:.3f}]"
+        )
+        logger.info(
+            f"Normal points {'towards' if normal[2] < 0 else 'away from'} camera (z={normal[2]:.3f})"
+        )
 
         return normal, closest_point
 
@@ -727,11 +753,13 @@ class HandleGrabModule(Module):
             # Fallback to simplified transform
             point_camera_m = point_camera / 1000.0
             camera_position_base = np.array([0.3, 0, 0.5])
-            R_base_camera = np.array([
-                [0, 0, 1],   # Camera Z -> Base X
-                [-1, 0, 0],  # Camera X -> Base -Y
-                [0, -1, 0]   # Camera Y -> Base -Z
-            ])
+            R_base_camera = np.array(
+                [
+                    [0, 0, 1],  # Camera Z -> Base X
+                    [-1, 0, 0],  # Camera X -> Base -Y
+                    [0, -1, 0],  # Camera Y -> Base -Z
+                ]
+            )
             point_base = R_base_camera @ point_camera_m + camera_position_base
             normal_base = R_base_camera @ normal_camera
             normal_base = normal_base / np.linalg.norm(normal_base)
@@ -740,11 +768,7 @@ class HandleGrabModule(Module):
             return point_base, normal_base
 
         # Get transform from camera frame to world (base) frame
-        X_WC = self.plant.CalcRelativeTransform(
-            self.plant_context,
-            self.base_frame,
-            zed_frame
-        )
+        X_WC = self.plant.CalcRelativeTransform(self.plant_context, self.base_frame, zed_frame)
 
         # Convert point from mm to m
         point_camera_m = point_camera / 1000.0
@@ -851,7 +875,7 @@ class HandleGrabModule(Module):
             np.zeros(3),
             self.base_frame,
             target_position - position_tolerance * np.ones(3),
-            target_position + position_tolerance * np.ones(3)
+            target_position + position_tolerance * np.ones(3),
         )
 
         # Add orientation constraint
@@ -861,7 +885,7 @@ class HandleGrabModule(Module):
             RotationMatrix(),
             self.base_frame,
             target_orientation,
-            orientation_tolerance
+            orientation_tolerance,
         )
 
         # Get current joint positions as initial guess
@@ -876,7 +900,7 @@ class HandleGrabModule(Module):
         # Add perturbed version
         q_perturbed = q_initial.copy()
         for i in range(6):
-            joint = self.plant.GetJointByName(f"joint{i+1}")
+            joint = self.plant.GetJointByName(f"joint{i + 1}")
             idx = joint.position_start()
             q_perturbed[idx] += np.random.uniform(-0.1, 0.1)
         initial_guesses.append(q_perturbed)
@@ -886,12 +910,12 @@ class HandleGrabModule(Module):
         for attempt, q_guess in enumerate(initial_guesses):
             prog.SetInitialGuess(ik.q(), q_guess)
 
-            logger.info(f"Solving IK (attempt {attempt+1}/{len(initial_guesses)})...")
+            logger.info(f"Solving IK (attempt {attempt + 1}/{len(initial_guesses)})...")
             result = Solve(prog)
 
             if result.is_success():
                 q_solution = result.GetSolution(ik.q())
-                logger.info(f"IK solution found on attempt {attempt+1}!")
+                logger.info(f"IK solution found on attempt {attempt + 1}!")
                 return q_solution
 
         logger.warning("IK solution not found")
@@ -920,9 +944,7 @@ class HandleGrabModule(Module):
             # Get orientation from last solution
             self.plant.SetPositions(self.plant_context, self.last_q_solution)
             tool_pose = self.plant.CalcRelativeTransform(
-                self.plant_context,
-                self.base_frame,
-                self.tool_frame
+                self.plant_context, self.base_frame, self.tool_frame
             )
 
             q_up = self.solve_ik(target_pos_up, tool_pose.rotation())
@@ -932,7 +954,7 @@ class HandleGrabModule(Module):
 
             # Step 2: Move forward
             forward_distance = 0.09
-            logger.info(f"Moving forward {forward_distance*100:.0f}cm...")
+            logger.info(f"Moving forward {forward_distance * 100:.0f}cm...")
 
             approach_direction = -np.array(self.last_target_normal)
             target_pos_forward = target_pos_up + approach_direction * forward_distance
@@ -955,8 +977,9 @@ class HandleGrabModule(Module):
 
         return False
 
-    def create_debug_visualization(self, rgb_image, mask, selected_point, normal_camera,
-                                  point_camera, pcd=None, mesh=None):
+    def create_debug_visualization(
+        self, rgb_image, mask, selected_point, normal_camera, point_camera, pcd=None, mesh=None
+    ):
         """Create debugging visualization with detection, segmentation, and normals.
 
         Args:
@@ -976,9 +999,9 @@ class HandleGrabModule(Module):
         # 1. Original image with detection point
         ax1 = plt.subplot(2, 4, 1)
         ax1.imshow(rgb_image)
-        ax1.scatter(selected_point[0], selected_point[1], c='red', s=100, marker='x', linewidths=3)
-        ax1.set_title(f'Detection Point: ({selected_point[0]}, {selected_point[1]})')
-        ax1.axis('off')
+        ax1.scatter(selected_point[0], selected_point[1], c="red", s=100, marker="x", linewidths=3)
+        ax1.set_title(f"Detection Point: ({selected_point[0]}, {selected_point[1]})")
+        ax1.axis("off")
 
         # 2. Segmentation mask overlay
         ax2 = plt.subplot(2, 4, 2)
@@ -987,45 +1010,67 @@ class HandleGrabModule(Module):
         mask_colored[:, :, 1] = mask * 255  # Green channel for mask
         overlay = cv2.addWeighted(overlay, 0.7, mask_colored, 0.3, 0)
         ax2.imshow(overlay)
-        ax2.set_title('Segmentation Mask Overlay')
-        ax2.axis('off')
+        ax2.set_title("Segmentation Mask Overlay")
+        ax2.axis("off")
 
         # 3. Normal vector visualization in 2D
         ax3 = plt.subplot(2, 4, 3)
         ax3.imshow(rgb_image)
         # Project normal to 2D (using first two components)
-        normal_2d = normal_camera[:2] / np.linalg.norm(normal_camera[:2]) if np.linalg.norm(normal_camera[:2]) > 0 else normal_camera[:2]
+        normal_2d = (
+            normal_camera[:2] / np.linalg.norm(normal_camera[:2])
+            if np.linalg.norm(normal_camera[:2]) > 0
+            else normal_camera[:2]
+        )
         arrow_scale = 100
-        ax3.arrow(selected_point[0], selected_point[1],
-                  normal_2d[0] * arrow_scale, -normal_2d[1] * arrow_scale,
-                  head_width=20, head_length=10, fc='yellow', ec='yellow', linewidth=3)
-        ax3.set_title('Normal Vector (2D projection)')
-        ax3.axis('off')
+        ax3.arrow(
+            selected_point[0],
+            selected_point[1],
+            normal_2d[0] * arrow_scale,
+            -normal_2d[1] * arrow_scale,
+            head_width=20,
+            head_length=10,
+            fc="yellow",
+            ec="yellow",
+            linewidth=3,
+        )
+        ax3.set_title("Normal Vector (2D projection)")
+        ax3.axis("off")
 
         # 4. 3D visualization of normal in camera frame
-        ax4 = plt.subplot(2, 4, 4, projection='3d')
+        ax4 = plt.subplot(2, 4, 4, projection="3d")
         # Draw coordinate axes
-        ax4.quiver(0, 0, 0, 100, 0, 0, color='r', arrow_length_ratio=0.1, label='X')
-        ax4.quiver(0, 0, 0, 0, 100, 0, color='g', arrow_length_ratio=0.1, label='Y')
-        ax4.quiver(0, 0, 0, 0, 0, 100, color='b', arrow_length_ratio=0.1, label='Z')
+        ax4.quiver(0, 0, 0, 100, 0, 0, color="r", arrow_length_ratio=0.1, label="X")
+        ax4.quiver(0, 0, 0, 0, 100, 0, color="g", arrow_length_ratio=0.1, label="Y")
+        ax4.quiver(0, 0, 0, 0, 0, 100, color="b", arrow_length_ratio=0.1, label="Z")
 
         # Draw normal vector
         normal_scaled = normal_camera * 150
-        ax4.quiver(0, 0, 0, normal_scaled[0], normal_scaled[1], normal_scaled[2],
-                  color='purple', arrow_length_ratio=0.1, linewidth=3, label='Normal')
+        ax4.quiver(
+            0,
+            0,
+            0,
+            normal_scaled[0],
+            normal_scaled[1],
+            normal_scaled[2],
+            color="purple",
+            arrow_length_ratio=0.1,
+            linewidth=3,
+            label="Normal",
+        )
 
         ax4.set_xlim([-200, 200])
         ax4.set_ylim([-200, 200])
         ax4.set_zlim([-200, 200])
-        ax4.set_xlabel('X (mm)')
-        ax4.set_ylabel('Y (mm)')
-        ax4.set_zlabel('Z (mm)')
+        ax4.set_xlabel("X (mm)")
+        ax4.set_ylabel("Y (mm)")
+        ax4.set_zlabel("Z (mm)")
         ax4.legend()
-        ax4.set_title('Normal in Camera Frame')
+        ax4.set_title("Normal in Camera Frame")
 
         # 5. Point cloud visualization (if available)
         if pcd is not None:
-            ax5 = plt.subplot(2, 4, 5, projection='3d')
+            ax5 = plt.subplot(2, 4, 5, projection="3d")
             points = np.asarray(pcd.points)
 
             # Subsample for visualization
@@ -1033,24 +1078,28 @@ class HandleGrabModule(Module):
                 indices = np.random.choice(len(points), 5000, replace=False)
                 points = points[indices]
 
-            ax5.scatter(points[:, 0], points[:, 1], points[:, 2], c='b', s=1, alpha=0.3)
+            ax5.scatter(points[:, 0], points[:, 1], points[:, 2], c="b", s=1, alpha=0.3)
 
             # Add normal vector at point
             if point_camera is not None:
-                ax5.scatter(point_camera[0], point_camera[1], point_camera[2], c='r', s=50)
+                ax5.scatter(point_camera[0], point_camera[1], point_camera[2], c="r", s=50)
                 normal_end = point_camera + normal_camera * 100
-                ax5.plot([point_camera[0], normal_end[0]],
-                        [point_camera[1], normal_end[1]],
-                        [point_camera[2], normal_end[2]], 'g-', linewidth=3)
+                ax5.plot(
+                    [point_camera[0], normal_end[0]],
+                    [point_camera[1], normal_end[1]],
+                    [point_camera[2], normal_end[2]],
+                    "g-",
+                    linewidth=3,
+                )
 
-            ax5.set_xlabel('X (mm)')
-            ax5.set_ylabel('Y (mm)')
-            ax5.set_zlabel('Z (mm)')
-            ax5.set_title('Point Cloud with Normal')
+            ax5.set_xlabel("X (mm)")
+            ax5.set_ylabel("Y (mm)")
+            ax5.set_zlabel("Z (mm)")
+            ax5.set_title("Point Cloud with Normal")
 
         # 6. Information panel
         ax6 = plt.subplot(2, 4, 6)
-        ax6.axis('off')
+        ax6.axis("off")
         info_text = "Detection and Segmentation Info\n" + "=" * 35 + "\n\n"
         info_text += f"Selected Point: ({selected_point[0]}, {selected_point[1]})\n\n"
         info_text += f"Segmented Pixels: {np.sum(mask > 0)}\n\n"
@@ -1064,24 +1113,30 @@ class HandleGrabModule(Module):
         info_text += f"  Z: {normal_camera[2]:.3f}\n"
         info_text += f"  Magnitude: {np.linalg.norm(normal_camera):.3f}\n"
 
-        ax6.text(0.1, 0.9, info_text, transform=ax6.transAxes, fontsize=10,
-                verticalalignment='top', fontfamily='monospace')
-        ax6.set_title('Detection Info')
+        ax6.text(
+            0.1,
+            0.9,
+            info_text,
+            transform=ax6.transAxes,
+            fontsize=10,
+            verticalalignment="top",
+            fontfamily="monospace",
+        )
+        ax6.set_title("Detection Info")
 
-        plt.suptitle('Handle Detection Debug Visualization', fontsize=14, fontweight='bold')
+        plt.suptitle("Handle Detection Debug Visualization", fontsize=14, fontweight="bold")
         plt.tight_layout()
 
         # Save the figure
-        debug_path = 'debug_visualization.png'
-        plt.savefig(debug_path, dpi=150, bbox_inches='tight')
+        debug_path = "debug_visualization.png"
+        plt.savefig(debug_path, dpi=150, bbox_inches="tight")
         logger.info(f"Saved debug visualization to {debug_path}")
         plt.close()
 
     @skill()
-    def grab_handle(self,
-                    use_qwen: bool = True,
-                    loop_count: int = 1,
-                    execute_grab: bool = True) -> str:
+    def grab_handle(
+        self, use_qwen: bool = True, loop_count: int = 1, execute_grab: bool = True
+    ) -> str:
         """Execute handle detection and grabbing sequence.
 
         Args:
@@ -1102,9 +1157,9 @@ class HandleGrabModule(Module):
             successful_iterations = 0
 
             for iteration in range(1, loop_count + 1):
-                logger.info("\n" + "="*60)
+                logger.info("\n" + "=" * 60)
                 logger.info(f"Iteration {iteration}/{loop_count}")
-                logger.info("="*60)
+                logger.info("=" * 60)
 
                 # Get latest frame from ZED
                 rgb_image, depth_map = self.get_latest_frame()
@@ -1153,16 +1208,21 @@ class HandleGrabModule(Module):
                 mesh = self.reconstruct_mesh(pcd)
 
                 # Find normal at selected point
-                normal_camera, closest_point = self.find_normal_at_point(mesh, selected_point, depth_map)
+                normal_camera, closest_point = self.find_normal_at_point(
+                    mesh, selected_point, depth_map
+                )
                 if normal_camera is None:
                     logger.warning("Could not compute normal vector")
                     continue
 
-                logger.info(f"Normal vector (camera): [{normal_camera[0]:.3f}, {normal_camera[1]:.3f}, {normal_camera[2]:.3f}]")
+                logger.info(
+                    f"Normal vector (camera): [{normal_camera[0]:.3f}, {normal_camera[1]:.3f}, {normal_camera[2]:.3f}]"
+                )
 
                 # Create debug visualization
-                self.create_debug_visualization(rgb_image, mask, selected_point, normal_camera,
-                                               closest_point, pcd, mesh)
+                self.create_debug_visualization(
+                    rgb_image, mask, selected_point, normal_camera, closest_point, pcd, mesh
+                )
 
                 # Transform to base frame
                 point_base, normal_base = self.transform_to_base_frame(closest_point, normal_camera)
@@ -1177,9 +1237,17 @@ class HandleGrabModule(Module):
 
                 # Store successful solution for potential grab
                 if q_solution is not None:
-                    self.last_q_solution = q_solution.copy() if isinstance(q_solution, np.ndarray) else q_solution
-                    self.last_target_position = target_position.copy() if isinstance(target_position, np.ndarray) else target_position
-                    self.last_target_normal = normal_base.copy() if isinstance(normal_base, np.ndarray) else normal_base
+                    self.last_q_solution = (
+                        q_solution.copy() if isinstance(q_solution, np.ndarray) else q_solution
+                    )
+                    self.last_target_position = (
+                        target_position.copy()
+                        if isinstance(target_position, np.ndarray)
+                        else target_position
+                    )
+                    self.last_target_normal = (
+                        normal_base.copy() if isinstance(normal_base, np.ndarray) else normal_base
+                    )
 
                     # Execute movement if not in test mode
                     if self.arm is not None and not self.test_mode:
@@ -1210,12 +1278,14 @@ class HandleGrabModule(Module):
                 if iteration < loop_count:
                     time.sleep(2)
 
-            logger.info("\n" + "="*60)
+            logger.info("\n" + "=" * 60)
             logger.info(f"Completed {successful_iterations}/{loop_count} iterations successfully")
-            logger.info("="*60)
+            logger.info("=" * 60)
 
             # Execute grab sequence if requested and we had at least one success
-            logger.info(f"Checking grab sequence: execute_grab={execute_grab}, successful_iterations={successful_iterations}")
+            logger.info(
+                f"Checking grab sequence: execute_grab={execute_grab}, successful_iterations={successful_iterations}"
+            )
             if execute_grab and successful_iterations > 0:
                 logger.info(f"\nExecuting grab sequence...")
                 grab_success = self.execute_grab_sequence()
@@ -1223,7 +1293,9 @@ class HandleGrabModule(Module):
                 if grab_success:
                     return f"Grab sequence completed successfully after {successful_iterations} successful iterations"
                 else:
-                    return f"Grab sequence failed after {successful_iterations} successful iterations"
+                    return (
+                        f"Grab sequence failed after {successful_iterations} successful iterations"
+                    )
             elif execute_grab and successful_iterations == 0:
                 return "Cannot execute grab sequence - no successful iterations"
 

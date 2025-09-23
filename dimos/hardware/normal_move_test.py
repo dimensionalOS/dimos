@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Normal-based IK Motion Test
 ===========================
@@ -15,8 +29,10 @@ import torch
 import open3d as o3d
 from pathlib import Path
 import matplotlib
-matplotlib.use('Agg')
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
 try:
     from mpl_toolkits.mplot3d import Axes3D
 except ImportError:
@@ -58,16 +74,22 @@ from pydrake.all import (
 )
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
 class NormalMoveTest:
     """Test normal estimation and IK-based motion planning"""
 
-    def __init__(self, fastsam_model_path: str = "./weights/FastSAM-x.pt",
-                 xarm_ip: str = None, test_mode: bool = False, use_qwen: bool = False,
-                 loop_count: int = 1, execute_grab: bool = False):
+    def __init__(
+        self,
+        fastsam_model_path: str = "./weights/FastSAM-x.pt",
+        xarm_ip: str = None,
+        test_mode: bool = False,
+        use_qwen: bool = False,
+        loop_count: int = 1,
+        execute_grab: bool = False,
+    ):
         """Initialize the test system
 
         Args:
@@ -81,7 +103,7 @@ class NormalMoveTest:
         self.zed = None
         self.fastsam_model = None
         self.fastsam_model_path = fastsam_model_path
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.xarm_ip = xarm_ip
         self.test_mode = test_mode
         self.use_qwen = use_qwen
@@ -107,10 +129,10 @@ class NormalMoveTest:
 
         # Get initial xARM positions if connected
         if self.xarm_ip:
-            logger.info(f"\n{'='*60}")
+            logger.info(f"\n{'=' * 60}")
             logger.info(f"Connecting to xARM at {self.xarm_ip}")
             logger.info(f"Test mode: {'ON' if self.test_mode else 'OFF'}")
-            logger.info(f"{'='*60}")
+            logger.info(f"{'=' * 60}")
             self.xarm_positions = self.get_xarm_positions()
             if self.xarm_positions is None:
                 logger.warning("Failed to get xARM positions, using default")
@@ -121,6 +143,7 @@ class NormalMoveTest:
             if not self.test_mode:
                 try:
                     from xarm.wrapper import XArmAPI
+
                     self.arm = XArmAPI(self.xarm_ip, do_not_open=False, is_radian=True)
                     self.arm.clean_error()
                     self.arm.clean_warn()
@@ -197,9 +220,7 @@ class NormalMoveTest:
         self.builder = DiagramBuilder()
 
         # Create plant and scene graph
-        self.plant, self.scene_graph = AddMultibodyPlantSceneGraph(
-            self.builder, time_step=0.001
-        )
+        self.plant, self.scene_graph = AddMultibodyPlantSceneGraph(self.builder, time_step=0.001)
 
         # Parse URDF
         parser = Parser(self.plant)
@@ -230,7 +251,9 @@ class NormalMoveTest:
             self.link6_body = self.tool_body
 
             self.zed_frame = self.plant.GetFrameByName("zed_left_camera_optical_frame")
-            logger.info("Found all required frames: base, tool (link_openft/link6), zed_left_camera_optical_frame")
+            logger.info(
+                "Found all required frames: base, tool (link_openft/link6), zed_left_camera_optical_frame"
+            )
         except Exception as e:
             logger.error(f"Error finding frames: {e}")
             raise
@@ -256,7 +279,7 @@ class NormalMoveTest:
         # Use xARM positions if available
         if self.xarm_positions is not None:
             logger.info("\nSetting Drake to actual xARM joint positions:")
-            arm_joint_names = [f"joint{i+1}" for i in range(6)]
+            arm_joint_names = [f"joint{i + 1}" for i in range(6)]
             for i, joint_name in enumerate(arm_joint_names):
                 try:
                     joint = self.plant.GetJointByName(joint_name)
@@ -282,10 +305,7 @@ class NormalMoveTest:
         self.plant.SetPositions(self.plant_context, initial_positions)
 
         # Set camera view
-        self.meshcat.SetCameraPose(
-            camera_in_world=[2.0, 2.0, 1.5],
-            target_in_world=[0.0, 0.0, 0.5]
-        )
+        self.meshcat.SetCameraPose(camera_in_world=[2.0, 2.0, 1.5], target_in_world=[0.0, 0.0, 0.5])
 
         # Initial publish
         self.diagram.ForcedPublish(self.diagram_context)
@@ -353,7 +373,7 @@ class NormalMoveTest:
 
         while True:
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
+            if key == ord("q"):
                 cv2.destroyAllWindows()
                 return None
             elif len(selected_point) > 0:
@@ -401,15 +421,13 @@ class NormalMoveTest:
                     "content": [
                         {
                             "type": "text",
-                            "text": "Please identify a point on the center of the front face of the microwave handle in this image. Return ONLY a point in the center of the front camera facing face of the microwave handle as a tuple in the format (x, y) where x and y are pixel coordinates. Do not include any other text or explanation."
+                            "text": "Please identify a point on the center of the front face of the microwave handle in this image. Return ONLY a point in the center of the front camera facing face of the microwave handle as a tuple in the format (x, y) where x and y are pixel coordinates. Do not include any other text or explanation.",
                         },
                         {
                             "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{img_base64}"
-                            }
-                        }
-                    ]
+                            "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"},
+                        },
+                    ],
                 }
             ]
 
@@ -418,7 +436,7 @@ class NormalMoveTest:
                 model="qwen2.5-vl-72b-instruct",  # Using the vision-language model
                 messages=messages,
                 max_tokens=100,
-                temperature=0.1  # Low temperature for more deterministic output
+                temperature=0.1,  # Low temperature for more deterministic output
             )
 
             response_text = response.choices[0].message.content
@@ -429,7 +447,7 @@ class NormalMoveTest:
             coordinates = None
 
             # Strategy 1: Look for tuple format (x, y)
-            match = re.search(r'\((\d+),\s*(\d+)\)', response_text)
+            match = re.search(r"\((\d+),\s*(\d+)\)", response_text)
             if match:
                 x, y = int(match.group(1)), int(match.group(2))
                 coordinates = (x, y)
@@ -438,14 +456,14 @@ class NormalMoveTest:
                 try:
                     # Remove any non-tuple text
                     clean_text = response_text.strip()
-                    if clean_text.startswith('(') and clean_text.endswith(')'):
+                    if clean_text.startswith("(") and clean_text.endswith(")"):
                         coordinates = ast.literal_eval(clean_text)
                 except:
                     pass
 
                 # Strategy 3: Look for two numbers
                 if coordinates is None:
-                    numbers = re.findall(r'\d+', response_text)
+                    numbers = re.findall(r"\d+", response_text)
                     if len(numbers) >= 2:
                         coordinates = (int(numbers[0]), int(numbers[1]))
 
@@ -541,8 +559,9 @@ class NormalMoveTest:
         logger.info("Computing normals for point cloud...")
 
         # Estimate normals
-        pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(
-            radius=20.0, max_nn=30))
+        pcd.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=20.0, max_nn=30)
+        )
 
         # Orient normals consistently
         pcd.orient_normals_consistent_tangent_plane(100)
@@ -550,7 +569,8 @@ class NormalMoveTest:
         # Poisson surface reconstruction
         logger.info("Performing Poisson surface reconstruction...")
         mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-            pcd, depth=9, width=0, scale=1.1, linear_fit=False)
+            pcd, depth=9, width=0, scale=1.1, linear_fit=False
+        )
 
         # Remove low density vertices to clean up the mesh
         vertices_to_remove = densities < np.quantile(densities, 0.1)
@@ -559,7 +579,9 @@ class NormalMoveTest:
         # Compute mesh normals
         mesh.compute_vertex_normals()
 
-        logger.info(f"Mesh created with {len(mesh.vertices)} vertices and {len(mesh.triangles)} triangles")
+        logger.info(
+            f"Mesh created with {len(mesh.vertices)} vertices and {len(mesh.triangles)} triangles"
+        )
         return mesh
 
     def find_normal_at_point(self, mesh, selected_2d_point):
@@ -597,8 +619,12 @@ class NormalMoveTest:
 
         closest_point = mesh_vertices[closest_vertex_idx]
 
-        logger.info(f"Normal vector in camera frame: [{normal[0]:.3f}, {normal[1]:.3f}, {normal[2]:.3f}]")
-        logger.info(f"Normal points {'towards' if normal[2] < 0 else 'away from'} camera (z={normal[2]:.3f})")
+        logger.info(
+            f"Normal vector in camera frame: [{normal[0]:.3f}, {normal[1]:.3f}, {normal[2]:.3f}]"
+        )
+        logger.info(
+            f"Normal points {'towards' if normal[2] < 0 else 'away from'} camera (z={normal[2]:.3f})"
+        )
 
         return normal, closest_point
 
@@ -618,11 +644,7 @@ class NormalMoveTest:
         q = self.plant.GetPositions(self.plant_context)
 
         # Get transform from camera frame to world (base) frame
-        X_WC = self.plant.CalcRelativeTransform(
-            self.plant_context,
-            self.base_frame,
-            self.zed_frame
-        )
+        X_WC = self.plant.CalcRelativeTransform(self.plant_context, self.base_frame, self.zed_frame)
 
         # Convert point from mm to m
         point_camera_m = point_camera / 1000.0
@@ -669,7 +691,9 @@ class NormalMoveTest:
         z_offset = np.array([0, 0, -0.1])  # 10cm down in world frame
         target_position = target_position + z_offset
 
-        logger.info(f"Target position before Z offset: {point_base + normal_base * approach_distance}")
+        logger.info(
+            f"Target position before Z offset: {point_base + normal_base * approach_distance}"
+        )
         logger.info(f"Applied Z offset: -10cm in world frame")
 
         # Determine which frame we're using and set tool axis accordingly
@@ -726,7 +750,9 @@ class NormalMoveTest:
             logger.info(f"  Tool Z-axis (approach): {desired_z_axis}")
             logger.info(f"  Tool Y-axis (upward): {desired_y_axis}")
             logger.info(f"  Tool X-axis (gripper): {desired_x_axis}")
-            logger.info(f"  Y-axis alignment with world Z: {np.dot(desired_y_axis, world_z_up):.3f}")
+            logger.info(
+                f"  Y-axis alignment with world Z: {np.dot(desired_y_axis, world_z_up):.3f}"
+            )
 
         else:
             # For link6 frame (original assumption):
@@ -782,7 +808,7 @@ class NormalMoveTest:
             np.zeros(3),  # Point in tool frame
             self.base_frame,
             target_position - position_tolerance * np.ones(3),
-            target_position + position_tolerance * np.ones(3)
+            target_position + position_tolerance * np.ones(3),
         )
 
         # Add orientation constraint with relaxed tolerance
@@ -793,7 +819,7 @@ class NormalMoveTest:
             RotationMatrix(),  # Identity in tool frame
             self.base_frame,
             target_orientation,  # Target orientation in base frame
-            orientation_tolerance
+            orientation_tolerance,
         )
 
         # Get current joint positions as initial guess
@@ -811,7 +837,7 @@ class NormalMoveTest:
         # Add a slightly perturbed version of current position
         q_perturbed = q_initial.copy()
         for i in range(6):
-            joint = self.plant.GetJointByName(f"joint{i+1}")
+            joint = self.plant.GetJointByName(f"joint{i + 1}")
             idx = joint.position_start()
             q_perturbed[idx] += np.random.uniform(-0.1, 0.1)  # Small random perturbation
         initial_guesses.append(q_perturbed)
@@ -819,7 +845,9 @@ class NormalMoveTest:
         for attempt, q_guess in enumerate(initial_guesses):
             prog.SetInitialGuess(ik.q(), q_guess)
 
-            logger.info(f"Solving inverse kinematics (attempt {attempt+1}/{len(initial_guesses)})...")
+            logger.info(
+                f"Solving inverse kinematics (attempt {attempt + 1}/{len(initial_guesses)})..."
+            )
             result = Solve(prog)
 
             if result.is_success():
@@ -828,23 +856,23 @@ class NormalMoveTest:
                 # Verify the solution is reasonable
                 joint_limits_ok = True
                 for i in range(6):
-                    joint = self.plant.GetJointByName(f"joint{i+1}")
+                    joint = self.plant.GetJointByName(f"joint{i + 1}")
                     idx = joint.position_start()
                     angle = q_solution[idx]
                     # Check if joint is near limits (within 5 degrees)
                     lower = self.plant.GetPositionLowerLimits()[idx]
                     upper = self.plant.GetPositionUpperLimits()[idx]
                     if angle < lower + np.radians(5) or angle > upper - np.radians(5):
-                        logger.warning(f"  Joint {i+1} near limit: {np.degrees(angle):.1f}°")
+                        logger.warning(f"  Joint {i + 1} near limit: {np.degrees(angle):.1f}°")
                         joint_limits_ok = False
 
                 if joint_limits_ok or attempt == len(initial_guesses) - 1:
-                    logger.info(f"IK solution found on attempt {attempt+1}!")
+                    logger.info(f"IK solution found on attempt {attempt + 1}!")
                     return q_solution
                 else:
                     logger.info(f"Solution found but joints near limits, trying next guess...")
             else:
-                logger.info(f"  Attempt {attempt+1} failed: {result.get_solution_result()}")
+                logger.info(f"  Attempt {attempt + 1} failed: {result.get_solution_result()}")
 
         logger.warning("IK solution not found after all attempts")
         logger.info(f"  Target position: {target_position}")
@@ -858,7 +886,7 @@ class NormalMoveTest:
             np.zeros(3),
             self.base_frame,
             target_position - 0.01 * np.ones(3),
-            target_position + 0.01 * np.ones(3)
+            target_position + 0.01 * np.ones(3),
         )
 
         prog_pos = ik_pos_only.get_mutable_prog()
@@ -871,8 +899,17 @@ class NormalMoveTest:
 
         return None
 
-    def visualize_open3d_scene(self, pcd, mesh, normal_camera, normal_point_camera, selected_3d_camera,
-                               normal_base, point_base, target_position):
+    def visualize_open3d_scene(
+        self,
+        pcd,
+        mesh,
+        normal_camera,
+        normal_point_camera,
+        selected_3d_camera,
+        normal_base,
+        point_base,
+        target_position,
+    ):
         """
         Visualize the scene with Open3D interactive viewer.
 
@@ -912,7 +949,7 @@ class NormalMoveTest:
                 cylinder_radius=2,
                 cone_radius=4,
                 cylinder_height=arrow_length * 0.8,
-                cone_height=arrow_length * 0.2
+                cone_height=arrow_length * 0.2,
             )
 
             # Create rotation matrix to align arrow with normal
@@ -923,7 +960,8 @@ class NormalMoveTest:
                     rotation_axis = rotation_axis / np.linalg.norm(rotation_axis)
                     rotation_angle = np.arccos(np.clip(np.dot(z_axis, normal_camera), -1, 1))
                     rotation_matrix = o3d.geometry.get_rotation_matrix_from_axis_angle(
-                        rotation_axis * rotation_angle)
+                        rotation_axis * rotation_angle
+                    )
                     arrow.rotate(rotation_matrix, center=[0, 0, 0])
 
             arrow.translate(normal_point_camera)
@@ -970,14 +1008,16 @@ class NormalMoveTest:
                 geometries,
                 window_name="Normal Vector Estimation - Camera Frame",
                 width=1024,
-                height=768
+                height=768,
             )
         except Exception as e:
             logger.warning(f"Open3D visualization failed: {e}")
 
         return geometries
 
-    def visualize_drake_scene(self, point_base, normal_base, target_position, target_orientation, q_solution=None):
+    def visualize_drake_scene(
+        self, point_base, normal_base, target_position, target_orientation, q_solution=None
+    ):
         """
         Visualize the scene in Drake with mesh, normal, and IK solution.
 
@@ -1000,42 +1040,43 @@ class NormalMoveTest:
         axis_radius = 0.003
 
         # X-axis (red)
-        self.meshcat.SetObject("base_frame_axes/x", Cylinder(axis_radius, axis_length), Rgba(1, 0, 0, 0.6))
-        x_rot = RotationMatrix.MakeYRotation(np.pi/2)
-        self.meshcat.SetTransform("base_frame_axes/x", RigidTransform(x_rot, [axis_length/2, 0, 0]))
+        self.meshcat.SetObject(
+            "base_frame_axes/x", Cylinder(axis_radius, axis_length), Rgba(1, 0, 0, 0.6)
+        )
+        x_rot = RotationMatrix.MakeYRotation(np.pi / 2)
+        self.meshcat.SetTransform(
+            "base_frame_axes/x", RigidTransform(x_rot, [axis_length / 2, 0, 0])
+        )
 
         # Y-axis (green)
-        self.meshcat.SetObject("base_frame_axes/y", Cylinder(axis_radius, axis_length), Rgba(0, 1, 0, 0.6))
-        y_rot = RotationMatrix.MakeXRotation(-np.pi/2)
-        self.meshcat.SetTransform("base_frame_axes/y", RigidTransform(y_rot, [0, axis_length/2, 0]))
+        self.meshcat.SetObject(
+            "base_frame_axes/y", Cylinder(axis_radius, axis_length), Rgba(0, 1, 0, 0.6)
+        )
+        y_rot = RotationMatrix.MakeXRotation(-np.pi / 2)
+        self.meshcat.SetTransform(
+            "base_frame_axes/y", RigidTransform(y_rot, [0, axis_length / 2, 0])
+        )
 
         # Z-axis (blue)
-        self.meshcat.SetObject("base_frame_axes/z", Cylinder(axis_radius, axis_length), Rgba(0, 0, 1, 0.6))
-        self.meshcat.SetTransform("base_frame_axes/z", RigidTransform(RotationMatrix(), [0, 0, axis_length/2]))
-
-        # Visualize handle point (red sphere)
         self.meshcat.SetObject(
-            "handle_point",
-            Sphere(0.01),
-            Rgba(1.0, 0.0, 0.0, 0.8)
+            "base_frame_axes/z", Cylinder(axis_radius, axis_length), Rgba(0, 0, 1, 0.6)
         )
         self.meshcat.SetTransform(
-            "handle_point",
-            RigidTransform(RotationMatrix(), point_base)
+            "base_frame_axes/z", RigidTransform(RotationMatrix(), [0, 0, axis_length / 2])
         )
+
+        # Visualize handle point (red sphere)
+        self.meshcat.SetObject("handle_point", Sphere(0.01), Rgba(1.0, 0.0, 0.0, 0.8))
+        self.meshcat.SetTransform("handle_point", RigidTransform(RotationMatrix(), point_base))
 
         # Visualize normal vector (green arrow) - make it bigger for visibility
         arrow_length = 0.3  # Increased from 0.2
         arrow_radius = 0.008  # Increased from 0.005
         self.meshcat.SetObject(
-            "normal_vector/shaft",
-            Cylinder(arrow_radius, arrow_length),
-            Rgba(0.0, 1.0, 0.0, 0.8)
+            "normal_vector/shaft", Cylinder(arrow_radius, arrow_length), Rgba(0.0, 1.0, 0.0, 0.8)
         )
         self.meshcat.SetObject(
-            "normal_vector/head",
-            Sphere(arrow_radius * 3),
-            Rgba(0.0, 1.0, 0.0, 0.9)
+            "normal_vector/head", Sphere(arrow_radius * 3), Rgba(0.0, 1.0, 0.0, 0.9)
         )
 
         # Position normal arrow starting from handle point
@@ -1048,9 +1089,9 @@ class NormalMoveTest:
             if np.linalg.norm(axis) > 0.001:
                 axis = axis / np.linalg.norm(axis)
                 angle = np.arccos(np.clip(np.dot(z_axis, normal_base), -1, 1))
-                K = np.array([[0, -axis[2], axis[1]],
-                             [axis[2], 0, -axis[0]],
-                             [-axis[1], axis[0], 0]])
+                K = np.array(
+                    [[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]]
+                )
                 R = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
                 rotation = RotationMatrix(R)
             else:
@@ -1061,22 +1102,17 @@ class NormalMoveTest:
         else:
             rotation = RotationMatrix()
 
-        self.meshcat.SetTransform(
-            "normal_vector/shaft",
-            RigidTransform(rotation, arrow_center)
-        )
+        self.meshcat.SetTransform("normal_vector/shaft", RigidTransform(rotation, arrow_center))
         self.meshcat.SetTransform(
             "normal_vector/head",
-            RigidTransform(RotationMatrix(), point_base + normal_base * arrow_length)
+            RigidTransform(RotationMatrix(), point_base + normal_base * arrow_length),
         )
 
         # Visualize approach line from handle to target
         line_radius = 0.002
         approach_distance = np.linalg.norm(target_position - point_base)
         self.meshcat.SetObject(
-            "approach_line",
-            Cylinder(line_radius, approach_distance),
-            Rgba(0.5, 0.5, 0.5, 0.5)
+            "approach_line", Cylinder(line_radius, approach_distance), Rgba(0.5, 0.5, 0.5, 0.5)
         )
         line_center = (point_base + target_position) / 2
 
@@ -1087,9 +1123,9 @@ class NormalMoveTest:
             if np.linalg.norm(axis) > 0.001:
                 axis = axis / np.linalg.norm(axis)
                 angle = np.arccos(np.clip(np.dot(z_axis, approach_dir), -1, 1))
-                K = np.array([[0, -axis[2], axis[1]],
-                             [axis[2], 0, -axis[0]],
-                             [-axis[1], axis[0], 0]])
+                K = np.array(
+                    [[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]]
+                )
                 R = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
                 line_rotation = RotationMatrix(R)
             else:
@@ -1097,21 +1133,11 @@ class NormalMoveTest:
         else:
             line_rotation = RotationMatrix()
 
-        self.meshcat.SetTransform(
-            "approach_line",
-            RigidTransform(line_rotation, line_center)
-        )
+        self.meshcat.SetTransform("approach_line", RigidTransform(line_rotation, line_center))
 
         # Visualize target point (blue sphere)
-        self.meshcat.SetObject(
-            "target_point",
-            Sphere(0.015),
-            Rgba(0.0, 0.0, 1.0, 0.8)
-        )
-        self.meshcat.SetTransform(
-            "target_point",
-            RigidTransform(RotationMatrix(), target_position)
-        )
+        self.meshcat.SetObject("target_point", Sphere(0.015), Rgba(0.0, 0.0, 1.0, 0.8))
+        self.meshcat.SetTransform("target_point", RigidTransform(RotationMatrix(), target_position))
 
         # Visualize target frame axes
         frame_axis_length = 0.15
@@ -1119,21 +1145,33 @@ class NormalMoveTest:
 
         # Target X-axis (red) - should point towards handle
         target_x = target_orientation.matrix()[:, 0]
-        self.meshcat.SetObject("target_frame/x", Cylinder(frame_axis_radius, frame_axis_length), Rgba(0.8, 0.2, 0.2, 0.9))
+        self.meshcat.SetObject(
+            "target_frame/x",
+            Cylinder(frame_axis_radius, frame_axis_length),
+            Rgba(0.8, 0.2, 0.2, 0.9),
+        )
         x_center = target_position + target_x * frame_axis_length / 2
         x_rot = self._align_cylinder_with_axis(target_x)
         self.meshcat.SetTransform("target_frame/x", RigidTransform(x_rot, x_center))
 
         # Target Y-axis (green)
         target_y = target_orientation.matrix()[:, 1]
-        self.meshcat.SetObject("target_frame/y", Cylinder(frame_axis_radius, frame_axis_length), Rgba(0.2, 0.8, 0.2, 0.9))
+        self.meshcat.SetObject(
+            "target_frame/y",
+            Cylinder(frame_axis_radius, frame_axis_length),
+            Rgba(0.2, 0.8, 0.2, 0.9),
+        )
         y_center = target_position + target_y * frame_axis_length / 2
         y_rot = self._align_cylinder_with_axis(target_y)
         self.meshcat.SetTransform("target_frame/y", RigidTransform(y_rot, y_center))
 
         # Target Z-axis (blue)
         target_z = target_orientation.matrix()[:, 2]
-        self.meshcat.SetObject("target_frame/z", Cylinder(frame_axis_radius, frame_axis_length), Rgba(0.2, 0.2, 0.8, 0.9))
+        self.meshcat.SetObject(
+            "target_frame/z",
+            Cylinder(frame_axis_radius, frame_axis_length),
+            Rgba(0.2, 0.2, 0.8, 0.9),
+        )
         z_center = target_position + target_z * frame_axis_length / 2
         z_rot = self._align_cylinder_with_axis(target_z)
         self.meshcat.SetTransform("target_frame/z", RigidTransform(z_rot, z_center))
@@ -1144,16 +1182,14 @@ class NormalMoveTest:
             logger.info("Applied IK solution to robot")
 
             # Log joint angles
-            joint_names = [f"joint{i+1}" for i in range(6)]
+            joint_names = [f"joint{i + 1}" for i in range(6)]
             for i, name in enumerate(joint_names):
                 if i < len(q_solution):
                     logger.info(f"  {name}: {np.degrees(q_solution[i]):.2f} deg")
 
             # Get actual link6 pose after IK
             link6_pose = self.plant.CalcRelativeTransform(
-                self.plant_context,
-                self.base_frame,
-                self.link6_frame
+                self.plant_context, self.base_frame, self.link6_frame
             )
             link6_pos = link6_pose.translation()
             link6_rot = link6_pose.rotation()
@@ -1164,21 +1200,33 @@ class NormalMoveTest:
 
             # Link6 X-axis (red) - this should be the tool axis
             link6_x = link6_rot.matrix()[:, 0]
-            self.meshcat.SetObject("link6_frame/x", Cylinder(link6_axis_radius, link6_axis_length), Rgba(1.0, 0.0, 0.0, 0.7))
+            self.meshcat.SetObject(
+                "link6_frame/x",
+                Cylinder(link6_axis_radius, link6_axis_length),
+                Rgba(1.0, 0.0, 0.0, 0.7),
+            )
             link6_x_center = link6_pos + link6_x * link6_axis_length / 2
             link6_x_rot = self._align_cylinder_with_axis(link6_x)
             self.meshcat.SetTransform("link6_frame/x", RigidTransform(link6_x_rot, link6_x_center))
 
             # Link6 Y-axis (green)
             link6_y = link6_rot.matrix()[:, 1]
-            self.meshcat.SetObject("link6_frame/y", Cylinder(link6_axis_radius, link6_axis_length), Rgba(0.0, 1.0, 0.0, 0.7))
+            self.meshcat.SetObject(
+                "link6_frame/y",
+                Cylinder(link6_axis_radius, link6_axis_length),
+                Rgba(0.0, 1.0, 0.0, 0.7),
+            )
             link6_y_center = link6_pos + link6_y * link6_axis_length / 2
             link6_y_rot = self._align_cylinder_with_axis(link6_y)
             self.meshcat.SetTransform("link6_frame/y", RigidTransform(link6_y_rot, link6_y_center))
 
             # Link6 Z-axis (blue)
             link6_z = link6_rot.matrix()[:, 2]
-            self.meshcat.SetObject("link6_frame/z", Cylinder(link6_axis_radius, link6_axis_length), Rgba(0.0, 0.0, 1.0, 0.7))
+            self.meshcat.SetObject(
+                "link6_frame/z",
+                Cylinder(link6_axis_radius, link6_axis_length),
+                Rgba(0.0, 0.0, 1.0, 0.7),
+            )
             link6_z_center = link6_pos + link6_z * link6_axis_length / 2
             link6_z_rot = self._align_cylinder_with_axis(link6_z)
             self.meshcat.SetTransform("link6_frame/z", RigidTransform(link6_z_rot, link6_z_center))
@@ -1193,7 +1241,9 @@ class NormalMoveTest:
             x_alignment = np.dot(link6_x, target_orientation.matrix()[:, 0])
             logger.info(f"\nAlignment check:")
             logger.info(f"  X-axis alignment: {x_alignment:.3f} (should be ~1.0)")
-            logger.info(f"  Position error: {np.linalg.norm(link6_pos - target_position)*1000:.1f} mm")
+            logger.info(
+                f"  Position error: {np.linalg.norm(link6_pos - target_position) * 1000:.1f} mm"
+            )
 
         # Log visualization info
         logger.info("\nDrake Visualization Legend:")
@@ -1221,106 +1271,167 @@ class NormalMoveTest:
             rotation_axis = np.cross(z_axis, axis)
             rotation_axis = rotation_axis / np.linalg.norm(rotation_axis)
             angle = np.arccos(np.clip(np.dot(z_axis, axis), -1, 1))
-            K = np.array([[0, -rotation_axis[2], rotation_axis[1]],
-                         [rotation_axis[2], 0, -rotation_axis[0]],
-                         [-rotation_axis[1], rotation_axis[0], 0]])
+            K = np.array(
+                [
+                    [0, -rotation_axis[2], rotation_axis[1]],
+                    [rotation_axis[2], 0, -rotation_axis[0]],
+                    [-rotation_axis[1], rotation_axis[0], 0],
+                ]
+            )
             R = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
             return RotationMatrix(R)
 
-    def create_results_figure(self, rgb_image, mask, selected_2d, normal_camera,
-                            point_camera, normal_base, point_base, target_position):
+    def create_results_figure(
+        self,
+        rgb_image,
+        mask,
+        selected_2d,
+        normal_camera,
+        point_camera,
+        normal_base,
+        point_base,
+        target_position,
+    ):
         """Create a comprehensive figure with all results"""
         fig = plt.figure(figsize=(20, 12))
 
         # 1. Original RGB with selected point
         ax1 = plt.subplot(2, 4, 1)
         ax1.imshow(rgb_image)
-        ax1.scatter(selected_2d[0], selected_2d[1], c='red', s=100, marker='x', linewidths=2)
-        ax1.set_title(f'Selected Point: ({selected_2d[0]}, {selected_2d[1]})')
-        ax1.axis('off')
+        ax1.scatter(selected_2d[0], selected_2d[1], c="red", s=100, marker="x", linewidths=2)
+        ax1.set_title(f"Selected Point: ({selected_2d[0]}, {selected_2d[1]})")
+        ax1.axis("off")
 
         # 2. Segmentation mask
         ax2 = plt.subplot(2, 4, 2)
-        ax2.imshow(mask, cmap='gray')
-        ax2.set_title(f'Segmentation Mask')
-        ax2.axis('off')
+        ax2.imshow(mask, cmap="gray")
+        ax2.set_title(f"Segmentation Mask")
+        ax2.axis("off")
 
         # 3. Normal in camera frame
-        ax3 = plt.subplot(2, 4, 3, projection='3d')
-        ax3.quiver(0, 0, 0, 50, 0, 0, color='r', arrow_length_ratio=0.1, label='X')
-        ax3.quiver(0, 0, 0, 0, 50, 0, color='g', arrow_length_ratio=0.1, label='Y')
-        ax3.quiver(0, 0, 0, 0, 0, 50, color='b', arrow_length_ratio=0.1, label='Z')
+        ax3 = plt.subplot(2, 4, 3, projection="3d")
+        ax3.quiver(0, 0, 0, 50, 0, 0, color="r", arrow_length_ratio=0.1, label="X")
+        ax3.quiver(0, 0, 0, 0, 50, 0, color="g", arrow_length_ratio=0.1, label="Y")
+        ax3.quiver(0, 0, 0, 0, 0, 50, color="b", arrow_length_ratio=0.1, label="Z")
 
         normal_scaled = normal_camera * 100
-        ax3.quiver(0, 0, 0, normal_scaled[0], normal_scaled[1], normal_scaled[2],
-                  color='purple', arrow_length_ratio=0.1, linewidth=3, label='Normal (Camera)')
+        ax3.quiver(
+            0,
+            0,
+            0,
+            normal_scaled[0],
+            normal_scaled[1],
+            normal_scaled[2],
+            color="purple",
+            arrow_length_ratio=0.1,
+            linewidth=3,
+            label="Normal (Camera)",
+        )
 
         ax3.set_xlim([-100, 100])
         ax3.set_ylim([-100, 100])
         ax3.set_zlim([-100, 100])
-        ax3.set_xlabel('X (mm)')
-        ax3.set_ylabel('Y (mm)')
-        ax3.set_zlabel('Z (mm)')
+        ax3.set_xlabel("X (mm)")
+        ax3.set_ylabel("Y (mm)")
+        ax3.set_zlabel("Z (mm)")
         ax3.legend()
-        ax3.set_title('Normal in Camera Frame')
+        ax3.set_title("Normal in Camera Frame")
 
         # 4. Normal in base frame
-        ax4 = plt.subplot(2, 4, 4, projection='3d')
-        ax4.quiver(0, 0, 0, 0.2, 0, 0, color='r', arrow_length_ratio=0.1, label='X')
-        ax4.quiver(0, 0, 0, 0, 0.2, 0, color='g', arrow_length_ratio=0.1, label='Y')
-        ax4.quiver(0, 0, 0, 0, 0, 0.2, color='b', arrow_length_ratio=0.1, label='Z')
+        ax4 = plt.subplot(2, 4, 4, projection="3d")
+        ax4.quiver(0, 0, 0, 0.2, 0, 0, color="r", arrow_length_ratio=0.1, label="X")
+        ax4.quiver(0, 0, 0, 0, 0.2, 0, color="g", arrow_length_ratio=0.1, label="Y")
+        ax4.quiver(0, 0, 0, 0, 0, 0.2, color="b", arrow_length_ratio=0.1, label="Z")
 
         normal_base_scaled = normal_base * 0.3
-        ax4.quiver(0, 0, 0, normal_base_scaled[0], normal_base_scaled[1], normal_base_scaled[2],
-                  color='purple', arrow_length_ratio=0.1, linewidth=3, label='Normal (Base)')
+        ax4.quiver(
+            0,
+            0,
+            0,
+            normal_base_scaled[0],
+            normal_base_scaled[1],
+            normal_base_scaled[2],
+            color="purple",
+            arrow_length_ratio=0.1,
+            linewidth=3,
+            label="Normal (Base)",
+        )
 
         ax4.set_xlim([-0.3, 0.3])
         ax4.set_ylim([-0.3, 0.3])
         ax4.set_zlim([-0.3, 0.3])
-        ax4.set_xlabel('X (m)')
-        ax4.set_ylabel('Y (m)')
-        ax4.set_zlabel('Z (m)')
+        ax4.set_xlabel("X (m)")
+        ax4.set_ylabel("Y (m)")
+        ax4.set_zlabel("Z (m)")
         ax4.legend()
-        ax4.set_title('Normal in Base Frame')
+        ax4.set_title("Normal in Base Frame")
 
         # 5. Target position visualization
-        ax5 = plt.subplot(2, 4, 5, projection='3d')
+        ax5 = plt.subplot(2, 4, 5, projection="3d")
 
         # Plot handle point
-        ax5.scatter(point_base[0], point_base[1], point_base[2],
-                   c='red', s=100, marker='o', label='Handle Point')
+        ax5.scatter(
+            point_base[0],
+            point_base[1],
+            point_base[2],
+            c="red",
+            s=100,
+            marker="o",
+            label="Handle Point",
+        )
 
         # Plot target position
-        ax5.scatter(target_position[0], target_position[1], target_position[2],
-                   c='blue', s=100, marker='^', label='Target Position')
+        ax5.scatter(
+            target_position[0],
+            target_position[1],
+            target_position[2],
+            c="blue",
+            s=100,
+            marker="^",
+            label="Target Position",
+        )
 
         # Draw line connecting them
-        ax5.plot([point_base[0], target_position[0]],
-                [point_base[1], target_position[1]],
-                [point_base[2], target_position[2]],
-                'g--', alpha=0.5)
+        ax5.plot(
+            [point_base[0], target_position[0]],
+            [point_base[1], target_position[1]],
+            [point_base[2], target_position[2]],
+            "g--",
+            alpha=0.5,
+        )
 
         # Draw normal vector
-        ax5.quiver(point_base[0], point_base[1], point_base[2],
-                  normal_base[0]*0.3, normal_base[1]*0.3, normal_base[2]*0.3,
-                  color='green', arrow_length_ratio=0.1, linewidth=2, label='Normal')
+        ax5.quiver(
+            point_base[0],
+            point_base[1],
+            point_base[2],
+            normal_base[0] * 0.3,
+            normal_base[1] * 0.3,
+            normal_base[2] * 0.3,
+            color="green",
+            arrow_length_ratio=0.1,
+            linewidth=2,
+            label="Normal",
+        )
 
-        ax5.set_xlabel('X (m)')
-        ax5.set_ylabel('Y (m)')
-        ax5.set_zlabel('Z (m)')
+        ax5.set_xlabel("X (m)")
+        ax5.set_ylabel("Y (m)")
+        ax5.set_zlabel("Z (m)")
         ax5.legend()
-        ax5.set_title('Target Planning in Base Frame')
+        ax5.set_title("Target Planning in Base Frame")
 
         # 6. Information panel
         ax6 = plt.subplot(2, 4, 6)
-        ax6.axis('off')
+        ax6.axis("off")
         info_text = "Transformation Results\n" + "=" * 30 + "\n\n"
         info_text += f"Selected Point (Camera):\n"
         info_text += f"  X: {point_camera[0]:.1f} mm\n"
         info_text += f"  Y: {point_camera[1]:.1f} mm\n"
         info_text += f"  Z: {point_camera[2]:.1f} mm\n\n"
         info_text += f"Normal (Camera):\n"
-        info_text += f"  [{normal_camera[0]:.3f}, {normal_camera[1]:.3f}, {normal_camera[2]:.3f}]\n\n"
+        info_text += (
+            f"  [{normal_camera[0]:.3f}, {normal_camera[1]:.3f}, {normal_camera[2]:.3f}]\n\n"
+        )
         info_text += f"Point (Base):\n"
         info_text += f"  X: {point_base[0]:.3f} m\n"
         info_text += f"  Y: {point_base[1]:.3f} m\n"
@@ -1332,16 +1443,23 @@ class NormalMoveTest:
         info_text += f"  Y: {target_position[1]:.3f} m\n"
         info_text += f"  Z: {target_position[2]:.3f} m\n"
 
-        ax6.text(0.1, 0.9, info_text, transform=ax6.transAxes, fontsize=10,
-                verticalalignment='top', fontfamily='monospace')
-        ax6.set_title('Transformation Info')
+        ax6.text(
+            0.1,
+            0.9,
+            info_text,
+            transform=ax6.transAxes,
+            fontsize=10,
+            verticalalignment="top",
+            fontfamily="monospace",
+        )
+        ax6.set_title("Transformation Info")
 
-        plt.suptitle('Normal-based IK Motion Planning', fontsize=16, fontweight='bold')
+        plt.suptitle("Normal-based IK Motion Planning", fontsize=16, fontweight="bold")
         plt.tight_layout()
 
         # Save figure
         output_path = "normal_move_results.png"
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
         logger.info(f"Saved results figure to {output_path}")
         plt.close()
 
@@ -1357,9 +1475,9 @@ class NormalMoveTest:
             bool: True if successful, False otherwise
         """
         try:
-            logger.info("\n" + "="*60)
+            logger.info("\n" + "=" * 60)
             logger.info(f"Iteration {iteration_num}/{self.loop_count}")
-            logger.info("="*60)
+            logger.info("=" * 60)
             # 1. Capture frame
             logger.info("Capturing frame from ZED camera...")
             rgb_image, depth_map, point_cloud = self.capture_frame()
@@ -1412,7 +1530,9 @@ class NormalMoveTest:
                 logger.warning("Could not compute normal vector")
                 return
 
-            logger.info(f"Normal vector (camera): [{normal_camera[0]:.3f}, {normal_camera[1]:.3f}, {normal_camera[2]:.3f}]")
+            logger.info(
+                f"Normal vector (camera): [{normal_camera[0]:.3f}, {normal_camera[1]:.3f}, {normal_camera[2]:.3f}]"
+            )
 
             # 8. Transform to base frame
             point_base, normal_base = self.transform_to_base_frame(closest_point, normal_camera)
@@ -1427,21 +1547,29 @@ class NormalMoveTest:
 
             # Store successful solution for potential grab
             if q_solution is not None:
-                self.last_q_solution = q_solution.copy() if isinstance(q_solution, np.ndarray) else q_solution
-                self.last_target_position = target_position.copy() if isinstance(target_position, np.ndarray) else target_position
-                self.last_target_normal = normal_base.copy() if isinstance(normal_base, np.ndarray) else normal_base
+                self.last_q_solution = (
+                    q_solution.copy() if isinstance(q_solution, np.ndarray) else q_solution
+                )
+                self.last_target_position = (
+                    target_position.copy()
+                    if isinstance(target_position, np.ndarray)
+                    else target_position
+                )
+                self.last_target_normal = (
+                    normal_base.copy() if isinstance(normal_base, np.ndarray) else normal_base
+                )
 
                 # Execute movement if not in test mode and we have a solution
                 if self.arm is not None and not self.test_mode:
-                    logger.info("\n" + "="*60)
+                    logger.info("\n" + "=" * 60)
                     logger.info("Executing movement to target position")
-                    logger.info("="*60)
+                    logger.info("=" * 60)
                     self.execute_xarm_movement(q_solution)
                 elif self.test_mode:
-                    logger.info("\n" + "="*60)
+                    logger.info("\n" + "=" * 60)
                     logger.info("Test mode - NOT executing movement")
                     logger.info("IK solution found but movement disabled")
-                    logger.info("="*60)
+                    logger.info("=" * 60)
             else:
                 logger.warning("No IK solution found for this iteration")
                 return False
@@ -1449,21 +1577,35 @@ class NormalMoveTest:
             # Only visualize on the last iteration or if only one iteration
             if iteration_num == self.loop_count:
                 # 11. Visualize in Open3D first (camera frame)
-                logger.info("\n" + "="*60)
+                logger.info("\n" + "=" * 60)
                 logger.info("Open3D Visualization (Camera Frame)")
-                logger.info("="*60)
+                logger.info("=" * 60)
                 self.visualize_open3d_scene(
-                    pcd, mesh, normal_camera, closest_point, selected_3d,
-                    normal_base, point_base, target_position
+                    pcd,
+                    mesh,
+                    normal_camera,
+                    closest_point,
+                    selected_3d,
+                    normal_base,
+                    point_base,
+                    target_position,
                 )
 
                 # 12. Visualize in Drake
-                self.visualize_drake_scene(point_base, normal_base, target_position, target_orientation, q_solution)
+                self.visualize_drake_scene(
+                    point_base, normal_base, target_position, target_orientation, q_solution
+                )
 
                 # 13. Create results figure
                 self.create_results_figure(
-                    rgb_image, mask, selected_point, normal_camera,
-                    closest_point, normal_base, point_base, target_position
+                    rgb_image,
+                    mask,
+                    selected_point,
+                    normal_camera,
+                    closest_point,
+                    normal_base,
+                    point_base,
+                    target_position,
                 )
 
                 # 14. Save mesh for reference
@@ -1494,9 +1636,11 @@ class NormalMoveTest:
                     logger.info(f"\nWaiting {wait_time} seconds before next iteration...")
                     time.sleep(wait_time)
 
-            logger.info("\n" + "="*60)
-            logger.info(f"Completed {successful_iterations}/{self.loop_count} iterations successfully")
-            logger.info("="*60)
+            logger.info("\n" + "=" * 60)
+            logger.info(
+                f"Completed {successful_iterations}/{self.loop_count} iterations successfully"
+            )
+            logger.info("=" * 60)
 
             # Execute grab sequence if requested and we had at least one success
             if self.execute_grab and successful_iterations > 0:
@@ -1509,10 +1653,10 @@ class NormalMoveTest:
             elif self.execute_grab and successful_iterations == 0:
                 logger.warning("Cannot execute grab sequence - no successful iterations")
 
-            logger.info("\n" + "="*60)
+            logger.info("\n" + "=" * 60)
             logger.info("Processing complete!")
             logger.info("Check Meshcat for Drake visualization")
-            logger.info("="*60)
+            logger.info("=" * 60)
 
             # Keep visualization running
             logger.info("Press Ctrl+C to exit...")
@@ -1543,7 +1687,7 @@ class NormalMoveTest:
             if code == 0 and angles:
                 logger.info(f"Got xARM joint positions:")
                 for i, angle in enumerate(angles[:6]):
-                    logger.info(f"  joint{i+1}: {angle:.4f} rad ({np.degrees(angle):.2f} deg)")
+                    logger.info(f"  joint{i + 1}: {angle:.4f} rad ({np.degrees(angle):.2f} deg)")
 
                 # Try to get gripper position
                 try:
@@ -1586,7 +1730,7 @@ class NormalMoveTest:
 
         try:
             # Extract joint angles for xARM (first 6 joints)
-            arm_joint_names = [f"joint{i+1}" for i in range(6)]
+            arm_joint_names = [f"joint{i + 1}" for i in range(6)]
             positions = []
 
             for joint_name in arm_joint_names:
@@ -1596,7 +1740,7 @@ class NormalMoveTest:
 
             logger.info("Sending joint angles to xARM:")
             for i, angle in enumerate(positions):
-                logger.info(f"  joint{i+1}: {np.degrees(angle):.2f} deg")
+                logger.info(f"  joint{i + 1}: {np.degrees(angle):.2f} deg")
 
             # Send command to xARM with specified speed
             code = self.arm.set_servo_angle(angle=positions, speed=speed, wait=True, is_radian=True)
@@ -1622,17 +1766,23 @@ class NormalMoveTest:
         2. Moves forward along the approach direction
         3. Closes the gripper
         """
-        if self.last_q_solution is None or self.last_target_position is None or self.last_target_normal is None:
+        if (
+            self.last_q_solution is None
+            or self.last_target_position is None
+            or self.last_target_normal is None
+        ):
             logger.warning("No successful positioning found, cannot execute grab sequence")
             return False
 
         if self.test_mode:
-            logger.info("\n" + "="*60)
+            logger.info("\n" + "=" * 60)
             logger.info("Test mode - Would execute grab sequence:")
-            logger.info(f"  1. Move up {self.z_offset_applied*100:.0f}cm (reverse Z offset)")
-            logger.info(f"  2. Move forward {forward_distance*100:.0f}cm along approach direction")
+            logger.info(f"  1. Move up {self.z_offset_applied * 100:.0f}cm (reverse Z offset)")
+            logger.info(
+                f"  2. Move forward {forward_distance * 100:.0f}cm along approach direction"
+            )
             logger.info(f"  3. Close gripper quickly")
-            logger.info("="*60)
+            logger.info("=" * 60)
             return True
 
         if not self.arm:
@@ -1640,12 +1790,14 @@ class NormalMoveTest:
             return False
 
         try:
-            logger.info("\n" + "="*60)
+            logger.info("\n" + "=" * 60)
             logger.info("Executing grab sequence")
-            logger.info("="*60)
+            logger.info("=" * 60)
 
             # Step 1: Move up by reversing the Z offset
-            logger.info(f"Step 1: Moving up {self.z_offset_applied*100:.0f}cm to reverse Z offset")
+            logger.info(
+                f"Step 1: Moving up {self.z_offset_applied * 100:.0f}cm to reverse Z offset"
+            )
 
             # Calculate new target position (move up in world Z)
             target_pos_up = np.array(self.last_target_position, copy=True)
@@ -1658,9 +1810,7 @@ class NormalMoveTest:
             # Get the last orientation from the plant context
             self.plant.SetPositions(self.plant_context, self.last_q_solution)
             tool_pose = self.plant.CalcRelativeTransform(
-                self.plant_context,
-                self.base_frame,
-                self.tool_frame
+                self.plant_context, self.base_frame, self.tool_frame
             )
             target_orientation = tool_pose.rotation()
 
@@ -1677,7 +1827,9 @@ class NormalMoveTest:
 
             # Step 2: Move forward 9cm along approach direction
             forward_distance = 0.09  # 9cm
-            logger.info(f"Step 2: Moving forward {forward_distance*100:.0f}cm along approach direction")
+            logger.info(
+                f"Step 2: Moving forward {forward_distance * 100:.0f}cm along approach direction"
+            )
 
             # The approach direction is opposite to the normal (we approach towards the surface)
             approach_direction = -np.array(self.last_target_normal)
@@ -1697,13 +1849,17 @@ class NormalMoveTest:
                 # Update plant context for final position
                 self.plant.SetPositions(self.plant_context, q_forward)
             else:
-                logger.warning("  Failed to solve IK for forward movement, continuing with gripper close")
+                logger.warning(
+                    "  Failed to solve IK for forward movement, continuing with gripper close"
+                )
 
             # Step 3: Close gripper
             logger.info("Step 3: Closing gripper")
 
             # Close the gripper with faster speed
-            code = self.arm.set_gripper_position(0, wait=True, speed=5000)  # 0 = fully closed, speed increased from 500 to 5000
+            code = self.arm.set_gripper_position(
+                0, wait=True, speed=5000
+            )  # 0 = fully closed, speed increased from 500 to 5000
 
             if code == 0:
                 logger.info("  Gripper closed successfully")
@@ -1711,9 +1867,9 @@ class NormalMoveTest:
             else:
                 logger.error(f"  Failed to close gripper, code: {code}")
 
-            logger.info("\n" + "="*60)
+            logger.info("\n" + "=" * 60)
             logger.info("Grab sequence completed!")
-            logger.info("="*60)
+            logger.info("=" * 60)
 
             return True
 
@@ -1736,19 +1892,37 @@ def main():
     """Main entry point"""
     import argparse
 
-    parser = argparse.ArgumentParser(description='Normal-based IK motion planning')
-    parser.add_argument('--fastsam-model', type=str, default='./weights/FastSAM-x.pt',
-                       help='Path to FastSAM model weights')
-    parser.add_argument('--xarm', type=str, default=None,
-                       help='xARM IP address (e.g., 192.168.1.100)')
-    parser.add_argument('--test', action='store_true',
-                       help='Test mode: get xARM positions but do not execute movements')
-    parser.add_argument('--qwen', action='store_true',
-                       help='Use Qwen vision model to automatically detect handle point instead of manual selection')
-    parser.add_argument('--loop', type=int, default=1,
-                       help='Number of times to repeat the detection and movement cycle (default: 1)')
-    parser.add_argument('--grab', action='store_true',
-                       help='Execute grab sequence after positioning: move up, forward, and close gripper')
+    parser = argparse.ArgumentParser(description="Normal-based IK motion planning")
+    parser.add_argument(
+        "--fastsam-model",
+        type=str,
+        default="./weights/FastSAM-x.pt",
+        help="Path to FastSAM model weights",
+    )
+    parser.add_argument(
+        "--xarm", type=str, default=None, help="xARM IP address (e.g., 192.168.1.100)"
+    )
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Test mode: get xARM positions but do not execute movements",
+    )
+    parser.add_argument(
+        "--qwen",
+        action="store_true",
+        help="Use Qwen vision model to automatically detect handle point instead of manual selection",
+    )
+    parser.add_argument(
+        "--loop",
+        type=int,
+        default=1,
+        help="Number of times to repeat the detection and movement cycle (default: 1)",
+    )
+    parser.add_argument(
+        "--grab",
+        action="store_true",
+        help="Execute grab sequence after positioning: move up, forward, and close gripper",
+    )
 
     args = parser.parse_args()
 
@@ -1759,7 +1933,7 @@ def main():
         test_mode=args.test,
         use_qwen=args.qwen,
         loop_count=args.loop,
-        execute_grab=args.grab
+        execute_grab=args.grab,
     )
 
     try:

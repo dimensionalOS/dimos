@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Force-Torque Pull Module Test/Deployment Script
 
@@ -62,15 +76,12 @@ Examples:
         "--calibration",
         type=str,
         default="dimos/hardware/ft_calibration.json",
-        help="Path to calibration file (default: dimos/hardware/ft_calibration.json)"
+        help="Path to calibration file (default: dimos/hardware/ft_calibration.json)",
     )
 
     # xARM connection
     parser.add_argument(
-        "--xarm",
-        type=str,
-        default=None,
-        help="xARM IP address (e.g., 192.168.1.210)"
+        "--xarm", type=str, default=None, help="xARM IP address (e.g., 192.168.1.210)"
     )
 
     # Pull skill parameters (for auto-run mode)
@@ -78,49 +89,43 @@ Examples:
         "--force-threshold",
         type=float,
         default=7.0,
-        help="Target force threshold in Newtons (default: 7.0)"
+        help="Target force threshold in Newtons (default: 7.0)",
     )
     parser.add_argument(
-        "--rotation-gain",
-        type=float,
-        default=0.01,
-        help="Rotation gain (rad/N) (default: 0.01)"
+        "--rotation-gain", type=float, default=0.01, help="Rotation gain (rad/N) (default: 0.01)"
     )
     parser.add_argument(
         "--pull-speed",
         type=float,
         default=0.015,
-        help="Pull speed in meters per step (default: 0.015)"
+        help="Pull speed in meters per step (default: 0.015)",
     )
     parser.add_argument(
         "--pivot-distance",
         type=float,
         default=0.2,
-        help="Distance to virtual pivot point in meters (default: 0.2)"
+        help="Distance to virtual pivot point in meters (default: 0.2)",
     )
     parser.add_argument(
         "--door-opens-clockwise",
         action="store_true",
-        help="Door opens clockwise (default: counter-clockwise)"
+        help="Door opens clockwise (default: counter-clockwise)",
     )
     parser.add_argument(
         "--rotation-axis",
         type=str,
         default="z",
         choices=["x", "y", "z"],
-        help="Rotation axis (default: z)"
+        help="Rotation axis (default: z)",
     )
     parser.add_argument(
         "--max-duration",
         type=float,
         default=30.0,
-        help="Maximum duration in seconds (default: 30.0)"
+        help="Maximum duration in seconds (default: 30.0)",
     )
     parser.add_argument(
-        "--end-angle",
-        type=float,
-        default=None,
-        help="Maximum rotation angle in degrees (optional)"
+        "--end-angle", type=float, default=None, help="Maximum rotation angle in degrees (optional)"
     )
 
     # LCM transport arguments
@@ -137,58 +142,39 @@ Examples:
 
     # Visualizer arguments
     parser.add_argument(
-        "--dash-port",
-        type=int,
-        default=8052,
-        help="Port for Dash web server (default: 8052)"
+        "--dash-port", type=int, default=8052, help="Port for Dash web server (default: 8052)"
     )
     parser.add_argument(
-        "--dash-host",
-        default="0.0.0.0",
-        help="Host for Dash web server (default: 0.0.0.0)"
+        "--dash-host", default="0.0.0.0", help="Host for Dash web server (default: 0.0.0.0)"
     )
     parser.add_argument(
-        "--history",
-        type=int,
-        default=500,
-        help="Max history points to keep (default: 500)"
+        "--history", type=int, default=500, help="Max history points to keep (default: 500)"
     )
     parser.add_argument(
         "--update-interval",
         type=int,
         default=100,
-        help="Dashboard update interval in ms (default: 100)"
+        help="Dashboard update interval in ms (default: 100)",
     )
     parser.add_argument(
-        "--no-visualizer",
-        action="store_true",
-        help="Run without visualizer dashboard"
+        "--no-visualizer", action="store_true", help="Run without visualizer dashboard"
     )
 
     # Execution mode
     parser.add_argument(
         "--interactive",
         action="store_true",
-        help="Run in interactive mode with agent and human input"
+        help="Run in interactive mode with agent and human input",
     )
     parser.add_argument(
-        "--auto-run",
-        action="store_true",
-        help="Automatically start the continuous pull on startup"
+        "--auto-run", action="store_true", help="Automatically start the continuous pull on startup"
     )
 
     # System arguments
     parser.add_argument(
-        "--processes",
-        type=int,
-        default=3,
-        help="Number of Dimos processes (default: 3)"
+        "--processes", type=int, default=3, help="Number of Dimos processes (default: 3)"
     )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output"
-    )
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
 
     args = parser.parse_args()
 
@@ -278,12 +264,12 @@ Examples:
     stats = driver.get_stats()
     logger.info(f"Driver initial stats: {stats}")
 
-    if stats['message_count'] == 0:
+    if stats["message_count"] == 0:
         logger.warning("No messages received from sensor yet")
         logger.warning("Waiting additional time for sensor to start...")
         time.sleep(3)
         stats = driver.get_stats()
-        if stats['message_count'] == 0:
+        if stats["message_count"] == 0:
             logger.error("Still no data from sensor after 4 seconds!")
             logger.error("Check sensor connection and power")
 
@@ -348,7 +334,7 @@ Examples:
 
             2. 'stop_pull': Stop the continuous pull operation
 
-            Be helpful and explain what you're doing when executing skills."""
+            Be helpful and explain what you're doing when executing skills.""",
         )
 
         # Register skills
@@ -390,7 +376,7 @@ Examples:
             door_opens_clockwise=args.door_opens_clockwise,
             rotation_axis=args.rotation_axis,
             max_duration=args.max_duration,
-            end_angle=args.end_angle
+            end_angle=args.end_angle,
         )
 
         logger.info(f"Skill result: {result}")
@@ -422,21 +408,21 @@ Examples:
                         f"Calibrated={driver_stats['calibrated_count']}"
                     )
 
-                    if driver_stats['calibration_loaded']:
+                    if driver_stats["calibration_loaded"]:
                         logger.info(
                             f"  Latest |F|={driver_stats['latest_force_magnitude']:.2f} N, "
                             f"|T|={driver_stats['latest_torque_magnitude']:.4f} N⋅m"
                         )
 
                     ft_pull_stats = ft_pull.get_stats()
-                    if ft_pull_stats['has_force_data']:
+                    if ft_pull_stats["has_force_data"]:
                         logger.info(
                             f"Pull Stats: Force={ft_pull_stats['lateral_force']:.1f}N, "
                             f"Rotation={ft_pull_stats['total_rotation_deg']:.1f}°, "
                             f"Pull={ft_pull_stats['total_pull_cm']:.1f}cm, "
                             f"Motions={ft_pull_stats['motion_count']}"
                         )
-                        if ft_pull_stats['running']:
+                        if ft_pull_stats["running"]:
                             logger.info("  Status: PULLING")
                         else:
                             logger.info("  Status: IDLE")

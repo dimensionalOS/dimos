@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Handle Grab Module Test/Deployment Script
 
@@ -51,122 +65,96 @@ Examples:
         "--fastsam-model",
         type=str,
         default="./weights/FastSAM-x.pt",
-        help="Path to FastSAM model weights (default: ./weights/FastSAM-x.pt)"
+        help="Path to FastSAM model weights (default: ./weights/FastSAM-x.pt)",
     )
     parser.add_argument(
-        "--xarm",
-        type=str,
-        default="192.168.1.210",
-        help="xARM IP address (e.g., 192.168.1.100)"
+        "--xarm", type=str, default="192.168.1.210", help="xARM IP address (e.g., 192.168.1.100)"
     )
     parser.add_argument(
         "--test",
         action="store_true",
-        help="Test mode: get xARM positions but do not execute movements"
+        help="Test mode: get xARM positions but do not execute movements",
     )
 
     # Skill arguments (for default execution)
     parser.add_argument(
         "--qwen",
         action="store_true",
-        help="Use Qwen vision model to automatically detect handle point"
+        help="Use Qwen vision model to automatically detect handle point",
     )
     parser.add_argument(
         "--loop",
         type=int,
         default=1,
-        help="Number of times to repeat the detection and movement cycle (default: 1)"
+        help="Number of times to repeat the detection and movement cycle (default: 1)",
     )
     parser.add_argument(
-        "--grab",
-        action="store_true",
-        help="Execute grab sequence after positioning"
+        "--grab", action="store_true", help="Execute grab sequence after positioning"
     )
 
     # ZED camera arguments
-    parser.add_argument(
-        "--camera-id",
-        type=int,
-        default=0,
-        help="ZED camera ID (default: 0)"
-    )
+    parser.add_argument("--camera-id", type=int, default=0, help="ZED camera ID (default: 0)")
     parser.add_argument(
         "--resolution",
         type=str,
         default="HD720",
         choices=["HD720", "HD1080", "HD2K", "VGA"],
-        help="ZED camera resolution (default: HD720)"
+        help="ZED camera resolution (default: HD720)",
     )
     parser.add_argument(
         "--depth-mode",
         type=str,
         default="NEURAL",
         choices=["NEURAL", "ULTRA", "QUALITY", "PERFORMANCE"],
-        help="ZED depth mode (default: NEURAL)"
+        help="ZED depth mode (default: NEURAL)",
     )
+    parser.add_argument("--fps", type=int, default=30, help="Camera frame rate (default: 30)")
     parser.add_argument(
-        "--fps",
-        type=int,
-        default=30,
-        help="Camera frame rate (default: 30)"
-    )
-    parser.add_argument(
-        "--enable-tracking",
-        action="store_true",
-        help="Enable ZED positional tracking"
+        "--enable-tracking", action="store_true", help="Enable ZED positional tracking"
     )
 
     # LCM transport arguments
     parser.add_argument(
         "--lcm-color-channel",
         default="/zed/color_image",
-        help="LCM channel for color image data (default: /zed/color_image)"
+        help="LCM channel for color image data (default: /zed/color_image)",
     )
     parser.add_argument(
         "--lcm-depth-channel",
         default="/zed/depth_image",
-        help="LCM channel for depth image data (default: /zed/depth_image)"
+        help="LCM channel for depth image data (default: /zed/depth_image)",
     )
     parser.add_argument(
         "--lcm-info-channel",
         default="/zed/camera_info",
-        help="LCM channel for camera info (default: /zed/camera_info)"
+        help="LCM channel for camera info (default: /zed/camera_info)",
     )
     parser.add_argument(
         "--lcm-pose-channel",
         default="/zed/pose",
-        help="LCM channel for camera pose (default: /zed/pose)"
+        help="LCM channel for camera pose (default: /zed/pose)",
     )
 
     # Execution mode
     parser.add_argument(
         "--interactive",
         action="store_true",
-        help="Run in interactive mode with agent and human input"
+        help="Run in interactive mode with agent and human input",
     )
     parser.add_argument(
-        "--auto-run",
-        action="store_true",
-        help="Automatically run the grab_handle skill on startup"
+        "--auto-run", action="store_true", help="Automatically run the grab_handle skill on startup"
     )
 
     # System arguments
     parser.add_argument(
-        "--processes",
-        type=int,
-        default=5,
-        help="Number of Dimos processes (default: 3)"
+        "--processes", type=int, default=5, help="Number of Dimos processes (default: 3)"
     )
     parser.add_argument(
         "--no-visualization",
         action="store_true",
-        help="Run without visualization (useful for headless systems)"
+        help="Run without visualization (useful for headless systems)",
     )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output"
-    )
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
 
     args = parser.parse_args()
 
@@ -193,7 +181,7 @@ Examples:
         fps=args.fps,
         enable_tracking=args.enable_tracking,
         publish_rate=args.fps,
-        frame_id="zed_camera"
+        frame_id="zed_camera",
     )
 
     # Set up LCM transports for ZED outputs
@@ -218,7 +206,7 @@ Examples:
         HandleGrabModule,
         fastsam_model_path=args.fastsam_model,
         xarm_ip=args.xarm,
-        test_mode=args.test
+        test_mode=args.test,
     )
 
     # Connect handle grab inputs to ZED outputs
@@ -258,7 +246,7 @@ Examples:
             - loop_count: Number of detection attempts (integer)
             - execute_grab: Actually close gripper after positioning (boolean)
 
-            Be helpful and explain what you're doing when executing skills."""
+            Be helpful and explain what you're doing when executing skills.""",
         )
 
         # Register skills
@@ -291,9 +279,7 @@ Examples:
 
         # Execute the skill
         result = handle_grab.grab_handle(
-            use_qwen=args.qwen,
-            loop_count=args.loop,
-            execute_grab=args.grab
+            use_qwen=args.qwen, loop_count=args.loop, execute_grab=args.grab
         )
 
         logger.info(f"Skill result: {result}")
@@ -312,9 +298,7 @@ Examples:
 
             # Execute the skill
             result = handle_grab.grab_handle(
-                use_qwen=args.qwen,
-                loop_count=args.loop,
-                execute_grab=args.grab
+                use_qwen=args.qwen, loop_count=args.loop, execute_grab=args.grab
             )
 
             logger.info(f"Skill result: {result}")
@@ -341,9 +325,11 @@ Examples:
                     # Get pose if tracking enabled
                     if args.enable_tracking:
                         pose = zed.get_pose()
-                        if pose and pose.get('valid', False):
-                            pos = pose.get('position', [0, 0, 0])
-                            logger.info(f"Camera position: X={pos[0]:.2f}, Y={pos[1]:.2f}, Z={pos[2]:.2f}")
+                        if pose and pose.get("valid", False):
+                            pos = pose.get("position", [0, 0, 0])
+                            logger.info(
+                                f"Camera position: X={pos[0]:.2f}, Y={pos[1]:.2f}, Z={pos[2]:.2f}"
+                            )
 
                     last_print_time = time.time()
 

@@ -168,7 +168,9 @@ class FTDriverModule(Module):
 
             # Verify connection
             if self.ser.is_open:
-                logger.info(f"Successfully connected to {self.serial_port} at {self.baud_rate} baud")
+                logger.info(
+                    f"Successfully connected to {self.serial_port} at {self.baud_rate} baud"
+                )
                 # Clear any buffered data
                 self.ser.reset_input_buffer()
                 return True
@@ -182,6 +184,7 @@ class FTDriverModule(Module):
         except Exception as e:
             logger.error(f"Unexpected error opening serial port {self.serial_port}: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             return False
 
@@ -278,16 +281,21 @@ class FTDriverModule(Module):
                 # Log status every 5 seconds even if not verbose
                 current_time = time.time()
                 if current_time - last_log_time > 5.0:
-                    logger.info(f"FT driver status: {read_count} reads, {self.calibrated_count} calibrated, {self.error_count} errors")
+                    logger.info(
+                        f"FT driver status: {read_count} reads, {self.calibrated_count} calibrated, {self.error_count} errors"
+                    )
                     last_log_time = current_time
 
                 if read_count % 100 == 0 and self.verbose:
-                    logger.debug(f"Read {read_count} messages, published {self.calibrated_count} calibrated")
+                    logger.debug(
+                        f"Read {read_count} messages, published {self.calibrated_count} calibrated"
+                    )
         except KeyboardInterrupt:
             logger.info("Shutting down...")
         except Exception as e:
             logger.error(f"Error in driver loop: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
         finally:
             logger.info(f"FT driver thread stopping after {read_count} reads")
@@ -329,7 +337,9 @@ class FTDriverModule(Module):
 
         # Verify thread is alive
         if self._thread.is_alive():
-            logger.info(f"FT driver started successfully - thread running: {self._thread.is_alive()}")
+            logger.info(
+                f"FT driver started successfully - thread running: {self._thread.is_alive()}"
+            )
             return True
         else:
             logger.error("FT driver thread failed to start!")
@@ -353,7 +363,9 @@ class FTDriverModule(Module):
         if self.ser and self.ser.is_open:
             self.ser.close()
 
-        logger.info(f"FT driver stopped. Messages: {self.message_count}, Errors: {self.error_count}, Calibrated: {self.calibrated_count}")
+        logger.info(
+            f"FT driver stopped. Messages: {self.message_count}, Errors: {self.error_count}, Calibrated: {self.calibrated_count}"
+        )
 
     @rpc
     def get_stats(self) -> Dict[str, Any]:

@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Minimal Force-Torque Sensor Driver
 
@@ -17,11 +31,11 @@ from collections import deque
 
 def main():
     parser = argparse.ArgumentParser(description="Minimal FT sensor driver")
-    parser.add_argument('--port', default='/dev/tty.usbserial-0001', help='Serial port')
-    parser.add_argument('--baud', type=int, default=115200, help='Baud rate')
-    parser.add_argument('--zmq-port', type=int, default=5555, help='ZMQ publish port')
-    parser.add_argument('--window', type=int, default=3, help='Moving average window size')
-    parser.add_argument('--verbose', action='store_true', help='Print sensor values')
+    parser.add_argument("--port", default="/dev/tty.usbserial-0001", help="Serial port")
+    parser.add_argument("--baud", type=int, default=115200, help="Baud rate")
+    parser.add_argument("--zmq-port", type=int, default=5555, help="ZMQ publish port")
+    parser.add_argument("--window", type=int, default=3, help="Moving average window size")
+    parser.add_argument("--verbose", action="store_true", help="Print sensor values")
     args = parser.parse_args()
 
     # Initialize moving average buffers for each sensor
@@ -49,14 +63,14 @@ def main():
         while True:
             try:
                 # Read line from serial
-                line = ser.readline().decode('utf-8').strip()
+                line = ser.readline().decode("utf-8").strip()
                 if not line:
                     continue
 
                 # Parse comma-separated values (remove trailing comma)
-                if line.endswith(','):
+                if line.endswith(","):
                     line = line[:-1]
-                values = [float(x) for x in line.split(',')]
+                values = [float(x) for x in line.split(",")]
 
                 if len(values) != 16:
                     if args.verbose:
@@ -70,10 +84,7 @@ def main():
                     moving_averages.append(np.mean(buffers[i]))
 
                 # Publish to ZMQ
-                data = {
-                    'sensor_moving_averages': moving_averages,
-                    'timestamp': time.time()
-                }
+                data = {"sensor_moving_averages": moving_averages, "timestamp": time.time()}
                 publisher.send_string(json.dumps(data))
 
                 # Optional verbose output
@@ -101,5 +112,5 @@ def main():
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     exit(main())
