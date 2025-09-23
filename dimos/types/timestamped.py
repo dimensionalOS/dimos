@@ -263,7 +263,7 @@ def align_timestamped(
         secondary_sub = secondary_observable.subscribe(secondary_collection.add)
 
         def on_primary(primary_item: PRIMARY):
-            time.sleep(0.5)
+            time.sleep(1.0)
             secondary_item = secondary_collection.find_closest(
                 primary_item.ts, tolerance=match_tolerance
             )

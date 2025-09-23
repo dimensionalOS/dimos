@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-from typing import List, Optional, Tuple
+from typing import Optional
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
@@ -99,7 +98,7 @@ class Detection3DModule(Detection2DModule):
             backpressure(self.detection_stream_2d()),
             self.pointcloud.observable(),
             match_tolerance=0.25,
-            buffer_size=8,
+            buffer_size=10.0,
         ).pipe(ops.map(detection2d_to_3d))
 
         self.detection_stream_3d.subscribe(self._publish_detections)
@@ -110,6 +109,6 @@ class Detection3DModule(Detection2DModule):
 
         for index, detection in enumerate(detections[:3]):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
-            image_topic = getattr(self, "detected_image_" + str(index))
+            # image_topic = getattr(self, "detected_image_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
-            image_topic.publish(detection.cropped_image())
+            # image_topic.publish(detection.cropped_image())

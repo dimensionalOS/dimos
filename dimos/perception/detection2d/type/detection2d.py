@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
-from dimos_lcm.foxglove_msgs.Color import Color
+from dimos.msgs.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
     TextAnnotation,
@@ -198,7 +198,7 @@ class Detection2D(Timestamped):
             PointsAnnotation(
                 timestamp=to_ros_stamp(self.ts),
                 outline_color=Color(r=0.0, g=0.0, b=0.0, a=1.0),
-                fill_color=Color(r=1.0, g=0.0, b=0.0, a=0.15),
+                fill_color=Color.from_string(self.name, alpha=0.15),
                 thickness=thickness,
                 points_length=4,
                 points=[

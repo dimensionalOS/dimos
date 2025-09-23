@@ -22,7 +22,8 @@ from typing import Any, Dict, Optional, TypeVar
 import numpy as np
 from dimos_lcm.sensor_msgs import CameraInfo
 from lcm_msgs.builtin_interfaces import Duration
-from lcm_msgs.foxglove_msgs import Color, CubePrimitive, SceneEntity, SceneUpdate, TextPrimitive
+from lcm_msgs.foxglove_msgs import CubePrimitive, SceneEntity, SceneUpdate, TextPrimitive
+from dimos.msgs.foxglove_msgs.Color import Color
 from lcm_msgs.geometry_msgs import Point, Pose, Quaternion
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
 
@@ -274,12 +275,8 @@ class Detection3D(Detection2D):
         cube.size.y = aabb_extent[1]  # height
         cube.size.z = aabb_extent[2]  # depth
 
-        # Set color (red with transparency)
-        cube.color = Color()
-        cube.color.r = 1.0
-        cube.color.g = 0.0
-        cube.color.b = 0.0
-        cube.color.a = 0.2
+        # Set color based on name hash
+        cube.color = Color.from_string(self.name, alpha=0.2)
 
         # Create text label
         text = TextPrimitive()
