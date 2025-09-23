@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from typing import TypeAlias
 
 
 @dataclass(frozen=True)
@@ -21,4 +22,4 @@ class LatLon:
     lon: float
 
 
-type ImageCoord = tuple[int, int]
+ImageCoord: TypeAlias = tuple[int, int]

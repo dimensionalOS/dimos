@@ -2,7 +2,7 @@ import * as React from "react";
 
 import Button from "./Button";
 
-interface ControlPanelProps {
+interface ExplorePanelProps {
   onStartExplore: () => void;
   onStopExplore: () => void;
 }
@@ -10,7 +10,7 @@ interface ControlPanelProps {
 export default function ExplorePanel({
   onStartExplore,
   onStopExplore,
-}: ControlPanelProps): React.ReactElement {
+}: ExplorePanelProps): React.ReactElement {
   const [exploring, setExploring] = React.useState(false);
 
   return (

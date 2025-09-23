@@ -22,6 +22,7 @@
     "@foxglove/eslint-plugin": "2.1.0",
     "@foxglove/extension": "2.34.0",
     "@types/d3": "^7.4.3",
+    "@types/leaflet": "^1.9.20",
     "@types/react": "18.3.24",
     "@types/react-dom": "18.3.7",
     "create-foxglove-extension": "1.0.6",
@@ -33,6 +34,7 @@
   },
   "dependencies": {
     "d3": "^7.9.0",
+    "react-leaflet": "^4.2.1",
     "socket.io-client": "^4.8.1"
   }
 }

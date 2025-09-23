@@ -15,7 +15,8 @@
 from dataclasses import dataclass
 import math
 import io
-from typing import Tuple
+from typing import Tuple, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import numpy as np
 from PIL import Image as PILImage
@@ -104,9 +105,34 @@ def _lat_lon_to_tile(lat: float, lon: float, zoom: int) -> Tuple[float, float]:
     return x_tile, y_tile
 
 
+def _download_tile(
+    args: Tuple[int, int, int, int, int],
+) -> Tuple[int, int, Optional[PILImage.Image]]:
+    """Download a single tile.
+
+    Args:
+        args: Tuple of (row, col, tile_x, tile_y, zoom_level)
+
+    Returns:
+        Tuple of (row, col, tile_image or None if failed)
+    """
+    row, col, tile_x, tile_y, zoom_level = args
+    url = f"https://tile.openstreetmap.org/{zoom_level}/{tile_x}/{tile_y}.png"
+    headers = {"User-Agent": "Dimos OSM Client/1.0"}
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        tile_img = PILImage.open(io.BytesIO(response.content))
+        return row, col, tile_img
+    except Exception:
+        return row, col, None
+
+
 def get_osm_map(position: LatLon, zoom_level: int = 18, n_tiles: int = 4) -> MapImage:
     """
     Tiles are always 256x256 pixels. With n_tiles=4, this should produce a 1024x1024 image.
+    Downloads tiles in parallel with a maximum of 5 concurrent downloads.
 
     Args:
         position (LatLon): center position
@@ -122,29 +148,28 @@ def get_osm_map(position: LatLon, zoom_level: int = 18, n_tiles: int = 4) -> Map
     output_size = tile_size * n_tiles
     output_img = PILImage.new("RGB", (output_size, output_size))
 
-    headers = {"User-Agent": "Dimos OSM Client/1.0"}
-
     n_failed_tiles = 0
 
+    # Prepare all tile download tasks
+    download_tasks = []
     for row in range(n_tiles):
         for col in range(n_tiles):
             tile_x = start_x + col
             tile_y = start_y + row
+            download_tasks.append((row, col, tile_x, tile_y, zoom_level))
 
-            url = f"https://tile.openstreetmap.org/{zoom_level}/{tile_x}/{tile_y}.png"
+    # Download tiles in parallel with max 5 workers
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(_download_tile, task) for task in download_tasks]
 
-            try:
-                response = requests.get(url, headers=headers, timeout=10)
-                response.raise_for_status()
+        for future in as_completed(futures):
+            row, col, tile_img = future.result()
 
-                tile_img = PILImage.open(io.BytesIO(response.content))
-
+            if tile_img is not None:
                 paste_x = col * tile_size
                 paste_y = row * tile_size
-
                 output_img.paste(tile_img, (paste_x, paste_y))
-
-            except Exception:
+            else:
                 n_failed_tiles += 1
 
     if n_failed_tiles > 3:

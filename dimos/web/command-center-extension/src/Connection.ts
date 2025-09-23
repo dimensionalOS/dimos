@@ -7,6 +7,7 @@ import {
   EncodedPath,
   EncodedVector,
   FullStateData,
+  LatLon,
   Path,
   TwistCommand,
   Vector,
@@ -28,6 +29,11 @@ export default class Connection {
     this.socket.on("robot_pose", (data: EncodedVector) => {
       const robotPose = Vector.decode(data);
       this.dispatch({ type: "SET_ROBOT_POSE", payload: robotPose });
+    });
+
+    this.socket.on("gps_location", (data: LatLon) => {
+      this.dispatch({ type: "SET_GPS_LOCATION", payload: data });
+      console.log('setting', data)
     });
 
     this.socket.on("path", (data: EncodedPath) => {
@@ -78,6 +84,10 @@ export default class Connection {
       },
     };
     this.socket.emit("move_command", twist);
+  }
+
+  sendGpsGoal(goal: LatLon): void {
+    this.socket.emit("gps_goal", goal);
   }
 
   stopMoveCommand(): void {

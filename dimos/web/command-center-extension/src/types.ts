@@ -13,6 +13,11 @@ export class Vector {
   }
 }
 
+export interface LatLon {
+  lat: number;
+  lon: number;
+}
+
 export type EncodedPath = Encoded<"path"> & {
   points: Array<[number, number]>;
 };
@@ -111,11 +116,13 @@ export interface TwistCommand {
 export interface AppState {
   costmap: Costmap | null;
   robotPose: Vector | null;
+  gpsLocation: LatLon | null;
   path: Path | null;
 }
 
 export type AppAction =
   | { type: "SET_COSTMAP"; payload: Costmap }
   | { type: "SET_ROBOT_POSE"; payload: Vector }
+  | { type: "SET_GPS_LOCATION"; payload: LatLon }
   | { type: "SET_PATH"; payload: Path }
   | { type: "SET_FULL_STATE"; payload: Partial<AppState> };

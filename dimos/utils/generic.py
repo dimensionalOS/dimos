@@ -17,6 +17,11 @@ from typing import Any, Optional
 
 
 def truncate_display_string(arg: Any, max: Optional[int] = None) -> str:
+    """
+    If we print strings that are too long that potentially obscures more important logs.
+
+    Use this function to truncate it to a reasonable length (configurable from the env).
+    """
     string = str(arg)
 
     if max is not None:
