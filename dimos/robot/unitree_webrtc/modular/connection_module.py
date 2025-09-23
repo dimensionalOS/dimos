@@ -103,9 +103,7 @@ class FakeRTC(UnitreeWebRTCConnection):
     @functools.cache
     def video_stream(self):
         print("video stream start")
-        video_store = TimedSensorReplay(
-            f"{self.dir_name}/video",
-        )
+        video_store = TimedSensorReplay(f"{self.dir_name}/video")
 
         return video_store.stream(**self.replay_config)
 
@@ -183,10 +181,9 @@ class ConnectionModule(Module):
                 int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
             )
 
-        self.connection.video_stream().subscribe(self.video.publish)
-        # sharpness = sharpness_window(10, self.connection.video_stream())
-        # sharpness.subscribe(self.video.publish)
         # self.connection.video_stream().subscribe(self.video.publish)
+        #
+        sharpness_window(3.0, self.connection.video_stream()).subscribe(self.video.publish)
 
         # self.connection.video_stream().pipe(ops.map(resize)).subscribe(self.video.publish)
         self.camera_info_stream().subscribe(self.camera_info.publish)

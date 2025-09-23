@@ -244,6 +244,9 @@ class TimestampedBufferCollection(TimestampedCollection[T]):
             del self._items[:keep_idx]
 
 
+import time
+
+
 def align_timestamped(
     primary_observable: Observable[PRIMARY],
     secondary_observable: Observable[SECONDARY],
@@ -260,11 +263,14 @@ def align_timestamped(
         secondary_sub = secondary_observable.subscribe(secondary_collection.add)
 
         def on_primary(primary_item: PRIMARY):
+            time.sleep(0.5)
             secondary_item = secondary_collection.find_closest(
                 primary_item.ts, tolerance=match_tolerance
             )
             if secondary_item is not None:
                 observer.on_next((primary_item, secondary_item))
+            else:
+                print("No match found for primary item at ts:", primary_item.ts)
 
         # Subscribe to primary and emit aligned pairs
         primary_sub = primary_observable.subscribe(

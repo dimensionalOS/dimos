@@ -530,7 +530,7 @@ def sharpness_window(target_frequency: float, source: Observable[Image]) -> Obse
         if not window._items:
             return None
 
-        found = max(window._items, key=lambda x: x.sharpness())
+        found = max(window._items, key=lambda x: x.sharpness)
         return found
 
     return rx.interval(1.0 / target_frequency).pipe(

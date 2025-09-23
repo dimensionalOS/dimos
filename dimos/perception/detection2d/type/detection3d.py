@@ -37,6 +37,7 @@ from dimos.types.timestamped import to_ros_stamp
 class Detection3D(Detection2D):
     pointcloud: PointCloud2
     transform: Transform
+    frame_id: str = "world"
 
     @classmethod
     def from_2d(
@@ -65,6 +66,7 @@ class Detection3D(Detection2D):
         Returns:
             Detection3D with filtered pointcloud, or None if no valid points
         """
+
         # Extract camera parameters
         fx, fy = camera_info.K[0], camera_info.K[4]
         cx, cy = camera_info.K[2], camera_info.K[5]
@@ -179,6 +181,7 @@ class Detection3D(Detection2D):
             ts=det.ts,
             pointcloud=detection_pc,
             transform=world_to_camera_transform,
+            frame_id=world_pointcloud.frame_id,
         )
 
     @functools.cached_property
@@ -194,7 +197,7 @@ class Detection3D(Detection2D):
         """
         return PoseStamped(
             ts=self.ts,
-            frame_id="world",
+            frame_id=self.frame_id,
             position=self.center,
             orientation=(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
         )
@@ -303,7 +306,7 @@ class Detection3D(Detection2D):
         # Create scene entity
         entity = SceneEntity()
         entity.timestamp = to_ros_stamp(self.ts)
-        entity.frame_id = "map"
+        entity.frame_id = self.frame_id
         entity.id = str(self.track_id)
         entity.lifetime = Duration()
         entity.lifetime.sec = 0  # Persistent

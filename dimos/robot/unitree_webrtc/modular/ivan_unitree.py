@@ -16,6 +16,7 @@ import logging
 import time
 
 from dimos_lcm.sensor_msgs import CameraInfo
+from lcm_msgs.foxglove_msgs import SceneUpdate
 
 from dimos.core import LCMTransport, start
 
@@ -24,6 +25,7 @@ from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d import Detection3DModule
+from dimos.perception.detection2d.moduleDB import ObjectDBModule
 from dimos.protocol.pubsub import lcm
 from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
@@ -39,8 +41,9 @@ def detection_unitree():
     connection.start()
     # connection.record("unitree_go2_office_walk2")
     # mapper = deploy_navigation(dimos, connection)
+    # mapper.start()
 
-    module3D = dimos.deploy(Detection3DModule, camera_info=ConnectionModule._camera_info())
+    module3D = dimos.deploy(ObjectDBModule, camera_info=ConnectionModule._camera_info())
 
     module3D.image.connect(connection.video)
     module3D.pointcloud.connect(connection.lidar)
@@ -55,6 +58,8 @@ def detection_unitree():
     module3D.detected_image_0.transport = LCMTransport("/detected/image/0", Image)
     module3D.detected_image_1.transport = LCMTransport("/detected/image/1", Image)
     module3D.detected_image_2.transport = LCMTransport("/detected/image/2", Image)
+
+    module3D.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
     module3D.start()
     # detection.start()
 
@@ -63,8 +68,6 @@ def detection_unitree():
             time.sleep(1)
     except KeyboardInterrupt:
         connection.stop()
-        # mapper.stop()
-        # detection.stop()
         logger.info("Shutting down...")
 
 

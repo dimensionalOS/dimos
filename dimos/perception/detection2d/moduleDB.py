@@ -17,7 +17,6 @@ import time
 from typing import Any, Dict, List, Optional
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
-
 from lcm_msgs.foxglove_msgs import SceneUpdate
 from reactivex.observable import Observable
 
@@ -55,6 +54,7 @@ class Object3D(Detection3D):
         self.bbox = detection.bbox
         self.transform = detection.transform
         self.center = detection.center
+        self.frame_id = detection.frame_id
 
     def __add__(self, detection: Detection3D) -> "Object3D":
         new_object = Object3D(self.track_id)
@@ -66,6 +66,7 @@ class Object3D(Detection3D):
         new_object.name = self.name
         new_object.transform = self.transform
         new_object.pointcloud = self.pointcloud + detection.pointcloud
+        new_object.frame_id = self.frame_id
 
         if detection.image.sharpness > self.image.sharpness:
             new_object.image = detection.image
@@ -113,6 +114,8 @@ class ObjectDBModule(Detection3DModule):
         return distances[0]
 
     def add_detection(self, detection: Detection3D):
+        print(f"Adding detection: {detection.name} at {detection.center}")
+
         """Add detection to existing object or create new one."""
         closest = self.closest_object(detection)
         if closest and closest.bounding_box_intersects(detection):
@@ -140,6 +143,7 @@ class ObjectDBModule(Detection3DModule):
         super().start()
 
         def update_objects(imageDetections: ImageDetections3D):
+            print(f"Received {len(imageDetections.detections)} detections")
             for detection in imageDetections.detections:
                 return self.add_detection(detection)
 
@@ -147,7 +151,7 @@ class ObjectDBModule(Detection3DModule):
             while True:
                 scene_update = self.to_foxglove_scene_update()
                 self.scene_update.publish(scene_update)
-                time.sleep(0.5)
+                time.sleep(1.0)
 
         threading.Thread(target=scene_thread, daemon=True).start()
 

@@ -63,6 +63,10 @@ class ImageDetections(Generic[T]):
     image: Image
     detections: List[T]
 
+    @property
+    def ts(self) -> float:
+        return self.image.ts
+
     def __init__(self, image: Image, detections: List[T]):
         self.image = image
         self.detections = detections
