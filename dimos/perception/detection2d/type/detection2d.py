@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
-from dimos.msgs.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
     TextAnnotation,
@@ -37,6 +37,7 @@ from rich.console import Console
 from rich.text import Text
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
+from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
 from dimos.perception.detection2d.type.imageDetections import ImageDetections
@@ -49,6 +50,32 @@ InconvinientDetectionFormat = Tuple[List[Bbox], List[int], List[int], List[float
 
 Detection = Tuple[Bbox, int, int, float, str]
 Detections = List[Detection]
+
+
+def _hash_to_color(name: str) -> str:
+    """Generate a consistent color for a given name using hash."""
+    # List of rich colors to choose from
+    colors = [
+        "cyan",
+        "magenta",
+        "yellow",
+        "blue",
+        "green",
+        "red",
+        "bright_cyan",
+        "bright_magenta",
+        "bright_yellow",
+        "bright_blue",
+        "bright_green",
+        "bright_red",
+        "purple",
+        "white",
+        "pink",
+    ]
+
+    # Hash the name and pick a color
+    hash_value = hashlib.md5(name.encode()).digest()[0]
+    return colors[hash_value % len(colors)]
 
 
 # yolo and detic have bad formats this translates into list of detections
@@ -79,7 +106,7 @@ class Detection2D(Timestamped):
             "name": self.name,
             "class": str(self.class_id),
             "track": str(self.track_id),
-            "conf": self.confidence,
+            "conf": f"{self.confidence:.2f}",
             "bbox": f"[{x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}]",
         }
 
@@ -108,12 +135,12 @@ class Detection2D(Timestamped):
         ]
 
         # Add any extra fields (e.g., points for Detection3D)
-        extra_keys = [k for k in d.keys() if k not in ["name", "class", "track", "conf", "bbox"]]
+        extra_keys = [k for k in d.keys() if k not in ["class"]]
         for key in extra_keys:
             if d[key] == "None":
-                parts.append(Text(f" {key}={d[key]}", style="dim"))
+                parts.append(Text(f"{key}={d[key]}", style="dim"))
             else:
-                parts.append(Text(f" {key}={d[key]}", style="blue"))
+                parts.append(Text(f"{key}={d[key]}", style=_hash_to_color(key)))
 
         parts.append(Text(")"))
 

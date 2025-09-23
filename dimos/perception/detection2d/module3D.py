@@ -42,15 +42,9 @@ class Detection3DModule(Detection2DModule):
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
 
-    detections: Out[Detection2DArray] = None  # type: ignore
-    annotations: Out[ImageAnnotations] = None  # type: ignore
-
     detected_pointcloud_0: Out[PointCloud2] = None  # type: ignore
     detected_pointcloud_1: Out[PointCloud2] = None  # type: ignore
     detected_pointcloud_2: Out[PointCloud2] = None  # type: ignore
-    detected_image_0: Out[Image] = None  # type: ignore
-    detected_image_1: Out[Image] = None  # type: ignore
-    detected_image_2: Out[Image] = None  # type: ignore
 
     detection_3d_stream: Observable[ImageDetections3D] = None
 

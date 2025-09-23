@@ -23,10 +23,10 @@ import numpy as np
 from dimos_lcm.sensor_msgs import CameraInfo
 from lcm_msgs.builtin_interfaces import Duration
 from lcm_msgs.foxglove_msgs import CubePrimitive, SceneEntity, SceneUpdate, TextPrimitive
-from dimos.msgs.foxglove_msgs.Color import Color
 from lcm_msgs.geometry_msgs import Point, Pose, Quaternion
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
 
+from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.perception.detection2d.type.detection2d import Detection2D
@@ -220,11 +220,6 @@ class Detection3D(Detection2D):
         return self.pointcloud.bounding_box_intersects(other.pointcloud)
 
     def to_repr_dict(self) -> Dict[str, Any]:
-        d = super().to_repr_dict()
-
-        # Add pointcloud info
-        d["points"] = str(len(self.pointcloud))
-
         # Calculate distance from camera
         # The pointcloud is in world frame, and transform gives camera position in world
         center_world = self.center
@@ -232,9 +227,16 @@ class Detection3D(Detection2D):
         camera_pos = self.transform.translation
         # Use Vector3 subtraction and magnitude
         distance = (center_world - camera_pos).magnitude()
-        d["dist"] = f"{distance:.2f}m"
 
-        return d
+        parent_dict = super().to_repr_dict()
+        # Remove bbox key if present
+        parent_dict.pop("bbox", None)
+
+        return {
+            **parent_dict,
+            "dist": f"{distance:.2f}m",
+            "points": str(len(self.pointcloud)),
+        }
 
     def to_foxglove_scene_entity(self, entity_id: str = None) -> "SceneEntity":
         """Convert detection to a Foxglove SceneEntity with cube primitive and text label.
@@ -334,32 +336,6 @@ class Detection3D(Detection2D):
 
 
 T = TypeVar("T", bound="Detection2D")
-
-
-def _hash_to_color(name: str) -> str:
-    """Generate a consistent color for a given name using hash."""
-    # List of rich colors to choose from
-    colors = [
-        "cyan",
-        "magenta",
-        "yellow",
-        "blue",
-        "green",
-        "red",
-        "bright_cyan",
-        "bright_magenta",
-        "bright_yellow",
-        "bright_blue",
-        "bright_green",
-        "bright_red",
-        "purple",
-        "white",
-        "pink",
-    ]
-
-    # Hash the name and pick a color
-    hash_value = hashlib.md5(name.encode()).digest()[0]
-    return colors[hash_value % len(colors)]
 
 
 class ImageDetections3D(ImageDetections[Detection3D]):
