@@ -91,7 +91,9 @@ class Detection3DModule(Detection2DModule):
         super().start()
 
         def detection2d_to_3d(args):
+            #            print("Aligning 2D detections with 3D pointcloud...")
             detections, pc = args
+            print(detections, pc)
             transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
             return self.process_frame(detections, pc, transform)
 
@@ -110,6 +112,6 @@ class Detection3DModule(Detection2DModule):
 
         for index, detection in enumerate(detections[:3]):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
-            image_topic = getattr(self, "detected_image_" + str(index))
+            # image_topic = getattr(self, "detected_image_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
-            image_topic.publish(detection.cropped_image())
+            # image_topic.publish(detection.cropped_image())

@@ -66,7 +66,7 @@ class Detection3D(Detection2D):
         Returns:
             Detection3D with filtered pointcloud, or None if no valid points
         """
-
+        # print(f"Processing Detection2D: {det.name}")
         # Extract camera parameters
         fx, fy = camera_info.K[0], camera_info.K[4]
         cx, cy = camera_info.K[2], camera_info.K[5]
@@ -123,6 +123,7 @@ class Detection3D(Detection2D):
         detection_points = world_points[in_box_mask]
 
         if detection_points.shape[0] == 0:
+            # print(f"No points found in detection bbox after projection. {det.name}")
             return None
 
         # Create initial pointcloud for this detection
@@ -132,19 +133,20 @@ class Detection3D(Detection2D):
             timestamp=world_pointcloud.ts,
         )
 
-        # Apply height filter if specified
-        if height_filter is not None:
-            detection_pc = detection_pc.filter_by_height(height_filter)
-            if len(detection_pc.pointcloud.points) == 0:
-                return None
+        # # Apply height filter if specified
+        # if height_filter is not None:
+        #     detection_pc = detection_pc.filter_by_height(height_filter)
+        #     if len(detection_pc.pointcloud.points) == 0:
+        #         print("No points left after height filtering.")
+        #         return None
 
         # Remove statistical outliers
         try:
             pcd = detection_pc.pointcloud
-            statistical, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=0.5)
+            statistical, _ = pcd.remove_statistical_outlier(nb_neighbors=25, std_ratio=0.2)
             detection_pc = PointCloud2(statistical, detection_pc.frame_id, detection_pc.ts)
         except Exception as e:
-            print("Outlier removal failed, continuing without it.", 3)
+            # print("Outlier removal failed, continuing without it.", 3)
             import traceback
 
             traceback.print_exc()
