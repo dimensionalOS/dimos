@@ -294,9 +294,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="DimOS Drone System")
     parser.add_argument("--replay", action="store_true", help="Use recorded data for testing")
-    parser.add_argument(
-        "--test", action="store_true", help="Run test commands (takeoff, land, capture frame)"
-    )
+
     parser.add_argument(
         "--outdoor",
         action="store_true",
@@ -328,7 +326,6 @@ def main():
 ╚══════════════════════════════════════════╝
     """)
 
-    # Configure LCM
     pubsub.lcm.autoconf()
 
     drone = Drone(connection_string=connection, video_port=video_port, outdoor=args.outdoor)
@@ -346,89 +343,42 @@ def main():
     print("  • /drone/camera_info    - Camera calibration")
     print("  • /drone/cmd_vel        - Movement commands (Vector3)")
 
-    # Start interactive command thread
-    import threading
-    import re
+    from dimos.agents2 import Agent
+    from dimos.agents2.spec import Model, Provider
+    from dimos.agents2.cli.human import HumanInput
 
-    def command_loop():
-        """Interactive command loop for testing."""
-        print("\n" + "=" * 60)
-        print("INTERACTIVE MODE - Type commands:")
-        print("  fly_to(lat, lon, alt) - Fly to GPS coordinates")
-        print("  takeoff(alt) - Takeoff to altitude")
-        print("  land() - Land the drone")
-        print("  arm() - Arm the drone")
-        print("  disarm() - Disarm the drone")
-        print("  status - Show current status")
-        print("  quit - Exit the program")
-        print("=" * 60 + "\n")
+    human_input = drone.dimos.deploy(HumanInput)
 
-        while True:
-            try:
-                cmd = input("drone> ").strip()
+    agent = Agent(
+        system_prompt="""You are controlling a DJI drone with MAVLink interface.
+        You have access to drone control skills you are already flying so only run move_twist, set_mode, and fly_to.
+        When the user gives commands, use the appropriate skills to control the drone.
+        Always confirm actions and report results. Send fly_to commands only at above 200 meters altitude to be safe. 
+        Here are some GPS locations to remember
+        6th and Natoma intersection: 37.78019978319006, -122.40770815020853,
+        454 Natoma (Office): 37.780967465525244, -122.40688342010769
+        5th and mission intersection: 37.782598539339695, -122.40649441875473
+        6th and mission intersection: 37.781007204789354, -122.40868447123661""",
+        model=Model.GPT_4O,
+        provider=Provider.OPENAI,
+    )
 
-                if cmd.lower() == "quit":
-                    print("Exiting...")
-                    drone.stop()
-                    import sys
+    agent.register_skills(drone.connection)
+    agent.register_skills(human_input)
 
-                    sys.exit(0)
+    agent.run_implicit_skill("human")
 
-                # Parse fly_to command
-                fly_to_match = re.match(
-                    r"fly_to\s*\(\s*([-.\d]+)\s*,\s*([-.\d]+)\s*,\s*([-.\d]+)\s*\)", cmd
-                )
-                if fly_to_match:
-                    lat = float(fly_to_match.group(1))
-                    lon = float(fly_to_match.group(2))
-                    alt = float(fly_to_match.group(3))
-                    print(f"Flying to: lat={lat}, lon={lon}, alt={alt}m")
-                    result = drone.fly_to(lat, lon, alt)
-                    print(f"Result: {result}")
-                    continue
+    agent.start()
+    agent.loop_thread()
 
-                # Parse takeoff command
-                takeoff_match = re.match(r"takeoff\s*\(\s*([-.\d]+)\s*\)", cmd)
-                if takeoff_match:
-                    alt = float(takeoff_match.group(1))
-                    print(f"Taking off to {alt}m")
-                    result = drone.takeoff(alt)
-                    print(f"Result: {result}")
-                    continue
+    # Testing
+    # from dimos_lcm.geometry_msgs import Twist,Vector3
+    # twist = Twist()
+    # twist.linear = Vector3(-0.5, 0.5, 0.5)
+    # drone.connection.move_twist(twist, duration=2.0, lock_altitude=True)
 
-                # Parse simple commands
-                if cmd == "land()":
-                    print("Landing...")
-                    result = drone.land()
-                    print(f"Result: {result}")
-                elif cmd == "arm()":
-                    print("Arming...")
-                    result = drone.arm()
-                    print(f"Result: {result}")
-                elif cmd == "disarm()":
-                    print("Disarming...")
-                    result = drone.disarm()
-                    print(f"Result: {result}")
-                elif cmd == "status":
-                    print("Status:", drone.get_status())
-                elif cmd:
-                    print(f"Unknown command: {cmd}")
-
-            except Exception as e:
-                print(f"Error: {e}")
-
-    # Start command thread
-    cmd_thread = threading.Thread(target=command_loop, daemon=True)
-    cmd_thread.start()
-
-    # Keep main thread alive
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n\nShutting down drone system...")
-        drone.stop()
-        print("✓ Drone system stopped cleanly")
+    while True:
+        time.sleep(1)
 
 
 if __name__ == "__main__":
