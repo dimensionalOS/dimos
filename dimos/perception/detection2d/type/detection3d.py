@@ -303,7 +303,7 @@ class Detection3D(Detection2D):
         # Create scene entity
         entity = SceneEntity()
         entity.timestamp = to_ros_stamp(self.ts)
-        entity.frame_id = "world"
+        entity.frame_id = "map"
         entity.id = str(self.track_id)
         entity.lifetime = Duration()
         entity.lifetime.sec = 0  # Persistent

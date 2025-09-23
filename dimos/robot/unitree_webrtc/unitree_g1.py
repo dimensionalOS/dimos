@@ -190,7 +190,7 @@ class UnitreeG1(Robot):
         detection = self.dimos.deploy(ObjectDBModule, camera_info=zed.CameraInfo.SingleWebcam)
 
         detection.image.connect(self.camera.image)
-        detection.pointcloud.transport = core.LCMTransport("/explored_areas", PointCloud2)
+        detection.pointcloud.transport = core.LCMTransport("/map", PointCloud2)
 
         detection.annotations.transport = core.LCMTransport("/annotations", ImageAnnotations)
         detection.detections.transport = core.LCMTransport("/detections", Detection2DArray)
@@ -262,14 +262,14 @@ class UnitreeG1(Robot):
             ),
             hardware=lambda: Webcam(
                 camera_index=0,
-                frequency=30,
+                frequency=15,
                 stereo_slice="left",
                 camera_info=zed.CameraInfo.SingleWebcam,
             ),
         )
 
         self.camera.image.transport = core.LCMTransport("/image", Image)
-        self.camera.camera_info.transport = core.LCMTransport("/image/camera_info", CameraInfo)
+        self.camera.camera_info.transport = core.LCMTransport("/camera_info", CameraInfo)
         logger.info("Webcam module configured")
 
     def _deploy_visualization(self):
@@ -317,7 +317,7 @@ class UnitreeG1(Robot):
         # )
 
         self.ros_bridge.add_topic(
-            "/explored_areas",
+            "/registered_scan",
             PointCloud2,
             ROSPointCloud2,
             direction=BridgeDirection.ROS_TO_DIMOS,
@@ -332,15 +332,15 @@ class UnitreeG1(Robot):
         """Start all deployed modules."""
         if self.connection:
             self.connection.start()
-        self.websocket_vis.start()
+        # self.websocket_vis.start()
         self.foxglove_bridge.start()
 
-        if self.joystick:
-            self.joystick.start()
+        # if self.joystick:
+        #    self.joystick.start()
 
         if self.camera:
             self.camera.start()
-            self.detection.start()
+        # self.detection.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:

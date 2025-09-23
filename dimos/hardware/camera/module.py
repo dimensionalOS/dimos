@@ -79,7 +79,7 @@ class CameraModule(Module):
         stream = self.hardware.image_stream()
         sharpness = sharpness_window(5, stream)
 
-        camera_info_stream = self.camera_info_stream(frequency=1.0)
+        camera_info_stream = self.camera_info_stream(frequency=5.0)
 
         def publish_info(camera_info: CameraInfo):
             self.camera_info.publish(camera_info)
@@ -89,7 +89,7 @@ class CameraModule(Module):
 
             camera_link = self.config.transform
 
-            camera_link.ts = time.time()
+            camera_link.ts = camera_info.ts
             camera_optical = Transform(
                 translation=Vector3(0.0, 0.0, 0.0),
                 rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
@@ -101,7 +101,7 @@ class CameraModule(Module):
             self.tf.publish(camera_link, camera_optical)
 
         self._camera_info_subscription = camera_info_stream.subscribe(publish_info)
-        self._module_subscription = sharpness.subscribe(self.image.publish)
+        self._module_subscription = stream.subscribe(self.image.publish)
 
     @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
     def video_stream(self) -> Image:
@@ -112,8 +112,12 @@ class CameraModule(Module):
         for image in iter(_queue.get, None):
             yield image
 
-    def camera_info_stream(self, frequency: float = 1.0) -> Observable[CameraInfo]:
-        return rx.interval(1.0 / frequency).pipe(ops.map(lambda _: self.hardware.camera_info))
+    def camera_info_stream(self, frequency: float = 5.0) -> Observable[CameraInfo]:
+        def camera_info(_) -> CameraInfo:
+            self.hardware.camera_info.ts = time.time()
+            return self.hardware.camera_info
+
+        return rx.interval(1.0 / frequency).pipe(ops.map(camera_info))
 
     def stop(self):
         if self._module_subscription:
