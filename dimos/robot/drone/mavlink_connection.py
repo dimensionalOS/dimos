@@ -35,15 +35,22 @@ logger = setup_logger(__name__, level=logging.INFO)
 class MavlinkConnection:
     """MAVLink connection for drone control."""
 
-    def __init__(self, connection_string: str = "udp:0.0.0.0:14550", outdoor: bool = False):
+    def __init__(
+        self,
+        connection_string: str = "udp:0.0.0.0:14550",
+        outdoor: bool = False,
+        max_velocity: float = 5.0,
+    ):
         """Initialize drone connection.
 
         Args:
             connection_string: MAVLink connection string
             outdoor: Use GPS only mode (no velocity integration)
+            max_velocity: Maximum velocity in m/s
         """
         self.connection_string = connection_string
         self.outdoor = outdoor
+        self.max_velocity = max_velocity
         self.mavlink = None
         self.connected = False
         self.telemetry = {}
@@ -53,11 +60,13 @@ class MavlinkConnection:
         self._telemetry_subject = Subject()
         self._raw_mavlink_subject = Subject()
 
-        # # TEMPORARY - DELETE AFTER RECORDING
-        # from dimos.utils.testing import TimedSensorStorage
-        # self._mavlink_storage = TimedSensorStorage("drone/mavlink")
-        # self._mavlink_subscription = self._mavlink_storage.save_stream(self._raw_mavlink_subject).subscribe()
-        # logger.info("Recording MAVLink to data/drone/mavlink/")
+        # Velocity tracking for smoothing
+        self.prev_vx = 0.0
+        self.prev_vy = 0.0
+        self.prev_vz = 0.0
+
+        # Flag to prevent concurrent fly_to commands
+        self.flying_to_target = False
 
     def connect(self):
         """Connect to drone via MAVLink."""
@@ -94,8 +103,6 @@ class MavlinkConnection:
                 # print("HEARTBEAT:", msg_dict, "ARMED:", armed)
             # print("MESSAGE", msg_dict)
             # print("MESSAGE TYPE", msg_type)
-
-            # TEMPORARY - DELETE AFTER RECORDING
             # self._raw_mavlink_subject.on_next(msg_dict)
 
             self.telemetry[msg_type] = msg_dict
@@ -331,6 +338,73 @@ class MavlinkConnection:
 
         return True
 
+    def move_twist(self, twist, duration: float = 0.0, lock_altitude: bool = True) -> bool:
+        """Move using ROS-style Twist commands.
+
+        Args:
+            twist: Twist message with linear velocities (angular.z ignored for now)
+            duration: How long to move (0 = single command)
+            lock_altitude: If True, ignore Z velocity and maintain current altitude
+
+        Returns:
+            True if command sent successfully
+        """
+        if not self.connected:
+            return False
+
+        # Extract velocities
+        forward = twist.linear.x  # m/s forward (body frame)
+        right = twist.linear.y  # m/s right (body frame)
+        down = 0.0 if lock_altitude else -twist.linear.z  # Lock altitude by default
+
+        if duration > 0:
+            # Send velocity for duration
+            end_time = time.time() + duration
+            while time.time() < end_time:
+                self.mavlink.mav.set_position_target_local_ned_send(
+                    0,  # time_boot_ms
+                    self.mavlink.target_system,
+                    self.mavlink.target_component,
+                    mavutil.mavlink.MAV_FRAME_BODY_NED,  # Body frame for strafing
+                    0b0000111111000111,  # type_mask - velocities only, no rotation
+                    0,
+                    0,
+                    0,  # positions (ignored)
+                    forward,
+                    right,
+                    down,  # velocities in m/s
+                    0,
+                    0,
+                    0,  # accelerations (ignored)
+                    0,
+                    0,  # yaw, yaw_rate (ignored)
+                )
+                time.sleep(0.05)  # 20Hz
+            # Send stop command
+            self.stop()
+        else:
+            # Send single command for continuous movement
+            self.mavlink.mav.set_position_target_local_ned_send(
+                0,  # time_boot_ms
+                self.mavlink.target_system,
+                self.mavlink.target_component,
+                mavutil.mavlink.MAV_FRAME_BODY_NED,  # Body frame for strafing
+                0b0000111111000111,  # type_mask - velocities only, no rotation
+                0,
+                0,
+                0,  # positions (ignored)
+                forward,
+                right,
+                down,  # velocities in m/s
+                0,
+                0,
+                0,  # accelerations (ignored)
+                0,
+                0,  # yaw, yaw_rate (ignored)
+            )
+
+        return True
+
     def stop(self) -> bool:
         """Stop all movement."""
         if not self.connected:
@@ -355,6 +429,124 @@ class MavlinkConnection:
             0,
         )
         return True
+
+    def rotate_to(self, target_heading_deg: float, timeout: float = 60.0) -> bool:
+        """Rotate drone to face a specific heading.
+
+        Args:
+            target_heading_deg: Target heading in degrees (0-360, 0=North, 90=East)
+            timeout: Maximum time to spend rotating in seconds
+
+        Returns:
+            True if rotation completed successfully
+        """
+        if not self.connected:
+            return False
+
+        logger.info(f"Rotating to heading {target_heading_deg:.1f}°")
+
+        import math
+        import time
+
+        start_time = time.time()
+        loop_count = 0
+
+        while time.time() - start_time < timeout:
+            loop_count += 1
+
+            # Don't call update_telemetry - let background thread handle it
+            # Just read the current telemetry which should be continuously updated
+
+            if "GLOBAL_POSITION_INT" not in self.telemetry:
+                logger.warning("No GLOBAL_POSITION_INT in telemetry dict")
+                time.sleep(0.1)
+                continue
+
+            # Debug: Log what's in telemetry
+            gps_telem = self.telemetry["GLOBAL_POSITION_INT"]
+
+            # Get current heading - check if already converted or still in centidegrees
+            raw_hdg = gps_telem.get("hdg", 0)
+
+            # Debug logging to figure out the issue
+            if loop_count % 5 == 0:  # Log every 5th iteration
+                logger.info(f"DEBUG TELEMETRY: raw hdg={raw_hdg}, type={type(raw_hdg)}")
+                logger.info(f"DEBUG TELEMETRY keys: {list(gps_telem.keys())[:5]}")  # First 5 keys
+
+                # Check if hdg is already converted (should be < 360 if in degrees, > 360 if in centidegrees)
+                if raw_hdg > 360:
+                    logger.info(f"HDG appears to be in centidegrees: {raw_hdg}")
+                    current_heading_deg = raw_hdg / 100.0
+                else:
+                    logger.info(f"HDG appears to be in degrees already: {raw_hdg}")
+                    current_heading_deg = raw_hdg
+            else:
+                # Normal conversion
+                if raw_hdg > 360:
+                    current_heading_deg = raw_hdg / 100.0
+                else:
+                    current_heading_deg = raw_hdg
+
+            # Normalize to 0-360
+            if current_heading_deg > 360:
+                current_heading_deg = current_heading_deg % 360
+
+            # Calculate heading error (shortest angular distance)
+            heading_error = target_heading_deg - current_heading_deg
+            if heading_error > 180:
+                heading_error -= 360
+            elif heading_error < -180:
+                heading_error += 360
+
+            logger.info(
+                f"ROTATION: current={current_heading_deg:.1f}° → target={target_heading_deg:.1f}° (error={heading_error:.1f}°)"
+            )
+
+            # Check if we're close enough
+            if abs(heading_error) < 10:  # Complete within 10 degrees
+                logger.info(
+                    f"ROTATION COMPLETE: current={current_heading_deg:.1f}° ≈ target={target_heading_deg:.1f}° (within {abs(heading_error):.1f}°)"
+                )
+                # Don't stop - let fly_to immediately transition to forward movement
+                return True
+
+            # Calculate yaw rate with minimum speed to avoid slow approach
+            yaw_rate = heading_error * 0.3  # Higher gain for faster rotation
+            # Ensure minimum rotation speed of 15 deg/s to avoid crawling near target
+            if abs(yaw_rate) < 15.0:
+                yaw_rate = 15.0 if heading_error > 0 else -15.0
+            yaw_rate = max(-60.0, min(60.0, yaw_rate))  # Cap at 60 deg/s max
+            yaw_rate_rad = math.radians(yaw_rate)
+
+            logger.info(
+                f"ROTATING: yaw_rate={yaw_rate:.1f} deg/s to go from {current_heading_deg:.1f}° → {target_heading_deg:.1f}°"
+            )
+
+            # Send rotation command
+            self.mavlink.mav.set_position_target_local_ned_send(
+                0,  # time_boot_ms
+                self.mavlink.target_system,
+                self.mavlink.target_component,
+                mavutil.mavlink.MAV_FRAME_BODY_NED,  # Body frame for rotation
+                0b0000011111111111,  # type_mask - ignore everything except yaw_rate
+                0,
+                0,
+                0,  # positions (ignored)
+                0,
+                0,
+                0,  # velocities (ignored)
+                0,
+                0,
+                0,  # accelerations (ignored)
+                0,  # yaw (ignored)
+                yaw_rate_rad,  # yaw_rate in rad/s
+            )
+
+            time.sleep(0.1)  # 10Hz control loop
+
+        logger.warning("Rotation timeout")
+        self.stop()
+        return False
 
     def arm(self) -> bool:
         """Arm the drone."""
@@ -521,156 +713,224 @@ class MavlinkConnection:
             alt: Altitude in meters (relative to home)
 
         Returns:
-            True if command sent successfully
+            True if target reached, False if timeout or error
         """
         if not self.connected:
             return False
 
+        # Check if already flying to a target
+        if self.flying_to_target:
+            logger.warning("Already flying to target, ignoring new fly_to command")
+            return False
+
+        self.flying_to_target = True
+
         # Ensure GUIDED mode for GPS navigation
         if not self.set_mode("GUIDED"):
             logger.error("Failed to set GUIDED mode for GPS navigation")
+            self.flying_to_target = False
             return False
 
         logger.info(f"Flying to GPS: lat={lat:.7f}, lon={lon:.7f}, alt={alt:.1f}m")
 
-        # Send velocity commands towards GPS target at 1Hz
-        acceptance_radius = 10.0  # meters
+        # Reset velocity tracking for smooth start
+        self.prev_vx = 0.0
+        self.prev_vy = 0.0
+        self.prev_vz = 0.0
+
+        # Send velocity commands towards GPS target at 10Hz
+        acceptance_radius = 30.0  # meters
         max_duration = 120  # seconds max flight time
         start_time = time.time()
-        max_speed = 5.0  # m/s max speed
+        max_speed = self.max_velocity  # m/s max speed
 
         import math
 
         loop_count = 0
-        while time.time() - start_time < max_duration:
-            loop_start = time.time()
 
-            # Update telemetry to get fresh GPS position
-            self.update_telemetry(timeout=0.01)  # Short timeout to not block
+        try:
+            while time.time() - start_time < max_duration:
+                loop_start = time.time()
 
-            # Check current position from telemetry
-            if "GLOBAL_POSITION_INT" in self.telemetry:
-                t1 = time.time()
+                # Don't update telemetry here - let background thread handle it
+                # self.update_telemetry(timeout=0.01)  # Removed to prevent message conflicts
 
-                # Telemetry already has converted values (see update_telemetry lines 104-107)
-                current_lat = self.telemetry["GLOBAL_POSITION_INT"].get(
-                    "lat", 0
-                )  # Already in degrees
-                current_lon = self.telemetry["GLOBAL_POSITION_INT"].get(
-                    "lon", 0
-                )  # Already in degrees
-                current_alt = self.telemetry["GLOBAL_POSITION_INT"].get(
-                    "relative_alt", 0
-                )  # Already in meters
+                # Check current position from telemetry
+                if "GLOBAL_POSITION_INT" in self.telemetry:
+                    t1 = time.time()
 
-                t2 = time.time()
+                    # Telemetry already has converted values (see update_telemetry lines 104-107)
+                    current_lat = self.telemetry["GLOBAL_POSITION_INT"].get(
+                        "lat", 0
+                    )  # Already in degrees
+                    current_lon = self.telemetry["GLOBAL_POSITION_INT"].get(
+                        "lon", 0
+                    )  # Already in degrees
+                    current_alt = self.telemetry["GLOBAL_POSITION_INT"].get(
+                        "relative_alt", 0
+                    )  # Already in meters
 
-                logger.info(
-                    f"DEBUG: Current GPS: lat={current_lat:.10f}, lon={current_lon:.10f}, alt={current_alt:.2f}m"
-                )
-                logger.info(f"DEBUG: Target GPS:  lat={lat:.10f}, lon={lon:.10f}, alt={alt:.2f}m")
-
-                # Calculate vector to target with high precision
-                dlat = lat - current_lat
-                dlon = lon - current_lon
-                dalt = alt - current_alt
-
-                logger.info(f"DEBUG: Delta: dlat={dlat:.10f}, dlon={dlon:.10f}, dalt={dalt:.2f}m")
-
-                t3 = time.time()
-
-                # Convert lat/lon difference to meters with high precision
-                # Using more accurate calculation
-                lat_rad = current_lat * math.pi / 180.0
-                meters_per_degree_lat = (
-                    111132.92 - 559.82 * math.cos(2 * lat_rad) + 1.175 * math.cos(4 * lat_rad)
-                )
-                meters_per_degree_lon = 111412.84 * math.cos(lat_rad) - 93.5 * math.cos(3 * lat_rad)
-
-                x_dist = dlat * meters_per_degree_lat  # North distance in meters
-                y_dist = dlon * meters_per_degree_lon  # East distance in meters
-
-                logger.info(
-                    f"DEBUG: Distance in meters: North={x_dist:.2f}m, East={y_dist:.2f}m, Up={dalt:.2f}m"
-                )
-
-                # Calculate total distance
-                distance = math.sqrt(x_dist**2 + y_dist**2 + dalt**2)
-                logger.info(f"DEBUG: Total distance to target: {distance:.2f}m")
-
-                t4 = time.time()
-
-                if distance < acceptance_radius:
-                    logger.info(f"Reached GPS target (within {distance:.1f}m)")
-                    self.stop()
-                    break
-
-                # Calculate velocity commands (NED frame)
-                if distance > 0.1:  # Only send commands if we're far enough
-                    # Normalize and scale by max speed
-                    speed = min(
-                        max_speed, max(0.5, distance / 10.0)
-                    )  # Min 0.5 m/s, scale down as we approach
-                    vx = (x_dist / distance) * speed  # North velocity
-                    vy = (y_dist / distance) * speed  # East velocity
-                    # This system uses opposite of NED for Z axis:
-                    # Positive vz = UP, Negative vz = DOWN
-                    # If dalt is negative (target below), we want negative vz (go down)
-                    # If dalt is positive (target above), we want positive vz (go up)
-                    vz = (dalt / distance) * speed
+                    t2 = time.time()
 
                     logger.info(
-                        f"DEBUG: Sending velocity: vx={vx:.3f} vy={vy:.3f} vz={vz:.3f} m/s (speed={speed:.2f})"
+                        f"DEBUG: Current GPS: lat={current_lat:.10f}, lon={current_lon:.10f}, alt={current_alt:.2f}m"
+                    )
+                    logger.info(
+                        f"DEBUG: Target GPS:  lat={lat:.10f}, lon={lon:.10f}, alt={alt:.2f}m"
                     )
 
-                    # Log if we're not moving as expected
-                    if loop_count > 20 and loop_count % 10 == 0:
-                        logger.warning(
-                            f"STUCK? Been sending commands for {loop_count} iterations but distance still {distance:.1f}m"
-                        )
+                    # Calculate vector to target with high precision
+                    dlat = lat - current_lat
+                    dlon = lon - current_lon
+                    dalt = alt - current_alt
 
-                    t5 = time.time()
-
-                    # Send velocity command in NED frame
-                    self.mavlink.mav.set_position_target_local_ned_send(
-                        0,  # time_boot_ms
-                        self.mavlink.target_system,
-                        self.mavlink.target_component,
-                        mavutil.mavlink.MAV_FRAME_LOCAL_NED,  # Local NED frame
-                        0b0000111111000111,  # type_mask (only velocities enabled)
-                        0,
-                        0,
-                        0,  # positions (not used)
-                        vx,
-                        vy,
-                        vz,  # velocities in m/s (NED)
-                        0,
-                        0,
-                        0,  # accelerations (not used)
-                        0,
-                        0,  # yaw, yaw_rate (not used)
+                    logger.info(
+                        f"DEBUG: Delta: dlat={dlat:.10f}, dlon={dlon:.10f}, dalt={dalt:.2f}m"
                     )
 
-                    t6 = time.time()
+                    t3 = time.time()
 
-                    # Log timing every 10 loops
-                    loop_count += 1
-                    if loop_count % 10 == 0:
+                    # Convert lat/lon difference to meters with high precision
+                    # Using more accurate calculation
+                    lat_rad = current_lat * math.pi / 180.0
+                    meters_per_degree_lat = (
+                        111132.92 - 559.82 * math.cos(2 * lat_rad) + 1.175 * math.cos(4 * lat_rad)
+                    )
+                    meters_per_degree_lon = 111412.84 * math.cos(lat_rad) - 93.5 * math.cos(
+                        3 * lat_rad
+                    )
+
+                    x_dist = dlat * meters_per_degree_lat  # North distance in meters
+                    y_dist = dlon * meters_per_degree_lon  # East distance in meters
+
+                    logger.info(
+                        f"DEBUG: Distance in meters: North={x_dist:.2f}m, East={y_dist:.2f}m, Up={dalt:.2f}m"
+                    )
+
+                    # Calculate total distance
+                    distance = math.sqrt(x_dist**2 + y_dist**2 + dalt**2)
+                    logger.info(f"DEBUG: Total distance to target: {distance:.2f}m")
+
+                    t4 = time.time()
+
+                    if distance < acceptance_radius:
+                        logger.info(f"Reached GPS target (within {distance:.1f}m)")
+                        self.stop()
+                        # Return to manual control
+                        self.set_mode("STABILIZE")
+                        logger.info("Returned to STABILIZE mode for manual control")
+                        self.flying_to_target = False
+                        return True  # Successfully reached target
+
+                    # Only send velocity commands if we're far enough
+                    if distance > 0.1:
+                        # On first loop, rotate to face the target
+                        if loop_count == 0:
+                            # Calculate bearing to target
+                            bearing_rad = math.atan2(
+                                y_dist, x_dist
+                            )  # East, North -> angle from North
+                            target_heading_deg = math.degrees(bearing_rad)
+                            if target_heading_deg < 0:
+                                target_heading_deg += 360
+
+                            logger.info(
+                                f"Rotating to face target at heading {target_heading_deg:.1f}°"
+                            )
+                            self.rotate_to(target_heading_deg, timeout=45.0)
+                            logger.info("Rotation complete, starting movement")
+
+                        # Now just move towards target (no rotation)
+                        t5 = time.time()
+
+                        # Calculate movement speed - maintain max speed until 20m from target
+                        if distance > 20:
+                            speed = max_speed  # Full speed when far from target
+                        else:
+                            # Ramp down speed from 20m to target
+                            speed = max(
+                                0.5, distance / 4.0
+                            )  # At 20m: 5m/s, at 10m: 2.5m/s, at 2m: 0.5m/s
+
+                        # Calculate target velocities
+                        target_vx = (x_dist / distance) * speed  # North velocity
+                        target_vy = (y_dist / distance) * speed  # East velocity
+                        target_vz = (dalt / distance) * speed  # Up velocity (positive = up)
+
+                        # Direct velocity assignment (no acceleration limiting)
+                        vx = target_vx
+                        vy = target_vy
+                        vz = target_vz
+
+                        # Store for next iteration
+                        self.prev_vx = vx
+                        self.prev_vy = vy
+                        self.prev_vz = vz
+
                         logger.info(
-                            f"TIMING: telemetry_read={t2 - t1:.4f}s, delta_calc={t3 - t2:.4f}s, "
-                            f"distance_calc={t4 - t3:.4f}s, velocity_calc={t5 - t4:.4f}s, "
-                            f"mavlink_send={t6 - t5:.4f}s, total_loop={t6 - loop_start:.4f}s"
+                            f"MOVING: vx={vx:.3f} vy={vy:.3f} vz={vz:.3f} m/s, distance={distance:.1f}m"
                         )
+
+                        # Send velocity command in LOCAL_NED frame
+                        self.mavlink.mav.set_position_target_local_ned_send(
+                            0,  # time_boot_ms
+                            self.mavlink.target_system,
+                            self.mavlink.target_component,
+                            mavutil.mavlink.MAV_FRAME_LOCAL_NED,  # Local NED for movement
+                            0b0000111111000111,  # type_mask - use velocities only
+                            0,
+                            0,
+                            0,  # positions (not used)
+                            vx,
+                            vy,
+                            vz,  # velocities in m/s
+                            0,
+                            0,
+                            0,  # accelerations (not used)
+                            0,  # yaw (not used)
+                            0,  # yaw_rate (not used)
+                        )
+
+                        # Log if stuck
+                        if loop_count > 20 and loop_count % 10 == 0:
+                            logger.warning(
+                                f"STUCK? Been sending commands for {loop_count} iterations but distance still {distance:.1f}m"
+                            )
+
+                        t6 = time.time()
+
+                        # Log timing every 10 loops
+                        loop_count += 1
+                        if loop_count % 10 == 0:
+                            logger.info(
+                                f"TIMING: telemetry_read={t2 - t1:.4f}s, delta_calc={t3 - t2:.4f}s, "
+                                f"distance_calc={t4 - t3:.4f}s, velocity_calc={t5 - t4:.4f}s, "
+                                f"mavlink_send={t6 - t5:.4f}s, total_loop={t6 - loop_start:.4f}s"
+                            )
+                    else:
+                        logger.info("DEBUG: Too close to send velocity commands")
+
                 else:
-                    logger.info("DEBUG: Too close to send velocity commands")
+                    logger.warning("DEBUG: No GLOBAL_POSITION_INT in telemetry!")
 
-            else:
-                logger.warning("DEBUG: No GLOBAL_POSITION_INT in telemetry!")
+                time.sleep(0.1)  # Send at 10Hz
 
-            time.sleep(0.1)  # Send at 10Hz for smooth control
+        except Exception as e:
+            logger.error(f"Error during fly_to: {e}")
+            self.flying_to_target = False  # Clear flag immediately
+            raise  # Re-raise the exception so caller sees the error
+        finally:
+            # Always clear the flag when exiting
+            if self.flying_to_target:
+                logger.info("Stopped sending GPS velocity commands (timeout)")
+                self.flying_to_target = False
+                self.set_mode("BRAKE")
+                time.sleep(0.5)
+                # Return to manual control
+                self.set_mode("STABILIZE")
+                logger.info("Returned to STABILIZE mode for manual control")
 
-        logger.info("Stopped sending GPS velocity commands")
-        return True
+        return False  # Timeout - did not reach target
 
     def set_mode(self, mode: str) -> bool:
         """Set flight mode."""
@@ -684,6 +944,7 @@ class MavlinkConnection:
             "RTL": 6,
             "LAND": 9,
             "POSHOLD": 16,
+            "BRAKE": 17,
         }
 
         if mode not in mode_mapping:
