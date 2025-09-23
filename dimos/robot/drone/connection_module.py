@@ -292,6 +292,21 @@ class DroneConnectionModule(Module):
             return self.connection.set_mode(mode)
         return False
 
+    def move_twist(self, twist, duration: float = 0.0, lock_altitude: bool = True) -> bool:
+        """Move using ROS-style Twist commands.
+
+        Args:
+            twist: Twist message with linear velocities
+            duration: How long to move (0 = single command)
+            lock_altitude: If True, ignore Z velocity
+
+        Returns:
+            True if command sent successfully
+        """
+        if self.connection:
+            return self.connection.move_twist(twist, duration, lock_altitude)
+        return False
+
     @skill()
     def fly_to(self, lat: float, lon: float, alt: float) -> bool:
         """Fly drone to GPS coordinates.
