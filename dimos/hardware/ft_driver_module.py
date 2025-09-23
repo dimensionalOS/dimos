@@ -163,11 +163,26 @@ class FTDriverModule(Module):
     def connect_serial(self):
         """Connect to serial port."""
         try:
+            logger.info(f"Attempting to connect to serial port {self.serial_port}...")
             self.ser = serial.Serial(self.serial_port, self.baud_rate, timeout=1)
-            logger.info(f"Connected to {self.serial_port} at {self.baud_rate} baud")
-            return True
+
+            # Verify connection
+            if self.ser.is_open:
+                logger.info(f"Successfully connected to {self.serial_port} at {self.baud_rate} baud")
+                # Clear any buffered data
+                self.ser.reset_input_buffer()
+                return True
+            else:
+                logger.error(f"Serial port {self.serial_port} opened but not active")
+                return False
+
         except serial.SerialException as e:
-            logger.error(f"Failed to open serial port: {e}")
+            logger.error(f"SerialException: Failed to open {self.serial_port}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error opening serial port {self.serial_port}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
 
     def read_and_process(self):
@@ -200,8 +215,8 @@ class FTDriverModule(Module):
 
             timestamp = time.time()
 
-            # Optionally publish raw sensor data with moving averages
-            if self.raw_sensor_data is not None:
+            # Optionally publish raw sensor data with moving averages (only if transport configured)
+            if self.raw_sensor_data is not None and self.raw_sensor_data.transport is not None:
                 raw_data = RawSensorData(sensor_values=moving_averages, timestamp=timestamp)
                 self.raw_sensor_data.publish(raw_data)
 
@@ -245,18 +260,37 @@ class FTDriverModule(Module):
 
     def _run_loop(self):
         """Main loop that reads from serial port - runs in background thread."""
+        logger.info(f"FT driver background thread started (PID: {threading.get_ident()})")
+        logger.info(f"Serial port status: {self.ser is not None and self.ser.is_open}")
+
         if self.verbose:
             logger.debug("Sensor readings:")
             logger.debug("-" * 80)
 
+        read_count = 0
+        last_log_time = time.time()
+
         try:
             while self.running:
                 self.read_and_process()
+                read_count += 1
+
+                # Log status every 5 seconds even if not verbose
+                current_time = time.time()
+                if current_time - last_log_time > 5.0:
+                    logger.info(f"FT driver status: {read_count} reads, {self.calibrated_count} calibrated, {self.error_count} errors")
+                    last_log_time = current_time
+
+                if read_count % 100 == 0 and self.verbose:
+                    logger.debug(f"Read {read_count} messages, published {self.calibrated_count} calibrated")
         except KeyboardInterrupt:
             logger.info("Shutting down...")
         except Exception as e:
             logger.error(f"Error in driver loop: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         finally:
+            logger.info(f"FT driver thread stopping after {read_count} reads")
             self.running = False
             if self.ser:
                 self.ser.close()
@@ -266,7 +300,7 @@ class FTDriverModule(Module):
         """Start the sensor driver."""
         if self.running:
             logger.warning("FT driver already running")
-            return
+            return True
 
         logger.info(f"Starting FT driver module...")
         logger.info(f"  Serial port: {self.serial_port}")
@@ -279,17 +313,28 @@ class FTDriverModule(Module):
 
         # Connect to serial
         if not self.connect_serial():
-            logger.error("Failed to connect to serial port")
-            return
+            logger.error(f"CRITICAL: Failed to connect to serial port {self.serial_port}")
+            logger.error("FT driver cannot start without serial connection!")
+            return False
 
-        # Set running flag
+        # Set running flag BEFORE starting thread
         self.running = True
 
         # Start background thread for serial reading
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
 
-        logger.info("FT driver started successfully")
+        # Wait a moment to ensure thread is running
+        time.sleep(0.1)
+
+        # Verify thread is alive
+        if self._thread.is_alive():
+            logger.info(f"FT driver started successfully - thread running: {self._thread.is_alive()}")
+            return True
+        else:
+            logger.error("FT driver thread failed to start!")
+            self.running = False
+            return False
 
     @rpc
     def stop(self):
