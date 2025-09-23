@@ -301,40 +301,58 @@ class TimedSensorReplay(SensorReplay[T]):
         def _subscribe(observer, scheduler=None):
             from reactivex.disposable import CompositeDisposable, Disposable
 
-            scheduler = scheduler or TimeoutScheduler()  # default thread-based
+            scheduler = scheduler or TimeoutScheduler()
+            disp = CompositeDisposable()
 
             iterator = self.iterate_ts(
                 seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
             )
 
+            # Get first message
             try:
-                prev_ts, first_data = next(iterator)
+                first_ts, first_data = next(iterator)
             except StopIteration:
                 observer.on_completed()
                 return Disposable()
 
-            # Emit the first sample immediately
+            # Establish timing reference
+            start_local_time = time.time()
+            start_replay_time = first_ts
+
+            # Emit first sample immediately
             observer.on_next(first_data)
 
-            disp = CompositeDisposable()
+            # Pre-load next message
+            try:
+                next_message = next(iterator)
+            except StopIteration:
+                observer.on_completed()
+                return disp
 
-            def emit_next(prev_timestamp):
+            def schedule_emission(message):
+                nonlocal next_message
+                ts, data = message
+
+                # Pre-load the following message while we have time
                 try:
-                    ts, data = next(iterator)
+                    next_message = next(iterator)
                 except StopIteration:
-                    observer.on_completed()
-                    return
+                    next_message = None
 
-                delay = max(0.0, ts - prev_timestamp) / speed
+                # Calculate absolute emission time
+                target_time = start_local_time + (ts - start_replay_time) / speed
+                delay = max(0.0, target_time - time.time())
 
-                def _action(sc, _state=None):
+                def emit():
                     observer.on_next(data)
-                    emit_next(ts)  # schedule the following sample
+                    if next_message is not None:
+                        schedule_emission(next_message)
+                    else:
+                        observer.on_completed()
 
-                # Schedule the next emission relative to previous timestamp
-                disp.add(scheduler.schedule_relative(delay, _action))
+                disp.add(scheduler.schedule_relative(delay, lambda sc, _: emit()))
 
-            emit_next(prev_ts)
+            schedule_emission(next_message)
 
             return disp
 
