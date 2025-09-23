@@ -56,7 +56,7 @@ Examples:
     parser.add_argument(
         "--xarm",
         type=str,
-        default=None,
+        default="192.168.1.210",
         help="xARM IP address (e.g., 192.168.1.100)"
     )
     parser.add_argument(
@@ -278,6 +278,9 @@ Examples:
 
         # Keep agent running
         agent.loop_thread()
+
+        while True:
+            time.sleep(1)
 
     # Auto-run mode if requested
     elif args.auto_run:

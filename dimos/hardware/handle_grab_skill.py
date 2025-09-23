@@ -1079,9 +1079,9 @@ class HandleGrabModule(Module):
 
     @skill()
     def grab_handle(self,
-                    use_qwen: bool = False,
+                    use_qwen: bool = True,
                     loop_count: int = 1,
-                    execute_grab: bool = False) -> str:
+                    execute_grab: bool = True) -> str:
         """Execute handle detection and grabbing sequence.
 
         Args:
@@ -1092,6 +1092,8 @@ class HandleGrabModule(Module):
         Returns:
             Status message about the operation
         """
+        # Potentially need to set this to just 1
+        # loop_count = 1
         try:
             # Wait for ZED data to be available
             if not self.wait_for_data(timeout=10):
