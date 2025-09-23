@@ -98,7 +98,7 @@ class Detection3DModule(Detection2DModule):
             backpressure(self.detection_stream_2d()),
             self.pointcloud.observable(),
             match_tolerance=0.25,
-            buffer_size=10.0,
+            buffer_size=2.0,
         ).pipe(ops.map(detection2d_to_3d))
 
         self.detection_stream_3d.subscribe(self._publish_detections)

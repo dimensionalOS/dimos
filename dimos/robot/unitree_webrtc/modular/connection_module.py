@@ -183,7 +183,7 @@ class ConnectionModule(Module):
 
         # self.connection.video_stream().subscribe(self.video.publish)
         #
-        sharpness_window(3.0, self.connection.video_stream()).subscribe(self.video.publish)
+        sharpness_window(10.0, self.connection.video_stream()).subscribe(self.video.publish)
 
         # self.connection.video_stream().pipe(ops.map(resize)).subscribe(self.video.publish)
         self.camera_info_stream().subscribe(self.camera_info.publish)
