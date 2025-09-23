@@ -26,6 +26,13 @@ import logging
 import sys
 import os
 import time
+import re
+from typing import Optional
+from openai import OpenAI
+import ast
+import base64
+from io import BytesIO
+from PIL import Image
 
 # Add FastSAM to path
 sys.path.insert(0, os.path.dirname(__file__))
@@ -59,13 +66,17 @@ class NormalMoveTest:
     """Test normal estimation and IK-based motion planning"""
 
     def __init__(self, fastsam_model_path: str = "./weights/FastSAM-x.pt",
-                 xarm_ip: str = None, test_mode: bool = False):
+                 xarm_ip: str = None, test_mode: bool = False, use_qwen: bool = False,
+                 loop_count: int = 1, execute_grab: bool = False):
         """Initialize the test system
 
         Args:
             fastsam_model_path: Path to FastSAM model weights
             xarm_ip: IP address of xARM robot (None for simulation only)
             test_mode: If True, only get positions from xARM but don't execute movements
+            use_qwen: If True, use Qwen vision model to automatically detect handle point
+            loop_count: Number of times to repeat the detection and movement cycle
+            execute_grab: If True, execute grab sequence after final positioning
         """
         self.zed = None
         self.fastsam_model = None
@@ -73,8 +84,17 @@ class NormalMoveTest:
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.xarm_ip = xarm_ip
         self.test_mode = test_mode
+        self.use_qwen = use_qwen
+        self.loop_count = loop_count
+        self.execute_grab = execute_grab
         self.arm = None
         self.xarm_positions = None
+
+        # Store last successful target pose for grab sequence
+        self.last_target_position = None
+        self.last_target_normal = None
+        self.last_q_solution = None
+        self.z_offset_applied = 0.1  # Z offset applied in compute_target_pose (10cm)
 
         # Initialize components
         self._init_camera()
@@ -340,6 +360,123 @@ class NormalMoveTest:
                 cv2.waitKey(500)  # Show selection briefly
                 cv2.destroyAllWindows()
                 return selected_point[-1]
+
+    def query_qwen_for_point(self, rgb_image):
+        """Query Qwen vision model to detect handle point automatically.
+
+        Args:
+            rgb_image: RGB image numpy array
+
+        Returns:
+            tuple: (x, y) coordinates of the handle point, or None if failed
+        """
+        try:
+            # Get API key from environment
+            api_key = os.getenv("ALIBABA_API_KEY")
+            if not api_key:
+                logger.error("ALIBABA_API_KEY environment variable not set")
+                logger.info("Falling back to manual point selection")
+                return None
+
+            logger.info("Querying Qwen vision model for microwave handle location...")
+
+            # Create Qwen client
+            qwen_client = OpenAI(
+                base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                api_key=api_key,
+            )
+
+            # Convert numpy array to PIL Image
+            pil_image = Image.fromarray(rgb_image)
+
+            # Convert to base64
+            buffered = BytesIO()
+            pil_image.save(buffered, format="JPEG")
+            img_base64 = base64.b64encode(buffered.getvalue()).decode()
+
+            # Create the message with image
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Please identify a point on the center of the front face of the microwave handle in this image. Return ONLY a point in the center of the front camera facing face of the microwave handle as a tuple in the format (x, y) where x and y are pixel coordinates. Do not include any other text or explanation."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{img_base64}"
+                            }
+                        }
+                    ]
+                }
+            ]
+
+            # Query the model
+            response = qwen_client.chat.completions.create(
+                model="qwen2.5-vl-72b-instruct",  # Using the vision-language model
+                messages=messages,
+                max_tokens=100,
+                temperature=0.1  # Low temperature for more deterministic output
+            )
+
+            response_text = response.choices[0].message.content
+            logger.info(f"Qwen response: {response_text}")
+
+            # Parse the response to extract coordinates
+            # Try multiple parsing strategies
+            coordinates = None
+
+            # Strategy 1: Look for tuple format (x, y)
+            match = re.search(r'\((\d+),\s*(\d+)\)', response_text)
+            if match:
+                x, y = int(match.group(1)), int(match.group(2))
+                coordinates = (x, y)
+            else:
+                # Strategy 2: Try to evaluate as Python literal
+                try:
+                    # Remove any non-tuple text
+                    clean_text = response_text.strip()
+                    if clean_text.startswith('(') and clean_text.endswith(')'):
+                        coordinates = ast.literal_eval(clean_text)
+                except:
+                    pass
+
+                # Strategy 3: Look for two numbers
+                if coordinates is None:
+                    numbers = re.findall(r'\d+', response_text)
+                    if len(numbers) >= 2:
+                        coordinates = (int(numbers[0]), int(numbers[1]))
+
+            if coordinates:
+                x, y = coordinates
+                # Validate coordinates are within image bounds
+                if 0 <= x < rgb_image.shape[1] and 0 <= y < rgb_image.shape[0]:
+                    logger.info(f"Detected handle point at: ({x}, {y})")
+
+                    # Display the detected point briefly
+                    display_img = rgb_image.copy()
+                    cv2.circle(display_img, (x, y), 10, (0, 255, 0), -1)
+                    cv2.circle(display_img, (x, y), 15, (0, 255, 0), 2)
+                    cv2.namedWindow("Qwen Detected Handle Point", cv2.WINDOW_NORMAL)
+                    cv2.imshow("Qwen Detected Handle Point", display_img)
+                    logger.info("Displaying Qwen-detected handle point (green circle)")
+                    cv2.waitKey(2000)  # Show for 2 seconds
+                    cv2.destroyAllWindows()
+
+                    return coordinates
+                else:
+                    logger.warning(f"Detected coordinates {coordinates} are out of image bounds")
+                    return None
+            else:
+                logger.warning("Could not parse coordinates from Qwen response")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error querying Qwen: {e}")
+            logger.info("Falling back to manual point selection")
+            return None
 
     def segment_with_fastsam(self, rgb_image, point):
         """Segment the handle using FastSAM"""
@@ -1210,9 +1347,19 @@ class NormalMoveTest:
 
         return output_path
 
-    def run(self):
-        """Main execution pipeline"""
+    def single_iteration(self, iteration_num):
+        """Execute a single iteration of detection and movement.
+
+        Args:
+            iteration_num: Current iteration number (1-indexed)
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
         try:
+            logger.info("\n" + "="*60)
+            logger.info(f"Iteration {iteration_num}/{self.loop_count}")
+            logger.info("="*60)
             # 1. Capture frame
             logger.info("Capturing frame from ZED camera...")
             rgb_image, depth_map, point_cloud = self.capture_frame()
@@ -1220,8 +1367,18 @@ class NormalMoveTest:
             # Save debug image
             cv2.imwrite("captured_frame.jpg", cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR))
 
-            # 2. Select point
-            selected_point = self.select_point(rgb_image)
+            # 2. Select point (either using Qwen or manual selection)
+            if self.use_qwen:
+                logger.info("Using Qwen vision model for automatic handle detection")
+                selected_point = self.query_qwen_for_point(rgb_image)
+
+                # Fall back to manual selection if Qwen fails
+                if selected_point is None:
+                    logger.info("Qwen detection failed, falling back to manual selection")
+                    selected_point = self.select_point(rgb_image)
+            else:
+                selected_point = self.select_point(rgb_image)
+
             if selected_point is None:
                 logger.warning("No point selected")
                 return
@@ -1268,39 +1425,89 @@ class NormalMoveTest:
             # 10. Solve inverse kinematics
             q_solution = self.solve_ik(target_position, target_orientation)
 
-            # Execute movement if not in test mode and we have a solution
-            if q_solution is not None and self.arm is not None and not self.test_mode:
-                logger.info("\n" + "="*60)
-                logger.info("Executing movement to target position")
-                logger.info("="*60)
-                self.execute_xarm_movement(q_solution)
-            elif q_solution is not None and self.test_mode:
-                logger.info("\n" + "="*60)
-                logger.info("Test mode - NOT executing movement")
-                logger.info("IK solution found but movement disabled")
-                logger.info("="*60)
+            # Store successful solution for potential grab
+            if q_solution is not None:
+                self.last_q_solution = q_solution.copy() if isinstance(q_solution, np.ndarray) else q_solution
+                self.last_target_position = target_position.copy() if isinstance(target_position, np.ndarray) else target_position
+                self.last_target_normal = normal_base.copy() if isinstance(normal_base, np.ndarray) else normal_base
 
-            # 11. Visualize in Open3D first (camera frame)
+                # Execute movement if not in test mode and we have a solution
+                if self.arm is not None and not self.test_mode:
+                    logger.info("\n" + "="*60)
+                    logger.info("Executing movement to target position")
+                    logger.info("="*60)
+                    self.execute_xarm_movement(q_solution)
+                elif self.test_mode:
+                    logger.info("\n" + "="*60)
+                    logger.info("Test mode - NOT executing movement")
+                    logger.info("IK solution found but movement disabled")
+                    logger.info("="*60)
+            else:
+                logger.warning("No IK solution found for this iteration")
+                return False
+
+            # Only visualize on the last iteration or if only one iteration
+            if iteration_num == self.loop_count:
+                # 11. Visualize in Open3D first (camera frame)
+                logger.info("\n" + "="*60)
+                logger.info("Open3D Visualization (Camera Frame)")
+                logger.info("="*60)
+                self.visualize_open3d_scene(
+                    pcd, mesh, normal_camera, closest_point, selected_3d,
+                    normal_base, point_base, target_position
+                )
+
+                # 12. Visualize in Drake
+                self.visualize_drake_scene(point_base, normal_base, target_position, target_orientation, q_solution)
+
+                # 13. Create results figure
+                self.create_results_figure(
+                    rgb_image, mask, selected_point, normal_camera,
+                    closest_point, normal_base, point_base, target_position
+                )
+
+                # 14. Save mesh for reference
+                o3d.io.write_triangle_mesh(f"reconstructed_mesh_iter{iteration_num}.ply", mesh)
+                logger.info(f"Saved mesh to reconstructed_mesh_iter{iteration_num}.ply")
+
+            logger.info(f"\nIteration {iteration_num} complete!")
+            return True
+
+        except Exception as e:
+            logger.error(f"Iteration {iteration_num} failed: {e}")
+            return False
+
+    def run(self):
+        """Main execution pipeline with looping and grab support."""
+        try:
+            successful_iterations = 0
+
+            # Execute iterations
+            for i in range(1, self.loop_count + 1):
+                success = self.single_iteration(i)
+                if success:
+                    successful_iterations += 1
+
+                # Wait between iterations if not the last one
+                if i < self.loop_count:
+                    wait_time = 2
+                    logger.info(f"\nWaiting {wait_time} seconds before next iteration...")
+                    time.sleep(wait_time)
+
             logger.info("\n" + "="*60)
-            logger.info("Open3D Visualization (Camera Frame)")
+            logger.info(f"Completed {successful_iterations}/{self.loop_count} iterations successfully")
             logger.info("="*60)
-            self.visualize_open3d_scene(
-                pcd, mesh, normal_camera, closest_point, selected_3d,
-                normal_base, point_base, target_position
-            )
 
-            # 12. Visualize in Drake
-            self.visualize_drake_scene(point_base, normal_base, target_position, target_orientation, q_solution)
-
-            # 13. Create results figure
-            self.create_results_figure(
-                rgb_image, mask, selected_point, normal_camera,
-                closest_point, normal_base, point_base, target_position
-            )
-
-            # 14. Save mesh for reference
-            o3d.io.write_triangle_mesh("reconstructed_mesh.ply", mesh)
-            logger.info("Saved mesh to reconstructed_mesh.ply")
+            # Execute grab sequence if requested and we had at least one success
+            if self.execute_grab and successful_iterations > 0:
+                logger.info("\nExecuting grab sequence...")
+                grab_success = self.execute_grab_sequence()
+                if grab_success:
+                    logger.info("Grab sequence completed successfully!")
+                else:
+                    logger.warning("Grab sequence failed or incomplete")
+            elif self.execute_grab and successful_iterations == 0:
+                logger.warning("Cannot execute grab sequence - no successful iterations")
 
             logger.info("\n" + "="*60)
             logger.info("Processing complete!")
@@ -1313,7 +1520,7 @@ class NormalMoveTest:
                 time.sleep(0.1)
 
         except KeyboardInterrupt:
-            logger.info("Exiting...")
+            logger.info("\nExiting...")
         except Exception as e:
             logger.error(f"Processing failed: {e}")
             raise
@@ -1366,11 +1573,12 @@ class NormalMoveTest:
 
         return None
 
-    def execute_xarm_movement(self, q_solution):
+    def execute_xarm_movement(self, q_solution, speed=15):
         """Execute the IK solution on the real xARM robot.
 
         Args:
             q_solution: Joint angles from IK solution
+            speed: Movement speed (default 15, use 7.5 for slower movements)
         """
         if not self.arm:
             logger.warning("xARM API not initialized, cannot execute movement")
@@ -1390,8 +1598,8 @@ class NormalMoveTest:
             for i, angle in enumerate(positions):
                 logger.info(f"  joint{i+1}: {np.degrees(angle):.2f} deg")
 
-            # Send command to xARM with moderate speed
-            code = self.arm.set_servo_angle(angle=positions, speed=30, wait=True, is_radian=True)
+            # Send command to xARM with specified speed
+            code = self.arm.set_servo_angle(angle=positions, speed=speed, wait=True, is_radian=True)
 
             if code == 0:
                 logger.info("Movement executed successfully")
@@ -1405,6 +1613,113 @@ class NormalMoveTest:
 
         except Exception as e:
             logger.error(f"Error executing movement: {e}")
+
+    def execute_grab_sequence(self):
+        """Execute the grab sequence: move up, forward, and close gripper.
+
+        This method:
+        1. Moves up by the Z offset that was applied (10cm)
+        2. Moves forward along the approach direction
+        3. Closes the gripper
+        """
+        if self.last_q_solution is None or self.last_target_position is None or self.last_target_normal is None:
+            logger.warning("No successful positioning found, cannot execute grab sequence")
+            return False
+
+        if self.test_mode:
+            logger.info("\n" + "="*60)
+            logger.info("Test mode - Would execute grab sequence:")
+            logger.info(f"  1. Move up {self.z_offset_applied*100:.0f}cm (reverse Z offset)")
+            logger.info(f"  2. Move forward {forward_distance*100:.0f}cm along approach direction")
+            logger.info(f"  3. Close gripper quickly")
+            logger.info("="*60)
+            return True
+
+        if not self.arm:
+            logger.warning("xARM API not initialized, cannot execute grab sequence")
+            return False
+
+        try:
+            logger.info("\n" + "="*60)
+            logger.info("Executing grab sequence")
+            logger.info("="*60)
+
+            # Step 1: Move up by reversing the Z offset
+            logger.info(f"Step 1: Moving up {self.z_offset_applied*100:.0f}cm to reverse Z offset")
+
+            # Calculate new target position (move up in world Z)
+            target_pos_up = np.array(self.last_target_position, copy=True)
+            target_pos_up[2] += self.z_offset_applied  # Move up by the offset amount
+
+            # Solve IK for upward movement
+            logger.info(f"  Target position after moving up: {target_pos_up}")
+
+            # We keep the same orientation, just change position
+            # Get the last orientation from the plant context
+            self.plant.SetPositions(self.plant_context, self.last_q_solution)
+            tool_pose = self.plant.CalcRelativeTransform(
+                self.plant_context,
+                self.base_frame,
+                self.tool_frame
+            )
+            target_orientation = tool_pose.rotation()
+
+            # Solve IK for the new position
+            q_up = self.solve_ik(target_pos_up, target_orientation)
+
+            if q_up is not None:
+                # Execute upward movement at half default speed (7.5 instead of 15)
+                self.execute_xarm_movement(q_up, speed=7.5)
+                time.sleep(1)  # Wait for movement to complete
+                logger.info("  Upward movement completed")
+            else:
+                logger.warning("  Failed to solve IK for upward movement")
+
+            # Step 2: Move forward 9cm along approach direction
+            forward_distance = 0.09  # 9cm
+            logger.info(f"Step 2: Moving forward {forward_distance*100:.0f}cm along approach direction")
+
+            # The approach direction is opposite to the normal (we approach towards the surface)
+            approach_direction = -np.array(self.last_target_normal)
+            target_pos_forward = target_pos_up + approach_direction * forward_distance
+
+            logger.info(f"  Target position after moving forward: {target_pos_forward}")
+
+            # Solve IK for forward movement
+            q_forward = self.solve_ik(target_pos_forward, target_orientation)
+
+            if q_forward is not None:
+                # Execute forward movement at half default speed (7.5 instead of 15)
+                self.execute_xarm_movement(q_forward, speed=7.5)
+                time.sleep(1)  # Wait for movement to complete
+                logger.info("  Forward movement completed")
+
+                # Update plant context for final position
+                self.plant.SetPositions(self.plant_context, q_forward)
+            else:
+                logger.warning("  Failed to solve IK for forward movement, continuing with gripper close")
+
+            # Step 3: Close gripper
+            logger.info("Step 3: Closing gripper")
+
+            # Close the gripper with faster speed
+            code = self.arm.set_gripper_position(0, wait=True, speed=5000)  # 0 = fully closed, speed increased from 500 to 5000
+
+            if code == 0:
+                logger.info("  Gripper closed successfully")
+                time.sleep(0.2)  # Reduced pause from 0.5 to 0.2 seconds
+            else:
+                logger.error(f"  Failed to close gripper, code: {code}")
+
+            logger.info("\n" + "="*60)
+            logger.info("Grab sequence completed!")
+            logger.info("="*60)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error executing grab sequence: {e}")
+            return False
 
     def cleanup(self):
         """Clean up resources"""
@@ -1428,6 +1743,12 @@ def main():
                        help='xARM IP address (e.g., 192.168.1.100)')
     parser.add_argument('--test', action='store_true',
                        help='Test mode: get xARM positions but do not execute movements')
+    parser.add_argument('--qwen', action='store_true',
+                       help='Use Qwen vision model to automatically detect handle point instead of manual selection')
+    parser.add_argument('--loop', type=int, default=1,
+                       help='Number of times to repeat the detection and movement cycle (default: 1)')
+    parser.add_argument('--grab', action='store_true',
+                       help='Execute grab sequence after positioning: move up, forward, and close gripper')
 
     args = parser.parse_args()
 
@@ -1435,7 +1756,10 @@ def main():
     test = NormalMoveTest(
         fastsam_model_path=args.fastsam_model,
         xarm_ip=args.xarm,
-        test_mode=args.test
+        test_mode=args.test,
+        use_qwen=args.qwen,
+        loop_count=args.loop,
+        execute_grab=args.grab
     )
 
     try:

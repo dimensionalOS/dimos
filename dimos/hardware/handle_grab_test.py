@@ -1,237 +1,233 @@
 #!/usr/bin/env python3
 """
-Handle Grab Test/Deployment Script
+Handle Grab Module Test/Deployment Script
 
-Deploys and connects the ZED camera module, handle grab module, and agent
-for integrated handle detection and grasping.
+Deploys and connects the ZED camera module and handle grab skill module using Dimos.
 """
 
 import time
 import argparse
-from pathlib import Path
-
 from dimos.core import start, LCMTransport
+from dimos.utils.logging_config import setup_logger
 from dimos.msgs.sensor_msgs import Image, CameraInfo
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.hardware.zed_camera import ZEDModule
 from dimos.hardware.handle_grab_skill import HandleGrabModule
 from dimos.agents2.agent import Agent
 from dimos.agents2.cli.human import HumanInput
-from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
 
 
 def main():
-    """Main deployment function for handle grabbing system."""
+    """Main deployment function for handle grab system."""
     parser = argparse.ArgumentParser(
-        description="Deploy handle detection and grasping system with ZED camera and agent interface",
+        description="Deploy ZED camera and handle grab skill modules",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Run with default settings (simulation only)
   python handle_grab_test.py
 
-  # Run with real xARM robot
+  # Run with xARM robot
   python handle_grab_test.py --xarm 192.168.1.100
 
-  # Run with custom FastSAM model
-  python handle_grab_test.py --fastsam ./weights/FastSAM-x.pt --xarm 192.168.1.100
+  # Run in test mode (get positions but don't move)
+  python handle_grab_test.py --xarm 192.168.1.100 --test
 
-  # Run with custom approach distance
-  python handle_grab_test.py --approach-distance 0.3 --iterations 2
+  # Run with Qwen automatic detection and grab
+  python handle_grab_test.py --xarm 192.168.1.100 --qwen --grab
+
+  # Run with multiple iterations
+  python handle_grab_test.py --xarm 192.168.1.100 --loop 3 --grab
+
+  # Run without visualization (headless)
+  python handle_grab_test.py --xarm 192.168.1.100 --no-visualization
         """,
     )
 
-    # ZED Camera arguments
+    # Module arguments
     parser.add_argument(
-        "--zed-resolution",
-        type=str,
-        default="HD720",
-        choices=["HD2K", "HD1080", "HD720", "VGA"],
-        help="ZED camera resolution (default: HD720)",
-    )
-    parser.add_argument(
-        "--zed-fps",
-        type=int,
-        default=30,
-        help="ZED camera FPS (default: 30)",
-    )
-    parser.add_argument(
-        "--zed-depth-mode",
-        type=str,
-        default="NEURAL",
-        choices=["ULTRA", "QUALITY", "PERFORMANCE", "NEURAL"],
-        help="ZED depth mode (default: NEURAL)",
-    )
-
-    # Handle Grab arguments
-    parser.add_argument(
-        "--fastsam",
+        "--fastsam-model",
         type=str,
         default="./weights/FastSAM-x.pt",
-        help="Path to FastSAM model weights",
+        help="Path to FastSAM model weights (default: ./weights/FastSAM-x.pt)"
     )
     parser.add_argument(
         "--xarm",
         type=str,
-        help="xARM IP address for robot control (omit for simulation only)",
+        default=None,
+        help="xARM IP address (e.g., 192.168.1.100)"
     )
     parser.add_argument(
-        "--approach-distance",
-        type=float,
-        default=0.25,
-        help="Distance to approach from handle (meters, default: 0.25)",
-    )
-    parser.add_argument(
-        "--iterations",
-        type=int,
-        default=3,
-        help="Maximum refinement iterations (default: 3)",
-    )
-    parser.add_argument(
-        "--no-visualization",
+        "--test",
         action="store_true",
-        help="Disable Drake visualization",
+        help="Test mode: get xARM positions but do not execute movements"
+    )
+
+    # Skill arguments (for default execution)
+    parser.add_argument(
+        "--qwen",
+        action="store_true",
+        help="Use Qwen vision model to automatically detect handle point"
+    )
+    parser.add_argument(
+        "--loop",
+        type=int,
+        default=1,
+        help="Number of times to repeat the detection and movement cycle (default: 1)"
+    )
+    parser.add_argument(
+        "--grab",
+        action="store_true",
+        help="Execute grab sequence after positioning"
+    )
+
+    # ZED camera arguments
+    parser.add_argument(
+        "--camera-id",
+        type=int,
+        default=0,
+        help="ZED camera ID (default: 0)"
+    )
+    parser.add_argument(
+        "--resolution",
+        type=str,
+        default="HD720",
+        choices=["HD720", "HD1080", "HD2K", "VGA"],
+        help="ZED camera resolution (default: HD720)"
+    )
+    parser.add_argument(
+        "--depth-mode",
+        type=str,
+        default="NEURAL",
+        choices=["NEURAL", "ULTRA", "QUALITY", "PERFORMANCE"],
+        help="ZED depth mode (default: NEURAL)"
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=30,
+        help="Camera frame rate (default: 30)"
+    )
+    parser.add_argument(
+        "--enable-tracking",
+        action="store_true",
+        help="Enable ZED positional tracking"
     )
 
     # LCM transport arguments
     parser.add_argument(
-        "--lcm-image-channel",
-        default="/zed/image",
-        help="LCM channel for color image (default: /zed/image)",
+        "--lcm-color-channel",
+        default="/zed/color_image",
+        help="LCM channel for color image data (default: /zed/color_image)"
     )
     parser.add_argument(
         "--lcm-depth-channel",
-        default="/zed/depth",
-        help="LCM channel for depth image (default: /zed/depth)",
+        default="/zed/depth_image",
+        help="LCM channel for depth image data (default: /zed/depth_image)"
     )
     parser.add_argument(
-        "--lcm-camera-info-channel",
+        "--lcm-info-channel",
         default="/zed/camera_info",
-        help="LCM channel for camera info (default: /zed/camera_info)",
+        help="LCM channel for camera info (default: /zed/camera_info)"
     )
     parser.add_argument(
         "--lcm-pose-channel",
         default="/zed/pose",
-        help="LCM channel for camera pose (default: /zed/pose)",
+        help="LCM channel for camera pose (default: /zed/pose)"
     )
 
-    # General arguments
+    # Execution mode
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Run in interactive mode with agent and human input"
+    )
+    parser.add_argument(
+        "--auto-run",
+        action="store_true",
+        help="Automatically run the grab_handle skill on startup"
+    )
+
+    # System arguments
     parser.add_argument(
         "--processes",
         type=int,
-        default=3,
-        help="Number of Dimos processes (default: 3)",
+        default=5,
+        help="Number of Dimos processes (default: 3)"
+    )
+    parser.add_argument(
+        "--no-visualization",
+        action="store_true",
+        help="Run without visualization (useful for headless systems)"
     )
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Enable verbose output",
+        help="Enable verbose output"
     )
 
     args = parser.parse_args()
 
-    # Check FastSAM model
-    if args.fastsam:
-        fastsam_path = Path(args.fastsam)
-        if not fastsam_path.exists():
-            logger.warning(f"FastSAM model not found at {fastsam_path}")
-            logger.warning("Segmentation features will be limited")
-
     # Start Dimos
     logger.info("=" * 60)
-    logger.info("Handle Detection and Grasping System")
+    logger.info("Handle Grab System Deployment")
     logger.info("=" * 60)
     logger.info(f"Starting Dimos with {args.processes} processes...")
     dimos = start(args.processes)
 
-    # Deploy ZED camera module
+    # Deploy ZED module
     logger.info("Deploying ZED camera module...")
-    logger.info(f"  Resolution: {args.zed_resolution}")
-    logger.info(f"  FPS: {args.zed_fps}")
-    logger.info(f"  Depth mode: {args.zed_depth_mode}")
+    logger.info(f"  Camera ID: {args.camera_id}")
+    logger.info(f"  Resolution: {args.resolution}")
+    logger.info(f"  Depth mode: {args.depth_mode}")
+    logger.info(f"  FPS: {args.fps}")
+    logger.info(f"  Tracking: {'Enabled' if args.enable_tracking else 'Disabled'}")
 
-    # Pass string arguments directly - ZEDModule handles the conversion
     zed = dimos.deploy(
         ZEDModule,
-        resolution=args.zed_resolution,
-        fps=args.zed_fps,
-        depth_mode=args.zed_depth_mode,
-        enable_tracking=True,
+        camera_id=args.camera_id,
+        resolution=args.resolution,
+        depth_mode=args.depth_mode,
+        fps=args.fps,
+        enable_tracking=args.enable_tracking,
+        publish_rate=args.fps,
+        frame_id="zed_camera"
     )
 
-    # Set up LCM transport for ZED outputs
-    logger.info("Setting up LCM transports for ZED...")
-    zed.color_image.transport = LCMTransport(args.lcm_image_channel, Image)
+    # Set up LCM transports for ZED outputs
+    zed.color_image.transport = LCMTransport(args.lcm_color_channel, Image)
     zed.depth_image.transport = LCMTransport(args.lcm_depth_channel, Image)
-    zed.camera_info.transport = LCMTransport(args.lcm_camera_info_channel, CameraInfo)
+    zed.camera_info.transport = LCMTransport(args.lcm_info_channel, CameraInfo)
     zed.pose.transport = LCMTransport(args.lcm_pose_channel, PoseStamped)
-    logger.info(f"  Color image: {args.lcm_image_channel}")
-    logger.info(f"  Depth image: {args.lcm_depth_channel}")
-    logger.info(f"  Camera info: {args.lcm_camera_info_channel}")
+
+    logger.info("ZED LCM channels configured:")
+    logger.info(f"  Color: {args.lcm_color_channel}")
+    logger.info(f"  Depth: {args.lcm_depth_channel}")
+    logger.info(f"  Info: {args.lcm_info_channel}")
     logger.info(f"  Pose: {args.lcm_pose_channel}")
 
     # Deploy handle grab module
     logger.info("Deploying handle grab module...")
-    logger.info(f"  FastSAM model: {args.fastsam or 'None'}")
+    logger.info(f"  FastSAM model: {args.fastsam_model}")
     logger.info(f"  xARM IP: {args.xarm or 'None (simulation only)'}")
-    logger.info(f"  Approach distance: {args.approach_distance}m")
-    logger.info(f"  Max iterations: {args.iterations}")
-    logger.info(f"  Visualization: {'Disabled' if args.no_visualization else 'Enabled'}")
+    logger.info(f"  Test mode: {'ON' if args.test else 'OFF'}")
 
     handle_grab = dimos.deploy(
         HandleGrabModule,
-        fastsam_model_path=args.fastsam,
+        fastsam_model_path=args.fastsam_model,
         xarm_ip=args.xarm,
-        approach_distance=args.approach_distance,
-        max_iterations=args.iterations,
-        enable_visualization=not args.no_visualization,
+        test_mode=args.test
     )
 
-    # Connect handle grab module to ZED outputs
+    # Connect handle grab inputs to ZED outputs
     handle_grab.color_image.connect(zed.color_image)
     handle_grab.depth_image.connect(zed.depth_image)
     handle_grab.camera_info.connect(zed.camera_info)
-    logger.info("  Connected to ZED camera streams")
+    logger.info("Connected handle grab module to ZED data streams (color, depth, camera_info)")
 
-    # Deploy human input module
-    logger.info("Deploying human input module...")
-    human_input = dimos.deploy(HumanInput)
-
-    # Deploy agent
-    logger.info("Deploying agent...")
-    agent = dimos.deploy(
-        Agent,
-        system_prompt="""You are a helpful robotic assistant that can detect and approach handles using computer vision.
-
-Available skills:
-- approach_handle: Detect and iteratively approach a handle for grasping (can specify iterations)
-- get_handle_detection: Get information about the last handle detection
-
-The approach_handle skill will:
-1. Capture the current view from the ZED camera
-2. Detect a handle point in the image
-3. Segment the handle using FastSAM
-4. Estimate the surface normal
-5. Move the robot to an approach position
-6. Repeat 2-3 times to refine the approach
-
-Example commands:
-- "Approach the handle" - Will run the default 3 iterations
-- "Approach the handle with 2 iterations" - Will run 2 iterations
-- "What's the last handle detection?" - Gets detection info
-
-The robot will get progressively closer and more aligned with each iteration.
-"""
-    )
-
-    # Register skills
-    agent.register_skills(handle_grab)
-    agent.register_skills(human_input)
-    logger.info("  Registered handle grab and human input skills")
-
-    # Start all modules
+    # Start modules
     logger.info("=" * 60)
     logger.info("Starting modules...")
     logger.info("=" * 60)
@@ -244,45 +240,120 @@ The robot will get progressively closer and more aligned with each iteration.
     handle_grab.start()
     logger.info("Handle grab module started")
 
-    # Start agent
-    agent.run_implicit_skill("human")
-    agent.start()
-    agent.loop_thread()
-    logger.info("Agent started with human interface")
+    # Setup interactive mode if requested
+    if args.interactive:
+        logger.info("Setting up interactive agent mode...")
 
-    logger.info("=" * 60)
-    logger.info("All modules started successfully!")
-    logger.info("")
-    logger.info("You can now interact with the handle detection system through the agent.")
-    logger.info("Example commands:")
-    logger.info("  'Approach the handle'")
-    logger.info("  'Approach the handle with 2 iterations'")
-    logger.info("  'What's the last handle detection?'")
-    logger.info("")
-    if not args.no_visualization and hasattr(handle_grab, 'meshcat') and handle_grab.meshcat:
-        try:
-            meshcat_url = handle_grab.meshcat.web_url()
-            logger.info(f"Drake visualization available at: {meshcat_url}")
-        except:
-            pass
-    logger.info("")
-    logger.info("Press Ctrl+C to stop...")
-    logger.info("=" * 60)
+        # Deploy human input module
+        human_input = dimos.deploy(HumanInput)
 
-    # Main loop - keep running
-    try:
-        while True:
-            time.sleep(1)
+        # Deploy agent
+        agent = dimos.deploy(
+            Agent,
+            system_prompt="""You are a helpful robotic assistant that can control a handle grabbing system.
+            You have access to a skill called 'grab_handle' that can detect and grab handles on objects like microwaves.
 
-    except KeyboardInterrupt:
-        logger.info("")
-        logger.info("=" * 60)
-        logger.info("Shutting down...")
-        logger.info("=" * 60)
+            The skill accepts these parameters:
+            - use_qwen: Use AI vision to detect handles automatically (boolean)
+            - loop_count: Number of detection attempts (integer)
+            - execute_grab: Actually close gripper after positioning (boolean)
 
+            Be helpful and explain what you're doing when executing skills."""
+        )
+
+        # Register skills
+        agent.register_skills(handle_grab)
+        agent.register_skills(human_input)
+
+        # Start agent
+        agent.run_implicit_skill("human")
+        agent.start()
+
+        logger.info("Interactive agent ready!")
+        logger.info("You can now interact with the system through the agent.")
+        logger.info("Example commands:")
+        logger.info('  "Grab the handle using AI detection"')
+        logger.info('  "Try to grab the handle 3 times"')
+        logger.info('  "Position at the handle but dont grab"')
+
+        # Keep agent running
+        agent.loop_thread()
+
+    # Auto-run mode if requested
+    elif args.auto_run:
+        logger.info("Auto-running grab_handle skill...")
+
+        # Wait a moment for data to start flowing
+        time.sleep(2)
+
+        # Execute the skill
+        result = handle_grab.grab_handle(
+            use_qwen=args.qwen,
+            loop_count=args.loop,
+            execute_grab=args.grab
+        )
+
+        logger.info(f"Skill result: {result}")
+
+        # Keep running for a bit to allow cleanup
+        time.sleep(5)
+
+    # Default mode - if grab is requested, auto-run it
+    else:
+        # If --grab or --qwen was specified, automatically run the skill
+        if args.grab or args.qwen:
+            logger.info("Auto-running grab_handle skill (use --interactive for manual control)...")
+
+            # Wait a moment for data to start flowing
+            time.sleep(2)
+
+            # Execute the skill
+            result = handle_grab.grab_handle(
+                use_qwen=args.qwen,
+                loop_count=args.loop,
+                execute_grab=args.grab
+            )
+
+            logger.info(f"Skill result: {result}")
+
+            # Keep running for a bit to allow cleanup
+            time.sleep(5)
+        else:
+            logger.info("Modules running. The grab_handle skill is available for RPC calls.")
+            logger.info("Press Ctrl+C to stop...")
+
+            try:
+                # Main loop - print statistics periodically
+                last_print_time = time.time()
+                while True:
+                    time.sleep(1)
+
+                    # Print stats every 10 seconds
+                    if time.time() - last_print_time > 10:
+                        # Get ZED camera info
+                        zed_info = zed.get_camera_info()
+                        if zed_info:
+                            logger.info(f"ZED Camera: {zed_info.get('model', 'Unknown')}")
+
+                    # Get pose if tracking enabled
+                    if args.enable_tracking:
+                        pose = zed.get_pose()
+                        if pose and pose.get('valid', False):
+                            pos = pose.get('position', [0, 0, 0])
+                            logger.info(f"Camera position: X={pos[0]:.2f}, Y={pos[1]:.2f}, Z={pos[2]:.2f}")
+
+                    last_print_time = time.time()
+
+            except KeyboardInterrupt:
+                logger.info("\n" + "=" * 60)
+                logger.info("Shutting down...")
+                logger.info("=" * 60)
+
+    # Cleanup
+    if not args.interactive:
         # Stop modules
         zed.stop()
-        handle_grab.stop()
+        handle_grab.cleanup()
 
         # Shutdown Dimos
         time.sleep(0.5)

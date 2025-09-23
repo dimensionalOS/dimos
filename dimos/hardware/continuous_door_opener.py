@@ -70,7 +70,8 @@ class ContinuousDoorOpener:
         sensor_delay=0.2,  # 200ms delay
         prediction_gain=0.3,  # How much to trust force rate prediction
         door_opens_clockwise=True,  # Door opening direction
-        rotation_axis='z'  # Rotation axis: 'x', 'y', or 'z'
+        rotation_axis='z',  # Rotation axis: 'x', 'y', or 'z'
+        end_angle=None  # Optional maximum rotation angle in degrees
     ):
         """
         Initialize the continuous door opener controller.
@@ -86,6 +87,8 @@ class ContinuousDoorOpener:
             prediction_gain: Weight for predictive compensation (0-1)
             door_opens_clockwise: Whether door opens clockwise (True) or counter-clockwise (False)
             rotation_axis: Axis to rotate around ('x', 'y', or 'z' in world frame)
+            end_angle: Optional maximum rotation angle in degrees (absolute value). If specified,
+                      the controller will stop when abs(total_rotation) >= end_angle
         """
         
         # Start meshcat
@@ -122,6 +125,9 @@ class ContinuousDoorOpener:
         
         # Door parameters
         self.door_opens_clockwise = door_opens_clockwise
+
+        # Termination condition
+        self.end_angle = np.radians(end_angle) if end_angle is not None else None
         
         # Statistics tracking
         self.total_rotation = 0.0
@@ -925,6 +931,8 @@ class ContinuousDoorOpener:
         print(f"  - Sensor delay compensation: {self.sensor_delay*1000:.0f}ms")
         print(f"  - Door type: {'CLOCKWISE' if self.door_opens_clockwise else 'COUNTER-CLOCKWISE'}")
         print(f"  - Rotation axis: {self.rotation_axis.upper()}-axis (world frame)")
+        if self.end_angle is not None:
+            print(f"  - End angle: {np.degrees(self.end_angle):.1f}° (will stop at this rotation)")
         print("Press Ctrl+C to stop")
         print("="*60 + "\n")
         
@@ -966,6 +974,14 @@ class ContinuousDoorOpener:
                     # Update statistics
                     self.total_rotation += rotation_angle
                     self.total_pull_distance += np.linalg.norm(translation)
+
+                    # Check if we've reached the end angle
+                    if self.end_angle is not None and abs(self.total_rotation) >= self.end_angle:
+                        print(f"\n{'='*60}")
+                        print(f"Target angle reached! Total rotation: {np.degrees(abs(self.total_rotation)):.1f}° >= {np.degrees(self.end_angle):.1f}°")
+                        print(f"Stopping controller...")
+                        print(f"{'='*60}")
+                        break
                     
                     # Print status periodically
                     if time.time() - last_print_time > 0.5:  # Every 500ms
@@ -1096,6 +1112,12 @@ def main():
         choices=['x', 'y', 'z'],
         help="Axis to rotate around in world frame (default: z for vertical axis)"
     )
+    parser.add_argument(
+        "--end_angle",
+        type=float,
+        default=None,
+        help="Maximum rotation angle in degrees (absolute value). Controller stops when reached."
+    )
     
     args = parser.parse_args()
     
@@ -1118,7 +1140,7 @@ def main():
         prediction_gain=args.prediction_gain,
         door_opens_clockwise=door_opens_clockwise,
         rotation_axis=args.rotation_axis,
-        end_angle=90
+        end_angle=args.end_angle
     )
     
     controller.run()
