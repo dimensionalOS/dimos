@@ -181,10 +181,8 @@ class ConnectionModule(Module):
                 int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
             )
 
-        # self.connection.video_stream().subscribe(self.video.publish)
-        #
-        sharpness_window(10.0, self.connection.video_stream()).subscribe(self.video.publish)
-
+        self.connection.video_stream().subscribe(self.video.publish)
+        # sharpness_window(15.0, self.connection.video_stream()).subscribe(self.video.publish)
         # self.connection.video_stream().pipe(ops.map(resize)).subscribe(self.video.publish)
         self.camera_info_stream().subscribe(self.camera_info.publish)
         self.movecmd.subscribe(self.connection.move)

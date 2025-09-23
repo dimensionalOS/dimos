@@ -35,6 +35,10 @@ class Detection2DModule(Module):
     detections: Out[Detection2DArray] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
+    detected_image_0: Out[Image] = None  # type: ignore
+    detected_image_1: Out[Image] = None  # type: ignore
+    detected_image_2: Out[Image] = None  # type: ignore
+
     _initDetector = Yolo2DDetector
 
     def __init__(self, *args, detector=Optional[Callable[[Any], Any]], **kwargs):
@@ -55,13 +59,20 @@ class Detection2DModule(Module):
 
     @rpc
     def start(self):
-        self.detection_stream_2d().subscribe(
-            lambda det: self.detections.publish(det.to_ros_detection2d_array())
-        )
+        # self.detection_stream_2d().subscribe(
+        #    lambda det: self.detections.publish(det.to_ros_detection2d_array())
+        # )
+
+        def publish_cropped_images(detections: ImageDetections2D):
+            for index, detection in enumerate(detections[:3]):
+                image_topic = getattr(self, "detected_image_" + str(index))
+                image_topic.publish(detection.cropped_image())
 
         self.detection_stream_2d().subscribe(
             lambda det: self.annotations.publish(det.to_foxglove_annotations())
         )
+
+        self.detection_stream_2d().subscribe(publish_cropped_images)
 
     @rpc
     def stop(self): ...

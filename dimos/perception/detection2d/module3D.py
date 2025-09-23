@@ -109,6 +109,4 @@ class Detection3DModule(Detection2DModule):
 
         for index, detection in enumerate(detections[:3]):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
-            # image_topic = getattr(self, "detected_image_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
-            # image_topic.publish(detection.cropped_image())
