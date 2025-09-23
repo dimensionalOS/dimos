@@ -42,6 +42,85 @@ from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 
 logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 
+############################################################
+# Navigation Module
+
+# first run unitree_g1.py to start the ROS bridge and webrtc connection and teleop
+# python dimos/robot/unitree_webrtc/unitree_g1.py
+
+
+# then deploy this module in any other run file.
+############################################################
+class NavigationModule(Module):
+    goal_reached: In[Bool] = None
+
+    goal_pose: Out[PoseStamped] = None
+    cancel_goal: Out[Bool] = None
+
+    def __init__(self, *args, **kwargs):
+        """Initialize NavigationModule."""
+        Module.__init__(self, *args, **kwargs)
+        self.goal_reach = None
+
+    @rpc
+    def start(self):
+        """Start the navigation module."""
+        if self.goal_reached:
+            self.goal_reached.subscribe(self._on_goal_reached)
+        logger.info("NavigationModule started")
+
+    def _on_goal_reached(self, msg: Bool):
+        """Handle goal reached status messages."""
+        self.goal_reach = msg.data
+
+    @rpc
+    def go_to(self, pose: PoseStamped, timeout: float = 60.0) -> bool:
+        """
+        Navigate to a target pose by publishing to LCM topics.
+
+        Args:
+            pose: Target pose to navigate to
+            blocking: If True, block until goal is reached
+            timeout: Maximum time to wait for goal (seconds)
+
+        Returns:
+            True if navigation was successful (or started if non-blocking)
+        """
+        logger.info(
+            f"Navigating to goal: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
+        )
+
+        self.goal_reach = None
+        self.goal_pose.publish(pose)
+
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if self.goal_reach is not None:
+                return self.goal_reach
+            time.sleep(0.1)
+
+        self.stop()
+
+        logger.warning(f"Navigation timed out after {timeout} seconds")
+        return False
+
+    @rpc
+    def stop(self) -> bool:
+        """
+        Cancel current navigation by publishing to cancel_goal.
+
+        Returns:
+            True if cancel command was sent successfully
+        """
+        logger.info("Cancelling navigation")
+
+        if self.cancel_goal:
+            cancel_msg = Bool(data=True)
+            self.cancel_goal.publish(cancel_msg)
+            return True
+
+        return False
+
 
 class TopicRemapModule(Module):
     """Module that remaps Odometry to PoseStamped and publishes static transforms."""
