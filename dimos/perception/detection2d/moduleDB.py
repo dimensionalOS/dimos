@@ -114,8 +114,6 @@ class ObjectDBModule(Detection3DModule):
         return distances[0]
 
     def add_detection(self, detection: Detection3D):
-        print(f"Adding detection: {detection.name} at {detection.center}")
-
         """Add detection to existing object or create new one."""
         closest = self.closest_object(detection)
         if closest and closest.bounding_box_intersects(detection):
@@ -143,8 +141,8 @@ class ObjectDBModule(Detection3DModule):
         super().start()
 
         def update_objects(imageDetections: ImageDetections3D):
-            print(f"Received {len(imageDetections.detections)} detections")
             for detection in imageDetections.detections:
+                print(detection)
                 return self.add_detection(detection)
 
         def scene_thread():

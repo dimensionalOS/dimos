@@ -22,24 +22,26 @@ import logging
 import os
 import time
 from typing import Optional
+<<<<<<< HEAD
 from dimos import core
 from dimos.core import In, Module, Out, rpc
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+=======
+>>>>>>> 7af366144609942b58db7326505b68b1d1207ede
 
 from dimos.msgs.std_msgs.Bool import Bool, ROSBool
 from dimos.robot.unitree_webrtc.rosnav import NavigationModule
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+from lcm_msgs.foxglove_msgs import SceneUpdate
 from nav_msgs.msg import Odometry as ROSOdometry
 from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
 from tf2_msgs.msg import TFMessage as ROSTFMessage
-from dimos.skills.skills import SkillLibrary
-from dimos.robot.robot import Robot
-from dimos.hardware.camera.webcam import Webcam
-from dimos.perception.detection2d.moduleDB import ObjectDBModule
+
+from dimos import core
+from dimos.core import In, Module, Out, rpc
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
-from lcm_msgs.foxglove_msgs import SceneUpdate
-
+from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
@@ -54,12 +56,14 @@ from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d import Detection3DModule
+from dimos.perception.detection2d.moduleDB import ObjectDBModule
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.robot import Robot
 from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree_webrtc.rosnav import NavigationModule
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
@@ -240,10 +244,13 @@ class UnitreeG1(Robot):
         self._start_modules()
 
         self.nav = self.dimos.deploy(NavigationModule)
+<<<<<<< HEAD
         self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
         self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
         self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
         self.nav.start()
+=======
+>>>>>>> 7af366144609942b58db7326505b68b1d1207ede
 
         self.lcm.start()
 
@@ -320,6 +327,22 @@ class UnitreeG1(Robot):
         # Add /tf topic from ROS to DIMOS
         self.ros_bridge.add_topic(
             "/tf", TFMessage, ROSTFMessage, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+
+        from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+        from std_msgs.msg import Bool as ROSBool
+
+        from dimos.msgs.std_msgs import Bool
+
+        # Navigation control topics from autonomy stack
+        self.ros_bridge.add_topic(
+            "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
+        )
+        self.ros_bridge.add_topic(
+            "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
+        )
+        self.ros_bridge.add_topic(
+            "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
         # Add /registered_scan topic from ROS to DIMOS
@@ -441,9 +464,8 @@ def main():
     time.sleep(10)
     print("Starting navigation...")
     print(
-        "NAV RESULT",
         robot.nav.go_to(
-            PoseStamped(ts=time.time(), frame_id="world", position=Vector3(0.1, 0.1, 0.1)),
+            PoseStamped(ts=time.time(), frame_id="map", position=Vector3(0.1, 0.1, 0.1)),
             timeout=10,
         ),
     )

@@ -12,12 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-from typing import List, Optional, Tuple
+from typing import Optional
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-)
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
 from reactivex.observable import Observable
@@ -25,7 +21,6 @@ from reactivex.observable import Observable
 from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.type import (
     ImageDetections2D,
@@ -38,27 +33,17 @@ from dimos.utils.reactive import backpressure
 
 class Detection3DModule(Detection2DModule):
     camera_info: CameraInfo
-    height_filter: Optional[float]
 
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
 
-    detections: Out[Detection2DArray] = None  # type: ignore
-    annotations: Out[ImageAnnotations] = None  # type: ignore
-
     detected_pointcloud_0: Out[PointCloud2] = None  # type: ignore
     detected_pointcloud_1: Out[PointCloud2] = None  # type: ignore
     detected_pointcloud_2: Out[PointCloud2] = None  # type: ignore
-    detected_image_0: Out[Image] = None  # type: ignore
-    detected_image_1: Out[Image] = None  # type: ignore
-    detected_image_2: Out[Image] = None  # type: ignore
 
     detection_3d_stream: Observable[ImageDetections3D] = None
 
-    def __init__(
-        self, camera_info: CameraInfo, height_filter: Optional[float] = 0.1, *args, **kwargs
-    ):
-        self.height_filter = height_filter
+    def __init__(self, camera_info: CameraInfo, *args, **kwargs):
         self.camera_info = camera_info
 
         Detection2DModule.__init__(self, *args, **kwargs)
@@ -79,7 +64,6 @@ class Detection3DModule(Detection2DModule):
                 world_pointcloud=pointcloud,
                 camera_info=self.camera_info,
                 world_to_camera_transform=transform,
-                height_filter=self.height_filter,
             )
             if detection3d is not None:
                 detection3d_list.append(detection3d)
@@ -101,7 +85,7 @@ class Detection3DModule(Detection2DModule):
             backpressure(self.detection_stream_2d()),
             self.pointcloud.observable(),
             match_tolerance=0.25,
-            buffer_size=8,
+            buffer_size=2.0,
         ).pipe(ops.map(detection2d_to_3d))
 
         self.detection_stream_3d.subscribe(self._publish_detections)
@@ -112,6 +96,4 @@ class Detection3DModule(Detection2DModule):
 
         for index, detection in enumerate(detections[:3]):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
-            # image_topic = getattr(self, "detected_image_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
-            # image_topic.publish(detection.cropped_image())

@@ -17,27 +17,77 @@ from __future__ import annotations
 import functools
 import hashlib
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, TypeVar
+from typing import Any, Callable, Dict, Optional, TypeVar
 
 import numpy as np
 from dimos_lcm.sensor_msgs import CameraInfo
 from lcm_msgs.builtin_interfaces import Duration
-from lcm_msgs.foxglove_msgs import Color, CubePrimitive, SceneEntity, SceneUpdate, TextPrimitive
+from lcm_msgs.foxglove_msgs import CubePrimitive, SceneEntity, SceneUpdate, TextPrimitive
 from lcm_msgs.geometry_msgs import Point, Pose, Quaternion
 from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
 
+from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.perception.detection2d.type.detection2d import Detection2D
 from dimos.perception.detection2d.type.imageDetections import ImageDetections
 from dimos.types.timestamped import to_ros_stamp
 
+type Detection3DFilter = Callable[
+    [Detection2D, PointCloud2, CameraInfo, Transform], Optional[Detection3D]
+]
+
+
+def height_filter(height=0.1) -> Detection3DFilter:
+    return lambda det, pc, ci, tf: pc.filter_by_height(height)
+
+
+def statistical(nb_neighbors=20, std_ratio=0.5) -> Detection3DFilter:
+    def filter_func(
+        det: Detection2D, pc: PointCloud2, ci: CameraInfo, tf: Transform
+    ) -> Optional[PointCloud2]:
+        statistical, removed = pc.pointcloud.remove_statistical_outlier(
+            nb_neighbors=nb_neighbors, std_ratio=std_ratio
+        )
+
+        return PointCloud2(statistical, pc.frame_id, pc.ts)
+
+
+def raycast() -> Detection3DFilter:
+    def filter_func(
+        det: Detection2D, pc: PointCloud2, ci: CameraInfo, tf: Transform
+    ) -> Optional[PointCloud2]:
+        camera_pos = tf.inverse().translation
+        camera_pos_np = camera_pos.to_numpy()
+        _, visible_indices = pc.pointcloud.hidden_point_removal(camera_pos_np, radius=100.0)
+        visible_pcd = pc.pointcloud.select_by_index(visible_indices)
+        return PointCloud2(visible_pcd, pc.frame_id, pc.ts)
+
+    return filter_func
+
+
+def radius_outlier(min_neighbors: int = 8, radius: float = 0.3) -> Detection3DFilter:
+    """
+    Remove isolated points: keep only points that have at least `min_neighbors`
+    neighbors within `radius` meters (same units as your point cloud).
+    """
+
+    def filter_func(
+        det: Detection2D, pc: PointCloud2, ci: CameraInfo, tf: Transform
+    ) -> Optional[PointCloud2]:
+        filtered_pcd, removed = pc.pointcloud.remove_radius_outlier(
+            nb_points=min_neighbors, radius=radius
+        )
+        return PointCloud2(filtered_pcd, pc.frame_id, pc.ts)
+
+    return filter_func
+
 
 @dataclass
 class Detection3D(Detection2D):
     pointcloud: PointCloud2
     transform: Transform
-    frame_id: str = "world"
+    frame_id: str = "unknown"
 
     @classmethod
     def from_2d(
@@ -46,7 +96,14 @@ class Detection3D(Detection2D):
         world_pointcloud: PointCloud2,
         camera_info: CameraInfo,
         world_to_camera_transform: Transform,
-        height_filter: Optional[float] = 0.2,
+        # filters are to be adjusted based on the sensor noise characteristics if feeding
+        # sensor data directly
+        filters: list[Callable[[PointCloud2], PointCloud2]] = [
+            # height_filter(0.1),
+            raycast(),
+            #            statistical(),
+            radius_outlier(),
+        ],
     ) -> Optional["Detection3D"]:
         """Create a Detection3D from a 2D detection by projecting world pointcloud.
 
@@ -60,9 +117,8 @@ class Detection3D(Detection2D):
             det: The 2D detection
             world_pointcloud: Full pointcloud in world frame
             camera_info: Camera calibration info
-            world_to_camera_transform: Transform from world to camera frame
-            height_filter: Optional minimum height filter (in world frame)
-
+            world_to_camerlka_transform: Transform from world to camera frame
+            filters: List of functions to apply to the pointcloud for filtering
         Returns:
             Detection3D with filtered pointcloud, or None if no valid points
         """
@@ -127,46 +183,19 @@ class Detection3D(Detection2D):
             return None
 
         # Create initial pointcloud for this detection
-        detection_pc = PointCloud2.from_numpy(
+        initial_pc = PointCloud2.from_numpy(
             detection_points,
             frame_id=world_pointcloud.frame_id,
             timestamp=world_pointcloud.ts,
         )
 
-        # # Apply height filter if specified
-        # if height_filter is not None:
-        #     detection_pc = detection_pc.filter_by_height(height_filter)
-        #     if len(detection_pc.pointcloud.points) == 0:
-        #         print("No points left after height filtering.")
-        #         return None
-
-        # Remove statistical outliers
-        try:
-            pcd = detection_pc.pointcloud
-            statistical, _ = pcd.remove_statistical_outlier(nb_neighbors=25, std_ratio=0.2)
-            detection_pc = PointCloud2(statistical, detection_pc.frame_id, detection_pc.ts)
-        except Exception as e:
-            # print("Outlier removal failed, continuing without it.", 3)
-            import traceback
-
-            traceback.print_exc()
-            # If outlier removal fails, continue with original
-            pass
-
-        # Hidden point removal from camera perspective
-        camera_position = world_to_camera_transform.inverse().translation
-        camera_pos_np = camera_position.to_numpy()
-
-        try:
-            pcd = detection_pc.pointcloud
-            _, visible_indices = pcd.hidden_point_removal(camera_pos_np, radius=100.0)
-            visible_pcd = pcd.select_by_index(visible_indices)
-            detection_pc = PointCloud2(
-                visible_pcd, frame_id=detection_pc.frame_id, ts=detection_pc.ts
-            )
-        except Exception:
-            # If hidden point removal fails, continue with current pointcloud
-            pass
+        # Apply filters - each filter needs all 4 arguments
+        detection_pc = initial_pc
+        for filter_func in filters:
+            result = filter_func(det, detection_pc, camera_info, world_to_camera_transform)
+            if result is None:
+                return None
+            detection_pc = result
 
         # Final check for empty pointcloud
         if len(detection_pc.pointcloud.points) == 0:
@@ -221,11 +250,6 @@ class Detection3D(Detection2D):
         return self.pointcloud.bounding_box_intersects(other.pointcloud)
 
     def to_repr_dict(self) -> Dict[str, Any]:
-        d = super().to_repr_dict()
-
-        # Add pointcloud info
-        d["points"] = str(len(self.pointcloud))
-
         # Calculate distance from camera
         # The pointcloud is in world frame, and transform gives camera position in world
         center_world = self.center
@@ -233,9 +257,16 @@ class Detection3D(Detection2D):
         camera_pos = self.transform.translation
         # Use Vector3 subtraction and magnitude
         distance = (center_world - camera_pos).magnitude()
-        d["dist"] = f"{distance:.2f}m"
 
-        return d
+        parent_dict = super().to_repr_dict()
+        # Remove bbox key if present
+        parent_dict.pop("bbox", None)
+
+        return {
+            **parent_dict,
+            "dist": f"{distance:.2f}m",
+            "points": str(len(self.pointcloud)),
+        }
 
     def to_foxglove_scene_entity(self, entity_id: str = None) -> "SceneEntity":
         """Convert detection to a Foxglove SceneEntity with cube primitive and text label.
@@ -276,12 +307,8 @@ class Detection3D(Detection2D):
         cube.size.y = aabb_extent[1]  # height
         cube.size.z = aabb_extent[2]  # depth
 
-        # Set color (red with transparency)
-        cube.color = Color()
-        cube.color.r = 1.0
-        cube.color.g = 0.0
-        cube.color.b = 0.0
-        cube.color.a = 0.2
+        # Set color based on name hash
+        cube.color = Color.from_string(self.name, alpha=0.2)
 
         # Create text label
         text = TextPrimitive()
@@ -339,32 +366,6 @@ class Detection3D(Detection2D):
 
 
 T = TypeVar("T", bound="Detection2D")
-
-
-def _hash_to_color(name: str) -> str:
-    """Generate a consistent color for a given name using hash."""
-    # List of rich colors to choose from
-    colors = [
-        "cyan",
-        "magenta",
-        "yellow",
-        "blue",
-        "green",
-        "red",
-        "bright_cyan",
-        "bright_magenta",
-        "bright_yellow",
-        "bright_blue",
-        "bright_green",
-        "bright_red",
-        "purple",
-        "white",
-        "pink",
-    ]
-
-    # Hash the name and pick a color
-    hash_value = hashlib.md5(name.encode()).digest()[0]
-    return colors[hash_value % len(colors)]
 
 
 class ImageDetections3D(ImageDetections[Detection3D]):

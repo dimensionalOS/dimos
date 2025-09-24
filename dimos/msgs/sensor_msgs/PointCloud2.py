@@ -76,6 +76,9 @@ class PointCloud2(Timestamped):
         pcd.points = o3d.utility.Vector3dVector(points)
         return cls(pointcloud=pcd, ts=timestamp, frame_id=frame_id)
 
+    def __str__(self) -> str:
+        return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self.pointcloud.points)})"
+
     @functools.cached_property
     def center(self) -> Vector3:
         """Calculate the center of the pointcloud in world frame."""
