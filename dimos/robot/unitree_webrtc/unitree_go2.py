@@ -22,6 +22,8 @@ import time
 import warnings
 from typing import List, Optional
 
+from reactivex import Observable
+
 from dimos import core
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
@@ -652,6 +654,10 @@ class UnitreeGo2(UnitreeRobot):
             SpatialMemory module instance or None if perception is disabled
         """
         return self.spatial_memory_module
+
+    @functools.cached_property
+    def gps_position_stream(self) -> Observable[LatLon]:
+        return self.connection.gps_location.transport.pure_observable()
 
     def get_odom(self) -> PoseStamped:
         """Get the robot's odometry.

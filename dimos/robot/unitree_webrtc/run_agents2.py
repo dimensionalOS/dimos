@@ -15,11 +15,15 @@
 
 import os
 import time
+from typing import Optional
 from dotenv import load_dotenv
 
 from dimos.agents2 import Agent
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.constants import AGENT_SYSTEM_PROMPT_PATH
+from dimos.agents2.skills.google_maps import GoogleMapsSkillContainer
+from dimos.agents2.skills.osm import OsmSkillContainer
+from dimos.robot.robot import UnitreeRobot
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.agents2.skills.navigation import NavigationSkillContainer
@@ -38,8 +42,12 @@ with open(AGENT_SYSTEM_PROMPT_PATH, "r") as f:
 
 
 class UnitreeAgents2Runner:
+    _robot: Optional[UnitreeRobot]
+    _agent: Optional[Agent]
+    _exit_stack: ExitStack
+
     def __init__(self):
-        self._robot = None
+        self._robot: UnitreeRobot = None
         self._agent = None
         self._exit_stack = ExitStack()
 
@@ -90,6 +98,9 @@ class UnitreeAgents2Runner:
         return False
 
     def setup_agent(self) -> None:
+        if not self._robot:
+            raise ValueError("robot not set")
+
         logger.info("Setting up agent with skills...")
 
         self._agent = Agent(system_prompt=SYSTEM_PROMPT)
@@ -101,6 +112,12 @@ class UnitreeAgents2Runner:
                     robot=self._robot,
                     video_stream=self._robot.connection.video,
                 )
+            ),
+            self._exit_stack.enter_context(
+                OsmSkillContainer(self._robot, self._robot.gps_position_stream),
+            ),
+            self._exit_stack.enter_context(
+                GoogleMapsSkillContainer(self._robot, self._robot.gps_position_stream),
             ),
             HumanInput(),
         ]
