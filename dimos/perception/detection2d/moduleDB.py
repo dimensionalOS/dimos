@@ -104,12 +104,14 @@ class ObjectDBModule(Detection3DModule):
         self.objects = {}
 
     def closest_object(self, detection: Detection3D) -> Optional[Object3D]:
-        distances = sorted(
-            self.objects.values(), key=lambda obj: detection.center.distance(obj.center)
-        )
+        # Filter objects to only those with matching names
+        matching_objects = [obj for obj in self.objects.values() if obj.name == detection.name]
 
-        if not distances:
+        if not matching_objects:
             return None
+
+        # Sort by distance
+        distances = sorted(matching_objects, key=lambda obj: detection.center.distance(obj.center))
 
         return distances[0]
 
