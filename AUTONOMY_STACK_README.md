@@ -67,6 +67,12 @@ Available robot configurations:
 - `unitree/unitree_g1` - Unitree G1 robot (default)
 - Add your custom robot configs in `src/base_autonomy/local_planner/config/`
 
+## Build the system
+
+You must do this every you make a code change, this is not Python
+
+```colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release```
+
 ## System Launch
 
 ### Simulation Mode
