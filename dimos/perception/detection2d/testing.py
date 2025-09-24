@@ -11,19 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import time
 import functools
+import hashlib
+import os
+import time
+from pathlib import Path
 from typing import Optional, TypedDict, Union
-from dimos.msgs.tf2_msgs import TFMessage
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
-from dimos.msgs.sensor_msgs import CameraInfo, PointCloud2
 from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 
 from dimos.core.transport import LCMTransport
+from dimos.hardware.camera import zed
 from dimos.msgs.geometry_msgs import Transform
+from dimos.msgs.sensor_msgs import CameraInfo, PointCloud2
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.tf2_msgs import TFMessage
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.perception.detection2d.moduleDB import ObjectDBModule
@@ -35,7 +39,6 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
-from dimos.hardware.camera import zed
 
 
 class Moment(TypedDict, total=False):
@@ -76,8 +79,6 @@ def get_g1_moment(seek: float = 10.0):
 
     tf_window = 1.5
     for timestamp, tf_frame in tf_replay.iterate_ts(seek=seek - tf_window, duration=tf_window):
-        tf.publish(*TFMessage.lcm_decode(tf_frame).transforms)
-        time.sleep(0.1)
         tf.publish(*TFMessage.lcm_decode(tf_frame).transforms)
 
     print(tf)
@@ -210,6 +211,10 @@ def publish_moment(moment: Union[Moment, Moment2D, Moment3D]):
     if odom_frame:
         odom_frame_transport = _get_transport("/odom", Odometry)
         odom_frame_transport.publish(moment.get("odom_frame"))
+
+    moment.get("tf").publish_all()
+    time.sleep(0.1)
+    moment.get("tf").publish_all()
 
     detections2d: ImageDetections2D = moment.get("detections2d")
     if detections2d:

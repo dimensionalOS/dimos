@@ -104,8 +104,14 @@ class ImageDetections(Generic[T]):
             for key in first_dict.keys():
                 if key == "conf":
                     # Color-code confidence
-                    conf_color = "green" if d[key] > 0.8 else "yellow" if d[key] > 0.5 else "red"
-                    row.append(Text(f"{d[key]:.1%}", style=conf_color))
+                    conf_color = (
+                        "green"
+                        if float(d[key]) > 0.8
+                        else "yellow"
+                        if float(d[key]) > 0.5
+                        else "red"
+                    )
+                    row.append(Text(f"{d[key]}", style=conf_color))
                 elif key == "points" and d.get(key) == "None":
                     row.append(Text(d.get(key, ""), style="dim"))
                 else:

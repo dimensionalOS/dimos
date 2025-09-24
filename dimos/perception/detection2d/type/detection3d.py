@@ -49,6 +49,7 @@ def statistical(nb_neighbors=20, std_ratio=0.5) -> Detection3DFilter:
         statistical, removed = pc.pointcloud.remove_statistical_outlier(
             nb_neighbors=nb_neighbors, std_ratio=std_ratio
         )
+
         return PointCloud2(statistical, pc.frame_id, pc.ts)
 
 
@@ -56,7 +57,6 @@ def raycast() -> Detection3DFilter:
     def filter_func(
         det: Detection2D, pc: PointCloud2, ci: CameraInfo, tf: Transform
     ) -> Optional[PointCloud2]:
-        # Camera position in world frame is the translation part of the transform
         camera_pos = tf.inverse().translation
         camera_pos_np = camera_pos.to_numpy()
         _, visible_indices = pc.pointcloud.hidden_point_removal(camera_pos_np, radius=100.0)
@@ -66,7 +66,7 @@ def raycast() -> Detection3DFilter:
     return filter_func
 
 
-def radius_outlier(min_neighbors: int = 8, radius: float = 0.08) -> Detection3DFilter:
+def radius_outlier(min_neighbors: int = 8, radius: float = 0.3) -> Detection3DFilter:
     """
     Remove isolated points: keep only points that have at least `min_neighbors`
     neighbors within `radius` meters (same units as your point cloud).
@@ -99,7 +99,7 @@ class Detection3D(Detection2D):
         # filters are to be adjusted based on the sensor noise characteristics if feeding
         # sensor data directly
         filters: list[Callable[[PointCloud2], PointCloud2]] = [
-            height_filter(0.1),
+            # height_filter(0.1),
             raycast(),
             #            statistical(),
             radius_outlier(),
@@ -182,15 +182,19 @@ class Detection3D(Detection2D):
             return None
 
         # Create initial pointcloud for this detection
-        detection_pc = functools.reduce(
-            lambda pc, f: f(pc),
-            filters,
-            PointCloud2.from_numpy(
-                detection_points,
-                frame_id=world_pointcloud.frame_id,
-                timestamp=world_pointcloud.ts,
-            ),
+        initial_pc = PointCloud2.from_numpy(
+            detection_points,
+            frame_id=world_pointcloud.frame_id,
+            timestamp=world_pointcloud.ts,
         )
+
+        # Apply filters - each filter needs all 4 arguments
+        detection_pc = initial_pc
+        for filter_func in filters:
+            result = filter_func(det, detection_pc, camera_info, world_to_camera_transform)
+            if result is None:
+                return None
+            detection_pc = result
 
         # Final check for empty pointcloud
         if len(detection_pc.pointcloud.points) == 0:
