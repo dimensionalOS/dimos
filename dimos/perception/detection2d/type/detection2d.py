@@ -149,6 +149,12 @@ class Detection2D(Timestamped):
             console.print(*parts, end="")
         return capture.get().strip()
 
+    def bbox_2d_volume(self) -> float:
+        x1, y1, x2, y2 = self.bbox
+        width = max(0.0, x2 - x1)
+        height = max(0.0, y2 - y1)
+        return width * height
+
     @classmethod
     def from_detector(
         cls, raw_detections: InconvinientDetectionFormat, **kwargs

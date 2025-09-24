@@ -11,17 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from copy import copy
+from typing import Any, Callable, Dict, List, Optional
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from lcm_msgs.foxglove_msgs import SceneUpdate
 from reactivex.observable import Observable
 
+from dimos.agents2 import Agent, Output, Reducer, Stream, skill
 from dimos.core import In, Out, rpc
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.module3D import Detection3DModule
@@ -29,20 +30,24 @@ from dimos.perception.detection2d.type import (
     Detection3D,
     ImageDetections3D,
 )
-from dimos.perception.detection2d.type.detection3d import Detection3D
+from dimos.protocol.skill.skill import skill
+from dimos.protocol.skill.type import Output, Reducer, Stream
+from dimos.types.timestamped import to_datetime
 
 
 # Represents an object in space, as collection of 3d detections over time
 class Object3D(Detection3D):
-    image: Image = None
+    best_detection: Detection3D = None
     center: Vector3 = None
     track_id: str = None
+    detections: List[Detection3D]
 
     def to_repr_dict(self) -> Dict[str, Any]:
         return {"object_id": self.track_id}
 
     def __init__(self, track_id: str, detection: Optional[Detection3D] = None, *args, **kwargs):
         if detection is None:
+            self.detections = []
             return
         self.ts = detection.ts
         self.track_id = track_id
@@ -50,11 +55,12 @@ class Object3D(Detection3D):
         self.name = detection.name
         self.confidence = detection.confidence
         self.pointcloud = detection.pointcloud
-        self.image = detection.image
         self.bbox = detection.bbox
         self.transform = detection.transform
         self.center = detection.center
         self.frame_id = detection.frame_id
+        self.detections = [detection]
+        self.best_detection = detection
 
     def __add__(self, detection: Detection3D) -> "Object3D":
         new_object = Object3D(self.track_id)
@@ -67,21 +73,49 @@ class Object3D(Detection3D):
         new_object.transform = self.transform
         new_object.pointcloud = self.pointcloud + detection.pointcloud
         new_object.frame_id = self.frame_id
-
-        if detection.image.sharpness > self.image.sharpness:
-            new_object.image = detection.image
-        else:
-            new_object.image = self.image
-
         new_object.center = (self.center + detection.center) / 2
+        new_object.detections = self.detections + [detection]
+
+        if detection.bbox_2d_volume() > self.bbox_2d_volume():
+            new_object.best_detection = detection
+        else:
+            new_object.best_detection = self.best_detection
 
         return new_object
+
+    @property
+    def image(self) -> Image:
+        return self.best_detection.image
+
+    def scene_entity_label(self) -> str:
+        return f"{self.name} ({len(self.detections)})"
+
+    def agent_encode(self):
+        return {
+            "id": self.track_id,
+            "name": self.name,
+            "detections": len(self.detections),
+            "last_seen": f"{round((time.time() - self.ts))}s ago",
+            "position": self.to_pose().position.agent_encode(),
+        }
+
+    def to_pose(self) -> PoseStamped:
+        optical_inverse = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
+            frame_id="camera_link",
+            child_frame_id="camera_optical",
+        ).inverse()
+
+        return (self.best_detection.transform + optical_inverse).to_pose()
 
 
 class ObjectDBModule(Detection3DModule):
     cnt: int = 0
     objects: dict[str, Object3D]
     object_stream: Observable[Object3D] = None
+
+    goto: Callable[[PoseStamped], Any] = None
 
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
@@ -99,17 +133,20 @@ class ObjectDBModule(Detection3DModule):
 
     scene_update: Out[SceneUpdate] = None  # type: ignore
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, goto: Callable[[PoseStamped], Any], *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.goto = goto
         self.objects = {}
 
     def closest_object(self, detection: Detection3D) -> Optional[Object3D]:
-        distances = sorted(
-            self.objects.values(), key=lambda obj: detection.center.distance(obj.center)
-        )
+        # Filter objects to only those with matching names
+        matching_objects = [obj for obj in self.objects.values() if obj.name == detection.name]
 
-        if not distances:
+        if not matching_objects:
             return None
+
+        # Sort by distance
+        distances = sorted(matching_objects, key=lambda obj: detection.center.distance(obj.center))
 
         return distances[0]
 
@@ -132,6 +169,33 @@ class ObjectDBModule(Detection3DModule):
         self.cnt += 1
         return new_object
 
+    def agent_encode(self) -> List[Any]:
+        ret = []
+        for obj in copy(self.objects).values():
+            # we need at least 3 detectieons to consider it a valid object
+            # for this to be serious we need a ratio of detections within the window of observations
+            if len(obj.detections) < 3:
+                continue
+            ret.append(obj.agent_encode())
+        if not ret:
+            return "No objects detected yet."
+        return ret
+
+    @skill()
+    def list_objects(self):
+        """List all detected objects that the system remembers and can navigate to."""
+        data = self.agent_encode()
+        print("LIST OBJECTS", data)
+        return data
+
+    @skill()
+    def navigate_to_object(self, object_id: str):
+        """Navigate to an object by an object id"""
+        target_obj = self.objects.get(object_id, None)
+        if not target_obj:
+            return f"Object {object_id} not found\nHere are the known objects:\n{str(self.agent_encode())}"
+        return self.goto(target_obj.to_pose())
+
     def lookup(self, label: str) -> List[Detection3D]:
         """Look up a detection by label."""
         return []
@@ -142,7 +206,6 @@ class ObjectDBModule(Detection3DModule):
 
         def update_objects(imageDetections: ImageDetections3D):
             for detection in imageDetections.detections:
-                print(detection)
                 return self.add_detection(detection)
 
         def scene_thread():
@@ -155,13 +218,16 @@ class ObjectDBModule(Detection3DModule):
 
         self.detection_stream_3d.subscribe(update_objects)
 
+    def goto_object(self, object_id: str) -> Optional[Object3D]:
+        """Go to object by id."""
+        return self.objects.get(object_id, None)
+
     def to_foxglove_scene_update(self) -> "SceneUpdate":
         """Convert all detections to a Foxglove SceneUpdate message.
 
         Returns:
             SceneUpdate containing SceneEntity objects for all detections
         """
-        from lcm_msgs.foxglove_msgs import SceneUpdate
 
         # Create SceneUpdate message with all detections
         scene_update = SceneUpdate()
@@ -169,10 +235,21 @@ class ObjectDBModule(Detection3DModule):
         scene_update.deletions = []
         scene_update.entities = []
 
-        # Process each detection
-        for obj in self.objects.values():
-            entity = obj.to_foxglove_scene_entity(entity_id=f"object_{obj.name}_{obj.track_id}")
-            scene_update.entities.append(entity)
+        for obj in copy(self.objects).values():
+            # we need at least 3 detectieons to consider it a valid object
+            # for this to be serious we need a ratio of detections within the window of observations
+            if len(obj.detections) < 3:
+                continue
+
+            # print(
+            #    f"Object {obj.track_id}: {len(obj.detections)} detections, confidence {obj.confidence}"
+            # )
+            # print(obj.to_pose())
+            scene_update.entities.append(
+                obj.to_foxglove_scene_entity(
+                    entity_id=f"object_{obj.name}_{obj.track_id}_{len(obj.detections)}"
+                )
+            )
 
         scene_update.entities_length = len(scene_update.entities)
         return scene_update

@@ -155,6 +155,10 @@ class Vector3(LCMVector3):
 
         return f"{getArrow()} Vector {self.__repr__()}"
 
+    def agent_encode(self) -> dict:
+        """Encode the vector for agent communication."""
+        return {"x": self.x, "y": self.y, "z": self.z}
+
     def serialize(self) -> dict:
         """Serialize the vector to a tuple."""
         return {"type": "vector", "c": (self.x, self.y, self.z)}
