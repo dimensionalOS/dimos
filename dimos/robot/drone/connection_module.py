@@ -16,9 +16,11 @@
 """DimOS module wrapper for drone connection."""
 
 import time
-from typing import Optional
+import json
+from typing import Any, Optional
 
 from dimos.core import In, Module, Out, rpc
+from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
 from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.std_msgs import String
@@ -37,9 +39,11 @@ class DroneConnectionModule(Module):
 
     # Inputs
     movecmd: In[Vector3] = None
+    gps_goal: In[LatLon] = None
 
     # Outputs
     odom: Out[PoseStamped] = None
+    gps_location: Out[LatLon] = None
     status: Out[String] = None  # JSON status
     telemetry: Out[String] = None  # Full telemetry JSON
     video: Out[Image] = None
@@ -51,6 +55,7 @@ class DroneConnectionModule(Module):
     _odom: Optional[PoseStamped] = None
     _status: dict = {}
     _latest_video_frame: Optional[Image] = None
+    _latest_telemetry: Optional[dict[str, Any]] = None
 
     def __init__(
         self,
@@ -73,6 +78,7 @@ class DroneConnectionModule(Module):
         self.connection = None
         self.video_stream = None
         self._latest_video_frame = None
+        self._latest_telemetry = None
         Module.__init__(self, *args, **kwargs)
 
     @rpc
@@ -117,6 +123,8 @@ class DroneConnectionModule(Module):
 
         # Subscribe to movement commands
         self.movecmd.subscribe(self.move)
+
+        self.gps_goal.subscribe(self._on_gps_goal)
 
         # Start telemetry update thread
         import threading
@@ -163,17 +171,19 @@ class DroneConnectionModule(Module):
     def _publish_status(self, status: dict):
         """Publish drone status as JSON string."""
         self._status = status
-        import json
 
         status_str = String(json.dumps(status))
         self.status.publish(status_str)
 
     def _publish_telemetry(self, telemetry: dict):
         """Publish full telemetry as JSON string."""
-        import json
-
         telemetry_str = String(json.dumps(telemetry))
         self.telemetry.publish(telemetry_str)
+        self._latest_telemetry = telemetry
+
+        if "GLOBAL_POSITION_INT" in telemetry:
+            tel = telemetry["GLOBAL_POSITION_INT"]
+            self.gps_location.publish(LatLon(lat=tel["lat"], lon=tel["lon"]))
 
     def _telemetry_loop(self):
         """Continuously update telemetry at 30Hz."""
@@ -322,6 +332,10 @@ class DroneConnectionModule(Module):
         if self.connection:
             return self.connection.fly_to(lat, lon, alt)
         return False
+
+    def _on_gps_goal(self, cmd: LatLon) -> None:
+        current_alt = self._latest_telemetry.get("GLOBAL_POSITION_INT", {}).get("relative_alt", 0)
+        self.connection.fly_to(cmd.lat, cmd.lon, current_alt)
 
     @rpc
     def stop(self):

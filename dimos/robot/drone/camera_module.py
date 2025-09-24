@@ -154,6 +154,8 @@ class DroneCameraModule(Module):
 
         logger.info("Depth processing loop started")
 
+        _reported_error = False
+
         while not self._stop_processing.is_set():
             if self._latest_frame is not None and self.metric3d is not None:
                 try:
@@ -198,7 +200,9 @@ class DroneCameraModule(Module):
                     self._publish_camera_pose(header)
 
                 except Exception as e:
-                    logger.error(f"Error processing depth: {e}")
+                    if not _reported_error:
+                        _reported_error = True
+                        logger.error(f"Error processing depth: {e}")
             else:
                 time.sleep(0.01)
 

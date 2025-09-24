@@ -17,17 +17,22 @@
 
 """Main Drone robot class for DimOS."""
 
+import functools
 import os
 import time
 import logging
 from typing import Optional
 
+from reactivex import Observable
+
 from dimos import core
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.mapping.types import LatLon
+from dimos.msgs.geometry_msgs import PoseStamped, Vector3, Twist
 from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.std_msgs import String
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.protocol import pubsub
+from dimos_lcm.std_msgs import Bool
 
 # LCM not needed in orchestrator - modules handle communication
 from dimos.robot.robot import Robot
@@ -36,6 +41,7 @@ from dimos.robot.drone.camera_module import DroneCameraModule
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 logger = setup_logger(__name__)
 
@@ -82,6 +88,7 @@ class Drone(Robot):
         self.connection = None
         self.camera = None
         self.foxglove_bridge = None
+        self.websocket_vis = None
 
         self._setup_directories()
 
@@ -101,6 +108,7 @@ class Drone(Robot):
         self._deploy_connection()
         self._deploy_camera()
         self._deploy_visualization()
+        self._deploy_navigation()
 
         # Start modules
         self._start_modules()
@@ -114,13 +122,15 @@ class Drone(Robot):
 
         self.connection = self.dimos.deploy(
             DroneConnectionModule,
-            connection_string=self.connection_string,
+            connection_string="replay",
+            # connection_string=self.connection_string,
             video_port=self.video_port,
             outdoor=self.outdoor,
         )
 
         # Configure LCM transports
         self.connection.odom.transport = core.LCMTransport("/drone/odom", PoseStamped)
+        self.connection.gps_location.transport = core.pLCMTransport("/gps_location")
         self.connection.status.transport = core.LCMTransport("/drone/status", String)
         self.connection.telemetry.transport = core.LCMTransport("/drone/telemetry", String)
         self.connection.video.transport = core.LCMTransport("/drone/video", Image)
@@ -147,9 +157,23 @@ class Drone(Robot):
         logger.info("Camera module deployed")
 
     def _deploy_visualization(self):
-        """Deploy visualization tools."""
-        logger.info("Setting up Foxglove bridge...")
+        """Deploy and configure visualization modules."""
+        self.websocket_vis = self.dimos.deploy(WebsocketVisModule)
+        # self.websocket_vis.click_goal.transport = core.LCMTransport("/goal_request", PoseStamped)
+        self.websocket_vis.gps_goal.transport = core.pLCMTransport("/gps_goal")
+        # self.websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
+        # self.websocket_vis.stop_explore_cmd.transport = core.LCMTransport("/stop_explore_cmd", Bool)
+        self.websocket_vis.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
+
+        self.websocket_vis.robot_pose.connect(self.connection.odom)
+        self.websocket_vis.gps_location.connect(self.connection.gps_location)
+        # self.websocket_vis.path.connect(self.global_planner.path)
+        # self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
+
         self.foxglove_bridge = FoxgloveBridge()
+
+    def _deploy_navigation(self):
+        self.websocket_vis.gps_goal.connect(self.connection.gps_goal)
 
     def _start_modules(self):
         """Start all deployed modules."""
@@ -165,6 +189,8 @@ class Drone(Robot):
         if not result:
             logger.warning("Camera module failed to start")
 
+        self.websocket_vis.start()
+
         # Start Foxglove
         self.foxglove_bridge.start()
 
@@ -179,6 +205,10 @@ class Drone(Robot):
             Current pose or None
         """
         return self.connection.get_odom()
+
+    @functools.cached_property
+    def gps_position_stream(self) -> Observable[LatLon]:
+        return self.connection.gps_location.transport.pure_observable()
 
     def get_status(self) -> dict:
         """Get drone status.
@@ -321,8 +351,8 @@ def main():
 ║         DimOS Mavlink Drone Runner       ║
 ╠══════════════════════════════════════════╣
 ║  MAVLink: {connection:<30} ║
-║  Video:   UDP port {video_port:<22} ║
-║  Foxglove: http://localhost:8765        ║
+║  Video:   UDP port {video_port:<22}║
+║  Foxglove: http://localhost:8765         ║
 ╚══════════════════════════════════════════╝
     """)
 
