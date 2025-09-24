@@ -34,21 +34,18 @@ from dimos.hardware.camera.webcam import Webcam, WebcamConfig
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
 
+default_transform = lambda: Transform(
+    translation=Vector3(0.0, 0.0, 0.0),
+    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+    frame_id="base_link",
+    child_frame_id="camera_link",
+)
+
 
 @dataclass
 class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
-
-    transform: Transform = (
-        field(
-            default_factory=lambda: Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="base_link",
-                child_frame_id="camera_link",
-            )
-        ),
-    )
+    transform: Optional[Transform] = field(default_factory=default_transform)
     hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
 
 
@@ -88,7 +85,6 @@ class CameraModule(Module):
                 return
 
             camera_link = self.config.transform
-
             camera_link.ts = camera_info.ts
             camera_optical = Transform(
                 translation=Vector3(0.0, 0.0, 0.0),
@@ -107,7 +103,7 @@ class CameraModule(Module):
     def video_stream(self) -> Image:
         """implicit video stream skill"""
         _queue = queue.Queue(maxsize=1)
-        self.hardware.color_stream().subscribe(_queue.put)
+        self.hardware.image_stream().subscribe(_queue.put)
 
         for image in iter(_queue.get, None):
             yield image

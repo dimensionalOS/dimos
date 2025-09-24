@@ -22,12 +22,9 @@ import logging
 import os
 import time
 from typing import Optional
-<<<<<<< HEAD
 from dimos import core
 from dimos.core import In, Module, Out, rpc
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
-=======
->>>>>>> 7af366144609942b58db7326505b68b1d1207ede
 
 from dimos.msgs.std_msgs.Bool import Bool, ROSBool
 from dimos.robot.unitree_webrtc.rosnav import NavigationModule
@@ -193,9 +190,9 @@ class UnitreeG1(Robot):
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
 
-    def _deploy_detection(self):
+    def _deploy_detection(self, goto):
         detection = self.dimos.deploy(
-            ObjectDBModule, camera_info=zed.CameraInfo.SingleWebcam, height_filter=-1
+            ObjectDBModule, goto=goto, camera_info=zed.CameraInfo.SingleWebcam
         )
 
         detection.image.connect(self.camera.image)
@@ -231,10 +228,6 @@ class UnitreeG1(Robot):
 
         self._deploy_visualization()
 
-        if self.enable_camera:
-            self._deploy_camera()
-            self._deploy_detection()
-
         if self.enable_joystick:
             self._deploy_joystick()
 
@@ -244,15 +237,33 @@ class UnitreeG1(Robot):
         self._start_modules()
 
         self.nav = self.dimos.deploy(NavigationModule)
-<<<<<<< HEAD
         self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
         self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
         self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
         self.nav.start()
-=======
->>>>>>> 7af366144609942b58db7326505b68b1d1207ede
+
+        if self.enable_camera:
+            self._deploy_camera()
+            self._deploy_detection(self.nav.go_to)
 
         self.lcm.start()
+
+        from dimos.agents2.spec import Model, Provider
+        from dimos.agents2 import Agent, Output, Reducer, Stream, skill
+        from dimos.agents2.cli.human import HumanInput
+
+        agent = Agent(
+            system_prompt="You are a helpful assistant for controlling a humanoid robot. ",
+            model=Model.GPT_4O,  # Could add CLAUDE models to enum
+            provider=Provider.OPENAI,  # Would need ANTHROPIC provider
+        )
+        human_input = self.dimos.deploy(HumanInput)
+        agent.register_skills(human_input)
+        agent.register_skills(self.detection)
+
+        agent.run_implicit_skill("human")
+        agent.start()
+        agent.loop_thread()
 
         logger.info("UnitreeG1 initialized and started")
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
@@ -335,15 +346,15 @@ class UnitreeG1(Robot):
         from dimos.msgs.std_msgs import Bool
 
         # Navigation control topics from autonomy stack
-        self.ros_bridge.add_topic(
-            "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
-        )
-        self.ros_bridge.add_topic(
-            "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
-        )
-        self.ros_bridge.add_topic(
-            "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
-        )
+        # self.ros_bridge.add_topic(
+        #    "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
+        # )
+        # self.ros_bridge.add_topic(
+        #    "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
+        # )
+        # self.ros_bridge.add_topic(
+        #    "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
+        # )
 
         # Add /registered_scan topic from ROS to DIMOS
         # self.ros_bridge.add_topic(
@@ -354,12 +365,12 @@ class UnitreeG1(Robot):
         self.ros_bridge.add_topic(
             "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
         )
-        self.ros_bridge.add_topic(
-            "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
-        )
-        self.ros_bridge.add_topic(
-            "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
-        )
+        # self.ros_bridge.add_topic(
+        #    "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
+        # )
+        # self.ros_bridge.add_topic(
+        #    "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
+        # )
 
         self.ros_bridge.add_topic(
             "/registered_scan",
@@ -385,7 +396,7 @@ class UnitreeG1(Robot):
 
         if self.camera:
             self.camera.start()
-            # self.detection.start()
+            self.detection.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -461,11 +472,11 @@ def main():
     )
     robot.start()
 
-    time.sleep(10)
+    time.sleep(7)
     print("Starting navigation...")
     print(
         robot.nav.go_to(
-            PoseStamped(ts=time.time(), frame_id="map", position=Vector3(0.1, 0.1, 0.1)),
+            PoseStamped(ts=time.time(), frame_id="map", position=Vector3(0.0, 0.0, 0.03)),
             timeout=10,
         ),
     )
@@ -492,4 +503,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-9
