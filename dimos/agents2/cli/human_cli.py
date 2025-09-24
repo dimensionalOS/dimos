@@ -242,7 +242,7 @@ Tool calls are displayed in cyan with ▶ prefix"""
             return
 
         # Send to agent (message will be displayed when received back)
-        self.human_transport.publish(None, message)
+        self.human_transport.publish(message)
 
     def action_clear(self) -> None:
         """Clear the chat log."""

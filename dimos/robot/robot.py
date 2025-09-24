@@ -17,6 +17,9 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
+from reactivex import Observable
+
+from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.types.robot_capabilities import RobotCapability
@@ -83,3 +86,7 @@ class UnitreeRobot(Robot):
     @property
     @abstractmethod
     def spatial_memory(self) -> Optional[SpatialMemory]: ...
+
+    @property
+    @abstractmethod
+    def gps_position_stream(self) -> Observable[LatLon]: ...

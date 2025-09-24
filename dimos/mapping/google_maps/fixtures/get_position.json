@@ -1,0 +1,141 @@
+[
+  {
+    "address_components": [
+      {
+        "long_name": "Golden Gate Bridge",
+        "short_name": "Golden Gate Bridge",
+        "types": [
+          "establishment",
+          "point_of_interest",
+          "tourist_attraction"
+        ]
+      },
+      {
+        "long_name": "Golden Gate Bridge",
+        "short_name": "Golden Gate Brg",
+        "types": [
+          "route"
+        ]
+      },
+      {
+        "long_name": "San Francisco",
+        "short_name": "SF",
+        "types": [
+          "locality",
+          "political"
+        ]
+      },
+      {
+        "long_name": "San Francisco County",
+        "short_name": "San Francisco County",
+        "types": [
+          "administrative_area_level_2",
+          "political"
+        ]
+      },
+      {
+        "long_name": "California",
+        "short_name": "CA",
+        "types": [
+          "administrative_area_level_1",
+          "political"
+        ]
+      },
+      {
+        "long_name": "United States",
+        "short_name": "US",
+        "types": [
+          "country",
+          "political"
+        ]
+      }
+    ],
+    "formatted_address": "Golden Gate Bridge, Golden Gate Brg, San Francisco, CA, USA",
+    "geometry": {
+      "location": {
+        "lat": 37.8199109,
+        "lng": -122.4785598
+      },
+      "location_type": "GEOMETRIC_CENTER",
+      "viewport": {
+        "northeast": {
+          "lat": 37.8324583,
+          "lng": -122.4756692
+        },
+        "southwest": {
+          "lat": 37.8075604,
+          "lng": -122.4810829
+        }
+      }
+    },
+    "navigation_points": [
+      {
+        "location": {
+          "latitude": 37.8075604,
+          "longitude": -122.4756957
+        }
+      },
+      {
+        "location": {
+          "latitude": 37.80756119999999,
+          "longitude": -122.4756922
+        },
+        "restricted_travel_modes": [
+          "WALK"
+        ]
+      },
+      {
+        "location": {
+          "latitude": 37.8324279,
+          "longitude": -122.4810829
+        }
+      },
+      {
+        "location": {
+          "latitude": 37.8324382,
+          "longitude": -122.4810669
+        },
+        "restricted_travel_modes": [
+          "WALK"
+        ]
+      },
+      {
+        "location": {
+          "latitude": 37.8083987,
+          "longitude": -122.4765643
+        },
+        "restricted_travel_modes": [
+          "DRIVE"
+        ]
+      },
+      {
+        "location": {
+          "latitude": 37.8254712,
+          "longitude": -122.4791469
+        },
+        "restricted_travel_modes": [
+          "DRIVE"
+        ]
+      },
+      {
+        "location": {
+          "latitude": 37.8321189,
+          "longitude": -122.4808249
+        },
+        "restricted_travel_modes": [
+          "DRIVE"
+        ]
+      }
+    ],
+    "place_id": "ChIJw____96GhYARCVVwg5cT7c0",
+    "plus_code": {
+      "compound_code": "RG9C+XH Presidio of San Francisco, San Francisco, CA",
+      "global_code": "849VRG9C+XH"
+    },
+    "types": [
+      "establishment",
+      "point_of_interest",
+      "tourist_attraction"
+    ]
+  }
+]

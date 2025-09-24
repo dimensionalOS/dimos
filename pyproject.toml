@@ -96,6 +96,7 @@ dependencies = [
 
     # Mapping
     "open3d",
+    "googlemaps>=4.10.0",
 
     # Inference
 
