@@ -22,12 +22,9 @@ import logging
 import os
 import time
 from typing import Optional
-<<<<<<< HEAD
 from dimos import core
 from dimos.core import In, Module, Out, rpc
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
-=======
->>>>>>> 7af366144609942b58db7326505b68b1d1207ede
 
 from dimos.msgs.std_msgs.Bool import Bool, ROSBool
 from dimos.robot.unitree_webrtc.rosnav import NavigationModule
@@ -244,14 +241,12 @@ class UnitreeG1(Robot):
         self._start_modules()
 
         self.nav = self.dimos.deploy(NavigationModule)
-<<<<<<< HEAD
-        self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
-        self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
-        self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
-        self.nav.start()
-=======
->>>>>>> 7af366144609942b58db7326505b68b1d1207ede
 
+        self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
+        self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+        self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
+
+        self.nav.start()
         self.lcm.start()
 
         logger.info("UnitreeG1 initialized and started")
