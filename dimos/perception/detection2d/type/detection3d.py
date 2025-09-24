@@ -57,6 +57,10 @@ def raycast() -> Detection3DFilter:
     def filter_func(
         det: Detection2D, pc: PointCloud2, ci: CameraInfo, tf: Transform
     ) -> Optional[PointCloud2]:
+        # check number of points for this algo
+        if len(pc.pointcloud.points) < 4:
+            return pc
+
         camera_pos = tf.inverse().translation
         camera_pos_np = camera_pos.to_numpy()
         _, visible_indices = pc.pointcloud.hidden_point_removal(camera_pos_np, radius=100.0)
