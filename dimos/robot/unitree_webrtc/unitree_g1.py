@@ -22,7 +22,15 @@ import logging
 import os
 import time
 from typing import Optional
+<<<<<<< HEAD
+from dimos import core
+from dimos.core import In, Module, Out, rpc
+from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+=======
+>>>>>>> 7af366144609942b58db7326505b68b1d1207ede
 
+from dimos.msgs.std_msgs.Bool import Bool, ROSBool
+from dimos.robot.unitree_webrtc.rosnav import NavigationModule
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from lcm_msgs.foxglove_msgs import SceneUpdate
 from nav_msgs.msg import Odometry as ROSOdometry
@@ -186,7 +194,9 @@ class UnitreeG1(Robot):
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
 
     def _deploy_detection(self):
-        detection = self.dimos.deploy(ObjectDBModule, camera_info=zed.CameraInfo.SingleWebcam)
+        detection = self.dimos.deploy(
+            ObjectDBModule, camera_info=zed.CameraInfo.SingleWebcam, height_filter=-1
+        )
 
         detection.image.connect(self.camera.image)
         detection.pointcloud.transport = core.LCMTransport("/map", PointCloud2)
@@ -234,6 +244,13 @@ class UnitreeG1(Robot):
         self._start_modules()
 
         self.nav = self.dimos.deploy(NavigationModule)
+<<<<<<< HEAD
+        self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+        self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
+        self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
+        self.nav.start()
+=======
+>>>>>>> 7af366144609942b58db7326505b68b1d1207ede
 
         self.lcm.start()
 
@@ -333,6 +350,17 @@ class UnitreeG1(Robot):
         #    "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
         # )
 
+        # Navigation control topics from autonomy stack
+        self.ros_bridge.add_topic(
+            "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
+        )
+        self.ros_bridge.add_topic(
+            "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
+        )
+        self.ros_bridge.add_topic(
+            "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+
         self.ros_bridge.add_topic(
             "/registered_scan",
             PointCloud2,
@@ -357,7 +385,7 @@ class UnitreeG1(Robot):
 
         if self.camera:
             self.camera.start()
-        # self.detection.start()
+            # self.detection.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -434,8 +462,13 @@ def main():
     robot.start()
 
     time.sleep(10)
-    robot.nav.go_to(PoseStamped(Vector3[0, 0, 0]))
-
+    print("Starting navigation...")
+    print(
+        robot.nav.go_to(
+            PoseStamped(ts=time.time(), frame_id="map", position=Vector3(0.1, 0.1, 0.1)),
+            timeout=10,
+        ),
+    )
     try:
         if args.joystick:
             print("\n" + "=" * 50)

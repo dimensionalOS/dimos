@@ -122,7 +122,7 @@ class Detection3D(Detection2D):
         Returns:
             Detection3D with filtered pointcloud, or None if no valid points
         """
-
+        # print(f"Processing Detection2D: {det.name}")
         # Extract camera parameters
         fx, fy = camera_info.K[0], camera_info.K[4]
         cx, cy = camera_info.K[2], camera_info.K[5]
@@ -179,6 +179,7 @@ class Detection3D(Detection2D):
         detection_points = world_points[in_box_mask]
 
         if detection_points.shape[0] == 0:
+            # print(f"No points found in detection bbox after projection. {det.name}")
             return None
 
         # Create initial pointcloud for this detection
