@@ -18,6 +18,7 @@
 import functools
 import logging
 import os
+import queue
 import time
 import warnings
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
+from dimos.agents2 import Agent, Output, Reducer, Stream, skill
 from dimos.core import DimosCluster, In, LCMTransport, Module, ModuleConfig, Out, rpc
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
@@ -134,10 +136,26 @@ class ConnectionModule(Module):
 
     default_config = ConnectionModuleConfig
 
+    # mega temporary, skill should have a limit decorator for number of
+    # parallel calls
+    video_running: bool = False
+
     def __init__(self, connection_type: str = "webrtc", *args, **kwargs):
         self.connection_config = kwargs
         self.connection_type = connection_type
         Module.__init__(self, *args, **kwargs)
+
+    @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
+    def video_stream_tool(self) -> Image:
+        """implicit video stream skill, don't call this directly"""
+        if self.video_running:
+            return "video stream already running"
+        self.video_running = True
+        _queue = queue.Queue(maxsize=1)
+        self.connection.video_stream().subscribe(_queue.put)
+
+        for image in iter(_queue.get, None):
+            yield image
 
     @rpc
     def record(self, recording_name: str):
@@ -274,8 +292,8 @@ class ConnectionModule(Module):
 
 
 def deploy_connection(dimos: DimosCluster, **kwargs):
-    # foxglove_bridge = dimos.deploy(FoxgloveBridge)
-    # foxglove_bridge.start()
+    foxglove_bridge = dimos.deploy(FoxgloveBridge)
+    foxglove_bridge.start()
 
     connection = dimos.deploy(
         ConnectionModule,
