@@ -11,13 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import time
 import functools
 from typing import Optional, TypedDict, Union
+from dimos.msgs.tf2_msgs import TFMessage
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
-from dimos_lcm.sensor_msgs import CameraInfo, PointCloud2
+from dimos.msgs.sensor_msgs import CameraInfo, PointCloud2
 from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 
 from dimos.core.transport import LCMTransport
@@ -34,6 +35,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
+from dimos.hardware.camera import zed
 
 
 class Moment(TypedDict, total=False):
@@ -60,7 +62,41 @@ class Moment3D(Moment):
 tf = TF()
 
 
-def get_moment(seek: float = 10):
+def get_g1_moment(seek: float = 10.0):
+    data_dir = "replay_g1"
+    get_data(data_dir)
+
+    lidar_frame = PointCloud2.lcm_decode(
+        TimedSensorReplay(f"{data_dir}/map#sensor_msgs.PointCloud2").find_closest_seek(seek)
+    )
+
+    tf_replay = TimedSensorReplay(f"{data_dir}/tf#tf2_msgs.TFMessage")
+    tf = TF()
+    tf.start()
+
+    tf_window = 1.5
+    for timestamp, tf_frame in tf_replay.iterate_ts(seek=seek - tf_window, duration=tf_window):
+        tf.publish(*TFMessage.lcm_decode(tf_frame).transforms)
+        time.sleep(0.1)
+        tf.publish(*TFMessage.lcm_decode(tf_frame).transforms)
+
+    print(tf)
+    image_frame = Image.lcm_decode(
+        TimedSensorReplay(f"{data_dir}/image#sensor_msgs.Image").find_closest_seek(seek)
+    )
+
+    return {
+        "lidar_frame": lidar_frame,
+        "image_frame": image_frame,
+        "camera_info": zed.CameraInfo.SingleWebcam,
+        "tf": tf,
+    }
+
+
+def get_moment(seek: float = 10, g1: bool = False) -> Moment:
+    if g1:
+        return get_g1_moment(seek=seek)
+
     data_dir = "unitree_go2_lidar_corrected"
     get_data(data_dir)
 
@@ -95,13 +131,12 @@ _detection2d_module = None
 _objectdb_module = None
 
 
-def detections2d(seek: float = 10.0) -> Moment2D:
+def detections2d(seek: float = 10.0, g1: bool = False) -> Moment2D:
     global _detection2d_module
-    moment = get_moment(seek=seek)
+    moment = get_moment(seek=seek, g1=g1)
     if _detection2d_module is None:
         _detection2d_module = Detection2DModule()
 
-    moment = get_moment(seek=seek)
     return {
         **moment,
         "detections2d": _detection2d_module.process_image_frame(moment["image_frame"]),
@@ -112,11 +147,12 @@ def detections2d(seek: float = 10.0) -> Moment2D:
 _detection3d_module = None
 
 
-def detections3d(seek: float = 10.0) -> Moment3D:
+def detections3d(seek: float = 10.0, g1: bool = False) -> Moment3D:
     global _detection3d_module
 
-    moment = detections2d(seek=seek)
-    camera_transform = moment["tf"].get("camera_optical", "world")
+    moment = detections2d(seek=seek, g1=g1)
+
+    camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
     if camera_transform is None:
         raise ValueError("No camera_optical transform in tf")
 
@@ -135,7 +171,7 @@ def objectdb(seek: float = 10.0) -> Moment3D:
     global _objectdb_module
 
     moment = detections3d(seek=seek)
-    camera_transform = moment["tf"].get("camera_optical", "world")
+    camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
     if camera_transform is None:
         raise ValueError("No camera_optical transform in tf")
 
@@ -167,16 +203,18 @@ def publish_moment(moment: Union[Moment, Moment2D, Moment3D]):
     image_frame_transport = _get_transport("/image", Image)
     image_frame_transport.publish(moment.get("image_frame"))
 
-    odom_frame_transport = _get_transport("/odom", Odometry)
-    odom_frame_transport.publish(moment.get("odom_frame"))
-
     camera_info_transport = _get_transport("/camera_info", CameraInfo)
     camera_info_transport.publish(moment.get("camera_info"))
+
+    odom_frame = moment.get("odom_frame")
+    if odom_frame:
+        odom_frame_transport = _get_transport("/odom", Odometry)
+        odom_frame_transport.publish(moment.get("odom_frame"))
 
     detections2d: ImageDetections2D = moment.get("detections2d")
     if detections2d:
         annotations_transport = _get_transport("/annotations", ImageAnnotations)
-        annotations_transport.publish(detections2d.to_image_annotations())
+        annotations_transport.publish(detections2d.to_foxglove_annotations())
 
     detections3d: ImageDetections3D = moment.get("detections3d")
     if detections3d:

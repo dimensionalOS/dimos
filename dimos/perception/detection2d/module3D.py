@@ -14,9 +14,6 @@
 
 from typing import Optional
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-)
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
 from reactivex.observable import Observable
@@ -24,7 +21,6 @@ from reactivex.observable import Observable
 from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.type import (
     ImageDetections2D,
@@ -37,7 +33,6 @@ from dimos.utils.reactive import backpressure
 
 class Detection3DModule(Detection2DModule):
     camera_info: CameraInfo
-    height_filter: Optional[float]
 
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
@@ -48,10 +43,7 @@ class Detection3DModule(Detection2DModule):
 
     detection_3d_stream: Observable[ImageDetections3D] = None
 
-    def __init__(
-        self, camera_info: CameraInfo, height_filter: Optional[float] = 0.1, *args, **kwargs
-    ):
-        self.height_filter = height_filter
+    def __init__(self, camera_info: CameraInfo, *args, **kwargs):
         self.camera_info = camera_info
 
         Detection2DModule.__init__(self, *args, **kwargs)
@@ -72,7 +64,6 @@ class Detection3DModule(Detection2DModule):
                 world_pointcloud=pointcloud,
                 camera_info=self.camera_info,
                 world_to_camera_transform=transform,
-                height_filter=self.height_filter,
             )
             if detection3d is not None:
                 detection3d_list.append(detection3d)

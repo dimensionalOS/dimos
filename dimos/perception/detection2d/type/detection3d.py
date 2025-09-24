@@ -17,7 +17,7 @@ from __future__ import annotations
 import functools
 import hashlib
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, TypeVar
+from typing import Any, Callable, Dict, Optional, TypeVar
 
 import numpy as np
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -33,12 +33,61 @@ from dimos.perception.detection2d.type.detection2d import Detection2D
 from dimos.perception.detection2d.type.imageDetections import ImageDetections
 from dimos.types.timestamped import to_ros_stamp
 
+type Detection3DFilter = Callable[
+    [Detection2D, PointCloud2, CameraInfo, Transform], Optional[Detection3D]
+]
+
+
+def height_filter(height=0.1) -> Detection3DFilter:
+    return lambda det, pc, ci, tf: pc.filter_by_height(height)
+
+
+def statistical(nb_neighbors=20, std_ratio=0.5) -> Detection3DFilter:
+    def filter_func(
+        det: Detection2D, pc: PointCloud2, ci: CameraInfo, tf: Transform
+    ) -> Optional[PointCloud2]:
+        statistical, removed = pc.pointcloud.remove_statistical_outlier(
+            nb_neighbors=nb_neighbors, std_ratio=std_ratio
+        )
+        return PointCloud2(statistical, pc.frame_id, pc.ts)
+
+
+def raycast() -> Detection3DFilter:
+    def filter_func(
+        det: Detection2D, pc: PointCloud2, ci: CameraInfo, tf: Transform
+    ) -> Optional[PointCloud2]:
+        # Camera position in world frame is the translation part of the transform
+        camera_pos = tf.inverse().translation
+        camera_pos_np = camera_pos.to_numpy()
+        _, visible_indices = pc.pointcloud.hidden_point_removal(camera_pos_np, radius=100.0)
+        visible_pcd = pc.pointcloud.select_by_index(visible_indices)
+        return PointCloud2(visible_pcd, pc.frame_id, pc.ts)
+
+    return filter_func
+
+
+def radius_outlier(min_neighbors: int = 8, radius: float = 0.08) -> Detection3DFilter:
+    """
+    Remove isolated points: keep only points that have at least `min_neighbors`
+    neighbors within `radius` meters (same units as your point cloud).
+    """
+
+    def filter_func(
+        det: Detection2D, pc: PointCloud2, ci: CameraInfo, tf: Transform
+    ) -> Optional[PointCloud2]:
+        filtered_pcd, removed = pc.pointcloud.remove_radius_outlier(
+            nb_points=min_neighbors, radius=radius
+        )
+        return PointCloud2(filtered_pcd, pc.frame_id, pc.ts)
+
+    return filter_func
+
 
 @dataclass
 class Detection3D(Detection2D):
     pointcloud: PointCloud2
     transform: Transform
-    frame_id: str = "world"
+    frame_id: str = "unknown"
 
     @classmethod
     def from_2d(
@@ -47,7 +96,14 @@ class Detection3D(Detection2D):
         world_pointcloud: PointCloud2,
         camera_info: CameraInfo,
         world_to_camera_transform: Transform,
-        height_filter: Optional[float] = 0.2,
+        # filters are to be adjusted based on the sensor noise characteristics if feeding
+        # sensor data directly
+        filters: list[Callable[[PointCloud2], PointCloud2]] = [
+            height_filter(0.1),
+            raycast(),
+            #            statistical(),
+            radius_outlier(),
+        ],
     ) -> Optional["Detection3D"]:
         """Create a Detection3D from a 2D detection by projecting world pointcloud.
 
@@ -61,9 +117,8 @@ class Detection3D(Detection2D):
             det: The 2D detection
             world_pointcloud: Full pointcloud in world frame
             camera_info: Camera calibration info
-            world_to_camera_transform: Transform from world to camera frame
-            height_filter: Optional minimum height filter (in world frame)
-
+            world_to_camerlka_transform: Transform from world to camera frame
+            filters: List of functions to apply to the pointcloud for filtering
         Returns:
             Detection3D with filtered pointcloud, or None if no valid points
         """
@@ -127,45 +182,15 @@ class Detection3D(Detection2D):
             return None
 
         # Create initial pointcloud for this detection
-        detection_pc = PointCloud2.from_numpy(
-            detection_points,
-            frame_id=world_pointcloud.frame_id,
-            timestamp=world_pointcloud.ts,
+        detection_pc = functools.reduce(
+            lambda pc, f: f(pc),
+            filters,
+            PointCloud2.from_numpy(
+                detection_points,
+                frame_id=world_pointcloud.frame_id,
+                timestamp=world_pointcloud.ts,
+            ),
         )
-
-        # Apply height filter if specified
-        if height_filter is not None:
-            detection_pc = detection_pc.filter_by_height(height_filter)
-            if len(detection_pc.pointcloud.points) == 0:
-                return None
-
-        # Remove statistical outliers
-        try:
-            pcd = detection_pc.pointcloud
-            statistical, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=0.5)
-            detection_pc = PointCloud2(statistical, detection_pc.frame_id, detection_pc.ts)
-        except Exception as e:
-            print("Outlier removal failed, continuing without it.", 3)
-            import traceback
-
-            traceback.print_exc()
-            # If outlier removal fails, continue with original
-            pass
-
-        # Hidden point removal from camera perspective
-        camera_position = world_to_camera_transform.inverse().translation
-        camera_pos_np = camera_position.to_numpy()
-
-        try:
-            pcd = detection_pc.pointcloud
-            _, visible_indices = pcd.hidden_point_removal(camera_pos_np, radius=100.0)
-            visible_pcd = pcd.select_by_index(visible_indices)
-            detection_pc = PointCloud2(
-                visible_pcd, frame_id=detection_pc.frame_id, ts=detection_pc.ts
-            )
-        except Exception:
-            # If hidden point removal fails, continue with current pointcloud
-            pass
 
         # Final check for empty pointcloud
         if len(detection_pc.pointcloud.points) == 0:
