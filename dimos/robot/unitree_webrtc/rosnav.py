@@ -93,6 +93,8 @@ class NavigationModule(Module):
 
         self.goal_reach = None
         self.goal_pose.publish(pose)
+        time.sleep(0.2)
+        self.goal_pose.publish(pose)
 
         start_time = time.time()
         while time.time() - start_time < timeout:
