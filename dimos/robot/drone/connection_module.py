@@ -359,8 +359,8 @@ class DroneConnectionModule(Module):
         logger.info("Drone connection module stopped")
 
     @skill(output=Output.image)
-    def get_single_frame(self) -> Optional[Image]:
-        """Returns the latest video frame from the drone camera.
+    def observe(self) -> Optional[Image]:
+        """Returns the latest video frame from the drone camera. Use this skill for any visual world queries.
 
         This skill provides the current camera view for perception tasks.
         Returns None if no frame has been captured yet.
