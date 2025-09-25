@@ -21,7 +21,8 @@ from dotenv import load_dotenv
 from dimos.agents2 import Agent
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.constants import AGENT_SYSTEM_PROMPT_PATH
-from dimos.agents2.skills.google_maps import GoogleMapsSkillContainer
+from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
+from dimos.agents2.skills.gps_nav_skill import GpsNavSkillContainer
 from dimos.agents2.skills.osm import OsmSkillContainer
 from dimos.robot.robot import UnitreeRobot
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
@@ -118,6 +119,9 @@ class UnitreeAgents2Runner:
             ),
             self._exit_stack.enter_context(
                 GoogleMapsSkillContainer(self._robot, self._robot.gps_position_stream),
+            ),
+            self._exit_stack.enter_context(
+                GpsNavSkillContainer(self._robot, self._robot.gps_position_stream),
             ),
             HumanInput(),
         ]

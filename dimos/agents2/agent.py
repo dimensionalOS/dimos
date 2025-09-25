@@ -207,6 +207,7 @@ class Agent(AgentSpec):
 
     @rpc
     def stop(self):
+        self._close_module()
         self.coordinator.stop()
         self._agent_stopped = True
 

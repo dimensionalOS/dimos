@@ -1,0 +1,23 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "navigate_with_text",
+          "args": {
+            "args": [
+              "bookshelf"
+            ]
+          },
+          "id": "call_yPoqcavMo05ogNNy5LMNQl2a",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I have successfully arrived at the bookshelf. Is there anything specific you need here?",
+      "tool_calls": []
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "responses": [
+    {
+      "content": "I will navigate to the nearest chair.",
+      "tool_calls": [
+        {
+          "name": "navigate_with_text",
+          "args": {
+            "args": [
+              "chair"
+            ]
+          },
+          "id": "call_LP4eewByfO9XaxMtnnWxDUz7",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I'm on my way to the chair. Let me know if there's anything else you'd like me to do!",
+      "tool_calls": []
+    },
+    {
+      "content": "I have successfully navigated to the chair. Let me know if you need anything else!",
+      "tool_calls": []
+    }
+  ]
+}

@@ -63,7 +63,7 @@ from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.transform_utils import offset_distance
 from dimos.perception.object_tracker import ObjectTracking
 from dimos_lcm.std_msgs import Bool
-from dimos.robot.robot import UnitreeRobot
+from dimos.robot.robot import GpsRobot, UnitreeRobot
 from dimos.types.robot_capabilities import RobotCapability
 
 
@@ -313,7 +313,7 @@ class ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
 
-class UnitreeGo2(UnitreeRobot):
+class UnitreeGo2(GpsRobot, UnitreeRobot):
     """Full Unitree Go2 robot with navigation and perception capabilities."""
 
     def __init__(
@@ -498,6 +498,12 @@ class UnitreeGo2(UnitreeRobot):
 
         self.foxglove_bridge = FoxgloveBridge()
 
+        # TODO: This should be moved.
+        def _set_goal(goal: LatLon):
+            self.set_gps_travel_goal_points([goal])
+
+        unsub = self.websocket_vis.gps_goal.transport.pure_observable().subscribe(_set_goal)
+
     def _deploy_perception(self):
         """Deploy and configure perception modules."""
         # Deploy spatial memory
@@ -658,6 +664,12 @@ class UnitreeGo2(UnitreeRobot):
     @functools.cached_property
     def gps_position_stream(self) -> Observable[LatLon]:
         return self.connection.gps_location.transport.pure_observable()
+
+    def set_gps_travel_goal_points(self, points: list[LatLon]) -> None:
+        logger.info(f"Travelling to: {points}")
+        # self.connection.... (actually set the goal)
+        print("websocketvis", self.websocket_vis)
+        self.websocket_vis.set_gps_travel_goal_points(points)
 
     def get_odom(self) -> PoseStamped:
         """Get the robot's odometry.

@@ -17,6 +17,11 @@
 
 """Comprehensive tests for Unitree B1 connection module Timer implementation."""
 
+# TODO: These tests are reaching too much into `conn` by setting and shutting
+# down threads manually. That code is already in the connection module, and
+# should be used and tested. Additionally, tests should always use `try-finally`
+# to clean up even if the test fails.
+
 import time
 import threading
 
@@ -67,6 +72,7 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
+        conn._close_module()
 
     def test_watchdog_resets_on_new_command(self):
         """Test that watchdog timeout resets when new command arrives."""
@@ -114,6 +120,7 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
+        conn._close_module()
 
     def test_watchdog_thread_efficiency(self):
         """Test that watchdog uses only one thread regardless of command rate."""
@@ -147,6 +154,7 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
+        conn._close_module()
 
     def test_watchdog_with_send_loop_blocking(self):
         """Test that watchdog still works if send loop blocks."""
@@ -193,6 +201,7 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
+        conn._close_module()
 
     def test_continuous_commands_prevent_timeout(self):
         """Test that continuous commands prevent watchdog timeout."""
@@ -227,6 +236,7 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
+        conn._close_module()
 
     def test_watchdog_timing_accuracy(self):
         """Test that watchdog zeros commands at approximately 200ms."""
@@ -267,6 +277,7 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
+        conn._close_module()
 
     def test_mode_changes_with_watchdog(self):
         """Test that mode changes work correctly with watchdog."""
@@ -306,6 +317,7 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
+        conn._close_module()
 
     def test_watchdog_stops_movement_when_commands_stop(self):
         """Verify watchdog zeros commands when packets stop being sent."""
@@ -363,6 +375,7 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
+        conn._close_module()
 
     def test_rapid_command_thread_safety(self):
         """Test thread safety with rapid commands from multiple threads."""
@@ -411,3 +424,4 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
+        conn._close_module()

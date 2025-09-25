@@ -16,6 +16,7 @@ export class Vector {
 export interface LatLon {
   lat: number;
   lon: number;
+  alt?: number;
 }
 
 export type EncodedPath = Encoded<"path"> & {
@@ -97,6 +98,8 @@ export type Encoded<T extends string> = {
 export interface FullStateData {
   costmap?: EncodedCostmap;
   robot_pose?: EncodedVector;
+  gps_location?: LatLon;
+  gps_travel_goal_points?: LatLon[];
   path?: EncodedPath;
 }
 
@@ -117,6 +120,7 @@ export interface AppState {
   costmap: Costmap | null;
   robotPose: Vector | null;
   gpsLocation: LatLon | null;
+  gpsTravelGoalPoints: LatLon[] | null;
   path: Path | null;
 }
 
@@ -124,5 +128,6 @@ export type AppAction =
   | { type: "SET_COSTMAP"; payload: Costmap }
   | { type: "SET_ROBOT_POSE"; payload: Vector }
   | { type: "SET_GPS_LOCATION"; payload: LatLon }
+  | { type: "SET_GPS_TRAVEL_GOAL_POINTS"; payload: LatLon[] }
   | { type: "SET_PATH"; payload: Path }
   | { type: "SET_FULL_STATE"; payload: Partial<AppState> };
