@@ -234,17 +234,18 @@ class UnitreeG1(Robot):
         if self.enable_ros_bridge:
             self._deploy_ros_bridge()
 
-        self._start_modules()
-
         self.nav = self.dimos.deploy(NavigationModule)
         self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
         self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
         self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
         self.nav.start()
 
-        if self.enable_camera:
-            self._deploy_camera()
-            self._deploy_detection(self.nav.go_to)
+        self._deploy_camera()
+        self._deploy_detection(self.nav.go_to)
+
+        self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
+        self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+        self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
 
         self.lcm.start()
 
@@ -267,6 +268,7 @@ class UnitreeG1(Robot):
 
         logger.info("UnitreeG1 initialized and started")
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
+        self._start_modules()
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
@@ -362,9 +364,9 @@ class UnitreeG1(Robot):
         # )
 
         # Navigation control topics from autonomy stack
-        self.ros_bridge.add_topic(
-            "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
-        )
+        # self.ros_bridge.add_topic(
+        #    "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
+        # )
         # self.ros_bridge.add_topic(
         #    "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
         # )
@@ -394,9 +396,8 @@ class UnitreeG1(Robot):
         # if self.joystick:
         #    self.joystick.start()
 
-        if self.camera:
-            self.camera.start()
-            self.detection.start()
+        self.camera.start()
+        self.detection.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -472,14 +473,14 @@ def main():
     )
     robot.start()
 
-    time.sleep(7)
-    print("Starting navigation...")
-    print(
-        robot.nav.go_to(
-            PoseStamped(ts=time.time(), frame_id="map", position=Vector3(0.0, 0.0, 0.03)),
-            timeout=10,
-        ),
-    )
+    # time.sleep(7)
+    # print("Starting navigation...")
+    # print(
+    #    robot.nav.go_to(
+    #        PoseStamped(ts=time.time(), frame_id="map", position=Vector3(0.0, 0.0, 0.03)),
+    #        timeout=10,
+    #    ),
+    # )
     try:
         if args.joystick:
             print("\n" + "=" * 50)

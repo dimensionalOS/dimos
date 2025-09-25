@@ -96,7 +96,7 @@ class Object3D(Detection3D):
             "name": self.name,
             "detections": len(self.detections),
             "last_seen": f"{round((time.time() - self.ts))}s ago",
-            "position": self.to_pose().position.agent_encode(),
+            # "position": self.to_pose().position.agent_encode(),
         }
 
     def to_pose(self) -> PoseStamped:
@@ -174,18 +174,17 @@ class ObjectDBModule(Detection3DModule):
         for obj in copy(self.objects).values():
             # we need at least 3 detectieons to consider it a valid object
             # for this to be serious we need a ratio of detections within the window of observations
-            if len(obj.detections) < 3:
-                continue
-            ret.append(obj.agent_encode())
+            # if len(obj.detections) < 3:
+            #    continue
+            ret.append(str(obj.agent_encode()))
         if not ret:
             return "No objects detected yet."
-        return ret
+        return "\n".join(ret)
 
-    @skill()
+    @skill(reducer=Reducer.all)
     def list_objects(self):
         """List all detected objects that the system remembers and can navigate to."""
         data = self.agent_encode()
-        print("LIST OBJECTS", data)
         return data
 
     @skill()
@@ -206,6 +205,7 @@ class ObjectDBModule(Detection3DModule):
 
         def update_objects(imageDetections: ImageDetections3D):
             for detection in imageDetections.detections:
+                # print(detection)
                 return self.add_detection(detection)
 
         def scene_thread():

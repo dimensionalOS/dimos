@@ -74,7 +74,7 @@ def raycast() -> Detection3DFilter:
     return filter_func
 
 
-def radius_outlier(min_neighbors: int = 2, radius: float = 0.3) -> Detection3DFilter:
+def radius_outlier(min_neighbors: int = 5, radius: float = 0.3) -> Detection3DFilter:
     """
     Remove isolated points: keep only points that have at least `min_neighbors`
     neighbors within `radius` meters (same units as your point cloud).
@@ -107,7 +107,7 @@ class Detection3D(Detection2D):
         # filters are to be adjusted based on the sensor noise characteristics if feeding
         # sensor data directly
         filters: list[Callable[[PointCloud2], PointCloud2]] = [
-            height_filter(0.1),
+            # height_filter(0.1),
             raycast(),
             statistical(),
             radius_outlier(),
