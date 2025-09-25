@@ -318,8 +318,19 @@ class DroneConnectionModule(Module):
         return False
 
     @skill()
-    def fly_to(self, lat: float, lon: float, alt: float) -> bool:
-        """Fly drone to GPS coordinates.
+    def is_flying_to_target(self) -> bool:
+        """Check if drone is currently flying to a GPS target.
+
+        Returns:
+            True if flying to target, False otherwise
+        """
+        if self.connection and hasattr(self.connection, "is_flying_to_target"):
+            return self.connection.is_flying_to_target
+        return False
+
+    @skill()
+    def fly_to(self, lat: float, lon: float, alt: float) -> str:
+        """Fly drone to GPS coordinates (blocking operation).
 
         Args:
             lat: Latitude in degrees
@@ -327,11 +338,11 @@ class DroneConnectionModule(Module):
             alt: Altitude in meters (relative to home)
 
         Returns:
-            True if command sent successfully
+            String message indicating success or failure reason
         """
         if self.connection:
             return self.connection.fly_to(lat, lon, alt)
-        return False
+        return "Failed: No connection to drone"
 
     def _on_gps_goal(self, cmd: LatLon) -> None:
         current_alt = self._latest_telemetry.get("GLOBAL_POSITION_INT", {}).get("relative_alt", 0)
