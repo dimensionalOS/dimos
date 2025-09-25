@@ -25,8 +25,8 @@ from dimos import core
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped, Transform, Vector3
 from dimos.msgs.nav_msgs import Odometry
-from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.msgs.std_msgs import Bool, Header
+from dimos.msgs.sensor_msgs import PointCloud2, Joy
+from dimos.msgs.std_msgs import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf import TF
 from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
@@ -34,7 +34,7 @@ from dimos.utils.transform_utils import euler_to_quaternion
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
 from nav_msgs.msg import Odometry as ROSOdometry
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy
 from std_msgs.msg import Bool as ROSBool
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.utils.logging_config import setup_logger
@@ -56,6 +56,7 @@ class NavigationModule(Module):
 
     goal_pose: Out[PoseStamped] = None
     cancel_goal: Out[Bool] = None
+    joy: Out[Joy] = None
 
     def __init__(self, *args, **kwargs):
         """Initialize NavigationModule."""
@@ -72,6 +73,42 @@ class NavigationModule(Module):
     def _on_goal_reached(self, msg: Bool):
         """Handle goal reached status messages."""
         self.goal_reach = msg.data
+
+    def _set_autonomy_mode(self):
+        """
+        Set autonomy mode by publishing Joy message.
+        """
+
+        joy_msg = Joy(
+            frame_id="dimos",
+            axes=[
+                0.0,  # axis 0
+                0.0,  # axis 1
+                -1.0,  # axis 2
+                0.0,  # axis 3
+                1.0,  # axis 4
+                1.0,  # axis 5
+                0.0,  # axis 6
+                0.0,  # axis 7
+            ],
+            buttons=[
+                0,  # button 0
+                0,  # button 1
+                0,  # button 2
+                0,  # button 3
+                0,  # button 4
+                0,  # button 5
+                0,  # button 6
+                1,  # button 7 - controls autonomy mode
+                0,  # button 8
+                0,  # button 9
+                0,  # button 10
+            ],
+        )
+
+        if self.joy:
+            self.joy.publish(joy_msg)
+            logger.info(f"Setting autonomy mode via Joy message")
 
     @rpc
     def go_to(self, pose: PoseStamped, timeout: float = 60.0) -> bool:
@@ -91,6 +128,7 @@ class NavigationModule(Module):
         )
 
         self.goal_reach = None
+        self._set_autonomy_mode()
         self.goal_pose.publish(pose)
 
         start_time = time.time()
@@ -250,7 +288,7 @@ class NavBot:
         self.ros_bridge.add_topic(
             "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
         )
-
+        self.ros_bridge.add_topic("/joy", Joy, ROSJoy, direction=BridgeDirection.DIMOS_TO_ROS)
         # Navigation control topics from autonomy stack
         self.ros_bridge.add_topic(
             "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
@@ -261,6 +299,40 @@ class NavBot:
         self.ros_bridge.add_topic(
             "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
         )
+
+    def _set_autonomy_mode(self):
+        """
+        Set autonomy mode by publishing Joy message.
+        """
+
+        joy_msg = Joy(
+            frame_id="dimos",
+            axes=[
+                0.0,  # axis 0
+                0.0,  # axis 1
+                -1.0,  # axis 2
+                0.0,  # axis 3
+                1.0,  # axis 4
+                1.0,  # axis 5
+                0.0,  # axis 6
+                0.0,  # axis 7
+            ],
+            buttons=[
+                0,  # button 0
+                0,  # button 1
+                0,  # button 2
+                0,  # button 3
+                0,  # button 4
+                0,  # button 5
+                0,  # button 6
+                1,  # button 7 - controls autonomy mode
+                0,  # button 8
+                0,  # button 9
+                0,  # button 10
+            ],
+        )
+
+        self.lcm.publish(Topic("/joy", Joy), joy_msg)
 
     def navigate_to_goal(self, pose: PoseStamped, blocking: bool = True, timeout: float = 30.0):
         """Navigate to a target pose using ROS topics.
@@ -279,6 +351,7 @@ class NavBot:
         )
 
         # Publish goal to /goal_pose topic
+        self._set_autonomy_mode()
         goal_topic = Topic("/goal_pose", PoseStamped)
         self.lcm.publish(goal_topic, pose)
 
