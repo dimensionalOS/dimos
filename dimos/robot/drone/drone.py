@@ -122,8 +122,8 @@ class Drone(Robot):
 
         self.connection = self.dimos.deploy(
             DroneConnectionModule,
-            connection_string="replay",
-            # connection_string=self.connection_string,
+            # connection_string="replay",
+            connection_string=self.connection_string,
             video_port=self.video_port,
             outdoor=self.outdoor,
         )
