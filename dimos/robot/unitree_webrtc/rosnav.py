@@ -60,6 +60,42 @@ class NavigationModule(Module):
         """Handle goal reached status messages."""
         self.goal_reach = msg.data
 
+    def _set_autonomy_mode(self):
+        """
+        Set autonomy mode by publishing Joy message.
+        """
+
+        joy_msg = Joy(
+            frame_id="dimos",
+            axes=[
+                0.0,  # axis 0
+                0.0,  # axis 1
+                -1.0,  # axis 2
+                0.0,  # axis 3
+                1.0,  # axis 4
+                1.0,  # axis 5
+                0.0,  # axis 6
+                0.0,  # axis 7
+            ],
+            buttons=[
+                0,  # button 0
+                0,  # button 1
+                0,  # button 2
+                0,  # button 3
+                0,  # button 4
+                0,  # button 5
+                0,  # button 6
+                1,  # button 7 - controls autonomy mode
+                0,  # button 8
+                0,  # button 9
+                0,  # button 10
+            ],
+        )
+
+        if self.joy:
+            self.joy.publish(joy_msg)
+            logger.info(f"Setting autonomy mode via Joy message")
+
     @rpc
     def go_to(self, pose: PoseStamped, timeout: float = 60.0) -> bool:
         """
@@ -78,6 +114,7 @@ class NavigationModule(Module):
         )
 
         self.goal_reach = None
+        self._set_autonomy_mode()
         self.goal_pose.publish(pose)
         time.sleep(0.2)
         self.goal_pose.publish(pose)
