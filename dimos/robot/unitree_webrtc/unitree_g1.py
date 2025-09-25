@@ -27,7 +27,7 @@ from dimos.core import In, Module, Out, rpc
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
 
 from dimos.msgs.sensor_msgs import Joy
-from dimos.msgs.std_msgs.Bool import Bool, ROSBool
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.robot.unitree_webrtc.rosnav import NavigationModule
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from lcm_msgs.foxglove_msgs import SceneUpdate
@@ -350,33 +350,17 @@ class UnitreeG1(Robot):
         from dimos.msgs.std_msgs import Bool
 
         # Navigation control topics from autonomy stack
-        # self.ros_bridge.add_topic(
-        #    "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
-        # )
-        # self.ros_bridge.add_topic(
-        #    "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
-        # )
-        # self.ros_bridge.add_topic(
-        #    "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
-        # )
+        self.ros_bridge.add_topic(
+           "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
+        )
+        self.ros_bridge.add_topic(
+           "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
+        )
+        self.ros_bridge.add_topic(
+           "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
+        )
 
         self.ros_bridge.add_topic("/joy", Joy, ROSJoy, direction=BridgeDirection.DIMOS_TO_ROS)
-
-        # Add /registered_scan topic from ROS to DIMOS
-        # self.ros_bridge.add_topic(
-        #    "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
-        # )
-
-        # Navigation control topics from autonomy stack
-        # self.ros_bridge.add_topic(
-        #    "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
-        # )
-        # self.ros_bridge.add_topic(
-        #    "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
-        # )
-        # self.ros_bridge.add_topic(
-        #    "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
-        # )
 
         self.ros_bridge.add_topic(
             "/registered_scan",
