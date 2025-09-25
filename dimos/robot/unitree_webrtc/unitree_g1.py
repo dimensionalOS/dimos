@@ -351,13 +351,13 @@ class UnitreeG1(Robot):
 
         # Navigation control topics from autonomy stack
         self.ros_bridge.add_topic(
-           "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
+            "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
         )
         self.ros_bridge.add_topic(
-           "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
+            "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
         )
         self.ros_bridge.add_topic(
-           "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
+            "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
         self.ros_bridge.add_topic("/joy", Joy, ROSJoy, direction=BridgeDirection.DIMOS_TO_ROS)
