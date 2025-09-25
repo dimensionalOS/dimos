@@ -38,6 +38,7 @@ from dimos_lcm.std_msgs import Bool
 from dimos.robot.robot import Robot
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.camera_module import DroneCameraModule
+from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
@@ -107,6 +108,7 @@ class Drone(Robot):
         # Deploy modules
         self._deploy_connection()
         self._deploy_camera()
+        self._deploy_tracking()
         self._deploy_visualization()
         self._deploy_navigation()
 
@@ -135,6 +137,9 @@ class Drone(Robot):
         self.connection.telemetry.transport = core.LCMTransport("/drone/telemetry", String)
         self.connection.video.transport = core.LCMTransport("/drone/video", Image)
         self.connection.movecmd.transport = core.LCMTransport("/drone/cmd_vel", Vector3)
+        self.connection.movecmd_twist.transport = core.LCMTransport(
+            "/drone/tracking/cmd_vel", Twist
+        )
 
         logger.info("Connection module deployed")
 
@@ -155,6 +160,30 @@ class Drone(Robot):
         self.camera.video.connect(self.connection.video)
 
         logger.info("Camera module deployed")
+
+    def _deploy_tracking(self):
+        """Deploy and configure tracking module."""
+        logger.info("Deploying tracking module...")
+
+        self.tracking = self.dimos.deploy(
+            DroneTrackingModule,
+            x_pid_params=(0.001, 0.0, 0.0001, (-0.5, 0.5), None, 30),
+            y_pid_params=(0.001, 0.0, 0.0001, (-0.5, 0.5), None, 30),
+        )
+
+        self.tracking.tracking_overlay.transport = core.LCMTransport(
+            "/drone/tracking_overlay", Image
+        )
+        self.tracking.tracking_status.transport = core.LCMTransport(
+            "/drone/tracking_status", String
+        )
+        self.tracking.cmd_vel.transport = core.LCMTransport("/drone/tracking/cmd_vel", Twist)
+
+        self.tracking.video_input.connect(self.connection.video)
+
+        self.connection.movecmd_twist.connect(self.tracking.cmd_vel)
+
+        logger.info("Tracking module deployed")
 
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
@@ -188,6 +217,12 @@ class Drone(Robot):
         result = self.camera.start()
         if not result:
             logger.warning("Camera module failed to start")
+
+        result = self.tracking.start()
+        if result:
+            logger.info("Tracking module started successfully")
+        else:
+            logger.warning("Tracking module failed to start")
 
         self.websocket_vis.start()
 
@@ -372,6 +407,8 @@ def main():
     print("  • /drone/depth_colorized - Colorized depth (Image)")
     print("  • /drone/camera_info    - Camera calibration")
     print("  • /drone/cmd_vel        - Movement commands (Vector3)")
+    print("  • /drone/tracking_overlay - Object tracking visualization (Image)")
+    print("  • /drone/tracking_status - Tracking status (String/JSON)")
 
     from dimos.agents2 import Agent
     from dimos.agents2.spec import Model, Provider
@@ -395,7 +432,6 @@ def main():
 
     agent.register_skills(drone.connection)
     agent.register_skills(human_input)
-
     agent.run_implicit_skill("human")
 
     agent.start()
@@ -406,7 +442,8 @@ def main():
     # twist = Twist()
     # twist.linear = Vector3(-0.5, 0.5, 0.5)
     # drone.connection.move_twist(twist, duration=2.0, lock_altitude=True)
-
+    time.sleep(10)
+    drone.tracking.track_object("water bottle")
     while True:
         time.sleep(1)
 
