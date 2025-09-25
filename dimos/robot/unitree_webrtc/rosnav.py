@@ -20,7 +20,7 @@ from dimos import core
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped, Transform, Vector3
 from dimos.msgs.nav_msgs import Odometry
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs import PointCloud2, Joy
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -43,6 +43,7 @@ class NavigationModule(Module):
     goal_pose: Out[PoseStamped] = None
     goal_reached: In[Bool] = None
     cancel_goal: Out[Bool] = None
+    joy: Out[Joy] = None
 
     def __init__(self, *args, **kwargs):
         """Initialize NavigationModule."""
@@ -59,6 +60,42 @@ class NavigationModule(Module):
     def _on_goal_reached(self, msg: Bool):
         """Handle goal reached status messages."""
         self.goal_reach = msg.data
+
+    def _set_autonomy_mode(self):
+        """
+        Set autonomy mode by publishing Joy message.
+        """
+
+        joy_msg = Joy(
+            frame_id="dimos",
+            axes=[
+                0.0,  # axis 0
+                0.0,  # axis 1
+                -1.0,  # axis 2
+                0.0,  # axis 3
+                1.0,  # axis 4
+                1.0,  # axis 5
+                0.0,  # axis 6
+                0.0,  # axis 7
+            ],
+            buttons=[
+                0,  # button 0
+                0,  # button 1
+                0,  # button 2
+                0,  # button 3
+                0,  # button 4
+                0,  # button 5
+                0,  # button 6
+                1,  # button 7 - controls autonomy mode
+                0,  # button 8
+                0,  # button 9
+                0,  # button 10
+            ],
+        )
+
+        if self.joy:
+            self.joy.publish(joy_msg)
+            logger.info(f"Setting autonomy mode via Joy message")
 
     @rpc
     def go_to(self, pose: PoseStamped, timeout: float = 60.0) -> bool:
@@ -78,6 +115,7 @@ class NavigationModule(Module):
         )
 
         self.goal_reach = None
+        self._set_autonomy_mode()
         self.goal_pose.publish(pose)
         time.sleep(0.2)
         self.goal_pose.publish(pose)
