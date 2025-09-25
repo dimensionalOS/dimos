@@ -704,7 +704,7 @@ class MavlinkConnection:
         logger.warning("Land timeout")
         return self.set_mode("LAND")
 
-    def fly_to(self, lat: float, lon: float, alt: float) -> bool:
+    def fly_to(self, lat: float, lon: float, alt: float) -> str:
         """Fly to GPS coordinates - sends commands continuously until reaching target.
 
         Args:
@@ -713,15 +713,19 @@ class MavlinkConnection:
             alt: Altitude in meters (relative to home)
 
         Returns:
-            True if target reached, False if timeout or error
+            String message indicating success or failure reason
         """
         if not self.connected:
-            return False
+            return "Failed: Not connected to drone"
 
         # Check if already flying to a target
         if self.flying_to_target:
-            logger.warning("Already flying to target, ignoring new fly_to command")
-            return False
+            logger.warning(
+                "Already flying to target, ignoring new fly_to command. Wait until completed to send new fly_to command."
+            )
+            return (
+                "Already flying to target - wait for completion before sending new fly_to command"
+            )
 
         self.flying_to_target = True
 
@@ -729,7 +733,7 @@ class MavlinkConnection:
         if not self.set_mode("GUIDED"):
             logger.error("Failed to set GUIDED mode for GPS navigation")
             self.flying_to_target = False
-            return False
+            return "Failed: Could not set GUIDED mode for GPS navigation"
 
         logger.info(f"Flying to GPS: lat={lat:.7f}, lon={lon:.7f}, alt={alt:.1f}m")
 
@@ -820,7 +824,7 @@ class MavlinkConnection:
                         self.set_mode("STABILIZE")
                         logger.info("Returned to STABILIZE mode for manual control")
                         self.flying_to_target = False
-                        return True  # Successfully reached target
+                        return f"Success: Reached target location (lat={lat:.7f}, lon={lon:.7f}, alt={alt:.1f}m)"
 
                     # Only send velocity commands if we're far enough
                     if distance > 0.1:
@@ -930,7 +934,7 @@ class MavlinkConnection:
                 self.set_mode("STABILIZE")
                 logger.info("Returned to STABILIZE mode for manual control")
 
-        return False  # Timeout - did not reach target
+        return "Failed: Timeout - did not reach target within 120 seconds"
 
     def set_mode(self, mode: str) -> bool:
         """Set flight mode."""
@@ -1006,6 +1010,11 @@ class MavlinkConnection:
             self.mavlink.close()
         self.connected = False
         logger.info("Disconnected")
+
+    @property
+    def is_flying_to_target(self) -> bool:
+        """Check if drone is currently flying to a GPS target."""
+        return self.flying_to_target
 
     def get_video_stream(self, fps: int = 30):
         """Get video stream (to be implemented with GStreamer)."""
