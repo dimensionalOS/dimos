@@ -26,12 +26,13 @@ from dimos import core
 from dimos.core import In, Module, Out, rpc
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
 
+from dimos.msgs.sensor_msgs import Joy
 from dimos.msgs.std_msgs.Bool import Bool, ROSBool
 from dimos.robot.unitree_webrtc.rosnav import NavigationModule
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from lcm_msgs.foxglove_msgs import SceneUpdate
 from nav_msgs.msg import Odometry as ROSOdometry
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 
 from dimos import core
@@ -245,6 +246,7 @@ class UnitreeG1(Robot):
         self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
         self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
         self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
+        self.nav.joy.transport = core.LCMTransport("/joy", Joy)
 
         self.nav.start()
         self.lcm.start()
@@ -339,6 +341,8 @@ class UnitreeG1(Robot):
         self.ros_bridge.add_topic(
             "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
         )
+
+        self.ros_bridge.add_topic("/joy", Joy, ROSJoy, direction=BridgeDirection.DIMOS_TO_ROS)
 
         # Add /registered_scan topic from ROS to DIMOS
         # self.ros_bridge.add_topic(

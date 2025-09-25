@@ -20,7 +20,7 @@ from dimos import core
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped, Transform, Vector3
 from dimos.msgs.nav_msgs import Odometry
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs import PointCloud2, Joy
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -43,6 +43,7 @@ class NavigationModule(Module):
     goal_pose: Out[PoseStamped] = None
     goal_reached: In[Bool] = None
     cancel_goal: Out[Bool] = None
+    joy: Out[Joy] = None
 
     def __init__(self, *args, **kwargs):
         """Initialize NavigationModule."""
