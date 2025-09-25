@@ -21,17 +21,16 @@ from typing import Any, Optional
 
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion, Twist
 from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.std_msgs import String
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
+from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
 
 logger = setup_logger(__name__)
-
-from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
 
 
 class DroneConnectionModule(Module):
@@ -39,6 +38,7 @@ class DroneConnectionModule(Module):
 
     # Inputs
     movecmd: In[Vector3] = None
+    movecmd_twist: In[Twist] = None  # Twist commands from tracking/navigation
     gps_goal: In[LatLon] = None
 
     # Outputs
@@ -123,6 +123,10 @@ class DroneConnectionModule(Module):
 
         # Subscribe to movement commands
         self.movecmd.subscribe(self.move)
+
+        # Subscribe to Twist movement commands
+        if self.movecmd_twist.transport:
+            self.movecmd_twist.subscribe(self._on_move_twist)
 
         self.gps_goal.subscribe(self._on_gps_goal)
 
@@ -343,6 +347,16 @@ class DroneConnectionModule(Module):
         if self.connection:
             return self.connection.fly_to(lat, lon, alt)
         return "Failed: No connection to drone"
+
+    def _on_move_twist(self, msg: Twist):
+        """Handle Twist movement commands from tracking/navigation.
+
+        Args:
+            msg: Twist message with linear and angular velocities
+        """
+        if self.connection:
+            # Use move_twist to properly handle Twist messages
+            self.connection.move_twist(msg, duration=0, lock_altitude=True)
 
     def _on_gps_goal(self, cmd: LatLon) -> None:
         current_alt = self._latest_telemetry.get("GLOBAL_POSITION_INT", {}).get("relative_alt", 0)
