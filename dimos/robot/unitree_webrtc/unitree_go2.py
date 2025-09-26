@@ -63,7 +63,7 @@ from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.transform_utils import offset_distance
 from dimos.perception.object_tracker import ObjectTracking
 from dimos_lcm.std_msgs import Bool
-from dimos.robot.robot import GpsRobot, UnitreeRobot
+from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_capabilities import RobotCapability
 
 
@@ -313,7 +313,7 @@ class ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
 
-class UnitreeGo2(GpsRobot, UnitreeRobot):
+class UnitreeGo2(UnitreeRobot):
     """Full Unitree Go2 robot with navigation and perception capabilities."""
 
     def __init__(
