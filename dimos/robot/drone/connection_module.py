@@ -15,9 +15,10 @@
 
 """DimOS module wrapper for drone connection."""
 
+import threading
 import time
 import json
-from typing import Any, Optional
+from typing import Any, Generator, Optional
 
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
@@ -26,7 +27,7 @@ from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.std_msgs import String
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Output
+from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.utils.logging_config import setup_logger
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
 
@@ -40,6 +41,7 @@ class DroneConnectionModule(Module):
     movecmd: In[Vector3] = None
     movecmd_twist: In[Twist] = None  # Twist commands from tracking/navigation
     gps_goal: In[LatLon] = None
+    tracking_status: In[String] = None
 
     # Outputs
     odom: Out[PoseStamped] = None
@@ -47,6 +49,7 @@ class DroneConnectionModule(Module):
     status: Out[String] = None  # JSON status
     telemetry: Out[String] = None  # Full telemetry JSON
     video: Out[Image] = None
+    follow_object_cmd: Out[String] = None
 
     # Parameters
     connection_string: str
@@ -56,6 +59,8 @@ class DroneConnectionModule(Module):
     _status: dict = {}
     _latest_video_frame: Optional[Image] = None
     _latest_telemetry: Optional[dict[str, Any]] = None
+    _latest_status: Optional[dict[str, Any]] = None
+    _latest_status_lock: threading.RLock
 
     def __init__(
         self,
@@ -79,6 +84,8 @@ class DroneConnectionModule(Module):
         self.video_stream = None
         self._latest_video_frame = None
         self._latest_telemetry = None
+        self._latest_status = None
+        self._latest_status_lock = threading.RLock()
         Module.__init__(self, *args, **kwargs)
 
     @rpc
@@ -129,6 +136,7 @@ class DroneConnectionModule(Module):
             self.movecmd_twist.subscribe(self._on_move_twist)
 
         self.gps_goal.subscribe(self._on_gps_goal)
+        self.tracking_status.subscribe(self._on_tracking_status)
 
         # Start telemetry update thread
         import threading
@@ -348,6 +356,52 @@ class DroneConnectionModule(Module):
             return self.connection.fly_to(lat, lon, alt)
         return "Failed: No connection to drone"
 
+    @skill()
+    def follow_object(
+        self, object_description: str, duration: float = 120.0
+    ) -> Generator[str, None, None]:
+        """Follow an object with visual servoing.
+
+        Example:
+
+            follow_object(object_description="red car", duration=120)
+
+        Args:
+            object_description (str): A short and clear description of the object.
+            duration (float, optional): How long to track for. Defaults to 120.0.
+        """
+        msg = {"object_description": object_description, "duration": duration}
+        self.follow_object_cmd.publish(String(json.dumps(msg)))
+
+        yield "Started trying to track. First, trying to find the object."
+
+        start_time = time.time()
+
+        started_tracking = False
+
+        while time.time() - start_time < duration:
+            time.sleep(0.01)
+            with self._latest_status_lock:
+                if not self._latest_status:
+                    continue
+                match self._latest_status.get("status"):
+                    case "not_found" | "failed":
+                        yield f"The '{object_description}' object has not been found. Stopped tracking."
+                        break
+                    case "tracking":
+                        # Only return tracking once.
+                        if not started_tracking:
+                            started_tracking = True
+                            yield f"The '{object_description}' object is now being followed."
+                    case "lost":
+                        yield f"The '{object_description}' object has been lost. Stopped tracking."
+                        break
+                    case "stopped":
+                        yield f"Tracking '{object_description}' has stopped."
+                        break
+        else:
+            yield f"Stopped tracking '{object_description}'"
+
     def _on_move_twist(self, msg: Twist):
         """Handle Twist movement commands from tracking/navigation.
 
@@ -361,6 +415,10 @@ class DroneConnectionModule(Module):
     def _on_gps_goal(self, cmd: LatLon) -> None:
         current_alt = self._latest_telemetry.get("GLOBAL_POSITION_INT", {}).get("relative_alt", 0)
         self.connection.fly_to(cmd.lat, cmd.lon, current_alt)
+
+    def _on_tracking_status(self, status: String) -> None:
+        with self._latest_status_lock:
+            self._latest_status = json.loads(status.data)
 
     @rpc
     def stop(self):

@@ -40,6 +40,7 @@ class DroneTrackingModule(Module):
 
     # Inputs
     video_input: In[Image] = None
+    follow_object_cmd: In[String] = None
 
     # Outputs
     tracking_overlay: Out[Image] = None  # Visualization with bbox and crosshairs
@@ -80,6 +81,10 @@ class DroneTrackingModule(Module):
         with self._frame_lock:
             self._latest_frame = frame
 
+    def _on_follow_object_cmd(self, cmd: String) -> None:
+        msg = json.loads(cmd.data)
+        self.track_object(msg["object_description"], msg["duration"])
+
     def _get_latest_frame(self) -> Optional[np.ndarray]:
         """Get the latest video frame as numpy array."""
         with self._frame_lock:
@@ -96,6 +101,10 @@ class DroneTrackingModule(Module):
             logger.info("DroneTrackingModule started - subscribed to video input")
         else:
             logger.warning("DroneTrackingModule: No video input transport configured")
+
+        if self.follow_object_cmd.transport:
+            self.follow_object_cmd.subscribe(self._on_follow_object_cmd)
+
         return True
 
     @rpc
@@ -127,6 +136,7 @@ class DroneTrackingModule(Module):
             if bbox is None:
                 msg = f"No object detected{' for: ' + object_name if object_name else ''}"
                 logger.warning(msg)
+                self._publish_status({"status": "not_found", "object": self._current_object})
                 return msg
 
             logger.info(f"Object detected at bbox: {bbox}")
@@ -144,6 +154,7 @@ class DroneTrackingModule(Module):
             # Initialize tracker
             success = tracker.init(frame, (x, y, w, h))
             if not success:
+                self._publish_status({"status": "failed", "object": self._current_object})
                 return "Failed to initialize tracker"
 
             self._current_object = object_name or "object"
