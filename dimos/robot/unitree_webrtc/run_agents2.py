@@ -21,15 +21,11 @@ from dotenv import load_dotenv
 from dimos.agents2 import Agent
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.constants import AGENT_SYSTEM_PROMPT_PATH
-from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
-from dimos.agents2.skills.gps_nav_skill import GpsNavSkillContainer
-from dimos.agents2.skills.osm import OsmSkillContainer
 from dimos.robot.robot import UnitreeRobot
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.robot.utils.robot_debugger import RobotDebugger
-from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
 from contextlib import ExitStack
@@ -68,15 +64,6 @@ class UnitreeAgents2Runner:
 
         self.setup_agent()
 
-        # TODO: Remove this temp stuff
-        self._robot.spatial_memory.tag_location(
-            RobotLocation(name="kitchen", position=(-3.7, 0.4, 0.3), rotation=(0, 0, -2.7)),
-        )
-        self._robot.spatial_memory.tag_location(
-            RobotLocation(name="Paul's work location", position=(0, 0, 0), rotation=(0, 0, 0)),
-        )
-        # TODO: Remove above temp stuff
-
         self._exit_stack.enter_context(RobotDebugger(self._robot))
 
         logger.info("=" * 60)
@@ -113,15 +100,6 @@ class UnitreeAgents2Runner:
                     robot=self._robot,
                     video_stream=self._robot.connection.video,
                 )
-            ),
-            self._exit_stack.enter_context(
-                OsmSkillContainer(self._robot, self._robot.gps_position_stream),
-            ),
-            self._exit_stack.enter_context(
-                GoogleMapsSkillContainer(self._robot, self._robot.gps_position_stream),
-            ),
-            self._exit_stack.enter_context(
-                GpsNavSkillContainer(self._robot, self._robot.gps_position_stream),
             ),
             HumanInput(),
         ]
