@@ -136,6 +136,9 @@ class Drone(Robot):
         self.connection.status.transport = core.LCMTransport("/drone/status", String)
         self.connection.telemetry.transport = core.LCMTransport("/drone/telemetry", String)
         self.connection.video.transport = core.LCMTransport("/drone/video", Image)
+        self.connection.follow_object_cmd.transport = core.LCMTransport(
+            "/drone/follow_object_cmd", String
+        )
         self.connection.movecmd.transport = core.LCMTransport("/drone/cmd_vel", Vector3)
         self.connection.movecmd_twist.transport = core.LCMTransport(
             "/drone/tracking/cmd_vel", Twist
@@ -180,8 +183,10 @@ class Drone(Robot):
         self.tracking.cmd_vel.transport = core.LCMTransport("/drone/tracking/cmd_vel", Twist)
 
         self.tracking.video_input.connect(self.connection.video)
+        self.tracking.follow_object_cmd.connect(self.connection.follow_object_cmd)
 
         self.connection.movecmd_twist.connect(self.tracking.cmd_vel)
+        self.connection.tracking_status.connect(self.tracking.tracking_status)
 
         logger.info("Tracking module deployed")
 
@@ -442,8 +447,8 @@ def main():
     # twist = Twist()
     # twist.linear = Vector3(-0.5, 0.5, 0.5)
     # drone.connection.move_twist(twist, duration=2.0, lock_altitude=True)
-    time.sleep(10)
-    drone.tracking.track_object("water bottle")
+    # time.sleep(10)
+    # drone.tracking.track_object("water bottle")
     while True:
         time.sleep(1)
 
