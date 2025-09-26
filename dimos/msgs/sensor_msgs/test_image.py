@@ -14,8 +14,9 @@
 
 import numpy as np
 import pytest
+from reactivex import operators as ops
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_window
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_barrier, sharpness_window
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
 
@@ -65,7 +66,7 @@ def test_opencv_conversion(img: Image):
 
 
 @pytest.mark.tool
-def test_sharpness_detector():
+def test_sharpness_stream():
     get_data("unitree_office_walk")  # Preload data for testing
     video_store = TimedSensorReplay(
         "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
@@ -74,55 +75,85 @@ def test_sharpness_detector():
     cnt = 0
     for image in video_store.iterate():
         cnt = cnt + 1
-        print(image.sharpness())
+        print(image.sharpness)
         if cnt > 30:
             return
 
 
-@pytest.mark.tool
-def test_sharpness_sliding_window_foxglove():
+def test_sharpness_barrier():
     import time
+    from unittest.mock import MagicMock
 
-    from dimos.msgs.geometry_msgs import Vector3
-    from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+    # Create mock images with known sharpness values
+    # This avoids loading real data from disk
+    mock_images = []
+    sharpness_values = [0.3711, 0.3241, 0.3067, 0.2583, 0.3665]  # Just 5 images for 1 window
 
-    lcm = LCM()
-    lcm.start()
+    for i, sharp in enumerate(sharpness_values):
+        img = MagicMock()
+        img.sharpness = sharp
+        img.ts = 1758912038.208 + i * 0.01  # Simulate timestamps
+        mock_images.append(img)
 
-    ping = 0
-    sharp_topic = Topic("/sharp", Image)
-    all_topic = Topic("/all", Image)
-    sharpness_topic = Topic("/sharpness", Vector3)
+    # Track what goes into windows and what comes out
+    start_wall_time = None
+    window_contents = []  # List of (wall_time, image)
+    emitted_images = []
 
-    get_data("unitree_office_walk")  # Preload data for testing
-    video_stream = TimedSensorReplay(
-        "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
-    ).stream()
+    def track_input(img):
+        """Track all images going into sharpness_barrier with wall-clock time"""
+        nonlocal start_wall_time
+        wall_time = time.time()
+        if start_wall_time is None:
+            start_wall_time = wall_time
+        relative_time = wall_time - start_wall_time
+        window_contents.append((relative_time, img))
+        return img
 
-    # Publish all images to all_topic
-    video_stream.subscribe(lambda x: lcm.publish(all_topic, x))
+    def track_output(img):
+        """Track what sharpness_barrier emits"""
+        emitted_images.append(img)
 
-    def sharpness_vector(x: Image):
-        nonlocal ping
-        sharpness = x.sharpness()
-        if ping:
-            y = 1
-            ping = ping - 1
-        else:
-            y = 0
+    # Use 20Hz frequency (0.05s windows) for faster test
+    # Emit images at 100Hz to get ~5 per window
+    from reactivex import from_iterable, interval
 
-        return Vector3([sharpness, y, 0])
+    source = from_iterable(mock_images).pipe(
+        ops.zip(interval(0.01)),  # 100Hz emission rate
+        ops.map(lambda x: x[0]),  # Extract just the image
+    )
 
-    video_stream.subscribe(lambda x: lcm.publish(sharpness_topic, sharpness_vector(x)))
+    source.pipe(
+        ops.do_action(track_input),  # Track inputs
+        sharpness_barrier(20),  # 20Hz = 0.05s windows
+        ops.do_action(track_output),  # Track outputs
+    ).run()
 
-    def pub_sharp(x: Image):
-        nonlocal ping
-        ping = 3
-        lcm.publish(sharp_topic, x)
+    # Only need 0.08s for 1 full window at 20Hz plus buffer
+    time.sleep(0.08)
 
-    sharpness_window(
-        1,
-        source=video_stream,
-    ).subscribe(pub_sharp)
+    # Verify we got correct emissions
+    assert len(emitted_images) >= 1, f"Expected at least 1 emission, got {len(emitted_images)}"
 
-    time.sleep(120)
+    # Group inputs by wall-clock windows and verify we got the sharpest
+    window_duration = 0.05  # 20Hz
+
+    # Test just the first window
+    for window_idx in range(min(1, len(emitted_images))):
+        window_start = window_idx * window_duration
+        window_end = window_start + window_duration
+
+        # Get all images that arrived during this wall-clock window
+        window_imgs = [
+            img for wall_time, img in window_contents if window_start <= wall_time < window_end
+        ]
+
+        if window_imgs:
+            max_sharp = max(img.sharpness for img in window_imgs)
+            emitted_sharp = emitted_images[window_idx].sharpness
+
+            # Verify we emitted the sharpest
+            assert abs(emitted_sharp - max_sharp) < 0.0001, (
+                f"Window {window_idx}: Emitted image (sharp={emitted_sharp}) "
+                f"is not the sharpest (max={max_sharp})"
+            )

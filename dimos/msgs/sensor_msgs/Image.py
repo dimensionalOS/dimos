@@ -29,6 +29,7 @@ from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
+from dimos.utils.reactive import quality_barrier
 
 try:
     from sensor_msgs.msg import Image as ROSImage
@@ -587,18 +588,20 @@ class Image(Timestamped):
 
 
 def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
-    window = TimestampedBufferCollection(1.0 / target_frequency)
-    source.subscribe(window.add)
+    raise NotImplementedError("use sharpness_barrier instead")
 
-    thread_scheduler = ThreadPoolScheduler(max_workers=1)
 
-    def find_best(*argv):
-        if not window._items:
-            return None
+def sharpness_barrier(target_frequency: float):
+    """
+    RxPY pipe operator that selects the sharpest image within each time window.
 
-        found = max(window._items, key=lambda x: x.sharpness)
-        return found
+    Args:
+        target_frequency: Output frequency in Hz (e.g., 1.0 for 1 image per second)
 
-    return rx.interval(1.0 / target_frequency).pipe(
-        ops.observe_on(thread_scheduler), ops.map(find_best), ops.filter(lambda x: x is not None)
-    )
+    Returns:
+        A pipe operator that can be used with .pipe()
+
+    Example:
+        video_stream.pipe(sharpness_barrier(1.0)).subscribe(print)
+    """
+    return quality_barrier(lambda x: x.sharpness, target_frequency)

@@ -107,7 +107,18 @@ class Object3D(Detection3D):
             child_frame_id="camera_optical",
         ).inverse()
 
-        return (self.best_detection.transform + optical_inverse).to_pose()
+        print("transform is", self.best_detection.transform)
+
+        global_transform = optical_inverse + self.best_detection.transform
+
+        print("inverse optical is", global_transform)
+
+        print("obj center is", self.center)
+        global_pose = global_transform.to_pose()
+        print("Global pose:", global_pose)
+        global_pose.frame_id = self.best_detection.frame_id
+        print("remap to", self.best_detection.frame_id)
+        return PoseStamped(position=self.center, orientation=Quaternion(), frame_id="world")
 
 
 class ObjectDBModule(Detection3DModule):
@@ -132,6 +143,8 @@ class ObjectDBModule(Detection3DModule):
     detected_image_2: Out[Image] = None  # type: ignore
 
     scene_update: Out[SceneUpdate] = None  # type: ignore
+
+    target: Out[PoseStamped] = None  # type: ignore
 
     def __init__(self, goto: Callable[[PoseStamped], Any], *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -193,7 +206,11 @@ class ObjectDBModule(Detection3DModule):
         target_obj = self.objects.get(object_id, None)
         if not target_obj:
             return f"Object {object_id} not found\nHere are the known objects:\n{str(self.agent_encode())}"
-        return self.goto(target_obj.to_pose())
+        target_pose = target_obj.to_pose()
+        self.target.publish(target_pose)
+        time.sleep(0.1)
+        self.target.publish(target_pose)
+        return self.goto(target_pose)
 
     def lookup(self, label: str) -> List[Detection3D]:
         """Look up a detection by label."""

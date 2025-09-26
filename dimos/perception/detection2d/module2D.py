@@ -13,8 +13,11 @@
 # limitations under the License.
 
 import functools
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
+import numpy as np
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
@@ -23,33 +26,45 @@ from reactivex.observable import Observable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.type import ImageDetections2D
+from dimos.perception.detection2d.type import ImageDetections2D, InconvinientDetectionFormat
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.utils.reactive import backpressure
 
 
+class Detector(ABC):
+    @abstractmethod
+    def process_image(self, image: np.ndarray) -> InconvinientDetectionFormat: ...
+
+
+@dataclass
+class Config:
+    detector = Optional[Callable[[Any], Detector]] = Yolo2DDetector
+    max_freq: float = 3.0  # hz
+
+
 class Detection2DModule(Module):
+    config: Config
+    detector: Detector
+
     image: In[Image] = None  # type: ignore
 
     detections: Out[Detection2DArray] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
-    #
-    detected_image_0: Out[Image] = None  # type: ignore
-    detected_image_1: Out[Image] = None  # type: ignore
-    detected_image_2: Out[Image] = None  # type: ignore
 
     detected_image_0: Out[Image] = None  # type: ignore
     detected_image_1: Out[Image] = None  # type: ignore
     detected_image_2: Out[Image] = None  # type: ignore
 
-    _initDetector = Yolo2DDetector
+    detected_image_0: Out[Image] = None  # type: ignore
+    detected_image_1: Out[Image] = None  # type: ignore
+    detected_image_2: Out[Image] = None  # type: ignore
 
-    def __init__(self, *args, detector=Optional[Callable[[Any], Any]], **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if detector:
-            self._detectorClass = detector
-        self.detector = self._initDetector()
+        self.config: Config = Config(**kwargs)
+        self.detector = self.config.detector()
 
     def process_image_frame(self, image: Image) -> ImageDetections2D:
         detections = ImageDetections2D.from_detector(
@@ -59,7 +74,12 @@ class Detection2DModule(Module):
 
     @functools.cache
     def detection_stream_2d(self) -> Observable[ImageDetections2D]:
-        return backpressure(self.image.observable().pipe(ops.map(self.process_image_frame)))
+        return backpressure(
+            self.image.observable().pipe(
+                sharpness_barrier(self.config.max_freq),
+                self.process_image_frame,
+            )
+        )
 
     @rpc
     def start(self):
