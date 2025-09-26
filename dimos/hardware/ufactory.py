@@ -131,7 +131,7 @@ class xArm:
         # code = self.arm.set_position(
         #     x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, speed=100, is_radian=False, wait=True
         # )
-        self.cmd_joint_angles([0.2, -32.6, -0.6, 42.3, 0.5, 55, 0.1], speed=50, is_radian=False)
+        self.cmd_joint_angles([0.2, -60, -0, 63, 0.5, 77, 0.1], speed=50, is_radian=False)
         # if code != 0:
         #     logger.error(f"Failed to go to observe position, code: {code}")
 
