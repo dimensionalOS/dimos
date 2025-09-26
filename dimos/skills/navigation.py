@@ -33,22 +33,7 @@ from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 
-logger = setup_logger("dimos.skills.semantic_map_skills")
-
-
-def get_dimos_base_path():
-    """
-    Get the DiMOS base path from DIMOS_PATH environment variable or default to user's home directory.
-
-    Returns:
-        Base path to use for DiMOS assets
-    """
-    dimos_path = os.environ.get("DIMOS_PATH")
-    if dimos_path:
-        return dimos_path
-    # Get the current user's username
-    user = os.environ.get("USER", os.path.basename(os.path.expanduser("~")))
-    return f"/home/{user}/dimos"
+logger = setup_logger(__file__)
 
 
 class NavigateWithText(AbstractRobotSkill):

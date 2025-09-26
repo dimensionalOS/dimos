@@ -96,6 +96,7 @@ dependencies = [
 
     # Mapping
     "open3d",
+    "googlemaps>=4.10.0",
 
     # Inference
 
@@ -171,7 +172,10 @@ dev = [
     "pre_commit==4.2.0",
     "pytest==8.3.5",
     "pytest-asyncio==0.26.0",
-    "textual==3.7.1"
+    "pytest-mock==3.15.0",
+    "pytest-env==1.1.5",
+    "textual==3.7.1",
+    "requests-mock==1.12.1",
 ]
 
 sim = [
@@ -234,7 +238,9 @@ markers = [
     "gpu: tests that require GPU",
     "tofix: temporarily disabled test"
 ]
-
+env = [
+  "GOOGLE_MAPS_API_KEY=AIzafake_google_key"
+]
 addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

@@ -454,3 +454,7 @@ def to_list(value: Sequence[int | float]) -> list[float]:
 
 
 VectorLike: TypeAlias = VectorConvertable | Vector3
+
+
+def make_vector3(x: float, y: float, z: float) -> Vector3:
+    return Vector3(x, y, z)

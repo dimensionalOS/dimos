@@ -14,22 +14,20 @@
 
 from __future__ import annotations
 
-import json
 import textwrap
 import threading
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolCall, ToolMessage
-from rich.console import Console
-from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Vertical
+from textual.containers import Container
 from textual.events import Key
-from textual.widgets import Footer, Input, RichLog
+from textual.widgets import Input, RichLog
 
 from dimos.core import pLCMTransport
+from dimos.utils.generic import truncate_display_string
 
 
 class HumanCLIApp(App):
@@ -108,7 +106,13 @@ class HumanCLIApp(App):
             timestamp = datetime.now().strftime("%H:%M:%S")
 
             if isinstance(msg, SystemMessage):
-                self.call_from_thread(self._add_message, timestamp, "system", msg.content, "red")
+                self.call_from_thread(
+                    self._add_message,
+                    timestamp,
+                    "system",
+                    truncate_display_string(msg.content, 1000),
+                    "red",
+                )
             elif isinstance(msg, AIMessage):
                 content = msg.content or ""
                 tool_calls = msg.additional_kwargs.get("tool_calls", [])
@@ -141,20 +145,7 @@ class HumanCLIApp(App):
         """Format a tool call for display."""
         f = tool_call.get("function", {})
         name = f.get("name", "unknown")
-        try:
-            arguments = json.loads(f.get("arguments", "{}"))
-            args = arguments.get("args", [])
-
-            # Format parameters more readably
-            params_parts = []
-            if args:
-                kw_parts = [f"{k}={repr(v)}" for k, v in args.items()]
-                params_parts.append(", ".join(kw_parts))
-
-            params = ", ".join(params_parts) if params_parts else ""
-            return f"▶ {name}({params})"
-        except Exception as e:
-            return f"▶ {name}(<error parsing arguments>)"
+        return f"▶ {name}({f.get('arguments', '')})"
 
     def _add_message(self, timestamp: str, sender: str, content: str, color: str) -> None:
         """Add a message to the chat log."""
@@ -251,7 +242,7 @@ Tool calls are displayed in cyan with ▶ prefix"""
             return
 
         # Send to agent (message will be displayed when received back)
-        self.human_transport.publish(None, message)
+        self.human_transport.publish(message)
 
     def action_clear(self) -> None:
         """Clear the chat log."""

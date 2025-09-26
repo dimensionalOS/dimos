@@ -43,3 +43,5 @@ data/*
 !data/.lfs/
 FastSAM-x.pt
 yolo11n.pt
+
+/thread_monitor_report.csv

@@ -1,0 +1,36 @@
+#!/bin/bash
+
+# Control the robot with a python shell (for debugging).
+#
+# You have to start the robot run file with:
+#
+#     ROBOT_DEBUGGER=true python <runfile>
+#
+# And now start this script
+#
+#     $ ./bin/robot-debugger 
+#     >>> robot.explore()
+#     True
+#     >>>
+
+
+exec python -i <(cat <<EOF
+import rpyc
+import time
+
+for i in range(30):
+    try:
+        c = rpyc.connect("localhost", 18861)
+        if i > 0:
+            print("\nConnected.")
+        break
+    except ConnectionRefusedError:
+        print("Not started yet. Trying again...")
+        time.sleep(2)
+else:
+    print("Failed to connect. Is it started?")
+    exit(1)
+
+robot = c.root.robot()
+EOF
+)
