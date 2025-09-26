@@ -104,7 +104,7 @@ class XArmRobot(Robot):
             ee_frame_id="ee_link",
             camera_frame_id="zed_camera_link",
             ee_to_camera_6dof=[
-                -0.130,
+                -0.10,
                 0.04,
                 -0.135,
                 0,
@@ -133,7 +133,7 @@ class XArmRobot(Robot):
             track_frame_id=track_frame,  # Use world frame if mobile base enabled
             reach_timeout=15.0,  # Simple timeout for reaching poses
             enable_mobile_base=self.enable_mobile_base_control,  # Pass mobile base flag
-            pregrasp_distance=0.3,
+            pregrasp_distance=0.15,
             grasp_distance_range=0.02,
             grasp_width_offset=0.02,
             gripper_max_opening=0.1,

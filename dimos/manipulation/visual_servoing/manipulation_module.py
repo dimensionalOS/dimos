@@ -192,8 +192,8 @@ class ManipulationModule(Module):
 
         self.workspace_min_radius = 0.2
         self.workspace_max_radius = 1.0
-        self.min_grasp_pitch_degrees = 60
-        self.max_grasp_pitch_degrees = 90.0
+        self.min_grasp_pitch_degrees = 20
+        self.max_grasp_pitch_degrees = 80.0
 
         self.grasp_stage = GraspStage.IDLE
         self.pose_history_size = 4
