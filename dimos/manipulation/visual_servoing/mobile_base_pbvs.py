@@ -117,6 +117,7 @@ class MobileBasePBVS(Module):
         base_frame_id: str = "base_link",
         track_frame_id: str = "world",
         tracking_loss_timeout: float = 2.0,
+        detection_freeze_distance: float = 1.0,
         **kwargs,
     ):
         """Initialize mobile base PBVS module."""
@@ -137,6 +138,7 @@ class MobileBasePBVS(Module):
         self.target_distance = 1.0
         self.target_tolerance = target_tolerance
         self.tracking_loss_timeout = tracking_loss_timeout
+        self.detection_freeze_distance = detection_freeze_distance
 
         # Frame IDs
         self.camera_frame_id = camera_frame_id
@@ -377,6 +379,12 @@ class MobileBasePBVS(Module):
 
         while not self.stop_detection.is_set():
             try:
+                # Check if target is close enough to freeze detection
+                if self._should_freeze_detection():
+                    logger.debug("Target close - detection frozen")
+                    time.sleep(0.1)
+                    continue
+
                 self._process_frame()
                 time.sleep(0.05)  # 20Hz detection rate
             except Exception as e:
@@ -560,6 +568,7 @@ class MobileBasePBVS(Module):
                 self.state = ServoingState.REACHED
                 # Publish reached state
                 self.tracking_state.publish(String(data=self.state.value))
+                time.sleep(0.2)
             # Send zero velocity while at target
             self._send_zero_velocity()
             return
@@ -675,6 +684,22 @@ class MobileBasePBVS(Module):
 
         except Exception as e:
             logger.error(f"Error publishing visualization: {e}")
+
+    def _should_freeze_detection(self) -> bool:
+        """Check if detection should be frozen based on distance to target.
+
+        Returns:
+            True if target is close enough to freeze detection, False otherwise
+        """
+        if not self.target_object or not self.latest_odom:
+            return False
+
+        base_distance = get_distance(
+            self.latest_odom.position, self.target_object.bbox.center.position
+        )
+
+        # Freeze detection if within threshold distance
+        return base_distance < self.detection_freeze_distance
 
     def _publish_target_tf(self):
         """Publish TF transform for the tracked target."""
