@@ -12,150 +12,141 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import pickle
+import numpy as np
+import pytest
 
-from dimos.core.transport import LCMTransport
-from dimos.perception.detection2d.type.detection3d import Detection3D
-from dimos.protocol.service import lcmservice as lcm
+from dimos.perception.detection2d import testing
 
 
-def test_boundingbox():
-    import os
-
-    pkl_path = os.path.join(os.path.dirname(__file__), "detection3d.pkl")
-    detection = pickle.load(open(pkl_path, "rb"))
-    print(detection)
-
-    # Test bounding box functions
-    print("\n=== Testing Bounding Box Functions ===")
-    try:
-        # Get oriented bounding box
-        obb = detection.get_oriented_bounding_box()
-        print(f"✓ Oriented bounding box: {obb}")
-
-        # Get bounding box dimensions
-        dims = detection.get_bounding_box_dimensions()
-        print(f"✓ Bounding box dimensions (W×H×D): {dims[0]:.3f} × {dims[1]:.3f} × {dims[2]:.3f} m")
-
-        # Get axis-aligned bounding box for comparison
-        aabb = detection.get_bounding_box()
-        print(f"✓ Axis-aligned bounding box: {aabb}")
-
-    except Exception as e:
-        print(f"✗ Error getting bounding box: {e}")
-
-    # Test Foxglove scene entity generation
-    print("\n=== Testing Foxglove Scene Entity Generation ===")
-    try:
-        # First, print the point cloud boundaries
-        import numpy as np
-
-        # Access points directly from pointcloud
-        print(f"\n✓ Point cloud info:")
-        pc_points = detection.pointcloud.points()  # Call the method
-        print(f"  - Number of points: {len(pc_points)}")
-        print(f"  - Frame ID: {detection.pointcloud.frame_id}")
-
-        # Extract xyz coordinates from points
-        points = []
-        for pt in pc_points:
-            points.append([pt[0], pt[1], pt[2]])  # Assuming points are arrays/tuples
-        points = np.array(points)
-
-        if len(points) > 0:
-            min_pt = np.min(points, axis=0)
-            max_pt = np.max(points, axis=0)
-            center = np.mean(points, axis=0)
-            print(f"\n✓ Point cloud boundaries:")
-            print(f"  - Min point: [{min_pt[0]:.3f}, {min_pt[1]:.3f}, {min_pt[2]:.3f}]")
-            print(f"  - Max point: [{max_pt[0]:.3f}, {max_pt[1]:.3f}, {max_pt[2]:.3f}]")
-            print(f"  - Center: [{center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f}]")
-            print(
-                f"  - Extent: [{max_pt[0] - min_pt[0]:.3f}, {max_pt[1] - min_pt[1]:.3f}, {max_pt[2] - min_pt[2]:.3f}]"
-            )
-
-        # Test generating a Foxglove scene entity
-        entity = detection.to_foxglove_scene_entity("test_entity_123")
-        print(f"\n✓ Generated Foxglove scene entity:")
-        print(f"  - ID: {entity.id}")
-        print(f"  - Frame: {entity.frame_id}")
-        print(f"  - Cubes: {entity.cubes_length}")
-        print(f"  - Texts: {entity.texts_length}")
-
-        if entity.cubes_length > 0:
-            cube = entity.cubes[0]
-            print(f"\n✓ Cube primitive:")
-            print(
-                f"  - Position: [{cube.pose.position.x:.3f}, {cube.pose.position.y:.3f}, {cube.pose.position.z:.3f}]"
-            )
-            print(f"  - Size: [{cube.size.x:.3f} × {cube.size.y:.3f} × {cube.size.z:.3f}] m")
-            print(
-                f"  - Color: RGBA({cube.color.r}, {cube.color.g}, {cube.color.b}, {cube.color.a})"
-            )
-
-        if entity.texts_length > 0:
-            text = entity.texts[0]
-            print(f"\n✓ Text label:")
-            print(f"  - Text: {text.text}")
-            print(
-                f"  - Position: [{text.pose.position.x:.3f}, {text.pose.position.y:.3f}, {text.pose.position.z:.3f}]"
-            )
-            print(f"  - Font size: {text.font_size}")
-
-        # Print detection pose/transform info
-        print(f"\n✓ Detection pose:")
-        print(
-            f"  - Position: [{detection.pose.x:.3f}, {detection.pose.y:.3f}, {detection.pose.z:.3f}]"
-        )
-        print(f"  - Frame: {detection.pose.frame_id}")
-
-    except Exception as e:
-        print(f"✗ Error generating Foxglove entity: {e}")
-        import traceback
-
-        traceback.print_exc()
+@pytest.fixture(scope="session")
+def detection3d():
+    """Fixture to load and provide a 3D detection instance for testing."""
+    moment: testing.Moment3D = testing.detections3d()
+    detections = moment["detections3d"]
+    assert detections, "No detections found in test data"
+    return detections[0]
 
 
-def test_publish_foxglove_native(moment, detections3d, publish_lcm):
-    """Test publishing detection3d as Foxglove native 3D annotations using fixtures"""
-    from dimos.perception.detection2d.type.detection3d import ImageDetections3D
+def test_oriented_bounding_box(detection3d):
+    """Test oriented bounding box calculation and values."""
+    obb = detection3d.get_oriented_bounding_box()
+    assert obb is not None, "Oriented bounding box should not be None"
 
-    # Configure LCM
-    lcm.autoconf()
+    # Verify OBB center values
+    assert obb.center[0] == pytest.approx(-3.36002, abs=0.0001)
+    assert obb.center[1] == pytest.approx(-0.196446, abs=0.0001)
+    assert obb.center[2] == pytest.approx(0.106373, abs=0.0001)
 
-    # Add detections to moment
-    moment["detections"] = detections3d
+    # Verify OBB extent values
+    assert obb.extent[0] == pytest.approx(0.714664, abs=0.0001)
+    assert obb.extent[1] == pytest.approx(0.461054, abs=0.0001)
+    assert obb.extent[2] == pytest.approx(0.407777, abs=0.0001)
 
-    # Create ImageDetections3D and use the new method to generate SceneUpdate
-    image_detections = ImageDetections3D(
-        image=detections3d[0].image if detections3d else None, detections=detections3d
+
+def test_bounding_box_dimensions(detection3d):
+    """Test bounding box dimension calculation."""
+    dims = detection3d.get_bounding_box_dimensions()
+    assert len(dims) == 3, "Bounding box dimensions should have 3 values"
+    assert dims[0] == pytest.approx(0.500, abs=0.001)
+    assert dims[1] == pytest.approx(0.550, abs=0.001)
+    assert dims[2] == pytest.approx(0.550, abs=0.001)
+
+
+def test_axis_aligned_bounding_box(detection3d):
+    """Test axis-aligned bounding box calculation."""
+    aabb = detection3d.get_bounding_box()
+    assert aabb is not None, "Axis-aligned bounding box should not be None"
+
+    # Verify AABB min values
+    assert aabb.min_bound[0] == pytest.approx(-3.575, abs=0.001)
+    assert aabb.min_bound[1] == pytest.approx(-0.375, abs=0.001)
+    assert aabb.min_bound[2] == pytest.approx(-0.075, abs=0.001)
+
+    # Verify AABB max values
+    assert aabb.max_bound[0] == pytest.approx(-3.075, abs=0.001)
+    assert aabb.max_bound[1] == pytest.approx(0.175, abs=0.001)
+    assert aabb.max_bound[2] == pytest.approx(0.475, abs=0.001)
+
+
+def test_point_cloud_properties(detection3d):
+    """Test point cloud data and boundaries."""
+    pc_points = detection3d.pointcloud.points()
+    assert len(pc_points) == 94, f"Expected 94 points, got {len(pc_points)}"
+    assert detection3d.pointcloud.frame_id == "world", (
+        f"Expected frame_id 'world', got '{detection3d.pointcloud.frame_id}'"
     )
-    scene_update = image_detections.to_foxglove_scene_update()
 
-    # Add scene_update to moment
-    moment["scene_update"] = scene_update
+    # Extract xyz coordinates from points
+    points = np.array([[pt[0], pt[1], pt[2]] for pt in pc_points])
 
-    # Publish all data including scene_update
-    publish_lcm(moment)
+    min_pt = np.min(points, axis=0)
+    max_pt = np.max(points, axis=0)
+    center = np.mean(points, axis=0)
 
-    print(f"\nPublishing Foxglove native 3D annotations for {len(detections3d)} detections:")
-    for i, detection in enumerate(detections3d):
-        entity = scene_update.entities[i]
-        cube = entity.cubes[0]
-        text = entity.texts[0]
-        print(f"\nDetection {i + 1}:")
-        print(f"  - Entity ID: {entity.id}")
-        print(f"  - Class: {detection.name} ({detection.confidence:.0%})")
-        print(
-            f"  - Position: ({cube.pose.position.x:.3f}, {cube.pose.position.y:.3f}, {cube.pose.position.z:.3f})"
-        )
-        print(f"  - Size: ({cube.size.x:.3f} × {cube.size.y:.3f} × {cube.size.z:.3f}) m")
-        print(f"  - Points: {len(detection.pointcloud.points())}")
+    # Verify point cloud boundaries
+    assert min_pt[0] == pytest.approx(-3.575, abs=0.001)
+    assert min_pt[1] == pytest.approx(-0.375, abs=0.001)
+    assert min_pt[2] == pytest.approx(-0.075, abs=0.001)
 
-    print(f"\nPublished channels:")
-    print(f"  - /foxglove/scene_update (Foxglove native 3D annotations)")
-    print(f"  - /detected/pointcloud/* (Individual point clouds)")
-    print(f"  - /detected/image/* (Cropped detection images)")
-    print(f"  - /image, /lidar, /odom, /camera_info (Sensor data)")
-    print(f"\nView in Foxglove Studio!")
+    assert max_pt[0] == pytest.approx(-3.075, abs=0.001)
+    assert max_pt[1] == pytest.approx(0.175, abs=0.001)
+    assert max_pt[2] == pytest.approx(0.475, abs=0.001)
+
+    assert center[0] == pytest.approx(-3.326, abs=0.001)
+    assert center[1] == pytest.approx(-0.202, abs=0.001)
+    assert center[2] == pytest.approx(0.160, abs=0.001)
+
+
+def test_foxglove_scene_entity_generation(detection3d):
+    """Test Foxglove scene entity creation and structure."""
+    entity = detection3d.to_foxglove_scene_entity("test_entity_123")
+
+    # Verify entity metadata
+    assert entity.id == "1", f"Expected entity ID '1', got '{entity.id}'"
+    assert entity.frame_id == "world", f"Expected frame_id 'world', got '{entity.frame_id}'"
+    assert entity.cubes_length == 1, f"Expected 1 cube, got {entity.cubes_length}"
+    assert entity.texts_length == 1, f"Expected 1 text, got {entity.texts_length}"
+
+
+def test_foxglove_cube_properties(detection3d):
+    """Test Foxglove cube primitive properties."""
+    entity = detection3d.to_foxglove_scene_entity("test_entity_123")
+    cube = entity.cubes[0]
+
+    # Verify position
+    assert cube.pose.position.x == pytest.approx(-3.325, abs=0.001)
+    assert cube.pose.position.y == pytest.approx(-0.100, abs=0.001)
+    assert cube.pose.position.z == pytest.approx(0.200, abs=0.001)
+
+    # Verify size
+    assert cube.size.x == pytest.approx(0.500, abs=0.001)
+    assert cube.size.y == pytest.approx(0.550, abs=0.001)
+    assert cube.size.z == pytest.approx(0.550, abs=0.001)
+
+    # Verify color (green with alpha)
+    assert cube.color.r == pytest.approx(0.08235294117647059, abs=0.001)
+    assert cube.color.g == pytest.approx(0.7176470588235294, abs=0.001)
+    assert cube.color.b == pytest.approx(0.28627450980392155, abs=0.001)
+    assert cube.color.a == pytest.approx(0.2, abs=0.001)
+
+
+def test_foxglove_text_label(detection3d):
+    """Test Foxglove text label properties."""
+    entity = detection3d.to_foxglove_scene_entity("test_entity_123")
+    text = entity.texts[0]
+
+    assert text.text == "1/suitcase (81%)", f"Expected text '1/suitcase (81%)', got '{text.text}'"
+    assert text.pose.position.x == pytest.approx(-3.325, abs=0.001)
+    assert text.pose.position.y == pytest.approx(-0.100, abs=0.001)
+    assert text.pose.position.z == pytest.approx(0.575, abs=0.001)
+    assert text.font_size == 20.0, f"Expected font size 20.0, got {text.font_size}"
+
+
+def test_detection_pose(detection3d):
+    """Test detection pose and frame information."""
+    assert detection3d.pose.x == pytest.approx(-3.327, abs=0.001)
+    assert detection3d.pose.y == pytest.approx(-0.202, abs=0.001)
+    assert detection3d.pose.z == pytest.approx(0.160, abs=0.001)
+    assert detection3d.pose.frame_id == "world", (
+        f"Expected frame_id 'world', got '{detection3d.pose.frame_id}'"
+    )

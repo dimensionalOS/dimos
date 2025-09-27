@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.perception.detection2d.conftest import detections2d, detections3d
+from dimos.perception.detection2d.testing import detections2d, detections3d
 from dimos.perception.detection2d.type import (
     Detection2D,
     Detection3D,

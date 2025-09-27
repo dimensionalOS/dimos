@@ -65,7 +65,9 @@ class Moment3D(Moment):
 tf = TF()
 
 
-def get_g1_moment(seek: float = 10.0):
+def get_g1_moment(**kwargs):
+    seek = kwargs.get("seek", 10.0)
+
     data_dir = "replay_g1"
     get_data(data_dir)
 
@@ -94,9 +96,11 @@ def get_g1_moment(seek: float = 10.0):
     }
 
 
-def get_moment(seek: float = 10, g1: bool = False) -> Moment:
+def get_moment(**kwargs) -> Moment:
+    seek = kwargs.get("seek", 10.0)
+    g1 = kwargs.get("g1", False)
     if g1:
-        return get_g1_moment(seek=seek)
+        return get_g1_moment(**kwargs)
 
     data_dir = "unitree_go2_lidar_corrected"
     get_data(data_dir)
@@ -132,9 +136,9 @@ _detection2d_module = None
 _objectdb_module = None
 
 
-def detections2d(seek: float = 10.0, g1: bool = False) -> Moment2D:
+def detections2d(**kwargs) -> Moment2D:
     global _detection2d_module
-    moment = get_moment(seek=seek, g1=g1)
+    moment = get_moment(**kwargs)
     if _detection2d_module is None:
         _detection2d_module = Detection2DModule()
 
@@ -148,10 +152,10 @@ def detections2d(seek: float = 10.0, g1: bool = False) -> Moment2D:
 _detection3d_module = None
 
 
-def detections3d(seek: float = 10.0, g1: bool = False) -> Moment3D:
+def detections3d(**kwargs) -> Moment3D:
     global _detection3d_module
 
-    moment = detections2d(seek=seek, g1=g1)
+    moment = detections2d(**kwargs)
 
     camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
     if camera_transform is None:
@@ -168,16 +172,18 @@ def detections3d(seek: float = 10.0, g1: bool = False) -> Moment3D:
     }
 
 
-def objectdb(seek: float = 10.0) -> Moment3D:
+def objectdb(**kwargs) -> Moment3D:
     global _objectdb_module
 
-    moment = detections3d(seek=seek)
+    moment = detections3d(**kwargs)
     camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
     if camera_transform is None:
         raise ValueError("No camera_optical transform in tf")
 
     if _objectdb_module is None:
-        _objectdb_module = ObjectDBModule(camera_info=moment["camera_info"])
+        _objectdb_module = ObjectDBModule(
+            camera_info=moment["camera_info"], goto=lambda x: print("GOTO", x)
+        )
 
     for detection in moment["detections3d"]:
         _objectdb_module.add_detection(detection)

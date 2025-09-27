@@ -26,10 +26,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.module3D import Detection3DModule
-from dimos.perception.detection2d.type import (
-    Detection3D,
-    ImageDetections3D,
-)
+from dimos.perception.detection2d.type import Detection3D, ImageDetections3D, TableStr
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.types.timestamped import to_datetime
@@ -43,7 +40,11 @@ class Object3D(Detection3D):
     detections: List[Detection3D]
 
     def to_repr_dict(self) -> Dict[str, Any]:
-        return {"object_id": self.track_id}
+        return {
+            "object_id": self.track_id,
+            "detections": len(self.detections),
+            "center": "[" + ", ".join(list(map(lambda n: f"{n:1f}", self.center.to_list()))) + "]",
+        }
 
     def __init__(self, track_id: str, detection: Optional[Detection3D] = None, *args, **kwargs):
         if detection is None:
@@ -121,7 +122,7 @@ class Object3D(Detection3D):
         return PoseStamped(position=self.center, orientation=Quaternion(), frame_id="world")
 
 
-class ObjectDBModule(Detection3DModule):
+class ObjectDBModule(Detection3DModule, TableStr):
     cnt: int = 0
     objects: dict[str, Object3D]
     object_stream: Observable[Object3D] = None
@@ -162,6 +163,11 @@ class ObjectDBModule(Detection3DModule):
         distances = sorted(matching_objects, key=lambda obj: detection.center.distance(obj.center))
 
         return distances[0]
+
+    def add_detections(self, detections: List[Detection3D]) -> List[Object3D]:
+        return [
+            detection for detection in map(self.add_detection, detections) if detection is not None
+        ]
 
     def add_detection(self, detection: Detection3D):
         """Add detection to existing object or create new one."""
@@ -270,3 +276,9 @@ class ObjectDBModule(Detection3DModule):
 
         scene_update.entities_length = len(scene_update.entities)
         return scene_update
+
+    def __len__(self):
+        return len(self.objects.values())
+
+    def __iter__(self):
+        return iter(self.detections.values())
