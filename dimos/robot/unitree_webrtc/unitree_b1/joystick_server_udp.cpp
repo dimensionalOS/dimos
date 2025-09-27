@@ -8,6 +8,7 @@
 #include <iostream>
 #include <unistd.h>
 #include <string.h>
+#include <cstdlib>
 #include <thread>
 #include <mutex>
 #include <sys/socket.h>
@@ -18,6 +19,11 @@
 #include <errno.h>
 
 using namespace UNITREE_LEGGED_SDK;
+
+// Lightweight clamp compatible with older compilers (pre-C++17)
+static inline float clampf(float v, float lo, float hi) {
+    return fmaxf(lo, fminf(v, hi));
+}
 
 // Joystick command structure received over network
 struct NetworkJoystickCmd {
@@ -283,9 +289,9 @@ void JoystickServer::RobotControl() {
             break;
             
         case 2:  // Walk mode
-            cmd.velocity[0] = std::clamp(current_cmd.ly * MAX_FORWARD_SPEED, -MAX_FORWARD_SPEED, MAX_FORWARD_SPEED);
-            cmd.yawSpeed = std::clamp(-current_cmd.lx * MAX_YAW_SPEED, -MAX_YAW_SPEED, MAX_YAW_SPEED);
-            cmd.velocity[1] = std::clamp(-current_cmd.rx * MAX_SIDE_SPEED, -MAX_SIDE_SPEED, MAX_SIDE_SPEED);
+            cmd.velocity[0] = clampf(current_cmd.ly * MAX_FORWARD_SPEED, -MAX_FORWARD_SPEED, MAX_FORWARD_SPEED);
+            cmd.yawSpeed = clampf(-current_cmd.lx * MAX_YAW_SPEED, -MAX_YAW_SPEED, MAX_YAW_SPEED);
+            cmd.velocity[1] = clampf(-current_cmd.rx * MAX_SIDE_SPEED, -MAX_SIDE_SPEED, MAX_SIDE_SPEED);
             
             // Check button states for gait type
             if (current_cmd.buttons & 0x0001) {  // Button A
@@ -338,11 +344,24 @@ void signal_handler(int sig) {
 
 int main(int argc, char* argv[]) {
     int port = 9090;  // Default port
-    
-    if (argc > 1) {
-        port = atoi(argv[1]);
+    bool no_confirm = false; // Skip startup prompt if true
+
+    // Simple argument parsing:
+    //  - "<number>" sets port
+    //  - "--no-confirm" skips the startup prompt
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--no-confirm") == 0) {
+            no_confirm = true;
+            continue;
+        }
+        // Try to parse numeric port
+        char* end = nullptr;
+        long p = strtol(argv[i], &end, 10);
+        if (end != argv[i] && *end == '\0' && p > 0 && p <= 65535) {
+            port = static_cast<int>(p);
+        }
     }
-    
+
     std::cout << "UDP Unitree B1 Joystick Control Server" << std::endl;
     std::cout << "Communication level: HIGH-level" << std::endl;
     std::cout << "Protocol: UDP (datagram)" << std::endl;
@@ -350,8 +369,13 @@ int main(int argc, char* argv[]) {
     std::cout << "Packet size: 19 bytes (Python) or 20 bytes (C++)" << std::endl;
     std::cout << "Update rate: 50Hz expected" << std::endl;
     std::cout << "WARNING: Make sure the robot is standing on the ground." << std::endl;
-    std::cout << "Press Enter to continue..." << std::endl;
-    std::cin.ignore();
+    if (!no_confirm) {
+        // Only prompt if attached to a TTY; skip in services
+        if (isatty(STDIN_FILENO)) {
+            std::cout << "Press Enter to continue..." << std::endl;
+            std::cin.ignore();
+        }
+    }
     
     JoystickServer server(HIGHLEVEL, port);
     g_server = &server;

@@ -62,14 +62,20 @@ The B1 robot runs Ubuntu with the following requirements:
 ```bash
 # Navigate to build directory
 cd Unitree/sdk/unitree_legged_sdk_B1/build/
+./joystick_server [PORT] [--no-confirm]
+
+# Examples:
+# Default port, interactive prompt
 ./joystick_server
+# Custom port, skip prompt (for services)
+./joystick_server 9090 --no-confirm
 
 # You should see:
 # UDP Unitree B1 Joystick Control Server
 # Communication level: HIGH-level
 # Server port: 9090
 # WARNING: Make sure the robot is standing on the ground.
-# Press Enter to continue...
+# (No prompt if --no-confirm)
 ```
 
 The server will now listen for UDP packets on port 9090 and control the B1 robot.
@@ -188,6 +194,45 @@ External Machine (Client)          B1 Robot (Server)
 - Press Space or Q for immediate stop
 - Use Ctrl+C to exit cleanly
 - Robot auto-stops after 100ms without commands
+
+## Autostart on Boot (systemd)
+
+You can run the server automatically on boot using a systemd service. Adjust paths and user as needed.
+
+1) Create `/etc/systemd/system/joystick_server.service`:
+
+```
+[Unit]
+Description=Unitree B1 Joystick UDP Server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/unitree/Unitree/sdk/unitree_legged_sdk_B1/build
+ExecStart=/home/unitree/Unitree/sdk/unitree_legged_sdk_B1/build/joystick_server 9090 --no-confirm
+Restart=always
+RestartSec=2
+User=unitree
+Environment=LD_LIBRARY_PATH=/home/unitree/Unitree/sdk/unitree_legged_sdk_B1/build:$LD_LIBRARY_PATH
+
+[Install]
+WantedBy=multi-user.target
+```
+
+2) Enable and start it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable joystick_server
+sudo systemctl start joystick_server
+sudo journalctl -u joystick_server -f  # view logs
+```
+
+Notes:
+- `--no-confirm` avoids blocking on the startup prompt.
+- If the binary needs SDK shared libs in the build dir, keep `LD_LIBRARY_PATH`.
+- If you keep a different location/user, update `WorkingDirectory`, `ExecStart`, and `User`.
 
 ## Development Notes
 
