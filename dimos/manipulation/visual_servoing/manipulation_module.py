@@ -855,7 +855,7 @@ class ManipulationModule(Module):
 
             logger.info(f"Moving to grasp position, gripper={gripper_opening * 1000:.1f}mm")
             self.arm.cmd_gripper_ctrl(gripper_opening)
-            self.arm.cmd_ee_pose(target_pose, line_mode=False)
+            self.arm.cmd_ee_pose(target_pose, line_mode=True)
             self.current_executed_pose = target_pose
             self.waiting_for_reach = True
             self.waiting_start_time = time.time()
@@ -901,7 +901,7 @@ class ManipulationModule(Module):
         place_pose = self.get_place_target_pose()
         if place_pose:
             logger.info("Moving to place position")
-            self.arm.cmd_ee_pose(place_pose, line_mode=False)
+            self.arm.cmd_ee_pose(place_pose, line_mode=True)
             self.current_executed_pose = place_pose
             self.waiting_for_reach = True
             self.waiting_start_time = time.time()

@@ -296,7 +296,7 @@ class PiperArmModule(Module):
 
         # EE to camera transform
         if ee_to_camera_6dof is None:
-            ee_to_camera_6dof = [-0.065, 0.03, -0.095, 0.0, 0, 0.0]
+            ee_to_camera_6dof = [-0.065, 0.03, -0.095, 0.0, -1.57, 0.0]
         pos = Vector3(ee_to_camera_6dof[0], ee_to_camera_6dof[1], ee_to_camera_6dof[2])
         rot = Vector3(ee_to_camera_6dof[3], ee_to_camera_6dof[4], ee_to_camera_6dof[5])
         self.T_ee_to_camera = create_transform_from_6dof(pos, rot)
