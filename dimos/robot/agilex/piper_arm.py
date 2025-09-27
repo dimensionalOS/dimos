@@ -75,10 +75,7 @@ class PiperArmRobot(Robot):
             ZEDModule,
             camera_id=0,
             resolution="HD720",
-            depth_mode="NEURAL",
-            fps=30,
             enable_tracking=False,  # Disable tracking - using piper_arm transforms
-            publish_rate=30.0,
             frame_id="zed_camera_link",
             optical_frame_id="zed_camera_link_optical",
         )

@@ -87,9 +87,9 @@ class PiperArm:
         self.arm.EndPoseCtrl(X, Y, Z, RX, RY, RZ)
         self.arm.GripperCtrl(0, 1000, 0x01, 0)
 
-    def gotoObserve(self):
+    def gotoObserve(self, pitch=120.0):
         factor = 1000
-        position = [57.0, 0.0, 280.0, 0, 120.0, 0, 0]
+        position = [57.0, 0.0, 280.0, 0, pitch, 0, 0]
         X = round(position[0] * factor)
         Y = round(position[1] * factor)
         Z = round(position[2] * factor)
@@ -439,10 +439,10 @@ class PiperArmModule(Module):
             self.arm.gotoZero()
 
     @rpc
-    def goto_observe(self):
+    def goto_observe(self, pitch=120.0):
         """Move arm to observe position."""
         if self.arm:
-            self.arm.gotoObserve()
+            self.arm.gotoObserve(pitch=pitch)
         else:
             logger.warning("Cannot go to observe position - arm not initialized yet")
 

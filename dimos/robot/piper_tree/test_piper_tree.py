@@ -121,7 +121,7 @@ class TestInterface:
         try:
             logger.info(f"Starting mobile pick and place at ({x}, {y})")
             result = self.robot.mobile_pick_and_place(
-                x, y, servo_distance=0.4, servo_timeout=30.0, pick_timeout=60.0
+                x, y, servo_distance=0.5, servo_timeout=30.0, pick_timeout=60.0
             )
             if result.get("success"):
                 logger.info(f"Mobile pick and place completed: {result.get('message', 'Success')}")

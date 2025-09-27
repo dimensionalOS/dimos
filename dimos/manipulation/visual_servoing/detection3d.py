@@ -84,7 +84,7 @@ class Detection3DProcessor:
         self.detector = Sam2DSegmenter(
             use_tracker=False,
             use_analyzer=False,
-            use_filtering=True,
+            use_filtering=False,
         )
 
         self.min_confidence = min_confidence
