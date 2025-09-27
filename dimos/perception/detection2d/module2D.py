@@ -40,7 +40,7 @@ class Detector(ABC):
 
 @dataclass
 class Config:
-    detector = Optional[Callable[[Any], Detector]] = Yolo2DDetector
+    detector: Optional[Callable[[Any], Detector]] = Yolo2DDetector
     max_freq: float = 3.0  # hz
 
 

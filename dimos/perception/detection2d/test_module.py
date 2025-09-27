@@ -36,6 +36,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 
 
+@pytest.mark.tool
 def test_module2d(moment: Moment, publish_lcm):
     detections2d = Detection2DModule().process_image_frame(moment["image_frame"])
 

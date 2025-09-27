@@ -59,27 +59,9 @@ def _hash_to_color(name: str) -> str:
     return colors[hash_value % len(colors)]
 
 
-class ImageDetections(Generic[T]):
-    image: Image
-    detections: List[T]
-
-    @property
-    def ts(self) -> float:
-        return self.image.ts
-
-    def __init__(self, image: Image, detections: List[T]):
-        self.image = image
-        self.detections = detections
-        for det in self.detections:
-            if not det.ts:
-                det.ts = image.ts
-
+class TableStr:
     def __str__(self):
         console = Console(force_terminal=True, legacy_windows=False)
-
-        # Dynamically build columns based on the first detection's dict keys
-        if not self.detections:
-            return "Empty ImageDetections"
 
         # Create a table for detections
         table = Table(
@@ -88,8 +70,14 @@ class ImageDetections(Generic[T]):
             show_edge=True,
         )
 
+        # Dynamically build columns based on the first detection's dict keys
+        if not self.detections:
+            return (
+                f"   {self.__class__.__name__} [0 detections @ {to_timestamp(self.image.ts):.3f}]"
+            )
+
         # Cache all repr_dicts to avoid double computation
-        detection_dicts = [det.to_repr_dict() for det in self.detections]
+        detection_dicts = [det.to_repr_dict() for det in self]
 
         first_dict = detection_dicts[0]
         table.add_column("#", style="dim")
@@ -121,6 +109,22 @@ class ImageDetections(Generic[T]):
         with console.capture() as capture:
             console.print(table)
         return capture.get().strip()
+
+
+class ImageDetections(Generic[T], TableStr):
+    image: Image
+    detections: List[T]
+
+    @property
+    def ts(self) -> float:
+        return self.image.ts
+
+    def __init__(self, image: Image, detections: List[T]):
+        self.image = image
+        self.detections = detections
+        for det in self.detections:
+            if not det.ts:
+                det.ts = image.ts
 
     def __len__(self):
         return len(self.detections)

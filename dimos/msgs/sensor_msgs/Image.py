@@ -592,16 +592,4 @@ def sharpness_window(target_frequency: float, source: Observable[Image]) -> Obse
 
 
 def sharpness_barrier(target_frequency: float):
-    """
-    RxPY pipe operator that selects the sharpest image within each time window.
-
-    Args:
-        target_frequency: Output frequency in Hz (e.g., 1.0 for 1 image per second)
-
-    Returns:
-        A pipe operator that can be used with .pipe()
-
-    Example:
-        video_stream.pipe(sharpness_barrier(1.0)).subscribe(print)
-    """
     return quality_barrier(lambda x: x.sharpness, target_frequency)
