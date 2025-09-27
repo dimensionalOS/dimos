@@ -240,6 +240,5 @@ def publish_moment(moment: Union[Moment, Moment2D, Moment3D]):
 
     objectdb: ObjectDBModule = moment.get("objectdb")
     if objectdb:
-        print("PUB OBJECT DB", list(objectdb.objects.keys()))
         scene_entity_transport = _get_transport("/scene_update", SceneUpdate)
         scene_entity_transport.publish(objectdb.to_foxglove_scene_update())

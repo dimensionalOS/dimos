@@ -34,8 +34,6 @@ def test_moduleDB():
         moment = testing.get_moment(seek=seek_value)
         imageDetections2d = module2d.process_image_frame(moment["image_frame"])
 
-        # print(imageDetections2d)
-
         camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
 
         imageDetections3d = module3d.process_frame(
@@ -44,3 +42,5 @@ def test_moduleDB():
 
         moduleDB.add_detections(imageDetections3d)
         print(moduleDB)
+
+        testing.publish_moment(moment)
