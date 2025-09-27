@@ -95,7 +95,7 @@ class CameraModule(Module):
 
             self.tf.publish(camera_link, camera_optical)
 
-        self._camera_info_subscription = self.camera_info_stream.subscribe(publish_info)
+        self._camera_info_subscription = self.camera_info_stream().subscribe(publish_info)
         self._module_subscription = stream.subscribe(self.image.publish)
 
     @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
