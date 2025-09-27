@@ -93,7 +93,7 @@ class PiperTree(Robot):
             MobileBasePBVS,
             # PID parameters for linear X (forward/backward)
             linear_x_kp=0.6,
-            linear_x_ki=0.2,
+            linear_x_ki=0.3,
             linear_x_kd=0.05,
             # PID parameters for linear Y (left/right)
             linear_y_kp=0.5,

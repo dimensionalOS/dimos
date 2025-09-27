@@ -214,7 +214,7 @@ class ManipulationModule(Module):
             None  # Track when the target was last updated with new 2D detection
         )
         self.target_has_new_detection = False  # Flag for new detection for the specific target
-        self.detection_timeout = 6.0  # Timeout in seconds for no new detections during pre-grasp
+        self.detection_timeout = 10.0  # Timeout in seconds for no new detections during pre-grasp
         self.ee_frame_id = "ee_link"
 
         self.target_click = None
