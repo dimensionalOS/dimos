@@ -43,6 +43,8 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+from dimos.agents2.skills.google_maps import GoogleMapsSkillContainer
+from dimos.agents2.skills.osm import OsmSkillContainer
 
 logger = setup_logger(__name__)
 
@@ -170,8 +172,8 @@ class Drone(Robot):
 
         self.tracking = self.dimos.deploy(
             DroneTrackingModule,
-            x_pid_params=(0.001, 0.0, 0.0001, (-0.5, 0.5), None, 30),
-            y_pid_params=(0.001, 0.0, 0.0001, (-0.5, 0.5), None, 30),
+            x_pid_params=(0.05, 0.0, 0.0003, (-5, 5), None, 10),
+            y_pid_params=(0.05, 0.0, 0.0003, (-5, 5), None, 10),
         )
 
         self.tracking.tracking_overlay.transport = core.LCMTransport(
@@ -437,6 +439,8 @@ def main():
 
     agent.register_skills(drone.connection)
     agent.register_skills(human_input)
+    agent.register_skills(GoogleMapsSkillContainer(drone, drone.gps_position_stream))
+    agent.register_skills(OsmSkillContainer(drone, drone.gps_position_stream))
     agent.run_implicit_skill("human")
 
     agent.start()
