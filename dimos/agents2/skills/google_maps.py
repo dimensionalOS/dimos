@@ -44,12 +44,17 @@ class GoogleMapsSkillContainer(SkillContainer):
         self._latest_location = None
         self._position_stream = position_stream
         self._client = GoogleMaps()
-        self._started = False
+        self._started = True
         self._max_valid_distance = 20000  # meters
+        self._subscription = None
+        self._subscription = self._position_stream.subscribe(self._on_gps_location)
+        self._disposables.add(self._subscription)
 
     def __enter__(self) -> "GoogleMapsSkillContainer":
         self._started = True
-        self._disposables.add(self._position_stream.subscribe(self._on_gps_location))
+        if self._subscription is None:
+            self._subscription = self._position_stream.subscribe(self._on_gps_location)
+            self._disposables.add(self._subscription)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -95,8 +100,9 @@ class GoogleMapsSkillContainer(SkillContainer):
 
     @skill()
     def get_gps_position_for_queries(self, queries: list[str]) -> str:
-        """Get the GPS position (latitude/longitude)
-
+        """Get the GPS position (latitude/longitude) from Google Maps for know landmarks or searchable locations.
+           This includes anything that wouldn't be viewable on a physical OSM map including intersections (5th and Natoma)
+           landmarks (Dolores park), or locations (Tempest bar)
         Example:
 
             get_gps_position_for_queries(['Fort Mason', 'Lafayette Park'])
