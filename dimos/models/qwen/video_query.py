@@ -2,7 +2,7 @@
 
 import os
 import numpy as np
-from typing import Optional
+from typing import Optional, Tuple
 from openai import OpenAI
 from reactivex import Observable, operators as ops
 from reactivex.subject import Subject
@@ -11,6 +11,8 @@ from dimos.agents.agent import OpenAIAgent
 from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.utils.threadpool import get_scheduler
 import json
+
+BBox = Tuple[float, float, float, float]  # (x1, y1, x2, y2)
 
 
 def query_single_frame_observable(
@@ -161,7 +163,7 @@ def query_single_frame(
 
 def get_bbox_from_qwen(
     video_stream: Observable, object_name: Optional[str] = None
-) -> Optional[list]:
+) -> Optional[Tuple[BBox, float]]:
     """Get bounding box coordinates from Qwen for a specific object or any object.
 
     Args:
@@ -169,7 +171,8 @@ def get_bbox_from_qwen(
         object_name: Optional name of object to detect
 
     Returns:
-        bbox: Bounding box as [x1, y1, x2, y2] or None if no detection
+        Tuple of (bbox, size) where bbox is (x1, y1, x2, y2) and size is height in meters,
+        or None if no detection
     """
     prompt = (
         f"Look at this image and find the {object_name if object_name else 'most prominent object'}. Estimate the approximate height of the subject."
@@ -189,7 +192,8 @@ def get_bbox_from_qwen(
 
             # Extract and validate bbox
             if "bbox" in result and len(result["bbox"]) == 4:
-                return result["bbox"], result["size"]
+                bbox = tuple(result["bbox"])  # Convert list to tuple
+                return (bbox, result["size"])
     except Exception as e:
         print(f"Error parsing Qwen response: {e}")
         print(f"Raw response: {response}")
@@ -197,7 +201,7 @@ def get_bbox_from_qwen(
     return None
 
 
-def get_bbox_from_qwen_frame(frame, object_name: Optional[str] = None) -> Optional[list]:
+def get_bbox_from_qwen_frame(frame, object_name: Optional[str] = None) -> Optional[BBox]:
     """Get bounding box coordinates from Qwen for a specific object or any object using a single frame.
 
     Args:
@@ -205,7 +209,7 @@ def get_bbox_from_qwen_frame(frame, object_name: Optional[str] = None) -> Option
         object_name: Optional name of object to detect
 
     Returns:
-        list: bbox as [x1, y1, x2, y2] or None if no detection
+        BBox: Bounding box as (x1, y1, x2, y2) or None if no detection
     """
     # Ensure frame is numpy array
     if not isinstance(frame, np.ndarray):
@@ -229,7 +233,7 @@ def get_bbox_from_qwen_frame(frame, object_name: Optional[str] = None) -> Option
 
             # Extract and validate bbox
             if "bbox" in result and len(result["bbox"]) == 4:
-                return result["bbox"]
+                return tuple(result["bbox"])  # Convert list to tuple
     except Exception as e:
         print(f"Error parsing Qwen response: {e}")
         print(f"Raw response: {response}")

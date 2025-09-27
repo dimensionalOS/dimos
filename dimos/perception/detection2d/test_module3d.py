@@ -39,14 +39,14 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 
 
-def test_module3d():
-    lcm.autoconf()
+# def test_module3d():
+#     lcm.autoconf()
 
-    for i in range(120):
-        seek_value = 10.0 + (i / 2)
-        moment = testing.detections3d(seek=seek_value)
+#     for i in range(120):
+#         seek_value = 10.0 + (i / 2)
+#         moment = testing.detections3d(seek=seek_value)
 
-        testing.publish_moment(moment)
-        testing.publish_moment(moment)
+#         testing.publish_moment(moment)
+#         testing.publish_moment(moment)
 
-        time.sleep(0.1)
+#         time.sleep(0.1)

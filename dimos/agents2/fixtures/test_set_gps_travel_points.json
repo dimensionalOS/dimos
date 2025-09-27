@@ -1,0 +1,30 @@
+{
+  "responses": [
+    {
+      "content": "I understand you want me to navigate to the specified location. I will set the GPS travel point accordingly.",
+      "tool_calls": [
+        {
+          "name": "set_gps_travel_points",
+          "args": {
+            "args": [
+              {
+                "lat": 37.782654,
+                "lon": -122.413273
+              }
+            ]
+          },
+          "id": "call_q6JCCYFuyAjqUgUibJHqcIMD",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I'm on my way to the specified location. Let me know if there is anything else I can assist you with!",
+      "tool_calls": []
+    },
+    {
+      "content": "I've reached the specified location. Do you need any further assistance?",
+      "tool_calls": []
+    }
+  ]
+}

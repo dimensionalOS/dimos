@@ -13,40 +13,51 @@
 # limitations under the License.
 import time
 
-import pytest
-from dimos_lcm.foxglove_msgs import ImageAnnotations, SceneUpdate
-from dimos_lcm.sensor_msgs import Image, PointCloud2
+from lcm_msgs.foxglove_msgs import SceneUpdate
 
 from dimos.core import LCMTransport
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
-from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.msgs.sensor_msgs import PointCloud2 as PointCloud2Msg
+from dimos.msgs.foxglove_msgs import ImageAnnotations
+from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d import testing
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.perception.detection2d.moduleDB import ObjectDBModule
-from dimos.perception.detection2d.type import (
-    Detection2D,
-    Detection3D,
-    ImageDetections2D,
-    ImageDetections3D,
-)
 from dimos.protocol.service import lcmservice as lcm
 from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.map import Map
 
 
-def test_module3d():
-    lcm.autoconf()
+def test_moduleDB(dimos_cluster):
+    connection = deploy_connection(dimos_cluster)
 
-    for i in range(120):
-        seek_value = 10.0 + (i / 2)
-        moment = testing.objectdb(seek=seek_value)
+    moduleDB = dimos_cluster.deploy(
+        ObjectDBModule,
+        camera_info=ConnectionModule._camera_info(),
+        goto=lambda obj_id: print(f"Going to {obj_id}"),
+    )
+    moduleDB.image.connect(connection.video)
+    moduleDB.pointcloud.connect(connection.lidar)
 
-        testing.publish_moment(moment)
-        testing.publish_moment(moment)
+    moduleDB.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
+    moduleDB.detections.transport = LCMTransport("/detections", Detection2DArray)
 
-        time.sleep(0.1)
+    moduleDB.detected_pointcloud_0.transport = LCMTransport("/detected/pointcloud/0", PointCloud2)
+    moduleDB.detected_pointcloud_1.transport = LCMTransport("/detected/pointcloud/1", PointCloud2)
+    moduleDB.detected_pointcloud_2.transport = LCMTransport("/detected/pointcloud/2", PointCloud2)
+
+    moduleDB.detected_image_0.transport = LCMTransport("/detected/image/0", Image)
+    moduleDB.detected_image_1.transport = LCMTransport("/detected/image/1", Image)
+    moduleDB.detected_image_2.transport = LCMTransport("/detected/image/2", Image)
+
+    moduleDB.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
+    moduleDB.target.transport = LCMTransport("/target", PoseStamped)
+
+    connection.start()
+    moduleDB.start()
+
+    time.sleep(4)
+    print("STARTING QUERY!!")
+    print("VLM RES", moduleDB.navigate_to_object_in_view("white floor"))
+    time.sleep(30)

@@ -69,7 +69,7 @@ class RobotLocation:
         Returns:
             Dictionary with metadata fields compatible with vector DB storage
         """
-        return {
+        metadata = {
             "pos_x": float(self.position[0]),
             "pos_y": float(self.position[1]),
             "pos_z": float(self.position[2]),
@@ -78,10 +78,15 @@ class RobotLocation:
             "rot_z": float(self.rotation[2]),
             "timestamp": self.timestamp,
             "location_id": self.location_id,
-            "frame_id": self.frame_id,
             "location_name": self.name,
             "description": self.name,  # Makes it searchable by text
         }
+
+        # Only add frame_id if it's not None
+        if self.frame_id is not None:
+            metadata["frame_id"] = self.frame_id
+
+        return metadata
 
     @classmethod
     def from_vector_metadata(cls, metadata: Dict[str, Any]) -> "RobotLocation":
@@ -128,3 +133,6 @@ class RobotLocation:
                 ]
             },
         )
+
+    def __str__(self):
+        return f"[RobotPosition name:{self.name} pos:{self.position} rot:{self.rotation})]"

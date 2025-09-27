@@ -29,6 +29,7 @@ from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
+from dimos.utils.reactive import quality_barrier
 
 
 class ImageFormat(Enum):
@@ -521,18 +522,8 @@ class Image(Timestamped):
 
 
 def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
-    window = TimestampedBufferCollection(1.0 / target_frequency)
-    source.subscribe(window.add)
+    raise NotImplementedError("use sharpness_barrier instead")
 
-    thread_scheduler = ThreadPoolScheduler(max_workers=1)
 
-    def find_best(*argv):
-        if not window._items:
-            return None
-
-        found = max(window._items, key=lambda x: x.sharpness)
-        return found
-
-    return rx.interval(1.0 / target_frequency).pipe(
-        ops.observe_on(thread_scheduler), ops.map(find_best), ops.filter(lambda x: x is not None)
-    )
+def sharpness_barrier(target_frequency: float):
+    return quality_barrier(lambda x: x.sharpness, target_frequency)

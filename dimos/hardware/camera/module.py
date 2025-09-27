@@ -16,7 +16,6 @@ import queue
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Optional, Protocol, TypeVar
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
 
 import reactivex as rx
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -33,6 +32,7 @@ from dimos.hardware.camera.spec import (
 from dimos.hardware.camera.webcam import Webcam, WebcamConfig
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 
 default_transform = lambda: Transform(
     translation=Vector3(0.0, 0.0, 0.0),
@@ -73,10 +73,9 @@ class CameraModule(Module):
         if self._module_subscription:
             return "already started"
 
-        stream = self.hardware.image_stream()
-        sharpness = sharpness_window(5, stream)
+        stream = self.hardware.image_stream().pipe(sharpness_barrier(5))
 
-        camera_info_stream = self.camera_info_stream(frequency=5.0)
+        # camera_info_stream = self.camera_info_stream(frequency=5.0)
 
         def publish_info(camera_info: CameraInfo):
             self.camera_info.publish(camera_info)
@@ -96,7 +95,7 @@ class CameraModule(Module):
 
             self.tf.publish(camera_link, camera_optical)
 
-        self._camera_info_subscription = camera_info_stream.subscribe(publish_info)
+        self._camera_info_subscription = self.camera_info_stream().subscribe(publish_info)
         self._module_subscription = stream.subscribe(self.image.publish)
 
     @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)

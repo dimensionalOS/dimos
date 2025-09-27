@@ -26,7 +26,6 @@ from dimos.perception.detection2d.utils import (
 from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.path_utils import get_project_root
 
 logger = setup_logger("dimos.perception.detection2d.yolo_2d_det")
 
@@ -42,7 +41,7 @@ class Yolo2DDetector:
             device (str): Device to run inference on ('cuda' or 'cpu')
         """
         self.device = device
-        self.model = YOLO(get_data(model_path) / model_name)
+        self.model = YOLO(get_data(model_path) / model_name, task="detect")
 
         module_dir = os.path.dirname(__file__)
         self.tracker_config = os.path.join(module_dir, "config", "custom_tracker.yaml")
@@ -50,10 +49,10 @@ class Yolo2DDetector:
             if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
                 onnxruntime.preload_dlls(cuda=True, cudnn=True)
             self.device = "cuda"
-            logger.info("Using CUDA for YOLO 2d detector")
+            logger.debug("Using CUDA for YOLO 2d detector")
         else:
             self.device = "cpu"
-            logger.info("Using CPU for YOLO 2d detector")
+            logger.debug("Using CPU for YOLO 2d detector")
 
     def process_image(self, image):
         """

@@ -207,7 +207,7 @@ class DepthModule(Module):
             self._publish_depth()
 
         except Exception as e:
-            logger.error(f"Error processing depth: {e}", exc_info=True)
+            logger.error(f"Error processing depth: {e}")
             self._cannot_process_depth = True
 
     def _publish_depth(self):

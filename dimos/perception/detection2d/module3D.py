@@ -44,8 +44,8 @@ class Detection3DModule(Detection2DModule):
     detection_3d_stream: Observable[ImageDetections3D] = None
 
     def __init__(self, camera_info: CameraInfo, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.camera_info = camera_info
-
         Detection2DModule.__init__(self, *args, **kwargs)
 
     def process_frame(
@@ -57,6 +57,7 @@ class Detection3DModule(Detection2DModule):
         if not transform:
             return ImageDetections3D(detections.image, [])
 
+        print("PROCESS FRAME", detections)
         detection3d_list = []
         for detection in detections:
             detection3d = Detection3D.from_2d(
@@ -75,23 +76,20 @@ class Detection3DModule(Detection2DModule):
         super().start()
 
         def detection2d_to_3d(args):
-            #            print("Aligning 2D detections with 3D pointcloud...")
             detections, pc = args
-            # print(detections, pc)
             transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
             return self.process_frame(detections, pc, transform)
 
-        self.detection_stream_3d = align_timestamped(
-            backpressure(self.detection_stream_2d()),
-            self.pointcloud.observable(),
-            match_tolerance=0.25,
-            buffer_size=2.0,
-        ).pipe(ops.map(detection2d_to_3d))
+        # self.detection_stream_3d = align_timestamped(
+        #     backpressure(self.detection_stream_2d()),
+        #     self.pointcloud.observable(),
+        #     match_tolerance=0.25,
+        #     buffer_size=20.0,
+        # ).pipe(ops.map(detection2d_to_3d))
 
-        # self.detection_stream_3d = backpressure(self.detection_stream_2d()).pipe(
-        #     ops.with_latest_from(self.pointcloud.observable()),
-        #     ops.map(detection2d_to_3d)
-        # )
+        self.detection_stream_3d = backpressure(self.detection_stream_2d()).pipe(
+            ops.with_latest_from(self.pointcloud.observable()), ops.map(detection2d_to_3d)
+        )
 
         self.detection_stream_3d.subscribe(self._publish_detections)
 

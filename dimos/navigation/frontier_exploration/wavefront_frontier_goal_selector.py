@@ -173,6 +173,7 @@ class WavefrontFrontierExplorer(Module):
     def cleanup(self):
         """Clean up resources."""
         self.stop_exploration()
+        self._close_module()
         logger.info("WavefrontFrontierExplorer cleanup complete")
 
     def _on_costmap(self, msg: OccupancyGrid):
@@ -733,6 +734,10 @@ class WavefrontFrontierExplorer(Module):
 
         logger.info("Stopped autonomous frontier exploration")
         return True
+
+    @rpc
+    def is_exploration_active(self) -> bool:
+        return self.exploration_active
 
     def _exploration_loop(self):
         """Main exploration loop running in separate thread."""

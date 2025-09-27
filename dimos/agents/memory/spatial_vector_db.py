@@ -20,10 +20,11 @@ their XY locations and querying by location or image similarity.
 """
 
 import numpy as np
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Optional, Tuple, Any
 import chromadb
 
 from dimos.agents.memory.visual_memory import VisualMemory
+from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.agents.memory.spatial_vector_db")
@@ -85,6 +86,12 @@ class SpatialVectorDB:
         # Store the embedding provider to reuse for all operations
         self.embedding_provider = embedding_provider
 
+        # Initialize the location collection for text-based location tagging
+        location_collection_name = f"{collection_name}_locations"
+        self.location_collection = self.client.get_or_create_collection(
+            name=location_collection_name, metadata={"hnsw:space": "cosine"}
+        )
+
         # Log initialization info with details about whether using existing collection
         client_type = "persistent" if chroma_client is not None else "in-memory"
         try:
@@ -120,7 +127,7 @@ class SpatialVectorDB:
             ids=[vector_id], embeddings=[embedding.tolist()], metadatas=[metadata]
         )
 
-        logger.debug(f"Added image vector {vector_id} with metadata: {metadata}")
+        logger.info(f"Added image vector {vector_id} with metadata: {metadata}")
 
     def query_by_embedding(self, embedding: np.ndarray, limit: int = 5) -> List[Dict]:
         """
@@ -275,3 +282,49 @@ class SpatialVectorDB:
     def image_storage(self):
         """Legacy accessor for compatibility with existing code."""
         return self.visual_memory.images
+
+    def tag_location(self, location: RobotLocation) -> None:
+        """
+        Tag a location with a semantic name/description for text-based retrieval.
+
+        Args:
+            location: RobotLocation object with position/rotation data
+        """
+
+        location_id = location.location_id
+        metadata = location.to_vector_metadata()
+
+        self.location_collection.add(
+            ids=[location_id], documents=[location.name], metadatas=[metadata]
+        )
+
+    def query_tagged_location(self, query: str) -> Tuple[Optional[RobotLocation], float]:
+        """
+        Query for a tagged location using semantic text search.
+
+        Args:
+            query: Natural language query (e.g., "dining area", "place to eat")
+
+        Returns:
+            The best matching RobotLocation or None if no matches found
+        """
+
+        results = self.location_collection.query(
+            query_texts=[query], n_results=1, include=["metadatas", "documents", "distances"]
+        )
+
+        if not (results and results["ids"] and len(results["ids"][0]) > 0):
+            return None, 0
+
+        best_match_metadata = results["metadatas"][0][0]
+        distance = float(results["distances"][0][0] if "distances" in results else 0.0)
+
+        location = RobotLocation.from_vector_metadata(best_match_metadata)
+
+        logger.info(
+            f"Found location '{location.name}' for query '{query}' (distance: {distance:.3f})"
+            if distance
+            else ""
+        )
+
+        return location, distance

@@ -26,10 +26,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.module3D import Detection3DModule
-from dimos.perception.detection2d.type import (
-    Detection3D,
-    ImageDetections3D,
-)
+from dimos.perception.detection2d.type import Detection3D, ImageDetections3D, TableStr
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.types.timestamped import to_datetime
@@ -43,7 +40,11 @@ class Object3D(Detection3D):
     detections: List[Detection3D]
 
     def to_repr_dict(self) -> Dict[str, Any]:
-        return {"object_id": self.track_id}
+        return {
+            "object_id": self.track_id,
+            "detections": len(self.detections),
+            "center": "[" + ", ".join(list(map(lambda n: f"{n:1f}", self.center.to_list()))) + "]",
+        }
 
     def __init__(self, track_id: str, detection: Optional[Detection3D] = None, *args, **kwargs):
         if detection is None:
@@ -107,10 +108,21 @@ class Object3D(Detection3D):
             child_frame_id="camera_optical",
         ).inverse()
 
-        return (self.best_detection.transform + optical_inverse).to_pose()
+        print("transform is", self.best_detection.transform)
+
+        global_transform = optical_inverse + self.best_detection.transform
+
+        print("inverse optical is", global_transform)
+
+        print("obj center is", self.center)
+        global_pose = global_transform.to_pose()
+        print("Global pose:", global_pose)
+        global_pose.frame_id = self.best_detection.frame_id
+        print("remap to", self.best_detection.frame_id)
+        return PoseStamped(position=self.center, orientation=Quaternion(), frame_id="world")
 
 
-class ObjectDBModule(Detection3DModule):
+class ObjectDBModule(Detection3DModule, TableStr):
     cnt: int = 0
     objects: dict[str, Object3D]
     object_stream: Observable[Object3D] = None
@@ -133,6 +145,8 @@ class ObjectDBModule(Detection3DModule):
 
     scene_update: Out[SceneUpdate] = None  # type: ignore
 
+    target: Out[PoseStamped] = None  # type: ignore
+
     def __init__(self, goto: Callable[[PoseStamped], Any], *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.goto = goto
@@ -149,6 +163,11 @@ class ObjectDBModule(Detection3DModule):
         distances = sorted(matching_objects, key=lambda obj: detection.center.distance(obj.center))
 
         return distances[0]
+
+    def add_detections(self, detections: List[Detection3D]) -> List[Object3D]:
+        return [
+            detection for detection in map(self.add_detection, detections) if detection is not None
+        ]
 
     def add_detection(self, detection: Detection3D):
         """Add detection to existing object or create new one."""
@@ -181,6 +200,29 @@ class ObjectDBModule(Detection3DModule):
             return "No objects detected yet."
         return "\n".join(ret)
 
+    def vlm_query(self, description: str) -> str:
+        imageDetections2D = super().vlm_query(description)
+        time.sleep(1.5)
+
+        print("VLM query found", imageDetections2D, "detections")
+        ret = []
+        for obj in self.objects.values():
+            if obj.ts != imageDetections2D.ts:
+                continue
+            if obj.class_id != -100:
+                continue
+            ret.append(obj)
+        return ret
+
+    @skill()
+    def navigate_to_object_in_view(self, description: str) -> str:
+        """Navigate to an object by description using vision-language model to find it."""
+        objects = self.vlm_query(description)
+        if not objects:
+            return f"No objects found matching '{description}'"
+        target_obj = objects[0]
+        return self.navigate_to_object_by_id(target_obj.track_id)
+
     @skill(reducer=Reducer.all)
     def list_objects(self):
         """List all detected objects that the system remembers and can navigate to."""
@@ -188,12 +230,17 @@ class ObjectDBModule(Detection3DModule):
         return data
 
     @skill()
-    def navigate_to_object(self, object_id: str):
+    def navigate_to_object_by_id(self, object_id: str):
         """Navigate to an object by an object id"""
         target_obj = self.objects.get(object_id, None)
         if not target_obj:
             return f"Object {object_id} not found\nHere are the known objects:\n{str(self.agent_encode())}"
-        return self.goto(target_obj.to_pose())
+        target_pose = target_obj.to_pose()
+        self.target.publish(target_pose)
+        time.sleep(0.1)
+        self.target.publish(target_pose)
+        self.goto(target_pose)
+        return f"Navigating to f{object_id} f{target_obj.name}"
 
     def lookup(self, label: str) -> List[Detection3D]:
         """Look up a detection by label."""
@@ -238,13 +285,14 @@ class ObjectDBModule(Detection3DModule):
         for obj in copy(self.objects).values():
             # we need at least 3 detectieons to consider it a valid object
             # for this to be serious we need a ratio of detections within the window of observations
-            if len(obj.detections) < 3:
+            if obj.class_id != -100 and len(obj.detections) < 3:
                 continue
 
             # print(
             #    f"Object {obj.track_id}: {len(obj.detections)} detections, confidence {obj.confidence}"
             # )
             # print(obj.to_pose())
+
             scene_update.entities.append(
                 obj.to_foxglove_scene_entity(
                     entity_id=f"object_{obj.name}_{obj.track_id}_{len(obj.detections)}"
@@ -253,3 +301,9 @@ class ObjectDBModule(Detection3DModule):
 
         scene_update.entities_length = len(scene_update.entities)
         return scene_update
+
+    def __len__(self):
+        return len(self.objects.values())
+
+    def __iter__(self):
+        return iter(self.detections.values())

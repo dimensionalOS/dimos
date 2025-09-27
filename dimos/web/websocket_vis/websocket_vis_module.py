@@ -33,6 +33,7 @@ from starlette.routing import Route
 
 from dimos.core import Module, In, Out, rpc
 from dimos_lcm.std_msgs import Bool
+from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
@@ -61,11 +62,13 @@ class WebsocketVisModule(Module):
 
     # LCM inputs
     robot_pose: In[PoseStamped] = None
+    gps_location: In[LatLon] = None
     path: In[Path] = None
     global_costmap: In[OccupancyGrid] = None
 
     # LCM outputs
     click_goal: Out[PoseStamped] = None
+    gps_goal: Out[LatLon] = None
     explore_cmd: Out[Bool] = None
     stop_explore_cmd: Out[Bool] = None
     movecmd: Out[Twist] = None
@@ -116,6 +119,8 @@ class WebsocketVisModule(Module):
         # Only subscribe to connected topics
         if self.robot_pose.connection is not None:
             self.robot_pose.subscribe(self._on_robot_pose)
+        if self.gps_location.connection is not None:
+            self.gps_location.subscribe(self._on_gps_location)
         if self.path.connection is not None:
             self.path.subscribe(self._on_path)
         if self.global_costmap.connection is not None:
@@ -131,6 +136,12 @@ class WebsocketVisModule(Module):
         if self._broadcast_thread and self._broadcast_thread.is_alive():
             self._broadcast_thread.join(timeout=1.0)
         logger.info("WebSocket visualization module stopped")
+
+    @rpc
+    def set_gps_travel_goal_points(self, points: list[LatLon]) -> None:
+        json_points = [{"lat": x.lat, "lon": x.lon} for x in points]
+        self.vis_state["gps_travel_goal_points"] = json_points
+        self._emit("gps_travel_goal_points", json_points)
 
     def _create_server(self):
         # Create SocketIO server
@@ -160,6 +171,11 @@ class WebsocketVisModule(Module):
             )
             self.click_goal.publish(goal)
             logger.info(f"Click goal published: ({goal.position.x:.2f}, {goal.position.y:.2f})")
+
+        @self.sio.event
+        async def gps_goal(sid, goal):
+            logger.info(f"Set GPS goal: {goal}")
+            self.gps_goal.publish(LatLon(lat=goal["lat"], lon=goal["lon"]))
 
         @self.sio.event
         async def start_explore(sid):
@@ -207,6 +223,11 @@ class WebsocketVisModule(Module):
         pose_data = {"type": "vector", "c": [msg.position.x, msg.position.y, msg.position.z]}
         self.vis_state["robot_pose"] = pose_data
         self._emit("robot_pose", pose_data)
+
+    def _on_gps_location(self, msg: LatLon):
+        pose_data = {"lat": msg.lat, "lon": msg.lon}
+        self.vis_state["gps_location"] = pose_data
+        self._emit("gps_location", pose_data)
 
     def _on_path(self, msg: Path):
         points = [[pose.position.x, pose.position.y] for pose in msg.poses]
