@@ -55,6 +55,11 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d import Detection3DModule
 from dimos.perception.detection2d.moduleDB import ObjectDBModule
+from dimos.core import Module, In, Out, rpc
+from dimos.hardware.gstreamer_camera import GstreamerCameraModule
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3, Quaternion
+from dimos.msgs.sensor_msgs import Image, CameraInfo
+from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.robot.foxglove_bridge import FoxgloveBridge
@@ -135,10 +140,13 @@ class UnitreeG1(Robot):
         skill_library: Optional[SkillLibrary] = None,
         recording_path: str = None,
         replay_path: str = None,
+        gstreamer_host: Optional[str] = None,
         enable_joystick: bool = False,
         enable_connection: bool = True,
         enable_ros_bridge: bool = True,
+        enable_perception: bool = False,
         enable_camera: bool = False,
+        enable_gstreamer_camera: bool = False,
     ):
         """Initialize the G1 robot.
 
@@ -159,10 +167,13 @@ class UnitreeG1(Robot):
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.recording_path = recording_path
         self.replay_path = replay_path
+        self.gstreamer_host = gstreamer_host
         self.enable_joystick = enable_joystick
         self.enable_connection = enable_connection
         self.enable_ros_bridge = enable_ros_bridge
+        self.enable_perception = enable_perception
         self.enable_camera = enable_camera
+        self.enable_gstreamer_camera = enable_gstreamer_camera
         self.websocket_port = websocket_port
         self.lcm = LCM()
 
@@ -181,15 +192,30 @@ class UnitreeG1(Robot):
         self.connection = None
         self.websocket_vis = None
         self.foxglove_bridge = None
+        self.spatial_memory_module = None
         self.joystick = None
         self.ros_bridge = None
         self.camera = None
         self._setup_directories()
 
     def _setup_directories(self):
-        """Setup output directories."""
+        """Setup directories for spatial memory storage."""
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
+
+        # Initialize memory directories
+        self.memory_dir = os.path.join(self.output_dir, "memory")
+        os.makedirs(self.memory_dir, exist_ok=True)
+
+        # Initialize spatial memory properties
+        self.spatial_memory_dir = os.path.join(self.memory_dir, "spatial_memory")
+        self.spatial_memory_collection = "spatial_memory"
+        self.db_path = os.path.join(self.spatial_memory_dir, "chromadb_data")
+        self.visual_memory_path = os.path.join(self.spatial_memory_dir, "visual_memory.pkl")
+
+        # Create spatial memory directories
+        os.makedirs(self.spatial_memory_dir, exist_ok=True)
+        os.makedirs(self.db_path, exist_ok=True)
 
     def _deploy_detection(self, goto):
         detection = self.dimos.deploy(
@@ -228,6 +254,15 @@ class UnitreeG1(Robot):
             self._deploy_connection()
 
         self._deploy_visualization()
+
+        if self.enable_perception:
+            self._deploy_perception()
+
+        if self.enable_camera:
+            self._deploy_camera()
+
+        if self.enable_gstreamer_camera:
+            self._deploy_gstreamer_camera()
 
         if self.enable_joystick:
             self._deploy_joystick()
@@ -272,6 +307,17 @@ class UnitreeG1(Robot):
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
         self._start_modules()
 
+    def stop(self):
+        self.lcm.stop()
+
+    def __enter__(self) -> "UnitreeG1":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+        return False
+
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
         self.connection = self.dimos.deploy(G1ConnectionModule, self.ip)
@@ -305,6 +351,20 @@ class UnitreeG1(Robot):
         self.camera.camera_info.transport = core.LCMTransport("/camera_info", CameraInfo)
         logger.info("Webcam module configured")
 
+    def _deploy_gstreamer_camera(self):
+        if not self.gstreamer_host:
+            raise ValueError("gstreamer_host is not set")
+        if self.zed_camera:
+            raise ValueError("a different zed_camera has been started")
+
+        self.zed_camera = self.dimos.deploy(
+            GstreamerCameraModule,
+            host=self.gstreamer_host,
+        )
+
+        # Set up LCM transport for the video output
+        self.zed_camera.video.transport = core.LCMTransport("/zed/color_image", Image)
+
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
         # Deploy WebSocket visualization module
@@ -315,6 +375,20 @@ class UnitreeG1(Robot):
 
         # Deploy Foxglove bridge
         self.foxglove_bridge = FoxgloveBridge()
+
+    def _deploy_perception(self):
+        self.spatial_memory_module = self.dimos.deploy(
+            SpatialMemory,
+            collection_name=self.spatial_memory_collection,
+            db_path=self.db_path,
+            visual_memory_path=self.visual_memory_path,
+            output_dir=self.spatial_memory_dir,
+        )
+
+        self.spatial_memory_module.video.transport = core.LCMTransport("/zed/color_image", Image)
+        self.spatial_memory_module.odom.transport = core.LCMTransport("/odom_pose", PoseStamped)
+
+        logger.info("Spatial memory module deployed and connected")
 
     def _deploy_joystick(self):
         """Deploy joystick control module."""
@@ -387,6 +461,12 @@ class UnitreeG1(Robot):
         self.camera.start()
         self.detection.start()
 
+        if self.enable_perception:
+            self.spatial_memory_module.start()
+
+        if self.zed_camera:
+            self.zed_camera.start()
+
         # Initialize skills after connection is established
         if self.skill_library is not None:
             for skill in self.skill_library:
@@ -426,6 +506,10 @@ class UnitreeG1(Robot):
                 logger.error(f"Error stopping websocket vis: {e}")
 
         logger.info("UnitreeG1 shutdown complete")
+
+    @property
+    def spatial_memory(self) -> Optional[SpatialMemory]:
+        return self.spatial_memory_module
 
 
 def main():
