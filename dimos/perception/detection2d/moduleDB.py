@@ -119,7 +119,9 @@ class Object3D(Detection3D):
         print("Global pose:", global_pose)
         global_pose.frame_id = self.best_detection.frame_id
         print("remap to", self.best_detection.frame_id)
-        return PoseStamped(position=self.center, orientation=Quaternion(), frame_id=self.best_detection.frame_id)
+        return PoseStamped(
+            position=self.center, orientation=Quaternion(), frame_id=self.best_detection.frame_id
+        )
 
 
 class ObjectDBModule(Detection3DModule, TableStr):
@@ -207,7 +209,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         print("VLM query found", imageDetections2D, "detections")
         ret = []
         for obj in self.objects.values():
-            #if obj.ts != imageDetections2D.ts:
+            # if obj.ts != imageDetections2D.ts:
             #    continue
             if obj.class_id != -100:
                 continue
