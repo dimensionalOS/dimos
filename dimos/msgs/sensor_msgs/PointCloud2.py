@@ -48,12 +48,33 @@ class PointCloud2(Timestamped):
     def __init__(
         self,
         pointcloud: o3d.geometry.PointCloud = None,
-        frame_id: str = "",
+        frame_id: str = "world",
         ts: Optional[float] = None,
     ):
-        self.ts = ts if ts is not None else time.time()
+        self.ts = ts
         self.pointcloud = pointcloud if pointcloud is not None else o3d.geometry.PointCloud()
         self.frame_id = frame_id
+
+    @classmethod
+    def from_numpy(
+        cls, points: np.ndarray, frame_id: str = "world", timestamp: Optional[float] = None
+    ) -> PointCloud2:
+        """Create PointCloud2 from numpy array of shape (N, 3).
+
+        Args:
+            points: Nx3 numpy array of 3D points
+            frame_id: Frame ID for the point cloud
+            timestamp: Timestamp for the point cloud (defaults to current time)
+
+        Returns:
+            PointCloud2 instance
+        """
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        return cls(pointcloud=pcd, ts=timestamp, frame_id=frame_id)
+
+    def points(self):
+        return self.pointcloud.points
 
     # TODO what's the usual storage here? is it already numpy?
     def as_numpy(self) -> np.ndarray:
@@ -217,6 +238,78 @@ class PointCloud2(Timestamped):
     def __len__(self) -> int:
         """Return number of points."""
         return len(self.pointcloud.points)
+
+    def filter_by_height(
+        self,
+        min_height: Optional[float] = None,
+        max_height: Optional[float] = None,
+    ) -> "PointCloud2":
+        """Filter points based on their height (z-coordinate).
+
+        This method creates a new PointCloud2 containing only points within the specified
+        height range. All metadata (frame_id, timestamp) is preserved.
+
+        Args:
+            min_height: Optional minimum height threshold. Points with z < min_height are filtered out.
+                       If None, no lower limit is applied.
+            max_height: Optional maximum height threshold. Points with z > max_height are filtered out.
+                       If None, no upper limit is applied.
+
+        Returns:
+            New PointCloud2 instance containing only the filtered points.
+
+        Raises:
+            ValueError: If both min_height and max_height are None (no filtering would occur).
+
+        Example:
+            # Remove ground points below 0.1m height
+            filtered_pc = pointcloud.filter_by_height(min_height=0.1)
+
+            # Keep only points between ground level and 2m height
+            filtered_pc = pointcloud.filter_by_height(min_height=0.0, max_height=2.0)
+
+            # Remove points above 1.5m (e.g., ceiling)
+            filtered_pc = pointcloud.filter_by_height(max_height=1.5)
+        """
+        # Validate that at least one threshold is provided
+        if min_height is None and max_height is None:
+            raise ValueError("At least one of min_height or max_height must be specified")
+
+        # Get points as numpy array
+        points = self.as_numpy()
+
+        if len(points) == 0:
+            # Empty pointcloud - return a copy
+            return PointCloud2(
+                pointcloud=o3d.geometry.PointCloud(),
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
+
+        # Extract z-coordinates (height values) - column index 2
+        heights = points[:, 2]
+
+        # Create boolean mask for filtering based on height thresholds
+        # Start with all True values
+        mask = np.ones(len(points), dtype=bool)
+
+        # Apply minimum height filter if specified
+        if min_height is not None:
+            mask &= heights >= min_height
+
+        # Apply maximum height filter if specified
+        if max_height is not None:
+            mask &= heights <= max_height
+
+        # Apply mask to filter points
+        filtered_points = points[mask]
+
+        # Create new PointCloud2 with filtered points
+        return PointCloud2.from_numpy(
+            points=filtered_points,
+            frame_id=self.frame_id,
+            timestamp=self.ts,
+        )
 
     def __repr__(self) -> str:
         """String representation."""

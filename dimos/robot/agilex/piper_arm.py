@@ -17,7 +17,7 @@ import logging
 from typing import Optional, List
 
 from dimos import core
-from dimos.hardware.zed_camera import ZEDModule
+from dimos.hardware.camera.zed import ZEDModule
 from dimos.manipulation.visual_servoing.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub

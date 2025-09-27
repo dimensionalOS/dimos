@@ -42,6 +42,13 @@ def to_timestamp(ts: TimeLike) -> float:
         return float(ts)
     if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
         return ts["sec"] + ts["nanosec"] / 1e9
+    # Check for ROS Time-like objects by attributes
+    if hasattr(ts, "sec") and (hasattr(ts, "nanosec") or hasattr(ts, "nsec")):
+        # Handle both std_msgs.Time (nsec) and builtin_interfaces.Time (nanosec)
+        if hasattr(ts, "nanosec"):
+            return ts.sec + ts.nanosec / 1e9
+        else:  # has nsec
+            return ts.sec + ts.nsec / 1e9
     raise TypeError("unsupported timestamp type")
 
 
@@ -54,6 +61,13 @@ def to_ros_stamp(ts: TimeLike) -> ROSTime:
     sec = int(timestamp)
     nanosec = int((timestamp - sec) * 1_000_000_000)
     return ROSTime(sec=sec, nanosec=nanosec)
+
+
+def to_human_readable(ts: float) -> str:
+    """Convert timestamp to human-readable format with date and time."""
+    import time
+
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
 
 
 def to_datetime(ts: TimeLike, tz=None) -> datetime:
@@ -85,8 +99,8 @@ class Timestamped:
     def dt(self) -> datetime:
         return datetime.fromtimestamp(self.ts, tz=timezone.utc).astimezone()
 
-    def ros_timestamp(self) -> dict[str, int]:
-        """Convert timestamp to ROS-style dictionary."""
+    def ros_timestamp(self) -> list[int]:
+        """Convert timestamp to ROS-style list [sec, nanosec]."""
         sec = int(self.ts)
         nanosec = int((self.ts - sec) * 1_000_000_000)
         return [sec, nanosec]
@@ -260,6 +274,65 @@ def align_timestamped(
         # Return cleanup function
         def dispose():
             secondary_sub.dispose()
+            primary_sub.dispose()
+
+        return dispose
+
+    return create(subscribe)
+
+
+def align_timestamped_multiple(
+    primary_observable: Observable[PRIMARY],
+    *secondary_observables: Observable[SECONDARY],
+    buffer_size: float = 1.0,  # seconds
+    match_tolerance: float = 0.05,  # seconds
+) -> Observable[Tuple[PRIMARY, ...]]:
+    """Align a primary observable with multiple secondary observables.
+
+    Args:
+        primary_observable: The primary stream to align against
+        *secondary_observables: Secondary streams to align
+        buffer_size: Time window to keep secondary messages in seconds
+        match_tolerance: Maximum time difference for matching in seconds
+
+    Returns:
+        Observable that emits tuples of (primary_item, secondary1, secondary2, ...)
+        where each secondary item is the closest match from the corresponding
+        secondary observable, or None if no match within tolerance.
+    """
+    from reactivex import create
+
+    def subscribe(observer, scheduler=None):
+        # Create a buffer collection for each secondary observable
+        secondary_collections: list[TimestampedBufferCollection[SECONDARY]] = [
+            TimestampedBufferCollection(buffer_size) for _ in secondary_observables
+        ]
+
+        # Subscribe to all secondary observables
+        secondary_subs = []
+        for i, secondary_obs in enumerate(secondary_observables):
+            sub = secondary_obs.subscribe(secondary_collections[i].add)
+            secondary_subs.append(sub)
+
+        def on_primary(primary_item: PRIMARY):
+            # Find closest match from each secondary collection
+            secondary_items = []
+            for collection in secondary_collections:
+                secondary_item = collection.find_closest(primary_item.ts, tolerance=match_tolerance)
+                secondary_items.append(secondary_item)
+
+            # Emit the aligned tuple (flatten into single tuple)
+            observer.on_next((primary_item, *secondary_items))
+
+        # Subscribe to primary and emit aligned tuples
+        primary_sub = primary_observable.subscribe(
+            on_next=on_primary, on_error=observer.on_error, on_completed=observer.on_completed
+        )
+
+        # Return cleanup function
+        def dispose():
+            for sub in secondary_subs:
+                sub.dispose()
             primary_sub.dispose()
 
         return dispose

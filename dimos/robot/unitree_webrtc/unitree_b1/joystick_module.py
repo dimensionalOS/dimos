@@ -23,19 +23,20 @@ import threading
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
 
+import time
 from dimos.core import Module, Out, rpc
-from dimos.msgs.geometry_msgs import Twist, Vector3
+from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
 from dimos.msgs.std_msgs import Int32
 
 
 class JoystickModule(Module):
     """Pygame-based joystick control module for B1 testing.
 
-    Outputs standard Twist messages on /cmd_vel and mode changes on /b1/mode.
+    Outputs timestamped Twist messages on /cmd_vel and mode changes on /b1/mode.
     This allows testing the same interface that navigation will use.
     """
 
-    twist_out: Out[Twist] = None  # Standard velocity commands
+    twist_out: Out[TwistStamped] = None  # Timestamped velocity commands
     mode_out: Out[Int32] = None  # Mode changes
 
     def __init__(self, *args, **kwargs):
@@ -119,7 +120,13 @@ class JoystickModule(Module):
                         stop_twist = Twist()
                         stop_twist.linear = Vector3(0, 0, 0)
                         stop_twist.angular = Vector3(0, 0, 0)
-                        self.twist_out.publish(stop_twist)
+                        stop_twist_stamped = TwistStamped(
+                            ts=time.time(),
+                            frame_id="base_link",
+                            linear=stop_twist.linear,
+                            angular=stop_twist.angular,
+                        )
+                        self.twist_out.publish(stop_twist_stamped)
                         print("EMERGENCY STOP!")
                     elif event.key == pygame.K_ESCAPE:
                         # ESC still quits for development convenience
@@ -178,8 +185,10 @@ class JoystickModule(Module):
                 if pygame.K_k in self.keys_held:
                     twist.angular.y = -1.0  # Pitch backward
 
-            # Always publish twist at 50Hz (matching working client behavior)
-            self.twist_out.publish(twist)
+            twist_stamped = TwistStamped(
+                ts=time.time(), frame_id="base_link", linear=twist.linear, angular=twist.angular
+            )
+            self.twist_out.publish(twist_stamped)
 
             # Update pygame display
             self._update_display(twist)
@@ -253,7 +262,13 @@ class JoystickModule(Module):
         self.running = False
         # Send stop command
         stop_twist = Twist()
-        self.twist_out.publish(stop_twist)
+        stop_twist_stamped = TwistStamped(
+            ts=time.time(),
+            frame_id="base_link",
+            linear=stop_twist.linear,
+            angular=stop_twist.angular,
+        )
+        self.twist_out.publish(stop_twist_stamped)
         return True
 
     def cleanup(self):

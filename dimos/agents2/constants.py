@@ -12,15 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.hardware.camera import Camera
+from dimos.constants import DIMOS_PROJECT_ROOT
 
 
-class StereoCamera(Camera):
-    def __init__(self, baseline=None, **kwargs):
-        super().__init__(**kwargs)
-        self.baseline = baseline
-
-    def get_intrinsics(self):
-        intrinsics = super().get_intrinsics()
-        intrinsics["baseline"] = self.baseline
-        return intrinsics
+AGENT_SYSTEM_PROMPT_PATH = DIMOS_PROJECT_ROOT / "assets/agent/prompt_agents2.txt"

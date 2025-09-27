@@ -27,7 +27,7 @@ if detic_path not in sys.path:
 import PIL.Image
 
 if not hasattr(PIL.Image, "LINEAR") and hasattr(PIL.Image, "BILINEAR"):
-    PIL.Image.LINEAR = PIL.Image.BILINEAR
+    PIL.Image.LINEAR = PIL.Image.BILINEAR  # type: ignore[attr-defined]
 
 # Detectron2 imports
 from detectron2.config import get_cfg

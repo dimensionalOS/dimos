@@ -15,13 +15,11 @@
 from __future__ import annotations
 
 import enum
-from functools import cache
 from typing import (
     Any,
     Callable,
     Generic,
     Optional,
-    Protocol,
     TypeVar,
 )
 
@@ -29,8 +27,6 @@ import reactivex as rx
 from dask.distributed import Actor
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
-from reactivex.observable import Observable
-from reactivex.scheduler import ThreadPoolScheduler
 
 import dimos.core.colors as colors
 import dimos.utils.reactive as reactive
@@ -79,11 +75,11 @@ class Transport(ObservableMixin[T]):
     # used by local Output
     def broadcast(self, selfstream: Out[T], value: T): ...
 
+    def publish(self, msg: T):
+        self.broadcast(None, msg)
+
     # used by local Input
     def subscribe(self, selfstream: In[T], callback: Callable[[T], any]) -> None: ...
-
-    def publish(self, *args, **kwargs):
-        return self.broadcast(*args, **kwargs)
 
 
 class Stream(Generic[T]):

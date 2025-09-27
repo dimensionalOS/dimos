@@ -22,8 +22,11 @@ import time
 import warnings
 from typing import List, Optional
 
+from reactivex import Observable
+
 from dimos import core
 from dimos.core import In, Module, Out, rpc
+from dimos.mapping.types import LatLon
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
@@ -60,7 +63,7 @@ from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.transform_utils import offset_distance
 from dimos.perception.object_tracker import ObjectTracking
 from dimos_lcm.std_msgs import Bool
-from dimos.robot.robot import Robot
+from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_capabilities import RobotCapability
 
 
@@ -139,6 +142,7 @@ class ConnectionModule(Module):
 
     movecmd: In[Twist] = None
     odom: Out[PoseStamped] = None
+    gps_location: Out[LatLon] = None
     lidar: Out[LidarMessage] = None
     video: Out[Image] = None
     camera_info: Out[CameraInfo] = None
@@ -206,6 +210,8 @@ class ConnectionModule(Module):
         # Connect sensor streams to outputs
         self.connection.lidar_stream().subscribe(self.lidar.publish)
         self.connection.odom_stream().subscribe(self._publish_tf)
+        if self.connection_type == "mujoco":
+            self.connection.gps_stream().subscribe(self._publish_gps_location)
         self.connection.video_stream().subscribe(self._on_video)
         self.movecmd.subscribe(self.move)
 
@@ -224,6 +230,9 @@ class ConnectionModule(Module):
         timestamp = msg.ts if msg.ts else time.time()
         self._publish_camera_info(timestamp)
         self._publish_camera_pose(timestamp)
+
+    def _publish_gps_location(self, msg: LatLon):
+        self.gps_location.publish(msg)
 
     def _publish_tf(self, msg):
         self._odom = msg
@@ -304,12 +313,12 @@ class ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
 
-class UnitreeGo2(Robot):
+class UnitreeGo2(UnitreeRobot):
     """Full Unitree Go2 robot with navigation and perception capabilities."""
 
     def __init__(
         self,
-        ip: str,
+        ip: Optional[str],
         output_dir: str = None,
         websocket_port: int = 7779,
         skill_library: Optional[SkillLibrary] = None,
@@ -356,6 +365,14 @@ class UnitreeGo2(Robot):
 
         self._setup_directories()
 
+    def __enter__(self) -> "UnitreeGo2":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # self.stop()
+        return False
+
     def _setup_directories(self):
         """Setup directories for spatial memory storage."""
         os.makedirs(self.output_dir, exist_ok=True)
@@ -401,6 +418,7 @@ class UnitreeGo2(Robot):
 
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
+        self.connection.gps_location.transport = core.pLCMTransport("/gps_location")
         self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
         self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
@@ -468,15 +486,23 @@ class UnitreeGo2(Robot):
         """Deploy and configure visualization modules."""
         self.websocket_vis = self.dimos.deploy(WebsocketVisModule, port=self.websocket_port)
         self.websocket_vis.click_goal.transport = core.LCMTransport("/goal_request", PoseStamped)
+        self.websocket_vis.gps_goal.transport = core.pLCMTransport("/gps_goal")
         self.websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
         self.websocket_vis.stop_explore_cmd.transport = core.LCMTransport("/stop_explore_cmd", Bool)
         self.websocket_vis.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
 
         self.websocket_vis.robot_pose.connect(self.connection.odom)
+        self.websocket_vis.gps_location.connect(self.connection.gps_location)
         self.websocket_vis.path.connect(self.global_planner.path)
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
 
         self.foxglove_bridge = FoxgloveBridge()
+
+        # TODO: This should be moved.
+        def _set_goal(goal: LatLon):
+            self.set_gps_travel_goal_points([goal])
+
+        unsub = self.websocket_vis.gps_goal.transport.pure_observable().subscribe(_set_goal)
 
     def _deploy_perception(self):
         """Deploy and configure perception modules."""
@@ -615,6 +641,9 @@ class UnitreeGo2(Robot):
         self.navigator.cancel_goal()
         return self.frontier_explorer.stop_exploration()
 
+    def is_exploration_active(self) -> bool:
+        return self.frontier_explorer.is_exploration_active()
+
     def cancel_navigation(self) -> bool:
         """Cancel the current navigation goal.
 
@@ -631,6 +660,16 @@ class UnitreeGo2(Robot):
             SpatialMemory module instance or None if perception is disabled
         """
         return self.spatial_memory_module
+
+    @functools.cached_property
+    def gps_position_stream(self) -> Observable[LatLon]:
+        return self.connection.gps_location.transport.pure_observable()
+
+    def set_gps_travel_goal_points(self, points: list[LatLon]) -> None:
+        logger.info(f"Travelling to: {points}")
+        # self.connection.... (actually set the goal)
+        print("websocketvis", self.websocket_vis)
+        self.websocket_vis.set_gps_travel_goal_points(points)
 
     def get_odom(self) -> PoseStamped:
         """Get the robot's odometry.

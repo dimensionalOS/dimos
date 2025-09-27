@@ -1,0 +1,53 @@
+{
+  "html_attributions": [],
+  "results": [
+    {
+      "business_status": "OPERATIONAL",
+      "formatted_address": "Golden Gate Brg, San Francisco, CA, United States",
+      "geometry": {
+        "location": {
+          "lat": 37.8199109,
+          "lng": -122.4785598
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.84490724999999,
+            "lng": -122.47296235
+          },
+          "southwest": {
+            "lat": 37.79511145000001,
+            "lng": -122.48378975
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/generic_business-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/generic_pinlet",
+      "name": "Golden Gate Bridge",
+      "photos": [
+        {
+          "height": 12240,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/108541592473751170957\">Jitesh Patil</a>"
+          ],
+          "photo_reference": "AciIO2dcF-W6JeWe01lyR39crDHHon3awa5LlBNNhxAZcAExA3sTr33iFa8HjDgPPfdNrl3C-0Bzqp2qEndFz3acXtm1kmj7puXUOtO48-Qmovp9Nvi5k3XJVbIEPYYRCXOshrYQ1od2tHe-MBkvFNxsg4uNByEbJxkstLLTuEOmSbCEx53EQfuJoxbPQgRGphAPDFkTeiCODXd7KzdL9-2GvVYTrGl_IK-AIds1-UYwWJPOi1mkM-iXFVoVm0R1LOgt-ydhnAaRFQPzOlz9Oezc0kDiuxvzjTO4mgeY79Nqcxq2osBqYGyJTLINYfNphZHzncxWqpWXP_mvQt77YaW368RGbBGDrHubXHJBkj7sdru0N1-qf5Q28rsxCSI5yyNsHm8zFmNWm1PlWA_LItL5LpoxG9Xkuuhuvv3XjWtBs5hnHxNDHP4jbJinWz2DPd9IPxHH-BAfwfJGdtgW1juBAEDi8od5KP95Drt8e9XOaG6I5UIeJnvUqq4Q1McAiVx5rVn7FGwu3NsTAeeS4FCKy2Ql_YoQpcqzRO45w8tI4DqFd8F19pZHw3t7p1t7DwmzAMzIS_17_2aScA",
+          "width": 16320
+        }
+      ],
+      "place_id": "ChIJw____96GhYARCVVwg5cT7c0",
+      "plus_code": {
+        "compound_code": "RG9C+XH Presidio of San Francisco, San Francisco, CA, USA",
+        "global_code": "849VRG9C+XH"
+      },
+      "rating": 4.8,
+      "reference": "ChIJw____96GhYARCVVwg5cT7c0",
+      "types": [
+        "tourist_attraction",
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 83799
+    }
+  ],
+  "status": "OK"
+}

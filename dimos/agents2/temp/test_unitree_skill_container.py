@@ -18,16 +18,14 @@ Test file for UnitreeSkillContainer with agents2 framework.
 Tests skill registration and basic functionality.
 """
 
-import asyncio
 import sys
-import os
 from pathlib import Path
 
 # Add parent directories to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from dimos.agents2 import Agent
-from dimos.agents2.spec import AgentConfig, Model, Provider
+from dimos.agents2.spec import Model, Provider
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.utils.logging_config import setup_logger
 

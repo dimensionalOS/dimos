@@ -13,6 +13,7 @@
 # limitations under the License.
 import asyncio
 import inspect
+import threading
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -30,12 +31,11 @@ from dimos.core.core import T, rpc
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable
-from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.tf import LCMTF, TFSpec
 
 
-def get_loop() -> asyncio.AbstractEventLoop:
+def get_loop() -> tuple[asyncio.AbstractEventLoop, Optional[threading.Thread]]:
     # we are actually instantiating a new loop here
     # to not interfere with an existing dask loop
 
@@ -53,16 +53,14 @@ def get_loop() -> asyncio.AbstractEventLoop:
 
     try:
         running_loop = asyncio.get_running_loop()
-        return running_loop
+        return running_loop, None
     except RuntimeError:
-        import threading
-
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
         thr = threading.Thread(target=loop.run_forever, daemon=True)
         thr.start()
-        return loop
+        return loop, thr
 
 
 @dataclass
@@ -74,13 +72,14 @@ class ModuleConfig:
 class ModuleBase(Configurable[ModuleConfig], SkillContainer):
     _rpc: Optional[RPCSpec] = None
     _tf: Optional[TFSpec] = None
-    _loop: asyncio.AbstractEventLoop = None
+    _loop: Optional[asyncio.AbstractEventLoop] = None
+    _loop_thread: Optional[threading.Thread]
 
     default_config = ModuleConfig
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._loop = get_loop()
+        self._loop, self._loop_thread = get_loop()
         # we can completely override comms protocols if we want
         try:
             # here we attempt to figure out if we are running on a dask worker
@@ -92,8 +91,17 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer):
         except ValueError:
             ...
 
-    def close_rpc(self):
-        if self.rpc:
+    def _close_module(self):
+        self._close_rpc()
+        if hasattr(self, "_loop") and self._loop_thread:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._loop = None
+            self._loop_thread.join(timeout=2)
+            self._loop_thread = None
+
+    def _close_rpc(self):
+        # Using hasattr is needed because SkillCoordinator skips ModuleBase.__init__ and self.rpc is never set.
+        if hasattr(self, "rpc") and self.rpc:
             self.rpc.stop()
             self.rpc = None
 

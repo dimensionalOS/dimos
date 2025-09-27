@@ -1,0 +1,76 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from typing import Optional
+
+from dimos.mapping.osm.osm import MapImage, get_osm_map
+from dimos.mapping.osm.query import query_for_one_position, query_for_one_position_and_context
+from dimos.mapping.types import LatLon
+from dimos.models.vl.base import VlModel
+from dimos.utils.logging_config import setup_logger
+
+
+logger = setup_logger(__file__)
+
+
+class CurrentLocationMap:
+    _vl_model: VlModel
+    _position: Optional[LatLon]
+    _map_image: Optional[MapImage]
+
+    def __init__(self, vl_model: VlModel):
+        self._vl_model = vl_model
+        self._position = None
+        self._map_image = None
+        self._zoom_level = 19
+        self._n_tiles = 6
+        # What ratio of the width is considered the center. 1.0 means the entire map is the center.
+        self._center_width = 0.4
+
+    def update_position(self, position: LatLon) -> None:
+        self._position = position
+
+    def query_for_one_position(self, query: str) -> Optional[LatLon]:
+        return query_for_one_position(self._vl_model, self._get_current_map(), query)
+
+    def query_for_one_position_and_context(
+        self, query: str, robot_position: LatLon
+    ) -> Optional[tuple[LatLon, str]]:
+        return query_for_one_position_and_context(
+            self._vl_model, self._get_current_map(), query, robot_position
+        )
+
+    def _get_current_map(self):
+        if not self._position:
+            raise ValueError("Current position has not been set.")
+
+        if not self._map_image or self._position_is_too_far_off_center():
+            self._fetch_new_map()
+            return self._map_image
+
+        return self._map_image
+
+    def _fetch_new_map(self) -> None:
+        logger.info(
+            f"Getting a new OSM map, position={self._position}, zoom={self._zoom_level} n_tiles={self._n_tiles}"
+        )
+        self._map_image = get_osm_map(self._position, self._zoom_level, self._n_tiles)
+
+    def _position_is_too_far_off_center(self) -> bool:
+        x, y = self._map_image.latlon_to_pixel(self._position)
+        width = self._map_image.image.width
+        size_min = width * (0.5 - self._center_width / 2)
+        size_max = width * (0.5 + self._center_width / 2)
+
+        return x < size_min or x > size_max or y < size_min or y > size_max
