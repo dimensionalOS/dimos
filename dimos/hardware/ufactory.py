@@ -798,7 +798,7 @@ def test_simple_error_clearing():
 
 def test_xarm():
     """Test function for xArm - moved to avoid circular imports."""
-    arm = xArm(ip="192.168.1.210", xarm_type="xarm7")    
+    arm = xArm(ip="192.168.1.210", xarm_type="xarm7")
     arm.enable()
     arm.gotoObserve()
     print(arm.get_ee_pose())
