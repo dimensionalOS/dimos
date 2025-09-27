@@ -82,9 +82,10 @@ class Detection3DProcessor:
 
         # Initialize Sam segmenter with tracking enabled but analysis disabled
         self.detector = Sam2DSegmenter(
+            model_name="FastSAM-x.onnx",
             use_tracker=False,
             use_analyzer=False,
-            use_filtering=False,
+            use_filtering=True,
         )
 
         self.min_confidence = min_confidence

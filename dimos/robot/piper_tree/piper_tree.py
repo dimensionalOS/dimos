@@ -23,12 +23,13 @@ from dimos.manipulation.visual_servoing.mobile_base_pbvs import MobileBasePBVS
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol import pubsub
-from dimos.msgs.geometry_msgs import Twist, PoseStamped
+from dimos.msgs.geometry_msgs import Twist, PoseStamped, Pose, Vector3, Quaternion
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.logging_config import setup_logger
 from dimos_lcm.std_msgs import String
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.utils.transform_utils import euler_to_quaternion
 
 logger = setup_logger("dimos.robot.piper_tree")
 
@@ -43,6 +44,7 @@ class PiperTree(Robot):
     MANIPULATION_MODULE = "ManipulationModule"
     PIPER_ARM_MODULE = "PiperArmModule"
     UNITREE_CONNECTION = "ConnectionModule"
+    ZED_MODULE = "ZEDModule"
 
     # LCM topic names
     ZED_COLOR_TOPIC = "/zed/color_image"
@@ -106,7 +108,7 @@ class PiperTree(Robot):
             # Velocity limits
             max_linear_velocity=0.6,
             max_angular_velocity=0.5,
-            target_tolerance=0.10,
+            target_tolerance=0.08,
             min_confidence=0.5,
             camera_frame_id="zed_camera_link_optical",
             track_frame_id="world",
@@ -149,6 +151,13 @@ class PiperTree(Robot):
 
         logger.info("PiperTree robot started")
         logger.info("Expecting PiperArmRobot and UnitreeGo2 to be running separately")
+
+        # Tune ZED camera exposure
+        self.rpc_client.call_sync(
+            f"{self.ZED_MODULE}/set_exposure",
+            ([20], {}),
+            rpc_timeout=1.0,
+        )
 
     def pick_and_place(
         self,
@@ -406,6 +415,36 @@ class PiperTree(Robot):
             logger.error(f"Close gripper RPC failed: {e}")
             return False
 
+    def execute_dump(self) -> bool:
+        """Execute a hardcoded command pose, wait 2 seconds, then open gripper."""
+        # Create hardcoded pose
+        position = Vector3(0.38, 0.0, 0.15)  # 15cm forward, 25cm up
+        orientation = euler_to_quaternion(Vector3(0.0, 110.0, 0.0), degrees=True)
+        hardcoded_pose = Pose(position, orientation)
+
+        try:
+            # Send pose command via RPC
+            self.rpc_client.call_sync(
+                f"{self.PIPER_ARM_MODULE}/cmd_ee_pose",
+                ([hardcoded_pose, False], {}),
+                rpc_timeout=5.0,
+            )
+        except Exception as e:
+            logger.error(f"Execute dump RPC failed: {e}")
+            return False
+
+        # Wait 2 seconds
+        time.sleep(2)
+
+        # Open gripper
+        self.open_gripper()
+
+        time.sleep(1)
+        self.reset_arm()
+
+        logger.info("Executed dump command")
+        return True
+
     def handle_keyboard_command(self, key: str) -> Optional[str]:
         """Handle keyboard command via RPC to manipulation module.
 
@@ -415,6 +454,9 @@ class PiperTree(Robot):
         Returns:
             Action taken or None
         """
+        if key == "t":
+            self.execute_dump()
+            return "dump"
         try:
             return self.rpc_client.call_sync(
                 f"{self.MANIPULATION_MODULE}/handle_keyboard_command",

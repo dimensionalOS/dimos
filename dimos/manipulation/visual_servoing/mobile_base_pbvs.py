@@ -204,6 +204,7 @@ class MobileBasePBVS(Module):
         self.camera_info.subscribe(self._on_camera_info)
         self.odom.subscribe(self._on_odom)
         logger.info("Mobile base PBVS module started")
+        self.stop()
 
     @rpc
     def track(

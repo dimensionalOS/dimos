@@ -114,6 +114,7 @@ class PiperArmRobot(Robot):
             base_frame_id="base_link",
             track_frame_id=track_frame,  # Use world frame if mobile base enabled
             reach_timeout=10.0,  # Simple timeout for reaching poses
+            grasp_distance_range=0.04,
             enable_mobile_base=self.enable_mobile_base_control,  # Pass mobile base flag
         )
 

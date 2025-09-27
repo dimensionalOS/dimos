@@ -54,7 +54,7 @@ class TestInterface:
         self.robot = robot
         self.lcm = LCM()
         self.latest_camera = None
-        self.mode = "pick_place"  # pick_place, servoing, or mobile_pick_place
+        self.mode = "mobile_pick_place"  # pick_place, servoing, or mobile_pick_place
         self.executor = ThreadPoolExecutor(max_workers=1)
         self._running = False
 
@@ -121,7 +121,7 @@ class TestInterface:
         try:
             logger.info(f"Starting mobile pick and place at ({x}, {y})")
             result = self.robot.mobile_pick_and_place(
-                x, y, servo_distance=0.5, servo_timeout=30.0, pick_timeout=60.0
+                x, y, servo_distance=0.475, servo_timeout=30.0, pick_timeout=60.0
             )
             if result.get("success"):
                 logger.info(f"Mobile pick and place completed: {result.get('message', 'Success')}")
@@ -312,12 +312,12 @@ def main():
                     break
                 elif key == ord("m"):
                     # Cycle through modes
-                    if interface.mode == "pick_place":
-                        interface.mode = "servoing"
-                    elif interface.mode == "servoing":
+                    # if interface.mode == "pick_place":
+                    #     interface.mode = "servoing"
+                    if interface.mode == "servoing":
                         interface.mode = "mobile_pick_place"
                     else:
-                        interface.mode = "pick_place"
+                        interface.mode = "servoing"
                     pick_location = None
                     place_location = None
                     task_in_progress = False

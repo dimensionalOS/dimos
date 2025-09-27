@@ -58,6 +58,11 @@ class Sam2DSegmenter:
             self.device = "cpu"
         # Core components
         self.model = FastSAM(get_data(model_path) / model_name)
+        # Set image size based on model type
+        if "FastSAM-x" in model_name:
+            self.imgsz = 1024
+        else:
+            self.imgsz = 640
         self.use_tracker = use_tracker
         self.use_analyzer = use_analyzer
         self.use_rich_labeling = use_rich_labeling
@@ -98,8 +103,9 @@ class Sam2DSegmenter:
             source=image,
             device=self.device,
             retina_masks=True,
-            conf=0.3,
-            iou=0.5,
+            imgsz=self.imgsz,
+            conf=0.2,
+            iou=0.6,
             persist=True,
             verbose=False,
         )
