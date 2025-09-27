@@ -13,7 +13,6 @@
 # limitations under the License.
 import functools
 import json
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -115,6 +114,7 @@ class Detection2DModule(Module):
                 )
             )
 
+        print("vlm detected", imageDetections)
         # Emit the VLM detections to the subject
         self.vlm_detections_subject.on_next(imageDetections)
 
@@ -135,6 +135,7 @@ class Detection2DModule(Module):
 
     @functools.cache
     def detection_stream_2d(self) -> Observable[ImageDetections2D]:
+        return self.vlm_detections_subject
         # Regular detection stream from the detector
         regular_detections = self.sharp_image_stream().pipe(ops.map(self.process_image_frame))
         # Merge with VL model detections
