@@ -16,7 +16,6 @@
 
 import asyncio
 import json
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Union
 
@@ -285,7 +284,7 @@ class BaseAgent:
             user_content = user_msg["content"]
 
             # Add to conversation history
-            logger.info(f"=== Adding to history (no tools) ===")
+            logger.info("=== Adding to history (no tools) ===")
             logger.info(f"  Adding user message: {str(user_content)[:100]}...")
             self.conversation.add_user_message(user_content)
             logger.info(f"  Adding assistant response: {content[:100]}...")

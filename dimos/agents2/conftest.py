@@ -40,6 +40,30 @@ def skill_container():
 
 
 @pytest.fixture
+def create_fake_agent(fixture_dir):
+    agent = None
+
+    def _agent_factory(*, system_prompt, skill_containers, fixture):
+        mock_model = MockModel(json_path=fixture_dir / fixture)
+
+        nonlocal agent
+        agent = Agent(system_prompt=system_prompt, model_instance=mock_model)
+
+        for skill_container in skill_containers:
+            agent.register_skills(skill_container)
+
+        agent.start()
+
+        return agent
+
+    try:
+        yield _agent_factory
+    finally:
+        if agent:
+            agent.stop()
+
+
+@pytest.fixture
 def create_potato_agent(potato_system_prompt, skill_container, fixture_dir):
     agent = None
 

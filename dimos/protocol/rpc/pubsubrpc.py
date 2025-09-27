@@ -22,6 +22,7 @@ import time
 import traceback
 from abc import abstractmethod
 from dataclasses import dataclass
+from types import FunctionType
 from typing import (
     Any,
     Callable,
@@ -105,7 +106,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         req: RPCReq = {"name": name, "args": arguments, "id": None}
         self.publish(topic_req, self._encodeRPCReq(req))
 
-    def serve_rpc(self, f: Callable, name: Optional[str] = None):
+    def serve_rpc(self, f: FunctionType, name: Optional[str] = None):
         if not name:
             name = f.__name__
 

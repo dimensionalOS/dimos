@@ -149,17 +149,11 @@ class MockModel(SimpleChatModel):
                 raise ValueError(f"No responses available for playback. ")
 
             if self.i >= len(self.responses):
-                self.i = 0  # Wrap around
-
-            response = self.responses[self.i]
-            self.i += 1
-
-            # if self.i >= len(self.responses):
-            #     # Don't wrap around - stay at last response
-            #     response = self.responses[-1]
-            # else:
-            #     response = self.responses[self.i]
-            #     self.i += 1
+                # Don't wrap around - stay at last response
+                response = self.responses[-1]
+            else:
+                response = self.responses[self.i]
+                self.i += 1
 
             if isinstance(response, AIMessage):
                 message = response

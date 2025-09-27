@@ -6,7 +6,7 @@
         {
           "name": "take_photo",
           "args": {
-            "args": null
+            "args": []
           },
           "id": "call_o6ikJtK3vObuEFD6hDtLoyGQ",
           "type": "tool_call"

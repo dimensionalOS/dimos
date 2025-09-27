@@ -25,25 +25,22 @@ from typing import TYPE_CHECKING, Optional
 
 from dimos.core import Module
 from dimos.msgs.geometry_msgs import Twist, Vector3
-from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.protocol.skill.type import Output, Reducer, Stream
+from dimos.protocol.skill.skill import skill
+from dimos.protocol.skill.type import Reducer, Stream
 from dimos.utils.logging_config import setup_logger
+from dimos.robot.unitree_webrtc.unitree_skills import UNITREE_WEBRTC_CONTROLS
+from go2_webrtc_driver.constants import RTC_TOPIC
 
 if TYPE_CHECKING:
     from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_skill_container")
 
-# Import constants from unitree_skills
-from go2_webrtc_driver.constants import RTC_TOPIC
-
-from dimos.robot.unitree_webrtc.unitree_skills import UNITREE_WEBRTC_CONTROLS
-
 
 class UnitreeSkillContainer(Module):
     """Container for Unitree Go2 robot skills using the new framework."""
 
-    def __init__(self, robot: Optional["UnitreeGo2"] = None):
+    def __init__(self, robot: Optional[UnitreeGo2] = None):
         """Initialize the skill container with robot reference.
 
         Args:
@@ -153,6 +150,11 @@ class UnitreeSkillContainer(Module):
         while True:
             yield str(datetime.datetime.now())
             time.sleep(1)
+
+    @skill()
+    def speak(self, text: str):
+        """Speak text out loud through the robot's speakers."""
+        return f"This is being said aloud: {text}"
 
     # ========== Helper Methods ==========
 
