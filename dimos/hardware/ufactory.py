@@ -118,12 +118,12 @@ class xArm:
         # self.arm.set_position(
         #     x=344, y=3.2, z=530, roll=180, pitch=-88.5, yaw=0, speed=50, is_radian=False, wait=True
         # )
-        self.cmd_joint_angles([0, -75, 0, 13.5, 0, 0, 0], speed=50, is_radian=False)
+        self.cmd_joint_angles([0, -90, 0, 0, 0, 0], speed=50, is_radian=False)
 
     def gotoObserve(self):
         """Move to observation position similar to PiperArm"""
 
-        self.cmd_joint_angles([0.2, -60, -0, 63, 0.5, 77, 0.1], speed=50, is_radian=False)
+        self.cmd_joint_angles([0.0, -60, -30, 0, 50, 0], speed=50, is_radian=False)
         # if code != 0:
         #     logger.error(f"Failed to go to observe position, code: {code}")
 
@@ -773,7 +773,7 @@ def test_simple_error_clearing():
     """Simple test for basic error clearing functionality."""
     print("=== Simple xArm Error Clearing Test ===")
 
-    arm = xArm(ip="10.0.0.197", xarm_type="xarm7")
+    arm = xArm(ip="192.168.1.210", xarm_type="xarm6")
 
     try:
         print("Enabling arm...")
@@ -798,16 +798,16 @@ def test_simple_error_clearing():
 
 def test_xarm():
     """Test function for xArm - moved to avoid circular imports."""
-    arm = xArm(ip="10.0.0.197", xarm_type="xarm7")
-    # arm.enable()
-    # arm.gotoObserve()
-    # print(arm.get_ee_pose())
-    # arm.enable_gripper()
+    arm = xArm(ip="192.168.1.210", xarm_type="xarm7")    
+    arm.enable()
+    arm.gotoObserve()
+    print(arm.get_ee_pose())
+    arm.enable_gripper()
     # time.sleep(2)
     arm.cmd_gripper_ctrl(0.1)
     # time.sleep(2)
-    # arm.gotoZero()
-    # print(arm.get_ee_pose())
+    arm.gotoZero()
+    print(arm.get_ee_pose())
     arm.close_gripper()
     arm.arm.set_gripper_enable(False)
 

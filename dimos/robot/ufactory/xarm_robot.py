@@ -43,8 +43,8 @@ class XArmRobot(Robot):
 
     def __init__(
         self,
-        arm_ip: str = "10.0.0.197",
-        arm_type: str = "xarm7",
+        arm_ip: str = "192.168.1.210",
+        arm_type: str = "xarm6",
         robot_capabilities: Optional[List[RobotCapability]] = None,
         enable_mobile_base_control: bool = False,
     ):
