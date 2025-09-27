@@ -239,6 +239,43 @@ class ZEDCamera(StereoCamera):
             logger.error(f"Error getting pose: {e}")
             return None
 
+    def set_exposure(self, exposure_value: int) -> bool:
+        """
+        Set camera exposure manually.
+
+        Args:
+            exposure_value: Exposure value from -1 to 100.
+                           -1 resets to auto exposure.
+                           0-100 sets manual exposure level.
+
+        Returns:
+            True if exposure was set successfully, False otherwise.
+        """
+        if not self.is_opened:
+            logger.error("ZED camera not opened")
+            return False
+
+        try:
+            if exposure_value == -1:
+                # Reset to automatic exposure
+                self.zed.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, -1)
+                self.zed.set_camera_settings(sl.VIDEO_SETTINGS.AEC_AGC, 1)  # Enable auto exposure
+                logger.info("Camera exposure set to automatic mode")
+            elif 0 <= exposure_value <= 100:
+                # Set manual exposure
+                self.zed.set_camera_settings(sl.VIDEO_SETTINGS.AEC_AGC, 0)  # Disable auto exposure
+                self.zed.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, exposure_value)
+                logger.info(f"Camera exposure set to manual mode: {exposure_value}")
+            else:
+                logger.error(f"Invalid exposure value: {exposure_value}. Must be -1 or 0-100.")
+                return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error setting exposure: {e}")
+            return False
+
     def get_imu_data(self) -> Optional[Dict[str, Any]]:
         """
         Get IMU sensor data if available.
@@ -896,6 +933,25 @@ class ZEDModule(Module):
         if self.zed_camera and self.enable_tracking:
             return self.zed_camera.get_pose()
         return None
+
+    @rpc
+    def set_exposure(self, exposure_value: int) -> bool:
+        """
+        Set camera exposure manually via RPC.
+
+        Args:
+            exposure_value: Exposure value from -1 to 100.
+                           -1 resets to auto exposure.
+                           0-100 sets manual exposure level.
+
+        Returns:
+            True if exposure was set successfully, False otherwise.
+        """
+        if not self.zed_camera:
+            logger.error("ZED camera not initialized")
+            return False
+
+        return self.zed_camera.set_exposure(exposure_value)
 
     def cleanup(self):
         """Clean up resources on module destruction."""

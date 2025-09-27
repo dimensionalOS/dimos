@@ -40,13 +40,14 @@ logger = setup_logger("test_zed_module")
 class ZEDVisualizationNode:
     """Node that subscribes to ZED topics and visualizes the data."""
 
-    def __init__(self):
+    def __init__(self, zed_module=None):
         self.lcm = LCM()
         self.latest_color = None
         self.latest_depth = None
         self.latest_pose = None
         self.camera_info = None
         self._running = False
+        self.zed_module = zed_module  # Reference to ZED module for control
 
         # Subscribe to topics
         self.color_topic = Topic("/zed/color_image", LCMImage)
@@ -193,6 +194,25 @@ class ZEDVisualizationNode:
                 if self.latest_depth is not None:
                     np.save("zed_depth.npy", self.latest_depth)
                     logger.info("Saved depth data to zed_depth.npy")
+            elif key >= ord("0") and key <= ord("9"):
+                # Set exposure using number keys
+                if self.zed_module is not None:
+                    digit = key - ord("0")
+                    if digit == 0:
+                        # 0 key sets auto exposure (-1)
+                        exposure_value = -1
+                        logger.info("Setting auto exposure")
+                    else:
+                        # 1-9 keys set manual exposure (10, 20, ..., 90)
+                        exposure_value = digit * 10
+                        logger.info(f"Setting manual exposure to {exposure_value}")
+
+                    # Call the set_exposure RPC method
+                    success = self.zed_module.set_exposure(exposure_value)
+                    if success:
+                        logger.info(f"Exposure set successfully to {exposure_value}")
+                    else:
+                        logger.error(f"Failed to set exposure to {exposure_value}")
 
             time.sleep(0.03)  # ~30 FPS
 
@@ -214,8 +234,8 @@ async def test_zed_module():
             ZEDModule,
             camera_id=0,
             resolution="HD720",
-            depth_mode="NEURAL",
-            fps=30,
+            depth_mode="NEURAL_LIGHT",
+            fps=10,
             enable_tracking=True,
             publish_rate=10.0,  # 10 Hz for testing
             frame_id="zed_camera",
@@ -237,15 +257,19 @@ async def test_zed_module():
         # Give module time to initialize
         await asyncio.sleep(2)
 
-        # Create and start visualization node
-        viz_node = ZEDVisualizationNode()
+        # Create and start visualization node with reference to ZED module
+        viz_node = ZEDVisualizationNode(zed_module=zed)
         viz_node.start()
 
         # Run visualization in separate thread
         viz_thread = threading.Thread(target=viz_node.visualize, daemon=True)
         viz_thread.start()
 
-        logger.info("ZED Module running. Press 'q' in image window to quit, 's' to save images.")
+        logger.info("ZED Module running. Controls:")
+        logger.info("  'q' - Quit")
+        logger.info("  's' - Save images")
+        logger.info("  '0' - Auto exposure")
+        logger.info("  '1-9' - Manual exposure (10-90)")
 
         # Keep running until visualization stops
         while viz_node._running:
