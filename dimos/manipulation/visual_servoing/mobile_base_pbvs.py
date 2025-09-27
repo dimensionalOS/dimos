@@ -277,8 +277,7 @@ class MobileBasePBVS(Module):
         Returns:
             Current state as string: 'idle', 'tracking', or 'reached'
         """
-        with self.state_lock:
-            return self.state.value
+        return self.state.value
 
     @rpc
     def get_latest_detection3d(self) -> Optional[Detection3D]:

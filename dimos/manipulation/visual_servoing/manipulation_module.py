@@ -196,6 +196,11 @@ class ManipulationModule(Module):
         self.latest_camera_info = None
         self.last_detection_3d_array = None
         self.last_detection_2d_array = None
+        self.last_target_update_time = (
+            None  # Track when the target was last updated with new 2D detection
+        )
+        self.target_has_new_detection = False  # Flag for new detection for the specific target
+        self.detection_timeout = 5.0  # Timeout in seconds for no new detections during pre-grasp
         self.ee_frame_id = "ee_link"
 
         self.target_click = None
@@ -348,6 +353,15 @@ class ManipulationModule(Module):
             logger.info("Opening gripper")
             self.arm.release_gripper()
             return "release"
+        elif key_code == ord("1"):
+            self.arm.goto_observe(pitch=90.0)
+            return "observe"
+        elif key_code == ord("2"):
+            self.arm.goto_observe(pitch=120.0)
+            return "observe"
+        elif key_code == ord("3"):
+            self.arm.goto_observe(pitch=150.0)
+            return "observe"
 
         return ""
 
@@ -593,8 +607,18 @@ class ManipulationModule(Module):
         if not detection_3d_array or not self.pbvs:
             return False
 
+        # Store the previous target to check if it changed
+        previous_target = self.pbvs.current_target
+
         target_tracked = self.pbvs.update_tracking(detection_3d_array)
         if target_tracked:
+            # Check if the target has been updated with new detection
+            if self.pbvs.current_target != previous_target:
+                # Target has been updated with new detection from process_frame
+                self.target_has_new_detection = True
+                self.last_target_update_time = time.time()
+                logger.debug("Target updated with new 2D detection")
+
             self.last_valid_target = self.pbvs.current_target
 
             # Publish TF for tracked object
@@ -647,9 +671,13 @@ class ManipulationModule(Module):
         self.target_object_height = None
         self.reached_poses.clear()  # Clear pose history
         self.pose_adjusted = False
+        self.target_has_new_detection = False  # Reset target detection flag
+        self.last_target_update_time = None
 
         if self.enable_mobile_base and self.cmd_vel:
             stop_cmd = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0))
+            self.cmd_vel.publish(stop_cmd)
+            time.sleep(0.2)
             self.cmd_vel.publish(stop_cmd)
 
         # Return arm to observe position
@@ -716,6 +744,22 @@ class ManipulationModule(Module):
             self.set_grasp_stage(GraspStage.GRASP)
             self.reached_poses.clear()
             return
+
+        # Check for detection timeout during pre-grasp
+        if self.last_target_update_time is not None:
+            time_since_last_detection = time.time() - self.last_target_update_time
+            if time_since_last_detection > self.detection_timeout:
+                logger.error(
+                    f"No new detection for {self.detection_timeout:.1f} seconds during pre-grasp, failing task"
+                )
+                self.task_failed = True
+                return
+
+        # Only compute and execute new grasp pose if target has been updated with new detection
+        if not self.target_has_new_detection:
+            logger.debug("Target has no new detection update, skipping pre-grasp pose update")
+            return
+
         ee_transform = self.tf.get(
             parent_frame=self.base_frame_id,
             child_frame=self.ee_frame_id,
@@ -751,6 +795,8 @@ class ManipulationModule(Module):
         self.current_executed_pose = target_pose
         self.waiting_for_reach = True
         self.waiting_start_time = time.time()
+        # Clear the target detection flag after using it
+        self.target_has_new_detection = False
 
     def execute_grasp(self):
         """Execute grasp stage: move to final grasp position."""
@@ -766,6 +812,11 @@ class ManipulationModule(Module):
             return
 
         if not self.last_valid_target:
+            return
+
+        # Only compute and execute new grasp pose if target has been updated with new detection
+        if not self.target_has_new_detection:
+            logger.debug("Target has no new detection update, skipping final grasp pose update")
             return
 
         target_in_base = self._get_target_in_base_frame()
@@ -810,6 +861,8 @@ class ManipulationModule(Module):
             self.current_executed_pose = target_pose
             self.waiting_for_reach = True
             self.waiting_start_time = time.time()
+            # Clear the target detection flag after using it
+            self.target_has_new_detection = False
 
     def execute_close_and_retract(self):
         """Execute the retraction sequence after gripper has been closed."""
@@ -914,6 +967,9 @@ class ManipulationModule(Module):
 
         self.pbvs.set_target(target_detection)
         self.last_valid_target = target_detection
+        # Mark that we have a new target with fresh detection
+        self.target_has_new_detection = True
+        self.last_target_update_time = time.time()
         if target_detection and target_detection.bbox and target_detection.bbox.center:
             self.tf.publish(
                 Transform(
