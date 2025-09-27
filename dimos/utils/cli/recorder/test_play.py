@@ -26,6 +26,7 @@ from dimos.utils.data import _get_data_dir
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
 
+@pytest.mark.tool
 def test_publish():
     def start_recorder():
         recording_name = "test_play_recording"
