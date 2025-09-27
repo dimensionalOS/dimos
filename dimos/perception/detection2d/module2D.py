@@ -138,7 +138,7 @@ class Detection2DModule(Module):
     def detection_stream_2d(self) -> Observable[ImageDetections2D]:
         return self.vlm_detections_subject
         # Regular detection stream from the detector
-        regular_detections = self.sharp_image_stream().pipe(ops.map(self.process_image_frame))
+        regular_detections = self.image.observable().pipe(ops.map(self.process_image_frame))
         # Merge with VL model detections
         return backpressure(regular_detections.pipe(ops.merge(self.vlm_detections_subject)))
 
