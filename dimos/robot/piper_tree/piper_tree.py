@@ -155,7 +155,7 @@ class PiperTree(Robot):
         # Tune ZED camera exposure
         self.rpc_client.call_sync(
             f"{self.ZED_MODULE}/set_exposure",
-            ([20], {}),
+            ([10], {}),
             rpc_timeout=1.0,
         )
 

@@ -228,9 +228,6 @@ class ManipulationModule(Module):
         self.place_pose = None
         self.retract_pose = None
 
-        # Store current dynamic pitch for direct arm application
-        self.current_dynamic_pitch = 0.0
-
         self.enable_mobile_base = enable_mobile_base
         self.pose_adjusted = False
         self.cmd_height = 0.0  # Height command for mobile base
@@ -769,12 +766,21 @@ class ManipulationModule(Module):
             return
 
         dynamic_pitch = self.calculate_dynamic_grasp_pitch(target_in_base)
-        self.current_dynamic_pitch = dynamic_pitch  # Store for direct arm application
         print(
             f"Dynamic grasp pitch: {dynamic_pitch:.2f} degrees, {np.deg2rad(dynamic_pitch):.2f} radians"
         )
+
+        # Use longer distance for first pre-grasp attempt
+        current_pregrasp_distance = self.pregrasp_distance
+        if len(self.reached_poses) == 0:
+            current_pregrasp_distance = self.pregrasp_distance * 1.5
+            dynamic_pitch -= 10.0
+            logger.info(
+                f"First pre-grasp attempt - using extended distance: {current_pregrasp_distance:.3f}m"
+            )
+
         target_pose = self.pbvs.compute_control(
-            target_in_base, ee_pose, self.pregrasp_distance, dynamic_pitch
+            target_in_base, ee_pose, current_pregrasp_distance, dynamic_pitch
         )
 
         if not target_pose:
@@ -822,7 +828,6 @@ class ManipulationModule(Module):
             return
 
         dynamic_pitch = self.calculate_dynamic_grasp_pitch(target_in_base)
-        self.current_dynamic_pitch = dynamic_pitch  # Store for direct arm application
         normalized_pitch = dynamic_pitch / 90.0
         grasp_distance = -self.grasp_distance_range + (
             2 * self.grasp_distance_range * normalized_pitch
