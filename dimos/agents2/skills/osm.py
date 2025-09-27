@@ -43,11 +43,16 @@ class OsmSkillContainer(SkillContainer):
         self._latest_location = None
         self._position_stream = position_stream
         self._current_location_map = CurrentLocationMap(QwenVlModel())
-        self._started = False
+        self._started = True
+        self._subscription = None
+        self._subscription = self._position_stream.subscribe(self._on_gps_location)
+        self._disposables.add(self._subscription)
 
     def __enter__(self) -> "OsmSkillContainer":
         self._started = True
-        self._disposables.add(self._position_stream.subscribe(self._on_gps_location))
+        if self._subscription is None:
+            self._subscription = self._position_stream.subscribe(self._on_gps_location)
+            self._disposables.add(self._subscription)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -58,14 +63,14 @@ class OsmSkillContainer(SkillContainer):
         self._latest_location = location
 
     @skill()
-    def street_map_query(self, query_sentence: str) -> str:
+    def map_query(self, query_sentence: str) -> str:
         """This skill uses a vision language model to find something on the map
         based on the query sentence. You can query it with something like "Where
         can I find a coffee shop?" and it returns the latitude and longitude.
 
         Example:
 
-            street_map_query("Where can I find a coffee shop?")
+            map_query("Where can I find a coffee shop?")
 
         Args:
             query_sentence (str): The query sentence.
