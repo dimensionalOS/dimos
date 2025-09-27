@@ -25,7 +25,7 @@ from dimos import core
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped, Transform, Vector3
 from dimos.msgs.nav_msgs import Odometry
-from dimos.msgs.sensor_msgs import PointCloud2, Joy
+from dimos.msgs.sensor_msgs import PointCloud2, Joy, Image
 from dimos.msgs.std_msgs import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf import TF
@@ -34,7 +34,7 @@ from dimos.utils.transform_utils import euler_to_quaternion
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
 from nav_msgs.msg import Odometry as ROSOdometry
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy
+from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy, Image as ROSImage
 from std_msgs.msg import Bool as ROSBool
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.utils.logging_config import setup_logger
@@ -298,6 +298,10 @@ class NavBot:
         )
         self.ros_bridge.add_topic(
             "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+
+        self.ros_bridge.add_topic(
+            "/camera/image", Image, ROSImage, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
     def _set_autonomy_mode(self):
