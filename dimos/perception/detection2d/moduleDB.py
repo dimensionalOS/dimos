@@ -200,6 +200,29 @@ class ObjectDBModule(Detection3DModule, TableStr):
             return "No objects detected yet."
         return "\n".join(ret)
 
+    def vlm_query(self, description: str) -> str:
+        imageDetections2D = super().vlm_query(description)
+        time.sleep(1.5)
+
+        print("VLM query found", imageDetections2D, "detections")
+        ret = []
+        for obj in self.objects.values():
+            if obj.ts != imageDetections2D.ts:
+                continue
+            if obj.class_id != -100:
+                continue
+            ret.append(obj)
+        return ret
+
+    @skill()
+    def navigate_to_object_in_view(self, description: str) -> str:
+        """Navigate to an object by description using vision-language model to find it."""
+        objects = self.vlm_query(description)
+        if not objects:
+            return f"No objects found matching '{description}'"
+        target_obj = objects[0]
+        return self.navigate_to_object_by_id(target_obj.track_id)
+
     @skill(reducer=Reducer.all)
     def list_objects(self):
         """List all detected objects that the system remembers and can navigate to."""
@@ -207,7 +230,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         return data
 
     @skill()
-    def navigate_to_object(self, object_id: str):
+    def navigate_to_object_by_id(self, object_id: str):
         """Navigate to an object by an object id"""
         target_obj = self.objects.get(object_id, None)
         if not target_obj:
@@ -216,7 +239,8 @@ class ObjectDBModule(Detection3DModule, TableStr):
         self.target.publish(target_pose)
         time.sleep(0.1)
         self.target.publish(target_pose)
-        return self.goto(target_pose)
+        self.goto(target_pose)
+        return f"Navigating to f{object_id} f{target_obj.name}"
 
     def lookup(self, label: str) -> List[Detection3D]:
         """Look up a detection by label."""
