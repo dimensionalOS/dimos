@@ -345,11 +345,15 @@ class XArmTree(Robot):
         """
         if self.lcm and self.cmd_vel_topic:
             logger.info(f"Publishing cmd_vel to topic: {self.CMD_VEL_TOPIC}")
-            logger.info(f"Twist: linear=({twist.linear.x:.2f}, {twist.linear.y:.2f}, {twist.linear.z:.2f}), angular=({twist.angular.x:.2f}, {twist.angular.y:.2f}, {twist.angular.z:.2f})")
+            logger.info(
+                f"Twist: linear=({twist.linear.x:.2f}, {twist.linear.y:.2f}, {twist.linear.z:.2f}), angular=({twist.angular.x:.2f}, {twist.angular.y:.2f}, {twist.angular.z:.2f})"
+            )
             self.lcm.publish(self.cmd_vel_topic, twist)
             logger.info("Published cmd_vel successfully")
         else:
-            logger.error(f"LCM initialized: {self.lcm is not None}, cmd_vel_topic initialized: {self.cmd_vel_topic is not None}")
+            logger.error(
+                f"LCM initialized: {self.lcm is not None}, cmd_vel_topic initialized: {self.cmd_vel_topic is not None}"
+            )
 
     def idle(self) -> bool:
         """Make robot go to idle mode via LCM."""
@@ -359,6 +363,7 @@ class XArmTree(Robot):
             self.lcm.publish(self.mode_topic, mode_msg)
             # Small delay to ensure message is processed
             import time
+
             time.sleep(0.1)
             logger.info("B1 robot set to idle mode")
             return True
@@ -375,11 +380,14 @@ class XArmTree(Robot):
             self.lcm.publish(self.mode_topic, mode_msg)
             # Small delay to ensure message is processed
             import time
+
             time.sleep(0.1)
             logger.info("B1 robot set to pose mode")
             return True
         else:
-            logger.error(f"LCM initialized: {self.lcm is not None}, mode_topic initialized: {self.mode_topic is not None}")
+            logger.error(
+                f"LCM initialized: {self.lcm is not None}, mode_topic initialized: {self.mode_topic is not None}"
+            )
             return False
 
     def walk(self) -> bool:
@@ -390,6 +398,7 @@ class XArmTree(Robot):
             self.lcm.publish(self.mode_topic, mode_msg)
             # Small delay to ensure message is processed
             import time
+
             time.sleep(0.1)
             logger.info("B1 robot set to walk mode")
             return True

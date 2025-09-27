@@ -387,6 +387,7 @@ def main():
                 elif key == 82:  # Up arrow
                     # Move forward
                     from dimos.msgs.geometry_msgs import Twist, Vector3
+
                     linear = Vector3()
                     linear.x, linear.y, linear.z = 0.3, 0.0, 0.0
                     angular = Vector3()
@@ -397,6 +398,7 @@ def main():
                 elif key == 84:  # Down arrow
                     # Move backward
                     from dimos.msgs.geometry_msgs import Twist, Vector3
+
                     linear = Vector3()
                     linear.x, linear.y, linear.z = -0.3, 0.0, 0.0
                     angular = Vector3()
@@ -407,6 +409,7 @@ def main():
                 elif key == 81:  # Left arrow
                     # Move left
                     from dimos.msgs.geometry_msgs import Twist, Vector3
+
                     linear = Vector3()
                     linear.x, linear.y, linear.z = 0.0, 0.3, 0.0
                     angular = Vector3()
@@ -417,6 +420,7 @@ def main():
                 elif key == 83:  # Right arrow
                     # Move right
                     from dimos.msgs.geometry_msgs import Twist, Vector3
+
                     linear = Vector3()
                     linear.x, linear.y, linear.z = 0.0, -0.3, 0.0
                     angular = Vector3()
@@ -428,6 +432,7 @@ def main():
                 elif key == ord("4"):
                     # Pitch forward in stand mode
                     from dimos.msgs.geometry_msgs import Twist, Vector3
+
                     linear = Vector3()
                     linear.x, linear.y, linear.z = 0.0, 0.0, 0.0
                     angular = Vector3()
@@ -438,6 +443,7 @@ def main():
                 elif key == ord("5"):
                     # Pitch backward in stand mode
                     from dimos.msgs.geometry_msgs import Twist, Vector3
+
                     linear = Vector3()
                     linear.x, linear.y, linear.z = 0.0, 0.0, 0.0
                     angular = Vector3()
@@ -448,6 +454,7 @@ def main():
                 elif key == ord("8"):
                     # Move up (linear Z positive)
                     from dimos.msgs.geometry_msgs import Twist, Vector3
+
                     linear = Vector3()
                     linear.x, linear.y, linear.z = 0.0, 0.0, 0.3
                     angular = Vector3()
@@ -458,6 +465,7 @@ def main():
                 elif key == ord("2"):
                     # Move down (linear Z negative)
                     from dimos.msgs.geometry_msgs import Twist, Vector3
+
                     linear = Vector3()
                     linear.x, linear.y, linear.z = 0.0, 0.0, -0.3
                     angular = Vector3()
@@ -468,6 +476,7 @@ def main():
                 elif key == 32:  # Space bar
                     # Stop movement
                     from dimos.msgs.geometry_msgs import Twist, Vector3
+
                     linear = Vector3()
                     linear.x, linear.y, linear.z = 0.0, 0.0, 0.0
                     angular = Vector3()
