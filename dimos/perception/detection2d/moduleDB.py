@@ -261,13 +261,14 @@ class ObjectDBModule(Detection3DModule, TableStr):
         for obj in copy(self.objects).values():
             # we need at least 3 detectieons to consider it a valid object
             # for this to be serious we need a ratio of detections within the window of observations
-            if len(obj.detections) < 3:
+            if obj.class_id != -100 and len(obj.detections) < 3:
                 continue
 
             # print(
             #    f"Object {obj.track_id}: {len(obj.detections)} detections, confidence {obj.confidence}"
             # )
             # print(obj.to_pose())
+
             scene_update.entities.append(
                 obj.to_foxglove_scene_entity(
                     entity_id=f"object_{obj.name}_{obj.track_id}_{len(obj.detections)}"
