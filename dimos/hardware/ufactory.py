@@ -122,15 +122,7 @@ class xArm:
 
     def gotoObserve(self):
         """Move to observation position similar to PiperArm"""
-        # xArm API expects mm and degrees
-        x, y, z = 400, 0, 300  # mm
-        roll, pitch, yaw = 180, -20, 0  # degrees
-        logger.debug(
-            f"Going to observe position: x={x}, y={y}, z={z}, roll={roll}, pitch={pitch}, yaw={yaw}"
-        )
-        # code = self.arm.set_position(
-        #     x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, speed=100, is_radian=False, wait=True
-        # )
+
         self.cmd_joint_angles([0.2, -60, -0, 63, 0.5, 77, 0.1], speed=50, is_radian=False)
         # if code != 0:
         #     logger.error(f"Failed to go to observe position, code: {code}")
