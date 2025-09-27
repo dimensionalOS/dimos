@@ -13,6 +13,7 @@
 # limitations under the License.
 import functools
 import json
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -109,7 +110,7 @@ class Detection2DModule(Module):
                     class_id=-100,
                     confidence=1.0,
                     name=name,
-                    ts=image.ts,
+                    ts=time.time(),
                     image=image,
                 )
             )
