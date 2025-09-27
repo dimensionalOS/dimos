@@ -143,6 +143,7 @@ class ConnectionModule(Module):
         connection_type: str = "webrtc",
         rectify_image: bool = True,
         enable_lidar: bool = True,
+        enable_video_stream: bool = True,
         *args,
         **kwargs,
     ):
@@ -150,6 +151,7 @@ class ConnectionModule(Module):
         self.connection_type = connection_type
         self.rectify_image = rectify_image
         self.enable_lidar = enable_lidar
+        self.enable_video_stream = enable_video_stream
         self.tf = TF()
         self.connection = None
 
@@ -196,7 +198,8 @@ class ConnectionModule(Module):
         if self.enable_lidar:
             self.connection.lidar_stream().subscribe(self.lidar.publish)
         self.connection.odom_stream().subscribe(self._publish_tf)
-        self.connection.video_stream().subscribe(self._on_video)
+        if self.enable_video_stream:
+            self.connection.video_stream().subscribe(self._on_video)
         self.movecmd.subscribe(self.move)
 
     def _on_video(self, msg: Image):
@@ -294,6 +297,7 @@ class UnitreeGo2(Robot):
         enable_lidar_mapping: bool = True,
         enable_navigation: bool = True,
         enable_mono_depth: bool = True,
+        enable_video_stream: bool = True,
     ):
         """Initialize the robot system.
 
@@ -307,6 +311,7 @@ class UnitreeGo2(Robot):
             enable_lidar_mapping: Enable lidar and mapping modules (default: True)
             enable_navigation: Enable navigation modules (default: True)
             enable_mono_depth: Enable monocular depth estimation (default: True)
+            enable_video_stream: Enable video stream from robot camera (default: True)
         """
         super().__init__()
         self.ip = ip
@@ -322,6 +327,7 @@ class UnitreeGo2(Robot):
         self.enable_lidar_mapping = enable_lidar_mapping
         self.enable_navigation = enable_navigation
         self.enable_mono_depth = enable_mono_depth
+        self.enable_video_stream = enable_video_stream
 
         # Initialize skill library
         if skill_library is None:
@@ -393,14 +399,18 @@ class UnitreeGo2(Robot):
         logger.info(
             f"Enabled features: spatial_memory={self.enable_spatial_memory}, "
             f"lidar_mapping={self.enable_lidar_mapping}, navigation={self.enable_navigation}, "
-            f"mono_depth={self.enable_mono_depth}"
+            f"mono_depth={self.enable_mono_depth}, video_stream={self.enable_video_stream}"
         )
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
         self.connection = self.dimos.deploy(
-            ConnectionModule, self.ip, connection_type=self.connection_type
+            ConnectionModule,
+            self.ip,
+            connection_type=self.connection_type,
+            enable_lidar=self.enable_lidar_mapping,
+            enable_video_stream=self.enable_video_stream,
         )
 
         # Only configure lidar transport if enabled
@@ -408,9 +418,13 @@ class UnitreeGo2(Robot):
             self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
 
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
-        self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
+        if self.enable_video_stream:
+            self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
-        self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
+        if self.enable_video_stream:
+            self.connection.camera_info.transport = core.LCMTransport(
+                "/go2/camera_info", CameraInfo
+            )
 
     def _deploy_mapping(self):
         """Deploy and configure the mapping module."""
@@ -503,6 +517,13 @@ class UnitreeGo2(Robot):
 
     def _deploy_perception(self):
         """Deploy and configure perception modules."""
+        # Perception requires video stream
+        if not self.enable_video_stream:
+            logger.warning(
+                "Spatial memory disabled because video_stream is disabled (required for visual perception)"
+            )
+            return
+
         # Deploy spatial memory
         self.spatial_memory_module = self.dimos.deploy(
             SpatialMemory,
@@ -541,6 +562,13 @@ class UnitreeGo2(Robot):
 
     def _deploy_camera(self):
         """Deploy and configure the depth module."""
+        # Depth module requires video stream
+        if not self.enable_video_stream:
+            logger.warning(
+                "Mono depth disabled because video_stream is disabled (required for depth estimation)"
+            )
+            return
+
         # Deploy DepthModule for monocular depth estimation
         gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.8
         self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
@@ -757,6 +785,7 @@ def main():
         ip=ip,
         websocket_port=7779,
         connection_type=connection_type,
+        enable_video_stream=False,
         enable_spatial_memory=False,
         enable_lidar_mapping=False,
         enable_navigation=False,
