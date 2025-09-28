@@ -27,11 +27,10 @@ from dimos.agents2.skills.ros_navigation import RosNavigation
 from dimos.core import In, Module, Out, rpc
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
 
-from dimos.msgs.sensor_msgs import Joy
-from dimos.msgs.std_msgs.Bool import Bool
-from dimos.robot.unitree_webrtc.rosnav import NavigationModule
+from geometry_msgs.msg import PoseStamped as ROSPoseStamped
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
-from lcm_msgs.foxglove_msgs import SceneUpdate
+
+from dimos_lcm.foxglove_msgs import SceneUpdate
 from nav_msgs.msg import Odometry as ROSOdometry
 from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy, Image as ROSImage
 from tf2_msgs.msg import TFMessage as ROSTFMessage
@@ -51,7 +50,8 @@ from dimos.msgs.geometry_msgs import (
     Vector3,
 )
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
+from dimos.msgs.sensor_msgs import CameraInfo, Image, Joy, PointCloud2
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d import Detection3DModule
@@ -295,9 +295,9 @@ class UnitreeG1(Robot):
 
         self.lcm.start()
 
-        from dimos.agents2.spec import Model, Provider
         from dimos.agents2 import Agent, Output, Reducer, Stream, skill
         from dimos.agents2.cli.human import HumanInput
+        from dimos.agents2.spec import Model, Provider
 
         agent = Agent(
             system_prompt="You are a helpful assistant for controlling a humanoid robot. ",
@@ -347,7 +347,7 @@ class UnitreeG1(Robot):
             CameraModule,
             transform=Transform(
                 translation=Vector3(0.05, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
                 frame_id="sensor",
                 child_frame_id="camera_link",
             ),
@@ -479,7 +479,7 @@ class UnitreeG1(Robot):
         #    self.joystick.start()
 
         self.camera.start()
-        self.detection.start()
+        # self.detection.start()
 
         if self.enable_perception:
             self.spatial_memory_module.start()

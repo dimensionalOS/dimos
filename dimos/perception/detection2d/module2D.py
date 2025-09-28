@@ -48,7 +48,7 @@ class Detector(ABC):
 @dataclass
 class Config:
     detector: Optional[Callable[[Any], Detector]] = Yolo2DDetector
-    max_freq: float = 3.0  # hz
+    max_freq: float = 0.5  # hz
     vlmodel: VlModel = QwenVlModel
 
 
@@ -122,6 +122,7 @@ class Detection2DModule(Module):
         return imageDetections
 
     def process_image_frame(self, image: Image) -> ImageDetections2D:
+        print("Processing image frame for detections", image)
         return ImageDetections2D.from_detector(
             image, self.detector.process_image(image.to_opencv())
         )
@@ -136,9 +137,9 @@ class Detection2DModule(Module):
 
     @functools.cache
     def detection_stream_2d(self) -> Observable[ImageDetections2D]:
-        return self.vlm_detections_subject
+        # self.vlm_detections_subject
         # Regular detection stream from the detector
-        regular_detections = self.image.observable().pipe(ops.map(self.process_image_frame))
+        regular_detections = self.sharp_image_stream().pipe(ops.map(self.process_image_frame))
         # Merge with VL model detections
         return backpressure(regular_detections.pipe(ops.merge(self.vlm_detections_subject)))
 

@@ -149,10 +149,13 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     target: Out[PoseStamped] = None  # type: ignore
 
+    remembered_locations: Dict[str, PoseStamped]
+
     def __init__(self, goto: Callable[[PoseStamped], Any], *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.goto = goto
         self.objects = {}
+        self.remembered_locations = {}
 
     def closest_object(self, detection: Detection3D) -> Optional[Object3D]:
         # Filter objects to only those with matching names
@@ -204,36 +207,67 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     def vlm_query(self, description: str) -> str:
         imageDetections2D = super().vlm_query(description)
-        time.sleep(3)
         print("VLM query found", imageDetections2D, "detections")
+        time.sleep(3)
 
-        transform = self.tf.get("camera_optical", "map")
-        detections3d = self.process_frame(imageDetections2D, self.pointcloud.get_next(), transform)
-        print("3D detections from VLM query:", detections3d)
-        if detections3d.detections:
-            target_pose = detections3d.detections[0].to_pose()
-            self.target.publish(target_pose)
-            self.goto(target_pose)
+        ret = []
+        for obj in self.objects.values():
+            if obj.ts != imageDetections2D.ts:
+                print(
+                    "Skipping",
+                    obj.track_id,
+                    "ts",
+                    obj.ts,
+                    "!=",
+                    imageDetections2D.ts,
+                )
+                continue
+            if obj.class_id != -100:
+                continue
+            if obj.name != imageDetections2D.detections[0].name:
+                print("Skipping", obj.name, "!=", imageDetections2D.detections[0].name)
+                continue
+            ret.append(obj)
+        ret.sort(key=lambda x: x.ts)
 
-        # ret = []
-        # for obj in self.objects.values():
-        # if obj.ts != imageDetections2D.ts:
-        #    continue
-        #    if obj.class_id != -100:
-        #        continue
-        #    if obj.name != imageDetections2D.detections[0].name:
-        #        print("Skipping", obj.name, "!=", imageDetections2D.detections[0].name)
-        #        continue
-        #    ret.append(obj)
-        # ret.sort(key=lambda x: x.ts)
-        # return ret
+        return ret[0]
 
     @skill()
-    def navigate_to_object_in_view(self, description: str) -> str:
+    def remember_location(self, name: str) -> str:
+        """Remember the current location with a name."""
+        pose = self.tf.lookup("map", "base_link").to_pose()
+        pose.frame_id = "map"
+        self.remembered_locations[name] = pose
+
+    @skill()
+    def goto_remembered_location(self, name: str) -> str:
+        """Go to a remembered location by name."""
+        pose = self.remembered_locations.get(name, None)
+        if not pose:
+            return f"Location {name} not found. Known locations: {list(self.remembered_locations.keys())}"
+        self.target.publish(pose)
+        time.sleep(0.1)
+        self.target.publish(pose)
+        return f"Navigating to remembered location {name}"
+
+    @skill()
+    def list_remembered_locations(self) -> List[str]:
+        """List all remembered locations."""
+        return str(list(self.remembered_locations.keys()))
+
+    def nav_to(self, target_pose) -> str:
+        target_pose.orientation = Quaternion(0.0, 0.0, 0.0, 0.0)
+        self.target.publish(target_pose)
+        time.sleep(0.1)
+        self.target.publish(target_pose)
+        self.goto(target_pose)
+
+    #    @skill()
+    def navigate_to_object_in_view(self, query: str) -> str:
         """Navigate to an object by description using vision-language model to find it."""
-        objects = self.vlm_query(description)
+        objects = self.vlm_query(query)
         if not objects:
-            return f"No objects found matching '{description}'"
+            return f"No objects found matching '{query}'"
         target_obj = objects[0]
         return self.navigate_to_object_by_id(target_obj.track_id)
 
@@ -250,10 +284,11 @@ class ObjectDBModule(Detection3DModule, TableStr):
         if not target_obj:
             return f"Object {object_id} not found\nHere are the known objects:\n{str(self.agent_encode())}"
         target_pose = target_obj.to_pose()
+        target_pose.frame_id = "map"
         self.target.publish(target_pose)
         time.sleep(0.1)
         self.target.publish(target_pose)
-        self.goto(target_pose)
+        self.nav_to(target_pose)
         return f"Navigating to f{object_id} f{target_obj.name}"
 
     def lookup(self, label: str) -> List[Detection3D]:
