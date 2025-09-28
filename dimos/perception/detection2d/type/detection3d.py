@@ -41,7 +41,7 @@ def height_filter(height=0.1) -> Detection3DFilter:
     return lambda det, pc, ci, tf: pc.filter_by_height(height)
 
 
-def statistical(nb_neighbors=20, std_ratio=0.5) -> Detection3DFilter:
+def statistical(nb_neighbors=40, std_ratio=0.5) -> Detection3DFilter:
     def filter_func(
         det: Detection2D, pc: PointCloud2, ci: CameraInfo, tf: Transform
     ) -> Optional[PointCloud2]:
@@ -74,7 +74,7 @@ def raycast() -> Detection3DFilter:
     return filter_func
 
 
-def radius_outlier(min_neighbors: int = 5, radius: float = 0.3) -> Detection3DFilter:
+def radius_outlier(min_neighbors: int = 20, radius: float = 0.3) -> Detection3DFilter:
     """
     Remove isolated points: keep only points that have at least `min_neighbors`
     neighbors within `radius` meters (same units as your point cloud).
@@ -109,8 +109,8 @@ class Detection3D(Detection2D):
         filters: list[Callable[[PointCloud2], PointCloud2]] = [
             # height_filter(0.1),
             raycast(),
-            statistical(),
             radius_outlier(),
+            statistical(),
         ],
     ) -> Optional["Detection3D"]:
         """Create a Detection3D from a 2D detection by projecting world pointcloud.

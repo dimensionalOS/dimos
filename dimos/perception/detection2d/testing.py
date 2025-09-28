@@ -11,11 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import functools
-import hashlib
-import os
 import time
-from pathlib import Path
 from typing import Optional, TypedDict, Union
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
@@ -32,7 +28,6 @@ from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.perception.detection2d.moduleDB import ObjectDBModule
 from dimos.perception.detection2d.type import ImageDetections2D, ImageDetections3D
-from dimos.protocol.service import lcmservice as lcm
 from dimos.protocol.tf import TF
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -83,7 +78,6 @@ def get_g1_moment(**kwargs):
     for timestamp, tf_frame in tf_replay.iterate_ts(seek=seek - tf_window, duration=tf_window):
         tf.publish(*TFMessage.lcm_decode(tf_frame).transforms)
 
-    print(tf)
     image_frame = Image.lcm_decode(
         TimedSensorReplay(f"{data_dir}/image#sensor_msgs.Image").find_closest_seek(seek)
     )
