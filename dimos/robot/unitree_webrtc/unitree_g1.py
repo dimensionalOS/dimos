@@ -23,6 +23,7 @@ import os
 import time
 from typing import Optional
 from dimos import core
+from dimos.agents2.skills.ros_navigation import RosNavigation
 from dimos.core import In, Module, Out, rpc
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
 
@@ -32,7 +33,7 @@ from dimos.robot.unitree_webrtc.rosnav import NavigationModule
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from lcm_msgs.foxglove_msgs import SceneUpdate
 from nav_msgs.msg import Odometry as ROSOdometry
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy
+from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy, Image as ROSImage
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 
 from dimos import core
@@ -304,6 +305,9 @@ class UnitreeG1(Robot):
         human_input = self.dimos.deploy(HumanInput)
         agent.register_skills(human_input)
         agent.register_skills(self.detection)
+        ros_nav = RosNavigation(self)
+        ros_nav.__enter__()
+        agent.register_skills(ros_nav)
 
         agent.run_implicit_skill("human")
         agent.start()
@@ -360,16 +364,16 @@ class UnitreeG1(Robot):
     def _deploy_gstreamer_camera(self):
         if not self.gstreamer_host:
             raise ValueError("gstreamer_host is not set")
-        if self.zed_camera:
-            raise ValueError("a different zed_camera has been started")
+        if self.camera:
+            raise ValueError("a different camera has been started")
 
-        self.zed_camera = self.dimos.deploy(
+        self.camera = self.dimos.deploy(
             GstreamerCameraModule,
             host=self.gstreamer_host,
         )
 
         # Set up LCM transport for the video output
-        self.zed_camera.video.transport = core.LCMTransport("/zed/color_image", Image)
+        self.camera.video.transport = core.LCMTransport("/zed/color_image", Image)
 
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
@@ -449,6 +453,9 @@ class UnitreeG1(Robot):
             direction=BridgeDirection.ROS_TO_DIMOS,
             remap_topic="/map",
         )
+        # self.ros_bridge.add_topic(
+        #     "/camera/image", Image, ROSImage, direction=BridgeDirection.ROS_TO_DIMOS
+        # )
 
         logger.info(
             "ROS bridge deployed: /cmd_vel, /state_estimation, /tf, /registered_scan (ROS → DIMOS)"
@@ -470,8 +477,8 @@ class UnitreeG1(Robot):
         if self.enable_perception:
             self.spatial_memory_module.start()
 
-        if self.zed_camera:
-            self.zed_camera.start()
+        if self.camera:
+            self.camera.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -548,17 +555,20 @@ def main():
         enable_camera=args.camera,
         enable_connection=os.getenv("ROBOT_IP") is not None,
         enable_ros_bridge=True,
+        enable_perception=True,
+        # enable_gstreamer_camera=True,
+        # gstreamer_host=self._gstreamer_host,
     )
     robot.start()
 
-    time.sleep(7)
-    print("Starting navigation...")
-    print(
-        robot.nav.go_to(
-            PoseStamped(ts=time.time(), frame_id="map", position=Vector3(0.0, 0.0, 0.03)),
-            timeout=10,
-        ),
-    )
+    # time.sleep(7)
+    # print("Starting navigation...")
+    # print(
+    #     robot.nav.go_to(
+    #         PoseStamped(ts=time.time(), frame_id="map", position=Vector3(0.0, 0.0, 0.03)),
+    #         timeout=10,
+    #     ),
+    # )
     try:
         if args.joystick:
             print("\n" + "=" * 50)

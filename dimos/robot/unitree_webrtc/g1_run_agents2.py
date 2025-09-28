@@ -55,8 +55,8 @@ class UnitreeAgents2Runner:
                 ip=os.getenv("ROBOT_IP"),
                 enable_connection=os.getenv("ROBOT_IP") is not None,
                 enable_perception=True,
-                enable_gstreamer_camera=True,
-                gstreamer_host=self._gstreamer_host,
+                # enable_gstreamer_camera=True,
+                # gstreamer_host=self._gstreamer_host,
             )
         )
 

@@ -14,20 +14,25 @@
 
 import time
 from typing import Any, Optional
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.robot.unitree_webrtc.unitree_g1 import UnitreeG1
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dimos.robot.unitree_webrtc.unitree_g1 import UnitreeG1
 
 logger = setup_logger(__file__)
 
 
 class RosNavigation(SkillContainer):
-    _robot: UnitreeG1
+    _robot: "UnitreeG1"
     _started: bool
 
-    def __init__(self, robot: UnitreeG1):
+    def __init__(self, robot: "UnitreeG1"):
         self._robot = robot
         self._similarity_threshold = 0.23
         self._started = False
@@ -51,6 +56,8 @@ class RosNavigation(SkillContainer):
             query: Text query to search for in the semantic map
         """
 
+        print("X" * 10000)
+
         if not self._started:
             raise ValueError(f"{self} has not been started.")
 
@@ -73,7 +80,7 @@ class RosNavigation(SkillContainer):
         if not goal_pose:
             return f"Found a result for '{query}' but it didn't have a valid position."
 
-        result = self._robot.navigate_to_goal(goal_pose, blocking=True)
+        result = self._robot.nav.go_to(goal_pose)
 
         if not result:
             return f"Failed to navigate for '{query}'"
@@ -110,7 +117,7 @@ class RosNavigation(SkillContainer):
 
         return PoseStamped(
             ts=time.time(),
-            position=Vector3.make_vector3(pos_x, pos_y, 0),
-            orientation=euler_to_quaternion(Vector3.make_vector3(0, 0, theta)),
+            position=make_vector3(pos_x, pos_y, 0),
+            orientation=euler_to_quaternion(make_vector3(0, 0, theta)),
             frame_id="map",
         )
