@@ -14,20 +14,14 @@
 
 import asyncio
 import json
+import threading
 import time
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, List, Literal, Optional, Union
 
-from langchain_core.messages import (
-    AIMessage,
-    HumanMessage,
-    MessageLikeRepresentation,
-    SystemMessage,
-    ToolCall,
-    ToolMessage,
-)
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool as langchain_tool
 from rich.console import Console
 from rich.table import Table
@@ -38,6 +32,7 @@ from dimos.core.module import get_loop
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
 from dimos.protocol.skill.type import MsgType, Output, Reducer, Return, SkillMsg, Stream
+from dimos.protocol.skill.utils import interpret_tool_call_args
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.protocol.skill.coordinator")
@@ -280,12 +275,13 @@ class SkillCoordinator(Module):
     _skills: dict[str, SkillConfig]
     _updates_available: Optional[asyncio.Event]
     _loop: Optional[asyncio.AbstractEventLoop]
+    _loop_thread: Optional[threading.Thread]
     _agent_loop: Optional[asyncio.AbstractEventLoop]
 
     def __init__(self) -> None:
         # TODO: Why isn't this super().__init__() ?
         SkillContainer.__init__(self)
-        self._loop = get_loop()
+        self._loop, self._loop_thread = get_loop()
         self._static_containers = []
         self._dynamic_containers = []
         self._skills = {}
@@ -329,6 +325,7 @@ class SkillCoordinator(Module):
 
     @rpc
     def stop(self) -> None:
+        self._close_module()
         self._closed_coord = True
         self.skill_transport.stop()
         if self._transport_unsub_fn:
@@ -379,6 +376,8 @@ class SkillCoordinator(Module):
         if isinstance(arg_keywords, list):
             arg_list = arg_keywords
             arg_keywords = {}
+
+        arg_list, arg_keywords = interpret_tool_call_args(args)
 
         return skill_config.call(
             call_id,

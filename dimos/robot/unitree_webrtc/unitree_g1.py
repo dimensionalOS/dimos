@@ -75,6 +75,12 @@ from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1", level=logging.INFO)
 
+try:
+    from dimos.hardware.camera.zed import ZEDModule
+except ImportError:
+    logger.warning("ZEDModule not found. Please install pyzed to use ZED camera functionality.")
+    ZEDModule = None
+
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
 logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)

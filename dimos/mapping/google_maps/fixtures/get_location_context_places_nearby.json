@@ -1,0 +1,965 @@
+{
+  "html_attributions": [],
+  "next_page_token": "AciIO2fBDpHRl2XoG9zreRkt9prSCk9LDy3sxfc-6uK7JcTxGSvbWY-XX87H38Pr547AkGKiHbzLzhvJxo99ZgbyGYP-9On6WhEFfvtiSnxWrLbz3V7Cfwpi_2GYt1TMeAqGnGlhFev1--1WgmfBnapSl95c7Myuh4Yby8UM34rMAWh9Md-T9DOVExJuqunnZMrS2ViNa1IRyboIu9ixrNTNYJXQ6hoSVlkM26Yw2sJB900sQFiChr_FrDIP6dbdIzZMZ3si7-3CFrR4gy6Y6wlyeVEiriGye9cFi8U0d0BprgdSIHC3hmp-pG8qtOHvn5tXJp6bDvU12hvRL32D4FFxgM1xKHqGdrun3N06tW2G_XuXZww3voN-bZh2y5y8ubZRJbcLjZQ-rpMUKVsfNPbdVYYPgV0oiLA8IlPQkbF5MM4M",
+  "results": [
+    {
+      "geometry": {
+        "location": {
+          "lat": 37.7749295,
+          "lng": -122.4194155
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.812,
+            "lng": -122.3482
+          },
+          "southwest": {
+            "lat": 37.70339999999999,
+            "lng": -122.527
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/geocode-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/generic_pinlet",
+      "name": "San Francisco",
+      "photos": [
+        {
+          "height": 675,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/105167680051506420390\">Zameer Dalvi</a>"
+          ],
+          "photo_reference": "AciIO2d9Esuu4AjK5SCX_Byk2t2jNOCJ1TkBc9V7So6HH2AjHH7SccRs-n7fGxN2bdQdm_t-jrSdyt7rmGoPil2-_phu5dXOszGmOG6HITWPRmQOajaPG4WrTQvAV6BCs5RGFq3NxJZ-uFyHCT472OFg15-d-iytsU_nKWjPuX1xCwmNDmuWxTc8YBWi05Cf0MxIFsVw7oj5gaHvGFx0ngYJlk67Jwl6vOTIBiEHfseOHkGhkMD7tX-RCPBhnaAUgGXRbuawYXkiu32c9RhxRaXReyFE_TtX09yqvmA6zr9WhaCLT0vTt4-KMOxpoACBnVt7gYVvRk-FWUXBiHISzppFi6o7FbEW4OE4WWsAXSFamzI5Z5Co9cAb8BTPZX8P3E-tZiWyoOb1WyhqjpGPKYsa7YJ_SRLFMI3kv8GWOb744A4t-3kLBIgZQi9nE5M4cfqmMmdofXLEct9srvrDVEjKns5kP3yp94xrV9205rGcqMtQ3rcQWhl62pLDxf3iEahwvxV-adcMVmaPjLFCrPiUCT1xKtBtRSQDjPcuUMBPaZ-7ylCuFvJLSEaEt8WpDiSDbn22NiuM0hPqu8tqL7hJpxsXPi6fLCreITtMwCBK_sS_-3C--VNxDhyAIAdjA3iOPnTtIw",
+          "width": 1080
+        }
+      ],
+      "place_id": "ChIJIQBpAG2ahYAR_6128GcTUEo",
+      "reference": "ChIJIQBpAG2ahYAR_6128GcTUEo",
+      "scope": "GOOGLE",
+      "types": [
+        "locality",
+        "political"
+      ],
+      "vicinity": "San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.7795744,
+          "lng": -122.4137147
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.78132539999999,
+            "lng": -122.41152835
+          },
+          "southwest": {
+            "lat": 37.777981,
+            "lng": -122.41572655
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/generic_business-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/generic_pinlet",
+      "name": "Civic Center / UN Plaza",
+      "photos": [
+        {
+          "height": 3072,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/112473462789000947403\">Neal</a>"
+          ],
+          "photo_reference": "AciIO2eQ5UqsRXvWTmbnbL9VjSIH-1SXRtU1k0UuJlVEyM_giS9ELQ-M4rjAF2wkan-7aE2l4yFtF4QmTEvORdTaj_lgO-_r9nTF2z7FKAFGcFxLL4wff1BD2NRu1cfYVWvStgOkdKGbZOmqKEpSU7qoFM_GjUdLO5ztvMCAJ8_h0-3VDy33ha8hGIa8AGuLhpitRAsRK9sztugTtxtaOruuuTtagZdfpyIvUjW1pJMCR3thLaWO2C4DVElGqhv4tynPVByugRqINceswryUNVh1yf_TD664L6AyyqjIL5Vv2583bIEefWHB3uEYJA2ohOV2YW_XhH5rY8Xg5Rdy6i8EUtW9GiVH694YHIgDEZsT-Or4uw_OHHYANd3z7MuQmLZ_JzyUCr8_ex8qxfzluml2bkfciWx3cqJ7YzodaED5nvzjffEuKXwp8cIz5cWF-xm1XSbTWZK5dafqVTC83ps9wDvoCmkPY2lXOgXhmTv85VTQNe8nj75LsplDo73CPg4XFRi6fZi-oicmtCjdjzpjUTHbHe3PEGB1F11BOPh_Hx8QkZlbWwIFooJc9FF8dgAh1GQzlwYb93tcPmRLAiaunw-h9F3eKDb7YghwBPtiBh6HygyNMnA4gtqdBd_qGQ6rVt9cLGCz",
+          "width": 4080
+        }
+      ],
+      "place_id": "ChIJYTKuRpuAhYAR8O67wA_IE9s",
+      "plus_code": {
+        "compound_code": "QHHP+RG Mid-Market, San Francisco, CA, USA",
+        "global_code": "849VQHHP+RG"
+      },
+      "rating": 3.5,
+      "reference": "ChIJYTKuRpuAhYAR8O67wA_IE9s",
+      "scope": "GOOGLE",
+      "types": [
+        "subway_station",
+        "transit_station",
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 375,
+      "vicinity": "1150 Market Street, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.7802611,
+          "lng": -122.4145017
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.7817168802915,
+            "lng": -122.4131737197085
+          },
+          "southwest": {
+            "lat": 37.7790189197085,
+            "lng": -122.4158716802915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/civic_building-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/civic-bldg_pinlet",
+      "name": "U.S. General Services Administration - Pacific Rim Region",
+      "opening_hours": {
+        "open_now": false
+      },
+      "photos": [
+        {
+          "height": 2448,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/102680249213328416583\">Wai Ki Wong</a>"
+          ],
+          "photo_reference": "AciIO2cN35fxs7byGa6qiTiJAxxJMorGoHDJp95RMFDnTMm-wDrb0QUZbujgJUBIV3uLQuBDpEdvyxxzc-fyzT3DgFlJSLKcnPcm_A-Fe3cj7rjPdEO9VMj0HHRf0aqDnRQXmtv2Ouh3QUH8OdvaoOlNMw293LOxjri9JvpjhPHCwJvwkKjxFYButiE_7XywtIRyQXRkZyDKxqKVxITircGB1P3efABFUQIye8hA71QZqTfYnBzT5wDSoV3oZRaB9aXUlTDGzNl3rJXE74BrlpgVhf-uYP_POcNqMbYmLXyWOjjVEZ4YZL58Ls53etW_ZUGGeiUAcrI3Uuq4glX5GRfGHssf_dqOWA29j0HZh6A_OFSluLSDbpy-HgXcW4Zg_qgF6XqobV78J_Ira4m8lgHiT3nDffo2YfELDcIvFxOJwpl1W3TUWawmHqvHiVTvHAQ_8-TcWE_rGCVIAAc8I0W25qRFngkVJ828ZIMHsnEiLLgsKTQlxKW94uAC8kgxh6v-iXP_7vP6-0aWGkFs4a2irwfQK5n5fKmDz7LBdVjyuAhoHwcCwE8VTn0wtwUcuiVCVBFs4-AnLWhwnVxf3fdmcMsZm91lPbm3fECbnt6SBhvXR48cM_ZZpMiyfIF1QuNE-vhfsnlK",
+          "width": 3264
+        }
+      ],
+      "place_id": "ChIJZxSUVZeAhYAReWcieluNDvY",
+      "plus_code": {
+        "compound_code": "QHJP+45 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHJP+45"
+      },
+      "rating": 2,
+      "reference": "ChIJZxSUVZeAhYAReWcieluNDvY",
+      "scope": "GOOGLE",
+      "types": [
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 4,
+      "vicinity": "50 United Nations Plaza, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.7801589,
+          "lng": -122.4143371
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.7818405302915,
+            "lng": -122.4131042697085
+          },
+          "southwest": {
+            "lat": 37.7791425697085,
+            "lng": -122.4158022302915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/civic_building-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/civic-bldg_pinlet",
+      "name": "Federal Office Building",
+      "opening_hours": {
+        "open_now": false
+      },
+      "photos": [
+        {
+          "height": 3024,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/103805566300624935423\">espresso</a>"
+          ],
+          "photo_reference": "AciIO2eg880rvWAbnaX5xUzP_b6dEVp4hOnZqnxo7W_1S2BZwdC0H9io5KptUm2MGue3FOw3KWPjTZeVu8B_gnFh-5EyAhJHqhlDrllLsL8K-cumkjtTDT3mxDaDXeU7XB9BWD7S0g0f4qbjEu_sKhvWAXE81_r1W5I8minbMbvzu3eU1sYICwWOk_5g4D1-690I_4V-4aJ-fDD04kHxsqkweZcxzUHgrmcKEOlt48UKVHe-GEOLD5-BRNZ3k4tx50T1SKqPeNUI_WtTrYkSkeNzCp4t9680YqCW7LBsES9viJdW_QBTgQd59gvMeIWEXQ-YBGPEobIS0hE73Eedi_1ATESgKI-tzOeeoeytLnmFFVC8c2obgt2Bd7cLOFjIjm5Oxn9jH0auBWPx8JsQifkXiyhXz2VP2AawCmID4TMtMwt-9ozTV6I_j5f_guI34w7MxKnHiyTQvupi0S4O2ByezHx56M7Ptmxjk8yia84SG20H7sRhEk3yeQHl_ujDGYhNFCtPmHWkCsdWm1go-FuMalIzkUL4ERuREN1hhdvYhswbbigJUG8mKKOBzHuPVLNK5KFs_N7E5l4g3v-drOKe1m_GafTHwQDRvEzJfL0UnIERhRYcRLMJWxeEbjtsnKch",
+          "width": 4032
+        }
+      ],
+      "place_id": "ChIJzdTUHpuAhYAR3ZHR1a8TJ-k",
+      "plus_code": {
+        "compound_code": "QHJP+37 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHJP+37"
+      },
+      "rating": 4.2,
+      "reference": "ChIJzdTUHpuAhYAR3ZHR1a8TJ-k",
+      "scope": "GOOGLE",
+      "types": [
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 5,
+      "vicinity": "50 United Nations Plaza, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.7799364,
+          "lng": -122.4147625
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.78122733029149,
+            "lng": -122.4136141697085
+          },
+          "southwest": {
+            "lat": 37.7785293697085,
+            "lng": -122.4163121302915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/civic_building-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/civic-bldg_pinlet",
+      "name": "UN Plaza",
+      "opening_hours": {
+        "open_now": false
+      },
+      "photos": [
+        {
+          "height": 3024,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/106987377679618272222\">Douglas Cheung</a>"
+          ],
+          "photo_reference": "AciIO2f7vWVfkBpMV-nKU0k06pZS--irdg7JnnJBrztgXtRf0MYFd0085Gfjm7TjBB4bCefkTdJBsNtyKiklgknHCuWhz3aqwx81XHDM51Jn-g5wI0hbG6dx8RpheFxfht_vpk9CQgjjg8mFEUp-aQaEc3hivi_bog295AUmEKdhTCRlYWLQJFPEpP-AKOpLwXdKYAjddd2nh18x9p8-gF0WphREBQFaOChd9lnWyuSKX-MOecG-ff1Brwpkcroc6VUeW6z1RQcLFNCUOomOpBCmeujvTquM_bI7a6T4WzM2o6Et_47EXmPzJhSAONorX8epNNHjZspoAd-LZ_PrBgy8H-WQEm6vlY88Dtc1Sucewnrv4Cd8xm2I1ywKPSsd2mgYBMVAipSS2XHuufe5FWzZM9vPZonW0Vb-X6HOAnVeQ52ZxNddc5pjDtU5GOZNb2oF-uLwo5-qrplZDryO5if0CPQRzE6iRbO9xLsWV0S7MGmxJ_bZk7nxWXjKAFNITIZ6dQcGJxuWH_LKDsF3Sfbg1emM4Xdujx0ZHhgFcBISAfHjX5hf0kBxGhpMlFIPxRns2Eng4HzTaebZAmMeqDoN_3KlnAof47SQyeLSQNy1K6PjWGrIPfaVOpubOTLJF_dLKt5pxQ",
+          "width": 4032
+        }
+      ],
+      "place_id": "ChIJ60hDVZeAhYAReuCqOWYsr_k",
+      "plus_code": {
+        "compound_code": "QHHP+X3 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHHP+X3"
+      },
+      "rating": 4,
+      "reference": "ChIJ60hDVZeAhYAReuCqOWYsr_k",
+      "scope": "GOOGLE",
+      "types": [
+        "city_hall",
+        "point_of_interest",
+        "local_government_office",
+        "establishment"
+      ],
+      "user_ratings_total": 428,
+      "vicinity": "355 McAllister Street, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.781006,
+          "lng": -122.4143741
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.78226673029149,
+            "lng": -122.4129892697085
+          },
+          "southwest": {
+            "lat": 37.7795687697085,
+            "lng": -122.4156872302915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/shopping-71.png",
+      "icon_background_color": "#4B96F3",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/shopping_pinlet",
+      "name": "McAllister Market & Deli",
+      "opening_hours": {
+        "open_now": false
+      },
+      "photos": [
+        {
+          "height": 4608,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/108402878153626673008\">Asteria Moore</a>"
+          ],
+          "photo_reference": "AciIO2chI9JnbQNwZt2yo7E--ruAq6ax7U4NrW_3PcNpGgFzXhxMqvYTtktvSLwFO5k21vHpEH-2AMYuaD6qctoIYdyt_g5EWhF88Ptb75HmmIEQzMqk2Ktpe3Vx06TnJKF47TZnQupjVdy_YTW3XGOGkA33Phe8I3I9szr54QqmYLFs6fPJMxo-M3keen9PlFiqqjvKAV170CuJ6HQ70AkRREWq3h18IcPUHHEKiZng5TKPSB7t_3dbyB_DWETnVQHu6P33XEmcKw77rgCuUogyxXZNMBulq305-FtBlH5lnvjy1F5Hpwf-q5cSB_40p082Joz0Vyazc1o4s-hnEyUnaQ6Zra1B_ODKvHqEKHoeJUKT4nAfFU4kBE5A7nmxkozqyks4MfaoN_P72atAhggEV5rog4EEtzFyeC1bx8GtQKhYccbeANSF5R9mAEpeefOrpYZpNW1uLffUMOpceZpZtNsE-yG59_v-56V1dxqCIGW9KOtVmfoEL0WLP6l-pMhKMv3EdSRmGqhbRtCA2fZNyFBWRyMwpfToRImtYxRbMiqriGONDU1e1m8j895QvLDknS6lY_qRMNv4YY3FLooGcag4YzcaDHwtI-ipxEcFknzhIIYt-_fdlTcUk0JMctC5re--5A",
+          "width": 2592
+        }
+      ],
+      "place_id": "ChIJz3oI4ZqAhYARYviYtbeKIFQ",
+      "plus_code": {
+        "compound_code": "QHJP+C7 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHJP+C7"
+      },
+      "rating": 3.6,
+      "reference": "ChIJz3oI4ZqAhYARYviYtbeKIFQ",
+      "scope": "GOOGLE",
+      "types": [
+        "liquor_store",
+        "atm",
+        "grocery_or_supermarket",
+        "finance",
+        "point_of_interest",
+        "food",
+        "store",
+        "establishment"
+      ],
+      "user_ratings_total": 12,
+      "vicinity": "136 McAllister Street, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.7802423,
+          "lng": -122.4145234
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.78171363029151,
+            "lng": -122.4131986197085
+          },
+          "southwest": {
+            "lat": 37.77901566970851,
+            "lng": -122.4158965802915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/civic_building-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/civic-bldg_pinlet",
+      "name": "US Health & Human Services Department/Office of the Regional Director",
+      "opening_hours": {
+        "open_now": false
+      },
+      "photos": [
+        {
+          "height": 1200,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/113570270161335385724\">Patrick Berkeley</a>"
+          ],
+          "photo_reference": "AciIO2eP4AmtKmitmIZbdY4bI2mc8aCNzT2vh8plui7wj0BJt-51HlfW7-arowozWM9Os9hSUBkXItcmlXnH08GpOYXc1u6gN-XmO7AL9ifSJfgWYt6XE0CkXfQ9iBQdHF1WFlfteWLOvL0mev0reMuAz78N7It7eWQY8HW3nm2_i14G_R51kbRK2djxoWjDqY9-xP5hTxWUs1u7JFqXtzOZAeMGlhFHHmqVe4A8nWMP7tr6Y385wmCIJvGwXivQmct7flmN6NpNqqp1U5CI1jy60x7Z2Zoq_uxzWpIB-1M-VRMJHblbb_1rPAc1Sg29n5XfhX4E1M1YqlEBdqg08VaqQSLbaJEHkvfDMFKlN36IsZmb8mZfFEinYSmkcISO6x-vuhgR7G4FJZLtt74goVGKIPsQoC9oPsPyN0mLaQJs9ZTS6D2mw5zIQXYBs2IfBdnG9sWDCQTujtdGWJv_SlWUHW499I-NK0MzNPjpLB4FW3dYOuqDQdk-8hzC1A5giSjr7J783WRLVhVKjfo8G8vCPCSY4JW6x3XB5bl9IJn5j_47sGhJOrHnHVkNaMmJMtdhGflXwT42-i033uzLJEGN1e887Jqe7OHRHqa97oPbXu3FQgVPjXvdBX33gmXc8XXeDg7gcQ",
+          "width": 1600
+        }
+      ],
+      "place_id": "ChIJ84fbMZuAhYARravvIpQYCY8",
+      "plus_code": {
+        "compound_code": "QHJP+35 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHJP+35"
+      },
+      "rating": 4,
+      "reference": "ChIJ84fbMZuAhYARravvIpQYCY8",
+      "scope": "GOOGLE",
+      "types": [
+        "local_government_office",
+        "health",
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 1,
+      "vicinity": "San Francisco Federal Building, 90 7th Street #5, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.7794949,
+          "lng": -122.414318
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.78079848029149,
+            "lng": -122.4128637197085
+          },
+          "southwest": {
+            "lat": 37.7781005197085,
+            "lng": -122.4155616802915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/school-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/school_pinlet",
+      "name": "Oasis For Girls",
+      "opening_hours": {
+        "open_now": false
+      },
+      "photos": [
+        {
+          "height": 3024,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/113305919995230455128\">Alex</a>"
+          ],
+          "photo_reference": "AciIO2cENrSmK967GV0iLgnIakOvEMavm9r5kA_LjIOHIji_Pc0T74VL-vwiFlUgoVgetRw9B-PzYrJ54EVfnbUQT-9XRi2LGt9rUOGX6V7h7lOVqgEJ1eaWEUtTDyk93eQRs3cc3GhXY2RIjL-nVdaxkwRc_RWpRPLcc8Om_aTYwyCQ5S7ZpmxPS419DoCJHt4sQJqzRsD6gz7I8AGj0c03MHYascQn4efsvFhjzaPex21ZKI9iGz923oe9WM8zq4BhgKJ3B9_IITYDuoO1mYdyIgU57ceuRoKb6n4zoCgyhLne1_SzGnFz7DrP9jL8luHSVHeoZcSKmU34Gr-sGfVs4kfH33lzlNurHQI6gIoOOWOXq7BTP-Jf5ArqGexfQfue7IGJpYjR4p5r4cJZ-dd0tzhlGvrZ2cSEnjQdv4oTx3U3kElm6foWI3xySsa1jmqsZ8BBBzEQ75rzHHhsW26xwwR9ZIKYV-_DZ9r0hrb0qPCEF3aAC9r2m6rfwrHWAfDy_-Egmv_5T1QyBFaAUT0Faay7EezCxCyWwx_0x0o2DRIOAcA8a01veJJPv1LhYcXCUnTgIATbSr-t30d9FdosyX0Vk9w4eSXU6B4qUWpusHVHPShTHhAcLMig0OOIXlZyyWtPT2sb",
+          "width": 4032
+        }
+      ],
+      "place_id": "ChIJyTuyEoKAhYARr0GnPKZSGCk",
+      "plus_code": {
+        "compound_code": "QHHP+Q7 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHHP+Q7"
+      },
+      "rating": 5,
+      "reference": "ChIJyTuyEoKAhYARr0GnPKZSGCk",
+      "scope": "GOOGLE",
+      "types": [
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 4,
+      "vicinity": "1170 Market Street, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.77929669999999,
+          "lng": -122.4143825
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.78060218029149,
+            "lng": -122.4129812697085
+          },
+          "southwest": {
+            "lat": 37.77790421970849,
+            "lng": -122.4156792302915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/generic_business-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/generic_pinlet",
+      "name": "San Francisco Culinary Bartenders & Service Employees Trust Funds",
+      "place_id": "ChIJpS60CuyBt4cRzO3UB4vL3L0",
+      "plus_code": {
+        "compound_code": "QHHP+P6 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHHP+P6"
+      },
+      "rating": 3.3,
+      "reference": "ChIJpS60CuyBt4cRzO3UB4vL3L0",
+      "scope": "GOOGLE",
+      "types": [
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 6,
+      "vicinity": "1182 Market Street #320, San Francisco"
+    },
+    {
+      "business_status": "CLOSED_TEMPORARILY",
+      "geometry": {
+        "location": {
+          "lat": 37.7801722,
+          "lng": -122.4140068
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.7817733302915,
+            "lng": -122.4129124197085
+          },
+          "southwest": {
+            "lat": 37.7790753697085,
+            "lng": -122.4156103802915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/civic_building-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/civic-bldg_pinlet",
+      "name": "San Francisco Federal Executive Board",
+      "permanently_closed": true,
+      "photos": [
+        {
+          "height": 943,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/111819026257017394044\">San Francisco Federal Executive Board</a>"
+          ],
+          "photo_reference": "AciIO2ecs5V8ZC8IEmpnMKdhn2pSWsCYSZ6C9Zf6lnQbp3owjaXeXRZuPMtnIJag_ga0uw8Jwa8SB-Wsb2YyB9PrdAzutETaYb56zja6D8NwiKdf9Z4EGnZ45JH20x7119EzrunOm1q4Ii6wuY0TudtYsadmJC0NPLnUZlua4PNnW7Zl76OQwLBcaPWu6rXBHCTT6iiBqSZeKiKJ8w4RzttHfN3oYB-IE02CXQPQX1xxFEeQ5cyuGPtv8ghXHRoSJdhvYDH_P0aSrOt9ibRtrH5kv7nAamKSVUNWvT5vuPrXao9PkaJd5f16tZiDoM_61tat9r1izspBFhU",
+          "width": 943
+        }
+      ],
+      "place_id": "ChIJu4Q_XDqBhYARojXRyiKC12g",
+      "plus_code": {
+        "compound_code": "QHJP+39 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHJP+39"
+      },
+      "reference": "ChIJu4Q_XDqBhYARojXRyiKC12g",
+      "scope": "GOOGLE",
+      "types": [
+        "point_of_interest",
+        "establishment"
+      ],
+      "vicinity": "50 United Nations Plaza, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.779756,
+          "lng": -122.41415
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.78130935000001,
+            "lng": -122.411308
+          },
+          "southwest": {
+            "lat": 37.77806635,
+            "lng": -122.4163908
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/generic_business-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/generic_pinlet",
+      "name": "Civic Center/UN Plaza BART Station",
+      "photos": [
+        {
+          "height": 4032,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/107011581015319368608\">Arthur Glauberman</a>"
+          ],
+          "photo_reference": "AciIO2f1VMpAIRJouUVjkeEUyHB-4jzRZ2_U3kfRr-LaavcPlVYClnn2DMGMiWo9Oun0t-qo9z5WIHp1BQBHazbPqrWnSGvQoO3FpJMra0OOGSgrpsD5T4dvinfSzWqwOOlRtMyQ4vlGvR99TpxcNVcasRyNflpZxRcYD9nBUPnrNUstxTCfKqSqLdYD3ZI0xZiX3wOJ_hlUVgRfSs04iqzREGvRR8cZRaufh1Hakq3bzaBL1KGuLF8ggV94iGQmzWYmU_FddWgH9ZhjGyMPi8LYdNmypH0fBenoYGVE_bUV9dWqh5dFIKDwCyxkbIseJ6Z49MRFnSEFTtBr02xVz7Q1vAx0iKSRAMof3o5dqEd5Y1fVhDuLk3KT5JisNQZd_yWXDflaHmEgjEqza7uTrdR6LWysHDD8EdUrGQxWWHmneyc3qdWlc0TBxhGp3Q8V0a3Ian1k75PqrfkyC_IITP0KIDmaylgMSMmAQbzvkeHDtPcibG-BiNn2FNK7T77m7GpQkubMwYOI1PkoGSmveiuooTTqj6PSDGrQdDfRllk_HSwcTnd9csLazAQP_tLKHX8lsHTtTE7Orkcf8IEUfmV35Ltx2HzLYytejCYYS7ZoSfgjDTZUOY41QQ-YS0tIDKHpgr_PJqtT",
+          "width": 3024
+        }
+      ],
+      "place_id": "ChIJK0jeP5uAhYARcxPNUpvfc7A",
+      "plus_code": {
+        "compound_code": "QHHP+W8 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHHP+W8"
+      },
+      "rating": 3.5,
+      "reference": "ChIJK0jeP5uAhYARcxPNUpvfc7A",
+      "scope": "GOOGLE",
+      "types": [
+        "transit_station",
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 2,
+      "vicinity": "United States"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.779989,
+          "lng": -122.4138743
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.7811369802915,
+            "lng": -122.4131672197085
+          },
+          "southwest": {
+            "lat": 37.7784390197085,
+            "lng": -122.4158651802915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/generic_business-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/generic_pinlet",
+      "name": "UN Skate Plaza",
+      "place_id": "ChIJR4ivYwCBhYAR2xEDgcXd8oE",
+      "plus_code": {
+        "compound_code": "QHHP+XF Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHHP+XF"
+      },
+      "reference": "ChIJR4ivYwCBhYAR2xEDgcXd8oE",
+      "scope": "GOOGLE",
+      "types": [
+        "point_of_interest",
+        "establishment"
+      ],
+      "vicinity": "1484 Market Street, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.7798254,
+          "lng": -122.4149907
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.7811608302915,
+            "lng": -122.4137199197085
+          },
+          "southwest": {
+            "lat": 37.77846286970851,
+            "lng": -122.4164178802915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/generic_business-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/generic_pinlet",
+      "name": "Curry Without Worry",
+      "opening_hours": {
+        "open_now": false
+      },
+      "photos": [
+        {
+          "height": 3024,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/111492358539752766553\">Sterling Gerard</a>"
+          ],
+          "photo_reference": "AciIO2cHQr4ENxn9-409JJPj5hKunwLPi9gn-eN4W0X85UOvQVHoKQBUA4AotH3pkFTPxm1X76omOi2jbTiRSL9-eRFhA9wWpiXoSj2ggXeHrUxLMQBZb7cQuH4lg9YCOasXwXz3-e3H1lrByl7en3XSTkvuZUDrbtHocGV-0XNw2YpOmVvN-mLcRxgUpWhguLsvnO7B5JzXjz4ewOAxBLF9f-ZOdRktRcHDczoA0zYsOFwri0CXVjfYdB4HxjwXBPm1vXQY1U5qRydrI0Eru1tbTI9alsrmBOL4l0BAY--_fd3luNnwiQAYHzBJoZ7pqHjGOHtHa-OH7GFawpbxKr8MqeT3KVMcDVWm8sOy-zd2Gjbez5CQ5ld0w-q_2QDTVzHV5ybrzDm1OIl4vIW9eBTQVwkBwnmUjKFSZEQ-ANezOwN6XfW_jkWleRJ28dpXLo25dhW7gmYZxRcGpPwWRpcH3jyenU59CRJ6EG8nqVhTs-JzGOawmsLs4Kyg4f16fJE2lDTySU82fcQgd8uBkJGE-XrFYNOakpMWBKo1GWNOvfPsceoyB4qiLwf7VFM5Sa8yQUmNxdKRvVvhqCRjzGwVQmcPEOgpANBuDTUdz9VscmOhPO_29jRMca1S9AuseiZBdmRO4HHv",
+          "width": 4032
+        }
+      ],
+      "place_id": "ChIJKZtFDpuAhYAR7xKvaP5D1dI",
+      "plus_code": {
+        "compound_code": "QHHP+W2 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHHP+W2"
+      },
+      "rating": 4.7,
+      "reference": "ChIJKZtFDpuAhYAR7xKvaP5D1dI",
+      "scope": "GOOGLE",
+      "types": [
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 14,
+      "vicinity": "50 United Nations Plaza, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.7798179,
+          "lng": -122.4149928
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.7811602302915,
+            "lng": -122.4137218697085
+          },
+          "southwest": {
+            "lat": 37.7784622697085,
+            "lng": -122.4164198302915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/generic_business-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/generic_pinlet",
+      "name": "UN Skatepark",
+      "photos": [
+        {
+          "height": 4096,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/105168407922834124813\">Ghassan G</a>"
+          ],
+          "photo_reference": "AciIO2cuIIcUq2yO7nQ_aENkWHN-EBW8baPzWgyrlTnoDLJnZ3xkqA3qGN06NxagIX9LHoTMQKoBBtLKns2IEl90Mb3H_2P13nbPfRUkK0LEwZYq8jrhkAr1kkiuSzQZwXaQEw8o3W4kTBjRhrSnqv69l-mQjTnOMPnIvfdsfM-7-5cCCbReiG2UuhJaxEEP4HEQhpoKPdeysLMtlmOG3AkapY9hUggeffNhVVSc55UEM7CRWozNOoy8oVS6E-kixEK5Zvnrs2JgCarGttCGaQPrxg_R3LjCfWNCqbHD5pz5UGlN_Nixxf5un7OoTvmvxHCjSblmFZttvdfpoI9H54u-rdY6XBeCXON4hcc8vTt-H7pUoPOYQAQvOEsMknrcKQ10Fr7MdsMqp495fV0xc1WK-TMf0sd8aTHjJlDh0_yvi9gzBd47UzJddXi81F0y7HLNpwAHorBvYsPKM3c3pCCKjzOJKtieqvv-xvvdygIEFh4GvIfqInYEpsZeIgvnpUWZKeRoBeAh46AWyHe_-iZzkG94o5TRWiX1McziIr0nXb-2-V0uDhY1CZzDZZxTNPuaanEBSekt9tUMoF-TF-0YSyxGSlm4w8EfGhBrde4vKu2JyunwApDogalJbiDVsX5x7ZqwvBS6sBQxmxotvhRApbUOSRE",
+          "width": 3072
+        }
+      ],
+      "place_id": "ChIJfZvlNy-BhYARYrz8xesnfo8",
+      "plus_code": {
+        "compound_code": "QHHP+W2 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHHP+W2"
+      },
+      "rating": 5,
+      "reference": "ChIJfZvlNy-BhYARYrz8xesnfo8",
+      "scope": "GOOGLE",
+      "types": [
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 1,
+      "vicinity": "50 United Nations Plz, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.7798164,
+          "lng": -122.4149956
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.7811597302915,
+            "lng": -122.4137233697085
+          },
+          "southwest": {
+            "lat": 37.7784617697085,
+            "lng": -122.4164213302915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/generic_business-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/generic_pinlet",
+      "name": "Sim\u00f3n Bol\u00edvar Statue",
+      "opening_hours": {
+        "open_now": true
+      },
+      "photos": [
+        {
+          "height": 3452,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/106644216914706335909\">Willians Rodriguez</a>"
+          ],
+          "photo_reference": "AciIO2cWoTT9PaFCzH3sXfgvrgMG7uflXzfYSi4jJwNNBJRMxVPQp1TO-_3F0HFe4cWsF-z2g0MrluTzpSdWET57_kIPxx_rRh7TpX6Nv6jpWStd6hDBSAu-WGoaV8T2KESXe-N4WhG0afkZV61_rKqYtk9tc_NsE7Und84qxrQHTD2U-SYCSevUE4EkOGtinTv1o9Ll9yS2Svct_xPp5dAPJEJLBj2JBmWyn2p-sK-DzFHaGzP4r1NfAxQx0oQdoa3R0IUOXLIM6Xx8B_By8Vv9x9Z6wRlblRIM9CiX497_oDaYINg0w8lBtaEN5SSO7QxPRfV8o5NtJWBMqabnW7wepbRqq7BQh43-3HO_HXB1H6nP-cHLXetjXtN775nnAWlhXCEV_2Gb2HTRK0s7xQXHGZdKQCwDXAiTLtHFNGSaqQ3GhQ6iZdGquwh3q46lv6aRczhbo2kGRUgnkYYUa8AquE7Et0miHHw2zKc3lXX9FHQQannKHRc_yMQUpeKQGlBIxTmGvKLeatxHN6iLrtlfSIuHSc4FJWaYqkkiPAny1ZYcM61Jar67gMpf3-3RVwckUMqy4a9yDJawO-g8d-9svKI-5QlZXqlayrNnPsU6KSEgJhkJ95Fdi0nNM9qRYVFVbFVzosF0",
+          "width": 1868
+        }
+      ],
+      "place_id": "ChIJxwBPDpuAhYAREmyxJOv11Nk",
+      "plus_code": {
+        "compound_code": "QHHP+W2 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHHP+W2"
+      },
+      "rating": 4.4,
+      "reference": "ChIJxwBPDpuAhYAREmyxJOv11Nk",
+      "scope": "GOOGLE",
+      "types": [
+        "tourist_attraction",
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 23,
+      "vicinity": "50 United Nations Plaza, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.77961519999999,
+          "lng": -122.4143835
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.78097603029151,
+            "lng": -122.4127372697085
+          },
+          "southwest": {
+            "lat": 37.77827806970851,
+            "lng": -122.4154352302915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/generic_business-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/generic_pinlet",
+      "name": "Fitness Court at UN Plaza",
+      "opening_hours": {
+        "open_now": true
+      },
+      "photos": [
+        {
+          "height": 3213,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/107329916561724658215\">Ally Lim</a>"
+          ],
+          "photo_reference": "AciIO2c46aZ1fy0jImtc4i9AybRpqmgpwtnxt0yabDDt0HSzMy6bLyNo06EfEpKBi6cvmAnTmtGPILHAMUacEz6idLBwFO6ClbLGSLpaGmrE-ER462n6AvHQXwHXjL1REr-EU_cWAGUj7vMDJ_8oJwBlON1J6OoUi4N4eaJCgGa2nYN2KhQ_IsxlW06jBWAJ_8i5UzDCk9paPMLTlx6XGrN_ARqihZrDHp1ejLT9LsQuBny8qSHSq6N_cgDjhB6x8DLxLrNeZzFcY6RTwhLDeYqAaV1xlyQN68D8rCd-THrFbXYh0eqnCUNPO2mY0KgET5ifiuIsqEAfpOJp5JHKduPfdRphmIPJfag_kwtJ5kwmjQaDcpmLpVRLxBaFKDmjZ1oFjIm68YpF0z3Tz7chAD90lfLzKKIfQadS5xZLJR-34rJwZA6uiLx-9mEe3upotSZzDmtGQCEbkEJIbWA5TXa0Gr-dK4wQ2RHkzHhIprVlxu6oiXkBzrxx5De5dULfVOtZe25GbYgC6yOGVWppzAawylRfzfroxgD0Q4Qm3vZhrSVdousQjlhvOOd4vNjF4ab1SM0NrBHydXTzm9qO-Q9O45FAGe6DG_9ftmhsrMX57SZpBlnbsYFHZEgNOJhNkAyxcW6rvg",
+          "width": 5712
+        }
+      ],
+      "place_id": "ChIJOxlsRwCBhYAR5FY6A3dg8Ek",
+      "plus_code": {
+        "compound_code": "QHHP+R6 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHHP+R6"
+      },
+      "rating": 5,
+      "reference": "ChIJOxlsRwCBhYAR5FY6A3dg8Ek",
+      "scope": "GOOGLE",
+      "types": [
+        "gym",
+        "health",
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 3,
+      "vicinity": "3537 Fulton Street, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.77961519999999,
+          "lng": -122.4143835
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.7810261302915,
+            "lng": -122.4129955697085
+          },
+          "southwest": {
+            "lat": 37.7783281697085,
+            "lng": -122.4156935302915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/cafe-71.png",
+      "icon_background_color": "#FF9E67",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/cafe_pinlet",
+      "name": "United Nations Cafe",
+      "opening_hours": {
+        "open_now": false
+      },
+      "photos": [
+        {
+          "height": 1836,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/105470727697681630412\">Steven Smith</a>"
+          ],
+          "photo_reference": "AciIO2dhjLdgjy4fMy59en74_XnQ8CoXenGsfvaQ3MM7TohCqXE2tS7BYvyYoNu5gZbhJsNRulbldWgRUT1EpRPkiFZoqa1leeUttiHt1NUuSOEOYULofcZ8ShClkfIPk2U6i6-OajtQc5Aj9rYRtS8WmF_19ducNw0h4f3CSSuDPqKIloeNRsWm-uqi2faqjsgqe8iWvsmgABAmcdUhdAuDFWW31TnrtRe3D58TkvUJGv6-cpIDzuNv8gYPyokrz6lngguIGgNfy53t6xdLFbHMQFnLzgFx2NJbFeC2ZX3-WjKMXuy85hHuVUmucmLz80z6_yHa7kxlbpnruFdjhehwajdG7c0uy-HhxG7LVhRy9I4-aE0f5i4lBoZONibJ7KaHGoJLEMLcm5ig-hXHXfGoXIX3MIl5y5IOxhe4N4bimc1IsmMTs0MKw4O0ZbMhQ8yF4Uqb67ZWfIiEKEL7sXxkWGlgE65OAIutewzFNjOuWzsbQ7oCMK77hVI72s83jl3qT7SX4BQcy0wkSblVVTrm1VWf1PajA9Bzye0ZFi4yClaARpsQH8ZnOOsA3igFlJbjNohPzM8EaOPV3eWUqr8o-tkIp8IIAx5OLBqJjOs_E10AvQB7Pc4z2c6viTZDda9E",
+          "width": 3264
+        }
+      ],
+      "place_id": "ChIJ4ZfeFJuAhYAREGTVnroeXsg",
+      "plus_code": {
+        "compound_code": "QHHP+R6 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHHP+R6"
+      },
+      "rating": 4.5,
+      "reference": "ChIJ4ZfeFJuAhYAREGTVnroeXsg",
+      "scope": "GOOGLE",
+      "types": [
+        "cafe",
+        "point_of_interest",
+        "food",
+        "establishment"
+      ],
+      "user_ratings_total": 33,
+      "vicinity": "3537 Fulton Street, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.78012649999999,
+          "lng": -122.4136321
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.78198923029149,
+            "lng": -122.4121925197085
+          },
+          "southwest": {
+            "lat": 37.7792912697085,
+            "lng": -122.4148904802915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/generic_business-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/generic_pinlet",
+      "name": "UN Skate Plaza",
+      "photos": [
+        {
+          "height": 2268,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/107329916561724658215\">Ally Lim</a>"
+          ],
+          "photo_reference": "AciIO2fVA9xB6yslvpFQ1lHcw50PP-CHL5GT3WOtJCZ9pXvXUQ_PO0UhhmED-HG6hgIzaN5asxwB8vmzFa4xU4PPKu_LIu4XoCl3PDszzyju1ve916Kpw4jxHkXej81y_IwngvIAFFEfehH5n3lgfdkiZW176mppdHS3A1FpuvUP7yRA3jhenmFvSwmhpJJ6qdicxFvd0Gk-0R-bgzE2bowKaDhUE05PdDInRQCc83j4DsKXfu0eyTUSxzKVJ_Cwy8qdyCfKLXKkdPC8puMSa4nHnaATsWwFNY0eIBKwjACewkHIw5cfCOtcnmg8C-k-iElrgDHrZbDuuFTazC44CAaY2IR-H6cylBKKo8vY73T0iWF2OFJN7hQiL41iWu49OkDv_0cLyOveKyCo-TXh-Fw3RXpsf4fOSsO8UO0l9okQ2f62L_2XRYSZtPMoax2ZrlCTiegxYScg4dvuEuKDQ6_lAqDUawZcb92EHPRV39JI8trLJLlpn0UjWEYQZJ6dVPEJkjcJbeVbxlCkxiIIrym5ljDDTCOv226BX8uEdWlEZSk5jrxt3Js7gNcNJYHlNbjb9KV1Oa_NWFU7AKzVXDJR7ZS-K9OAiAnISbJOviAroCh3vaVP958bxNJu6Cwt_jphUuYEnw",
+          "width": 4032
+        }
+      ],
+      "place_id": "ChIJQaVbEAuBhYARTcbgmBM8tVE",
+      "plus_code": {
+        "compound_code": "QHJP+3G Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHJP+3G"
+      },
+      "rating": 4.6,
+      "reference": "ChIJQaVbEAuBhYARTcbgmBM8tVE",
+      "scope": "GOOGLE",
+      "types": [
+        "point_of_interest",
+        "establishment"
+      ],
+      "user_ratings_total": 21,
+      "vicinity": "1140 Market Street, San Francisco"
+    },
+    {
+      "business_status": "OPERATIONAL",
+      "geometry": {
+        "location": {
+          "lat": 37.78093459999999,
+          "lng": -122.4144382
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.7822385302915,
+            "lng": -122.4130778197085
+          },
+          "southwest": {
+            "lat": 37.7795405697085,
+            "lng": -122.4157757802915
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/cafe-71.png",
+      "icon_background_color": "#FF9E67",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/cafe_pinlet",
+      "name": "Paris Cafe",
+      "opening_hours": {
+        "open_now": false
+      },
+      "photos": [
+        {
+          "height": 4032,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/113285169328289606457\">Paris Cafe</a>"
+          ],
+          "photo_reference": "AciIO2fMlGoVgo_TLdvq2CENHw2KFOvcDW45EWxcL8DAw7QPnBbPPS0665SVCCKmKdPI9upG7wCidO6UyCCcMGc4gF32SbUAAPa-whL7CHURZfb-9STDUqcrh-HWmP3K7ZmVoPpWHgFxkfsjfls6LzpphMo3DLXw5mdUIiRbg8d8PM0N-mVp-e7MBPMRIPm1t3RCBA3MdO5cBwHrRs2J3XB05ao22l6a-FBtIiaZWKEikHT9DsQnUH4bHgfvM7lPoCSCikwucTQasUYfXPbaNXm8z-LNvR6ZsTcGsOkRKsu5S7k7eEE3jK68GJxd7nV7C3217lyN12VxZ6U",
+          "width": 3024
+        }
+      ],
+      "place_id": "ChIJOYG2HACBhYAR51qH-8IsnFM",
+      "plus_code": {
+        "compound_code": "QHJP+96 Civic Center, San Francisco, CA, USA",
+        "global_code": "849VQHJP+96"
+      },
+      "price_level": 2,
+      "rating": 4.8,
+      "reference": "ChIJOYG2HACBhYAR51qH-8IsnFM",
+      "scope": "GOOGLE",
+      "types": [
+        "cafe",
+        "point_of_interest",
+        "store",
+        "food",
+        "establishment"
+      ],
+      "user_ratings_total": 78,
+      "vicinity": "142 McAllister Street, San Francisco"
+    },
+    {
+      "geometry": {
+        "location": {
+          "lat": 37.7773082,
+          "lng": -122.4196412
+        },
+        "viewport": {
+          "northeast": {
+            "lat": 37.78237885897592,
+            "lng": -122.4125122545961
+          },
+          "southwest": {
+            "lat": 37.77303595794733,
+            "lng": -122.4237308429429
+          }
+        }
+      },
+      "icon": "https://maps.gstatic.com/mapfiles/place_api/icons/v1/png_71/geocode-71.png",
+      "icon_background_color": "#7B9EB0",
+      "icon_mask_base_uri": "https://maps.gstatic.com/mapfiles/place_api/icons/v2/generic_pinlet",
+      "name": "Civic Center",
+      "photos": [
+        {
+          "height": 2268,
+          "html_attributions": [
+            "<a href=\"https://maps.google.com/maps/contrib/106695676461964286801\">Tobias Peyerl</a>"
+          ],
+          "photo_reference": "AciIO2cy7yjg95KUbhq9hn7tUsXX0uuUcS8pB9NHPMos5CJwF9b-za_UzQEnJeyopweobag8YKyuK5xbVUhjdgpb-QFhXNknGAD7vs6skcUi4i_2tPQ-ludpZX3_p3upeF2d0Y91HGvucbf6Opj7dKjNgp7gGyY-ZTwhfqo32bmEcu3G_CbTmvbyhuJXocIcJOIXwOM7VVxVB-_3vrcpWPHeV18Y6ilm_atTzkouUvclYwo5i_YInAZ_cNN1DPiNNsK4uHEOR-1wYHjaF8A2G-Y80ieN9G9TxZl6E04wxiiEx3lAYuUuOq4Be5RyMTSDKgv75gvjKmQPvxSD2nVKl8OKxXCWAujxI44xi0Mj_Jr7-K55rwJjTPpIPa-ng72LSvyQ4Er-tjC83O17SFUMNNxE5ixb-xDuARpu3UjB-0pzD8vJJ9BAnwHkUhvDueMMVrrQ7W7BNYw7T4-A-eiznIpS6pft_vc2Kkq3t-CE3-VlZAUC7dSoCiK-Kag77oB2WlIjJltl9dgtlNid2qoGE6nNkWBYlDnxADFBkHDEIeh6jIzqGMcUbr-rtw1H4otL8MjlWf65JpbCAmXifV1rSPqylFatmfp74jIuJSmnODs-lG_-R1eObSQ3oaDi280kJmvX6VOK5XDV",
+          "width": 4032
+        }
+      ],
+      "place_id": "ChIJ3eJWtI6AhYAR2ovTWatCF8s",
+      "reference": "ChIJ3eJWtI6AhYAR2ovTWatCF8s",
+      "scope": "GOOGLE",
+      "types": [
+        "neighborhood",
+        "political"
+      ],
+      "vicinity": "San Francisco"
+    }
+  ],
+  "status": "OK"
+}

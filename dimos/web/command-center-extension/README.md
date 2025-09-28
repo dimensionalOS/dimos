@@ -1,6 +1,8 @@
 # command-center-extension
 
-## Usage
+This is a Foxglove extension for visualizing robot data and controlling the robot. See `dimos/web/websocket_vis/README.md` for how to use the module in your robot.
+
+## Build and use
 
 Install the Foxglove Studio desktop application.
 

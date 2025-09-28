@@ -11,18 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import time
 
-from dimos.perception.detection2d import testing
+from dimos.constants import DIMOS_PROJECT_ROOT
 
 
-def test_module3d():
-    seek = 75
-    moment = testing.detections3d(seek=seek, g1=True)
-
-    print(moment.get("detections2d"))
-    print(moment.get("detections3d"))
-
-    for i in range(3):
-        testing.publish_moment(moment)
-        time.sleep(0.1)
+AGENT_SYSTEM_PROMPT_PATH = DIMOS_PROJECT_ROOT / "assets/agent/prompt_agents2.txt"

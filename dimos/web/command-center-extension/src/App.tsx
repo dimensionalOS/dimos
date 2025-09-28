@@ -2,9 +2,11 @@ import * as React from "react";
 
 import Connection from "./Connection";
 import ExplorePanel from "./ExplorePanel";
+import GpsButton from "./GpsButton";
 import KeyboardControlPanel from "./KeyboardControlPanel";
 import VisualizerWrapper from "./components/VisualizerWrapper";
-import { AppAction, AppState } from "./types";
+import LeafletMap from "./components/LeafletMap";
+import { AppAction, AppState, LatLon } from "./types";
 
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
@@ -12,6 +14,10 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, costmap: action.payload };
     case "SET_ROBOT_POSE":
       return { ...state, robotPose: action.payload };
+    case "SET_GPS_LOCATION":
+      return { ...state, gpsLocation: action.payload };
+    case "SET_GPS_TRAVEL_GOAL_POINTS":
+      return { ...state, gpsTravelGoalPoints: action.payload };
     case "SET_PATH":
       return { ...state, path: action.payload };
     case "SET_FULL_STATE":
@@ -24,11 +30,14 @@ function appReducer(state: AppState, action: AppAction): AppState {
 const initialState: AppState = {
   costmap: null,
   robotPose: null,
+  gpsLocation: null,
+  gpsTravelGoalPoints: null,
   path: null,
 };
 
 export default function App(): React.ReactElement {
   const [state, dispatch] = React.useReducer(appReducer, initialState);
+  const [isGpsMode, setIsGpsMode] = React.useState(false);
   const connectionRef = React.useRef<Connection | null>(null);
 
   React.useEffect(() => {
@@ -53,6 +62,10 @@ export default function App(): React.ReactElement {
     connectionRef.current?.stopExplore();
   }, []);
 
+  const handleGpsGoal = React.useCallback((goal: LatLon) => {
+    connectionRef.current?.sendGpsGoal(goal);
+  }, []);
+
   const handleSendMoveCommand = React.useCallback(
     (linear: [number, number, number], angular: [number, number, number]) => {
       connectionRef.current?.sendMoveCommand(linear, angular);
@@ -66,7 +79,15 @@ export default function App(): React.ReactElement {
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <VisualizerWrapper data={state} onWorldClick={handleWorldClick} />
+      {isGpsMode ? (
+        <LeafletMap
+          gpsLocation={state.gpsLocation}
+          gpsTravelGoalPoints={state.gpsTravelGoalPoints}
+          onGpsGoal={handleGpsGoal}
+        />
+      ) : (
+        <VisualizerWrapper data={state} onWorldClick={handleWorldClick} />
+      )}
       <div
         style={{
           position: "absolute",
@@ -79,6 +100,10 @@ export default function App(): React.ReactElement {
           alignItems: "flex-end",
         }}
       >
+        <GpsButton
+          onUseGps={() => setIsGpsMode(true)}
+          onUseCostmap={() => setIsGpsMode(false)}
+        ></GpsButton>
         <ExplorePanel onStartExplore={handleStartExplore} onStopExplore={handleStopExplore} />
         <KeyboardControlPanel
           onSendMoveCommand={handleSendMoveCommand}
