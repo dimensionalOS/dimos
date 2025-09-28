@@ -198,5 +198,6 @@ class BaseLocalPlanner(Module):
             self.planning_thread = None
         stop_cmd = Twist()
         self.cmd_vel.publish(stop_cmd)
+        self._close_module()
 
         logger.info("Local planner stopped")

@@ -1,0 +1,21 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "stop_movement",
+          "args": {
+            "args": null
+          },
+          "id": "call_oAKe9W8s3xRGioZhBJJDOZB1",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I have stopped moving. Let me know if you need anything else!",
+      "tool_calls": []
+    }
+  ]
+}

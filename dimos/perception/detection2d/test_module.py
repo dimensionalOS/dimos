@@ -45,7 +45,7 @@ def test_module2d(moment: Moment, publish_lcm):
     # Assertions for test_module2d
     assert isinstance(detections2d, ImageDetections2D)
     assert len(detections2d) == 1
-    assert detections2d.image.ts == 1757960670.490248
+    assert detections2d.image.ts == pytest.approx(1757960670.490248)
     assert detections2d.image.shape == (720, 1280, 3)
     assert detections2d.image.frame_id == "camera_optical"
 
@@ -55,10 +55,12 @@ def test_module2d(moment: Moment, publish_lcm):
     assert det.name == "suitcase"
     assert det.class_id == 28
     assert det.track_id == 1
-    assert det.confidence == 0.8145349025726318
+    assert det.confidence == pytest.approx(0.8145349025726318)
 
     # Check bbox values
-    assert det.bbox == [503.437255859375, 249.89385986328125, 655.950439453125, 469.82879638671875]
+    assert det.bbox == pytest.approx(
+        [503.437255859375, 249.89385986328125, 655.950439453125, 469.82879638671875]
+    )
 
     annotations = detections2d.to_image_annotations()
     publish_lcm({"annotations": annotations, **moment})
@@ -89,7 +91,7 @@ def test_module3d(moment: Moment, publish_lcm):
     # Assertions for test_module3d
     assert isinstance(detections3d, ImageDetections3D)
     assert len(detections3d) == 1
-    assert detections3d.image.ts == 1757960670.490248
+    assert detections3d.image.ts == pytest.approx(1757960670.490248)
     assert detections3d.image.shape == (720, 1280, 3)
     assert detections3d.image.frame_id == "camera_optical"
 
@@ -99,10 +101,13 @@ def test_module3d(moment: Moment, publish_lcm):
     assert det.name == "suitcase"
     assert det.class_id == 28
     assert det.track_id == 1
-    assert det.confidence == 0.8145349025726318
+
+    assert det.confidence == pytest.approx(0.8145349025726318)
 
     # Check bbox values (should match 2D)
-    assert det.bbox == [503.437255859375, 249.89385986328125, 655.950439453125, 469.82879638671875]
+    assert det.bbox == pytest.approx(
+        [503.437255859375, 249.89385986328125, 655.950439453125, 469.82879638671875]
+    )
 
     # 3D-specific assertions
     assert isinstance(det.pointcloud, PointCloud2Msg)
@@ -114,9 +119,9 @@ def test_module3d(moment: Moment, publish_lcm):
     center = det.center
     assert isinstance(center, Vector3)
     # Values from output: Vector([    -3.3565    -0.26265     0.18549])
-    assert abs(center.x - (-3.3565)) < 1e-4
-    assert abs(center.y - (-0.26265)) < 1e-4
-    assert abs(center.z - 0.18549) < 1e-4
+    assert center.x == pytest.approx(-3.3565, abs=1e-4)
+    assert center.y == pytest.approx(-0.26265, abs=1e-4)
+    assert center.z == pytest.approx(0.18549, abs=1e-4)
 
     # Check pose
     pose = det.pose

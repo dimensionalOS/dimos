@@ -137,6 +137,12 @@ class WebsocketVisModule(Module):
             self._broadcast_thread.join(timeout=1.0)
         logger.info("WebSocket visualization module stopped")
 
+    @rpc
+    def set_gps_travel_goal_points(self, points: list[LatLon]) -> None:
+        json_points = [{"lat": x.lat, "lon": x.lon} for x in points]
+        self.vis_state["gps_travel_goal_points"] = json_points
+        self._emit("gps_travel_goal_points", json_points)
+
     def _create_server(self):
         # Create SocketIO server
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")

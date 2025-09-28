@@ -26,32 +26,35 @@ from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 from dimos.utils.logging_config import setup_logger
+from reactivex.disposable import Disposable, CompositeDisposable
 
 logger = setup_logger(__file__)
 
 
 class NavigationSkillContainer(SkillContainer):
     _robot: UnitreeRobot
+    _disposables: CompositeDisposable
+    _latest_image: Optional[Image]
+    _video_stream: Observable[Image]
+    _started: bool
 
     def __init__(self, robot: UnitreeRobot, video_stream: Observable[Image]):
         super().__init__()
         self._robot = robot
-        self._unsub_fns = []
+        self._disposables = CompositeDisposable()
         self._latest_image = None
         self._video_stream = video_stream
         self._similarity_threshold = 0.23
+        self._started = False
 
     def __enter__(self) -> "NavigationSkillContainer":
-        self._unsub_fns.append(self._video_stream.subscribe(self._on_video))
+        unsub = self._video_stream.subscribe(self._on_video)
+        self._disposables.add(Disposable(unsub) if callable(unsub) else unsub)
+        self._started = True
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        for fn in self._unsub_fns:
-            try:
-                fn()
-            except Exception:
-                logger.error("Failed to unsub", exc_info=True)
-                pass
+        self._disposables.dispose()
         return False
 
     def _on_video(self, image: Image) -> None:
@@ -69,6 +72,9 @@ class NavigationSkillContainer(SkillContainer):
         Returns:
             str: the outcome
         """
+
+        if not self._started:
+            raise ValueError(f"{self} has not been started.")
 
         pose_data = self._robot.get_odom()
         position = pose_data.position
@@ -98,6 +104,9 @@ class NavigationSkillContainer(SkillContainer):
         Args:
             query: Text query to search for in the semantic map
         """
+
+        if not self._started:
+            raise ValueError(f"{self} has not been started.")
 
         success_msg = self._navigate_by_tagged_location(query)
         if success_msg:
@@ -195,8 +204,12 @@ class NavigationSkillContainer(SkillContainer):
     @skill()
     def stop_movement(self) -> str:
         """Immediatly stop moving."""
-        # TODO: How to kill skills?
+
+        if not self._started:
+            raise ValueError(f"{self} has not been started.")
+
         self._robot.stop_exploration()
+
         return "Stopped"
 
     @skill()
@@ -211,6 +224,9 @@ class NavigationSkillContainer(SkillContainer):
         Args:
             timeout (float, optional): Maximum time (in seconds) allowed for exploration
         """
+
+        if not self._started:
+            raise ValueError(f"{self} has not been started.")
 
         try:
             return self._start_exploration(timeout)

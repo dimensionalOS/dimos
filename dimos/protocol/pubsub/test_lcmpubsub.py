@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import subprocess
 import threading
 import time
-from unittest.mock import patch
 
 import pytest
 
@@ -26,6 +24,30 @@ from dimos.protocol.pubsub.lcmpubsub import (
     PickleLCM,
     Topic,
 )
+
+
+@pytest.fixture
+def lcm_pub_sub_base():
+    lcm = LCMPubSubBase(autoconf=True)
+    lcm.start()
+    yield lcm
+    lcm.stop()
+
+
+@pytest.fixture
+def pickle_lcm():
+    lcm = PickleLCM(autoconf=True)
+    lcm.start()
+    yield lcm
+    lcm.stop()
+
+
+@pytest.fixture
+def lcm():
+    lcm = LCM(autoconf=True)
+    lcm.start()
+    yield lcm
+    lcm.stop()
 
 
 class MockLCMMessage:
@@ -47,9 +69,8 @@ class MockLCMMessage:
         return isinstance(other, MockLCMMessage) and self.data == other.data
 
 
-def test_LCMPubSubBase_pubsub():
-    lcm = LCMPubSubBase(autoconf=True)
-    lcm.start()
+def test_LCMPubSubBase_pubsub(lcm_pub_sub_base):
+    lcm = lcm_pub_sub_base
 
     received_messages = []
 
@@ -77,10 +98,7 @@ def test_LCMPubSubBase_pubsub():
     assert received_topic == topic
 
 
-def test_lcm_autodecoder_pubsub():
-    lcm = LCM(autoconf=True)
-    lcm.start()
-
+def test_lcm_autodecoder_pubsub(lcm):
     received_messages = []
 
     topic = Topic(topic="/test_topic", lcm_type=MockLCMMessage)
@@ -116,10 +134,7 @@ test_msgs = [
 
 # passes some geometry types through LCM
 @pytest.mark.parametrize("test_message", test_msgs)
-def test_lcm_geometry_msgs_pubsub(test_message):
-    lcm = LCM(autoconf=True)
-    lcm.start()
-
+def test_lcm_geometry_msgs_pubsub(test_message, lcm):
     received_messages = []
 
     topic = Topic(topic="/test_topic", lcm_type=test_message.__class__)
@@ -150,10 +165,8 @@ def test_lcm_geometry_msgs_pubsub(test_message):
 
 # passes some geometry types through pickle LCM
 @pytest.mark.parametrize("test_message", test_msgs)
-def test_lcm_geometry_msgs_autopickle_pubsub(test_message):
-    lcm = PickleLCM(autoconf=True)
-    lcm.start()
-
+def test_lcm_geometry_msgs_autopickle_pubsub(test_message, pickle_lcm):
+    lcm = pickle_lcm
     received_messages = []
 
     topic = Topic(topic="/test_topic")
@@ -182,11 +195,8 @@ def test_lcm_geometry_msgs_autopickle_pubsub(test_message):
     print(test_message, topic)
 
 
-def test_wait_for_message_basic():
+def test_wait_for_message_basic(lcm):
     """Test basic wait_for_message functionality - message arrives before timeout."""
-    lcm = LCM(autoconf=True)
-    lcm.start()
-
     topic = Topic(topic="/test_wait", lcm_type=MockLCMMessage)
     test_message = MockLCMMessage("wait_test_data")
 
@@ -214,11 +224,8 @@ def test_wait_for_message_basic():
     assert elapsed_time < 0.5  # Should receive message in ~0.1 seconds
 
 
-def test_wait_for_message_timeout():
+def test_wait_for_message_timeout(lcm):
     """Test wait_for_message timeout - no message published."""
-    lcm = LCM(autoconf=True)
-    lcm.start()
-
     topic = Topic(topic="/test_timeout", lcm_type=MockLCMMessage)
 
     # Wait for message that will never come
@@ -233,11 +240,8 @@ def test_wait_for_message_timeout():
     assert 0.4 < elapsed_time < 0.7  # Allow some tolerance
 
 
-def test_wait_for_message_immediate():
+def test_wait_for_message_immediate(lcm):
     """Test wait_for_message with message published immediately after subscription."""
-    lcm = LCM(autoconf=True)
-    lcm.start()
-
     topic = Topic(topic="/test_immediate", lcm_type=MockLCMMessage)
     test_message = MockLCMMessage("immediate_data")
 
@@ -269,11 +273,8 @@ def test_wait_for_message_immediate():
     assert elapsed_time < 0.2  # Should be nearly immediate
 
 
-def test_wait_for_message_multiple_sequential():
+def test_wait_for_message_multiple_sequential(lcm):
     """Test multiple sequential wait_for_message calls."""
-    lcm = LCM(autoconf=True)
-    lcm.start()
-
     topic = Topic(topic="/test_sequential", lcm_type=MockLCMMessage)
 
     # Test multiple messages in sequence
@@ -298,11 +299,8 @@ def test_wait_for_message_multiple_sequential():
         publisher_thread.join()
 
 
-def test_wait_for_message_concurrent():
+def test_wait_for_message_concurrent(lcm):
     """Test concurrent wait_for_message calls on different topics."""
-    lcm = LCM(autoconf=True)
-    lcm.start()
-
     topic1 = Topic(topic="/test_concurrent1", lcm_type=MockLCMMessage)
     topic2 = Topic(topic="/test_concurrent2", lcm_type=MockLCMMessage)
 
@@ -338,11 +336,8 @@ def test_wait_for_message_concurrent():
     assert received_messages["topic2"].data == "concurrent2"
 
 
-def test_wait_for_message_wrong_topic():
+def test_wait_for_message_wrong_topic(lcm):
     """Test wait_for_message doesn't receive messages from wrong topic."""
-    lcm = LCM(autoconf=True)
-    lcm.start()
-
     topic_correct = Topic(topic="/test_correct", lcm_type=MockLCMMessage)
     topic_wrong = Topic(topic="/test_wrong", lcm_type=MockLCMMessage)
 
@@ -358,11 +353,9 @@ def test_wait_for_message_wrong_topic():
     assert received_msg is None
 
 
-def test_wait_for_message_pickle():
+def test_wait_for_message_pickle(pickle_lcm):
     """Test wait_for_message with PickleLCM."""
-    lcm = PickleLCM(autoconf=True)
-    lcm.start()
-
+    lcm = pickle_lcm
     topic = Topic(topic="/test_pickle")
     test_obj = {"key": "value", "number": 42}
 
