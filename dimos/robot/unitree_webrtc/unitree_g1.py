@@ -57,7 +57,6 @@ from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d import Detection3DModule
 from dimos.perception.detection2d.moduleDB import ObjectDBModule
 from dimos.core import Module, In, Out, rpc
-from dimos.hardware.gstreamer_camera import GstreamerCameraModule
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3, Quaternion
 from dimos.msgs.sensor_msgs import Image, CameraInfo
 from dimos.perception.spatial_perception import SpatialMemory
@@ -75,12 +74,6 @@ from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1", level=logging.INFO)
-
-try:
-    from dimos.hardware.camera.zed import ZEDModule
-except ImportError:
-    logger.warning("ZEDModule not found. Please install pyzed to use ZED camera functionality.")
-    ZEDModule = None
 
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
@@ -111,12 +104,10 @@ class G1ConnectionModule(Module):
         """Start the connection and subscribe to sensor streams."""
         # Use the exact same UnitreeWebRTCConnection as Go2
         self.connection = UnitreeWebRTCConnection(self.ip)
-        print("starting odom" * 10000)
         self.movecmd.subscribe(self.move)
         self.odom_in.subscribe(self._publish_odom_pose)
 
     def _publish_odom_pose(self, msg: Odometry):
-        print("publishing odom", msg)
         self.odom_pose.publish(
             PoseStamped(
                 ts=msg.ts,
@@ -149,13 +140,11 @@ class UnitreeG1(Robot):
         skill_library: Optional[SkillLibrary] = None,
         recording_path: str = None,
         replay_path: str = None,
-        gstreamer_host: Optional[str] = None,
         enable_joystick: bool = False,
         enable_connection: bool = True,
         enable_ros_bridge: bool = True,
         enable_perception: bool = False,
         enable_camera: bool = False,
-        enable_gstreamer_camera: bool = False,
     ):
         """Initialize the G1 robot.
 
@@ -176,13 +165,11 @@ class UnitreeG1(Robot):
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.recording_path = recording_path
         self.replay_path = replay_path
-        self.gstreamer_host = gstreamer_host
         self.enable_joystick = enable_joystick
         self.enable_connection = enable_connection
         self.enable_ros_bridge = enable_ros_bridge
         self.enable_perception = enable_perception
         self.enable_camera = enable_camera
-        self.enable_gstreamer_camera = enable_gstreamer_camera
         self.websocket_port = websocket_port
         self.lcm = LCM()
 
@@ -267,12 +254,6 @@ class UnitreeG1(Robot):
         if self.enable_perception:
             self._deploy_perception()
 
-        if self.enable_camera:
-            self._deploy_camera()
-
-        if self.enable_gstreamer_camera:
-            self._deploy_gstreamer_camera()
-
         if self.enable_joystick:
             self._deploy_joystick()
 
@@ -283,15 +264,11 @@ class UnitreeG1(Robot):
         self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
         self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
         self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
+        self.nav.joy.transport = core.LCMTransport("/joy", Joy)
         self.nav.start()
 
         self._deploy_camera()
         self._deploy_detection(self.nav.go_to)
-
-        self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
-        self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
-        self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
-        self.nav.joy.transport = core.LCMTransport("/joy", Joy)
 
         self.lcm.start()
 
@@ -363,20 +340,6 @@ class UnitreeG1(Robot):
         self.camera.camera_info.transport = core.LCMTransport("/camera_info", CameraInfo)
         logger.info("Webcam module configured")
 
-    def _deploy_gstreamer_camera(self):
-        if not self.gstreamer_host:
-            raise ValueError("gstreamer_host is not set")
-        if self.camera:
-            raise ValueError("a different camera has been started")
-
-        self.camera = self.dimos.deploy(
-            GstreamerCameraModule,
-            host=self.gstreamer_host,
-        )
-
-        # Set up LCM transport for the video output
-        self.camera.video.transport = core.LCMTransport("/zed/color_image", Image)
-
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
         # Deploy WebSocket visualization module
@@ -397,12 +360,7 @@ class UnitreeG1(Robot):
             output_dir=self.spatial_memory_dir,
         )
 
-        if self.enable_gstreamer_camera:
-            self.spatial_memory_module.video.transport = core.LCMTransport(
-                "/zed/color_image", Image
-            )
-        else:
-            self.spatial_memory_module.video.transport = core.LCMTransport("/image", Image)
+        self.spatial_memory_module.video.transport = core.LCMTransport("/image", Image)
         self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
 
         logger.info("Spatial memory module deployed and connected")
@@ -460,9 +418,6 @@ class UnitreeG1(Robot):
             direction=BridgeDirection.ROS_TO_DIMOS,
             remap_topic="/map",
         )
-        self.ros_bridge.add_topic(
-            "/camera/image", Image, ROSImage, direction=BridgeDirection.ROS_TO_DIMOS
-        )
 
         logger.info(
             "ROS bridge deployed: /cmd_vel, /state_estimation, /tf, /registered_scan (ROS → DIMOS)"
@@ -483,9 +438,6 @@ class UnitreeG1(Robot):
 
         if self.enable_perception:
             self.spatial_memory_module.start()
-
-        if self.camera:
-            self.camera.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -545,16 +497,9 @@ def main():
     parser.add_argument("--ip", default=os.getenv("ROBOT_IP"), help="Robot IP address")
     parser.add_argument("--joystick", action="store_true", help="Enable pygame joystick control")
     parser.add_argument("--camera", action="store_true", help="Enable usb camera module")
-    parser.add_argument("--zed-camera", action="store_true", help="Enable zed camera module")
     parser.add_argument("--output-dir", help="Output directory for logs/data")
     parser.add_argument("--record", help="Path to save recording")
     parser.add_argument("--replay", help="Path to replay recording from")
-    parser.add_argument(
-        "--gstreamer-host",
-        type=str,
-        default="10.0.0.227",
-        help="GStreamer host IP address (default: 10.0.0.227)",
-    )
 
     args = parser.parse_args()
 
@@ -570,8 +515,6 @@ def main():
         enable_connection=os.getenv("ROBOT_IP") is not None,
         enable_ros_bridge=True,
         enable_perception=True,
-        enable_gstreamer_camera=args.zed_camera,
-        gstreamer_host=args.gstreamer_host,
     )
     robot.start()
 
