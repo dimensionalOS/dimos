@@ -98,7 +98,7 @@ def main():
         "--gstreamer-host",
         type=str,
         default="10.0.0.227",
-        help="GStreamer host IP address (default: 10.0.0.227)"
+        help="GStreamer host IP address (default: 10.0.0.227)",
     )
 
     args = parser.parse_args()
