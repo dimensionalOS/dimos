@@ -300,9 +300,9 @@ class NavBot:
             "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
-        self.ros_bridge.add_topic(
-            "/camera/image", Image, ROSImage, direction=BridgeDirection.ROS_TO_DIMOS
-        )
+        # self.ros_bridge.add_topic(
+        #     "/camera/image", Image, ROSImage, direction=BridgeDirection.ROS_TO_DIMOS
+        # )
 
     def _set_autonomy_mode(self):
         """
