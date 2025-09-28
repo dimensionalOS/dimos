@@ -395,7 +395,12 @@ class UnitreeG1(Robot):
             output_dir=self.spatial_memory_dir,
         )
 
-        self.spatial_memory_module.video.transport = core.LCMTransport("/zed/color_image", Image)
+        if self.enable_gstreamer_camera:
+            self.spatial_memory_module.video.transport = core.LCMTransport(
+                "/zed/color_image", Image
+            )
+        else:
+            self.spatial_memory_module.video.transport = core.LCMTransport("/camera/image", Image)
         self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
 
         logger.info("Spatial memory module deployed and connected")
