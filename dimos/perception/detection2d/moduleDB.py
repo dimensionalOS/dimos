@@ -205,17 +205,28 @@ class ObjectDBModule(Detection3DModule, TableStr):
     def vlm_query(self, description: str) -> str:
         imageDetections2D = super().vlm_query(description)
         time.sleep(3)
-
         print("VLM query found", imageDetections2D, "detections")
-        ret = []
-        for obj in self.objects.values():
-            # if obj.ts != imageDetections2D.ts:
-            #    continue
-            if obj.class_id != -100:
-                continue
-            ret.append(obj)
-        ret.sort(key=lambda x: x.ts)
-        return ret
+
+        transform = self.tf.get("camera_optical", "map")
+        detections3d = self.process_frame(imageDetections2D, self.lidar.get_next(), transform)
+        print("3D detections from VLM query:", detections3d)
+        if detections3d.detections:
+            target_pose = detections3d.detections[0].to_pose()
+            self.target.publish(target_pose)
+            self.goto(target_pose)
+
+        # ret = []
+        # for obj in self.objects.values():
+        # if obj.ts != imageDetections2D.ts:
+        #    continue
+        #    if obj.class_id != -100:
+        #        continue
+        #    if obj.name != imageDetections2D.detections[0].name:
+        #        print("Skipping", obj.name, "!=", imageDetections2D.detections[0].name)
+        #        continue
+        #    ret.append(obj)
+        # ret.sort(key=lambda x: x.ts)
+        # return ret
 
     @skill()
     def navigate_to_object_in_view(self, description: str) -> str:
