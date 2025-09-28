@@ -396,7 +396,7 @@ class UnitreeG1(Robot):
         )
 
         self.spatial_memory_module.video.transport = core.LCMTransport("/zed/color_image", Image)
-        self.spatial_memory_module.odom.transport = core.LCMTransport("/odom_pose", PoseStamped)
+        self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
 
         logger.info("Spatial memory module deployed and connected")
 
@@ -538,9 +538,17 @@ def main():
     parser.add_argument("--ip", default=os.getenv("ROBOT_IP"), help="Robot IP address")
     parser.add_argument("--joystick", action="store_true", help="Enable pygame joystick control")
     parser.add_argument("--camera", action="store_true", help="Enable usb camera module")
+    parser.add_argument("--zed-camera", action="store_true", help="Enable zed camera module")
+    parser.add_argument("--perception", action="store_true", help="Enable perception")
     parser.add_argument("--output-dir", help="Output directory for logs/data")
     parser.add_argument("--record", help="Path to save recording")
     parser.add_argument("--replay", help="Path to replay recording from")
+    parser.add_argument(
+        "--gstreamer-host",
+        type=str,
+        default="10.0.0.227",
+        help="GStreamer host IP address (default: 10.0.0.227)",
+    )
 
     args = parser.parse_args()
 
@@ -556,8 +564,8 @@ def main():
         enable_connection=os.getenv("ROBOT_IP") is not None,
         enable_ros_bridge=True,
         enable_perception=True,
-        # enable_gstreamer_camera=True,
-        # gstreamer_host=self._gstreamer_host,
+        enable_gstreamer_camera=args.zed_camera,
+        gstreamer_host=args.gstreamer_host,
     )
     robot.start()
 
