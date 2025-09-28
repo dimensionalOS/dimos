@@ -466,8 +466,8 @@ def main():
             PoseStamped(
                 ts=time.time(),
                 frame_id="map",
-                position=Vector3(0.0, 0.0, 0.0),
-                orientation=Quaternion(0.0, 0.0, 0.0, 0.0),
+                position=Vector3(0.0, 0.0, 0.03),
+                orientation=Quaternion(0, 0, 0, 0),
             ),
             timeout=10,
         ),
