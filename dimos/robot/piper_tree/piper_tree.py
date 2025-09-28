@@ -155,7 +155,7 @@ class PiperTree(Robot):
         # Tune ZED camera exposure
         self.rpc_client.call_sync(
             f"{self.ZED_MODULE}/set_exposure",
-            ([10], {}),
+            ([40], {}),
             rpc_timeout=1.0,
         )
 
@@ -418,7 +418,7 @@ class PiperTree(Robot):
     def execute_dump(self) -> bool:
         """Execute a hardcoded command pose, wait 2 seconds, then open gripper."""
         # Create hardcoded pose
-        position = Vector3(0.38, 0.0, 0.15)  # 15cm forward, 25cm up
+        position = Vector3(0.42, 0.0, 0.15)  # 15cm forward, 25cm up
         orientation = euler_to_quaternion(Vector3(0.0, 110.0, 0.0), degrees=True)
         hardcoded_pose = Pose(position, orientation)
 

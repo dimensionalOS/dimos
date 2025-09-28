@@ -94,7 +94,7 @@ class PiperArmRobot(Robot):
             base_frame_id="base_link",
             ee_frame_id="ee_link",
             camera_frame_id="zed_camera_link",
-            ee_to_camera_6dof=[-0.065, 0.03, -0.095, 0.0, -1.57, 0],  # EE to camera transform
+            ee_to_camera_6dof=[-0.06, 0.03, -0.095, 0.0, -1.57, 0],  # EE to camera transform
         )
 
         # Configure Piper Arm output

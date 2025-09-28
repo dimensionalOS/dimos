@@ -117,7 +117,7 @@ class MobileBasePBVS(Module):
         base_frame_id: str = "base_link",
         track_frame_id: str = "world",
         tracking_loss_timeout: float = 2.0,
-        detection_freeze_distance: float = 1.0,
+        detection_freeze_distance: float = 1.2,
         **kwargs,
     ):
         """Initialize mobile base PBVS module."""
@@ -167,7 +167,6 @@ class MobileBasePBVS(Module):
 
         # Tracking state
         self.state = ServoingState.IDLE
-        self.state_lock = threading.Lock()
         self.target_object = None
         self.last_tracked_detection = None
         self.target_object_history = deque(maxlen=4)  # Keep last 4 target positions
@@ -175,6 +174,10 @@ class MobileBasePBVS(Module):
         self.tracking_thread = None
         self.stop_event = threading.Event()
         self.last_error_magnitude = None
+
+        # Reached timer
+        self.reached_timer = None
+        self.reached_duration = 3.0
 
         # Detection thread
         self.detection_thread = None
@@ -220,9 +223,8 @@ class MobileBasePBVS(Module):
         Returns:
             Dict with status and message
         """
-        with self.state_lock:
-            if self.state != ServoingState.IDLE:
-                return {"status": "error", "message": "Already tracking"}
+        if self.state != ServoingState.IDLE:
+            return {"status": "error", "message": "Already tracking"}
 
         if target_x is None or target_y is None:
             return {"status": "error", "message": "Target coordinates required"}
@@ -240,8 +242,8 @@ class MobileBasePBVS(Module):
 
         # Start tracking thread
         self.stop_event.clear()
-        with self.state_lock:
-            self.state = ServoingState.TRACKING
+        self.state = ServoingState.TRACKING
+        self.reached_timer = None  # Reset timer when starting new tracking
         self.tracking_thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self.tracking_thread.start()
 
@@ -255,9 +257,8 @@ class MobileBasePBVS(Module):
     @rpc
     def stop_track(self) -> Dict[str, Any]:
         """Stop tracking and servoing."""
-        with self.state_lock:
-            if self.state == ServoingState.IDLE:
-                return {"status": "warning", "message": "Not currently tracking"}
+        if self.state == ServoingState.IDLE:
+            return {"status": "warning", "message": "Not currently tracking"}
 
         # Stop tracking
         self.stop_event.set()
@@ -293,8 +294,8 @@ class MobileBasePBVS(Module):
         return self.last_tracked_detection
 
     def stop(self):
-        with self.state_lock:
-            self.state = ServoingState.IDLE
+        self.state = ServoingState.IDLE
+        self.reached_timer = None  # Reset timer
 
         # Stop robot
         self._send_zero_velocity()
@@ -427,9 +428,9 @@ class MobileBasePBVS(Module):
         self._send_zero_velocity()
 
         # Clear state (but keep last_tracked_detection for persistence)
-        with self.state_lock:
-            self.state = ServoingState.IDLE
+        self.state = ServoingState.IDLE
         self.target_object = None
+        self.reached_timer = None  # Reset timer
         self.target_object_history.clear()
         self.last_detection_time = None
         self.last_detections_2d = None
@@ -563,24 +564,34 @@ class MobileBasePBVS(Module):
         self.last_error_magnitude = error_magnitude
 
         if target_reached:
-            with self.state_lock:
+            # Start timer on first reach
+            if self.state != ServoingState.REACHED:
                 logger.info(f"Target reached! Error magnitude: {error_magnitude:.3f}m")
                 self.state = ServoingState.REACHED
+                self.reached_timer = time.time()  # Start timer
                 # Publish reached state
                 self.tracking_state.publish(String(data=self.state.value))
-                time.sleep(0.2)
+
+            # Check if timer has expired
+            if self.reached_timer and (time.time() - self.reached_timer) >= self.reached_duration:
+                logger.info(
+                    f"Reached timer expired after {self.reached_duration} seconds, stopping and resetting"
+                )
+                self.stop_track()
+                return
+
             # Send zero velocity while at target
             self._send_zero_velocity()
             return
         else:
             # Reset if we move away from target
-            with self.state_lock:
-                if self.state == ServoingState.REACHED:
-                    logger.info("Moved away from target, resuming tracking")
-                    self.state = ServoingState.TRACKING
-                    # Publish tracking state again
-                    if self.tracking_state:
-                        self.tracking_state.publish(String(data=self.state.value))
+            if self.state == ServoingState.REACHED:
+                logger.info("Moved away from target, resuming tracking")
+                self.state = ServoingState.TRACKING
+                self.reached_timer = None  # Reset timer
+                # Publish tracking state again
+                if self.tracking_state:
+                    self.tracking_state.publish(String(data=self.state.value))
 
         # Compute control commands only if not reached
         twist_cmd = self.controller.compute_control(ee_pose, retracted_pose)
@@ -703,9 +714,8 @@ class MobileBasePBVS(Module):
 
     def _publish_target_tf(self):
         """Publish TF transform for the tracked target."""
-        with self.state_lock:
-            if not self.target_object or self.state == ServoingState.IDLE:
-                return
+        if not self.target_object or self.state == ServoingState.IDLE:
+            return
 
         try:
             # Calculate target orientation: facing towards the object from robot position
@@ -733,9 +743,8 @@ class MobileBasePBVS(Module):
     def cleanup(self):
         """Clean up resources and stop tracking."""
         # Stop any active tracking
-        with self.state_lock:
-            if self.state != ServoingState.IDLE:
-                self.stop_track()
+        if self.state != ServoingState.IDLE:
+            self.stop_track()
 
         # Stop tracking thread if running
         if self.tracking_thread and self.tracking_thread.is_alive():
