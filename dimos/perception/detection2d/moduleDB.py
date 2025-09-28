@@ -210,6 +210,9 @@ class ObjectDBModule(Detection3DModule, TableStr):
         print("VLM query found", imageDetections2D, "detections")
         time.sleep(3)
 
+        if not imageDetections2D.detections:
+            return None
+
         ret = []
         for obj in self.objects.values():
             if obj.ts != imageDetections2D.ts:
@@ -230,14 +233,19 @@ class ObjectDBModule(Detection3DModule, TableStr):
             ret.append(obj)
         ret.sort(key=lambda x: x.ts)
 
-        return ret[0]
+        return ret[0] if ret else None
 
     @skill()
     def remember_location(self, name: str) -> str:
         """Remember the current location with a name."""
-        pose = self.tf.lookup("map", "base_link").to_pose()
+        transform = self.tf.get("map", "sensor", time_point=time.time(), time_tolerance=1.0)
+        if not transform:
+            return f"Could not get current location transform from map to sensor"
+
+        pose = transform.to_pose()
         pose.frame_id = "map"
         self.remembered_locations[name] = pose
+        return f"Location '{name}' saved at position: {pose.position}"
 
     @skill()
     def goto_remembered_location(self, name: str) -> str:
@@ -245,10 +253,8 @@ class ObjectDBModule(Detection3DModule, TableStr):
         pose = self.remembered_locations.get(name, None)
         if not pose:
             return f"Location {name} not found. Known locations: {list(self.remembered_locations.keys())}"
-        self.target.publish(pose)
-        time.sleep(0.1)
-        self.target.publish(pose)
-        return f"Navigating to remembered location {name}"
+        self.goto(pose)
+        return f"Navigating to remembered location {name} and pose {pose}"
 
     @skill()
     def list_remembered_locations(self) -> List[str]:
@@ -262,13 +268,12 @@ class ObjectDBModule(Detection3DModule, TableStr):
         self.target.publish(target_pose)
         self.goto(target_pose)
 
-    #    @skill()
+    @skill()
     def navigate_to_object_in_view(self, query: str) -> str:
-        """Navigate to an object by description using vision-language model to find it."""
-        objects = self.vlm_query(query)
-        if not objects:
+        """Navigate to an object in your current image view via natural language query using vision-language model to find it."""
+        target_obj = self.vlm_query(query)
+        if not target_obj:
             return f"No objects found matching '{query}'"
-        target_obj = objects[0]
         return self.navigate_to_object_by_id(target_obj.track_id)
 
     @skill(reducer=Reducer.all)
