@@ -173,6 +173,7 @@ class WavefrontFrontierExplorer(Module):
     def cleanup(self):
         """Clean up resources."""
         self.stop_exploration()
+        self._close_module()
         logger.info("WavefrontFrontierExplorer cleanup complete")
 
     def _on_costmap(self, msg: OccupancyGrid):

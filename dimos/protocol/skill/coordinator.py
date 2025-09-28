@@ -14,6 +14,7 @@
 
 import asyncio
 import json
+import threading
 import time
 from copy import copy
 from dataclasses import dataclass
@@ -274,12 +275,13 @@ class SkillCoordinator(Module):
     _skills: dict[str, SkillConfig]
     _updates_available: Optional[asyncio.Event]
     _loop: Optional[asyncio.AbstractEventLoop]
+    _loop_thread: Optional[threading.Thread]
     _agent_loop: Optional[asyncio.AbstractEventLoop]
 
     def __init__(self) -> None:
         # TODO: Why isn't this super().__init__() ?
         SkillContainer.__init__(self)
-        self._loop = get_loop()
+        self._loop, self._loop_thread = get_loop()
         self._static_containers = []
         self._dynamic_containers = []
         self._skills = {}
@@ -323,6 +325,7 @@ class SkillCoordinator(Module):
 
     @rpc
     def stop(self) -> None:
+        self._close_module()
         self._closed_coord = True
         self.skill_transport.stop()
         if self._transport_unsub_fn:

@@ -33,7 +33,10 @@ export default class Connection {
 
     this.socket.on("gps_location", (data: LatLon) => {
       this.dispatch({ type: "SET_GPS_LOCATION", payload: data });
-      console.log('setting', data)
+    });
+
+    this.socket.on("gps_travel_goal_points", (data: LatLon[]) => {
+      this.dispatch({ type: "SET_GPS_TRAVEL_GOAL_POINTS", payload: data });
     });
 
     this.socket.on("path", (data: EncodedPath) => {
@@ -42,13 +45,16 @@ export default class Connection {
     });
 
     this.socket.on("full_state", (data: FullStateData) => {
-      const state: Partial<{ costmap: Costmap; robotPose: Vector; path: Path }> = {};
+      const state: Partial<{ costmap: Costmap; robotPose: Vector; gpsLocation: LatLon; gpsTravelGoalPoints: LatLon[]; path: Path }> = {};
 
       if (data.costmap != undefined) {
         state.costmap = Costmap.decode(data.costmap);
       }
       if (data.robot_pose != undefined) {
         state.robotPose = Vector.decode(data.robot_pose);
+      }
+      if (data.gps_location != undefined) {
+        state.gpsLocation = data.gps_location;
       }
       if (data.path != undefined) {
         state.path = Path.decode(data.path);

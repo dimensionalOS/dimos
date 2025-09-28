@@ -17,23 +17,25 @@ from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.utils.transform_utils import euler_to_quaternion
 
 
-def test_stop_movement(fake_robot, navigation_agent):
-    navigation_agent.query("stop")
+def test_stop_movement(fake_robot, create_navigation_agent):
+    agent = create_navigation_agent(fixture="test_stop_movement.json")
+    agent.query("stop")
 
     fake_robot.stop_exploration.assert_called_once_with()
 
 
-def test_take_a_look_around(fake_robot, navigation_agent, mocker):
+def test_take_a_look_around(fake_robot, create_navigation_agent, mocker):
     fake_robot.explore.return_value = True
     fake_robot.is_exploration_active.side_effect = [True, False]
     mocker.patch("dimos.agents2.skills.navigation.time.sleep")
+    agent = create_navigation_agent(fixture="test_take_a_look_around.json")
 
-    navigation_agent.query("take a look around for 10 seconds")
+    agent.query("take a look around for 10 seconds")
 
     fake_robot.explore.assert_called_once_with()
 
 
-def test_go_to_object(fake_robot, navigation_agent, mocker):
+def test_go_to_object(fake_robot, create_navigation_agent, mocker):
     fake_robot.navigate_to_object.return_value = True
     mocker.patch(
         "dimos.agents2.skills.navigation.NavigationSkillContainer._navigate_by_tagged_location",
@@ -43,8 +45,9 @@ def test_go_to_object(fake_robot, navigation_agent, mocker):
         "dimos.agents2.skills.navigation.NavigationSkillContainer._navigate_using_semantic_map",
         return_value=None,
     )
+    agent = create_navigation_agent(fixture="test_go_to_object.json")
 
-    navigation_agent.query("go to the chair")
+    agent.query("go to the chair")
 
     fake_robot.navigate_to_object.assert_called_once()
     actual_bbox = fake_robot.navigate_to_object.call_args[0][0]
@@ -56,7 +59,7 @@ def test_go_to_object(fake_robot, navigation_agent, mocker):
         )
 
 
-def test_go_to_semantic_location(fake_robot, navigation_agent, mocker):
+def test_go_to_semantic_location(fake_robot, create_navigation_agent, mocker):
     mocker.patch(
         "dimos.agents2.skills.navigation.NavigationSkillContainer._navigate_by_tagged_location",
         return_value=None,
@@ -78,8 +81,9 @@ def test_go_to_semantic_location(fake_robot, navigation_agent, mocker):
             ],
         }
     ]
+    agent = create_navigation_agent(fixture="test_go_to_semantic_location.json")
 
-    navigation_agent.query("go to the bookshelf")
+    agent.query("go to the bookshelf")
 
     fake_robot.spatial_memory.query_by_text.assert_called_once_with("bookshelf")
     fake_robot.navigate_to.assert_called_once_with(

@@ -16,6 +16,8 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, robotPose: action.payload };
     case "SET_GPS_LOCATION":
       return { ...state, gpsLocation: action.payload };
+    case "SET_GPS_TRAVEL_GOAL_POINTS":
+      return { ...state, gpsTravelGoalPoints: action.payload };
     case "SET_PATH":
       return { ...state, path: action.payload };
     case "SET_FULL_STATE":
@@ -29,6 +31,7 @@ const initialState: AppState = {
   costmap: null,
   robotPose: null,
   gpsLocation: null,
+  gpsTravelGoalPoints: null,
   path: null,
 };
 
@@ -77,7 +80,11 @@ export default function App(): React.ReactElement {
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       {isGpsMode ? (
-        <LeafletMap gpsLocation={state.gpsLocation} onGpsGoal={handleGpsGoal}/>
+        <LeafletMap
+          gpsLocation={state.gpsLocation}
+          gpsTravelGoalPoints={state.gpsTravelGoalPoints}
+          onGpsGoal={handleGpsGoal}
+        />
       ) : (
         <VisualizerWrapper data={state} onWorldClick={handleWorldClick} />
       )}

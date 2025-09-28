@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 
@@ -53,14 +53,14 @@ class NearbyPlace(BaseModel):
 class LocationContext(BaseModel):
     """Contextual information about a location."""
 
-    formatted_address: str
-    street_number: str
-    street: str
-    neighborhood: str
-    locality: str
-    admin_area: str
-    country: str
-    postal_code: str
-    nearby_places: List[NearbyPlace]
-    place_types_summary: str
+    formatted_address: Optional[str] = None
+    street_number: Optional[str] = None
+    street: Optional[str] = None
+    neighborhood: Optional[str] = None
+    locality: Optional[str] = None
+    admin_area: Optional[str] = None
+    country: Optional[str] = None
+    postal_code: Optional[str] = None
+    nearby_places: List[NearbyPlace] = []
+    place_types_summary: Optional[str] = None
     coordinates: Coordinates

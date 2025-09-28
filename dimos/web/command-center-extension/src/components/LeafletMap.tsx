@@ -26,10 +26,11 @@ function MapClickHandler({ onMapClick }: { onMapClick: (lat: number, lng: number
 
 interface LeafletMapProps {
   gpsLocation: LatLon | null;
+  gpsTravelGoalPoints: LatLon[] | null;
   onGpsGoal: (goal: LatLon) => void;
 }
 
-const LeafletMap: React.FC<LeafletMapProps> = ({ gpsLocation, onGpsGoal }) => {
+const LeafletMap: React.FC<LeafletMapProps> = ({ gpsLocation, gpsTravelGoalPoints, onGpsGoal }) => {
   if (!gpsLocation) {
     return (
       <div style={{
@@ -66,6 +67,11 @@ const LeafletMap: React.FC<LeafletMapProps> = ({ gpsLocation, onGpsGoal }) => {
         <Marker position={center}>
           <Popup>Current GPS Location</Popup>
         </Marker>
+        {gpsTravelGoalPoints !== null && (
+          gpsTravelGoalPoints.map(p => (
+            <Marker key={`${p.lat}_${p.lon}}`} position={[p.lat, p.lon]}></Marker>
+          ))
+        )}
       </MapContainer>
     </div>
   );

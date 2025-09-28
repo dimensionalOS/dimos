@@ -32,7 +32,7 @@ class TestHolonomicLocalPlanner:
     @pytest.fixture
     def planner(self):
         """Create a planner instance for testing."""
-        return HolonomicLocalPlanner(
+        planner = HolonomicLocalPlanner(
             lookahead_dist=1.5,
             k_rep=1.0,
             alpha=1.0,  # No filtering for deterministic tests
@@ -40,6 +40,10 @@ class TestHolonomicLocalPlanner:
             goal_tolerance=0.5,
             control_frequency=10.0,
         )
+        yield planner
+        # TODO: This should call `planner.stop()` but that causes errors.
+        # Calling just this for now to fix thread leaks.
+        planner._close_module()
 
     @pytest.fixture
     def empty_costmap(self):
