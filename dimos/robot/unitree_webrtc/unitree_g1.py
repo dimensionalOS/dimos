@@ -465,7 +465,12 @@ def main():
     print("Starting navigation...")
     print(
         robot.nav.go_to(
-            PoseStamped(ts=time.time(), frame_id="map", position=Vector3(0.0, 0.0, 0.03)),
+            PoseStamped(
+                ts=time.time(),
+                frame_id="map",
+                position=Vector3(0.0, 0.0, 0.03),
+                orientation=Quaternion(0, 0, 0, 0),
+            ),
             timeout=10,
         ),
     )
