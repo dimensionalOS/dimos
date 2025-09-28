@@ -43,7 +43,7 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos.agents2.skills.google_maps import GoogleMapsSkillContainer
+from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents2.skills.osm import OsmSkillContainer
 
 logger = setup_logger(__name__)
