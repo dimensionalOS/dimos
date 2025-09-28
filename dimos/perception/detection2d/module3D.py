@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
@@ -57,7 +56,7 @@ class Detection3DModule(Detection2DModule):
         if not transform:
             return ImageDetections3D(detections.image, [])
 
-        print("PROCESS FRAME", detections)
+        print("3d projection", detections, pointcloud, transform)
         detection3d_list = []
         for detection in detections:
             detection3d = Detection3D.from_2d(
@@ -69,7 +68,9 @@ class Detection3DModule(Detection2DModule):
             if detection3d is not None:
                 detection3d_list.append(detection3d)
 
-        return ImageDetections3D(detections.image, detection3d_list)
+        ret = ImageDetections3D(detections.image, detection3d_list)
+        print("3d projection finished", ret)
+        return ret
 
     @rpc
     def start(self):
