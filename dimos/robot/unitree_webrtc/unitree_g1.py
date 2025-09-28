@@ -575,14 +575,19 @@ def main():
     )
     robot.start()
 
-    # time.sleep(7)
-    # print("Starting navigation...")
-    # print(
-    #     robot.nav.go_to(
-    #         PoseStamped(ts=time.time(), frame_id="map", position=Vector3(0.0, 0.0, 0.03)),
-    #         timeout=10,
-    #     ),
-    # )
+    time.sleep(7)
+    print("Starting navigation...")
+    print(
+        robot.nav.go_to(
+            PoseStamped(
+                ts=time.time(),
+                frame_id="map",
+                position=Vector3(0.0, 0.0, 0.03),
+                orientation=Quaternion(0, 0, 0, 0),
+            ),
+            timeout=10,
+        ),
+    )
     try:
         if args.joystick:
             print("\n" + "=" * 50)
