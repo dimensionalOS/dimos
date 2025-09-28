@@ -119,7 +119,9 @@ class Object3D(Detection3D):
         print("Global pose:", global_pose)
         global_pose.frame_id = self.best_detection.frame_id
         print("remap to", self.best_detection.frame_id)
-        return PoseStamped(position=self.center, orientation=Quaternion(), frame_id="world")
+        return PoseStamped(
+            position=self.center, orientation=Quaternion(), frame_id=self.best_detection.frame_id
+        )
 
 
 class ObjectDBModule(Detection3DModule, TableStr):
@@ -147,10 +149,13 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     target: Out[PoseStamped] = None  # type: ignore
 
+    remembered_locations: Dict[str, PoseStamped]
+
     def __init__(self, goto: Callable[[PoseStamped], Any], *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.goto = goto
         self.objects = {}
+        self.remembered_locations = {}
 
     def closest_object(self, detection: Detection3D) -> Optional[Object3D]:
         # Filter objects to only those with matching names
@@ -202,25 +207,73 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     def vlm_query(self, description: str) -> str:
         imageDetections2D = super().vlm_query(description)
-        time.sleep(1.5)
-
         print("VLM query found", imageDetections2D, "detections")
+        time.sleep(3)
+
+        if not imageDetections2D.detections:
+            return None
+
         ret = []
         for obj in self.objects.values():
             if obj.ts != imageDetections2D.ts:
+                print(
+                    "Skipping",
+                    obj.track_id,
+                    "ts",
+                    obj.ts,
+                    "!=",
+                    imageDetections2D.ts,
+                )
                 continue
             if obj.class_id != -100:
                 continue
+            if obj.name != imageDetections2D.detections[0].name:
+                print("Skipping", obj.name, "!=", imageDetections2D.detections[0].name)
+                continue
             ret.append(obj)
-        return ret
+        ret.sort(key=lambda x: x.ts)
+
+        return ret[0] if ret else None
 
     @skill()
-    def navigate_to_object_in_view(self, description: str) -> str:
-        """Navigate to an object by description using vision-language model to find it."""
-        objects = self.vlm_query(description)
-        if not objects:
-            return f"No objects found matching '{description}'"
-        target_obj = objects[0]
+    def remember_location(self, name: str) -> str:
+        """Remember the current location with a name."""
+        transform = self.tf.get("map", "sensor", time_point=time.time(), time_tolerance=1.0)
+        if not transform:
+            return f"Could not get current location transform from map to sensor"
+
+        pose = transform.to_pose()
+        pose.frame_id = "map"
+        self.remembered_locations[name] = pose
+        return f"Location '{name}' saved at position: {pose.position}"
+
+    @skill()
+    def goto_remembered_location(self, name: str) -> str:
+        """Go to a remembered location by name."""
+        pose = self.remembered_locations.get(name, None)
+        if not pose:
+            return f"Location {name} not found. Known locations: {list(self.remembered_locations.keys())}"
+        self.goto(pose)
+        return f"Navigating to remembered location {name} and pose {pose}"
+
+    @skill()
+    def list_remembered_locations(self) -> List[str]:
+        """List all remembered locations."""
+        return str(list(self.remembered_locations.keys()))
+
+    def nav_to(self, target_pose) -> str:
+        target_pose.orientation = Quaternion(0.0, 0.0, 0.0, 0.0)
+        self.target.publish(target_pose)
+        time.sleep(0.1)
+        self.target.publish(target_pose)
+        self.goto(target_pose)
+
+    @skill()
+    def navigate_to_object_in_view(self, query: str) -> str:
+        """Navigate to an object in your current image view via natural language query using vision-language model to find it."""
+        target_obj = self.vlm_query(query)
+        if not target_obj:
+            return f"No objects found matching '{query}'"
         return self.navigate_to_object_by_id(target_obj.track_id)
 
     @skill(reducer=Reducer.all)
@@ -236,10 +289,11 @@ class ObjectDBModule(Detection3DModule, TableStr):
         if not target_obj:
             return f"Object {object_id} not found\nHere are the known objects:\n{str(self.agent_encode())}"
         target_pose = target_obj.to_pose()
+        target_pose.frame_id = "map"
         self.target.publish(target_pose)
         time.sleep(0.1)
         self.target.publish(target_pose)
-        self.goto(target_pose)
+        self.nav_to(target_pose)
         return f"Navigating to f{object_id} f{target_obj.name}"
 
     def lookup(self, label: str) -> List[Detection3D]:

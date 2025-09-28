@@ -21,8 +21,6 @@ from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d import testing
-from dimos.perception.detection2d.module2D import Detection2DModule
-from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.perception.detection2d.moduleDB import ObjectDBModule
 from dimos.protocol.service import lcmservice as lcm
 from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
