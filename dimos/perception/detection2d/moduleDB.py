@@ -208,7 +208,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         print("VLM query found", imageDetections2D, "detections")
 
         transform = self.tf.get("camera_optical", "map")
-        detections3d = self.process_frame(imageDetections2D, self.lidar.get_next(), transform)
+        detections3d = self.process_frame(imageDetections2D, self.pointcloud.get_next(), transform)
         print("3D detections from VLM query:", detections3d)
         if detections3d.detections:
             target_pose = detections3d.detections[0].to_pose()
