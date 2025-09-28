@@ -453,9 +453,9 @@ class UnitreeG1(Robot):
             direction=BridgeDirection.ROS_TO_DIMOS,
             remap_topic="/map",
         )
-        # self.ros_bridge.add_topic(
-        #     "/camera/image", Image, ROSImage, direction=BridgeDirection.ROS_TO_DIMOS
-        # )
+        self.ros_bridge.add_topic(
+            "/camera/image", Image, ROSImage, direction=BridgeDirection.ROS_TO_DIMOS
+        )
 
         logger.info(
             "ROS bridge deployed: /cmd_vel, /state_estimation, /tf, /registered_scan (ROS → DIMOS)"

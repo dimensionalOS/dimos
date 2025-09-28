@@ -30,6 +30,11 @@ from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 
+try:
+    from sensor_msgs.msg import Image as ROSImage
+except ImportError:
+    ROSImage = None
+
 
 class ImageFormat(Enum):
     """Supported image formats for internal representation."""
@@ -495,6 +500,40 @@ class Image(Timestamped):
             raise ValueError(f"Unsupported encoding: {encoding}")
 
         return encoding_map[encoding]
+
+    @classmethod
+    def from_ros_msg(cls, ros_msg: ROSImage) -> "Image":
+        """Create an Image from a ROS sensor_msgs/Image message.
+
+        Args:
+            ros_msg: ROS Image message
+
+        Returns:
+            Image instance
+        """
+        # Convert timestamp from ROS header
+        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
+
+        # Parse encoding to determine format and data type
+        format_info = cls._parse_encoding(ros_msg.encoding)
+
+        # Convert data from ROS message (array.array) to numpy array
+        data_array = np.frombuffer(ros_msg.data, dtype=format_info["dtype"])
+
+        # Reshape to image dimensions
+        if format_info["channels"] == 1:
+            data_array = data_array.reshape((ros_msg.height, ros_msg.width))
+        else:
+            data_array = data_array.reshape(
+                (ros_msg.height, ros_msg.width, format_info["channels"])
+            )
+
+        return cls(
+            data=data_array,
+            format=format_info["format"],
+            frame_id=ros_msg.header.frame_id,
+            ts=ts,
+        )
 
     def __repr__(self) -> str:
         """String representation."""
