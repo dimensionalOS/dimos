@@ -156,6 +156,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         self.goto = goto
         self.objects = {}
         self.remembered_locations = {}
+        self._last_image = None
 
     def closest_object(self, detection: Detection3D) -> Optional[Object3D]:
         # Filter objects to only those with matching names
@@ -305,6 +306,10 @@ class ObjectDBModule(Detection3DModule, TableStr):
         super().start()
 
         def update_objects(imageDetections: ImageDetections3D):
+            # Store the latest image for the observe skill
+            if imageDetections.detections and imageDetections.detections[0].image:
+                self._last_image = imageDetections.detections[0].image
+
             for detection in imageDetections.detections:
                 # print(detection)
                 return self.add_detection(detection)
@@ -361,3 +366,15 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     def __iter__(self):
         return iter(self.detections.values())
+
+    @skill(output=Output.image)
+    def observe(self) -> Optional[Image]:
+        """Returns the latest camera frame. Use this skill for any visual world queries.
+
+        This skill provides the current camera view for perception tasks.
+        Returns None if no frame has been captured yet.
+        """
+        # Return the last processed image if available
+        if hasattr(self, "_last_image") and self._last_image is not None:
+            return self._last_image
+        return None
