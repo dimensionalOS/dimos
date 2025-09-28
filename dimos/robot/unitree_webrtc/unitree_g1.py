@@ -203,7 +203,7 @@ class UnitreeG1(Robot):
         detection.detections.transport = core.LCMTransport("/detections", Detection2DArray)
 
         detection.scene_update.transport = core.LCMTransport("/scene_update", SceneUpdate)
-
+        detection.target.transport = core.LCMTransport("/target", PoseStamped)
         detection.detected_pointcloud_0.transport = core.LCMTransport(
             "/detected/pointcloud/0", PointCloud2
         )
