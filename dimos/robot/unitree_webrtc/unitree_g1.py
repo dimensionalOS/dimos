@@ -111,10 +111,12 @@ class G1ConnectionModule(Module):
         """Start the connection and subscribe to sensor streams."""
         # Use the exact same UnitreeWebRTCConnection as Go2
         self.connection = UnitreeWebRTCConnection(self.ip)
+        print("starting odom" * 10000)
         self.movecmd.subscribe(self.move)
         self.odom_in.subscribe(self._publish_odom_pose)
 
     def _publish_odom_pose(self, msg: Odometry):
+        print("publishing odom", msg)
         self.odom_pose.publish(
             PoseStamped(
                 ts=msg.ts,
@@ -400,7 +402,7 @@ class UnitreeG1(Robot):
                 "/zed/color_image", Image
             )
         else:
-            self.spatial_memory_module.video.transport = core.LCMTransport("/camera/image", Image)
+            self.spatial_memory_module.video.transport = core.LCMTransport("/image", Image)
         self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
 
         logger.info("Spatial memory module deployed and connected")
@@ -544,7 +546,6 @@ def main():
     parser.add_argument("--joystick", action="store_true", help="Enable pygame joystick control")
     parser.add_argument("--camera", action="store_true", help="Enable usb camera module")
     parser.add_argument("--zed-camera", action="store_true", help="Enable zed camera module")
-    parser.add_argument("--perception", action="store_true", help="Enable perception")
     parser.add_argument("--output-dir", help="Output directory for logs/data")
     parser.add_argument("--record", help="Path to save recording")
     parser.add_argument("--replay", help="Path to replay recording from")
