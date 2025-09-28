@@ -23,7 +23,10 @@ import os
 import time
 from typing import Optional
 from dimos import core
+from dimos.agents2 import Agent
+from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.skills.ros_navigation import RosNavigation
+from dimos.agents2.spec import Model, Provider
 from dimos.core import In, Module, Out, rpc
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
 
@@ -67,6 +70,7 @@ from dimos.robot.robot import Robot
 from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.rosnav import NavigationModule
+from dimos.robot.unitree_webrtc.unitree_g1_skill_container import UnitreeG1SkillContainer
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
@@ -272,24 +276,37 @@ class UnitreeG1(Robot):
 
         self.lcm.start()
 
-        from dimos.agents2 import Agent, Output, Reducer, Stream, skill
-        from dimos.agents2.cli.human import HumanInput
-        from dimos.agents2.spec import Model, Provider
+        # Setup agent with G1 skills
+        logger.info("Setting up agent with G1 skills...")
 
         agent = Agent(
-            system_prompt="You are a helpful assistant for controlling a humanoid robot. ",
-            model=Model.GPT_4O,  # Could add CLAUDE models to enum
-            provider=Provider.OPENAI,  # Would need ANTHROPIC provider
+            system_prompt="You are a helpful assistant controlling a Unitree G1 humanoid robot. You can control the robot's arms, movement modes, and navigation.",
+            model=Model.GPT_4O,
+            provider=Provider.OPENAI,
         )
+
+        # Register G1-specific skill container
+        g1_skills = UnitreeG1SkillContainer(robot=self)
+        agent.register_skills(g1_skills)
+
         human_input = self.dimos.deploy(HumanInput)
         agent.register_skills(human_input)
-        agent.register_skills(self.detection)
+
+        if self.enable_perception:
+            agent.register_skills(self.detection)
+
+        # Register ROS navigation
         ros_nav = RosNavigation(self)
         ros_nav.__enter__()
         agent.register_skills(ros_nav)
 
         agent.run_implicit_skill("human")
         agent.start()
+
+        # For logging
+        skills = [tool.name for tool in agent.get_tools()]
+        logger.info(f"Agent configured with {len(skills)} skills: {', '.join(skills)}")
+
         agent.loop_thread()
 
         logger.info("UnitreeG1 initialized and started")
