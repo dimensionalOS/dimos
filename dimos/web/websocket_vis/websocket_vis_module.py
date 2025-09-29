@@ -92,7 +92,9 @@ class WebsocketVisModule(Module):
         self.vis_state = {}
         self.state_lock = threading.Lock()
 
-        logger.info(f"WebSocket visualization module initialized on port {port}")
+        # Track GPS goal points for visualization
+        self.gps_goal_points = []
+        logger.info(f"WebSocket visualization module initialized on port {port}, GPS goal tracking enabled")
 
     def _start_broadcast_loop(self):
         def run_loop():
@@ -160,7 +162,13 @@ class WebsocketVisModule(Module):
         async def connect(sid, environ):
             with self.state_lock:
                 current_state = dict(self.vis_state)
+
+            # Include GPS goal points in the initial state
+            if self.gps_goal_points:
+                current_state["gps_travel_goal_points"] = self.gps_goal_points
+
             await self.sio.emit("full_state", current_state, room=sid)
+            logger.info(f"Client {sid} connected, sent state with {len(self.gps_goal_points)} GPS goal points")
 
         @self.sio.event
         async def click(sid, position):
@@ -174,8 +182,18 @@ class WebsocketVisModule(Module):
 
         @self.sio.event
         async def gps_goal(sid, goal):
-            logger.info(f"Set GPS goal: {goal}")
+            logger.info(f"Received GPS goal: {goal}")
+
+            # Publish the goal to LCM
             self.gps_goal.publish(LatLon(lat=goal["lat"], lon=goal["lon"]))
+
+            # Add to goal points list for visualization
+            self.gps_goal_points.append(goal)
+            logger.info(f"Added GPS goal to list. Total goals: {len(self.gps_goal_points)}")
+
+            # Emit updated goal points back to all connected clients
+            await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
+            logger.debug(f"Emitted gps_travel_goal_points with {len(self.gps_goal_points)} points: {self.gps_goal_points}")
 
         @self.sio.event
         async def start_explore(sid):
@@ -186,6 +204,13 @@ class WebsocketVisModule(Module):
         async def stop_explore(sid):
             logger.info("Stopping exploration")
             self.stop_explore_cmd.publish(Bool(data=True))
+
+        @self.sio.event
+        async def clear_gps_goals(sid):
+            logger.info("Clearing all GPS goal points")
+            self.gps_goal_points.clear()
+            await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
+            logger.info("GPS goal points cleared and updated clients")
 
         @self.sio.event
         async def move_command(sid, data):
