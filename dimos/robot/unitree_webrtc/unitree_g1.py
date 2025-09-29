@@ -35,6 +35,7 @@ from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 
 from dimos_lcm.foxglove_msgs import SceneUpdate
 from nav_msgs.msg import Odometry as ROSOdometry
+from std_msgs.msg import Int8 as ROSInt8
 from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy, Image as ROSImage
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 
@@ -54,7 +55,7 @@ from dimos.msgs.geometry_msgs import (
 )
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs import CameraInfo, Image, Joy, PointCloud2
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs import Bool, Int8
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d import Detection3DModule
@@ -268,6 +269,7 @@ class UnitreeG1(Robot):
         self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
         self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
         self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
+        self.nav.soft_stop.transport = core.LCMTransport("/stop", Int8)
         self.nav.joy.transport = core.LCMTransport("/joy", Joy)
         self.nav.start()
 
@@ -410,6 +412,8 @@ class UnitreeG1(Robot):
             "/tf", TFMessage, ROSTFMessage, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
+        self.ros_bridge.add_topic("/stop", Int8, ROSInt8, direction=BridgeDirection.DIMOS_TO_ROS)
+
         from geometry_msgs.msg import PoseStamped as ROSPoseStamped
         from std_msgs.msg import Bool as ROSBool
 
@@ -543,7 +547,7 @@ def main():
     #             ts=time.time(),
     #             frame_id="map",
     #             position=Vector3(0.0, 0.0, 0.03),
-    #             orientation=Quaternion(0, 0, 0, 0),
+    #             orientation=Quaternion(0, 0, 0, 1),
     #         ),
     #         timeout=10,
     #     ),

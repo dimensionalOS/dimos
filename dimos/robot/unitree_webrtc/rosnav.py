@@ -21,9 +21,7 @@ from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped, Transform, Vector3
 from dimos.msgs.nav_msgs import Odometry
 from dimos.msgs.sensor_msgs import PointCloud2, Joy
-from dimos.msgs.std_msgs.Bool import Bool
-from dimos.msgs.std_msgs.Header import Header
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.std_msgs import Bool, Int8
 from dimos.protocol.tf import TF
 from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
 from dimos.utils.transform_utils import euler_to_quaternion
@@ -43,6 +41,7 @@ class NavigationModule(Module):
     goal_pose: Out[PoseStamped] = None
     goal_reached: In[Bool] = None
     cancel_goal: Out[Bool] = None
+    soft_stop: Out[Int8] = None
     joy: Out[Joy] = None
 
     def __init__(self, *args, **kwargs):
@@ -116,6 +115,7 @@ class NavigationModule(Module):
 
         self.goal_reach = None
         self._set_autonomy_mode()
+        self.soft_stop.publish(Int8(0))
         self.goal_pose.publish(pose)
         time.sleep(0.2)
         self.goal_pose.publish(pose)
@@ -123,6 +123,7 @@ class NavigationModule(Module):
         start_time = time.time()
         while time.time() - start_time < timeout:
             if self.goal_reach is not None:
+                self.soft_stop.publish(Int8(2))
                 return self.goal_reach
             time.sleep(0.1)
 
@@ -144,6 +145,7 @@ class NavigationModule(Module):
         if self.cancel_goal:
             cancel_msg = Bool(data=True)
             self.cancel_goal.publish(cancel_msg)
+            self.soft_stop.publish(Int8(2))
             return True
 
         return False
