@@ -15,6 +15,7 @@
 import pytest
 import reactivex as rx
 from functools import partial
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.agents2.skills.gps_nav_skill import GpsNavSkillContainer
 from dimos.agents2.skills.navigation import NavigationSkillContainer
@@ -24,6 +25,21 @@ from dimos.robot.robot import GpsRobot
 from dimos.robot.unitree_webrtc.run_agents2 import SYSTEM_PROMPT
 from dimos.utils.data import get_data
 from dimos.msgs.sensor_msgs import Image
+
+
+@pytest.fixture(autouse=True)
+def cleanup_threadpool_scheduler(monkeypatch):
+    # TODO: get rid of this global threadpool
+    """Clean up and recreate the global ThreadPoolScheduler after each test."""
+    # Disable ChromaDB telemetry to avoid leaking threads
+    monkeypatch.setenv("CHROMA_ANONYMIZED_TELEMETRY", "False")
+    yield
+    from dimos.utils import threadpool
+
+    # Shutdown the global scheduler's executor
+    threadpool.scheduler.executor.shutdown(wait=True)
+    # Recreate it for the next test
+    threadpool.scheduler = ThreadPoolScheduler(max_workers=threadpool.get_max_workers())
 
 
 @pytest.fixture

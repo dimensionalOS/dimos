@@ -13,12 +13,12 @@
 # limitations under the License.
 
 import re
-import json
-from typing import Any, Optional, Tuple
+from typing import Optional, Tuple
 
 from dimos.mapping.osm.osm import MapImage
 from dimos.mapping.types import LatLon
 from dimos.models.vl.base import VlModel
+from dimos.utils.generic import extract_json_from_llm_response
 from dimos.utils.logging_config import setup_logger
 
 
@@ -47,24 +47,10 @@ def query_for_one_position_and_context(
     response = vl_model.query(map_image.image.data, full_query)
 
     try:
-        doc = _extract_json_from_response(response)
+        doc = extract_json_from_llm_response(response)
         return map_image.pixel_to_latlon(tuple(doc["coordinates"])), str(doc["description"])
     except Exception:
         pass
 
     # TODO: Try more simplictic methods to parse.
-    return None
-
-
-def _extract_json_from_response(response: str) -> Any:
-    start_idx = response.find("{")
-    end_idx = response.rfind("}") + 1
-
-    if start_idx >= 0 and end_idx > start_idx:
-        json_str = response[start_idx:end_idx]
-        try:
-            return json.loads(json_str)
-        except Exception:
-            pass
-
     return None

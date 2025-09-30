@@ -312,26 +312,36 @@ class TimedSensorReplay(SensorReplay[T]):
             observer.on_next(first_data)
 
             disp = CompositeDisposable()
+            completed = [False]  # Use list to allow mutation in nested function
 
             def emit_next(prev_timestamp):
+                if completed[0]:
+                    return
+
                 try:
                     ts, data = next(iterator)
                 except StopIteration:
+                    completed[0] = True
                     observer.on_completed()
                     return
 
                 delay = max(0.0, ts - prev_timestamp) / speed
 
                 def _action(sc, _state=None):
-                    observer.on_next(data)
-                    emit_next(ts)  # schedule the following sample
+                    if not completed[0]:
+                        observer.on_next(data)
+                        emit_next(ts)  # schedule the following sample
 
                 # Schedule the next emission relative to previous timestamp
                 disp.add(scheduler.schedule_relative(delay, _action))
 
             emit_next(prev_ts)
 
-            return disp
+            def dispose():
+                completed[0] = True
+                disp.dispose()
+
+            return Disposable(dispose)
 
         from reactivex import create
 

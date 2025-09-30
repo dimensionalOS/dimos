@@ -128,6 +128,8 @@ def test_image_tool_call():
     ]
     assert len(human_messages_with_images) >= 0  # May have image messages
     agent.stop()
+    test_skill_module.stop()
+    dimos.close_all()
 
 
 @pytest.mark.tool

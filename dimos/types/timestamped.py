@@ -251,13 +251,18 @@ def align_timestamped(
     match_tolerance: float = 0.05,  # seconds
 ) -> Observable[Tuple[PRIMARY, SECONDARY]]:
     from reactivex import create
+    from reactivex.disposable import CompositeDisposable
 
     def subscribe(observer, scheduler=None):
         secondary_collection: TimestampedBufferCollection[SECONDARY] = TimestampedBufferCollection(
             buffer_size
         )
-        # Subscribe to secondary to populate the buffer
-        secondary_sub = secondary_observable.subscribe(secondary_collection.add)
+        # Subscribe to secondary to populate the buffer with proper error/complete handling
+        secondary_sub = secondary_observable.subscribe(
+            on_next=secondary_collection.add,
+            on_error=lambda e: None,  # Silently ignore errors from secondary
+            on_completed=lambda: None,  # Silently ignore completion from secondary
+        )
 
         def on_primary(primary_item: PRIMARY):
             secondary_item = secondary_collection.find_closest(
@@ -271,12 +276,8 @@ def align_timestamped(
             on_next=on_primary, on_error=observer.on_error, on_completed=observer.on_completed
         )
 
-        # Return cleanup function
-        def dispose():
-            secondary_sub.dispose()
-            primary_sub.dispose()
-
-        return dispose
+        # Return cleanup disposable
+        return CompositeDisposable(secondary_sub, primary_sub)
 
     return create(subscribe)
 
@@ -303,15 +304,21 @@ def align_timestamped_multiple(
     from reactivex import create
 
     def subscribe(observer, scheduler=None):
+        from reactivex.disposable import CompositeDisposable
+
         # Create a buffer collection for each secondary observable
         secondary_collections: list[TimestampedBufferCollection[SECONDARY]] = [
             TimestampedBufferCollection(buffer_size) for _ in secondary_observables
         ]
 
-        # Subscribe to all secondary observables
+        # Subscribe to all secondary observables with proper error/complete handling
         secondary_subs = []
         for i, secondary_obs in enumerate(secondary_observables):
-            sub = secondary_obs.subscribe(secondary_collections[i].add)
+            sub = secondary_obs.subscribe(
+                on_next=secondary_collections[i].add,
+                on_error=lambda e: None,  # Silently ignore errors from secondary
+                on_completed=lambda: None,  # Silently ignore completion from secondary
+            )
             secondary_subs.append(sub)
 
         def on_primary(primary_item: PRIMARY):
@@ -329,12 +336,7 @@ def align_timestamped_multiple(
             on_next=on_primary, on_error=observer.on_error, on_completed=observer.on_completed
         )
 
-        # Return cleanup function
-        def dispose():
-            for sub in secondary_subs:
-                sub.dispose()
-            primary_sub.dispose()
-
-        return dispose
+        # Return cleanup disposable
+        return CompositeDisposable(primary_sub, *secondary_subs)
 
     return create(subscribe)
