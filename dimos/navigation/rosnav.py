@@ -20,10 +20,6 @@ from dimos.navigation.spec import NavSpec
 from dimos.perception.pointcloud.spec import PointcloudPerception
 
 
-class Config:
-    global_frame_id: str = "world"
-
-
 class RosNav(Module, PointcloudPerception, Global3DMapSpec, NavSpec):
     goal_req: In[PoseStamped] = None  # type: ignore
     goal_active: Out[PoseStamped] = None  # type: ignore
@@ -33,9 +29,3 @@ class RosNav(Module, PointcloudPerception, Global3DMapSpec, NavSpec):
 
     pointcloud: Out[PointCloud2] = None  # type: ignore
     global_pointcloud: Out[PointCloud2] = None  # type: ignore
-
-    config: Config
-
-    def __init__(self, *args, **kwargs):
-        self.config = Config(**kwargs)
-        super().__init__()

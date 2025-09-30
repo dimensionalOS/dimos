@@ -25,8 +25,8 @@ class NavSpec(ABC):
     ctrl: Out[Twist] = None  # type: ignore
 
     # identity quaternion (Quaternion(0,0,0,1)) represents "no rotation requested"
-    def goto(self, target: PoseStamped) -> None:
+    def navigate_to_target(self, target: PoseStamped) -> None:
         pass
 
-    def stop(self) -> None:
+    def stop_navigating(self) -> None:
         pass
