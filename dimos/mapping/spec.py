@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC
+from typing import Protocol
 
 from dimos.core import Out
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 
 
-class Global3DMapSpec(ABC):
-    global_pointcloud: Out[PointCloud2] = None
+class Global3DMapSpec(Protocol):
+    global_pointcloud: Out[PointCloud2]
 
 
-class GlobalMapSpec(ABC):
-    global_map: Out[OccupancyGrid] = None
+class GlobalMapSpec(Protocol):
+    global_map: Out[OccupancyGrid]
 
 
-class GlobalCostmapSpec(ABC):
-    global_costmap: Out[OccupancyGrid] = None
+class GlobalCostmapSpec(Protocol):
+    global_costmap: Out[OccupancyGrid]
