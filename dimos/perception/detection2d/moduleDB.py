@@ -262,7 +262,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         self.target.publish(target_pose)
         self.goto(target_pose)
 
-    #    @skill()
+    @skill()
     def navigate_to_object_in_view(self, query: str) -> str:
         """Navigate to an object by description using vision-language model to find it."""
         objects = self.vlm_query(query)

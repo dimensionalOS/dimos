@@ -83,8 +83,8 @@ class Detection2DModule(Module):
 
         format should be:
         `[
-        [label, x1, y1, x2, y2]
-        ...
+           [label, x1, y1, x2, y2],
+           ...
         ]`
 
         (etc, multiple matches are possible)
@@ -116,7 +116,6 @@ class Detection2DModule(Module):
             )
 
         print("vlm detected", imageDetections)
-        # Emit the VLM detections to the subject
         self.vlm_detections_subject.on_next(imageDetections)
 
         return imageDetections
@@ -137,7 +136,6 @@ class Detection2DModule(Module):
 
     @functools.cache
     def detection_stream_2d(self) -> Observable[ImageDetections2D]:
-        # self.vlm_detections_subject
         # Regular detection stream from the detector
         regular_detections = self.sharp_image_stream().pipe(ops.map(self.process_image_frame))
         # Merge with VL model detections
@@ -145,9 +143,9 @@ class Detection2DModule(Module):
 
     @rpc
     def start(self):
-        # self.detection_stream_2d().subscribe(
-        #    lambda det: self.detections.publish(det.to_ros_detection2d_array())
-        # )
+        self.detection_stream_2d().subscribe(
+            lambda det: self.detections.publish(det.to_ros_detection2d_array())
+        )
 
         def publish_cropped_images(detections: ImageDetections2D):
             for index, detection in enumerate(detections[:3]):
