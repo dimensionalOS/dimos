@@ -14,7 +14,8 @@
 
 from dimos.core import In, Module, Out
 from dimos.mapping.spec import Global3DMapSpec
-from dimos.msgs.geometry_msgs import Path, PoseStamped, Twist
+from dimos.msgs.geometry_msgs import PoseStamped, Twist
+from dimos.msgs.nav_msgs import Path
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.navigation.spec import NavSpec
 from dimos.perception.pointcloud.spec import PointcloudPerception

@@ -15,7 +15,8 @@
 from abc import ABC
 
 from dimos.core import In, Out
-from dimos.msgs.geometry_msgs import Path, PoseStamped, Twist
+from dimos.msgs.geometry_msgs import PoseStamped, Twist
+from dimos.msgs.nav_msgs import Path
 
 
 class NavSpec(ABC):
