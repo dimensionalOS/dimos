@@ -19,7 +19,7 @@ from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 
 
-class GlobalPointcloudSpec(ABC):
+class Global3DMapSpec(ABC):
     global_pointcloud: Out[PointCloud2] = None
 
 
