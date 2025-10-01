@@ -28,7 +28,7 @@ from dimos.models.vl import QwenVlModel, VlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.detectors import Detector, Detic2DDetector
+from dimos.perception.detection2d.detectors import Detector, Detic2DDetector, Yolo2DDetector
 from dimos.perception.detection2d.type import (
     ImageDetections2D,
     InconvinientDetectionFormat,
@@ -39,7 +39,7 @@ from dimos.utils.reactive import backpressure
 
 @dataclass
 class Config:
-    max_freq: float = 5  # hz
+    max_freq: float = 10  # hz
     detector: Optional[Callable[[Any], Detector]] = Detic2DDetector
     vlmodel: VlModel = QwenVlModel
 
@@ -72,9 +72,11 @@ class Detection2DModule(Module):
         def spy(img):
             return img
 
-        return self.image.pure_observable().pipe(
-            sharpness_barrier(self.config.max_freq),
-            ops.map(spy),
+        return backpressure(
+            self.image.pure_observable().pipe(
+                sharpness_barrier(self.config.max_freq),
+                ops.map(spy),
+            )
         )
 
     @simple_mcache

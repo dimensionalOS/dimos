@@ -338,8 +338,8 @@ class ObjectDBModule(Detection3DModule, TableStr):
         for obj in copy(self.objects).values():
             # we need at least 3 detectieons to consider it a valid object
             # for this to be serious we need a ratio of detections within the window of observations
-            if obj.class_id != -100 and obj.detections < 3:
-                continue
+            # if obj.class_id != -100 and obj.detections < 2:
+            #    continue
 
             # print(
             #    f"Object {obj.track_id}: {len(obj.detections)} detections, confidence {obj.confidence}"

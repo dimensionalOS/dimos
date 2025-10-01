@@ -338,7 +338,7 @@ class Detic2DDetector(Detector):
 
         # Extract bounding boxes, classes, scores, and masks
         if len(instances) == 0:
-            return [], [], [], [], [], []
+            return [], [], [], [], []  # , []
 
         boxes = instances.pred_boxes.tensor.numpy()
         class_ids = instances.pred_classes.numpy()
@@ -364,7 +364,7 @@ class Detic2DDetector(Detector):
                 filtered_masks.append(masks[i])
 
         if not detections:
-            return [], [], [], [], [], []
+            return [], [], [], [], []  # , []
 
         # Update tracker with detections and correctly aligned masks
         track_results = self.tracker.update(detections, filtered_masks)
