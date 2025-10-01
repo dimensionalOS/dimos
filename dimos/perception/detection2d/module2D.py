@@ -11,11 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-import numpy as np
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
@@ -31,7 +29,6 @@ from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.detectors import Detector, Detic2DDetector, Yolo2DDetector
 from dimos.perception.detection2d.type import (
     ImageDetections2D,
-    InconvinientDetectionFormat,
 )
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
@@ -40,7 +37,7 @@ from dimos.utils.reactive import backpressure
 @dataclass
 class Config:
     max_freq: float = 10  # hz
-    detector: Optional[Callable[[Any], Detector]] = Detic2DDetector
+    detector: Optional[Callable[[Any], Detector]] = lambda: Yolo2DDetector(device="cuda")
     vlmodel: VlModel = QwenVlModel
 
 
@@ -65,7 +62,7 @@ class Detection2DModule(Module):
         self.vlm_detections_subject = Subject()
 
     def process_image_frame(self, image: Image) -> ImageDetections2D:
-        return ImageDetections2D.from_detector(image, self.detector.process_image(image))
+        return ImageDetections2D.from_bbox_detector(image, self.detector.process_image(image))
 
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:

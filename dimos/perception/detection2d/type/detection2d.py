@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import hashlib
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
@@ -89,8 +90,16 @@ def better_detection_format(inconvinient_detections: InconvinientDetectionFormat
     ]
 
 
-@dataclass
 class Detection2D(Timestamped):
+    @abstractmethod
+    def cropped_image(self, padding: int = 20) -> Image: ...
+
+    @abstractmethod
+    def to_image_annotations(self) -> ImageAnnotations: ...
+
+
+@dataclass
+class Detection2DBBox(Detection2D):
     bbox: Bbox
     track_id: int
     class_id: int
@@ -320,10 +329,10 @@ class Detection2D(Timestamped):
 
 class ImageDetections2D(ImageDetections[Detection2D]):
     @classmethod
-    def from_detector(
+    def from_bbox_detector(
         cls, image: Image, raw_detections: InconvinientDetectionFormat, **kwargs
     ) -> "ImageDetections2D":
         return cls(
             image=image,
-            detections=Detection2D.from_detector(raw_detections, image=image, ts=image.ts),
+            detections=Detection2DBbox.from_detector(raw_detections, image=image, ts=image.ts),
         )
