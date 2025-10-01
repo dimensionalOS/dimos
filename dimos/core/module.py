@@ -102,6 +102,9 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer):
                 self._loop_thread.join(timeout=2)
             self._loop = None
             self._loop_thread = None
+        if hasattr(self, "_tf") and self._tf is not None:
+            self._tf.stop()
+            self._tf = None
         if hasattr(self, "_disposables"):
             self._disposables.dispose()
 

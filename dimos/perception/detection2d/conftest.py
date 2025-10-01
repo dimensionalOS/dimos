@@ -53,7 +53,7 @@ def dimos_cluster():
     dimos.stop()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def moment():
     data_dir = "unitree_go2_lidar_corrected"
     get_data(data_dir)
@@ -90,66 +90,67 @@ def moment():
     tf.stop()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def publish_lcm():
     def publish(moment: Moment):
         lcm.autoconf()
 
         transports = []
 
-        lidar_frame_transport: LCMTransport = LCMTransport("/lidar", LidarMessage)
-        lidar_frame_transport.publish(moment.get("lidar_frame"))
-        transports.append(lidar_frame_transport)
+        try:
+            lidar_frame_transport: LCMTransport = LCMTransport("/lidar", LidarMessage)
+            lidar_frame_transport.publish(moment.get("lidar_frame"))
+            transports.append(lidar_frame_transport)
 
-        image_frame_transport: LCMTransport = LCMTransport("/image", Image)
-        image_frame_transport.publish(moment.get("image_frame"))
-        transports.append(image_frame_transport)
+            image_frame_transport: LCMTransport = LCMTransport("/image", Image)
+            image_frame_transport.publish(moment.get("image_frame"))
+            transports.append(image_frame_transport)
 
-        odom_frame_transport: LCMTransport = LCMTransport("/odom", Odometry)
-        odom_frame_transport.publish(moment.get("odom_frame"))
-        transports.append(odom_frame_transport)
+            odom_frame_transport: LCMTransport = LCMTransport("/odom", Odometry)
+            odom_frame_transport.publish(moment.get("odom_frame"))
+            transports.append(odom_frame_transport)
 
-        camera_info_transport: LCMTransport = LCMTransport("/camera_info", CameraInfo)
-        camera_info_transport.publish(moment.get("camera_info"))
-        transports.append(camera_info_transport)
+            camera_info_transport: LCMTransport = LCMTransport("/camera_info", CameraInfo)
+            camera_info_transport.publish(moment.get("camera_info"))
+            transports.append(camera_info_transport)
 
-        annotations = moment.get("annotations")
-        if annotations:
-            annotations_transport: LCMTransport = LCMTransport("/annotations", ImageAnnotations)
-            annotations_transport.publish(annotations)
-            transports.append(annotations_transport)
+            annotations = moment.get("annotations")
+            if annotations:
+                annotations_transport: LCMTransport = LCMTransport("/annotations", ImageAnnotations)
+                annotations_transport.publish(annotations)
+                transports.append(annotations_transport)
 
-        detections = moment.get("detections")
-        if detections:
-            for i, detection in enumerate(detections):
-                detections_transport: LCMTransport = LCMTransport(
-                    f"/detected/pointcloud/{i}", PointCloud2
-                )
-                detections_transport.publish(detection.pointcloud)
-                transports.append(detections_transport)
+            detections = moment.get("detections")
+            if detections:
+                for i, detection in enumerate(detections):
+                    detections_transport: LCMTransport = LCMTransport(
+                        f"/detected/pointcloud/{i}", PointCloud2
+                    )
+                    detections_transport.publish(detection.pointcloud)
+                    transports.append(detections_transport)
 
-                detections_image_transport: LCMTransport = LCMTransport(
-                    f"/detected/image/{i}", Image
-                )
-                detections_image_transport.publish(detection.cropped_image())
-                transports.append(detections_image_transport)
-
-        # Cleanup all transports immediately after publishing
-        for transport in transports:
-            if transport._started:
-                transport.lcm.stop()
+                    detections_image_transport: LCMTransport = LCMTransport(
+                        f"/detected/image/{i}", Image
+                    )
+                    detections_image_transport.publish(detection.cropped_image())
+                    transports.append(detections_image_transport)
+        finally:
+            # Cleanup all transports immediately after publishing
+            for transport in transports:
+                if transport._started:
+                    transport.lcm.stop()
 
     return publish
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def detections2d(moment: Moment):
     module = Detection2DModule()
     yield module.process_image_frame(moment["image_frame"])
     module._close_module()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def detections3d(moment: Moment):
     module2d = Detection2DModule()
     detections2d = module2d.process_image_frame(moment["image_frame"])
