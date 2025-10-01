@@ -6,4 +6,4 @@ from dimos.perception.detection2d.type.detection2d import (
 )
 from dimos.perception.detection2d.type.detection3d import Detection3D, ImageDetections3D
 from dimos.perception.detection2d.type.imageDetections import ImageDetections, TableStr
-from dimos.perception.detection2d.type.pose import Person
+from dimos.perception.detection2d.type.person import Person

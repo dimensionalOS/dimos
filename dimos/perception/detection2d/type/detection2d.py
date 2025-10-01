@@ -45,7 +45,7 @@ from dimos.perception.detection2d.type.imageDetections import ImageDetections
 from dimos.types.timestamped import Timestamped, to_ros_stamp, to_timestamp
 
 if TYPE_CHECKING:
-    from dimos.perception.detection2d.type.pose import Person
+    from dimos.perception.detection2d.type.person import Person
 
 Bbox = Tuple[float, float, float, float]
 CenteredBbox = Tuple[float, float, float, float]
