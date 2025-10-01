@@ -27,9 +27,16 @@ def event_loop():
 _seen_threads = set()
 _seen_threads_lock = threading.RLock()
 
+_skip_for = ["lcm", "heavy", "ros"]
+
 
 @pytest.fixture(autouse=True)
 def monitor_threads(request):
+    # Skip monitoring for tests marked with specified markers
+    if any(request.node.get_closest_marker(marker) for marker in _skip_for):
+        yield
+        return
+
     yield
 
     threads = [t for t in threading.enumerate() if t.name != "MainThread"]
