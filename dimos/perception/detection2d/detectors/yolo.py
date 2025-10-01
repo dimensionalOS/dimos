@@ -18,6 +18,8 @@ import cv2
 import onnxruntime
 from ultralytics import YOLO
 
+from dimos.msgs.sensor_msgs import Image
+from dimos.perception.detection2d.detectors.types import Detector
 from dimos.perception.detection2d.utils import (
     extract_detection_results,
     filter_detections,
@@ -30,7 +32,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger("dimos.perception.detection2d.yolo_2d_det")
 
 
-class Yolo2DDetector:
+class Yolo2DDetector(Detector):
     def __init__(self, model_path="models_yolo", model_name="yolo11n.onnx", device="cpu"):
         """
         Initialize the YOLO detector.
@@ -54,7 +56,7 @@ class Yolo2DDetector:
             self.device = "cpu"
             logger.debug("Using CPU for YOLO 2d detector")
 
-    def process_image(self, image):
+    def process_image(self, image: Image):
         """
         Process an image and return detection results.
 
@@ -70,7 +72,7 @@ class Yolo2DDetector:
                 - names: list of class names
         """
         results = self.model.track(
-            source=image,
+            source=image.to_numpy(),
             device=self.device,
             conf=0.5,
             iou=0.6,

@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
 import os
 import sys
+
+import numpy as np
+
+from dimos.msgs.sensor_msgs import Image
+from dimos.perception.detection2d.detectors.types import Detector
 from dimos.perception.detection2d.utils import plot_results
 
 # Add Detic to Python path
-detic_path = os.path.join(os.path.dirname(__file__), "..", "..", "models", "Detic")
+detic_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "Detic")
 if detic_path not in sys.path:
     sys.path.append(detic_path)
     sys.path.append(os.path.join(detic_path, "third_party/CenterNet2"))
@@ -154,7 +158,7 @@ class SimpleTracker:
         return result
 
 
-class Detic2DDetector:
+class Detic2DDetector(Detector):
     def __init__(self, model_path=None, device="cuda", vocabulary=None, threshold=0.5):
         """
         Initialize the Detic detector with open vocabulary support.
@@ -173,8 +177,8 @@ class Detic2DDetector:
         # Import Detic modules
         from centernet.config import add_centernet_config
         from detic.config import add_detic_config
-        from detic.modeling.utils import reset_cls_test
         from detic.modeling.text.text_encoder import build_text_encoder
+        from detic.modeling.utils import reset_cls_test
 
         # Keep reference to these functions for later use
         self.reset_cls_test = reset_cls_test
@@ -312,7 +316,7 @@ class Detic2DDetector:
         emb = text_encoder(texts).detach().permute(1, 0).contiguous().cpu()
         return emb
 
-    def process_image(self, image):
+    def process_image(self, image: Image):
         """
         Process an image and return detection results.
 
@@ -329,7 +333,7 @@ class Detic2DDetector:
                 - masks: list of segmentation masks (numpy arrays)
         """
         # Run inference with Detic
-        outputs = self.predictor(image)
+        outputs = self.predictor(image.to_numpy())
         instances = outputs["instances"].to("cpu")
 
         # Extract bounding boxes, classes, scores, and masks

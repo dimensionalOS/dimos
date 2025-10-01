@@ -56,7 +56,6 @@ class Detection3DModule(Detection2DModule):
         if not transform:
             return ImageDetections3D(detections.image, [])
 
-        print("3d projection", detections, pointcloud, transform)
         detection3d_list = []
         for detection in detections:
             detection3d = Detection3D.from_2d(
@@ -68,9 +67,7 @@ class Detection3DModule(Detection2DModule):
             if detection3d is not None:
                 detection3d_list.append(detection3d)
 
-        ret = ImageDetections3D(detections.image, detection3d_list)
-        print("3d projection finished", ret)
-        return ret
+        return ImageDetections3D(detections.image, detection3d_list)
 
     @rpc
     def start(self):

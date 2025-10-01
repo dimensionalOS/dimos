@@ -453,8 +453,8 @@ class UnitreeG1(Robot):
         self.camera.start()
         self.detection.start()
 
-        if self.enable_perception:
-            self.spatial_memory_module.start()
+        # if self.enable_perception:
+        # self.spatial_memory_module.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
