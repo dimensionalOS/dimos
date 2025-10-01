@@ -10,3 +10,4 @@ timestamp,test_module,test_name,initial_threads,final_threads,thread_change,leak
 2025-09-30T22:46:54.529973,test_yolo,test_multiple_people,1,1,0,0,,,0.000859
 2025-09-30T22:46:54.531746,test_yolo,test_invalid_keypoint,1,1,0,0,,,0.000734
 2025-09-30T23:04:11.387544,test_yolo,test_person_detection,1,1,0,0,,,0.000683
+2025-09-30T23:16:28.538572,test_yolo,test_person_detection,1,1,0,0,,,0.000662

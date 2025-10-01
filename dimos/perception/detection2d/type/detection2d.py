@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
@@ -43,6 +43,9 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
 from dimos.perception.detection2d.type.imageDetections import ImageDetections
 from dimos.types.timestamped import Timestamped, to_ros_stamp, to_timestamp
+
+if TYPE_CHECKING:
+    from dimos.perception.detection2d.type.pose import Person
 
 Bbox = Tuple[float, float, float, float]
 CenteredBbox = Tuple[float, float, float, float]
@@ -334,5 +337,23 @@ class ImageDetections2D(ImageDetections[Detection2D]):
     ) -> "ImageDetections2D":
         return cls(
             image=image,
-            detections=Detection2DBbox.from_detector(raw_detections, image=image, ts=image.ts),
+            detections=Detection2DBBox.from_detector(raw_detections, image=image, ts=image.ts),
+        )
+
+    @classmethod
+    def from_pose_detector(
+        cls, image: Image, people: List["Person"], **kwargs
+    ) -> "ImageDetections2D":
+        """Create ImageDetections2D from a list of Person detections.
+
+        Args:
+            image: Source image
+            people: List of Person objects with pose keypoints
+
+        Returns:
+            ImageDetections2D containing the pose detections
+        """
+        return cls(
+            image=image,
+            detections=people,  # Person objects are already Detection2D subclasses
         )
