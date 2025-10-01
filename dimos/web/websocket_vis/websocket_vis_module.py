@@ -94,7 +94,9 @@ class WebsocketVisModule(Module):
 
         # Track GPS goal points for visualization
         self.gps_goal_points = []
-        logger.info(f"WebSocket visualization module initialized on port {port}, GPS goal tracking enabled")
+        logger.info(
+            f"WebSocket visualization module initialized on port {port}, GPS goal tracking enabled"
+        )
 
     def _start_broadcast_loop(self):
         def run_loop():
@@ -168,7 +170,9 @@ class WebsocketVisModule(Module):
                 current_state["gps_travel_goal_points"] = self.gps_goal_points
 
             await self.sio.emit("full_state", current_state, room=sid)
-            logger.info(f"Client {sid} connected, sent state with {len(self.gps_goal_points)} GPS goal points")
+            logger.info(
+                f"Client {sid} connected, sent state with {len(self.gps_goal_points)} GPS goal points"
+            )
 
         @self.sio.event
         async def click(sid, position):
@@ -193,7 +197,9 @@ class WebsocketVisModule(Module):
 
             # Emit updated goal points back to all connected clients
             await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
-            logger.debug(f"Emitted gps_travel_goal_points with {len(self.gps_goal_points)} points: {self.gps_goal_points}")
+            logger.debug(
+                f"Emitted gps_travel_goal_points with {len(self.gps_goal_points)} points: {self.gps_goal_points}"
+            )
 
         @self.sio.event
         async def start_explore(sid):
