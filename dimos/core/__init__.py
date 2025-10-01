@@ -10,6 +10,7 @@ import dimos.core.colors as colors
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleBase, ModuleConfig
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
+from dimos.utils.actor_registry import ActorRegistry
 from dimos.core.transport import (
     LCMTransport,
     SHMTransport,
@@ -120,6 +121,9 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             worker = actor.set_ref(actor).result()
             print((f"deployed: {colors.green(actor)} @ {colors.blue('worker ' + str(worker))}"))
 
+            # Register actor deployment in shared memory
+            ActorRegistry.update(str(actor), str(worker))
+
             return RPCClient(actor, actor_class)
 
     def check_worker_memory():
@@ -176,6 +180,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             )
 
     def close_all():
+        ActorRegistry.clear()
         dask_client.shutdown()
         local_cluster.close()
 

@@ -29,6 +29,7 @@ from distributed.client import Client
 
 from distributed import get_client
 from dimos.core import Module, rpc
+from dimos.utils.actor_registry import ActorRegistry
 from dimos.utils.logging_config import setup_logger
 
 
@@ -36,8 +37,25 @@ logger = setup_logger(__file__)
 
 
 def print_data_table(data):
-    headers = ["active_percent", "gil_percent", "n_threads", "pid", "worker_id"]
-    numeric_headers = {"active_percent", "gil_percent", "n_threads", "pid"}
+    headers = [
+        "cpu_percent",
+        "active_percent",
+        "gil_percent",
+        "n_threads",
+        "pid",
+        "worker_id",
+        "modules",
+    ]
+    numeric_headers = {"cpu_percent", "active_percent", "gil_percent", "n_threads", "pid"}
+
+    # Add registered modules.
+    modules = ActorRegistry.get_all()
+    for worker in data:
+        worker["modules"] = ", ".join(
+            module_name.split("-", 1)[0]
+            for module_name, worker_id_str in modules.items()
+            if worker_id_str == str(worker["worker_id"])
+        )
 
     # Determine column widths
     col_widths = []
@@ -90,9 +108,10 @@ class UtilizationThread(threading.Thread):
                 if pid not in self._monitors:
                     self._monitors[pid] = GilMonitorThread(pid)
                     self._monitors[pid].start()
-                gil, active, n_threads = self._monitors[pid].get_values()
+                cpu, gil, active, n_threads = self._monitors[pid].get_values()
                 data.append(
                     {
+                        "cpu_percent": cpu,
                         "worker_id": worker_id,
                         "pid": pid,
                         "gil_percent": gil,
@@ -101,6 +120,7 @@ class UtilizationThread(threading.Thread):
                     }
                 )
             data.sort(key=lambda x: x["pid"])
+            self._fix_missing_ids(data)
             print_data_table(data)
             self._stop_event.wait(1)
 
@@ -109,6 +129,16 @@ class UtilizationThread(threading.Thread):
         for monitor in self._monitors.values():
             monitor.stop()
             monitor.join(timeout=2)
+
+    def _fix_missing_ids(self, data):
+        """
+        Some worker IDs are None. But if we order the workers by PID and all
+        non-None ids are in order, then we can deduce that the None ones are the
+        missing indices.
+        """
+        if all(x["worker_id"] in (i, None) for i, x in enumerate(data)):
+            for i, worker in enumerate(data):
+                worker["worker_id"] = i
 
 
 class UtilizationModule(Module):
@@ -192,14 +222,14 @@ def get_worker_pids():
 
 class GilMonitorThread(threading.Thread):
     pid: int
-    _latest_values: tuple[float, float, int]
+    _latest_values: tuple[float, float, float, int]
     _stop_event: threading.Event
     _lock: threading.Lock
 
     def __init__(self, pid):
         super().__init__(daemon=True)
         self.pid = pid
-        self._latest_values = (-1.0, -1.0, -1)
+        self._latest_values = (-1.0, -1.0, -1.0, -1)
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
 
@@ -229,12 +259,18 @@ class GilMonitorThread(threading.Thread):
                     continue
 
                 try:
+                    cpu_percent = _get_cpu_percent(self.pid)
                     gil_percent = float(match.group(1))
                     active_percent = float(match.group(2))
                     num_threads = int(match.group(3))
 
                     with self._lock:
-                        self._latest_values = (gil_percent, active_percent, num_threads)
+                        self._latest_values = (
+                            cpu_percent,
+                            gil_percent,
+                            active_percent,
+                            num_threads,
+                        )
                 except (ValueError, IndexError) as e:
                     pass
         except Exception as e:
@@ -252,3 +288,13 @@ class GilMonitorThread(threading.Thread):
 
     def stop(self):
         self._stop_event.set()
+
+
+def _get_cpu_percent(pid: int) -> float:
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "%cpu="], capture_output=True, text=True, check=True
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return -1.0
