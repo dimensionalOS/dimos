@@ -410,6 +410,21 @@ class UnitreeGo2(UnitreeRobot):
         logger.info("UnitreeGo2 initialized and started")
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
 
+    def stop(self):
+        # self.connection.stop()
+        # self.mapper.stop()
+        # self.global_planner.stop()
+        # self.local_planner.stop()
+        # self.navigator.stop()
+        # self.frontier_explorer.stop()
+        # self.websocket_vis.stop()
+        # self.foxglove_bridge.stop()
+        self.spatial_memory_module.stop()
+        # self.depth_module.stop()
+        # self.object_tracker.stop()
+        self.dimos.close_all()
+        self.lcm.stop()
+
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
         self.connection = self.dimos.deploy(
@@ -522,7 +537,6 @@ class UnitreeGo2(UnitreeRobot):
             output_dir=self.spatial_memory_dir,
         )
 
-        color_image_default_capacity = 1920 * 1080 * 4
         self.spatial_memory_module.video.transport = core.pSHMTransport(
             "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
@@ -764,9 +778,11 @@ def main():
 
     try:
         while True:
-            time.sleep(1)
+            time.sleep(0.1)
     except KeyboardInterrupt:
         logger.info("Shutting down...")
+    finally:
+        robot.stop()
 
 
 if __name__ == "__main__":
