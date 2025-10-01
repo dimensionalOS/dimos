@@ -65,9 +65,7 @@ class Detection2DModule(Module):
         self.vlm_detections_subject = Subject()
 
     def process_image_frame(self, image: Image) -> ImageDetections2D:
-        return ImageDetections2D.from_detector(
-            image, self.detector.process_image(image.to_opencv())
-        )
+        return ImageDetections2D.from_detector(image, self.detector.process_image(image))
 
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:

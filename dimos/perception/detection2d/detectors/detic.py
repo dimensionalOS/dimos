@@ -333,7 +333,7 @@ class Detic2DDetector(Detector):
                 - masks: list of segmentation masks (numpy arrays)
         """
         # Run inference with Detic
-        outputs = self.predictor(image.to_numpy())
+        outputs = self.predictor(image.to_opencv())
         instances = outputs["instances"].to("cpu")
 
         # Extract bounding boxes, classes, scores, and masks
@@ -391,7 +391,7 @@ class Detic2DDetector(Detector):
             tracked_class_ids,
             tracked_scores,
             tracked_names,
-            tracked_masks,
+            # tracked_masks,
         )
 
     def visualize_results(self, image, bboxes, track_ids, class_ids, confidences, names):

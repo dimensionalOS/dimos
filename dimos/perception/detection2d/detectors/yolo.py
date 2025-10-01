@@ -72,7 +72,7 @@ class Yolo2DDetector(Detector):
                 - names: list of class names
         """
         results = self.model.track(
-            source=image.to_numpy(),
+            source=image.to_opencv(),
             device=self.device,
             conf=0.5,
             iou=0.6,
