@@ -37,6 +37,7 @@ logger = setup_logger(__file__)
 
 def print_data_table(data):
     headers = ["active_percent", "gil_percent", "n_threads", "pid", "worker_id"]
+    numeric_headers = {"active_percent", "gil_percent", "n_threads", "pid"}
 
     # Determine column widths
     col_widths = []
@@ -44,15 +45,24 @@ def print_data_table(data):
         max_len = max(len(str(d[h])) for d in data)
         col_widths.append(max(len(h), max_len))
 
-    # Print header
-    header_row = " | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers))
-    print("-" * len(header_row))
+    # Print header with DOS box characters
+    header_row = " │ ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers))
+    border_parts = ["─" * w for w in col_widths]
+    border_line = "─┼─".join(border_parts)
+    print(border_line)
     print(header_row)
-    print("-" * len(header_row))
+    print(border_line)
 
     # Print rows
     for row in data:
-        print(" | ".join(str(row[h]).ljust(col_widths[i]) for i, h in enumerate(headers)))
+        formatted_cells = []
+        for i, h in enumerate(headers):
+            value = str(row[h])
+            if h in numeric_headers:
+                formatted_cells.append(value.rjust(col_widths[i]))
+            else:
+                formatted_cells.append(value.ljust(col_widths[i]))
+        print(" │ ".join(formatted_cells))
 
 
 class UtilizationThread(threading.Thread):
