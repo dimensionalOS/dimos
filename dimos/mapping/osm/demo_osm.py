@@ -45,6 +45,7 @@ class UnitreeAgents2Runner:
     def __init__(self):
         self._robot = None
         self._agent = None
+        self._robot_debugger = None
         self._exit_stack = ExitStack()
 
     def __enter__(self):
@@ -55,14 +56,19 @@ class UnitreeAgents2Runner:
         )
         self._agent.register_skills(HumanInput())
         self._agent.run_implicit_skill("human")
-        self._exit_stack.enter_context(self._agent)
+        self._agent.start()
         self._agent.loop_thread()
-        self._exit_stack.enter_context(RobotDebugger(self._robot))
+        self._robot_debugger = RobotDebugger(self._robot)
+        self._robot_debugger.start()
 
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._agent:
+            self._agent.stop()
         self._exit_stack.close()
+        if self._robot_debugger:
+            self._robot_debugger.stop()
         return False
 
     def run(self):

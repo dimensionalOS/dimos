@@ -14,18 +14,16 @@
 
 """Test agent with FakeChatModel for unit testing."""
 
-import os
 import time
 
 import pytest
 from dimos_lcm.sensor_msgs import CameraInfo
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolCall
+from langchain_core.messages import AIMessage, HumanMessage
 
 from dimos.agents2.agent import Agent
 from dimos.agents2.testing import MockModel
 from dimos.core import LCMTransport, start
-from dimos.msgs.foxglove_msgs import ImageAnnotations
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule

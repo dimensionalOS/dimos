@@ -23,10 +23,13 @@ import warnings
 from typing import List, Optional
 
 from reactivex import Observable
+from reactivex.disposable import CompositeDisposable
 
 from dimos import core
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
 from dimos.core import In, Module, Out, rpc
+from dimos.core.dimos import Dimos
+from dimos.core.resource import Resource
 from dimos.mapping.types import LatLon
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
@@ -69,7 +72,7 @@ from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_capabilities import RobotCapability
 
 
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
+logger = setup_logger(__file__, level=logging.INFO)
 
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
@@ -84,13 +87,16 @@ warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
 
-class FakeRTC:
+class FakeRTC(Resource):
     """Fake WebRTC connection for testing with recorded data."""
 
     def __init__(self, *args, **kwargs):
         get_data("unitree_office_walk")  # Preload data for testing
 
-    def connect(self):
+    def start(self):
+        pass
+
+    def stop(self):
         pass
 
     def standup(self):
@@ -184,6 +190,8 @@ class ConnectionModule(Module):
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
+        super().start()
+
         match self.connection_type:
             case "webrtc":
                 self.connection = UnitreeWebRTCConnection(self.ip)
@@ -193,17 +201,33 @@ class ConnectionModule(Module):
                 from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
                 self.connection = MujocoConnection()
-                self.connection.start()
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
+        self.connection.start()
+
         # Connect sensor streams to outputs
-        self.connection.lidar_stream().subscribe(self.lidar.publish)
-        self.connection.odom_stream().subscribe(self._publish_tf)
+        unsub = self.connection.lidar_stream().subscribe(self.lidar.publish)
+        self._disposables.add(unsub)
+
+        unsub = self.connection.odom_stream().subscribe(self._publish_tf)
+        self._disposables.add(unsub)
+
         if self.connection_type == "mujoco":
-            self.connection.gps_stream().subscribe(self._publish_gps_location)
-        self.connection.video_stream().subscribe(self._on_video)
-        self.movecmd.subscribe(self.move)
+            unsub = self.connection.gps_stream().subscribe(self._publish_gps_location)
+            self._disposables.add(unsub)
+
+        unsub = self.connection.video_stream().subscribe(self._on_video)
+        self._disposables.add(unsub)
+
+        unsub = self.movecmd.subscribe(self.move)
+        self._disposables.add(unsub)
+
+    @rpc
+    def stop(self):
+        if self.connection:
+            self.connection.stop()
+        super().stop()
 
     def _on_video(self, msg: Image):
         """Handle incoming video frames and publish synchronized camera data."""
@@ -303,8 +327,11 @@ class ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
 
-class UnitreeGo2(UnitreeRobot):
+class UnitreeGo2(UnitreeRobot, Resource):
     """Full Unitree Go2 robot with navigation and perception capabilities."""
+
+    _dimos: Dimos
+    _disposables: CompositeDisposable = CompositeDisposable()
 
     def __init__(
         self,
@@ -324,6 +351,7 @@ class UnitreeGo2(UnitreeRobot):
             connection_type: webrtc, fake, or mujoco
         """
         super().__init__()
+        self._dimos = Dimos(n=8)
         self.ip = ip
         self.connection_type = connection_type or "webrtc"
         if ip is None and self.connection_type == "webrtc":
@@ -340,7 +368,6 @@ class UnitreeGo2(UnitreeRobot):
         # Set capabilities
         self.capabilities = [RobotCapability.LOCOMOTION, RobotCapability.VISION]
 
-        self.dimos = None
         self.connection = None
         self.mapper = None
         self.global_planner = None
@@ -356,12 +383,14 @@ class UnitreeGo2(UnitreeRobot):
 
         self._setup_directories()
 
+    # TODO: REMOVE THESE
     def __enter__(self) -> "UnitreeGo2":
         self.start()
         return self
 
+    # TODO: REMOVE THESE
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # self.stop()
+        self.stop()
         return False
 
     def _setup_directories(self):
@@ -384,8 +413,8 @@ class UnitreeGo2(UnitreeRobot):
         os.makedirs(self.db_path, exist_ok=True)
 
     def start(self):
-        """Start the robot system with all modules."""
-        self.dimos = core.start(8)
+        self.lcm.start()
+        self._dimos.start()
 
         self._deploy_connection()
         self._deploy_mapping()
@@ -395,31 +424,18 @@ class UnitreeGo2(UnitreeRobot):
         self._deploy_camera()
 
         self._start_modules()
-
-        self.lcm.start()
-
         logger.info("UnitreeGo2 initialized and started")
-        logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
 
     def stop(self):
-        # self.connection.stop()
-        # self.mapper.stop()
-        # self.global_planner.stop()
-        # self.local_planner.stop()
-        # self.navigator.stop()
-        # self.frontier_explorer.stop()
-        # self.websocket_vis.stop()
-        # self.foxglove_bridge.stop()
-        self.spatial_memory_module.stop()
-        # self.depth_module.stop()
-        # self.object_tracker.stop()
-        self.utilization_module.stop()
-        self.dimos.close_all()
+        if self.foxglove_bridge:
+            self.foxglove_bridge.stop()
+        self._disposables.dispose()
+        self._dimos.stop()
         self.lcm.stop()
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
-        self.connection = self.dimos.deploy(
+        self.connection = self._dimos.deploy(
             ConnectionModule, self.ip, connection_type=self.connection_type
         )
 
@@ -436,7 +452,7 @@ class UnitreeGo2(UnitreeRobot):
     def _deploy_mapping(self):
         """Deploy and configure the mapping module."""
         min_height = 0.3 if self.connection_type == "mujoco" else 0.15
-        self.mapper = self.dimos.deploy(
+        self.mapper = self._dimos.deploy(
             Map, voxel_size=0.5, global_publish_interval=2.5, min_height=min_height
         )
 
@@ -448,14 +464,14 @@ class UnitreeGo2(UnitreeRobot):
 
     def _deploy_navigation(self):
         """Deploy and configure navigation modules."""
-        self.global_planner = self.dimos.deploy(AstarPlanner)
-        self.local_planner = self.dimos.deploy(HolonomicLocalPlanner)
-        self.navigator = self.dimos.deploy(
+        self.global_planner = self._dimos.deploy(AstarPlanner)
+        self.local_planner = self._dimos.deploy(HolonomicLocalPlanner)
+        self.navigator = self._dimos.deploy(
             BehaviorTreeNavigator,
             reset_local_planner=self.local_planner.reset,
             check_goal_reached=self.local_planner.is_goal_reached,
         )
-        self.frontier_explorer = self.dimos.deploy(WavefrontFrontierExplorer)
+        self.frontier_explorer = self._dimos.deploy(WavefrontFrontierExplorer)
 
         self.navigator.goal.transport = core.LCMTransport("/navigation_goal", PoseStamped)
         self.navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
@@ -493,7 +509,7 @@ class UnitreeGo2(UnitreeRobot):
 
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
-        self.websocket_vis = self.dimos.deploy(WebsocketVisModule, port=self.websocket_port)
+        self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
         self.websocket_vis.click_goal.transport = core.LCMTransport("/goal_request", PoseStamped)
         self.websocket_vis.gps_goal.transport = core.pLCMTransport("/gps_goal")
         self.websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
@@ -511,17 +527,12 @@ class UnitreeGo2(UnitreeRobot):
                 "/go2/depth_image#sensor_msgs.Image",
             ]
         )
-
-        # TODO: This should be moved.
-        def _set_goal(goal: LatLon):
-            self.set_gps_travel_goal_points([goal])
-
-        unsub = self.websocket_vis.gps_goal.transport.pure_observable().subscribe(_set_goal)
+        self.foxglove_bridge.start()
 
     def _deploy_perception(self):
         """Deploy and configure perception modules."""
         # Deploy spatial memory
-        self.spatial_memory_module = self.dimos.deploy(
+        self.spatial_memory_module = self._dimos.deploy(
             SpatialMemory,
             collection_name=self.spatial_memory_collection,
             db_path=self.db_path,
@@ -539,12 +550,12 @@ class UnitreeGo2(UnitreeRobot):
         logger.info("Spatial memory module deployed and connected")
 
         # Deploy object tracker
-        self.object_tracker = self.dimos.deploy(
+        self.object_tracker = self._dimos.deploy(
             ObjectTracking,
             frame_id="camera_link",
         )
 
-        self.utilization_module = self.dimos.deploy(UtilizationModule)
+        self.utilization_module = self._dimos.deploy(UtilizationModule)
 
         # Set up transports
         self.object_tracker.detection2darray.transport = core.LCMTransport(
@@ -562,7 +573,7 @@ class UnitreeGo2(UnitreeRobot):
     def _deploy_camera(self):
         """Deploy and configure the camera module."""
         gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.5
-        self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
+        self.depth_module = self._dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
 
         # Set up transports
         self.depth_module.color_image.transport = core.pSHMTransport(
@@ -584,18 +595,7 @@ class UnitreeGo2(UnitreeRobot):
 
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
-        self.connection.start()
-        self.mapper.start()
-        self.global_planner.start()
-        self.local_planner.start()
-        self.navigator.start()
-        self.frontier_explorer.start()
-        self.websocket_vis.start()
-        self.foxglove_bridge.start()
-        self.spatial_memory_module.start()
-        self.depth_module.start()
-        self.object_tracker.start()
-        self.utilization_module.start()
+        self._dimos.acquire_all_modules()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -688,12 +688,6 @@ class UnitreeGo2(UnitreeRobot):
     def gps_position_stream(self) -> Observable[LatLon]:
         return self.connection.gps_location.transport.pure_observable()
 
-    def set_gps_travel_goal_points(self, points: list[LatLon]) -> None:
-        logger.info(f"Travelling to: {points}")
-        # self.connection.... (actually set the goal)
-        print("websocketvis", self.websocket_vis)
-        self.websocket_vis.set_gps_travel_goal_points(points)
-
     def get_odom(self) -> PoseStamped:
         """Get the robot's odometry.
 
@@ -775,7 +769,7 @@ def main():
         while True:
             time.sleep(0.1)
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        pass
     finally:
         robot.stop()
 

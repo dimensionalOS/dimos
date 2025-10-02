@@ -31,7 +31,7 @@ from dimos.perception.detection2d.type import (
     ImageDetections2D,
     ImageDetections3D,
 )
-from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
+from dimos.robot.unitree_webrtc.modular import deploy_connection
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
@@ -66,7 +66,7 @@ def test_module2d(moment: Moment, publish_lcm):
     annotations = detections2d.to_image_annotations()
     publish_lcm({"annotations": annotations, **moment})
 
-    module._close_module()
+    module.stop()
 
 
 def test_module3d(moment: Moment, publish_lcm):
@@ -137,8 +137,8 @@ def test_module3d(moment: Moment, publish_lcm):
     assert repr_dict["dist"] == "0.88m"
     assert repr_dict["points"] == "81"
 
-    module2d._close_module()
-    module3d._close_module()
+    module2d.stop()
+    module3d.stop()
 
 
 @pytest.mark.tool

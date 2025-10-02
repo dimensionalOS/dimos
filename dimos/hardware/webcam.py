@@ -15,23 +15,22 @@
 import queue
 import threading
 import time
-from abc import ABC, abstractmethod, abstractproperty
+from abc import abstractmethod, abstractproperty
 from dataclasses import dataclass, field
 from functools import cache
 from typing import Any, Callable, Generic, Literal, Optional, Protocol, TypeVar
 
 import cv2
-import numpy as np
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import create
 from reactivex.observable import Observable
 
 from dimos.agents2 import Output, Reducer, Stream, skill
-from dimos.core import Module, Out, rpc
+from dimos.core import Out, rpc
 from dimos.core.module import DaskModule, ModuleConfig
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import ImageFormat
-from dimos.protocol.service import Configurable, Service
+from dimos.protocol.service import Configurable
 from dimos.utils.reactive import backpressure
 
 
@@ -117,7 +116,6 @@ class Webcam(ColorCameraHardware[WebcamConfig]):
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._capture_thread.start()
 
-    @rpc
     def stop(self):
         """Stop capturing frames"""
         # Signal thread to stop
@@ -217,6 +215,8 @@ class ColorCameraModule(DaskModule):
 
     @rpc
     def start(self):
+        super().start()
+
         if callable(self.config.hardware):
             self.hardware = self.config.hardware()
         else:

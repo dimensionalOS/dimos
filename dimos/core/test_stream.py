@@ -188,6 +188,8 @@ def test_subscription(dimos, subscriber_class):
     # ensuring no new messages have passed through
     assert total_msg_n == subscriber.sub1_msgs_len() + subscriber.sub2_msgs_len()
 
+    robot.stop()
+
 
 @pytest.mark.module
 def test_get_next(dimos):
@@ -215,6 +217,7 @@ def test_get_next(dimos):
     assert subscriber.active_subscribers() == 0
 
     assert next_odom != odom
+    robot.stop()
 
 
 @pytest.mark.module
@@ -249,3 +252,5 @@ def test_hot_getter(dimos):
     assert isinstance(next_odom, Odometry)
     assert next_odom != odom
     subscriber.stop_hot_getter()
+
+    robot.stop()

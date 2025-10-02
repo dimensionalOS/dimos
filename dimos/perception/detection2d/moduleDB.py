@@ -11,38 +11,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import functools
-import time
-from typing import List, Optional, Tuple
+from typing import List
 
-import numpy as np
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-)
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D
-from reactivex import operators as ops
 
-from dimos.core import In, Out, rpc
-from dimos.msgs.geometry_msgs import Transform
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
-from dimos.perception.detection2d.module2D import Detection2DModule
+from dimos.core import rpc
+from dimos.msgs.vision_msgs import Detection3DArray
 from dimos.perception.detection2d.module3D import Detection3DModule
-from dimos.perception.detection2d.type import (
-    Detection2D,
-    Detection3D,
-    ImageDetections2D,
-    ImageDetections3D,
-)
-from dimos.protocol.skill import skill
+from dimos.perception.detection2d.type import Detection3D
 
 
 class DetectionDBModule(Detection3DModule):
     @rpc
     def start(self):
         super().start()
-        self.pointcloud_stream().subscribe(self.add_detections)
+        unsub = self.pointcloud_stream().subscribe(self.add_detections)
+        self._disposables.add(unsub)
+
+    @rpc
+    def stop(self):
+        super().stop()
 
     def add_detections(self, detections: List[Detection3DArray]):
         for det in detections:

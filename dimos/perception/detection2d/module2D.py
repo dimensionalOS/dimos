@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import functools
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Optional
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
@@ -23,7 +23,7 @@ from reactivex.observable import Observable
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.type import Detection2D, ImageDetections2D
+from dimos.perception.detection2d.type import ImageDetections2D
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.utils.reactive import backpressure
 
@@ -54,13 +54,18 @@ class Detection2DModule(Module):
 
     @rpc
     def start(self):
-        self.detection_stream().subscribe(
+        super().start()
+
+        unsub = self.detection_stream().subscribe(
             lambda det: self.detections.publish(det.to_ros_detection2d_array())
         )
+        self._disposables.add(unsub)
 
-        self.detection_stream().subscribe(
+        unsub = self.detection_stream().subscribe(
             lambda det: self.annotations.publish(det.to_foxglove_annotations())
         )
+        self._disposables.add(unsub)
 
     @rpc
-    def stop(self): ...
+    def stop(self):
+        super().stop()

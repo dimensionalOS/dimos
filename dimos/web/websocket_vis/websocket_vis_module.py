@@ -37,6 +37,7 @@ from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
+from reactivex.disposable import Disposable
 
 logger = setup_logger("dimos.web.websocket_vis")
 
@@ -83,11 +84,12 @@ class WebsocketVisModule(Module):
         super().__init__(**kwargs)
 
         self.port = port
-        self.server_thread: Optional[threading.Thread] = None
+        self._uvicorn_server_thread: Optional[threading.Thread] = None
         self.sio: Optional[socketio.AsyncServer] = None
         self.app = None
         self._broadcast_loop = None
         self._broadcast_thread = None
+        self._uvicorn_server: Optional[uvicorn.Server] = None
 
         self.vis_state = {}
         self.state_lock = threading.Lock()
@@ -95,7 +97,7 @@ class WebsocketVisModule(Module):
         logger.info(f"WebSocket visualization module initialized on port {port}")
 
     def _start_broadcast_loop(self):
-        def run_loop():
+        def websocket_vis_loop():
             self._broadcast_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._broadcast_loop)
             try:
@@ -105,37 +107,58 @@ class WebsocketVisModule(Module):
             finally:
                 self._broadcast_loop.close()
 
-        self._broadcast_thread = threading.Thread(target=run_loop, daemon=True)
+        self._broadcast_thread = threading.Thread(target=websocket_vis_loop, daemon=True)
         self._broadcast_thread.start()
 
     @rpc
     def start(self):
+        super().start()
+
         self._create_server()
+
         self._start_broadcast_loop()
 
-        self.server_thread = threading.Thread(target=self._run_server, daemon=True)
-        self.server_thread.start()
+        self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
+        self._uvicorn_server_thread.start()
 
-        # Only subscribe to connected topics
         if self.robot_pose.connection is not None:
-            self.robot_pose.subscribe(self._on_robot_pose)
-        if self.gps_location.connection is not None:
-            self.gps_location.subscribe(self._on_gps_location)
-        if self.path.connection is not None:
-            self.path.subscribe(self._on_path)
-        if self.global_costmap.connection is not None:
-            self.global_costmap.subscribe(self._on_global_costmap)
+            unsub = self.robot_pose.subscribe(self._on_robot_pose)
+            self._disposables.add(Disposable(unsub))
 
-        logger.info(f"WebSocket server started on http://localhost:{self.port}")
+        if self.gps_location.connection is not None:
+            unsub = self.gps_location.subscribe(self._on_gps_location)
+            self._disposables.add(Disposable(unsub))
+
+        if self.path.connection is not None:
+            unsub = self.path.subscribe(self._on_path)
+            self._disposables.add(Disposable(unsub))
+
+        if self.global_costmap.connection is not None:
+            unsub = self.global_costmap.subscribe(self._on_global_costmap)
+            self._disposables.add(Disposable(unsub))
 
     @rpc
     def stop(self):
-        """Stop the WebSocket server."""
+        if self._uvicorn_server:
+            self._uvicorn_server.should_exit = True
+
+        if self.sio and self._broadcast_loop and not self._broadcast_loop.is_closed():
+
+            async def _disconnect_all():
+                await self.sio.disconnect()
+
+            asyncio.run_coroutine_threadsafe(_disconnect_all(), self._broadcast_loop)
+
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             self._broadcast_loop.call_soon_threadsafe(self._broadcast_loop.stop)
+
         if self._broadcast_thread and self._broadcast_thread.is_alive():
             self._broadcast_thread.join(timeout=1.0)
-        logger.info("WebSocket visualization module stopped")
+
+        if self._uvicorn_server_thread and self._uvicorn_server_thread.is_alive():
+            self._uvicorn_server_thread.join(timeout=2.0)
+
+        super().stop()
 
     @rpc
     def set_gps_travel_goal_points(self, points: list[LatLon]) -> None:
@@ -211,13 +234,15 @@ class WebsocketVisModule(Module):
                 )
                 self.movecmd_stamped.publish(twist_stamped)
 
-    def _run_server(self):
-        uvicorn.run(
+    def _run_uvicorn_server(self):
+        config = uvicorn.Config(
             self.app,
             host="0.0.0.0",
             port=self.port,
             log_level="error",  # Reduce verbosity
         )
+        self._uvicorn_server = uvicorn.Server(config)
+        self._uvicorn_server.run()
 
     def _on_robot_pose(self, msg: PoseStamped):
         pose_data = {"type": "vector", "c": [msg.position.x, msg.position.y, msg.position.z]}

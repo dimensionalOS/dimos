@@ -13,14 +13,12 @@
 # limitations under the License.
 
 import time
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import open3d as o3d
-import reactivex.operators as ops
 from reactivex import interval
-from reactivex.observable import Observable
+from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.nav_msgs import OccupancyGrid
@@ -54,7 +52,10 @@ class Map(Module):
 
     @rpc
     def start(self):
-        self.lidar.subscribe(self.add_frame)
+        super().start()
+
+        unsub = self.lidar.subscribe(self.add_frame)
+        self._disposables.add(Disposable(unsub))
 
         def publish(_):
             self.global_map.publish(self.to_lidar_message())
@@ -71,7 +72,12 @@ class Map(Module):
             self.global_costmap.publish(occupancygrid)
 
         if self.global_publish_interval is not None:
-            interval(self.global_publish_interval).subscribe(publish)
+            unsub = interval(self.global_publish_interval).subscribe(publish)
+            self._disposables.add(unsub)
+
+    @rpc
+    def stop(self):
+        super().stop()
 
     def to_PointCloud2(self) -> PointCloud2:
         return PointCloud2(

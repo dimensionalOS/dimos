@@ -115,7 +115,7 @@ def test_frontier_detection_with_office_lidar():
     else:
         print("No frontiers detected - map may be fully explored or parameters too restrictive")
 
-    explorer.cleanup()  # TODO: this should be a in try-finally
+    explorer.stop()  # TODO: this should be a in try-finally
 
 
 def test_exploration_goal_selection():
@@ -152,7 +152,7 @@ def test_exploration_goal_selection():
     else:
         print("No exploration goal selected - map may be fully explored")
 
-    explorer.cleanup()  # TODO: this should be a in try-finally
+    explorer.stop()  # TODO: this should be a in try-finally
 
 
 def test_exploration_session_reset():
@@ -183,7 +183,7 @@ def test_exploration_session_reset():
     assert explorer.no_gain_counter == 0, "No-gain counter should be reset"
 
     print("Exploration session reset successfully")
-    explorer.cleanup()  # TODO: this should be a in try-finally
+    explorer.stop()  # TODO: this should be a in try-finally
 
 
 def test_frontier_ranking():
@@ -234,7 +234,7 @@ def test_frontier_ranking():
     else:
         print("No frontiers found for ranking test")
 
-    explorer.cleanup()  # TODO: this should be a in try-finally
+    explorer.stop()  # TODO: this should be a in try-finally
 
 
 def test_exploration_with_no_gain_detection():
@@ -272,7 +272,7 @@ def test_exploration_with_no_gain_detection():
 
     print("No-gain detection test passed")
 
-    explorer.cleanup()  # TODO: this should be a in try-finally
+    explorer.stop()  # TODO: this should be a in try-finally
 
 
 @pytest.mark.vis
@@ -358,4 +358,4 @@ def test_frontier_detection_visualization():
 
     print("Visualization displayed. Close the image window to continue.")
 
-    explorer.cleanup()  # TODO: this should be a in try-finally
+    explorer.stop()  # TODO: this should be a in try-finally

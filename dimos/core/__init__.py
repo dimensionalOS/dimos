@@ -25,9 +25,6 @@ from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
 __all__ = ["TF", "LCMTF", "PubSubTF", "TFSpec", "TFConfig"]
 
 
-def patch_actor(actor, cls): ...
-
-
 class RPCClient:
     def __init__(self, actor_instance, actor_class):
         self.rpc = LCMRPC()
@@ -185,20 +182,20 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
     def close_all():
         import time
 
-        # Get the event loop before shutting down
-        loop = dask_client.loop
-
         # Close cluster and client
         ActorRegistry.clear()
-        local_cluster.close()
-        dask_client.close()
 
-        # Stop the Tornado IOLoop to clean up IO loop and Profile threads
-        if loop and hasattr(loop, "add_callback") and hasattr(loop, "stop"):
-            try:
-                loop.add_callback(loop.stop)
-            except Exception:
-                pass
+        # Close client first to signal workers to shut down gracefully
+        try:
+            dask_client.close(timeout=2)
+        except Exception:
+            pass
+
+        # Then close the cluster
+        try:
+            local_cluster.close(timeout=2)
+        except Exception:
+            pass
 
         # Shutdown the Dask offload thread pool
         try:

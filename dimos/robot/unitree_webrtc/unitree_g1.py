@@ -26,6 +26,8 @@ from typing import Optional
 from dimos import core
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
 from dimos.core import Module, In, Out, rpc
+from dimos.core.dimos import Dimos
+from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs import CameraInfo, PointCloud2
@@ -43,6 +45,7 @@ from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
+from reactivex.disposable import Disposable
 
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
@@ -82,10 +85,21 @@ class G1ConnectionModule(Module):
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
+
+        super().start()
+
         # Use the exact same UnitreeWebRTCConnection as Go2
         self.connection = UnitreeWebRTCConnection(self.ip)
-        self.movecmd.subscribe(self.move)
-        self.odom_in.subscribe(self._publish_odom_pose)
+        self.connection.start()
+        unsub = self.movecmd.subscribe(self.move)
+        self._disposables.add(Disposable(unsub))
+        unsub = self.odom_in.subscribe(self._publish_odom_pose)
+        self._disposables.add(Disposable(unsub))
+
+    @rpc
+    def stop(self):
+        self.connection.stop()
+        super().stop()
 
     def _publish_odom_pose(self, msg: Odometry):
         self.odom_pose.publish(
@@ -109,7 +123,7 @@ class G1ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
 
-class UnitreeG1(Robot):
+class UnitreeG1(Robot, Resource):
     """Unitree G1 humanoid robot."""
 
     def __init__(
@@ -162,7 +176,7 @@ class UnitreeG1(Robot):
         self.capabilities = [RobotCapability.LOCOMOTION]
 
         # Module references
-        self.dimos = None
+        self._dimos = Dimos(n=4)
         self.connection = None
         self.websocket_vis = None
         self.foxglove_bridge = None
@@ -178,8 +192,8 @@ class UnitreeG1(Robot):
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
 
     def start(self):
-        """Start the robot system with all modules."""
-        self.dimos = core.start(4)  # 2 workers for connection and visualization
+        self.lcm.start()
+        self._dimos.start()
 
         if self.enable_connection:
             self._deploy_connection()
@@ -197,14 +211,20 @@ class UnitreeG1(Robot):
 
         self._start_modules()
 
-        self.lcm.start()
-
         logger.info("UnitreeG1 initialized and started")
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
 
+    def stop(self):
+        if self.ros_bridge:
+            self.ros_bridge.stop()
+        if self.foxglove_bridge:
+            self.foxglove_bridge.stop()
+        self._dimos.stop()
+        self.lcm.stop()
+
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
-        self.connection = self.dimos.deploy(G1ConnectionModule, self.ip)
+        self.connection = self._dimos.deploy(G1ConnectionModule, self.ip)
 
         # Configure LCM transports
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", TwistStamped)
@@ -219,7 +239,7 @@ class UnitreeG1(Robot):
             from dimos.hardware.fake_zed_module import FakeZEDModule
 
             logger.info(f"Deploying FakeZEDModule for replay from: {self.replay_path}")
-            self.zed_camera = self.dimos.deploy(
+            self.zed_camera = self._dimos.deploy(
                 FakeZEDModule,
                 recording_path=self.replay_path,
                 frame_id="zed_camera",
@@ -227,7 +247,7 @@ class UnitreeG1(Robot):
         else:
             # Use real ZEDModule (with optional recording)
             logger.info("Deploying ZED camera module...")
-            self.zed_camera = self.dimos.deploy(
+            self.zed_camera = self._dimos.deploy(
                 ZEDModule,
                 camera_id=0,
                 resolution="HD720",
@@ -256,7 +276,7 @@ class UnitreeG1(Robot):
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
         # Deploy WebSocket visualization module
-        self.websocket_vis = self.dimos.deploy(WebsocketVisModule, port=self.websocket_port)
+        self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
         self.websocket_vis.movecmd_stamped.transport = core.LCMTransport("/cmd_vel", TwistStamped)
 
         # Note: robot_pose connection removed since odom was removed from G1ConnectionModule
@@ -268,13 +288,14 @@ class UnitreeG1(Robot):
                 "/zed/depth_image#sensor_msgs.Image",
             ]
         )
+        self.foxglove_bridge.start()
 
     def _deploy_joystick(self):
         """Deploy joystick control module."""
         from dimos.robot.unitree_webrtc.g1_joystick_module import G1JoystickModule
 
         logger.info("Deploying G1 joystick module...")
-        self.joystick = self.dimos.deploy(G1JoystickModule)
+        self.joystick = self._dimos.deploy(G1JoystickModule)
         self.joystick.twist_out.transport = core.LCMTransport("/cmd_vel", Twist)
         logger.info("Joystick module deployed - pygame window will open")
 
@@ -302,19 +323,15 @@ class UnitreeG1(Robot):
             "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
+        self.ros_bridge.start()
+
         logger.info(
             "ROS bridge deployed: /cmd_vel, /state_estimation, /tf, /registered_scan (ROS → DIMOS)"
         )
 
     def _start_modules(self):
         """Start all deployed modules."""
-        if self.connection:
-            self.connection.start()
-        self.websocket_vis.start()
-        self.foxglove_bridge.start()
-
-        if self.joystick:
-            self.joystick.start()
+        self._dimos.acquire_all_modules()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -334,27 +351,6 @@ class UnitreeG1(Robot):
         """Get the robot's odometry."""
         # Note: odom functionality removed from G1ConnectionModule
         return None
-
-    def shutdown(self):
-        """Shutdown the robot and clean up resources."""
-        logger.info("Shutting down UnitreeG1...")
-
-        # Shutdown ROS bridge if it exists
-        if self.ros_bridge is not None:
-            try:
-                self.ros_bridge.shutdown()
-                logger.info("ROS bridge shut down successfully")
-            except Exception as e:
-                logger.error(f"Error shutting down ROS bridge: {e}")
-
-        # Stop other modules if needed
-        if self.websocket_vis:
-            try:
-                self.websocket_vis.stop()
-            except Exception as e:
-                logger.error(f"Error stopping websocket vis: {e}")
-
-        logger.info("UnitreeG1 shutdown complete")
 
 
 def main():
@@ -407,7 +403,7 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         logger.info("Shutting down...")
-        robot.shutdown()
+        robot.stop()
 
 
 if __name__ == "__main__":
