@@ -118,7 +118,7 @@ class TestYolo2DDetector:
             # Clean up subscription
             subscription.dispose()
             video_provider.dispose_all()
-            detector.cleanup()
+            detector.stop()
             # Shutdown the scheduler to clean up threads
             test_scheduler.executor.shutdown(wait=True)
             # Check that we got detection results
@@ -180,7 +180,7 @@ class TestYolo2DDetector:
         except Exception as e:
             # Ensure cleanup happens even on exception
             if "detector" in locals():
-                detector.cleanup()
+                detector.stop()
             if "video_provider" in locals():
                 video_provider.dispose_all()
             pytest.skip(f"Skipping test due to error: {e}")
