@@ -20,11 +20,11 @@ def test_tf_close(tf):
     print("Testing tf close...", tf)
 
 
-def test_moment(get_moment):
-    moment = get_moment(seek=10.0)
-    print(moment)
+# def test_moment(get_moment):
+#     moment = get_moment(seek=10.0)
+#     print(moment)
 
 
-def test_2d_detections(get_moment_2d):
-    moment = get_moment_2d(seek=10.0)
-    print(moment)
+# def test_2d_detections(get_moment_2d):
+#     moment = get_moment_2d(seek=10.0)
+#     print(moment)

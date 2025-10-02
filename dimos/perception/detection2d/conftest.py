@@ -38,12 +38,12 @@ def dimos_cluster():
     dimos.stop()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def tf():
     return TF(autostart=False)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def get_moment(tf):
     def moment_provider(**kwargs) -> Moment:
         seek = kwargs.get("seek", 10.0)
@@ -78,7 +78,7 @@ def get_moment(tf):
     return moment_provider
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def get_moment_2d(get_moment) -> Callable[[], Moment2D]:
     module = Detection2DModule()
 
