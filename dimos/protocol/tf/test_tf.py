@@ -52,6 +52,8 @@ def test_tf_ros_example():
     assert end_effector_global_pose.translation.x == pytest.approx(1.366, abs=1e-3)
     assert end_effector_global_pose.translation.y == pytest.approx(0.366, abs=1e-3)
 
+    tf.stop()
+
 
 def test_tf_main():
     """Test TF broadcasting and querying between two TF instances.

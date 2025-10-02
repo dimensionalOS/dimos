@@ -78,13 +78,16 @@ class RPCClient:
             original_method = getattr(self.actor_class, name, None)
 
             def rpc_call(*args, **kwargs):
+                # For stop/close/shutdown, use call_nowait to avoid deadlock
+                # (the remote side stops its RPC service before responding)
+                if name in ("stop", "close", "shutdown"):
+                    if self.rpc:
+                        self.rpc.call_nowait(f"{self.remote_name}/{name}", (args, kwargs))
+                    self.stop_client()
+                    return None
+
                 result, unsub_fn = self.rpc.call_sync(f"{self.remote_name}/{name}", (args, kwargs))
                 self._unsub_fns.append(unsub_fn)
-
-                # TODO: This is ugly.
-                if name in ("stop", "close", "shutdown"):
-                    self.stop_client()
-
                 return result
 
             # Copy docstring and other attributes from original method
@@ -180,9 +183,34 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             )
 
     def close_all():
+        import time
+
+        # Get the event loop before shutting down
+        loop = dask_client.loop
+
+        # Close cluster and client
         ActorRegistry.clear()
-        dask_client.shutdown()
         local_cluster.close()
+        dask_client.close()
+
+        # Stop the Tornado IOLoop to clean up IO loop and Profile threads
+        if loop and hasattr(loop, "add_callback") and hasattr(loop, "stop"):
+            try:
+                loop.add_callback(loop.stop)
+            except Exception:
+                pass
+
+        # Shutdown the Dask offload thread pool
+        try:
+            from distributed.utils import _offload_executor
+
+            if _offload_executor:
+                _offload_executor.shutdown(wait=False)
+        except Exception:
+            pass
+
+        # Give threads a moment to clean up
+        time.sleep(0.1)
 
     dask_client.deploy = deploy
     dask_client.check_worker_memory = check_worker_memory

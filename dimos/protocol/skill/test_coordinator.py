@@ -126,8 +126,9 @@ async def test_coordinator_parallel_calls():
 
 @pytest.mark.asyncio
 async def test_coordinator_generator():
+    container = SkillContainerTest()
     skillCoordinator = SkillCoordinator()
-    skillCoordinator.register_skills(SkillContainerTest())
+    skillCoordinator.register_skills(container)
     skillCoordinator.start()
 
     # here we call a skill that generates a sequence of messages
@@ -144,4 +145,5 @@ async def test_coordinator_generator():
 
     print("coordinator loop finished")
     print(skillCoordinator)
+    container._close_module()
     skillCoordinator.stop()

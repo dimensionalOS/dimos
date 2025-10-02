@@ -15,9 +15,6 @@
 import asyncio
 import threading
 import pytest
-import csv
-import os
-from datetime import datetime
 
 
 @pytest.fixture
@@ -27,57 +24,37 @@ def event_loop():
     loop.close()
 
 
+_seen_threads = set()
+_seen_threads_lock = threading.RLock()
+
+_skip_for = ["lcm", "heavy", "ros"]
+
+
 @pytest.fixture(autouse=True)
 def monitor_threads(request):
-    test_name = request.node.name
-    test_module = request.node.module.__name__
-    initial_threads = threading.active_count()
-    initial_thread_names = [t.name for t in threading.enumerate()]
-    start_time = datetime.now()
+    # Skip monitoring for tests marked with specified markers
+    if any(request.node.get_closest_marker(marker) for marker in _skip_for):
+        yield
+        return
 
     yield
 
-    end_time = datetime.now()
-    final_threads = threading.active_count()
-    final_thread_names = [t.name for t in threading.enumerate()]
+    threads = [t for t in threading.enumerate() if t.name != "MainThread"]
 
-    new_threads = [t for t in final_thread_names if t not in initial_thread_names]
-    dead_threads = [t for t in initial_thread_names if t not in final_thread_names]
-    leaked_threads = final_threads - initial_threads
+    if not threads:
+        return
 
-    csv_file = "thread_monitor_report.csv"
-    file_exists = os.path.isfile(csv_file)
+    with _seen_threads_lock:
+        new_leaks = [t for t in threads if t.ident not in _seen_threads]
+        for t in threads:
+            _seen_threads.add(t.ident)
 
-    with open(csv_file, "a", newline="") as f:
-        writer = csv.writer(f)
+    if not new_leaks:
+        return
 
-        if not file_exists:
-            writer.writerow(
-                [
-                    "timestamp",
-                    "test_module",
-                    "test_name",
-                    "initial_threads",
-                    "final_threads",
-                    "thread_change",
-                    "leaked_threads",
-                    "new_thread_names",
-                    "closed_thread_names",
-                    "duration_seconds",
-                ]
-            )
+    thread_names = [t.name for f in new_leaks]
 
-        writer.writerow(
-            [
-                start_time.isoformat(),
-                test_module,
-                test_name,
-                initial_threads,
-                final_threads,
-                final_threads - initial_threads,
-                leaked_threads,
-                "|".join(new_threads) if new_threads else "",
-                "|".join(dead_threads) if dead_threads else "",
-                (end_time - start_time).total_seconds(),
-            ]
-        )
+    pytest.fail(
+        f"Non-closed threads before or during this test. The thread names: {thread_names}. "
+        "Please look at the first test that fails and fix that."
+    )

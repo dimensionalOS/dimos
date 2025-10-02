@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 import pytest
 from reactivex import operators as ops
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.types.timestamped import (
@@ -268,52 +269,62 @@ def test_time_window_collection():
 
 
 def test_timestamp_alignment():
-    speed = 5.0
+    # Create a dedicated scheduler for this test to avoid thread leaks
+    test_scheduler = ThreadPoolScheduler(max_workers=6)
+    try:
+        speed = 5.0
 
-    # ensure that lfs package is downloaded
-    get_data("unitree_office_walk")
+        # ensure that lfs package is downloaded
+        get_data("unitree_office_walk")
 
-    raw_frames = []
+        raw_frames = []
 
-    def spy(image):
-        raw_frames.append(image.ts)
-        print(image.ts)
-        return image
+        def spy(image):
+            raw_frames.append(image.ts)
+            print(image.ts)
+            return image
 
-    # sensor reply of raw video frames
-    video_raw = (
-        testing.TimedSensorReplay(
-            "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
+        # sensor reply of raw video frames
+        video_raw = (
+            testing.TimedSensorReplay(
+                "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
+            )
+            .stream(speed)
+            .pipe(ops.take(30))
         )
-        .stream(speed)
-        .pipe(ops.take(30))
-    )
 
-    processed_frames = []
+        processed_frames = []
 
-    def process_video_frame(frame):
-        processed_frames.append(frame.ts)
-        time.sleep(0.5 / speed)
-        return frame
+        def process_video_frame(frame):
+            processed_frames.append(frame.ts)
+            time.sleep(0.5 / speed)
+            return frame
 
-    # fake reply of some 0.5s processor of video frames that drops messages
-    fake_video_processor = backpressure(video_raw.pipe(ops.map(spy))).pipe(
-        ops.map(process_video_frame)
-    )
+        # fake reply of some 0.5s processor of video frames that drops messages
+        fake_video_processor = backpressure(
+            video_raw.pipe(ops.map(spy)), scheduler=test_scheduler
+        ).pipe(ops.map(process_video_frame))
 
-    aligned_frames = align_timestamped(fake_video_processor, video_raw).pipe(ops.to_list()).run()
-
-    assert len(raw_frames) == 30
-    assert len(processed_frames) > 2
-    assert len(aligned_frames) > 2
-
-    # Due to async processing, the last frame might not be aligned before completion
-    assert len(aligned_frames) >= len(processed_frames) - 1
-
-    for value in aligned_frames:
-        [primary, secondary] = value
-        diff = abs(primary.ts - secondary.ts)
-        print(
-            f"Aligned pair: primary={primary.ts:.6f}, secondary={secondary.ts:.6f}, diff={diff:.6f}s"
+        aligned_frames = (
+            align_timestamped(fake_video_processor, video_raw).pipe(ops.to_list()).run()
         )
-        assert diff <= 0.05
+
+        assert len(raw_frames) == 30
+        assert len(processed_frames) > 2
+        assert len(aligned_frames) > 2
+
+        # Due to async processing, the last frame might not be aligned before completion
+        assert len(aligned_frames) >= len(processed_frames) - 1
+
+        for value in aligned_frames:
+            [primary, secondary] = value
+            diff = abs(primary.ts - secondary.ts)
+            print(
+                f"Aligned pair: primary={primary.ts:.6f}, secondary={secondary.ts:.6f}, diff={diff:.6f}s"
+            )
+            assert diff <= 0.05
+    finally:
+        # Always shutdown the scheduler to clean up threads
+        test_scheduler.executor.shutdown(wait=True)
+        # Give threads time to finish cleanup
+        time.sleep(0.2)

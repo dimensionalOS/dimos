@@ -56,6 +56,7 @@ class GpsNavSkillContainer(SkillContainer):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._disposables.dispose()
+        self.stop()
         return False
 
     def _on_gps_location(self, location: LatLon) -> None:

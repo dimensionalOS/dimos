@@ -51,7 +51,6 @@ class UnitreeSkillContainer(Module):
 
         # Dynamically generate skills from UNITREE_WEBRTC_CONTROLS
         self._generate_unitree_skills()
-        super().__init__()
 
     def _generate_unitree_skills(self):
         """Dynamically generate skills from the UNITREE_WEBRTC_CONTROLS list."""

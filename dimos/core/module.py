@@ -97,10 +97,14 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer):
     def _close_module(self):
         self._close_rpc()
         if hasattr(self, "_loop") and self._loop_thread:
-            self._loop.call_soon_threadsafe(self._loop.stop)
+            if self._loop_thread.is_alive():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+                self._loop_thread.join(timeout=2)
             self._loop = None
-            self._loop_thread.join(timeout=2)
             self._loop_thread = None
+        if hasattr(self, "_tf") and self._tf is not None:
+            self._tf.stop()
+            self._tf = None
         if hasattr(self, "_disposables"):
             self._disposables.dispose()
 

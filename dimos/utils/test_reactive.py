@@ -17,6 +17,7 @@ import time
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
+from reactivex.scheduler import ThreadPoolScheduler
 from typing import Callable, TypeVar, Any
 from reactivex.disposable import Disposable
 from dimos.utils.reactive import (
@@ -74,54 +75,62 @@ def dispose_spy(source: rx.Observable[T]) -> rx.Observable[T]:
 
 
 def test_backpressure_handling():
-    received_fast = []
-    received_slow = []
-    # Create an observable that emits numpy arrays instead of integers
-    source = dispose_spy(
-        rx.interval(0.1).pipe(ops.map(lambda i: np.array([i, i + 1, i + 2])), ops.take(50))
-    )
+    # Create a dedicated scheduler for this test to avoid thread leaks
+    test_scheduler = ThreadPoolScheduler(max_workers=8)
+    try:
+        received_fast = []
+        received_slow = []
+        # Create an observable that emits numpy arrays instead of integers
+        source = dispose_spy(
+            rx.interval(0.1).pipe(ops.map(lambda i: np.array([i, i + 1, i + 2])), ops.take(50))
+        )
 
-    # Wrap with backpressure handling
-    safe_source = backpressure(source)
+        # Wrap with backpressure handling
+        safe_source = backpressure(source, scheduler=test_scheduler)
 
-    # Fast sub
-    subscription1 = safe_source.subscribe(lambda x: received_fast.append(x))
+        # Fast sub
+        subscription1 = safe_source.subscribe(lambda x: received_fast.append(x))
 
-    # Slow sub (shouldn't block above)
-    subscription2 = safe_source.subscribe(lambda x: (time.sleep(0.25), received_slow.append(x)))
+        # Slow sub (shouldn't block above)
+        subscription2 = safe_source.subscribe(lambda x: (time.sleep(0.25), received_slow.append(x)))
 
-    time.sleep(2.5)
+        time.sleep(2.5)
 
-    subscription1.dispose()
-    assert not source.is_disposed(), "Observable should not be disposed yet"
-    subscription2.dispose()
-    time.sleep(0.1)
-    assert source.is_disposed(), "Observable should be disposed"
+        subscription1.dispose()
+        assert not source.is_disposed(), "Observable should not be disposed yet"
+        subscription2.dispose()
+        # Wait longer to ensure background threads finish processing
+        # (the slow subscriber sleeps for 0.25s, so we need to wait at least that long)
+        time.sleep(0.5)
+        assert source.is_disposed(), "Observable should be disposed"
 
-    # Check results
-    print("Fast observer received:", len(received_fast), [arr[0] for arr in received_fast])
-    print("Slow observer received:", len(received_slow), [arr[0] for arr in received_slow])
+        # Check results
+        print("Fast observer received:", len(received_fast), [arr[0] for arr in received_fast])
+        print("Slow observer received:", len(received_slow), [arr[0] for arr in received_slow])
 
-    # Fast observer should get all or nearly all items
-    assert len(received_fast) > 15, (
-        f"Expected fast observer to receive most items, got {len(received_fast)}"
-    )
+        # Fast observer should get all or nearly all items
+        assert len(received_fast) > 15, (
+            f"Expected fast observer to receive most items, got {len(received_fast)}"
+        )
 
-    # Slow observer should get fewer items due to backpressure handling
-    assert len(received_slow) < len(received_fast), (
-        "Slow observer should receive fewer items than fast observer"
-    )
-    # Specifically, processing at 0.25s means ~4 items per second, so expect 8-10 items
-    assert 7 <= len(received_slow) <= 11, f"Expected 7-11 items, got {len(received_slow)}"
+        # Slow observer should get fewer items due to backpressure handling
+        assert len(received_slow) < len(received_fast), (
+            "Slow observer should receive fewer items than fast observer"
+        )
+        # Specifically, processing at 0.25s means ~4 items per second, so expect 8-10 items
+        assert 7 <= len(received_slow) <= 11, f"Expected 7-11 items, got {len(received_slow)}"
 
-    # The slow observer should skip items (not process them in sequence)
-    # We test this by checking that the difference between consecutive arrays is sometimes > 1
-    has_skips = False
-    for i in range(1, len(received_slow)):
-        if received_slow[i][0] - received_slow[i - 1][0] > 1:
-            has_skips = True
-            break
-    assert has_skips, "Slow observer should skip items due to backpressure"
+        # The slow observer should skip items (not process them in sequence)
+        # We test this by checking that the difference between consecutive arrays is sometimes > 1
+        has_skips = False
+        for i in range(1, len(received_slow)):
+            if received_slow[i][0] - received_slow[i - 1][0] > 1:
+                has_skips = True
+                break
+        assert has_skips, "Slow observer should skip items due to backpressure"
+    finally:
+        # Always shutdown the scheduler to clean up threads
+        test_scheduler.executor.shutdown(wait=True)
 
 
 def test_getter_streaming_blocking():
@@ -145,6 +154,7 @@ def test_getter_streaming_blocking():
     assert getter()[0] >= 4, f"Expected array with first value >= 4, got {getter()}"
 
     getter.dispose()
+    time.sleep(0.3)  # Wait for background interval timer threads to finish
     assert source.is_disposed(), "Observable should be disposed"
 
 
@@ -153,6 +163,7 @@ def test_getter_streaming_blocking_timeout():
     with pytest.raises(Exception):
         getter = getter_streaming(source, timeout=0.1)
         getter.dispose()
+    time.sleep(0.3)  # Wait for background interval timer threads to finish
     assert source.is_disposed()
 
 
@@ -177,6 +188,7 @@ def test_getter_streaming_nonblocking():
     assert getter() >= 4, f"Expected value >= 4, got {getter()}"
 
     getter.dispose()
+    time.sleep(0.3)  # Wait for background interval timer threads to finish
     assert source.is_disposed(), "Observable should be disposed"
 
 
@@ -188,15 +200,32 @@ def test_getter_streaming_nonblocking_timeout():
 
     assert not source.is_disposed(), "is not disposed, this is a job of the caller"
 
+    # Clean up the subscription to avoid thread leak
+    getter.dispose()
+    time.sleep(0.3)  # Wait for background threads to finish
+    assert source.is_disposed(), "Observable should be disposed after cleanup"
+
 
 def test_getter_ondemand():
-    source = dispose_spy(rx.interval(0.1).pipe(ops.take(50)))
-    getter = getter_ondemand(source)
-    assert source.is_disposed(), "Observable should be disposed"
-    assert min_time(getter, 0.05) == 0, f"Expected to get the first value of 0, got {getter()}"
-    assert source.is_disposed(), "Observable should be disposed"
-    assert getter() == 0, f"Expected to get the first value of 0, got {getter()}"
-    assert source.is_disposed(), "Observable should be disposed"
+    # Create a controlled scheduler to avoid thread leaks from rx.interval
+    test_scheduler = ThreadPoolScheduler(max_workers=4)
+    try:
+        source = dispose_spy(rx.interval(0.1, scheduler=test_scheduler).pipe(ops.take(50)))
+        getter = getter_ondemand(source)
+        assert source.is_disposed(), "Observable should be disposed"
+        result = min_time(getter, 0.05)
+        assert result == 0, f"Expected to get the first value of 0, got {result}"
+        # Wait for background threads to clean up
+        time.sleep(0.3)
+        assert source.is_disposed(), "Observable should be disposed"
+        result2 = getter()
+        assert result2 == 0, f"Expected to get the first value of 0, got {result2}"
+        assert source.is_disposed(), "Observable should be disposed"
+        # Wait for threads to finish
+        time.sleep(0.3)
+    finally:
+        # Explicitly shutdown the scheduler to clean up threads
+        test_scheduler.executor.shutdown(wait=True)
 
 
 def test_getter_ondemand_timeout():
@@ -205,6 +234,8 @@ def test_getter_ondemand_timeout():
     with pytest.raises(Exception):
         getter()
     assert source.is_disposed(), "Observable should be disposed"
+    # Wait for background interval timer threads to finish
+    time.sleep(0.3)
 
 
 def test_callback_to_observable():

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import json
 from typing import Any, Optional
 
 
@@ -33,3 +34,17 @@ def truncate_display_string(arg: Any, max: Optional[int] = None) -> str:
         return string
 
     return string[:max_chars] + "...(truncated)..."
+
+
+def extract_json_from_llm_response(response: str) -> Any:
+    start_idx = response.find("{")
+    end_idx = response.rfind("}") + 1
+
+    if start_idx >= 0 and end_idx > start_idx:
+        json_str = response[start_idx:end_idx]
+        try:
+            return json.loads(json_str)
+        except Exception:
+            pass
+
+    return None
