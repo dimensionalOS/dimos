@@ -27,7 +27,6 @@ from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos_lcm.std_msgs import String
-from dimos.navigation.local_planner.local_planner import BaseLocalPlanner
 from dimos.navigation.bt_navigator.goal_validator import find_safe_goal
 from dimos.navigation.bt_navigator.recovery_server import RecoveryServer
 from dimos.protocol.tf import TF

@@ -24,10 +24,11 @@ import logging
 from typing import Optional
 
 from dimos import core
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs import Image, CameraInfo, PointCloud2
+from dimos.msgs.sensor_msgs import CameraInfo, PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
@@ -241,8 +242,12 @@ class UnitreeG1(Robot):
             )
 
         # Configure ZED LCM transports (same for both real and fake)
-        self.zed_camera.color_image.transport = core.LCMTransport("/zed/color_image", Image)
-        self.zed_camera.depth_image.transport = core.LCMTransport("/zed/depth_image", Image)
+        self.zed_camera.color_image.transport = core.pSHMTransport(
+            "/zed/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        )
+        self.zed_camera.depth_image.transport = core.pSHMTransport(
+            "/zed/depth_image", default_capacity=DEFAULT_CAPACITY_DEPTH_IMAGE
+        )
         self.zed_camera.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
         self.zed_camera.pose.transport = core.LCMTransport("/zed/pose", PoseStamped)
 
@@ -257,7 +262,12 @@ class UnitreeG1(Robot):
         # Note: robot_pose connection removed since odom was removed from G1ConnectionModule
 
         # Deploy Foxglove bridge
-        self.foxglove_bridge = FoxgloveBridge()
+        self.foxglove_bridge = FoxgloveBridge(
+            shm_channels=[
+                "/zed/color_image#sensor_msgs.Image",
+                "/zed/depth_image#sensor_msgs.Image",
+            ]
+        )
 
     def _deploy_joystick(self):
         """Deploy joystick control module."""
