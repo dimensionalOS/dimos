@@ -17,7 +17,6 @@ import logging
 import os
 import pickle
 import re
-import shutil
 import time
 from pathlib import Path
 from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
@@ -108,13 +107,13 @@ class SensorReplay(Generic[T]):
 
 
 class SensorStorage(Generic[T]):
-    """Generic sensor data storage utility
-    .
-        Creates a directory in the test data directory and stores pickled sensor data.
+    """Generic sensor data storage utility.
 
-        Args:
-            name: The name of the storage directory
-            autocast: Optional function that takes data and returns a processed result before storage.
+    Creates a directory in the test data directory and stores pickled sensor data.
+
+    Args:
+        name: The name of the storage directory
+        autocast: Optional function that takes data and returns a processed result before storage.
     """
 
     def __init__(self, name: str, autocast: Optional[Callable[[T], Any]] = None):
@@ -136,10 +135,6 @@ class SensorStorage(Generic[T]):
         else:
             # Create the directory
             self.root_dir.mkdir(parents=True, exist_ok=True)
-
-    def consume_stream(self, observable: Observable[Union[T, Any]]) -> None:
-        """Consume an observable stream of sensor data without saving."""
-        return observable.subscribe(self.save_one)
 
     def save_stream(self, observable: Observable[Union[T, Any]]) -> Observable[int]:
         """Save an observable stream of sensor data to pickle files."""
@@ -301,25 +296,19 @@ class TimedSensorReplay(SensorReplay[T]):
         def _subscribe(observer, scheduler=None):
             from reactivex.disposable import CompositeDisposable, Disposable
 
-            scheduler = scheduler or TimeoutScheduler()
-            disp = CompositeDisposable()
+            scheduler = scheduler or TimeoutScheduler()  # default thread-based
 
             iterator = self.iterate_ts(
                 seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
             )
 
-            # Get first message
             try:
-                first_ts, first_data = next(iterator)
+                prev_ts, first_data = next(iterator)
             except StopIteration:
                 observer.on_completed()
                 return Disposable()
 
-            # Establish timing reference
-            start_local_time = time.time()
-            start_replay_time = first_ts
-
-            # Emit first sample immediately
+            # Emit the first sample immediately
             observer.on_next(first_data)
 
             disp = CompositeDisposable()
@@ -330,24 +319,23 @@ class TimedSensorReplay(SensorReplay[T]):
                     return
 
                 try:
-                    next_message = next(iterator)
+                    ts, data = next(iterator)
                 except StopIteration:
                     completed[0] = True
                     observer.on_completed()
                     return
 
-                # Calculate absolute emission time
-                target_time = start_local_time + (ts - start_replay_time) / speed
-                delay = max(0.0, target_time - time.time())
+                delay = max(0.0, ts - prev_timestamp) / speed
 
                 def _action(sc, _state=None):
                     if not completed[0]:
                         observer.on_next(data)
                         emit_next(ts)  # schedule the following sample
 
-                disp.add(scheduler.schedule_relative(delay, lambda sc, _: emit()))
+                # Schedule the next emission relative to previous timestamp
+                disp.add(scheduler.schedule_relative(delay, _action))
 
-            schedule_emission(next_message)
+            emit_next(prev_ts)
 
             def dispose():
                 completed[0] = True
