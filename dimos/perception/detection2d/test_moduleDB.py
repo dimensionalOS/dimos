@@ -13,6 +13,7 @@
 # limitations under the License.
 import time
 
+import pytest
 from lcm_msgs.foxglove_msgs import SceneUpdate
 
 from dimos.core import LCMTransport
@@ -27,6 +28,7 @@ from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigat
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 
 
+@pytest.mark.module
 def test_moduleDB(dimos_cluster):
     connection = deploy_connection(dimos_cluster)
 

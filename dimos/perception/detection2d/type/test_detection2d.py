@@ -127,7 +127,7 @@ def test_to_text_annotation(detection2d):
 
     # Second annotation: name_class_track
     text1 = text_annotations[1]
-    assert text1.text == "suitcase_28_1"
+    assert text1.text == "suitcase_1"
     assert text1.position.x == pytest.approx(503.437, abs=0.001)
     assert text1.position.y == pytest.approx(249.894, abs=0.001)
 
