@@ -402,12 +402,7 @@ def align_timestamped(
             on_primary, on_error=observer.on_error, on_completed=observer.on_completed
         )
 
-        # Return cleanup function
-        def dispose():
-            for sub in secondary_subs:
-                sub.dispose()
-            primary_sub.dispose()
-
-        return dispose
+        # Return cleanup disposable
+        return CompositeDisposable(primary_sub, *secondary_subs)
 
     return create(subscribe)

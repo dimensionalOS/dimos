@@ -15,3 +15,15 @@
 from pathlib import Path
 
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
+
+"""
+Constants for shared memory
+Usually, auto-detection for size would be preferred. Sadly, though, channels are made
+and frozen *before* the first frame is received.
+Therefore, a maximum capacity for color image and depth image transfer should be defined
+ahead of time.
+"""
+# Default color image size: 1920x1080 frame x 3 (RGB) x uint8
+DEFAULT_CAPACITY_COLOR_IMAGE = 1920 * 1080 * 3
+# Default depth image size: 1280x720 frame * 4 (float32 size)
+DEFAULT_CAPACITY_DEPTH_IMAGE = 1280 * 720 * 4

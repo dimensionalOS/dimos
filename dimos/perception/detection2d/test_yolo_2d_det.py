@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 import reactivex as rx
 from reactivex import operators as ops
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.stream.video_provider import VideoProvider
@@ -38,6 +39,8 @@ class TestYolo2DDetector:
 
     def test_yolo_detector_process_image(self):
         """Test YOLO detector can process video frames and return detection results."""
+        # Create a dedicated scheduler for this test to avoid thread leaks
+        test_scheduler = ThreadPoolScheduler(max_workers=6)
         try:
             # Import data inside method to avoid pytest fixture confusion
             from dimos.utils.data import get_data
@@ -48,7 +51,9 @@ class TestYolo2DDetector:
 
             # Create video provider and directly get a video stream observable
             assert os.path.exists(video_path), f"Test video not found: {video_path}"
-            video_provider = VideoProvider(dev_name="test_video", video_source=video_path)
+            video_provider = VideoProvider(
+                dev_name="test_video", video_source=video_path, pool_scheduler=test_scheduler
+            )
             # Process more frames for thorough testing
             video_stream = video_provider.capture_video_as_observable(realtime=False, fps=15)
 
@@ -113,6 +118,9 @@ class TestYolo2DDetector:
             # Clean up subscription
             subscription.dispose()
             video_provider.dispose_all()
+            detector.stop()
+            # Shutdown the scheduler to clean up threads
+            test_scheduler.executor.shutdown(wait=True)
             # Check that we got detection results
             if len(results) == 0:
                 pytest.skip("Skipping test due to error: Failed to get any detection results")
@@ -170,7 +178,15 @@ class TestYolo2DDetector:
                 )
 
         except Exception as e:
+            # Ensure cleanup happens even on exception
+            if "detector" in locals():
+                detector.stop()
+            if "video_provider" in locals():
+                video_provider.dispose_all()
             pytest.skip(f"Skipping test due to error: {e}")
+        finally:
+            # Always shutdown the scheduler
+            test_scheduler.executor.shutdown(wait=True)
 
 
 if __name__ == "__main__":

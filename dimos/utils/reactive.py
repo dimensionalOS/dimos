@@ -83,14 +83,42 @@ class LatestReader(Generic[T]):
 
 def getter_ondemand(observable: Observable[T], timeout: Optional[float] = 30.0) -> T:
     def getter():
+        result = []
+        error = []
+        event = threading.Event()
+
+        def on_next(value):
+            result.append(value)
+            event.set()
+
+        def on_error(e):
+            error.append(e)
+            event.set()
+
+        def on_completed():
+            event.set()
+
+        # Subscribe and wait for first value
+        subscription = observable.pipe(ops.first()).subscribe(
+            on_next=on_next, on_error=on_error, on_completed=on_completed
+        )
+
         try:
-            # Wait for first value with optional timeout
-            value = observable.pipe(
-                ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])
-            ).run()
-            return value
-        except Exception as e:
-            raise Exception(f"No value received after {timeout} seconds") from e
+            if timeout is not None:
+                if not event.wait(timeout):
+                    raise TimeoutError(f"No value received after {timeout} seconds")
+            else:
+                event.wait()
+
+            if error:
+                raise error[0]
+
+            if not result:
+                raise Exception("Observable completed without emitting a value")
+
+            return result[0]
+        finally:
+            subscription.dispose()
 
     return getter
 

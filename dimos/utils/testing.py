@@ -322,39 +322,38 @@ class TimedSensorReplay(SensorReplay[T]):
             # Emit first sample immediately
             observer.on_next(first_data)
 
-            # Pre-load next message
-            try:
-                next_message = next(iterator)
-            except StopIteration:
-                observer.on_completed()
-                return disp
+            disp = CompositeDisposable()
+            completed = [False]  # Use list to allow mutation in nested function
 
-            def schedule_emission(message):
-                nonlocal next_message
-                ts, data = message
+            def emit_next(prev_timestamp):
+                if completed[0]:
+                    return
 
-                # Pre-load the following message while we have time
                 try:
                     next_message = next(iterator)
                 except StopIteration:
-                    next_message = None
+                    completed[0] = True
+                    observer.on_completed()
+                    return
 
                 # Calculate absolute emission time
                 target_time = start_local_time + (ts - start_replay_time) / speed
                 delay = max(0.0, target_time - time.time())
 
-                def emit():
-                    observer.on_next(data)
-                    if next_message is not None:
-                        schedule_emission(next_message)
-                    else:
-                        observer.on_completed()
+                def _action(sc, _state=None):
+                    if not completed[0]:
+                        observer.on_next(data)
+                        emit_next(ts)  # schedule the following sample
 
                 disp.add(scheduler.schedule_relative(delay, lambda sc, _: emit()))
 
             schedule_emission(next_message)
 
-            return disp
+            def dispose():
+                completed[0] = True
+                disp.dispose()
+
+            return Disposable(dispose)
 
         from reactivex import create
 

@@ -23,13 +23,14 @@ from typing import Dict, List, Optional, Any
 
 import numpy as np
 import cv2
-from reactivex import Observable, disposable, just, interval
+from reactivex import Observable, disposable, interval
 from reactivex import operators as ops
 from datetime import datetime
+from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core import In, Module, rpc
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.geometry_msgs import Vector3, Quaternion, Pose, PoseStamped
+from dimos.msgs.geometry_msgs import Vector3, Pose, PoseStamped
 from dimos.utils.logging_config import setup_logger
 from dimos.agents.memory.spatial_vector_db import SpatialVectorDB
 from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
@@ -190,13 +191,20 @@ class SpatialMemory(Module):
         def set_odom(odom_msg: PoseStamped):
             self._latest_odom = odom_msg
 
-        self.video.subscribe(set_video)
-        self.odom.subscribe(set_odom)
+        unsub = self.video.subscribe(set_video)
+        self._disposables.add(Disposable(unsub))
+        unsub = self.odom.subscribe(set_odom)
+        self._disposables.add(Disposable(unsub))
 
         # Start periodic processing using interval
-        interval(self._process_interval).subscribe(lambda _: self._process_frame())
+        unsub = interval(self._process_interval).subscribe(lambda _: self._process_frame())
+        self._disposables.add(Disposable(unsub))
 
         logger.info("SpatialMemory module started and subscribed to LCM streams")
+
+    @rpc
+    def stop(self):
+        self._close_module()
 
     def _process_frame(self):
         """Process the latest frame with pose data if available."""

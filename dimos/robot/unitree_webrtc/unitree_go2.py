@@ -25,6 +25,7 @@ from typing import List, Optional
 from reactivex import Observable
 
 from dimos import core
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
 from dimos.msgs.std_msgs import Header
@@ -45,6 +46,7 @@ from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.utils.monitoring import UtilizationModule
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
@@ -80,18 +82,6 @@ logging.getLogger("root").setLevel(logging.WARNING)
 # Suppress warnings
 warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
-
-"""
-Constants for shared memory
-Usually, auto-detection for size would be preferred. Sadly, though, channels are made
-and frozen *before* the first frame is received.
-Therefore, a maximum capacity for color image and depth image transfer should be defined
-ahead of time.
-"""
-# Default color image size: 1920x1080 frame x 3 (RGB) x uint8
-DEFAULT_CAPACITY_COLOR_IMAGE = 1920 * 1080 * 3
-# Default depth image size: 1280x720 frame * 4 (float32 size)
-DEFAULT_CAPACITY_DEPTH_IMAGE = 1280 * 720 * 4
 
 
 class FakeRTC:
@@ -362,6 +352,7 @@ class UnitreeGo2(UnitreeRobot):
         self.spatial_memory_module = None
         self.depth_module = None
         self.object_tracker = None
+        self.utilization_module = None
 
         self._setup_directories()
 
@@ -410,6 +401,22 @@ class UnitreeGo2(UnitreeRobot):
         logger.info("UnitreeGo2 initialized and started")
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
 
+    def stop(self):
+        # self.connection.stop()
+        # self.mapper.stop()
+        # self.global_planner.stop()
+        # self.local_planner.stop()
+        # self.navigator.stop()
+        # self.frontier_explorer.stop()
+        # self.websocket_vis.stop()
+        # self.foxglove_bridge.stop()
+        self.spatial_memory_module.stop()
+        # self.depth_module.stop()
+        # self.object_tracker.stop()
+        self.utilization_module.stop()
+        self.dimos.close_all()
+        self.lcm.stop()
+
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
         self.connection = self.dimos.deploy(
@@ -419,7 +426,9 @@ class UnitreeGo2(UnitreeRobot):
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
         self.connection.gps_location.transport = core.pLCMTransport("/gps_location")
-        self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
+        self.connection.video.transport = core.pSHMTransport(
+            "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        )
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
         self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
         self.connection.camera_pose.transport = core.LCMTransport("/go2/camera_pose", PoseStamped)
@@ -496,7 +505,12 @@ class UnitreeGo2(UnitreeRobot):
         self.websocket_vis.path.connect(self.global_planner.path)
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
 
-        self.foxglove_bridge = FoxgloveBridge()
+        self.foxglove_bridge = FoxgloveBridge(
+            shm_channels=[
+                "/go2/color_image#sensor_msgs.Image",
+                "/go2/depth_image#sensor_msgs.Image",
+            ]
+        )
 
         # TODO: This should be moved.
         def _set_goal(goal: LatLon):
@@ -515,7 +529,9 @@ class UnitreeGo2(UnitreeRobot):
             output_dir=self.spatial_memory_dir,
         )
 
-        self.spatial_memory_module.video.transport = core.LCMTransport("/go2/color_image", Image)
+        self.spatial_memory_module.video.transport = core.pSHMTransport(
+            "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        )
         self.spatial_memory_module.odom.transport = core.LCMTransport(
             "/go2/camera_pose", PoseStamped
         )
@@ -527,6 +543,8 @@ class UnitreeGo2(UnitreeRobot):
             ObjectTracking,
             frame_id="camera_link",
         )
+
+        self.utilization_module = self.dimos.deploy(UtilizationModule)
 
         # Set up transports
         self.object_tracker.detection2darray.transport = core.LCMTransport(
@@ -547,8 +565,12 @@ class UnitreeGo2(UnitreeRobot):
         self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
 
         # Set up transports
-        self.depth_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
-        self.depth_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
+        self.depth_module.color_image.transport = core.pSHMTransport(
+            "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        )
+        self.depth_module.depth_image.transport = core.pSHMTransport(
+            "/go2/depth_image", default_capacity=DEFAULT_CAPACITY_DEPTH_IMAGE
+        )
         self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
 
         logger.info("Camera module deployed and connected")
@@ -573,6 +595,7 @@ class UnitreeGo2(UnitreeRobot):
         self.spatial_memory_module.start()
         self.depth_module.start()
         self.object_tracker.start()
+        self.utilization_module.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -750,9 +773,11 @@ def main():
 
     try:
         while True:
-            time.sleep(1)
+            time.sleep(0.1)
     except KeyboardInterrupt:
         logger.info("Shutting down...")
+    finally:
+        robot.stop()
 
 
 if __name__ == "__main__":

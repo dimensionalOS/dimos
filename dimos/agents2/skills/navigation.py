@@ -17,11 +17,13 @@ from typing import Any, Optional
 import cv2
 from reactivex import Observable
 
+from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs import Image
+from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_location import RobotLocation
-from dimos.models.qwen.video_query import BBox, get_bbox_from_qwen_frame
+from dimos.models.qwen.video_query import BBox
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
@@ -46,6 +48,7 @@ class NavigationSkillContainer(SkillContainer):
         self._video_stream = video_stream
         self._similarity_threshold = 0.23
         self._started = False
+        self._vl_model = QwenVlModel()
 
     def __enter__(self) -> "NavigationSkillContainer":
         unsub = self._video_stream.subscribe(self._on_video)
@@ -55,6 +58,7 @@ class NavigationSkillContainer(SkillContainer):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._disposables.dispose()
+        self.stop()
         return False
 
     def _on_video(self, image: Image) -> None:
@@ -174,7 +178,7 @@ class NavigationSkillContainer(SkillContainer):
         if frame is None:
             return None
 
-        return get_bbox_from_qwen_frame(frame, object_name=query)
+        return get_object_bbox_from_image(self._vl_model, frame, query)
 
     def _navigate_using_semantic_map(self, query: str) -> str:
         results = self._robot.spatial_memory.query_by_text(query)
