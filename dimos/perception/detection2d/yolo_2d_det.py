@@ -26,7 +26,6 @@ from dimos.perception.detection2d.utils import (
 from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.path_utils import get_project_root
 
 logger = setup_logger("dimos.perception.detection2d.yolo_2d_det")
 
@@ -104,7 +103,7 @@ class Yolo2DDetector:
         """
         return plot_results(image, bboxes, track_ids, class_ids, confidences, names)
 
-    def cleanup(self):
+    def stop(self):
         """
         Clean up resources used by the detector, including tracker threads.
         """
