@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, TypedDict
+from typing import Callable, Optional, TypedDict
 
 import pytest
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
@@ -21,13 +21,8 @@ from dimos_lcm.sensor_msgs import CameraInfo, PointCloud2
 from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 
 from dimos.core import start
-from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import Transform
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection2d.module2D import Detection2DModule
-from dimos.perception.detection2d.module3D import Detection3DModule
-from dimos.perception.detection2d.type import ImageDetections2D, ImageDetections3D
-from dimos.protocol.service import lcmservice as lcm
+from dimos.perception.detection2d.testing import Moment, Moment2D, Moment3D
 from dimos.protocol.tf import TF
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -41,3 +36,60 @@ def dimos_cluster():
     dimos = start(5)
     yield dimos
     dimos.stop()
+
+
+@pytest.fixture(scope="module")
+def tf():
+    return TF(autostart=False)
+
+
+@pytest.fixture(scope="module")
+def get_moment(tf):
+    def moment_provider(**kwargs) -> Moment:
+        seek = kwargs.get("seek", 10.0)
+
+        data_dir = "unitree_go2_lidar_corrected"
+        get_data(data_dir)
+
+        lidar_frame = TimedSensorReplay(f"{data_dir}/lidar").find_closest_seek(seek)
+
+        image_frame = TimedSensorReplay(
+            f"{data_dir}/video",
+        ).find_closest(lidar_frame.ts)
+
+        image_frame.frame_id = "camera_optical"
+
+        odom_frame = TimedSensorReplay(f"{data_dir}/odom", autocast=Odometry.from_msg).find_closest(
+            lidar_frame.ts
+        )
+
+        transforms = ConnectionModule._odom_to_tf(odom_frame)
+
+        tf.receive_transform(*transforms)
+        return {
+            "odom_frame": odom_frame,
+            "lidar_frame": lidar_frame,
+            "image_frame": image_frame,
+            "camera_info": ConnectionModule._camera_info(),
+            "transforms": transforms,
+            "tf": tf,
+        }
+
+    return moment_provider
+
+
+@pytest.fixture(scope="module")
+def get_moment_2d(get_moment) -> Callable[[], Moment2D]:
+    module = Detection2DModule()
+
+    def moment_provider(**kwargs) -> Moment2D:
+        moment = get_moment(**kwargs)
+        detections = module.process_image_frame(moment.get("image_frame"))
+
+        return {
+            **moment,
+            "detections2d": detections,
+        }
+
+    yield moment_provider
+    module._close_module()
