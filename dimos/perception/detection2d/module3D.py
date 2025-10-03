@@ -45,7 +45,6 @@ class Detection3DModule(Detection2DModule):
     def __init__(self, camera_info: CameraInfo, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.camera_info = camera_info
-        Detection2DModule.__init__(self, *args, **kwargs)
 
     def process_frame(
         self,
