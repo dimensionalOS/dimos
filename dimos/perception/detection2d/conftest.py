@@ -123,10 +123,5 @@ def get_moment_3d(get_moment_2d) -> Callable[[], Moment2D]:
         }
 
     yield moment_provider
-
-    print("Closing 3D detection module")
+    print("Closing 3D detection module", module)
     module._close_module()
-    module.stop()
-    import time
-
-    time.sleep(1)
