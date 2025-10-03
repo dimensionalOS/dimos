@@ -57,9 +57,6 @@ class Moment3D(Moment):
     detections3d: ImageDetections3D
 
 
-tf = TF()
-
-
 def get_g1_moment(**kwargs):
     seek = kwargs.get("seek", 10.0)
 

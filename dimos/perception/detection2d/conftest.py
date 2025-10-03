@@ -12,35 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Optional, TypedDict
+from typing import Callable
 
 import pytest
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
-from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
-from dimos_lcm.sensor_msgs import CameraInfo, PointCloud2
-from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 
-from dimos.core import start
 from dimos.perception.detection2d.module2D import Detection2DModule
-from dimos.perception.detection2d.testing import Moment, Moment2D, Moment3D
+from dimos.perception.detection2d.module3D import Detection3DModule
+from dimos.perception.detection2d.testing import Moment, Moment2D
+from dimos.perception.detection2d.type import Detection2D, Detection3D
 from dimos.protocol.tf import TF
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
 
 
 @pytest.fixture
-def dimos_cluster():
-    dimos = start(5)
-    yield dimos
-    dimos.stop()
-
-
-@pytest.fixture
 def tf():
-    return TF(autostart=False)
+    t = TF(autostart=False)
+    yield t
+    t.stop()
 
 
 @pytest.fixture
@@ -79,6 +70,21 @@ def get_moment(tf):
 
 
 @pytest.fixture
+def detection2d(get_moment_2d) -> Detection2D:
+    moment = get_moment_2d(seek=10.0)
+    assert len(moment["detections2d"]) > 0, "No detections found in the moment"
+    return moment["detections2d"][0]
+
+
+@pytest.fixture
+def detection3d(get_moment_3d) -> Detection3D:
+    moment = get_moment_3d(seek=10.0)
+    assert len(moment["detections3d"]) > 0, "No detections found in the moment"
+    print(moment["detections3d"])
+    return moment["detections3d"][0]
+
+
+@pytest.fixture
 def get_moment_2d(get_moment) -> Callable[[], Moment2D]:
     module = Detection2DModule()
 
@@ -93,3 +99,34 @@ def get_moment_2d(get_moment) -> Callable[[], Moment2D]:
 
     yield moment_provider
     module._close_module()
+
+
+@pytest.fixture
+def get_moment_3d(get_moment_2d) -> Callable[[], Moment2D]:
+    module = None
+
+    def moment_provider(**kwargs) -> Moment2D:
+        nonlocal module
+        moment = get_moment_2d(**kwargs)
+
+        module = Detection3DModule(camera_info=moment["camera_info"])
+
+        camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
+        if camera_transform is None:
+            raise ValueError("No camera_optical transform in tf")
+
+        return {
+            **moment,
+            "detections3d": module.process_frame(
+                moment["detections2d"], moment["lidar_frame"], camera_transform
+            ),
+        }
+
+    yield moment_provider
+
+    print("Closing 3D detection module")
+    module._close_module()
+    module.stop()
+    import time
+
+    time.sleep(1)
