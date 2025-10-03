@@ -25,15 +25,21 @@ import time
 from dimos import core
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
 from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3, Quaternion
-from dimos.msgs.sensor_msgs import Image, CameraInfo
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs import CameraInfo, PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.nav_bot import NavBot
+from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
+from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+from nav_msgs.msg import Odometry as ROSOdometry
+from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
 from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
@@ -68,6 +74,9 @@ class G1ConnectionModule(Module):
     """Simplified connection module for G1 - uses WebRTC for control."""
 
     movecmd: In[TwistStamped] = None
+    odom_in: In[Odometry] = None
+
+    odom_pose: Out[PoseStamped] = None
     ip: str
     connection_type: str = "webrtc"
 
@@ -79,20 +88,35 @@ class G1ConnectionModule(Module):
 
     @rpc
     def start(self):
+        """Start the connection and subscribe to sensor streams."""
+        # Use the exact same UnitreeWebRTCConnection as Go2
         self.connection = UnitreeWebRTCConnection(self.ip)
         self.movecmd.subscribe(self.move)
+        self.odom_in.subscribe(self._publish_odom_pose)
+
+    def _publish_odom_pose(self, msg: Odometry):
+        self.odom_pose.publish(
+            PoseStamped(
+                ts=msg.ts,
+                frame_id=msg.frame_id,
+                position=msg.pose.pose.position,
+                orientation=msg.pose.orientation,
+            )
+        )
 
     @rpc
     def move(self, twist_stamped: TwistStamped, duration: float = 0.0):
+        """Send movement command to robot."""
         twist = Twist(linear=twist_stamped.linear, angular=twist_stamped.angular)
         self.connection.move(twist, duration)
 
     @rpc
     def publish_request(self, topic: str, data: dict):
+        """Forward WebRTC publish requests to connection."""
         return self.connection.publish_request(topic, data)
 
 
-class UnitreeG1(Robot, NavBot):
+class UnitreeG1(Robot):
     """Unitree G1 humanoid robot."""
 
     def __init__(
@@ -105,6 +129,7 @@ class UnitreeG1(Robot, NavBot):
         replay_path: str = None,
         enable_joystick: bool = False,
         enable_connection: bool = True,
+        enable_ros_bridge: bool = True,
         enable_camera: bool = False,
     ):
         """Initialize the G1 robot.
@@ -118,22 +143,25 @@ class UnitreeG1(Robot, NavBot):
             replay_path: Path to replay recordings from (if replaying)
             enable_joystick: Enable pygame joystick control
             enable_connection: Enable robot connection module
+            enable_ros_bridge: Enable ROS bridge
             enable_camera: Enable ZED camera module
         """
-        Robot.__init__(self)
-        NavBot.__init__(self, sensor_to_base_link_transform=[0.0, 0.0, -0.04, 0.0, 0.0, 0.0])
+        super().__init__()
         self.ip = ip
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.recording_path = recording_path
         self.replay_path = replay_path
         self.enable_joystick = enable_joystick
         self.enable_connection = enable_connection
+        self.enable_ros_bridge = enable_ros_bridge
         self.enable_camera = enable_camera
         self.websocket_port = websocket_port
         self.lcm = LCM()
 
         # Initialize skill library with G1 robot type
         if skill_library is None:
+            from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
+
             skill_library = MyUnitreeSkills(robot_type="g1")
         self.skill_library = skill_library
 
@@ -141,11 +169,13 @@ class UnitreeG1(Robot, NavBot):
         self.capabilities = [RobotCapability.LOCOMOTION]
 
         # Module references
+        self.dimos = None
         self.connection = None
         self.websocket_vis = None
         self.foxglove_bridge = None
         self.spatial_memory_module = None
         self.joystick = None
+        self.ros_bridge = None
         self.zed_camera = None
 
         self._setup_directories()
@@ -200,6 +230,7 @@ class UnitreeG1(Robot, NavBot):
 
     def start(self):
         """Start the robot system with all modules."""
+        self.dimos = core.start(4)  # 2 workers for connection and visualization
 
         if self.enable_connection:
             self._deploy_connection()
@@ -212,8 +243,10 @@ class UnitreeG1(Robot, NavBot):
         if self.enable_joystick:
             self._deploy_joystick()
 
+        if self.enable_ros_bridge:
+            self._deploy_ros_bridge()
+
         self._start_modules()
-        NavBot.start(self)
 
         self.lcm.start()
 
@@ -263,7 +296,11 @@ class UnitreeG1(Robot, NavBot):
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
         self.connection = self.dimos.deploy(G1ConnectionModule, self.ip)
+
+        # Configure LCM transports
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", TwistStamped)
+        self.connection.odom_in.transport = core.LCMTransport("/state_estimation", Odometry)
+        self.connection.odom_pose.transport = core.LCMTransport("/odom", PoseStamped)
 
     def _deploy_camera(self):
         """Deploy and configure a standard webcam module."""
@@ -329,6 +366,34 @@ class UnitreeG1(Robot, NavBot):
         self.joystick.twist_out.transport = core.LCMTransport("/cmd_vel", Twist)
         logger.info("Joystick module deployed - pygame window will open")
 
+    def _deploy_ros_bridge(self):
+        """Deploy and configure ROS bridge."""
+        self.ros_bridge = ROSBridge("g1_ros_bridge")
+
+        # Add /cmd_vel topic from ROS to DIMOS
+        self.ros_bridge.add_topic(
+            "/cmd_vel", TwistStamped, ROSTwistStamped, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+
+        # Add /state_estimation topic from ROS to DIMOS
+        self.ros_bridge.add_topic(
+            "/state_estimation", Odometry, ROSOdometry, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+
+        # Add /tf topic from ROS to DIMOS
+        self.ros_bridge.add_topic(
+            "/tf", TFMessage, ROSTFMessage, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+
+        # Add /registered_scan topic from ROS to DIMOS
+        self.ros_bridge.add_topic(
+            "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+
+        logger.info(
+            "ROS bridge deployed: /cmd_vel, /state_estimation, /tf, /registered_scan (ROS → DIMOS)"
+        )
+
     def _start_modules(self):
         """Start all deployed modules."""
         self._dimos.start_all_modules()
@@ -356,9 +421,15 @@ class UnitreeG1(Robot, NavBot):
         """Shutdown the robot and clean up resources."""
         logger.info("Shutting down UnitreeG1...")
 
-        # Shutdown navigation modules from NavBot
-        NavBot.shutdown(self)
+        # Shutdown ROS bridge if it exists
+        if self.ros_bridge is not None:
+            try:
+                self.ros_bridge.shutdown()
+                logger.info("ROS bridge shut down successfully")
+            except Exception as e:
+                logger.error(f"Error shutting down ROS bridge: {e}")
 
+        # Stop other modules if needed
         if self.websocket_vis:
             try:
                 self.websocket_vis.stop()
@@ -401,22 +472,9 @@ def main():
         enable_joystick=args.joystick,
         enable_camera=args.camera,
         enable_connection=os.getenv("ROBOT_IP") is not None,
+        enable_ros_bridge=True,
     )
     robot.start()
-
-    # # test navigation
-    # pose = PoseStamped(
-    #     ts=time.time(),
-    #     frame_id="map",
-    #     position=Vector3(1.0, 1.0, 0.0),
-    #     orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    # )
-
-    # time.sleep(2)
-    # robot.navigate_to_goal(pose, blocking=False)
-
-    # time.sleep(5)
-    # robot.cancel_navigation()
 
     try:
         if args.joystick:
