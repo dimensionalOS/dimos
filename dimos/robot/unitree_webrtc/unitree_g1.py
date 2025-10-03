@@ -212,8 +212,6 @@ class UnitreeG1(Robot, NavBot):
         if self.enable_joystick:
             self._deploy_joystick()
 
-        self.deploy_navigation_modules(bridge_name="g1_ros_bridge")
-
         self._start_modules()
         NavBot.start(self)
 

@@ -54,16 +54,34 @@ logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 # then deploy this module in any other run file.
 ############################################################
 class NavigationModule(Module):
-    goal_reached: In[Bool] = None
+    """
+    Unified navigation module that handles both topic remapping and navigation control.
+    """
 
+    # Inputs
+    goal_reached: In[Bool] = None
+    odom: In[Odometry] = None
+
+    # Outputs
     goal_pose: Out[PoseStamped] = None
     cancel_goal: Out[Bool] = None
+    soft_stop: Out[Int8] = None
     joy: Out[Joy] = None
+    odom_pose: Out[PoseStamped] = None
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, sensor_to_base_link_transform=None, *args, **kwargs):
         """Initialize NavigationModule."""
         Module.__init__(self, *args, **kwargs)
         self.goal_reach = None
+        self.tf = TF()
+        self.sensor_to_base_link_transform = sensor_to_base_link_transform or [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ]
 
     @rpc
     def start(self):
@@ -79,6 +97,50 @@ class NavigationModule(Module):
     def _on_goal_reached(self, msg: Bool):
         """Handle goal reached status messages."""
         self.goal_reach = msg.data
+
+    def _publish_odom_pose(self, msg: Odometry):
+        """Remap Odometry to PoseStamped and publish transforms."""
+        # Publish pose from odometry
+        if self.odom_pose:
+            pose_msg = PoseStamped(
+                ts=msg.ts,
+                frame_id=msg.frame_id,
+                position=msg.pose.pose.position,
+                orientation=msg.pose.pose.orientation,
+            )
+            self.odom_pose.publish(pose_msg)
+
+        # Publish static transforms
+        translation = Vector3(
+            self.sensor_to_base_link_transform[0],
+            self.sensor_to_base_link_transform[1],
+            self.sensor_to_base_link_transform[2],
+        )
+        euler_angles = Vector3(
+            self.sensor_to_base_link_transform[3],
+            self.sensor_to_base_link_transform[4],
+            self.sensor_to_base_link_transform[5],
+        )
+        rotation = euler_to_quaternion(euler_angles)
+
+        sensor_to_base_link_tf = Transform(
+            translation=translation,
+            rotation=rotation,
+            frame_id="sensor",
+            child_frame_id="base_link",
+            ts=msg.ts,
+        )
+
+        # Map to world static transform
+        map_to_world_tf = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=euler_to_quaternion(Vector3(0.0, 0.0, 0.0)),
+            frame_id="map",
+            child_frame_id="world",
+            ts=msg.ts,
+        )
+
+        self.tf.publish(sensor_to_base_link_tf, map_to_world_tf)
 
     def _set_autonomy_mode(self):
         """
@@ -117,7 +179,7 @@ class NavigationModule(Module):
             logger.info(f"Setting autonomy mode via Joy message")
 
     @rpc
-    def go_to(self, pose: PoseStamped, timeout: float = 60.0) -> bool:
+    def navigate_to(self, pose: PoseStamped, timeout: float = 60.0) -> bool:
         """
         Navigate to a target pose by publishing to LCM topics.
 
@@ -135,11 +197,14 @@ class NavigationModule(Module):
 
         self.goal_reach = None
         self._set_autonomy_mode()
+
+        self.soft_stop.publish(Int8(data=0))
         self.goal_pose.publish(pose)
 
         start_time = time.time()
         while time.time() - start_time < timeout:
             if self.goal_reach is not None:
+                self.soft_stop.publish(Int8(data=2))
                 return self.goal_reach
             time.sleep(0.1)
 
@@ -161,6 +226,7 @@ class NavigationModule(Module):
         if self.cancel_goal:
             cancel_msg = Bool(data=True)
             self.cancel_goal.publish(cancel_msg)
+            self.soft_stop.publish(Int8(data=2))
             return True
 
         return False
@@ -257,7 +323,7 @@ class NavBot(Resource):
 
         self.sensor_to_base_link_transform = sensor_to_base_link_transform
         self.ros_bridge = None
-        self.topic_remap_module = None
+        self.navigation_module = None
         self.tf = TF()
         self.lcm = LCM()
 
@@ -289,8 +355,15 @@ class NavBot(Resource):
         self.topic_remap_module = self.dimos.deploy(
             TopicRemapModule, sensor_to_base_link_transform=self.sensor_to_base_link_transform
         )
-        self.topic_remap_module.odom.transport = core.LCMTransport("/odom", Odometry)
-        self.topic_remap_module.odom_pose.transport = core.LCMTransport("/odom_pose", PoseStamped)
+
+        # Configure all LCM transports for the navigation module
+        self.navigation_module.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+        self.navigation_module.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
+        self.navigation_module.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
+        self.navigation_module.soft_stop.transport = core.LCMTransport("/soft_stop", Int8)
+        self.navigation_module.joy.transport = core.LCMTransport("/joy", Joy)
+        self.navigation_module.odom.transport = core.LCMTransport("/odom", Odometry)
+        self.navigation_module.odom_pose.transport = core.LCMTransport("/odom_pose", PoseStamped)
 
         # Deploy ROS bridge
         logger.info("Deploying ROS bridge...")
@@ -361,7 +434,10 @@ class NavBot(Resource):
             ],
         )
 
-        self.lcm.publish(Topic("/joy", Joy), joy_msg)
+        # Start the navigation module
+        if self.navigation_module:
+            self.navigation_module.start()
+            logger.info("Navigation module started")
 
     def navigate_to_goal(self, pose: PoseStamped, blocking: bool = True, timeout: float = 30.0):
         """Navigate to a target pose using ROS topics.
