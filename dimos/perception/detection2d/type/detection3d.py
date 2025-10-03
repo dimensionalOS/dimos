@@ -32,8 +32,8 @@ from dimos.perception.detection2d.type.detection2d import Detection2D
 from dimos.perception.detection2d.type.imageDetections import ImageDetections
 from dimos.types.timestamped import to_ros_stamp
 
-type Detection3DFilter = Callable[
-    [Detection2D, PointCloud2, CameraInfo, Transform], Optional[Detection3D]
+Detection3DFilter = Callable[
+    [Detection2D, PointCloud2, CameraInfo, Transform], Optional["Detection3D"]
 ]
 
 
