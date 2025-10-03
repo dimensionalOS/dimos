@@ -12,19 +12,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable
+from typing import Callable, Optional, TypedDict, Union
 
 import pytest
+from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
+from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
+from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 
+from dimos.msgs.geometry_msgs import Transform
+from dimos.msgs.sensor_msgs import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
-from dimos.perception.detection2d.testing import Moment, Moment2D
-from dimos.perception.detection2d.type import Detection2D, Detection3D
+from dimos.perception.detection2d.moduleDB import ObjectDBModule
+from dimos.perception.detection2d.type import (
+    Detection2D,
+    Detection3D,
+    ImageDetections2D,
+    ImageDetections3D,
+)
 from dimos.protocol.tf import TF
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
+
+
+class Moment(TypedDict, total=False):
+    odom_frame: Odometry
+    lidar_frame: LidarMessage
+    image_frame: Image
+    camera_info: CameraInfo
+    transforms: list[Transform]
+    tf: TF
+    annotations: Optional[ImageAnnotations]
+    detections: Optional[ImageDetections3D]
+    markers: Optional[MarkerArray]
+    scene_update: Optional[SceneUpdate]
+
+
+class Moment2D(Moment):
+    detections2d: ImageDetections2D
+
+
+class Moment3D(Moment):
+    detections3d: ImageDetections3D
 
 
 @pytest.fixture
@@ -125,3 +158,52 @@ def get_moment_3d(get_moment_2d) -> Callable[[], Moment2D]:
     yield moment_provider
     print("Closing 3D detection module", module)
     module._close_module()
+
+
+@pytest.fixture
+def object_db_module(get_moment):
+    """Create and populate an ObjectDBModule with detections from multiple frames."""
+    module2d = Detection2DModule()
+    module3d = Detection3DModule(camera_info=ConnectionModule._camera_info())
+    moduleDB = ObjectDBModule(
+        camera_info=ConnectionModule._camera_info(),
+        goto=lambda obj_id: None,  # No-op for testing
+    )
+
+    # Process 5 frames to build up object history
+    for i in range(5):
+        seek_value = 10.0 + (i * 2)
+        moment = get_moment(seek=seek_value)
+
+        # Process 2D detections
+        imageDetections2d = module2d.process_image_frame(moment["image_frame"])
+
+        # Get camera transform
+        camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
+
+        # Process 3D detections
+        imageDetections3d = module3d.process_frame(
+            imageDetections2d, moment["lidar_frame"], camera_transform
+        )
+
+        # Add to database
+        moduleDB.add_detections(imageDetections3d)
+
+    yield moduleDB
+    module2d._close_module()
+    module3d._close_module()
+    moduleDB._close_module()
+
+
+@pytest.fixture
+def first_object(object_db_module):
+    """Get the first object from the database."""
+    objects = list(object_db_module.objects.values())
+    assert len(objects) > 0, "No objects found in database"
+    return objects[0]
+
+
+@pytest.fixture
+def all_objects(object_db_module):
+    """Get all objects from the database."""
+    return list(object_db_module.objects.values())
