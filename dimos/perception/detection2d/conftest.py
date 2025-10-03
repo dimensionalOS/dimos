@@ -29,7 +29,7 @@ from dimos.utils.testing import TimedSensorReplay
 
 @pytest.fixture
 def tf():
-    t = TF(autostart=False)
+    t = TF()
     yield t
     t.stop()
 
