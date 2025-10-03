@@ -162,13 +162,20 @@ class NavigationSkillContainer(SkillContainer):
 
         logger.info(f"Found {query} at {bbox}")
 
-        success = self._robot.navigate_to_object(bbox)
+        self._robot.object_tracker.track(bbox)
 
-        if not success:
-            logger.warning(f"Failed to navigate to '{query}' at {bbox}")
-            return None
+        start_time = time.time()
+        timeout = 30.0
 
-        return "Successfully navigated to object from query '{query}'."
+        while time.time() - start_time < timeout:
+            if not self._robot.object_tracker.is_tracking():
+                logger.warning(f"Lost tracking of '{query}'")
+                return None
+            time.sleep(0.5)
+
+        self._robot.object_tracker.stop_track()
+
+        return f"Successfully navigated to object from query '{query}'."
 
     def _get_bbox_for_current_frame(self, query: str) -> Optional[BBox]:
         if self._latest_image is None:
