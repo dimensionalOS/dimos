@@ -27,6 +27,7 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.detectors import Detector, Detic2DDetector, Yolo2DDetector
+from dimos.perception.detection2d.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection2d.type import (
     ImageDetections2D,
 )
@@ -36,8 +37,8 @@ from dimos.utils.reactive import backpressure
 
 @dataclass
 class Config:
-    max_freq: float = 10  # hz
-    detector: Optional[Callable[[Any], Detector]] = lambda: Yolo2DDetector(device="cuda")
+    max_freq: float = 5  # hz
+    detector: Optional[Callable[[Any], Detector]] = lambda: YoloPersonDetector()
     vlmodel: VlModel = QwenVlModel
 
 
@@ -62,17 +63,19 @@ class Detection2DModule(Module):
         self.vlm_detections_subject = Subject()
 
     def process_image_frame(self, image: Image) -> ImageDetections2D:
-        return ImageDetections2D.from_bbox_detector(image, self.detector.process_image(image))
+        # Use person detection specifically if it's a YoloPersonDetector
+        if isinstance(self.detector, YoloPersonDetector):
+            people = self.detector.detect_people(image)
+            return ImageDetections2D.from_pose_detector(image, people)
+        else:
+            # Fallback to generic dettection for other detectors
+            return ImageDetections2D.from_bbox_detector(image, self.detector.process_image(image))
 
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:
-        def spy(img):
-            return img
-
         return backpressure(
             self.image.pure_observable().pipe(
                 sharpness_barrier(self.config.max_freq),
-                ops.map(spy),
             )
         )
 

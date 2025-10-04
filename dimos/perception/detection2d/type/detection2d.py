@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
 Bbox = Tuple[float, float, float, float]
 CenteredBbox = Tuple[float, float, float, float]
+
 # yolo and detic have bad output formats
 InconvinientDetectionFormat = Tuple[List[Bbox], List[int], List[int], List[float], List[str]]
 
@@ -345,11 +346,9 @@ class ImageDetections2D(ImageDetections[Detection2D]):
         cls, image: Image, people: List["Person"], **kwargs
     ) -> "ImageDetections2D":
         """Create ImageDetections2D from a list of Person detections.
-
         Args:
             image: Source image
             people: List of Person objects with pose keypoints
-
         Returns:
             ImageDetections2D containing the pose detections
         """
