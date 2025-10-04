@@ -406,8 +406,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         self._deploy_connection()
         self._deploy_mapping()
         self._deploy_navigation()
-        # self._deploy_visualization()
-        self._deploy_foxglove_bridge()
+        self._deploy_visualization()
         self._deploy_perception()
         self._deploy_camera()
 
@@ -524,6 +523,12 @@ class UnitreeGo2(UnitreeRobot, Resource):
             ]
         )
         self.foxglove_bridge.start()
+
+        # TODO: This should be moved.
+        def _set_goal(goal: LatLon):
+            self.set_gps_travel_goal_points([goal])
+
+        unsub = self.websocket_vis.gps_goal.transport.pure_observable().subscribe(_set_goal)
 
     def _deploy_perception(self):
         """Deploy and configure perception modules."""

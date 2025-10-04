@@ -1,3 +1,5 @@
+import { EncodedOptimizedGrid, OptimizedGrid } from './optimizedCostmap';
+
 export type EncodedVector = Encoded<"vector"> & {
   c: number[];
 };
@@ -32,7 +34,7 @@ export class Path {
 }
 
 export type EncodedCostmap = Encoded<"costmap"> & {
-  grid: EncodedGrid;
+  grid: EncodedOptimizedGrid;
   origin: EncodedVector;
   resolution: number;
   origin_theta: number;
@@ -51,9 +53,22 @@ export class Costmap {
     this.origin_theta = origin_theta;
   }
 
+  private static decoder: OptimizedGrid | null = null;
+
   static decode(data: EncodedCostmap): Costmap {
+    // Use a singleton decoder to maintain state for delta updates
+    if (!Costmap.decoder) {
+      Costmap.decoder = new OptimizedGrid();
+    }
+
+    const float32Data = Costmap.decoder.decode(data.grid);
+    const shape = data.grid.shape;
+
+    // Create a Grid object from the decoded data
+    const grid = new Grid(float32Data, shape);
+
     return new Costmap(
-      Grid.decode(data.grid),
+      grid,
       Vector.decode(data.origin),
       data.resolution,
       data.origin_theta,
@@ -61,32 +76,11 @@ export class Costmap {
   }
 }
 
-const DTYPE = {
-  f32: Float32Array,
-  f64: Float64Array,
-  i32: Int32Array,
-  i8: Int8Array,
-};
-
-export type EncodedGrid = Encoded<"grid"> & {
-  shape: [number, number];
-  dtype: keyof typeof DTYPE;
-  compressed: boolean;
-  data: string;
-};
-
 export class Grid {
   constructor(
     public data: Float32Array | Float64Array | Int32Array | Int8Array,
     public shape: number[],
   ) {}
-
-  static decode(msg: EncodedGrid): Grid {
-    const bytes = Uint8Array.from(atob(msg.data), (c) => c.charCodeAt(0));
-    const raw = bytes;
-    const Arr = DTYPE[msg.dtype];
-    return new Grid(new Arr(raw.buffer), msg.shape);
-  }
 }
 
 export type Drawable = Costmap | Vector | Path;

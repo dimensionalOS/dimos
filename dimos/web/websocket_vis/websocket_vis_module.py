@@ -38,6 +38,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 from reactivex.disposable import Disposable
+from .optimized_costmap import OptimizedCostmapEncoder
 
 logger = setup_logger("dimos.web.websocket_vis")
 
@@ -93,6 +94,8 @@ class WebsocketVisModule(Module):
 
         self.vis_state = {}
         self.state_lock = threading.Lock()
+
+        self.costmap_encoder = OptimizedCostmapEncoder(chunk_size=64)
 
         logger.info(f"WebSocket visualization module initialized on port {port}")
 
@@ -183,6 +186,10 @@ class WebsocketVisModule(Module):
         async def connect(sid, environ):
             with self.state_lock:
                 current_state = dict(self.vis_state)
+
+            # Force full costmap update on new connection
+            self.costmap_encoder.last_full_grid = None
+
             await self.sio.emit("full_state", current_state, room=sid)
 
         @self.sio.event
@@ -268,20 +275,11 @@ class WebsocketVisModule(Module):
     def _process_costmap(self, costmap: OccupancyGrid) -> Dict[str, Any]:
         """Convert OccupancyGrid to visualization format."""
         costmap = costmap.inflate(0.1).gradient(max_distance=1.0)
-
-        # Convert grid data to base64 encoded string
-        grid_bytes = costmap.grid.astype(np.float32).tobytes()
-        grid_base64 = base64.b64encode(grid_bytes).decode("ascii")
+        grid_data = self.costmap_encoder.encode_costmap(costmap.grid)
 
         return {
             "type": "costmap",
-            "grid": {
-                "type": "grid",
-                "shape": [costmap.height, costmap.width],
-                "dtype": "f32",
-                "compressed": False,
-                "data": grid_base64,
-            },
+            "grid": grid_data,
             "origin": {
                 "type": "vector",
                 "c": [costmap.origin.position.x, costmap.origin.position.y, 0],
