@@ -565,19 +565,20 @@ class UnitreeGo2(UnitreeRobot):
 
     def _deploy_camera(self):
         """Deploy and configure the camera module."""
-        gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.5
-        self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
+        # gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.5
+        # self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
 
-        # Set up transports
-        self.depth_module.color_image.transport = core.pSHMTransport(
-            "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-        )
-        self.depth_module.depth_image.transport = core.pSHMTransport(
-            "/go2/depth_image", default_capacity=DEFAULT_CAPACITY_DEPTH_IMAGE
-        )
-        self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
+        # # Set up transports
+        # self.depth_module.color_image.transport = core.pSHMTransport(
+        #     "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        # )
+        # self.depth_module.depth_image.transport = core.pSHMTransport(
+        #     "/go2/depth_image", default_capacity=DEFAULT_CAPACITY_DEPTH_IMAGE
+        # )
+        # self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
 
         logger.info("Camera module deployed and connected")
+
         # Connect object tracker inputs after camera module is deployed
         if self.object_tracker:
             self.object_tracker.color_image.connect(self.connection.video)
@@ -601,7 +602,7 @@ class UnitreeGo2(UnitreeRobot):
         # self.websocket_vis.start()
         self.foxglove_bridge.start()
         self.spatial_memory_module.start()
-        self.depth_module.start()
+        # self.depth_module.start()
         self.object_tracker.start()
         self.bbox_navigator.start()
         self.utilization_module.start()

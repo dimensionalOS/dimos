@@ -28,6 +28,7 @@ from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 from dimos.utils.logging_config import setup_logger
+from dimos.navigation.bt_navigator.navigator import NavigatorState
 from reactivex.disposable import Disposable, CompositeDisposable
 
 logger = setup_logger(__file__)
@@ -112,11 +113,11 @@ class NavigationSkillContainer(SkillContainer):
         if not self._started:
             raise ValueError(f"{self} has not been started.")
 
-        success_msg = self._navigate_by_tagged_location(query)
-        if success_msg:
-            return success_msg
+        # success_msg = self._navigate_by_tagged_location(query)
+        # if success_msg:
+        #     return success_msg
 
-        logger.info(f"No tagged location found for {query}")
+        # logger.info(f"No tagged location found for {query}")
 
         success_msg = self._navigate_to_object(query)
         if success_msg:
@@ -124,9 +125,9 @@ class NavigationSkillContainer(SkillContainer):
 
         logger.info(f"No object in view found for {query}")
 
-        success_msg = self._navigate_using_semantic_map(query)
-        if success_msg:
-            return success_msg
+        # success_msg = self._navigate_using_semantic_map(query)
+        # if success_msg:
+        #     return success_msg
 
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
 
@@ -162,20 +163,41 @@ class NavigationSkillContainer(SkillContainer):
 
         logger.info(f"Found {query} at {bbox}")
 
+        # Start tracking - BBoxNavigationModule automatically generates goals
         self._robot.object_tracker.track(bbox)
 
         start_time = time.time()
         timeout = 30.0
+        goal_set = False
 
         while time.time() - start_time < timeout:
-            if not self._robot.object_tracker.is_tracking():
-                logger.warning(f"Lost tracking of '{query}'")
-                return None
-            time.sleep(0.5)
+            # Check if navigator finished
+            if self._robot.navigator.get_state() == NavigatorState.IDLE and goal_set:
+                logger.info("Waiting for goal result")
+                time.sleep(1.0)
+                if not self._robot.navigator.is_goal_reached():
+                    logger.info(f"Goal cancelled, tracking '{query}' failed")
+                    self._robot.object_tracker.stop_track()
+                    return None
+                else:
+                    logger.info(f"Reached '{query}'")
+                    self._robot.object_tracker.stop_track()
+                    return f"Successfully arrived at '{query}'"
 
+            # If goal set and tracking lost, just continue (tracker will resume or timeout)
+            if goal_set and not self._robot.object_tracker.is_tracking():
+                continue
+
+            # BBoxNavigationModule automatically sends goals when tracker publishes
+            # Just check if we have any detections to mark goal_set
+            if self._robot.object_tracker.is_tracking():
+                goal_set = True
+
+            time.sleep(0.25)
+
+        logger.warning(f"Navigation to '{query}' timed out after {timeout}s")
         self._robot.object_tracker.stop_track()
-
-        return f"Successfully navigated to object from query '{query}'."
+        return None
 
     def _get_bbox_for_current_frame(self, query: str) -> Optional[BBox]:
         if self._latest_image is None:

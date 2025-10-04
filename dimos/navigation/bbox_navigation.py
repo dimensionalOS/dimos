@@ -16,6 +16,10 @@ from dimos.core import Module, In, Out, rpc
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3, Quaternion
 from dimos_lcm.sensor_msgs import CameraInfo
+from dimos.utils.logging_config import setup_logger
+import logging
+
+logger = setup_logger(__name__, level=logging.DEBUG)
 
 
 class BBoxNavigationModule(Module):
@@ -54,5 +58,9 @@ class BBoxNavigationModule(Module):
             position=Vector3(z, -x, -y),
             orientation=Quaternion(0, 0, 0, 1),
             frame_id=det.header.frame_id,
+        )
+        logger.debug(
+            f"BBox center: ({center_x:.1f}, {center_y:.1f}) → "
+            f"Goal pose: ({z:.2f}, {-x:.2f}, {-y:.2f}) in frame '{det.header.frame_id}'"
         )
         self.goal_request.publish(goal)
