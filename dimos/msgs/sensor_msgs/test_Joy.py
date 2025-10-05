@@ -230,14 +230,3 @@ def test_edge_cases():
     assert joy3.axes == extreme_axes
 
     print("✓ Joy edge cases test passed")
-
-
-if __name__ == "__main__":
-    test_lcm_encode_decode()
-    test_initialization_methods()
-    test_equality()
-    test_string_representation()
-    if ROS_AVAILABLE:
-        test_ros_conversion()
-    test_edge_cases()
-    print("\nAll Joy tests passed! ✓")
