@@ -167,12 +167,12 @@ class AudioNormalizer(AbstractAudioTransform):
 
 if __name__ == "__main__":
     import sys
-    from dimos.stream.audio.node_microphone import (
+    from dimos.stream.audio.input.microphone import (
         SounddeviceAudioSource,
     )
-    from dimos.stream.audio.node_simulated import SimulatedAudioSource
+    from dimos.stream.audio.input.simulated import SimulatedAudioSource
     from dimos.stream.audio.node_volume_monitor import monitor
-    from dimos.stream.audio.node_output import SounddeviceAudioOutput
+    from dimos.stream.audio.output.soundcard import SounddeviceAudioOutput
     from dimos.stream.audio.utils import keepalive
 
     # Parse command line arguments

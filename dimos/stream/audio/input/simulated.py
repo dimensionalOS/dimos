@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.stream.audio.abstract import (
+from dimos.stream.audio.base import (
     AbstractAudioEmitter,
     AudioEvent,
 )
@@ -23,7 +23,7 @@ import time
 
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.stream.audio.node_simulated")
+logger = setup_logger("dimos.stream.audio.input.simulated")
 
 
 class SimulatedAudioSource(AbstractAudioEmitter):
@@ -126,9 +126,11 @@ class SimulatedAudioSource(AbstractAudioEmitter):
         elif self.channels > 2:
             wave = np.tile(wave.reshape(-1, 1), (1, self.channels))
 
-        # Convert to int16 if needed
+        # Convert to specified dtype
         if self.dtype == np.int16:
             wave = (wave * 32767).astype(np.int16)
+        elif self.dtype == np.float32:
+            wave = wave.astype(np.float32)
 
         return wave
 
@@ -200,7 +202,12 @@ class SimulatedAudioSource(AbstractAudioEmitter):
             def dispose():
                 logger.info("Stopping simulated audio")
                 self._running = False
-                if self._thread and self._thread.is_alive():
+                # Only join if we're not being called from the audio thread itself
+                if (
+                    self._thread
+                    and self._thread.is_alive()
+                    and threading.current_thread() != self._thread
+                ):
                     self._thread.join(timeout=1.0)
 
             return disposable.Disposable(dispose)
@@ -211,7 +218,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
 if __name__ == "__main__":
     from dimos.stream.audio.utils import keepalive
     from dimos.stream.audio.node_volume_monitor import monitor
-    from dimos.stream.audio.node_output import SounddeviceAudioOutput
+    from dimos.stream.audio.output.soundcard import SounddeviceAudioOutput
 
     source = SimulatedAudioSource()
     speaker = SounddeviceAudioOutput()

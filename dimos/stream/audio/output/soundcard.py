@@ -13,17 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
+
 import numpy as np
 import sounddevice as sd
 from reactivex import Observable
 
+from dimos.stream.audio.base import AbstractAudioTransform
 from dimos.utils.logging_config import setup_logger
-from dimos.stream.audio.base import (
-    AbstractAudioTransform,
-)
 
-logger = setup_logger("dimos.stream.audio.node_output")
+logger = setup_logger("dimos.stream.audio.output.soundcard")
 
 
 class SounddeviceAudioOutput(AbstractAudioTransform):
@@ -169,9 +168,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
 
 
 if __name__ == "__main__":
-    from dimos.stream.audio.node_microphone import (
-        SounddeviceAudioSource,
-    )
+    from dimos.stream.audio.input.microphone import SounddeviceAudioSource
     from dimos.stream.audio.node_normalizer import AudioNormalizer
     from dimos.stream.audio.utils import keepalive
 

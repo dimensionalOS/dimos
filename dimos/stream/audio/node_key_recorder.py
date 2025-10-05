@@ -298,10 +298,10 @@ class KeyRecorder(AbstractAudioTransform):
 
 
 if __name__ == "__main__":
-    from dimos.stream.audio.node_microphone import (
+    from dimos.stream.audio.input.microphone import (
         SounddeviceAudioSource,
     )
-    from dimos.stream.audio.node_output import SounddeviceAudioOutput
+    from dimos.stream.audio.output.soundcard import SounddeviceAudioOutput
     from dimos.stream.audio.node_volume_monitor import monitor
     from dimos.stream.audio.node_normalizer import AudioNormalizer
     from dimos.stream.audio.utils import keepalive
