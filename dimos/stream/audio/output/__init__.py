@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.stream.audio.output.soundcard import SounddeviceAudioOutput
 from dimos.stream.audio.output.gstreamer import GstreamerOutput
-from dimos.stream.audio.output.mock import MockAudioOutput
 
-__all__ = ["SounddeviceAudioOutput", "GstreamerOutput", "MockAudioOutput"]
+__all__ = ["GstreamerOutput"]

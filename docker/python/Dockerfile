@@ -32,7 +32,8 @@ RUN apt-get install -y \
     qtbase5-dev-tools \
     supervisor \
     iproute2 # for LCM networking system config \
-    liblcm-dev
+    liblcm-dev \
+    gobject-introspection gir1.2-gst-1.0 gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 
 # Fix distutils-installed packages that block pip upgrades
 RUN apt-get purge -y python3-blinker python3-sympy python3-oauthlib || true

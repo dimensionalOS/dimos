@@ -15,17 +15,19 @@
 
 from typing import Optional
 
+import gi
 import numpy as np
 from reactivex import Observable
-
-import gi
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
 gi.require_version("GstAudio", "1.0")
-from gi.repository import Gst, GstApp, GstAudio, GLib
+from gi.repository import GLib, Gst, GstApp, GstAudio
 
 from dimos.stream.audio.base import AbstractAudioTransform
+from dimos.stream.audio.input.player import FilePlayerInput
+from dimos.stream.audio.node_normalizer import AudioNormalizer
+from dimos.utils.gstreamer_manager import ensure_mainloop_running
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.stream.audio.output.gstreamer")
@@ -41,7 +43,7 @@ class GstreamerOutput(AbstractAudioTransform):
 
     def __init__(
         self,
-        sample_rate: int = 16000,
+        input_sample_rate: int = 44100,
         channels: int = 1,
         dtype: np.dtype = np.float32,
         device: Optional[str] = None,
@@ -50,14 +52,17 @@ class GstreamerOutput(AbstractAudioTransform):
         Initialize GstreamerOutput.
 
         Args:
-            sample_rate: Audio sample rate in Hz
+            input_sample_rate: Expected sample rate of input audio in Hz
             channels: Number of audio channels (1=mono, 2=stereo)
             dtype: Data type for audio samples (np.float32 or np.int16)
             device: Audio device name (None for default autoaudiosink)
         """
         Gst.init(None)
 
-        self.sample_rate = sample_rate
+        # Ensure GLib MainLoop is running for GStreamer
+        ensure_mainloop_running()
+
+        self.input_sample_rate = input_sample_rate
         self.channels = channels
         self.dtype = dtype
         self.device = device
@@ -87,6 +92,7 @@ class GstreamerOutput(AbstractAudioTransform):
 
         # Create elements
         self._appsrc = Gst.ElementFactory.make("appsrc", "audio-source")
+        queue = Gst.ElementFactory.make("queue", "buffer")
         audioconvert = Gst.ElementFactory.make("audioconvert", "convert")
         audioresample = Gst.ElementFactory.make("audioresample", "resample")
 
@@ -99,26 +105,34 @@ class GstreamerOutput(AbstractAudioTransform):
         else:
             audiosink = Gst.ElementFactory.make("autoaudiosink", "output")
 
-        if not all([self._appsrc, audioconvert, audioresample, audiosink]):
+        if not all([self._appsrc, queue, audioconvert, audioresample, audiosink]):
             raise RuntimeError("Failed to create GStreamer elements")
 
         # Configure appsrc
-        caps_str = f"audio/x-raw,format={self.audio_format},rate={self.sample_rate},channels={self.channels},layout=interleaved"
+        caps_str = f"audio/x-raw,format={self.audio_format},rate={self.input_sample_rate},channels={self.channels},layout=interleaved"
         caps = Gst.Caps.from_string(caps_str)
         self._appsrc.set_property("caps", caps)
         self._appsrc.set_property("format", Gst.Format.TIME)
-        self._appsrc.set_property("is-live", True)
+        self._appsrc.set_property("is-live", False)  # Always non-live for source-agnostic behavior
         self._appsrc.set_property("block", False)
+
+        # Configure queue for buffering
+        queue.set_property("max-size-time", 200000000)  # 200ms buffer
+        queue.set_property("max-size-buffers", 0)
+        queue.set_property("max-size-bytes", 0)
 
         # Add elements to pipeline
         self._pipeline.add(self._appsrc)
+        self._pipeline.add(queue)
         self._pipeline.add(audioconvert)
         self._pipeline.add(audioresample)
         self._pipeline.add(audiosink)
 
         # Link elements
-        if not self._appsrc.link(audioconvert):
-            raise RuntimeError("Failed to link appsrc to audioconvert")
+        if not self._appsrc.link(queue):
+            raise RuntimeError("Failed to link appsrc to queue")
+        if not queue.link(audioconvert):
+            raise RuntimeError("Failed to link queue to audioconvert")
         if not audioconvert.link(audioresample):
             raise RuntimeError("Failed to link audioconvert to audioresample")
         if not audioresample.link(audiosink):
@@ -162,7 +176,7 @@ class GstreamerOutput(AbstractAudioTransform):
         self._running = True
 
         logger.info(
-            f"Started GStreamer audio output: {self.sample_rate}Hz, "
+            f"Started GStreamer audio output: {self.input_sample_rate}Hz input, "
             f"{self.channels} channels, format={self.audio_format}"
         )
 
@@ -204,10 +218,10 @@ class GstreamerOutput(AbstractAudioTransform):
             data = audio_event.data.tobytes()
             buf = Gst.Buffer.new_wrapped(data)
 
-            # Set timestamp if available
-            if hasattr(audio_event, "timestamp") and audio_event.timestamp is not None:
-                buf.pts = int(audio_event.timestamp * Gst.SECOND)
-                buf.duration = int(len(audio_event.data) * Gst.SECOND / self.sample_rate)
+            # Set buffer duration based on sample count
+            buf.duration = int(len(audio_event.data) * Gst.SECOND / self.input_sample_rate)
+
+            # For non-live sources, we don't need timestamps as GStreamer will handle timing
 
             # Push buffer to pipeline
             ret = self._appsrc.emit("push-buffer", buf)
@@ -244,17 +258,49 @@ class GstreamerOutput(AbstractAudioTransform):
 
 
 if __name__ == "__main__":
-    from dimos.stream.audio.input.microphone import SounddeviceAudioSource
-    from dimos.stream.audio.node_normalizer import AudioNormalizer
+    import sys
+
+    from dimos.stream.audio.input.player import FilePlayerInput
     from dimos.stream.audio.utils import keepalive
+    from dimos.utils.data import get_data
 
-    # Create microphone source, normalizer and audio output
-    mic = SounddeviceAudioSource()
-    normalizer = AudioNormalizer()
-    speaker = GstreamerOutput()
+    # Test with petty_concerns.wav or command line argument
+    if len(sys.argv) > 1:
+        audio_file = sys.argv[1]
+    else:
+        try:
+            audio_file = get_data("petty_concerns.wav")
+        except Exception:
+            print("Usage: python gstreamer.py [audio_file]")
+            print("No audio file specified and petty_concerns.wav not found")
+            sys.exit(1)
 
-    # Connect the components in a pipeline
-    normalizer.consume_audio(mic.emit_audio())
-    speaker.consume_audio(normalizer.emit_audio())
+    loop = "--loop" in sys.argv
 
-    keepalive()
+    print(f"Testing GstreamerOutput with: {audio_file}")
+    print(f"Loop mode: {loop}")
+    print("Press Ctrl+C to stop")
+    print("-" * 40)
+
+    try:
+        # Create file player
+        file_player = FilePlayerInput(str(audio_file), loop=loop, sample_rate=44100)
+
+        # Create audio output
+        speaker = GstreamerOutput(input_sample_rate=44100)
+
+        normalizer = AudioNormalizer()
+
+        # Connect pipeline
+        normalizer.consume_audio(file_player.emit_audio())
+        speaker.consume_audio(normalizer.emit_audio())
+        # Keep running
+        keepalive()
+
+    except KeyboardInterrupt:
+        print("\nStopped by user")
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()

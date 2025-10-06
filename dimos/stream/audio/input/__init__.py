@@ -13,8 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.stream.audio.input.microphone import SounddeviceAudioSource
-from dimos.stream.audio.input.simulated import SimulatedAudioSource
 from dimos.stream.audio.input.gstreamer import GstreamerInput
+from dimos.stream.audio.input.player import FilePlayerInput
 
-__all__ = ["SounddeviceAudioSource", "SimulatedAudioSource", "GstreamerInput"]
+__all__ = ["GstreamerInput", "FilePlayerInput"]

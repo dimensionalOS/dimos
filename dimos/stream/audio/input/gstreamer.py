@@ -28,6 +28,7 @@ gi.require_version("GstAudio", "1.0")
 from gi.repository import Gst, GstApp, GstAudio, GLib
 
 from dimos.stream.audio.base import AbstractAudioEmitter, AudioEvent
+from dimos.utils.gstreamer_manager import ensure_mainloop_running
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.stream.audio.input.gstreamer")
@@ -62,6 +63,9 @@ class GstreamerInput(AbstractAudioEmitter):
             dtype: Data type for audio samples (np.float32 or np.int16)
         """
         Gst.init(None)
+
+        # Ensure GLib MainLoop is running for GStreamer
+        ensure_mainloop_running()
 
         self.sample_rate = sample_rate
         self.channels = channels
