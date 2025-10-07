@@ -84,6 +84,21 @@ def test_resize_parity(fmt):
     # Allow small tolerance due to float interpolation differences
     assert np.max(np.abs(cpu_res.astype(np.int16) - gpu_res.astype(np.int16))) <= 1
 
+@pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
+def test_perf_compare_alloc():
+    arr = _rand_uint8((480, 640, 3), seed=4)
+    import time
+
+    t0 = time.perf_counter()
+    for _ in range(5):
+        _ = Image.from_numpy(arr, format=ImageFormat.BGR)
+    cpu_t = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    for _ in range(5):
+        _ = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
+    gpu_t = time.perf_counter() - t0
+    print(f"alloc cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
+    assert cpu_t > 0 and gpu_t > 0
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
 def test_sharpness_parity():

@@ -33,9 +33,11 @@ from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
 
 try:
     import cupy as cp  # type: ignore
+    from cupyx.scipy import ndimage as cndimage  # type: ignore
     from cupyx.scipy import signal as csignal  # type: ignore
 except Exception:  # pragma: no cover
     cp = None  # type: ignore
+    cndimage = None  # type: ignore
     csignal = None  # type: ignore
 
 
@@ -74,54 +76,129 @@ def _rgb_to_gray_cuda(rgb):
 
 
 def _resize_bilinear_hwc_cuda(img, out_h: int, out_w: int):
-    in_h, in_w = img.shape[:2]
-    C = 1 if img.ndim == 2 else img.shape[2]
-    work = img.astype(cp.float32, copy=False)  # type: ignore
-    if C == 1 and img.ndim == 2:
-        work = work[..., None]
-    oy = cp.arange(out_h, dtype=cp.float32)  # type: ignore
-    ox = cp.arange(out_w, dtype=cp.float32)  # type: ignore
-    scale_y = in_h / out_h
-    scale_x = in_w / out_w
-    yy = (oy + 0.5) * scale_y - 0.5
-    xx = (ox + 0.5) * scale_x - 0.5
-    yy, xx = cp.meshgrid(yy, xx, indexing="ij")  # type: ignore
-    y0 = cp.floor(yy).astype(cp.int32)  # type: ignore
-    x0 = cp.floor(xx).astype(cp.int32)  # type: ignore
-    y1 = cp.clip(y0 + 1, 0, in_h - 1)
-    x1 = cp.clip(x0 + 1, 0, in_w - 1)
-    y0 = cp.clip(y0, 0, in_h - 1)
-    x0 = cp.clip(x0, 0, in_w - 1)
-    wy = yy - y0
-    wx = xx - x0
-    wy0 = 1.0 - wy
-    wx0 = 1.0 - wx
-    out = cp.empty((out_h, out_w, C), dtype=cp.float32)  # type: ignore
-    for c in range(C):
-        Ia = work[y0, x0, c]
-        Ib = work[y0, x1, c]
-        Ic = work[y1, x0, c]
-        Id = work[y1, x1, c]
-        out[..., c] = (wy0 * wx0) * Ia + (wy0 * wx) * Ib + (wy * wx0) * Ic + (wy * wx) * Id
-    if C == 1:
+    if cp is None or cndimage is None:
+        raise RuntimeError("CuPy/CUDA not available")
+    if img.ndim not in (2, 3):
+        raise ValueError("Expected HxW or HxWxC array")
+
+    work = img[..., None] if img.ndim == 2 else img
+    squeezed = work is not img
+    in_h, in_w = work.shape[:2]
+    if (in_h, in_w) == (out_h, out_w):
+        return img.copy()
+
+    zoom = (out_h / in_h, out_w / in_w, 1.0)
+    out = cndimage.zoom(
+        work.astype(cp.float32, copy=False),
+        zoom=zoom,
+        order=1,
+        mode="nearest",
+        prefilter=False,
+        grid_mode=True,
+    )
+
+    if squeezed:
         out = out[..., 0]
-    if img.dtype == cp.uint8:  # type: ignore
-        out = cp.clip(out, 0, 255).astype(cp.uint8)  # type: ignore
+    if img.dtype == cp.uint8:
+        out = cp.clip(out, 0, 255).astype(cp.uint8, copy=False)
+    elif out.dtype != img.dtype:
+        out = out.astype(img.dtype, copy=False)
     return out
 
 
-def _rodrigues_from_R_np(R: np.ndarray) -> np.ndarray:
-    trace = np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0)
-    theta = np.arccos(trace)
-    if np.isclose(theta, 0):
-        return np.zeros((3, 1), dtype=np.float64)
-    rx = R[2, 1] - R[1, 2]
-    ry = R[0, 2] - R[2, 0]
-    rz = R[1, 0] - R[0, 1]
-    r = np.array([rx, ry, rz])
-    r = r / (2.0 * np.sin(theta))
-    rvec = r * theta
-    return rvec.reshape(3, 1).astype(np.float64)
+def _rodrigues(x, inverse: bool = False):
+    """Unified Rodrigues transform (vector<->matrix) for NumPy/CuPy arrays."""
+
+    if cp is not None and (
+        isinstance(x, cp.ndarray)  # type: ignore[arg-type]
+        or getattr(x, "__cuda_array_interface__", None) is not None
+    ):
+        xp = cp
+    else:
+        xp = np
+    arr = xp.asarray(x, dtype=xp.float64)
+
+    if not inverse and arr.ndim >= 2 and arr.shape[-2:] == (3, 3):
+        inverse = True
+
+    if not inverse:
+        vec = arr
+        if vec.ndim >= 2 and vec.shape[-1] == 1:
+            vec = vec[..., 0]
+        if vec.shape[-1] != 3:
+            raise ValueError("Rodrigues expects vectors of shape (..., 3)")
+        orig_shape = vec.shape[:-1]
+        vec = vec.reshape(-1, 3)
+        n = vec.shape[0]
+        theta = xp.linalg.norm(vec, axis=1)
+        small = theta < 1e-12
+
+        def _skew(v):
+            vx, vy, vz = v[:, 0], v[:, 1], v[:, 2]
+            O = xp.zeros_like(vx)
+            return xp.stack(
+                [
+                    xp.stack([O, -vz, vy], axis=-1),
+                    xp.stack([vz, O, -vx], axis=-1),
+                    xp.stack([-vy, vx, O], axis=-1),
+                ],
+                axis=-2,
+            )
+
+        K = _skew(vec)
+        theta2 = theta * theta
+        theta4 = theta2 * theta2
+        theta_safe = xp.where(small, 1.0, theta)
+        theta2_safe = xp.where(small, 1.0, theta2)
+        A = xp.where(small, 1.0 - theta2 / 6.0 + theta4 / 120.0, xp.sin(theta) / theta_safe)[:, None, None]
+        B = xp.where(
+            small,
+            0.5 - theta2 / 24.0 + theta4 / 720.0,
+            (1.0 - xp.cos(theta)) / theta2_safe,
+        )[:, None, None]
+        I = xp.eye(3, dtype=arr.dtype)
+        I = I[None, :, :] if n == 1 else xp.broadcast_to(I, (n, 3, 3))
+        KK = xp.matmul(K, K)
+        out = I + A * K + B * KK
+        return out.reshape(orig_shape + (3, 3)) if orig_shape else out[0]
+
+    mat = arr
+    if mat.shape[-2:] != (3, 3):
+        raise ValueError("Rodrigues expects rotation matrices of shape (..., 3, 3)")
+    orig_shape = mat.shape[:-2]
+    mat = mat.reshape(-1, 3, 3)
+    trace = xp.trace(mat, axis1=1, axis2=2)
+    trace = xp.clip((trace - 1.0) / 2.0, -1.0, 1.0)
+    theta = xp.arccos(trace)
+    v = xp.stack(
+        [
+            mat[:, 2, 1] - mat[:, 1, 2],
+            mat[:, 0, 2] - mat[:, 2, 0],
+            mat[:, 1, 0] - mat[:, 0, 1],
+        ],
+        axis=1,
+    )
+    norm_v = xp.linalg.norm(v, axis=1)
+    small = theta < 1e-7
+    eps = 1e-8
+    norm_safe = xp.where(norm_v < eps, 1.0, norm_v)
+    r_general = theta[:, None] * v / norm_safe[:, None]
+    r_small = 0.5 * v
+    r = xp.where(small[:, None], r_small, r_general)
+    pi_mask = xp.abs(theta - xp.pi) < 1e-4
+    if (np.any(pi_mask) if xp is np else bool(cp.asnumpy(pi_mask).any())):
+        diag = xp.diagonal(mat, axis1=1, axis2=2)
+        axis_candidates = xp.clip((diag + 1.0) / 2.0, 0.0, None)
+        axis = xp.sqrt(axis_candidates)
+        signs = xp.sign(v)
+        axis = xp.where(signs == 0, axis, xp.copysign(axis, signs))
+        axis_norm = xp.linalg.norm(axis, axis=1)
+        axis_norm = xp.where(axis_norm < eps, 1.0, axis_norm)
+        axis = axis / axis_norm[:, None]
+        r_pi = theta[:, None] * axis
+        r = xp.where(pi_mask[:, None], r_pi, r)
+    out = r.reshape(orig_shape + (3,)) if orig_shape else r[0]
+    return out
 
 
 def _undistort_points_cuda(
@@ -278,7 +355,13 @@ class CudaImage(AbstractImage):
         return float(np.clip((np.log10(mean_mag + 1) - 1.7) / 2.0, 0.0, 1.0))
 
     # CUDA tracker (template NCC with small scale pyramid)
-    def create_csrt_tracker(self, bbox: Tuple[int, int, int, int]):
+    @dataclass
+    class BBox:
+        x: int
+        y: int
+        w: int
+        h: int
+    def create_csrt_tracker(self, bbox: BBox):
         if csignal is None:
             raise RuntimeError("cupyx.scipy.signal not available for CUDA tracker")
         x, y, w, h = map(int, bbox)
@@ -326,18 +409,8 @@ class CudaImage(AbstractImage):
                 axis=-2,
             )
 
-        def rodrigues(r):
-            theta = cp.linalg.norm(r)
-            I = cp.eye(3, dtype=cp.float64)
-            if float(theta) < 1e-12:
-                return I
-            k = r / theta
-            Kx = skew(k)
-            s, c = cp.sin(theta), cp.cos(theta)
-            return I + s * Kx + (1.0 - c) * (Kx @ Kx)
-
         for _ in range(30):
-            R = rodrigues(rvec)
+            R = _rodrigues(rvec)
             Xc = (obj @ R.T) + tvec
             X, Y, Z = Xc[:, 0], Xc[:, 1], Xc[:, 2]
             invZ = 1.0 / cp.clip(Z, 1e-9, None)
@@ -408,18 +481,8 @@ class CudaImage(AbstractImage):
                 axis=-2,
             )
 
-        def rodrigues_batch(r):
-            theta = cp.linalg.norm(r, axis=1)
-            I = cp.eye(3, dtype=cp.float64)[None, :, :].repeat(B, axis=0)
-            small = theta < 1e-12
-            k = cp.where(small[:, None], cp.zeros_like(r), r / theta[:, None])
-            Kx = skew_batch(k)
-            s = cp.sin(theta)[:, None, None]
-            c = cp.cos(theta)[:, None, None]
-            return I + s * Kx + (1.0 - c) * (Kx @ Kx)
-
         for _ in range(int(iterations)):
-            Rb = rodrigues_batch(rvecs)
+            Rb = _rodrigues(rvecs)
             Xc = cp.einsum("bij,bnj->bni", Rb, obj_b) + tvecs[:, None, :]
             X, Y, Z = Xc[:, :, 0], Xc[:, :, 1], Xc[:, :, 2]
             invZ = 1.0 / cp.clip(Z, 1e-9, None)
@@ -507,18 +570,8 @@ class CudaImage(AbstractImage):
                     axis=-2,
                 )
 
-            def rodrigues(r):
-                theta = cp.linalg.norm(r)
-                I = cp.eye(3, dtype=cp.float64)
-                if float(theta) < 1e-12:
-                    return I
-                k = r / theta
-                Kx = skew(k)
-                s, c = cp.sin(theta), cp.cos(theta)
-                return I + s * Kx + (1.0 - c) * (Kx @ Kx)
-
             for _ in range(20):
-                R = rodrigues(rvec)
+                R = _rodrigues(rvec)
                 Xc = (obj @ R.T) + tvec
                 X, Y, Z = Xc[:, 0], Xc[:, 1], Xc[:, 2]
                 invZ = 1.0 / cp.clip(Z, 1e-9, None)
@@ -559,20 +612,7 @@ class CudaImage(AbstractImage):
             # Project
             R = None
             # Rodrigues for scoring
-            theta = cp.linalg.norm(rvec)
-            if float(theta) < 1e-12:
-                R = cp.eye(3, dtype=cp.float64)
-            else:
-                k = rvec / theta
-                Kx = cp.stack(
-                    [
-                        cp.stack([0 * k[0], -k[2], k[1]]),
-                        cp.stack([k[2], 0 * k[0], -k[0]]),
-                        cp.stack([-k[1], k[0], 0 * k[0]]),
-                    ]
-                )  # not used; simplification skipped
-                # Use CPU Rodrigues for robust scoring
-                R = cp.asarray(cv2.Rodrigues(cp.asnumpy(rvec).reshape(3, 1))[0])
+            R = _rodrigues(rvec)
             Xc = (obj_all[0] @ R.T) + tvec
             invZ = 1.0 / cp.clip(Xc[:, 2], 1e-9, None)
             u_hat = fx * Xc[:, 0] * invZ + cx
