@@ -151,7 +151,9 @@ def _rodrigues(x, inverse: bool = False):
         theta4 = theta2 * theta2
         theta_safe = xp.where(small, 1.0, theta)
         theta2_safe = xp.where(small, 1.0, theta2)
-        A = xp.where(small, 1.0 - theta2 / 6.0 + theta4 / 120.0, xp.sin(theta) / theta_safe)[:, None, None]
+        A = xp.where(small, 1.0 - theta2 / 6.0 + theta4 / 120.0, xp.sin(theta) / theta_safe)[
+            :, None, None
+        ]
         B = xp.where(
             small,
             0.5 - theta2 / 24.0 + theta4 / 720.0,
@@ -187,7 +189,7 @@ def _rodrigues(x, inverse: bool = False):
     r_small = 0.5 * v
     r = xp.where(small[:, None], r_small, r_general)
     pi_mask = xp.abs(theta - xp.pi) < 1e-4
-    if (np.any(pi_mask) if xp is np else bool(cp.asnumpy(pi_mask).any())):
+    if np.any(pi_mask) if xp is np else bool(cp.asnumpy(pi_mask).any()):
         diag = xp.diagonal(mat, axis1=1, axis2=2)
         axis_candidates = xp.clip((diag + 1.0) / 2.0, 0.0, None)
         axis = xp.sqrt(axis_candidates)
@@ -362,6 +364,7 @@ class CudaImage(AbstractImage):
         y: int
         w: int
         h: int
+
     def create_csrt_tracker(self, bbox: BBox):
         if csignal is None:
             raise RuntimeError("cupyx.scipy.signal not available for CUDA tracker")
