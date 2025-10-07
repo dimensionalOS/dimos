@@ -43,3 +43,4 @@ data/*
 !data/.lfs/
 FastSAM-x.pt
 yolo11n.pt
+dimos/hardware/dim_cpp/
