@@ -17,10 +17,11 @@ import numpy as np
 import time
 import threading
 from typing import Dict, List, Optional
+import logging
 
 from dimos.core import In, Out, Module, rpc
 from dimos.msgs.std_msgs import Header
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.utils.logging_config import setup_logger
 
@@ -34,7 +35,7 @@ from dimos_lcm.vision_msgs import (
     Pose2D,
 )
 
-logger = setup_logger("dimos.perception.object_tracker_2d")
+logger = setup_logger("dimos.perception.object_tracker_2d", level=logging.INFO)
 
 
 class ObjectTracker2D(Module):
@@ -64,14 +65,20 @@ class ObjectTracker2D(Module):
         self.tracking_bbox = None  # Stores (x, y, w, h)
         self.tracking_initialized = False
 
+        # Stuck detection
+        self._last_bbox = None
+        self._stuck_count = 0
+        self._max_stuck_frames = 10  # Higher threshold for stationary objects
+
         # Frame management
         self._frame_lock = threading.Lock()
         self._latest_rgb_frame: Optional[np.ndarray] = None
+        self._frame_arrival_time: Optional[float] = None
 
         # Tracking thread control
         self.tracking_thread: Optional[threading.Thread] = None
         self.stop_tracking_event = threading.Event()
-        self.tracking_rate = 30.0  # Hz
+        self.tracking_rate = 5.0  # Hz
         self.tracking_period = 1.0 / self.tracking_rate
 
         # Store latest detection for RPC access
@@ -82,8 +89,10 @@ class ObjectTracker2D(Module):
         """Start the object tracking module and subscribe to video stream."""
 
         def on_frame(frame_msg: Image):
+            arrival_time = time.perf_counter()
             with self._frame_lock:
                 self._latest_rgb_frame = frame_msg.data
+                self._frame_arrival_time = arrival_time
 
         self.color_image.subscribe(on_frame)
         logger.info("ObjectTracker2D module started")
@@ -110,14 +119,14 @@ class ObjectTracker2D(Module):
             logger.warning(f"Invalid initial bbox provided: {bbox}. Tracking not started.")
             return {"status": "invalid_bbox"}
 
-        # Set tracking parameters
         self.tracking_bbox = (x1, y1, w, h)
         self.tracker = cv2.legacy.TrackerCSRT_create()
         self.tracking_initialized = False
         logger.info(f"Tracking target set with bbox: {self.tracking_bbox}")
 
-        # Initialize the tracker
-        init_success = self.tracker.init(self._latest_rgb_frame, self.tracking_bbox)
+        # Convert RGB to BGR for CSRT (OpenCV expects BGR)
+        frame_bgr = cv2.cvtColor(self._latest_rgb_frame, cv2.COLOR_RGB2BGR)
+        init_success = self.tracker.init(frame_bgr, self.tracking_bbox)
         if init_success:
             self.tracking_initialized = True
             logger.info("Tracker initialized successfully.")
@@ -150,6 +159,8 @@ class ObjectTracker2D(Module):
         self.tracker = None
         self.tracking_bbox = None
         self.tracking_initialized = False
+        self._last_bbox = None
+        self._stuck_count = 0
 
         # Publish empty detection
         empty_2d = Detection2DArray(
@@ -201,8 +212,10 @@ class ObjectTracker2D(Module):
                 return
             frame = self._latest_rgb_frame.copy()
 
-        # Perform tracker update
-        tracker_succeeded, bbox_cv = self.tracker.update(frame)
+        # Convert RGB to BGR for CSRT (OpenCV expects BGR)
+        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+        tracker_succeeded, bbox_cv = self.tracker.update(frame_bgr)
 
         if not tracker_succeeded:
             logger.info("Tracker update failed. Stopping track.")
@@ -213,6 +226,20 @@ class ObjectTracker2D(Module):
         x, y, w, h = map(int, bbox_cv)
         current_bbox_x1y1x2y2 = [x, y, x + w, y + h]
         x1, y1, x2, y2 = current_bbox_x1y1x2y2
+
+        # Check if tracker is stuck
+        if self._last_bbox is not None:
+            if (x1, y1, x2, y2) == self._last_bbox:
+                self._stuck_count += 1
+                if self._stuck_count >= self._max_stuck_frames:
+                    logger.warning(f"Tracker stuck for {self._stuck_count} frames. Stopping track.")
+                    self._reset_tracking_state()
+                    return
+            else:
+                self._stuck_count = 0
+
+        self._last_bbox = (x1, y1, x2, y2)
+
         center_x = (x1 + x2) / 2.0
         center_y = (y1 + y2) / 2.0
         width = float(x2 - x1)
@@ -248,21 +275,16 @@ class ObjectTracker2D(Module):
 
         # Create visualization
         viz_image = self._draw_visualization(frame, current_bbox_x1y1x2y2)
-        viz_msg = Image.from_numpy(viz_image)
+        viz_copy = viz_image.copy()  # Force copy needed to prevent frame reuse
+        viz_msg = Image.from_numpy(viz_copy, format=ImageFormat.RGB)
         self.tracked_overlay.publish(viz_msg)
 
     def _draw_visualization(self, image: np.ndarray, bbox: List[int]) -> np.ndarray:
         """Draw tracking visualization."""
         viz_image = image.copy()
-
         x1, y1, x2, y2 = bbox
-
-        # Draw bbox
         cv2.rectangle(viz_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-        # Draw status
         cv2.putText(viz_image, "TRACKING", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
         return viz_image
 
     @rpc
