@@ -69,6 +69,7 @@ def _rgb_to_gray_cuda(rgb):
     r = rgb[..., 0].astype(cp.float32)  # type: ignore
     g = rgb[..., 1].astype(cp.float32)  # type: ignore
     b = rgb[..., 2].astype(cp.float32)  # type: ignore
+    # These come from the Rec.601 conversion for YUV. R = 0.299, G = 0.587, B = 0.114
     y = 0.299 * r + 0.587 * g + 0.114 * b
     if rgb.dtype == cp.uint8:  # type: ignore
         y = cp.clip(y, 0, 255).astype(cp.uint8)  # type: ignore
