@@ -37,9 +37,10 @@ class QwenVlModel(VlModel):
                 stacklevel=2,
             )
 
-            image = Image.fromarray(image.astype("uint8"))
+            image = Image.from_numpy(image)
 
         img_base64 = image.to_base64()
+
         response = self._client.chat.completions.create(
             model=self._model_name,
             messages=[
