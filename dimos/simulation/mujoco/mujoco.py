@@ -93,7 +93,9 @@ class MujocoThread(threading.Thread):
             self.model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_right_camera"
         )
 
-        with viewer.launch_passive(self.model, self.data) as m_viewer:
+        with viewer.launch_passive(
+            self.model, self.data, show_left_ui=False, show_right_ui=False
+        ) as m_viewer:
             self._viewer = m_viewer
             camera_size = (320, 240)
 

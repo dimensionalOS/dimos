@@ -17,6 +17,12 @@ import time
 
 import numpy as np
 import pytest
+
+try:
+    from geometry_msgs.msg import TransformStamped as ROSTransformStamped
+except ImportError:
+    ROSTransformStamped = None
+
 from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from dimos_lcm.geometry_msgs import TransformStamped as LCMTransformStamped
 
@@ -421,3 +427,86 @@ def test_transform_from_pose_invalid_type():
 
     with pytest.raises(TypeError):
         Transform.from_pose(None)
+
+
+@pytest.mark.ros
+def test_transform_from_ros_transform_stamped():
+    """Test creating a Transform from a ROS TransformStamped message."""
+    ros_msg = ROSTransformStamped()
+    ros_msg.header.frame_id = "world"
+    ros_msg.header.stamp.sec = 123
+    ros_msg.header.stamp.nanosec = 456000000
+    ros_msg.child_frame_id = "robot"
+    ros_msg.transform.translation.x = 1.0
+    ros_msg.transform.translation.y = 2.0
+    ros_msg.transform.translation.z = 3.0
+    ros_msg.transform.rotation.x = 0.1
+    ros_msg.transform.rotation.y = 0.2
+    ros_msg.transform.rotation.z = 0.3
+    ros_msg.transform.rotation.w = 0.9
+
+    transform = Transform.from_ros_transform_stamped(ros_msg)
+
+    assert transform.frame_id == "world"
+    assert transform.child_frame_id == "robot"
+    assert transform.ts == 123.456
+    assert transform.translation.x == 1.0
+    assert transform.translation.y == 2.0
+    assert transform.translation.z == 3.0
+    assert transform.rotation.x == 0.1
+    assert transform.rotation.y == 0.2
+    assert transform.rotation.z == 0.3
+    assert transform.rotation.w == 0.9
+
+
+@pytest.mark.ros
+def test_transform_to_ros_transform_stamped():
+    """Test converting a Transform to a ROS TransformStamped message."""
+    transform = Transform(
+        translation=Vector3(4.0, 5.0, 6.0),
+        rotation=Quaternion(0.15, 0.25, 0.35, 0.85),
+        frame_id="base_link",
+        child_frame_id="sensor",
+        ts=124.789,
+    )
+
+    ros_msg = transform.to_ros_transform_stamped()
+
+    assert isinstance(ros_msg, ROSTransformStamped)
+    assert ros_msg.header.frame_id == "base_link"
+    assert ros_msg.child_frame_id == "sensor"
+    assert ros_msg.header.stamp.sec == 124
+    assert ros_msg.header.stamp.nanosec == 789000000
+    assert ros_msg.transform.translation.x == 4.0
+    assert ros_msg.transform.translation.y == 5.0
+    assert ros_msg.transform.translation.z == 6.0
+    assert ros_msg.transform.rotation.x == 0.15
+    assert ros_msg.transform.rotation.y == 0.25
+    assert ros_msg.transform.rotation.z == 0.35
+    assert ros_msg.transform.rotation.w == 0.85
+
+
+@pytest.mark.ros
+def test_transform_ros_roundtrip():
+    """Test round-trip conversion between Transform and ROS TransformStamped."""
+    original = Transform(
+        translation=Vector3(7.5, 8.5, 9.5),
+        rotation=Quaternion(0.0, 0.0, 0.383, 0.924),  # ~45 degrees around Z
+        frame_id="odom",
+        child_frame_id="base_footprint",
+        ts=99.123,
+    )
+
+    ros_msg = original.to_ros_transform_stamped()
+    restored = Transform.from_ros_transform_stamped(ros_msg)
+
+    assert restored.frame_id == original.frame_id
+    assert restored.child_frame_id == original.child_frame_id
+    assert restored.ts == original.ts
+    assert restored.translation.x == original.translation.x
+    assert restored.translation.y == original.translation.y
+    assert restored.translation.z == original.translation.z
+    assert restored.rotation.x == original.rotation.x
+    assert restored.rotation.y == original.rotation.y
+    assert restored.rotation.z == original.rotation.z
+    assert restored.rotation.w == original.rotation.w

@@ -14,9 +14,9 @@
 
 from __future__ import annotations
 
+import base64
 import time
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -30,6 +30,8 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
 )
 from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
 from dimos.msgs.sensor_msgs.image_impls.CudaImage import CudaImage
+from dimos_lcm.sensor_msgs.Image import Image as LCMImage
+from dimos_lcm.std_msgs.Header import Header
 
 try:
     import cupy as cp  # type: ignore
@@ -39,15 +41,13 @@ import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
-from dimos.types.timestamped import TimestampedBufferCollection
-from dimos_lcm.sensor_msgs.Image import Image as LCMImage
-from dimos_lcm.std_msgs.Header import Header
+
+from dimos.types.timestamped import TimestampedBufferCollection, to_human_readable
 
 
 class Image:
     msg_name = "sensor_msgs.Image"
 
-    # Construction
     def __init__(
         self,
         impl: AbstractImage | None = None,
@@ -97,6 +97,13 @@ class Image:
             self._impl = CudaImage(data, fmt, fid, tstamp)  # type: ignore
         else:
             self._impl = NumpyImage(np.asarray(data), fmt, fid, tstamp)
+
+    def __str__(self) -> str:
+        dev = "cuda" if self.is_cuda else "cpu"
+        return (
+            f"Image(shape={self.shape}, format={self.format.value}, dtype={self.dtype}, "
+            f"dev={dev}, ts={to_human_readable(self.ts)})"
+        )
 
     @classmethod
     def from_impl(cls, impl: AbstractImage) -> "Image":
@@ -290,8 +297,47 @@ class Image:
     def save(self, filepath: str) -> bool:
         return self._impl.save(filepath)
 
-    def to_base64(self, quality: int = 80) -> str:
-        return self._impl.to_base64(quality)
+    def to_base64(
+        self,
+        quality: int = 80,
+        *,
+        max_width: Optional[int] = None,
+        max_height: Optional[int] = None,
+    ) -> str:
+        """Encode the image as a base64 JPEG string.
+
+        Args:
+            quality: JPEG quality (0-100).
+            max_width: Optional maximum width to constrain the encoded image.
+            max_height: Optional maximum height to constrain the encoded image.
+
+        Returns:
+            Base64-encoded JPEG representation of the image.
+        """
+        bgr_image = self.to_bgr().to_opencv()
+        height, width = bgr_image.shape[:2]
+
+        scale = 1.0
+        if max_width is not None and width > max_width:
+            scale = min(scale, max_width / width)
+        if max_height is not None and height > max_height:
+            scale = min(scale, max_height / height)
+
+        if scale < 1.0:
+            new_width = max(1, int(round(width * scale)))
+            new_height = max(1, int(round(height * scale)))
+            bgr_image = cv2.resize(bgr_image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), int(np.clip(quality, 0, 100))]
+        success, buffer = cv2.imencode(".jpg", bgr_image, encode_param)
+        if not success:
+            raise ValueError("Failed to encode image as JPEG")
+
+        return base64.b64encode(buffer.tobytes()).decode("utf-8")
+
+    def agent_encode(self, quality: int = 80) -> str:
+        """Return a base64-encoded JPEG suitable for agent pipelines."""
+        return self.to_base64(quality=quality)
 
     # LCM encode/decode
     def lcm_encode(self, frame_id: Optional[str] = None) -> bytes:
@@ -404,10 +450,12 @@ def sharpness_window(target_frequency: float, source: Observable[Image]) -> Obse
     def find_best(*argv):
         if not window._items:
             return None
-        return max(window._items, key=lambda x: x.sharpness())
+
+        found = max(window._items, key=lambda x: x.sharpness())
+        return found
 
     return rx.interval(1.0 / target_frequency).pipe(
-        ops.observe_on(thread_scheduler), ops.map(find_best)
+        ops.observe_on(thread_scheduler), ops.map(find_best), ops.filter(lambda x: x is not None)
     )
 
 

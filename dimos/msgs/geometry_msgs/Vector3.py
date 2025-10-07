@@ -203,6 +203,10 @@ class Vector3(LCMVector3):
             self.x * other_vector.y - self.y * other_vector.x,
         )
 
+    def magnitude(self) -> float:
+        """Alias for length()."""
+        return self.length()
+
     def length(self) -> float:
         """Compute the Euclidean length (magnitude) of the vector."""
         return float(np.sqrt(self.x * self.x + self.y * self.y + self.z * self.z))
@@ -450,3 +454,7 @@ def to_list(value: Sequence[int | float]) -> list[float]:
 
 
 VectorLike: TypeAlias = VectorConvertable | Vector3
+
+
+def make_vector3(x: float, y: float, z: float) -> Vector3:
+    return Vector3(x, y, z)

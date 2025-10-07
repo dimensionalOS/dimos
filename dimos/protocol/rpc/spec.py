@@ -45,17 +45,19 @@ class RPCClient(Protocol):
 
     # we expect to crash if we don't get a return value after 10 seconds
     # but callers can override this timeout for extra long functions
-    def call_sync(self, name: str, arguments: Args, rpc_timeout: Optional[float] = 120.0) -> Any:
+    def call_sync(
+        self, name: str, arguments: Args, rpc_timeout: Optional[float] = 120.0
+    ) -> Tuple[Any, Callable[[], None]]:
         event = threading.Event()
 
         def receive_value(val):
             event.result = val  # attach to event
             event.set()
 
-        self.call(name, arguments, receive_value)
+        unsub_fn = self.call(name, arguments, receive_value)
         if not event.wait(rpc_timeout):
             raise TimeoutError(f"RPC call to '{name}' timed out after {rpc_timeout} seconds")
-        return event.result
+        return event.result, unsub_fn
 
     async def call_async(self, name: str, arguments: Args) -> Any:
         loop = asyncio.get_event_loop()
@@ -73,7 +75,7 @@ class RPCClient(Protocol):
 
 
 class RPCServer(Protocol):
-    def serve_rpc(self, f: Callable, name: str) -> None: ...
+    def serve_rpc(self, f: Callable, name: str) -> Callable[[], None]: ...
 
     def serve_module_rpc(self, module: RPCInspectable, name: Optional[str] = None):
         for fname in module.rpcs.keys():
@@ -84,7 +86,7 @@ class RPCServer(Protocol):
                 return getattr(module, fname)(*args, **kwargs)
 
             topic = name + "/" + fname
-            self.serve_rpc(override_f, topic)
+            unsub_fn = self.serve_rpc(override_f, topic)
 
 
 class RPCSpec(RPCServer, RPCClient): ...

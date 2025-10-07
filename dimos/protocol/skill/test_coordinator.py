@@ -61,7 +61,7 @@ class SkillContainerTest(Module):
     def current_time(self, frequency: Optional[float] = 10) -> Generator[str, None, None]:
         """Provides current time."""
         while True:
-            yield datetime.datetime.now()
+            yield str(datetime.datetime.now())
             time.sleep(1 / frequency)
 
     @skill(stream=Stream.passive, reducer=Reducer.latest)
@@ -81,7 +81,7 @@ class SkillContainerTest(Module):
     def take_photo(self) -> str:
         """Takes a camera photo"""
         print("Taking photo...")
-        img = Image.from_file(get_data("cafe.jpg"))
+        img = Image.from_file(get_data("cafe-smol.jpg"))
         print("Photo taken.")
         return img
 
@@ -126,8 +126,9 @@ async def test_coordinator_parallel_calls():
 
 @pytest.mark.asyncio
 async def test_coordinator_generator():
+    container = SkillContainerTest()
     skillCoordinator = SkillCoordinator()
-    skillCoordinator.register_skills(SkillContainerTest())
+    skillCoordinator.register_skills(container)
     skillCoordinator.start()
 
     # here we call a skill that generates a sequence of messages
@@ -144,4 +145,5 @@ async def test_coordinator_generator():
 
     print("coordinator loop finished")
     print(skillCoordinator)
+    container._close_module()
     skillCoordinator.stop()

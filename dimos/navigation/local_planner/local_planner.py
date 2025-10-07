@@ -25,7 +25,7 @@ from abc import abstractmethod
 from typing import Optional
 
 from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import Twist, Vector3, PoseStamped
+from dimos.msgs.geometry_msgs import Twist, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance, quaternion_to_euler, normalize_angle
@@ -200,3 +200,8 @@ class BaseLocalPlanner(Module):
         self.cmd_vel.publish(stop_cmd)
 
         logger.info("Local planner stopped")
+
+    @rpc
+    def stop_planner_module(self):
+        self.stop()
+        self._close_module()

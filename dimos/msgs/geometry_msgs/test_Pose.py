@@ -18,6 +18,15 @@ import numpy as np
 import pytest
 from dimos_lcm.geometry_msgs import Pose as LCMPose
 
+try:
+    from geometry_msgs.msg import Pose as ROSPose
+    from geometry_msgs.msg import Point as ROSPoint
+    from geometry_msgs.msg import Quaternion as ROSQuaternion
+except ImportError:
+    ROSPose = None
+    ROSPoint = None
+    ROSQuaternion = None
+
 from dimos.msgs.geometry_msgs.Pose import Pose, to_pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -747,3 +756,55 @@ def test_pose_addition_3d_rotation():
     assert np.isclose(result.position.x, 1.0, atol=1e-10)  # X unchanged
     assert np.isclose(result.position.y, cos45 - sin45, atol=1e-10)
     assert np.isclose(result.position.z, sin45 + cos45, atol=1e-10)
+
+
+@pytest.mark.ros
+def test_pose_from_ros_msg():
+    """Test creating a Pose from a ROS Pose message."""
+    ros_msg = ROSPose()
+    ros_msg.position = ROSPoint(x=1.0, y=2.0, z=3.0)
+    ros_msg.orientation = ROSQuaternion(x=0.1, y=0.2, z=0.3, w=0.9)
+
+    pose = Pose.from_ros_msg(ros_msg)
+
+    assert pose.position.x == 1.0
+    assert pose.position.y == 2.0
+    assert pose.position.z == 3.0
+    assert pose.orientation.x == 0.1
+    assert pose.orientation.y == 0.2
+    assert pose.orientation.z == 0.3
+    assert pose.orientation.w == 0.9
+
+
+@pytest.mark.ros
+def test_pose_to_ros_msg():
+    """Test converting a Pose to a ROS Pose message."""
+    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
+
+    ros_msg = pose.to_ros_msg()
+
+    assert isinstance(ros_msg, ROSPose)
+    assert ros_msg.position.x == 1.0
+    assert ros_msg.position.y == 2.0
+    assert ros_msg.position.z == 3.0
+    assert ros_msg.orientation.x == 0.1
+    assert ros_msg.orientation.y == 0.2
+    assert ros_msg.orientation.z == 0.3
+    assert ros_msg.orientation.w == 0.9
+
+
+@pytest.mark.ros
+def test_pose_ros_roundtrip():
+    """Test round-trip conversion between Pose and ROS Pose."""
+    original = Pose(1.5, 2.5, 3.5, 0.15, 0.25, 0.35, 0.85)
+
+    ros_msg = original.to_ros_msg()
+    restored = Pose.from_ros_msg(ros_msg)
+
+    assert restored.position.x == original.position.x
+    assert restored.position.y == original.position.y
+    assert restored.position.z == original.position.z
+    assert restored.orientation.x == original.orientation.x
+    assert restored.orientation.y == original.orientation.y
+    assert restored.orientation.z == original.orientation.z
+    assert restored.orientation.w == original.orientation.w

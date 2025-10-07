@@ -13,6 +13,7 @@
 # limitations under the License.
 import asyncio
 import inspect
+import threading
 from dataclasses import dataclass
 from typing import (
     Any,
@@ -22,6 +23,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
+from reactivex.disposable import CompositeDisposable
 
 from dask.distributed import Actor, get_worker
 
@@ -30,29 +32,36 @@ from dimos.core.core import T, rpc
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable
-from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.tf import LCMTF, TFSpec
 
 
-def get_loop() -> asyncio.AbstractEventLoop:
-    try:
-        # here we attempt to figure out if we are running on a dask worker
-        # if so we use the dask worker _loop as ours,
-        # and we register our RPC server
-        worker = get_worker()
-        if worker.loop:
-            return worker.loop
+def get_loop() -> tuple[asyncio.AbstractEventLoop, Optional[threading.Thread]]:
+    # we are actually instantiating a new loop here
+    # to not interfere with an existing dask loop
 
-    except ValueError:
-        ...
+    # try:
+    #     # here we attempt to figure out if we are running on a dask worker
+    #     # if so we use the dask worker _loop as ours,
+    #     # and we register our RPC server
+    #     worker = get_worker()
+    #     if worker.loop:
+    #         print("using dask worker loop")
+    #         return worker.loop.asyncio_loop
+
+    # except ValueError:
+    #     ...
 
     try:
-        return asyncio.get_running_loop()
+        running_loop = asyncio.get_running_loop()
+        return running_loop, None
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        return loop
+
+        thr = threading.Thread(target=loop.run_forever, daemon=True)
+        thr.start()
+        return loop, thr
 
 
 @dataclass
@@ -64,34 +73,46 @@ class ModuleConfig:
 class ModuleBase(Configurable[ModuleConfig], SkillContainer):
     _rpc: Optional[RPCSpec] = None
     _tf: Optional[TFSpec] = None
-    _loop: asyncio.AbstractEventLoop = None
+    _loop: Optional[asyncio.AbstractEventLoop] = None
+    _loop_thread: Optional[threading.Thread]
+    _disposables: CompositeDisposable
 
     default_config = ModuleConfig
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._loop = get_loop()
+        self._loop, self._loop_thread = get_loop()
+        self._disposables = CompositeDisposable()
         # we can completely override comms protocols if we want
         try:
             # here we attempt to figure out if we are running on a dask worker
             # if so we use the dask worker _loop as ours,
             # and we register our RPC server
-            worker = get_worker()
-            self._loop = worker.loop if worker else None
             self.rpc = self.config.rpc_transport()
             self.rpc.serve_module_rpc(self)
             self.rpc.start()
         except ValueError:
             ...
 
-        # assuming we are not running on a dask worker,
-        # it's our job to determine or create the event loop
-        if not self._loop:
-            try:
-                self._loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self._loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._loop)
+    def _close_module(self):
+        self._close_rpc()
+        if hasattr(self, "_loop") and self._loop_thread:
+            if self._loop_thread.is_alive():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+                self._loop_thread.join(timeout=2)
+            self._loop = None
+            self._loop_thread = None
+        if hasattr(self, "_tf") and self._tf is not None:
+            self._tf.stop()
+            self._tf = None
+        if hasattr(self, "_disposables"):
+            self._disposables.dispose()
+
+    def _close_rpc(self):
+        # Using hasattr is needed because SkillCoordinator skips ModuleBase.__init__ and self.rpc is never set.
+        if hasattr(self, "rpc") and self.rpc:
+            self.rpc.stop()
+            self.rpc = None
 
     @property
     def tf(self):

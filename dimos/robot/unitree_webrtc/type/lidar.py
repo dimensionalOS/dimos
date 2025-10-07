@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from copy import copy
 from typing import List, Optional, TypedDict
 
@@ -20,7 +21,7 @@ import open3d as o3d
 
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.robot.unitree_webrtc.type.timeseries import to_human_readable
+from dimos.types.timestamped import to_human_readable
 
 
 class RawLidarPoints(TypedDict):
@@ -64,7 +65,7 @@ class LidarMessage(PointCloud2):
         self.resolution = kwargs.get("resolution", 0.05)
 
     @classmethod
-    def from_msg(cls: "LidarMessage", raw_message: RawLidarMsg) -> "LidarMessage":
+    def from_msg(cls: "LidarMessage", raw_message: RawLidarMsg, **kwargs) -> "LidarMessage":
         data = raw_message["data"]
         points = data["data"]["points"]
         pointcloud = o3d.geometry.PointCloud()
@@ -75,14 +76,16 @@ class LidarMessage(PointCloud2):
         # to shift the pointcloud by it's origin
         #
         # pointcloud.translate((origin / 2).to_tuple())
-
-        return cls(
-            origin=origin,
-            resolution=data["resolution"],
-            pointcloud=pointcloud,
-            ts=data["stamp"],
-            raw_msg=raw_message,
-        )
+        cls_data = {
+            "origin": origin,
+            "resolution": data["resolution"],
+            "pointcloud": pointcloud,
+            # - this is broken in unitree webrtc api "stamp":1.758148e+09
+            "ts": time.time(),  # data["stamp"],
+            "raw_msg": raw_message,
+            **kwargs,
+        }
+        return cls(**cls_data)
 
     def __repr__(self):
         return f"LidarMessage(ts={to_human_readable(self.ts)}, origin={self.origin}, resolution={self.resolution}, {self.pointcloud})"

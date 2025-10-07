@@ -27,6 +27,11 @@ import lcm
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf, check_system
 from dimos.protocol.service.spec import Service
+from dimos.utils.deprecation import deprecated
+from dimos.utils.logging_config import setup_logger
+
+
+logger = setup_logger(__name__)
 
 
 @runtime_checkable
@@ -56,7 +61,6 @@ class Topic:
 
 class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
     default_config = LCMConfig
-    lc: lcm.LCM
     _stop_event: threading.Event
     _thread: Optional[threading.Thread]
     _callbacks: dict[str, list[Callable[[Any], None]]]
@@ -68,18 +72,32 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
 
     def publish(self, topic: Topic, message: bytes):
         """Publish a message to the specified channel."""
+        if self.l is None:
+            logger.error("Tried to publish after LCM was closed")
+            return
         self.l.publish(str(topic), message)
 
     def subscribe(
         self, topic: Topic, callback: Callable[[bytes, Topic], Any]
     ) -> Callable[[], None]:
+        if self.l is None:
+            logger.error("Tried to subscribe after LCM was closed")
+
+            def noop():
+                pass
+
+            return noop
+
         lcm_subscription = self.l.subscribe(str(topic), lambda _, msg: callback(msg, topic))
 
         def unsubscribe():
+            if self.l is None:
+                return
             self.l.unsubscribe(lcm_subscription)
 
         return unsubscribe
 
+    @deprecated("Listen for the lastest message directly")
     def wait_for_message(self, topic: Topic, timeout: float = 1.0) -> Any:
         """Wait for a single message on the specified topic.
 
@@ -90,6 +108,11 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
         Returns:
             The received message or None if timeout occurred
         """
+
+        if self.l is None:
+            logger.error("Tried to wait for message after LCM was closed")
+            return None
+
         received_message = None
         message_event = threading.Event()
 

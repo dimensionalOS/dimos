@@ -22,6 +22,12 @@ from typing import BinaryIO, TypeAlias
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
 from dimos_lcm.std_msgs import Header as LCMHeader
 from dimos_lcm.std_msgs import Time as LCMTime
+
+try:
+    from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+except ImportError:
+    ROSPoseStamped = None
+
 from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -109,3 +115,44 @@ class PoseStamped(Pose, Timestamped):
             translation=local_translation,
             rotation=relative_rotation,
         )
+
+    @classmethod
+    def from_ros_msg(cls, ros_msg: ROSPoseStamped) -> "PoseStamped":
+        """Create a PoseStamped from a ROS geometry_msgs/PoseStamped message.
+
+        Args:
+            ros_msg: ROS PoseStamped message
+
+        Returns:
+            PoseStamped instance
+        """
+        # Convert timestamp from ROS header
+        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
+
+        # Convert pose
+        pose = Pose.from_ros_msg(ros_msg.pose)
+
+        return cls(
+            ts=ts,
+            frame_id=ros_msg.header.frame_id,
+            position=pose.position,
+            orientation=pose.orientation,
+        )
+
+    def to_ros_msg(self) -> ROSPoseStamped:
+        """Convert to a ROS geometry_msgs/PoseStamped message.
+
+        Returns:
+            ROS PoseStamped message
+        """
+        ros_msg = ROSPoseStamped()
+
+        # Set header
+        ros_msg.header.frame_id = self.frame_id
+        ros_msg.header.stamp.sec = int(self.ts)
+        ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1_000_000_000)
+
+        # Set pose
+        ros_msg.pose = Pose.to_ros_msg(self)
+
+        return ros_msg

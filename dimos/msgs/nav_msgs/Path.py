@@ -27,6 +27,11 @@ from dimos_lcm.nav_msgs import Path as LCMPath
 from dimos_lcm.std_msgs import Header as LCMHeader
 from dimos_lcm.std_msgs import Time as LCMTime
 
+try:
+    from nav_msgs.msg import Path as ROSPath
+except ImportError:
+    ROSPath = None
+
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
@@ -187,3 +192,44 @@ class Path(Timestamped):
     def clear(self) -> None:
         """Clear all poses from this path (mutable)."""
         self.poses.clear()
+
+    @classmethod
+    def from_ros_msg(cls, ros_msg: ROSPath) -> "Path":
+        """Create a Path from a ROS nav_msgs/Path message.
+
+        Args:
+            ros_msg: ROS Path message
+
+        Returns:
+            Path instance
+        """
+
+        # Convert timestamp from ROS header
+        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
+
+        # Convert poses
+        poses = []
+        for ros_pose_stamped in ros_msg.poses:
+            poses.append(PoseStamped.from_ros_msg(ros_pose_stamped))
+
+        return cls(ts=ts, frame_id=ros_msg.header.frame_id, poses=poses)
+
+    def to_ros_msg(self) -> ROSPath:
+        """Convert to a ROS nav_msgs/Path message.
+
+        Returns:
+            ROS Path message
+        """
+
+        ros_msg = ROSPath()
+
+        # Set header
+        ros_msg.header.frame_id = self.frame_id
+        ros_msg.header.stamp.sec = int(self.ts)
+        ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1_000_000_000)
+
+        # Convert poses
+        for pose in self.poses:
+            ros_msg.poses.append(pose.to_ros_msg())
+
+        return ros_msg

@@ -1,0 +1,27 @@
+# for cv2.VideoCapture and cutting only half of the frame
+image_width: 640
+image_height: 376
+camera_name: zed_webcam_single
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [379.45267,   0.     , 302.43516,
+           0.     , 380.67871, 228.00954,
+           0.     ,   0.     ,   1.     ]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [-0.309435, 0.092185, -0.009059, 0.003708, 0.000000]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1., 0., 0.,
+         0., 1., 0.,
+         0., 0., 1.]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [291.12888,   0.     , 304.94086,   0.     ,
+           0.     , 347.95022, 231.8885 ,   0.     ,
+           0.     ,   0.     ,   1.     ,   0.     ]

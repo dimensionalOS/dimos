@@ -14,18 +14,20 @@
 from __future__ import annotations
 
 import time
+import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Generic, Literal, Optional, TypeVar
 
 from dimos.types.timestamped import Timestamped
+from dimos.utils.generic import truncate_display_string
 
 # This file defines protocol messages used for communication between skills and agents
 
 
 class Output(Enum):
     standard = 0
-    separate_message = 1  # e.g., for images, videos, files, etc.
+    human = 1
     image = 2  # this is same as separate_message, but maybe clearer for users
 
 
@@ -139,15 +141,15 @@ class SkillMsg(Timestamped, Generic[M]):
         if self.type == MsgType.start:
             return f"Start({time_ago:.1f}s ago)"
         if self.type == MsgType.ret:
-            return f"Ret({time_ago:.1f}s ago, val={self.content})"
+            return f"Ret({time_ago:.1f}s ago, val={truncate_display_string(self.content)})"
         if self.type == MsgType.error:
-            return f"Error({time_ago:.1f}s ago, val={self.content})"
+            return f"Error({time_ago:.1f}s ago, val={truncate_display_string(self.content)})"
         if self.type == MsgType.pending:
             return f"Pending({time_ago:.1f}s ago)"
         if self.type == MsgType.stream:
-            return f"Stream({time_ago:.1f}s ago, val={self.content})"
+            return f"Stream({time_ago:.1f}s ago, val={truncate_display_string(self.content)})"
         if self.type == MsgType.reduced_stream:
-            return f"Stream({time_ago:.1f}s ago, val={self.content})"
+            return f"Stream({time_ago:.1f}s ago, val={truncate_display_string(self.content)})"
 
 
 # typing looks complex but it's a standard reducer function signature, using SkillMsgs
@@ -251,9 +253,19 @@ def accumulate_dict(
     return _make_skill_msg(msg, {**acc_value, **msg.content})
 
 
+def accumulate_string(
+    accumulator: Optional[SkillMsg[Literal[MsgType.reduced_stream]]],
+    msg: SkillMsg[Literal[MsgType.stream]],
+) -> SkillMsg[Literal[MsgType.reduced_stream]]:
+    """All reducer that collects all values into a list."""
+    acc_value = accumulator.content if accumulator else ""
+    return _make_skill_msg(msg, acc_value + "\n" + msg.content)
+
+
 class Reducer:
     sum = sum_reducer
     latest = latest_reducer
     all = all_reducer
     accumulate_list = accumulate_list
     accumulate_dict = accumulate_dict
+    string = accumulate_string

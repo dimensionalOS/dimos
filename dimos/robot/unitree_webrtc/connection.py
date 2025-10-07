@@ -33,6 +33,7 @@ from reactivex.subject import Subject
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Pose, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.robot.connection_interface import ConnectionInterface
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -73,6 +74,8 @@ class UnitreeWebRTCConnection:
     def __init__(self, ip: str, mode: str = "ai"):
         self.ip = ip
         self.mode = mode
+        self.stop_timer = None
+        self.cmd_vel_timeout = 0.2
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
         self.connect()
 
@@ -127,7 +130,7 @@ class UnitreeWebRTCConnection:
         async def async_move():
             self.conn.datachannel.pub_sub.publish_without_callback(
                 RTC_TOPIC["WIRELESS_CONTROLLER"],
-                data={"lx": y, "ly": x, "rx": -yaw, "ry": 0},
+                data={"lx": -y, "ly": x, "rx": -yaw, "ry": 0},
             )
 
         async def async_move_duration():
@@ -138,6 +141,15 @@ class UnitreeWebRTCConnection:
             while time.time() - start_time < duration:
                 await async_move()
                 await asyncio.sleep(sleep_time)
+
+        # Cancel existing timer and start a new one
+        if self.stop_timer:
+            self.stop_timer.cancel()
+
+        # Auto-stop after 0.5 seconds if no new commands
+        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop)
+        self.stop_timer.daemon = True
+        self.stop_timer.start()
 
         try:
             if duration > 0:
@@ -197,7 +209,7 @@ class UnitreeWebRTCConnection:
     def lidar_stream(self) -> Subject[LidarMessage]:
         return backpressure(
             self.raw_lidar_stream().pipe(
-                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame))
+                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame, ts=time.time()))
             )
         )
 
@@ -209,6 +221,20 @@ class UnitreeWebRTCConnection:
     @functools.cache
     def odom_stream(self) -> Subject[Pose]:
         return backpressure(self.raw_odom_stream().pipe(ops.map(Odometry.from_msg)))
+
+    @functools.cache
+    def video_stream(self) -> Observable[Image]:
+        return backpressure(
+            self.raw_video_stream().pipe(
+                ops.filter(lambda frame: frame is not None),
+                ops.map(
+                    lambda frame: Image.from_numpy(
+                        frame.to_ndarray(format="rgb24"),
+                        frame_id="camera_optical",
+                    )
+                ),
+            )
+        )
 
     @functools.cache
     def lowstate_stream(self) -> Subject[LowStateMsg]:
@@ -253,8 +279,8 @@ class UnitreeWebRTCConnection:
             },
         )
 
-    @functools.cache
-    def raw_video_stream(self) -> Subject[VideoMessage]:
+    @functools.lru_cache(maxsize=None)
+    def raw_video_stream(self) -> Observable[VideoMessage]:
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
 
@@ -286,14 +312,6 @@ class UnitreeWebRTCConnection:
 
         return subject.pipe(ops.finally_action(stop))
 
-    @functools.cache
-    def video_stream(self) -> Observable[VideoMessage]:
-        return backpressure(
-            self.raw_video_stream().pipe(
-                ops.map(lambda frame: Image.from_numpy(frame.to_ndarray(format="rgb24")))
-            )
-        )
-
     def get_video_stream(self, fps: int = 30) -> Observable[VideoMessage]:
         """Get the video stream from the robot's camera.
 
@@ -323,10 +341,20 @@ class UnitreeWebRTCConnection:
         Returns:
             bool: True if stop command was sent successfully
         """
+        # Cancel timer since we're explicitly stopping
+        if self.stop_timer:
+            self.stop_timer.cancel()
+            self.stop_timer = None
+
         return self.move(Twist())
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""
+        # Cancel timer
+        if self.stop_timer:
+            self.stop_timer.cancel()
+            self.stop_timer = None
+
         if hasattr(self, "task") and self.task:
             self.task.cancel()
         if hasattr(self, "conn"):

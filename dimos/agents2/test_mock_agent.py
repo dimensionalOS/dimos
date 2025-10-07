@@ -27,14 +27,12 @@ from dimos.core import LCMTransport, start
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d import Detect2DModule
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
-async def test_tool_call():
+def test_tool_call():
     """Test agent initialization and tool call execution."""
     # Create a fake model that will respond with tool calls
     fake_model = MockModel(
@@ -44,11 +42,12 @@ async def test_tool_call():
                 tool_calls=[
                     {
                         "name": "add",
-                        "args": {"args": [], "kwargs": {"x": 5, "y": 3}},
+                        "args": {"args": {"x": 5, "y": 3}},
                         "id": "tool_call_1",
                     }
                 ],
             ),
+            AIMessage(content="Let me do some math..."),
             AIMessage(content="The result of adding 5 and 3 is 8."),
         ]
     )
@@ -65,7 +64,7 @@ async def test_tool_call():
     agent.start()
 
     # Query the agent
-    await agent.query_async("Please add 5 and 3")
+    agent.query("Please add 5 and 3")
 
     # Check that tools were bound
     assert fake_model.tools is not None
@@ -77,7 +76,7 @@ async def test_tool_call():
     agent.stop()
 
 
-async def test_image_tool_call():
+def test_image_tool_call():
     """Test agent with image tool call execution."""
     dimos = start(2)
     # Create a fake model that will respond with image tool calls
@@ -88,7 +87,7 @@ async def test_image_tool_call():
                 tool_calls=[
                     {
                         "name": "take_photo",
-                        "args": {"args": [], "kwargs": {}},
+                        "args": {"args": {}},
                         "id": "tool_call_image_1",
                     }
                 ],
@@ -111,7 +110,7 @@ async def test_image_tool_call():
     agent.run_implicit_skill("get_detections")
 
     # Query the agent
-    await agent.query_async("Please take a photo")
+    agent.query("Please take a photo")
 
     # Check that tools were bound
     assert fake_model.tools is not None
@@ -129,10 +128,12 @@ async def test_image_tool_call():
     ]
     assert len(human_messages_with_images) >= 0  # May have image messages
     agent.stop()
+    test_skill_module.stop()
+    dimos.close_all()
 
 
 @pytest.mark.tool
-async def test_tool_call_implicit_detections():
+def test_tool_call_implicit_detections():
     """Test agent with image tool call execution."""
     dimos = start(2)
     # Create a fake model that will respond with image tool calls
@@ -143,7 +144,7 @@ async def test_tool_call_implicit_detections():
                 tool_calls=[
                     {
                         "name": "take_photo",
-                        "args": {"args": [], "kwargs": {}},
+                        "args": {"args": {}},
                         "id": "tool_call_image_1",
                     }
                 ],
@@ -166,15 +167,8 @@ async def test_tool_call_implicit_detections():
     robot_connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
     robot_connection.start()
 
-    detect2d = dimos.deploy(Detect2DModule)
-    detect2d.detections.transport = LCMTransport("/detections", Detection2DArray)
-    detect2d.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
-    detect2d.image.connect(robot_connection.video)
-    detect2d.start()
-
     test_skill_module = dimos.deploy(SkillContainerTest)
 
-    agent.register_skills(detect2d)
     agent.register_skills(test_skill_module)
     agent.start()
 
@@ -186,7 +180,7 @@ async def test_tool_call_implicit_detections():
     time.sleep(8.5)
 
     # Query the agent
-    await agent.query_async("Please take a photo")
+    agent.query("Please take a photo")
 
     # Check that tools were bound
     assert fake_model.tools is not None
@@ -207,5 +201,4 @@ async def test_tool_call_implicit_detections():
     agent.stop()
     test_skill_module.stop()
     robot_connection.stop()
-    detect2d.stop()
     dimos.stop()

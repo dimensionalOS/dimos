@@ -96,3 +96,5 @@ def test_robot_mapping():
     # Verify map has points
     assert len(pointcloud.points) > 0
     print(f"Map contains {len(pointcloud.points)} points")
+
+    map._close_module()

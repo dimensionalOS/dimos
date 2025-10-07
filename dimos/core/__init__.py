@@ -8,13 +8,14 @@ from rich.console import Console
 
 import dimos.core.colors as colors
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleBase
+from dimos.core.module import Module, ModuleBase, ModuleConfig
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
+from dimos.utils.actor_registry import ActorRegistry
 from dimos.core.transport import (
     LCMTransport,
+    SHMTransport,
     ZenohTransport,
     pLCMTransport,
-    SHMTransport,
     pSHMTransport,
 )
 from dimos.protocol.rpc.lcmrpc import LCMRPC
@@ -35,6 +36,20 @@ class RPCClient:
         self.actor_instance = actor_instance
         self.rpcs = actor_class.rpcs.keys()
         self.rpc.start()
+        self._unsub_fns = []
+
+    def stop_client(self):
+        for unsub in self._unsub_fns:
+            try:
+                unsub()
+            except Exception:
+                pass
+
+        self._unsub_fns = []
+
+        if self.rpc:
+            self.rpc.stop()
+            self.rpc = None
 
     def __reduce__(self):
         # Return the class and the arguments needed to reconstruct the object
@@ -63,7 +78,17 @@ class RPCClient:
             original_method = getattr(self.actor_class, name, None)
 
             def rpc_call(*args, **kwargs):
-                return self.rpc.call_sync(f"{self.remote_name}/{name}", (args, kwargs))
+                # For stop/close/shutdown, use call_nowait to avoid deadlock
+                # (the remote side stops its RPC service before responding)
+                if name in ("stop", "close", "shutdown"):
+                    if self.rpc:
+                        self.rpc.call_nowait(f"{self.remote_name}/{name}", (args, kwargs))
+                    self.stop_client()
+                    return None
+
+                result, unsub_fn = self.rpc.call_sync(f"{self.remote_name}/{name}", (args, kwargs))
+                self._unsub_fns.append(unsub_fn)
+                return result
 
             # Copy docstring and other attributes from original method
             if original_method:
@@ -78,7 +103,10 @@ class RPCClient:
         return self.actor_instance.__getattr__(name)
 
 
-def patchdask(dask_client: Client):
+DimosCluster = Client
+
+
+def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
     def deploy(
         actor_class,
         *args,
@@ -95,6 +123,9 @@ def patchdask(dask_client: Client):
 
             worker = actor.set_ref(actor).result()
             print((f"deployed: {colors.green(actor)} @ {colors.blue('worker ' + str(worker))}"))
+
+            # Register actor deployment in shared memory
+            ActorRegistry.update(str(actor), str(worker))
 
             return RPCClient(actor, actor_class)
 
@@ -151,9 +182,40 @@ def patchdask(dask_client: Client):
                 f"[bold]Total: {total_used_gb:.2f}/{total_limit_gb:.2f}GB ({total_percentage:.1f}%) across {total_workers} workers[/bold]"
             )
 
+    def close_all():
+        import time
+
+        # Get the event loop before shutting down
+        loop = dask_client.loop
+
+        # Close cluster and client
+        ActorRegistry.clear()
+        local_cluster.close()
+        dask_client.close()
+
+        # Stop the Tornado IOLoop to clean up IO loop and Profile threads
+        if loop and hasattr(loop, "add_callback") and hasattr(loop, "stop"):
+            try:
+                loop.add_callback(loop.stop)
+            except Exception:
+                pass
+
+        # Shutdown the Dask offload thread pool
+        try:
+            from distributed.utils import _offload_executor
+
+            if _offload_executor:
+                _offload_executor.shutdown(wait=False)
+        except Exception:
+            pass
+
+        # Give threads a moment to clean up
+        time.sleep(0.1)
+
     dask_client.deploy = deploy
     dask_client.check_worker_memory = check_worker_memory
-    dask_client.stop = lambda: dask_client.shutdown()
+    dask_client.stop = lambda: dask_client.close()
+    dask_client.close_all = close_all
     return dask_client
 
 
@@ -180,11 +242,4 @@ def start(n: Optional[int] = None, memory_limit: str = "auto") -> Client:
     console.print(
         f"[green]Initialized dimos local cluster with [bright_blue]{n} workers, memory limit: {memory_limit}"
     )
-    return patchdask(client)
-
-
-# this needs to go away
-# client.shutdown() is the correct shutdown method
-def stop(client: Client):
-    client.close()
-    client.cluster.close()
+    return patchdask(client, cluster)

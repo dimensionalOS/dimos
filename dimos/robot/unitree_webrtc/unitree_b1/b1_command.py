@@ -51,22 +51,27 @@ class B1Command(BaseModel):
         Returns:
             B1Command configured for the given Twist
         """
+        # Max velocities from ROS needed to clamp to joystick ranges properly
+        MAX_LINEAR_VEL = 1.0  # m/s
+        MAX_ANGULAR_VEL = 2.0  # rad/s
+
         if mode == 2:  # WALK mode - velocity control
             return cls(
-                lx=-twist.angular.z,  # ROS yaw → B1 turn (negated for correct direction)
-                ly=twist.linear.x,  # ROS forward → B1 forward
-                rx=-twist.linear.y,  # ROS lateral → B1 strafe (negated for correct direction)
+                # Scale and clamp to joystick range [-1, 1]
+                lx=max(-1.0, min(1.0, -twist.angular.z / MAX_ANGULAR_VEL)),
+                ly=max(-1.0, min(1.0, twist.linear.x / MAX_LINEAR_VEL)),
+                rx=max(-1.0, min(1.0, -twist.linear.y / MAX_LINEAR_VEL)),
                 ry=0.0,  # No pitch control in walk mode
                 mode=mode,
             )
         elif mode == 1:  # STAND mode - body pose control
             # Map Twist pose controls to B1 joystick axes
-            # G1 cpp server maps: ly→bodyHeight, lx→euler[2], rx→euler[0], ry→euler[1]
+            # Already in normalized units, just clamp to [-1, 1]
             return cls(
-                lx=-twist.angular.z,  # ROS yaw → B1 yaw (euler[2])
-                ly=twist.linear.z,  # ROS height → B1 bodyHeight
-                rx=-twist.angular.x,  # ROS roll → B1 roll (euler[0])
-                ry=twist.angular.y,  # ROS pitch → B1 pitch (euler[1])
+                lx=max(-1.0, min(1.0, -twist.angular.z)),  # ROS yaw → B1 yaw
+                ly=max(-1.0, min(1.0, twist.linear.z)),  # ROS height → B1 bodyHeight
+                rx=max(-1.0, min(1.0, -twist.angular.x)),  # ROS roll → B1 roll
+                ry=max(-1.0, min(1.0, twist.angular.y)),  # ROS pitch → B1 pitch
                 mode=mode,
             )
         else:

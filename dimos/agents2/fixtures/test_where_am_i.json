@@ -1,0 +1,21 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "where_am_i",
+          "args": {
+            "args": []
+          },
+          "id": "call_uRJLockZ5JWtGWbsSL1dpHm3",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "You are on Bourbon Street.",
+      "tool_calls": []
+    }
+  ]
+}

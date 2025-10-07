@@ -379,7 +379,6 @@ def test_mock_agent_with_images():
     """Test mock agent with images for CI."""
     # This test doesn't need API keys
 
-    from dimos.agents.agent_types import AgentResponse
     from dimos.agents.test_base_agent_text import MockAgent
 
     # Create mock agent
