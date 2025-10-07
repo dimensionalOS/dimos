@@ -235,7 +235,10 @@ class ManipulationHistory:
         return [entry for entry in self._history if entry.task.target_object == object_name]
 
     def create_task_entry(
-        self, task: ManipulationTask, result: dict[str, Any] | None = None, agent_response: str | None = None
+        self,
+        task: ManipulationTask,
+        result: dict[str, Any] | None = None,
+        agent_response: str | None = None,
     ) -> ManipulationHistoryEntry:
         """Create a new manipulation history entry.
 

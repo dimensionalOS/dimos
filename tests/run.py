@@ -282,9 +282,7 @@ stt_node = stt()
 stt_node.consume_audio(audio_subject.pipe(ops.share()))
 
 # Read system query from prompt.txt file
-with open(
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets/agent/prompt.txt")
-) as f:
+with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets/agent/prompt.txt")) as f:
     system_query = f.read()
 
 # Create a ClaudeAgent instance

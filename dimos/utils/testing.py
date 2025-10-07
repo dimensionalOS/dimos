@@ -92,9 +92,7 @@ class SensorReplay(Generic[T]):
             if not loop:
                 break
 
-    def stream(
-        self, rate_hz: float | None = None, loop: bool = False
-    ) -> Observable[T | Any]:
+    def stream(self, rate_hz: float | None = None, loop: bool = False) -> Observable[T | Any]:
         if rate_hz is None:
             return from_iterable(self.iterate(loop=loop))
 
@@ -189,9 +187,7 @@ class TimedSensorReplay(SensorReplay[T]):
                 return (data[0], self.autocast(data[1]))
             return data
 
-    def find_closest(
-        self, timestamp: float, tolerance: float | None = None
-    ) -> T | Any | None:
+    def find_closest(self, timestamp: float, tolerance: float | None = None) -> T | Any | None:
         """Find the frame closest to the given timestamp.
 
         Args:

@@ -273,7 +273,9 @@ class PointcloudFiltering:
         # Process each object and update ObjectData
         updated_objects = []
 
-        for i, (obj, _mask, pcd) in enumerate(zip(objects, processed_masks, masked_pcds, strict=False)):
+        for i, (obj, _mask, pcd) in enumerate(
+            zip(objects, processed_masks, masked_pcds, strict=False)
+        ):
             # Skip empty point clouds
             if len(np.asarray(pcd.points)) == 0:
                 continue

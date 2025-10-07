@@ -159,7 +159,9 @@ class Image(Timestamped):
         return cls(data=cv_image, format=detected_format)
 
     @classmethod
-    def from_depth(cls, depth_data: np.ndarray, frame_id: str = "", ts: float | None = None) -> "Image":
+    def from_depth(
+        cls, depth_data: np.ndarray, frame_id: str = "", ts: float | None = None
+    ) -> "Image":
         """Create Image from depth data (float32 array)."""
         if depth_data.dtype != np.float32:
             depth_data = depth_data.astype(np.float32)

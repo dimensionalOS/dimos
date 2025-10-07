@@ -414,9 +414,7 @@ class WavefrontFrontierExplorer(Module):
 
         return ranked_frontiers
 
-    def _update_exploration_direction(
-        self, robot_pose: Vector3, goal_pose: Vector3 | None = None
-    ):
+    def _update_exploration_direction(self, robot_pose: Vector3, goal_pose: Vector3 | None = None):
         """Update the current exploration direction based on robot movement or selected goal."""
         if goal_pose is not None:
             # Calculate direction from robot to goal
@@ -606,9 +604,7 @@ class WavefrontFrontierExplorer(Module):
         # Extract just the frontiers (remove scores) and return as list
         return [frontier for frontier, _ in valid_frontiers]
 
-    def get_exploration_goal(
-        self, robot_pose: Vector3, costmap: OccupancyGrid
-    ) -> Vector3 | None:
+    def get_exploration_goal(self, robot_pose: Vector3, costmap: OccupancyGrid) -> Vector3 | None:
         """
         Get the single best exploration goal using comprehensive frontier scoring.
 

@@ -41,9 +41,7 @@ class GoogleMaps:
         self._client = googlemaps.Client(key=api_key)
         self._max_nearby_places = 6
 
-    def get_position(
-        self, query: str, current_location: LatLon | None = None
-    ) -> Position | None:
+    def get_position(self, query: str, current_location: LatLon | None = None) -> Position | None:
         # Use location bias if current location is provided
         if current_location:
             geocode_results = self._client.geocode(

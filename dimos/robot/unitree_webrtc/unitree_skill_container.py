@@ -169,9 +169,7 @@ class UnitreeSkillContainer(Module):
             return f"Error: Robot not connected (cannot execute {name})"
 
         try:
-            self._robot.connection.publish_request(
-                RTC_TOPIC["SPORT_MOD"], {"api_id": api_id}
-            )
+            self._robot.connection.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": api_id})
             message = f"{name} command executed successfully (id={api_id})"
             logger.info(message)
             return message

@@ -372,9 +372,7 @@ class ZEDCamera:
 
     def capture_frame_with_pose(
         self,
-    ) -> tuple[
-        np.ndarray | None, np.ndarray | None, np.ndarray | None, dict[str, Any] | None
-    ]:
+    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, dict[str, Any] | None]:
         """
         Capture a frame with synchronized pose data.
 

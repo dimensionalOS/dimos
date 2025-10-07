@@ -155,7 +155,8 @@ class ObjectDetectionStream:
         def process_frame(frame):
             # TODO: More modular detector output interface
             bboxes, track_ids, class_ids, confidences, names, *mask_data = (
-                (*self.detector.process_image(frame), [])
+                *self.detector.process_image(frame),
+                [],
             )
 
             masks = (

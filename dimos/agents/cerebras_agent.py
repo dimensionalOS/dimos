@@ -406,7 +406,11 @@ class CerebrasAgent(LLMAgent):
         return cleaned
 
     def create_tool_call(
-        self, name: str | None = None, arguments: dict | None = None, call_id: str | None = None, content: str | None = None
+        self,
+        name: str | None = None,
+        arguments: dict | None = None,
+        call_id: str | None = None,
+        content: str | None = None,
     ):
         """Create a tool call object from either direct parameters or JSON content."""
         # If content is provided, parse it as JSON

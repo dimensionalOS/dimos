@@ -166,7 +166,9 @@ class HuggingFaceLocalAgent(LLMAgent):
                 print("Processing generated output...")
                 generated_ids = [
                     output_ids[len(input_ids) :]
-                    for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids, strict=False)
+                    for input_ids, output_ids in zip(
+                        model_inputs.input_ids, generated_ids, strict=False
+                    )
                 ]
 
                 # Convert tokens back to text

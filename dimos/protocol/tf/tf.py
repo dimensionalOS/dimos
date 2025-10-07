@@ -90,9 +90,7 @@ class TBuffer(TimestampedCollection[Transform]):
         while self._items and self._items[0].ts < cutoff_time:
             self._items.pop(0)
 
-    def get(
-        self, time_point: float | None = None, time_tolerance: float = 1.0
-    ) -> Transform | None:
+    def get(self, time_point: float | None = None, time_tolerance: float = 1.0) -> Transform | None:
         """Get transform at specified time or latest if no time given."""
         if time_point is None:
             # Return the latest transform

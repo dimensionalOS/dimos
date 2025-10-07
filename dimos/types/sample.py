@@ -427,7 +427,9 @@ class Sample(BaseModel):
         return cls(d)
 
     @classmethod
-    def from_flat_dict(cls, flat_dict: builtins.dict[str, Any], schema: builtins.dict | None = None) -> "Sample":
+    def from_flat_dict(
+        cls, flat_dict: builtins.dict[str, Any], schema: builtins.dict | None = None
+    ) -> "Sample":
         """Initialize a Sample instance from a flattened dictionary."""
         """
         Reconstructs the original JSON object from a flattened dictionary using the provided schema.

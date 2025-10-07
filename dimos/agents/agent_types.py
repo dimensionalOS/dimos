@@ -156,9 +156,7 @@ class ConversationHistory:
             self._messages.append(ConversationMessage(role="user", content=content))
             self._trim()
 
-    def add_assistant_message(
-        self, content: str, tool_calls: list[ToolCall] | None = None
-    ) -> None:
+    def add_assistant_message(self, content: str, tool_calls: list[ToolCall] | None = None) -> None:
         """Add assistant response to history.
 
         Args:

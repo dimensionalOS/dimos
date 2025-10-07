@@ -119,7 +119,12 @@ class AgentEnvironment(Environment):
         return np.array([])
 
     def generate_depth_map(
-        self, stereo: bool | None = None, monocular: bool | None = None, model: str | None = None, *args, **kwargs
+        self,
+        stereo: bool | None = None,
+        monocular: bool | None = None,
+        model: str | None = None,
+        *args,
+        **kwargs,
     ) -> np.ndarray:
         """Generate depth map for the current frame."""
         # TODO: Implement depth map generation using specified method

@@ -16,7 +16,6 @@
 Utility functions for frontier exploration visualization and testing.
 """
 
-
 import numpy as np
 from PIL import Image, ImageDraw
 

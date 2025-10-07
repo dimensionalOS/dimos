@@ -236,7 +236,9 @@ def plot_results(image, masks, bboxes, track_ids, probs, names, alpha=0.5):
     h, w = image.shape[:2]
     overlay = image.copy()
 
-    for mask, bbox, track_id, prob, name in zip(masks, bboxes, track_ids, probs, names, strict=False):
+    for mask, bbox, track_id, prob, name in zip(
+        masks, bboxes, track_ids, probs, names, strict=False
+    ):
         # Convert mask tensor to numpy if needed
         if isinstance(mask, torch.Tensor):
             mask = mask.cpu().numpy()

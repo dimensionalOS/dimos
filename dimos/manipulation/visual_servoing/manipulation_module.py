@@ -311,7 +311,11 @@ class ManipulationModule(Module):
 
     @rpc
     def pick_and_place(
-        self, target_x: int | None = None, target_y: int | None = None, place_x: int | None = None, place_y: int | None = None
+        self,
+        target_x: int | None = None,
+        target_y: int | None = None,
+        place_x: int | None = None,
+        place_y: int | None = None,
     ) -> dict[str, Any]:
         """
         Start a pick and place task.
@@ -782,9 +786,7 @@ class ManipulationModule(Module):
 
     def capture_and_process(
         self,
-    ) -> tuple[
-        np.ndarray | None, Detection3DArray | None, Detection2DArray | None, Pose | None
-    ]:
+    ) -> tuple[np.ndarray | None, Detection3DArray | None, Detection2DArray | None, Pose | None]:
         """Capture frame from camera data and process detections."""
         if self.latest_rgb is None or self.latest_depth is None or self.detector is None:
             return None, None, None, None

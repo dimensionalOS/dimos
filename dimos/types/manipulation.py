@@ -134,8 +134,8 @@ class ManipulationTask:
     timestamp: float = field(default_factory=time.time)
     task_id: str = ""
     result: dict[str, Any] | None = None  # Any result data from the task execution
-    constraints: list[AbstractConstraint] | ManipulationTaskConstraint | AbstractConstraint = (
-        field(default_factory=list)
+    constraints: list[AbstractConstraint] | ManipulationTaskConstraint | AbstractConstraint = field(
+        default_factory=list
     )
 
     def add_constraint(self, constraint: AbstractConstraint):

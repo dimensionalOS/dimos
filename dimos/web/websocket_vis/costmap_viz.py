@@ -17,7 +17,6 @@ Simple costmap wrapper for visualization purposes.
 This is a minimal implementation to support websocket visualization.
 """
 
-
 import numpy as np
 
 from dimos.msgs.nav_msgs import OccupancyGrid

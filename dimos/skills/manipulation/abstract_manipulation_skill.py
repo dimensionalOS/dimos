@@ -14,7 +14,6 @@
 
 """Abstract base class for manipulation skills."""
 
-
 from dimos.manipulation.manipulation_interface import ManipulationInterface
 from dimos.robot.robot import Robot
 from dimos.skills.skills import AbstractRobotSkill

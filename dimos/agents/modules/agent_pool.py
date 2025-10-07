@@ -177,9 +177,7 @@ class AgentPoolModule(Module):
 
         logger.info(f"Broadcasted query to {len(self._agents) - len(exclude)} agents")
 
-    def _setup_agent_routing(
-        self, agent_id: str, agent: BaseAgentModule | UnifiedAgentModule
-    ):
+    def _setup_agent_routing(self, agent_id: str, agent: BaseAgentModule | UnifiedAgentModule):
         """Setup response routing for an agent."""
 
         # Subscribe to agent responses and tag with agent_id

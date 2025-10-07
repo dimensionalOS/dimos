@@ -228,9 +228,11 @@ class LLMAgent(Agent):
             )
 
             logger.info("Subscribing to merged input stream...")
+
             # Define a query extractor for the merged stream
             def query_extractor(emission):
                 return (emission[0], emission[1][0])
+
             self.disposables.add(
                 self.subscribe_to_image_processing(
                     self.merged_stream, query_extractor=query_extractor

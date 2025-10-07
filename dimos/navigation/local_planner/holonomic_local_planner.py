@@ -18,7 +18,6 @@
 Gradient-Augmented Look-Ahead Pursuit (GLAP) holonomic local planner.
 """
 
-
 import numpy as np
 
 from dimos.msgs.geometry_msgs import Twist, Vector3

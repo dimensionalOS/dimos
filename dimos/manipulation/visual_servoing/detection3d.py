@@ -16,7 +16,6 @@
 Real-time 3D object detection processor that extracts object poses from RGB-D data.
 """
 
-
 import cv2
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
@@ -137,7 +136,9 @@ class Detection3DProcessor:
         detections_2d = []
         pose_dict = {p["mask_idx"]: p for p in poses if p["centroid"][2] < self.max_depth}
 
-        for i, (bbox, name, prob, track_id) in enumerate(zip(bboxes, names, probs, track_ids, strict=False)):
+        for i, (bbox, name, prob, track_id) in enumerate(
+            zip(bboxes, names, probs, track_ids, strict=False)
+        ):
             if i not in pose_dict:
                 continue
 
