@@ -57,7 +57,7 @@ class FTDriverModule(Module):
 
     def __init__(
         self,
-        serial_port: str = "/dev/tty.usbserial-0001",
+        serial_port: str = "/dev/ttyACM0",
         baud_rate: int = 115200,
         window_size: int = 3,
         calibration_file: Optional[str] = None,
@@ -384,7 +384,7 @@ class FTDriverModule(Module):
 if __name__ == "__main__":
     # For testing standalone
     parser = argparse.ArgumentParser(description="FT Driver Module")
-    parser.add_argument("--port", default="/dev/tty.usbserial-0001", help="Serial port")
+    parser.add_argument("--port", default="/dev/ttyACM0", help="Serial port")
     parser.add_argument("--baud", type=int, default=115200, help="Baud rate")
     parser.add_argument("--window", type=int, default=3, help="Moving average window size")
     parser.add_argument("--calibration", type=str, help="Calibration file path")
