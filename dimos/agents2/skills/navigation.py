@@ -113,11 +113,11 @@ class NavigationSkillContainer(SkillContainer):
         if not self._started:
             raise ValueError(f"{self} has not been started.")
 
-        # success_msg = self._navigate_by_tagged_location(query)
-        # if success_msg:
-        #     return success_msg
+        success_msg = self._navigate_by_tagged_location(query)
+        if success_msg:
+            return success_msg
 
-        # logger.info(f"No tagged location found for {query}")
+        logger.info(f"No tagged location found for {query}")
 
         success_msg = self._navigate_to_object(query)
         if success_msg:
@@ -125,9 +125,9 @@ class NavigationSkillContainer(SkillContainer):
 
         logger.info(f"No object in view found for {query}")
 
-        # success_msg = self._navigate_using_semantic_map(query)
-        # if success_msg:
-        #     return success_msg
+        success_msg = self._navigate_using_semantic_map(query)
+        if success_msg:
+            return success_msg
 
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
 
