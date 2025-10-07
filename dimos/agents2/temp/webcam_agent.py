@@ -23,29 +23,23 @@ import os
 import sys
 import time
 from pathlib import Path
-
-from dotenv import load_dotenv
-from dimos.hardware.camera import zed
-from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
-
-from dimos.agents2.cli.human import HumanInput
-
-# Add parent directories to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-from dimos.hardware.camera.module import CameraModule
-from dimos.hardware.camera.webcam import Webcam
-
 from threading import Thread
 
 import reactivex as rx
 import reactivex.operators as ops
+from dotenv import load_dotenv
 
 from dimos.agents2 import Agent, Output, Reducer, Stream, skill
+from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.spec import Model, Provider
 from dimos.core import LCMTransport, Module, pLCMTransport, start
+from dimos.hardware.camera import zed
+from dimos.hardware.camera.module import CameraModule
+from dimos.hardware.camera.webcam import Webcam
+from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 
 # from dimos.hardware.webcam import ColorCameraModule, Webcam
-from dimos.msgs.sensor_msgs import Image, CameraInfo
+from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer

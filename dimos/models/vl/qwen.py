@@ -1,8 +1,9 @@
 import base64
 import io
 import os
-from typing import Optional
+from typing import Optional, Union
 
+import np
 from openai import OpenAI
 from PIL import Image
 
@@ -28,11 +29,18 @@ class QwenVlModel(VlModel):
             api_key=api_key,
         )
 
-    def query(self, image: Image, query: str) -> str:
-        # pil_image = Image.fromarray(image.astype("uint8"))
-        # buffered = io.BytesIO()
-        # pil_image.save(buffered, format="PNG")
-        # img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    def query(self, image: Union[Image, np.ndarray], query: str) -> str:
+        # check if image is numpy array
+        if isinstance(image, np.ndarray):
+            import warnings
+
+            warnings.warn(
+                "QwenVlModel.query should receive standard dimos Image type, not a numpy array",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+            image = Image.fromarray(image.astype("uint8"))
 
         img_base64 = image.to_base64()
         response = self._client.chat.completions.create(

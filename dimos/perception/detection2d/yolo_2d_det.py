@@ -49,10 +49,10 @@ class Yolo2DDetector:
             if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
                 onnxruntime.preload_dlls(cuda=True, cudnn=True)
             self.device = "cuda"
-            logger.debug("Using CUDA for YOLO 2d detector")
+            logger.info("Using CUDA for YOLO 2d detector")
         else:
             self.device = "cpu"
-            logger.debug("Using CPU for YOLO 2d detector")
+            logger.info("Using CPU for YOLO 2d detector")
 
     def process_image(self, image):
         """
