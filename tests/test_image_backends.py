@@ -12,17 +12,67 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+import cv2
 import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, HAS_CUDA
-import cv2
+from dimos.utils.data import get_data
+
+IMAGE_PATH = get_data("chair-image.png")
 
 
-def _rand_uint8(shape, seed=1337):
-    rng = np.random.default_rng(seed)
-    return rng.integers(0, 256, size=shape, dtype=np.uint8)
+def _load_chair_image() -> np.ndarray:
+    img = cv2.imread(IMAGE_PATH, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        raise FileNotFoundError(f"unable to load test image at {IMAGE_PATH}")
+    return img
+
+
+_CHAIR_BGRA = _load_chair_image()
+
+
+def _prepare_image(fmt: ImageFormat, shape=None) -> np.ndarray:
+    base = _CHAIR_BGRA
+    if fmt == ImageFormat.BGR:
+        arr = cv2.cvtColor(base, cv2.COLOR_BGRA2BGR)
+    elif fmt == ImageFormat.RGB:
+        arr = cv2.cvtColor(base, cv2.COLOR_BGRA2RGB)
+    elif fmt == ImageFormat.BGRA:
+        arr = base.copy()
+    elif fmt == ImageFormat.GRAY:
+        arr = cv2.cvtColor(base, cv2.COLOR_BGRA2GRAY)
+    else:
+        raise ValueError(f"unsupported image format {fmt}")
+
+    if shape is None:
+        return arr.copy()
+
+    if len(shape) == 2:
+        height, width = shape
+        orig_h, orig_w = arr.shape[:2]
+        interp = cv2.INTER_AREA if height <= orig_h and width <= orig_w else cv2.INTER_LINEAR
+        resized = cv2.resize(arr, (width, height), interpolation=interp)
+        return resized.copy()
+
+    if len(shape) == 3:
+        height, width, channels = shape
+        orig_h, orig_w = arr.shape[:2]
+        interp = cv2.INTER_AREA if height <= orig_h and width <= orig_w else cv2.INTER_LINEAR
+        resized = cv2.resize(arr, (width, height), interpolation=interp)
+        if resized.ndim == 2:
+            resized = np.repeat(resized[:, :, None], channels, axis=2)
+        elif resized.shape[2] != channels:
+            if channels == 4 and resized.shape[2] == 3:
+                alpha = np.full((height, width, 1), 255, dtype=resized.dtype)
+                resized = np.concatenate([resized, alpha], axis=2)
+            elif channels == 3 and resized.shape[2] == 4:
+                resized = resized[:, :, :3]
+            else:
+                raise ValueError(f"cannot adjust image to {channels} channels")
+        return resized.copy()
+
+    raise ValueError("shape must be a tuple of length 2 or 3")
 
 
 @pytest.mark.parametrize(
@@ -36,7 +86,7 @@ def _rand_uint8(shape, seed=1337):
 )
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
 def test_color_conversions_parity(shape, fmt):
-    arr = _rand_uint8(shape)
+    arr = _prepare_image(fmt, shape)
     # Build CPU and CUDA images with same logical content
     cpu = Image.from_numpy(arr, format=fmt)
     gpu = Image.from_numpy(arr, format=fmt, to_cuda=True)
@@ -53,7 +103,7 @@ def test_color_conversions_parity(shape, fmt):
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
 def test_grayscale_parity():
-    arr = _rand_uint8((48, 32, 3), seed=7)
+    arr = _prepare_image(ImageFormat.BGR, (48, 32, 3))
     cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
     gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
 
@@ -71,7 +121,7 @@ def test_grayscale_parity():
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
 def test_resize_parity(fmt):
     shape = (60, 80, 3) if fmt in (ImageFormat.BGR, ImageFormat.RGB) else (60, 80, 4)
-    arr = _rand_uint8(shape, seed=9)
+    arr = _prepare_image(fmt, shape)
     cpu = Image.from_numpy(arr, format=fmt)
     gpu = Image.from_numpy(arr, format=fmt, to_cuda=True)
 
@@ -87,7 +137,7 @@ def test_resize_parity(fmt):
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
 def test_perf_compare_alloc():
-    arr = _rand_uint8((480, 640, 3), seed=4)
+    arr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
     import time
 
     t0 = time.perf_counter()
@@ -104,7 +154,7 @@ def test_perf_compare_alloc():
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
 def test_sharpness_parity():
-    arr = _rand_uint8((64, 64, 3), seed=42)
+    arr = _prepare_image(ImageFormat.BGR, (64, 64, 3))
     cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
     gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
 
@@ -118,7 +168,7 @@ def test_sharpness_parity():
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
 def test_to_opencv_parity():
     # BGRA should drop alpha and produce BGR
-    arr = _rand_uint8((32, 32, 4), seed=21)
+    arr = _prepare_image(ImageFormat.BGRA, (32, 32, 4))
     cpu = Image.from_numpy(arr, format=ImageFormat.BGRA)
     gpu = Image.from_numpy(arr, format=ImageFormat.BGRA, to_cuda=True)
 
@@ -152,11 +202,10 @@ def test_solve_pnp_parity():
     img_pts, _ = cv2.projectPoints(obj, rvec_true, tvec_true, K, dist)
     img_pts = img_pts.reshape(-1, 2).astype(np.float32)
 
-    # Build images (content irrelevant for solvePnP)
-    cpu = Image.from_numpy(np.zeros((48, 64, 3), dtype=np.uint8), format=ImageFormat.BGR)
-    gpu = Image.from_numpy(
-        np.zeros((48, 64, 3), dtype=np.uint8), format=ImageFormat.BGR, to_cuda=True
-    )
+    # Build images using deterministic fixture content
+    base_bgr = _prepare_image(ImageFormat.BGR, (48, 64, 3))
+    cpu = Image.from_numpy(base_bgr, format=ImageFormat.BGR)
+    gpu = Image.from_numpy(base_bgr.copy(), format=ImageFormat.BGR, to_cuda=True)
 
     ok_cpu, r_cpu, t_cpu = cpu.solve_pnp(obj, img_pts, K, dist)
     ok_gpu, r_gpu, t_gpu = gpu.solve_pnp(obj, img_pts, K, dist)
@@ -174,7 +223,7 @@ def test_solve_pnp_parity():
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
 def test_perf_compare_grayscale():
-    arr = _rand_uint8((480, 640, 3), seed=3)
+    arr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
     cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
     gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
     import time
@@ -193,7 +242,7 @@ def test_perf_compare_grayscale():
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
 def test_perf_compare_resize():
-    arr = _rand_uint8((480, 640, 3), seed=4)
+    arr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
     cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
     gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
     import time
@@ -212,7 +261,7 @@ def test_perf_compare_resize():
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
 def test_perf_compare_sharpness():
-    arr = _rand_uint8((480, 640, 3), seed=5)
+    arr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
     cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
     gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
     import time
@@ -239,10 +288,9 @@ def test_perf_compare_solvepnp():
     tvec_true = np.array([[0.0], [0.0], [3.0]])
     img_pts, _ = cv2.projectPoints(obj, rvec_true, tvec_true, K, dist)
     img_pts = img_pts.reshape(-1, 2).astype(np.float32)
-    cpu = Image.from_numpy(np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR)
-    gpu = Image.from_numpy(
-        np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR, to_cuda=True
-    )
+    base_bgr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
+    cpu = Image.from_numpy(base_bgr, format=ImageFormat.BGR)
+    gpu = Image.from_numpy(base_bgr.copy(), format=ImageFormat.BGR, to_cuda=True)
     import time
 
     t0 = time.perf_counter()
@@ -260,13 +308,20 @@ def test_perf_compare_solvepnp():
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
 def test_perf_compare_tracker():
     H, W = 240, 320
-    img1 = np.zeros((H, W, 3), dtype=np.uint8)
-    img2 = np.zeros((H, W, 3), dtype=np.uint8)
+    img_base = _prepare_image(ImageFormat.BGR, (H, W, 3))
+    img1 = img_base.copy()
+    img2 = img_base.copy()
     bbox0 = (80, 60, 40, 30)
     x0, y0, w0, h0 = bbox0
-    img1[y0 : y0 + h0, x0 : x0 + w0] = 255
+    cv2.rectangle(img1, (x0, y0), (x0 + w0, y0 + h0), (255, 255, 255), thickness=-1)
     dx, dy = 8, 5
-    img2[y0 + dy : y0 + dy + h0, x0 + dx : x0 + dx + w0] = 255
+    cv2.rectangle(
+        img2,
+        (x0 + dx, y0 + dy),
+        (x0 + dx + w0, y0 + dy + h0),
+        (255, 255, 255),
+        thickness=-1,
+    )
     cpu1 = Image.from_numpy(img1, format=ImageFormat.BGR)
     cpu2 = Image.from_numpy(img2, format=ImageFormat.BGR)
     gpu1 = Image.from_numpy(img1, format=ImageFormat.BGR, to_cuda=True)
@@ -300,15 +355,22 @@ def test_csrt_tracker_parity():
 
     H, W = 100, 100
     # Create two frames with a moving rectangle
-    img1 = np.zeros((H, W, 3), dtype=np.uint8)
-    img2 = np.zeros((H, W, 3), dtype=np.uint8)
+    img_base = _prepare_image(ImageFormat.BGR, (H, W, 3))
+    img1 = img_base.copy()
+    img2 = img_base.copy()
     bbox0 = (30, 30, 20, 15)
     x0, y0, w0, h0 = bbox0
     # draw rect in img1
-    img1[y0 : y0 + h0, x0 : x0 + w0] = 255
+    cv2.rectangle(img1, (x0, y0), (x0 + w0, y0 + h0), (255, 255, 255), thickness=-1)
     # shift by (dx,dy)
     dx, dy = 5, 3
-    img2[y0 + dy : y0 + dy + h0, x0 + dx : x0 + dx + w0] = 255
+    cv2.rectangle(
+        img2,
+        (x0 + dx, y0 + dy),
+        (x0 + dx + w0, y0 + dy + h0),
+        (255, 255, 255),
+        thickness=-1,
+    )
 
     cpu1 = Image.from_numpy(img1, format=ImageFormat.BGR)
     cpu2 = Image.from_numpy(img2, format=ImageFormat.BGR)
@@ -347,10 +409,9 @@ def test_solve_pnp_ransac_with_outliers_and_distortion():
     img_pts[idx] += rng.uniform(-50, 50, size=(n_out, 2))
     img_pts = img_pts.astype(np.float32)
 
-    cpu = Image.from_numpy(np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR)
-    gpu = Image.from_numpy(
-        np.zeros((480, 640, 3), dtype=np.uint8), format=ImageFormat.BGR, to_cuda=True
-    )
+    base_bgr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
+    cpu = Image.from_numpy(base_bgr, format=ImageFormat.BGR)
+    gpu = Image.from_numpy(base_bgr.copy(), format=ImageFormat.BGR, to_cuda=True)
 
     ok_gpu, r_gpu, t_gpu, mask_gpu = gpu.solve_pnp_ransac(
         obj, img_pts, K, dist, iterations_count=150, reprojection_error=3.0
@@ -383,10 +444,9 @@ def test_solve_pnp_batch_correctness_and_perf():
         img.append(ip.reshape(-1, 2))
     img = np.stack(img, axis=0).astype(np.float32)
 
-    cpu = Image.from_numpy(np.zeros((10, 10, 3), dtype=np.uint8), format=ImageFormat.BGR)
-    gpu = Image.from_numpy(
-        np.zeros((10, 10, 3), dtype=np.uint8), format=ImageFormat.BGR, to_cuda=True
-    )
+    base_bgr = _prepare_image(ImageFormat.BGR, (10, 10, 3))
+    cpu = Image.from_numpy(base_bgr, format=ImageFormat.BGR)
+    gpu = Image.from_numpy(base_bgr.copy(), format=ImageFormat.BGR, to_cuda=True)
 
     # CPU loop
     import time
@@ -423,7 +483,7 @@ def test_nvimgcodec_flag_and_fallback(monkeypatch):
     ImageMod = _importlib.import_module("dimos.msgs.sensor_msgs.Image")
     _importlib.reload(ImageMod)
     # Even if nvimgcodec missing, to_base64 should work (fallback)
-    arr = _rand_uint8((32, 32, 3))
+    arr = _prepare_image(ImageFormat.BGR, (32, 32, 3))
     img = ImageMod.Image.from_numpy(
         arr, format=ImageMod.ImageFormat.BGR, to_cuda=bool(ImageMod.HAS_CUDA)
     )
@@ -448,7 +508,7 @@ def test_nvimgcodec_gpu_path(monkeypatch):
     if not ImageMod.HAS_NVIMGCODEC:
         pytest.skip("nvimgcodec library not available")
     # Create a CUDA image and encode
-    arr = _rand_uint8((32, 32, 3))
+    arr = _prepare_image(ImageFormat.BGR, (32, 32, 3))
     img = ImageMod.Image.from_numpy(arr, format=ImageMod.ImageFormat.BGR, to_cuda=True)
     b64 = img.to_base64()
     assert isinstance(b64, str) and len(b64) > 0
