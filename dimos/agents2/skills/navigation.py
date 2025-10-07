@@ -30,6 +30,8 @@ from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
+from dimos.navigation.bt_navigator.navigator import NavigatorState
+from reactivex.disposable import Disposable, CompositeDisposable
 
 logger = setup_logger(__file__)
 
@@ -163,13 +165,41 @@ class NavigationSkillContainer(SkillContainer):
 
         logger.info(f"Found {query} at {bbox}")
 
-        success = self._robot.navigate_to_object(bbox)
+        # Start tracking - BBoxNavigationModule automatically generates goals
+        self._robot.object_tracker.track(bbox)
 
-        if not success:
-            logger.warning(f"Failed to navigate to '{query}' at {bbox}")
-            return None
+        start_time = time.time()
+        timeout = 30.0
+        goal_set = False
 
-        return "Successfully navigated to object from query '{query}'."
+        while time.time() - start_time < timeout:
+            # Check if navigator finished
+            if self._robot.navigator.get_state() == NavigatorState.IDLE and goal_set:
+                logger.info("Waiting for goal result")
+                time.sleep(1.0)
+                if not self._robot.navigator.is_goal_reached():
+                    logger.info(f"Goal cancelled, tracking '{query}' failed")
+                    self._robot.object_tracker.stop_track()
+                    return None
+                else:
+                    logger.info(f"Reached '{query}'")
+                    self._robot.object_tracker.stop_track()
+                    return f"Successfully arrived at '{query}'"
+
+            # If goal set and tracking lost, just continue (tracker will resume or timeout)
+            if goal_set and not self._robot.object_tracker.is_tracking():
+                continue
+
+            # BBoxNavigationModule automatically sends goals when tracker publishes
+            # Just check if we have any detections to mark goal_set
+            if self._robot.object_tracker.is_tracking():
+                goal_set = True
+
+            time.sleep(0.25)
+
+        logger.warning(f"Navigation to '{query}' timed out after {timeout}s")
+        self._robot.object_tracker.stop_track()
+        return None
 
     def _get_bbox_for_current_frame(self, query: str) -> Optional[BBox]:
         if self._latest_image is None:
