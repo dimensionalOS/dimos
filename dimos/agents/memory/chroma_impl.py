@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
-
-from langchain_openai import OpenAIEmbeddings
-from langchain_chroma import Chroma
 import os
+
+from langchain_chroma import Chroma
+from langchain_openai import OpenAIEmbeddings
 import torch
+
+from dimos.agents.memory.base import AbstractAgentSemanticMemory
 
 
 class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):

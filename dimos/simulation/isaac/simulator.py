@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, List, Dict, Union
+
 from isaacsim import SimulationApp
+
 from ..base.simulator_base import SimulatorBase
 
 
@@ -23,8 +24,8 @@ class IsaacSimulator(SimulatorBase):
     def __init__(
         self,
         headless: bool = True,
-        open_usd: Optional[str] = None,
-        entities: Optional[List[Dict[str, Union[str, dict]]]] = None,  # Add but ignore
+        open_usd: str | None = None,
+        entities: list[dict[str, str | dict]] | None = None,  # Add but ignore
     ):
         """Initialize the Isaac Sim simulation."""
         super().__init__(headless, open_usd)

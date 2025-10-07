@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
-import pickle
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, TypeVar
+import pickle
+from typing import Any, Generic, TypeVar
+
 from dimos.utils.logging_config import setup_logger
 
 MsgT = TypeVar("MsgT")

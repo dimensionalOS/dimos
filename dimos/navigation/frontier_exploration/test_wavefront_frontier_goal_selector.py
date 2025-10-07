@@ -12,19 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
 import time
-from typing import List, Optional, Tuple
-from unittest.mock import MagicMock
 
 import numpy as np
+from PIL import ImageDraw
 import pytest
-from PIL import Image, ImageDraw
-from reactivex import operators as ops
 
-from dimos import core
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
-from dimos.msgs.nav_msgs import OccupancyGrid, CostValues
+from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 from dimos.navigation.frontier_exploration.utils import costmap_to_pil_image
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
@@ -165,11 +160,10 @@ def test_exploration_session_reset():
     robot_pose = first_lidar.origin
 
     # Select a goal to populate exploration state
-    goal = explorer.get_exploration_goal(robot_pose, costmap)
+    explorer.get_exploration_goal(robot_pose, costmap)
 
     # Verify state is populated
-    initial_explored_count = len(explorer.explored_goals)
-    initial_direction = explorer.exploration_direction
+    len(explorer.explored_goals)
 
     # Reset exploration session
     explorer.reset_exploration_session()

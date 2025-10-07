@@ -14,22 +14,13 @@
 
 from __future__ import annotations
 
-import math
-import random
-import threading
-from typing import List
-
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.binding import Binding
 from textual.color import Color
-from textual.containers import Container
 from textual.reactive import reactive
-from textual.renderables.sparkline import Sparkline as SparklineRenderable
-from textual.widgets import DataTable, Footer, Header, Label, Sparkline
+from textual.widgets import DataTable, Footer
 
-from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy
-from dimos.utils.cli.lcmspy.lcmspy import GraphTopic as SpyTopic
+from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy, GraphTopic as SpyTopic
 
 
 def gradient(max_value: float, value: float) -> str:
@@ -100,7 +91,7 @@ class LCMSpyApp(App):
         self.spy.stop()
 
     def refresh_table(self):
-        topics: List[SpyTopic] = list(self.spy.topic.values())
+        topics: list[SpyTopic] = list(self.spy.topic.values())
         topics.sort(key=lambda t: t.total_traffic(), reverse=True)
         self.table.clear(columns=False)
 

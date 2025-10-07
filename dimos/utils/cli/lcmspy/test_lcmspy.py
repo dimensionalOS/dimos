@@ -17,9 +17,7 @@ import time
 import pytest
 
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
-from dimos.protocol.service.lcmservice import autoconf
-from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy, GraphTopic, LCMSpy
-from dimos.utils.cli.lcmspy.lcmspy import Topic as TopicSpy
+from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy, GraphTopic, LCMSpy, Topic as TopicSpy
 
 
 @pytest.mark.lcm
@@ -90,7 +88,7 @@ def test_topic_statistics_direct():
     # Add some test messages
     test_data = [b"small", b"medium sized message", b"very long message for testing purposes"]
 
-    for i, data in enumerate(test_data):
+    for _i, data in enumerate(test_data):
         topic.msg(data)
         time.sleep(0.1)  # Simulate time passing
 

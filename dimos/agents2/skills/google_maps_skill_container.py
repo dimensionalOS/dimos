@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import json
-from typing import Any, Optional, Union
+from typing import Any
+
 from reactivex import Observable
+from reactivex.disposable import CompositeDisposable
 
 from dimos.mapping.google_maps.google_maps import GoogleMaps
 from dimos.mapping.osm.current_location_map import CurrentLocationMap
@@ -23,15 +25,13 @@ from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.robot.robot import Robot
 from dimos.utils.logging_config import setup_logger
 
-from reactivex.disposable import CompositeDisposable
-
 logger = setup_logger(__file__)
 
 
 class GoogleMapsSkillContainer(SkillContainer):
     _robot: Robot
     _disposables: CompositeDisposable
-    _latest_location: Optional[LatLon]
+    _latest_location: LatLon | None
     _position_stream: Observable[LatLon]
     _current_location_map: CurrentLocationMap
     _started: bool
@@ -111,7 +111,7 @@ class GoogleMapsSkillContainer(SkillContainer):
 
         location = self._get_latest_location()
 
-        results: list[Union[dict[str, Any], str]] = []
+        results: list[dict[str, Any] | str] = []
 
         for query in queries:
             try:

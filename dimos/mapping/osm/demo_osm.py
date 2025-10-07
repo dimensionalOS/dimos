@@ -13,9 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import ExitStack
 import time
-import reactivex as rx
+
 from dotenv import load_dotenv
+import reactivex as rx
 from reactivex import Observable
 
 from dimos.agents2 import Agent
@@ -27,13 +29,11 @@ from dimos.robot.robot import Robot
 from dimos.robot.utils.robot_debugger import RobotDebugger
 from dimos.utils.logging_config import setup_logger
 
-from contextlib import ExitStack
-
 logger = setup_logger(__file__)
 
 load_dotenv()
 
-with open(AGENT_SYSTEM_PROMPT_PATH, "r") as f:
+with open(AGENT_SYSTEM_PROMPT_PATH) as f:
     SYSTEM_PROMPT = f.read()
 
 

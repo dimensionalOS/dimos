@@ -1,7 +1,7 @@
-import os
 import base64
 import io
-from typing import Optional
+import os
+
 import numpy as np
 from openai import OpenAI
 from PIL import Image
@@ -13,7 +13,7 @@ class QwenVlModel(VlModel):
     _client: OpenAI
     _model_name: str
 
-    def __init__(self, api_key: Optional[str] = None, model_name: str = "qwen2.5-vl-72b-instruct"):
+    def __init__(self, api_key: str | None = None, model_name: str = "qwen2.5-vl-72b-instruct"):
         self._model_name = model_name
 
         api_key = api_key or os.getenv("ALIBABA_API_KEY")

@@ -11,11 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import pytest
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
 from dimos_lcm.sensor_msgs import Image, PointCloud2
+import pytest
 
 from dimos.core import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
@@ -31,7 +31,7 @@ from dimos.perception.detection2d.type import (
     ImageDetections2D,
     ImageDetections3D,
 )
-from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
+from dimos.robot.unitree_webrtc.modular import deploy_connection
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map

@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
 import os
 import sys
+
+import numpy as np
+
 from dimos.perception.detection2d.utils import plot_results
 
 # Add Detic to Python path
@@ -173,8 +175,8 @@ class Detic2DDetector:
         # Import Detic modules
         from centernet.config import add_centernet_config
         from detic.config import add_detic_config
-        from detic.modeling.utils import reset_cls_test
         from detic.modeling.text.text_encoder import build_text_encoder
+        from detic.modeling.utils import reset_cls_test
 
         # Keep reference to these functions for later use
         self.reset_cls_test = reset_cls_test
@@ -272,7 +274,7 @@ class Detic2DDetector:
             if isinstance(vocabulary, str):
                 # If it's a string but not a built-in dataset, treat as a file
                 try:
-                    with open(vocabulary, "r") as f:
+                    with open(vocabulary) as f:
                         class_names = [line.strip() for line in f if line.strip()]
                 except:
                     # Default to LVIS if there's an issue
@@ -348,7 +350,7 @@ class Detic2DDetector:
             bboxes.append([x1, y1, x2, y2])
 
         # Get class names
-        names = [self.class_names[class_id] for class_id in class_ids]
+        [self.class_names[class_id] for class_id in class_ids]
 
         # Apply tracking
         detections = []
@@ -356,7 +358,7 @@ class Detic2DDetector:
         for i, bbox in enumerate(bboxes):
             if scores[i] >= self.threshold:
                 # Format for tracker: [x1, y1, x2, y2, score, class_id]
-                detections.append(bbox + [scores[i], class_ids[i]])
+                detections.append([*bbox, scores[i], class_ids[i]])
                 filtered_masks.append(masks[i])
 
         if not detections:

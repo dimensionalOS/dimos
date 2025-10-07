@@ -15,10 +15,8 @@
 import os
 import time
 
-import cv2
 import numpy as np
 import pytest
-import reactivex as rx
 from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 

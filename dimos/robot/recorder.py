@@ -14,10 +14,11 @@
 
 # UNDER DEVELOPMENT 🚧🚧🚧, NEEDS TESTING
 
+from collections.abc import Callable
+from queue import Queue
 import threading
 import time
-from queue import Queue
-from typing import Callable, Literal
+from typing import Literal
 
 # from dimos.data.recording import Recorder
 
@@ -41,7 +42,7 @@ class RobotRecorder:
         get_observation: Callable,
         prepare_action: Callable,
         frequency_hz: int = 5,
-        recorder_kwargs: dict = None,
+        recorder_kwargs: dict | None = None,
         on_static: Literal["record", "omit"] = "omit",
     ) -> None:
         """Initializes the RobotRecorder.

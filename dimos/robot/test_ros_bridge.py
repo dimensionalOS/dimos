@@ -12,21 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 import threading
+import time
 import unittest
-import numpy as np
 
+import numpy as np
 import pytest
 
 try:
+    from geometry_msgs.msg import TransformStamped, TwistStamped as ROSTwistStamped
     import rclpy
     from rclpy.node import Node
-    from geometry_msgs.msg import TwistStamped as ROSTwistStamped
-    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-    from sensor_msgs.msg import PointField
+    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, PointField
     from tf2_msgs.msg import TFMessage as ROSTFMessage
-    from geometry_msgs.msg import TransformStamped
 except ImportError:
     rclpy = None
     Node = None
@@ -36,11 +34,11 @@ except ImportError:
     ROSTFMessage = None
     TransformStamped = None
 
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.msgs.geometry_msgs import TwistStamped
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.tf2_msgs import TFMessage
-from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
+from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 
 
 @pytest.mark.ros

@@ -13,7 +13,8 @@
 # limitations under the License.
 
 from collections import defaultdict
-from typing import Any, Callable, DefaultDict, List
+from collections.abc import Callable
+from typing import Any
 
 from dimos.protocol import encode
 from dimos.protocol.pubsub.spec import PubSub, PubSubEncoderMixin
@@ -21,7 +22,7 @@ from dimos.protocol.pubsub.spec import PubSub, PubSubEncoderMixin
 
 class Memory(PubSub[str, Any]):
     def __init__(self) -> None:
-        self._map: DefaultDict[str, List[Callable[[Any, str], None]]] = defaultdict(list)
+        self._map: defaultdict[str, list[Callable[[Any, str], None]]] = defaultdict(list)
 
     def publish(self, topic: str, message: Any) -> None:
         for cb in self._map[topic]:

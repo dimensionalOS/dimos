@@ -18,20 +18,19 @@ Note, to enable ps-spy to run without sudo you need:
     echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 """
 
+from functools import cache
+import os
+import re
+import shutil
 import subprocess
 import threading
-import re
-import os
-import shutil
-from functools import lru_cache
-from typing import Optional
-from distributed.client import Client
 
 from distributed import get_client
+from distributed.client import Client
+
 from dimos.core import Module, rpc
 from dimos.utils.actor_registry import ActorRegistry
 from dimos.utils.logging_config import setup_logger
-
 
 logger = setup_logger(__file__)
 
@@ -142,8 +141,8 @@ class UtilizationThread(threading.Thread):
 
 
 class UtilizationModule(Module):
-    client: Optional[Client]
-    _utilization_thread: Optional[UtilizationThread]
+    client: Client | None
+    _utilization_thread: UtilizationThread | None
 
     def __init__(self):
         super().__init__()
@@ -193,7 +192,7 @@ def _can_use_py_spy():
     return False
 
 
-@lru_cache(maxsize=None)
+@cache
 def get_pid_by_port(port: int) -> int | None:
     try:
         result = subprocess.run(
@@ -211,7 +210,7 @@ def get_worker_pids():
         if not pid.isdigit():
             continue
         try:
-            with open(f"/proc/{pid}/cmdline", "r") as f:
+            with open(f"/proc/{pid}/cmdline") as f:
                 cmdline = f.read().replace("\x00", " ")
                 if "spawn_main" in cmdline:
                     pids.append(int(pid))
@@ -271,7 +270,7 @@ class GilMonitorThread(threading.Thread):
                             active_percent,
                             num_threads,
                         )
-                except (ValueError, IndexError) as e:
+                except (ValueError, IndexError):
                     pass
         except Exception as e:
             logger.error(f"An error occurred in GilMonitorThread for PID {self.pid}: {e}")

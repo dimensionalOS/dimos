@@ -13,27 +13,26 @@
 # limitations under the License.
 
 import asyncio
+from dataclasses import dataclass
 import functools
 import threading
 import time
-from dataclasses import dataclass
-from typing import Literal, Optional, TypeAlias
+from typing import Literal, TypeAlias
 
-import numpy as np
 from aiortc import MediaStreamTrack
 from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD, VUI_COLOR
 from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-not-found]
     Go2WebRTCConnection,
     WebRTCConnectionMethod,
 )
+import numpy as np
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
-from dimos.core import In, Module, Out, rpc
-from dimos.msgs.geometry_msgs import Pose, Transform, Twist, Vector3
+from dimos.core import rpc
+from dimos.msgs.geometry_msgs import Pose, Transform, Twist
 from dimos.msgs.sensor_msgs import Image
-from dimos.robot.connection_interface import ConnectionInterface
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -47,12 +46,12 @@ class SerializableVideoFrame:
     """Pickleable wrapper for av.VideoFrame with all metadata"""
 
     data: np.ndarray
-    pts: Optional[int] = None
-    time: Optional[float] = None
-    dts: Optional[int] = None
-    width: Optional[int] = None
-    height: Optional[int] = None
-    format: Optional[str] = None
+    pts: int | None = None
+    time: float | None = None
+    dts: int | None = None
+    width: int | None = None
+    height: int | None = None
+    format: str | None = None
 
     @classmethod
     def from_av_frame(cls, frame):
@@ -279,7 +278,7 @@ class UnitreeWebRTCConnection:
             },
         )
 
-    @functools.lru_cache(maxsize=None)
+    @functools.cache
     def raw_video_stream(self) -> Observable[VideoMessage]:
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()

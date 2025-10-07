@@ -13,34 +13,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import ExitStack
 import os
 import time
-from typing import Optional
+
 from dotenv import load_dotenv
 
 from dimos.agents2 import Agent
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.constants import AGENT_SYSTEM_PROMPT_PATH
+from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.robot.robot import UnitreeRobot
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
-from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.robot.utils.robot_debugger import RobotDebugger
 from dimos.utils.logging_config import setup_logger
-
-from contextlib import ExitStack
 
 logger = setup_logger("dimos.robot.unitree_webrtc.run_agents2")
 
 load_dotenv()
 
-with open(AGENT_SYSTEM_PROMPT_PATH, "r") as f:
+with open(AGENT_SYSTEM_PROMPT_PATH) as f:
     SYSTEM_PROMPT = f.read()
 
 
 class UnitreeAgents2Runner:
-    _robot: Optional[UnitreeRobot]
-    _agent: Optional[Agent]
+    _robot: UnitreeRobot | None
+    _agent: Agent | None
     _exit_stack: ExitStack
 
     def __init__(self):

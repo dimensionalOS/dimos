@@ -31,5 +31,4 @@ class HumanInput(Module):
 
         msg_queue = queue.Queue()
         transport.subscribe(msg_queue.put)
-        for message in iter(msg_queue.get, None):
-            yield message
+        yield from iter(msg_queue.get, None)

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import time
-from typing import Callable, Optional
 
 import pytest
 
@@ -60,8 +60,8 @@ class SubscriberBase(Module):
 
 class ClassicSubscriber(SubscriberBase):
     odom: In[Odometry] = None
-    unsub: Optional[Callable[[], None]] = None
-    unsub2: Optional[Callable[[], None]] = None
+    unsub: Callable[[], None] | None = None
+    unsub2: Callable[[], None] | None = None
 
     @rpc
     def sub1(self):
@@ -83,10 +83,10 @@ class ClassicSubscriber(SubscriberBase):
 
 class RXPYSubscriber(SubscriberBase):
     odom: In[Odometry] = None
-    unsub: Optional[Callable[[], None]] = None
-    unsub2: Optional[Callable[[], None]] = None
+    unsub: Callable[[], None] | None = None
+    unsub2: Callable[[], None] | None = None
 
-    hot: Optional[Callable[[], None]] = None
+    hot: Callable[[], None] | None = None
 
     @rpc
     def sub1(self):

@@ -14,31 +14,25 @@
 
 # dimos/hardware/piper_arm.py
 
-from typing import (
-    Optional,
-    Tuple,
-)
-from piper_sdk import *  # from the official Piper SDK
-import numpy as np
-import time
-import subprocess
-import kinpy as kp
+import select
 import sys
 import termios
-import tty
-import select
-from scipy.spatial.transform import Rotation as R
-from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
-from dimos.utils.logging_config import setup_logger
-
 import threading
+import time
+import tty
 
+from dimos_lcm.geometry_msgs import Pose, Twist, Vector3
+import kinpy as kp
+import numpy as np
+from piper_sdk import *  # from the official Piper SDK
 import pytest
+from scipy.spatial.transform import Rotation as R
 
 import dimos.core as core
-import dimos.protocol.service.lcmservice as lcmservice
 from dimos.core import In, Module, rpc
-from dimos_lcm.geometry_msgs import Pose, Vector3, Twist
+import dimos.protocol.service.lcmservice as lcmservice
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 
 logger = setup_logger("dimos.hardware.piper_arm")
 
@@ -79,7 +73,7 @@ class PiperArm:
         RX = round(position[3] * factor)
         RY = round(position[4] * factor)
         RZ = round(position[5] * factor)
-        joint_6 = round(position[6] * factor)
+        round(position[6] * factor)
         logger.debug(f"Going to zero position: X={X}, Y={Y}, Z={Z}, RX={RX}, RY={RY}, RZ={RZ}")
         self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
         self.arm.EndPoseCtrl(X, Y, Z, RX, RY, RZ)
@@ -94,7 +88,7 @@ class PiperArm:
         RX = round(position[3] * factor)
         RY = round(position[4] * factor)
         RZ = round(position[5] * factor)
-        joint_6 = round(position[6] * factor)
+        round(position[6] * factor)
         logger.debug(f"Going to zero position: X={X}, Y={Y}, Z={Z}, RX={RX}, RY={RY}, RZ={RZ}")
         self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
         self.arm.EndPoseCtrl(X, Y, Z, RX, RY, RZ)
@@ -186,7 +180,7 @@ class PiperArm:
         logger.info("Releasing gripper (opening to 100mm)")
         self.cmd_gripper_ctrl(0.1)  # 0.1m = 100mm = 10cm
 
-    def get_gripper_feedback(self) -> Tuple[float, float]:
+    def get_gripper_feedback(self) -> tuple[float, float]:
         """
         Get current gripper feedback.
 
@@ -224,7 +218,7 @@ class PiperArm:
             True if object is detected in gripper, False otherwise
         """
         # Get gripper feedback
-        angle_degrees, actual_effort = self.get_gripper_feedback()
+        _angle_degrees, actual_effort = self.get_gripper_feedback()
 
         # Check if object is grasped (effort > 80% of commanded effort)
         effort_threshold = 0.8 * commanded_effort
@@ -286,12 +280,12 @@ class PiperArm:
 
         self.arm.MotionCtrl_2(0x01, 0x01, 100, 0xAD)
         self.arm.JointCtrl(
-            int(round(newq[0])),
-            int(round(newq[1])),
-            int(round(newq[2])),
-            int(round(newq[3])),
-            int(round(newq[4])),
-            int(round(newq[5])),
+            round(newq[0]),
+            round(newq[1]),
+            round(newq[2]),
+            round(newq[3]),
+            round(newq[4]),
+            round(newq[5]),
         )
         time.sleep(self.dt)
         # print(f"[PiperArm] Moving to Joints to : {newq}")
@@ -425,12 +419,12 @@ class VelocityController(Module):
 
                 self.arm.MotionCtrl_2(0x01, 0x01, 100, 0xAD)
                 self.arm.JointCtrl(
-                    int(round(newq[0])),
-                    int(round(newq[1])),
-                    int(round(newq[2])),
-                    int(round(newq[3])),
-                    int(round(newq[4])),
-                    int(round(newq[5])),
+                    round(newq[0]),
+                    round(newq[1]),
+                    round(newq[2]),
+                    round(newq[3]),
+                    round(newq[4]),
+                    round(newq[5]),
                 )
                 time.sleep(self.period)
 

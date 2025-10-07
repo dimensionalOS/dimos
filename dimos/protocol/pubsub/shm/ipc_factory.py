@@ -14,15 +14,12 @@
 
 # frame_ipc.py
 # Python 3.9+
-import base64
-import time
 from abc import ABC, abstractmethod
+from multiprocessing.shared_memory import SharedMemory
 import os
-from typing import Optional, Tuple
+import time
 
 import numpy as np
-from multiprocessing.shared_memory import SharedMemory
-from multiprocessing.managers import SharedMemoryManager
 
 _UNLINK_ON_GC = os.getenv("DIMOS_IPC_UNLINK_ON_GC", "0").lower() not in ("0", "false", "no")
 
@@ -99,7 +96,8 @@ class FrameChannel(ABC):
 
 
 from multiprocessing.shared_memory import SharedMemory
-import weakref, os
+import os
+import weakref
 
 
 def _safe_unlink(name):

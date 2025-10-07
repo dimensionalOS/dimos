@@ -13,13 +13,12 @@
 # limitations under the License.
 
 import time
-from typing import List, Optional, Tuple
 
-import numpy as np
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
 from dimos_lcm.sensor_msgs import CameraInfo
+import numpy as np
 from reactivex import operators as ops
 
 from dimos.core import In, Out, rpc
@@ -36,8 +35,8 @@ from dimos.perception.detection2d.type import (
 )
 
 # Type aliases for clarity
-ImageDetections = Tuple[Image, List[Detection2D]]
-ImageDetection = Tuple[Image, Detection2D]
+ImageDetections = tuple[Image, list[Detection2D]]
+ImageDetection = tuple[Image, Detection2D]
 
 
 class Detection3DModule(Detection2DModule):
@@ -71,7 +70,7 @@ class Detection3DModule(Detection2DModule):
         points_3d: np.ndarray,
         camera_matrix: np.ndarray,
         extrinsics: Transform,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Project 3D points to 2D camera coordinates."""
         # Transform points from world to camera_optical frame
         points_homogeneous = np.hstack([points_3d, np.ones((points_3d.shape[0], 1))])
@@ -93,7 +92,7 @@ class Detection3DModule(Detection2DModule):
         detections: ImageDetections2D,
         pointcloud: PointCloud2,
         world_to_camera_transform: Transform,
-    ) -> List[Optional[PointCloud2]]:
+    ) -> list[PointCloud2 | None]:
         """Filter lidar points that fall within detection bounding boxes."""
         # Extract camera parameters
         camera_info = self.camera_info
@@ -124,7 +123,7 @@ class Detection3DModule(Detection2DModule):
         points_2d = points_2d[in_image_mask]
         valid_3d_points = valid_3d_points[in_image_mask]
 
-        filtered_pointclouds: List[Optional[PointCloud2]] = []
+        filtered_pointclouds: list[PointCloud2 | None] = []
 
         for detection in detections:
             # Extract bbox from Detection2D object
@@ -155,7 +154,7 @@ class Detection3DModule(Detection2DModule):
 
         return filtered_pointclouds
 
-    def combine_pointclouds(self, pointcloud_list: List[PointCloud2]) -> PointCloud2:
+    def combine_pointclouds(self, pointcloud_list: list[PointCloud2]) -> PointCloud2:
         """Combine multiple pointclouds into a single one."""
         # Filter out None values
         valid_pointclouds = [pc for pc in pointcloud_list if pc is not None]
@@ -190,7 +189,7 @@ class Detection3DModule(Detection2DModule):
             visible_pcd = pcd.select_by_index(visible_indices)
 
             return PointCloud2(visible_pcd, frame_id=pc.frame_id, ts=pc.ts)
-        except Exception as e:
+        except Exception:
             return pc
 
     def cleanup_pointcloud(self, pc: PointCloud2) -> PointCloud2:
@@ -213,7 +212,7 @@ class Detection3DModule(Detection2DModule):
         pointcloud_list = self.filter_points_in_detections(detections, pointcloud, transform)
 
         detection3d_list = []
-        for detection, pc in zip(detections, pointcloud_list):
+        for detection, pc in zip(detections, pointcloud_list, strict=False):
             if pc is None:
                 continue
             pc = self.hidden_point_removal(transform, self.cleanup_pointcloud(pc))

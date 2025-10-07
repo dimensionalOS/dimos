@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-import json
 import datetime
-import os
-import uuid
+import json
 from operator import itemgetter
-from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
+import os
+from typing import Any, TypedDict
+import uuid
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import (
@@ -30,7 +30,6 @@ from langchain_core.messages import (
 
 from dimos.agents2.spec import AgentSpec
 from dimos.core import rpc
-from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
@@ -91,8 +90,8 @@ def _custom_json_serializers(obj):
 # and builds messages to be sent to an agent
 def snapshot_to_messages(
     state: SkillStateDict,
-    tool_calls: List[ToolCall],
-) -> Tuple[List[ToolMessage], Optional[AIMessage]]:
+    tool_calls: list[ToolCall],
+) -> tuple[list[ToolMessage], AIMessage | None]:
     # builds a set of tool call ids from a previous agent request
     tool_call_ids = set(
         map(itemgetter("id"), tool_calls),
@@ -102,15 +101,15 @@ def snapshot_to_messages(
     tool_msgs: list[ToolMessage] = []
 
     # build a general skill state overview (for longer running skills)
-    state_overview: list[Dict[str, SkillStateSummary]] = []
+    state_overview: list[dict[str, SkillStateSummary]] = []
 
     # for special skills that want to return a separate message
     # (images for example, requires to be a HumanMessage)
-    special_msgs: List[HumanMessage] = []
+    special_msgs: list[HumanMessage] = []
 
     # for special skills that want to return a separate message that should
     # stay in history, like actual human messages, critical events
-    history_msgs: List[HumanMessage] = []
+    history_msgs: list[HumanMessage] = []
 
     # Initialize state_msg
     state_msg = None
@@ -157,7 +156,7 @@ def snapshot_to_messages(
 # Agent class job is to glue skill coordinator state to an agent, builds langchain messages
 class Agent(AgentSpec):
     system_message: SystemMessage
-    state_messages: List[Union[AIMessage, HumanMessage]]
+    state_messages: list[AIMessage | HumanMessage]
 
     def __init__(
         self,
@@ -214,17 +213,17 @@ class Agent(AgentSpec):
     def clear_history(self):
         self._history.clear()
 
-    def append_history(self, *msgs: List[Union[AIMessage, HumanMessage]]):
+    def append_history(self, *msgs: list[AIMessage | HumanMessage]):
         for msg in msgs:
             self.publish(msg)
 
         self._history.extend(msgs)
 
     def history(self):
-        return [self.system_message] + self._history + self.state_messages
+        return [self.system_message, *self._history, *self.state_messages]
 
     # Used by agent to execute tool calls
-    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> None:
+    def execute_tool_calls(self, tool_calls: list[ToolCall]) -> None:
         """Execute a list of tool calls from the agent."""
         if self._agent_stopped:
             logger.warning("Agent is stopped, cannot execute tool calls.")

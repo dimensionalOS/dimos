@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, TypeVar, Tuple
-from reactivex import Observable
-from reactivex import operators as ops
+from typing import TypeVar
+
+from reactivex import Observable, operators as ops
 
 T = TypeVar("T")
 Q = TypeVar("Q")
@@ -22,7 +22,7 @@ Q = TypeVar("Q")
 
 def create_stream_merger(
     data_input_stream: Observable[T], text_query_stream: Observable[Q]
-) -> Observable[Tuple[Q, List[T]]]:
+) -> Observable[tuple[Q, list[T]]]:
     """
     Creates a merged stream that combines the latest value from data_input_stream
     with each value from text_query_stream.

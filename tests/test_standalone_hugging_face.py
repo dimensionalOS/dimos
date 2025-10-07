@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
 
 # from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -126,6 +125,7 @@ import tests.test_header
 # -----------------------------------------------------------------------------
 
 import os
+
 from huggingface_hub import InferenceClient
 
 # Use environment variable for API key

@@ -13,14 +13,18 @@
 # limitations under the License.
 
 import os
+from typing import TYPE_CHECKING
+
 import cv2
 import numpy as np
-import pytest
 import open3d as o3d
+import pytest
 
 from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
 from dimos.perception.pointcloud.utils import load_camera_matrix_from_yaml
-from dimos.types.manipulation import ObjectData
+
+if TYPE_CHECKING:
+    from dimos.types.manipulation import ObjectData
 
 
 class TestPointcloudFiltering:
@@ -30,9 +34,9 @@ class TestPointcloudFiltering:
             filtering = PointcloudFiltering()
             assert filtering is not None
             assert filtering.color_weight == 0.3
-            assert filtering.enable_statistical_filtering == True
-            assert filtering.enable_radius_filtering == True
-            assert filtering.enable_subsampling == True
+            assert filtering.enable_statistical_filtering
+            assert filtering.enable_radius_filtering
+            assert filtering.enable_subsampling
         except Exception as e:
             pytest.skip(f"Skipping test due to initialization error: {e}")
 
@@ -47,8 +51,8 @@ class TestPointcloudFiltering:
                 max_num_objects=5,
             )
             assert filtering.color_weight == 0.5
-            assert filtering.enable_statistical_filtering == False
-            assert filtering.enable_radius_filtering == False
+            assert not filtering.enable_statistical_filtering
+            assert not filtering.enable_radius_filtering
             assert filtering.voxel_size == 0.01
             assert filtering.max_num_objects == 5
         except Exception as e:

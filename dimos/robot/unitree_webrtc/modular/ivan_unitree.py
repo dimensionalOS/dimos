@@ -15,8 +15,6 @@
 import logging
 import time
 
-from dimos_lcm.sensor_msgs import CameraInfo
-
 from dimos.core import LCMTransport, start
 
 # from dimos.msgs.detection2d import Detection2DArray
@@ -25,7 +23,7 @@ from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d import Detection3DModule
 from dimos.protocol.pubsub import lcm
-from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
+from dimos.robot.unitree_webrtc.modular import deploy_connection
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.utils.logging_config import setup_logger
 

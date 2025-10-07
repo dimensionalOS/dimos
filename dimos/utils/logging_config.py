@@ -17,16 +17,16 @@
 This module sets up a logger with color output for different log levels.
 """
 
-import os
 import logging
+import os
+
 import colorlog
-from typing import Optional
 
 logging.basicConfig(format="%(name)s - %(levelname)s - %(message)s")
 
 
 def setup_logger(
-    name: str, level: Optional[int] = None, log_format: Optional[str] = None
+    name: str, level: int | None = None, log_format: str | None = None
 ) -> logging.Logger:
     """Set up a logger with color output.
 

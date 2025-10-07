@@ -17,8 +17,8 @@
 import asyncio
 import os
 
-import pytest
 from dotenv import load_dotenv
+import pytest
 
 from dimos.agents.modules.gateway import UnifiedGatewayClient
 
@@ -99,7 +99,7 @@ async def test_gateway_streaming():
         # Reconstruct content
         content = ""
         for chunk in chunks:
-            if "choices" in chunk and chunk["choices"]:
+            if chunk.get("choices"):
                 delta = chunk["choices"][0].get("delta", {})
                 chunk_content = delta.get("content")
                 if chunk_content is not None:

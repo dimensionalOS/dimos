@@ -12,17 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
-from dimos.perception.detection2d.utils import filter_detections
-from dimos.perception.common.ibvs import PersonDistanceEstimator
-from reactivex import Observable, interval
-from reactivex import operators as ops
-import numpy as np
-import cv2
-from typing import Dict, Optional
 
-from dimos.core import In, Out, Module, rpc
+import cv2
+import numpy as np
+from reactivex import Observable, interval, operators as ops
+
+from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
+from dimos.perception.common.ibvs import PersonDistanceEstimator
+from dimos.perception.detection2d.utils import filter_detections
+from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.perception.person_tracker")
@@ -35,7 +34,7 @@ class PersonTrackingStream(Module):
     video: In[Image] = None
 
     # LCM outputs
-    tracking_data: Out[Dict] = None
+    tracking_data: Out[dict] = None
 
     def __init__(
         self,
@@ -84,7 +83,7 @@ class PersonTrackingStream(Module):
         )
 
         # For tracking latest frame data
-        self._latest_frame: Optional[np.ndarray] = None
+        self._latest_frame: np.ndarray | None = None
         self._process_interval = 0.1  # Process at 10Hz
 
         # Tracking state - starts disabled
@@ -170,7 +169,7 @@ class PersonTrackingStream(Module):
             target_data["angle"] = angle
 
             # Add text to visualization
-            x1, y1, x2, y2 = map(int, bbox)
+            _x1, y1, x2, _y2 = map(int, bbox)
             dist_text = f"{distance:.2f}m, {np.rad2deg(angle):.1f} deg"
 
             # Add black background for better visibility
@@ -228,7 +227,7 @@ class PersonTrackingStream(Module):
         return self._tracking_enabled
 
     @rpc
-    def get_tracking_data(self) -> Dict:
+    def get_tracking_data(self) -> dict:
         """Get the latest tracking data.
 
         Returns:

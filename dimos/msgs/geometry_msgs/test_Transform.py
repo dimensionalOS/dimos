@@ -23,8 +23,6 @@ try:
 except ImportError:
     ROSTransformStamped = None
 
-from dimos_lcm.geometry_msgs import Transform as LCMTransform
-from dimos_lcm.geometry_msgs import TransformStamped as LCMTransformStamped
 
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Transform, Vector3
 

@@ -18,14 +18,18 @@ Unitree G1 humanoid robot.
 Minimal implementation using WebRTC connection for robot control.
 """
 
+import logging
 import os
 import time
-import logging
-from typing import Optional
+
+from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+from nav_msgs.msg import Odometry as ROSOdometry
+from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+from tf2_msgs.msg import TFMessage as ROSTFMessage
 
 from dimos import core
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
-from dimos.core import Module, In, Out, rpc
+from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs import CameraInfo, PointCloud2
@@ -33,19 +37,14 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+from dimos.robot.robot import Robot
+from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
-from geometry_msgs.msg import TwistStamped as ROSTwistStamped
-from nav_msgs.msg import Odometry as ROSOdometry
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.skills.skills import SkillLibrary
-from dimos.robot.robot import Robot
-
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1", level=logging.INFO)
 
@@ -73,7 +72,7 @@ class G1ConnectionModule(Module):
     ip: str
     connection_type: str = "webrtc"
 
-    def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
+    def __init__(self, ip: str | None = None, connection_type: str = "webrtc", *args, **kwargs):
         self.ip = ip
         self.connection_type = connection_type
         self.connection = None
@@ -115,11 +114,11 @@ class UnitreeG1(Robot):
     def __init__(
         self,
         ip: str,
-        output_dir: str = None,
+        output_dir: str | None = None,
         websocket_port: int = 7779,
-        skill_library: Optional[SkillLibrary] = None,
-        recording_path: str = None,
-        replay_path: str = None,
+        skill_library: SkillLibrary | None = None,
+        recording_path: str | None = None,
+        replay_path: str | None = None,
         enable_joystick: bool = False,
         enable_connection: bool = True,
         enable_ros_bridge: bool = True,
@@ -359,8 +358,9 @@ class UnitreeG1(Robot):
 
 def main():
     """Main entry point for testing."""
-    import os
     import argparse
+    import os
+
     from dotenv import load_dotenv
 
     load_dotenv()

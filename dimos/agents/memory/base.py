@@ -13,9 +13,10 @@
 # limitations under the License.
 
 from abc import abstractmethod
+
 from dimos.exceptions.agent_memory_exceptions import (
-    UnknownConnectionTypeError,
     AgentMemoryConnectionError,
+    UnknownConnectionTypeError,
 )
 from dimos.utils.logging_config import setup_logger
 

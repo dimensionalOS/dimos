@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Pose, PoseStamped
@@ -26,6 +24,7 @@ from dimos.utils.transform_utils import euler_to_quaternion
 logger = setup_logger("dimos.robot.unitree.global_planner")
 
 import math
+
 from dimos.msgs.geometry_msgs import Quaternion, Vector3
 
 
@@ -162,8 +161,8 @@ class AstarPlanner(Planner):
         super().__init__()
 
         # Latest data
-        self.latest_costmap: Optional[OccupancyGrid] = None
-        self.latest_odom: Optional[PoseStamped] = None
+        self.latest_costmap: OccupancyGrid | None = None
+        self.latest_odom: PoseStamped | None = None
 
     @rpc
     def start(self):
@@ -194,7 +193,7 @@ class AstarPlanner(Planner):
             path = add_orientations_to_path(path, msg.orientation)
             self.path.publish(path)
 
-    def plan(self, goal: Pose) -> Optional[Path]:
+    def plan(self, goal: Pose) -> Path | None:
         """Plan a path from current position to goal."""
         if self.latest_costmap is None or self.latest_odom is None:
             logger.warning("Cannot plan: missing costmap or odometry data")

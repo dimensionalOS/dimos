@@ -15,30 +15,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from dataclasses import dataclass
 import functools
 import logging
 import os
-import time
 import warnings
-from dataclasses import dataclass
-from typing import List, Optional
 
-import reactivex as rx
 from dimos_lcm.sensor_msgs import CameraInfo
+import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.core import In, LCMTransport, Module, ModuleConfig, Out, rpc, DimosCluster
-from dimos.msgs.foxglove_msgs import ImageAnnotations
+from dimos.core import DimosCluster, In, LCMTransport, Module, ModuleConfig, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
 from dimos.msgs.std_msgs import Header
-from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.reactive import backpressure
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
@@ -119,7 +114,7 @@ class FakeRTC(UnitreeWebRTCConnection):
 
 @dataclass
 class ConnectionModuleConfig(ModuleConfig):
-    ip: Optional[str] = None
+    ip: str | None = None
     connection_type: str = "fake"  # or "fake" or "mujoco"
     loop: bool = False  # For fake connection
     speed: float = 1.0  # For fake connection
@@ -192,7 +187,7 @@ class ConnectionModule(Module):
         self.movecmd.subscribe(self.connection.move)
 
     @classmethod
-    def _odom_to_tf(self, odom: PoseStamped) -> List[Transform]:
+    def _odom_to_tf(cls, odom: PoseStamped) -> list[Transform]:
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -231,7 +226,7 @@ class ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
     @classmethod
-    def _camera_info(self) -> Out[CameraInfo]:
+    def _camera_info(cls) -> Out[CameraInfo]:
         fx, fy, cx, cy = list(
             map(
                 lambda x: int(x / image_resize_factor),

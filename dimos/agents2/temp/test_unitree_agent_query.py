@@ -20,17 +20,18 @@ Shows different ways to call the agent and handle async.
 
 import asyncio
 import os
+from pathlib import Path
 import sys
 import time
-from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Add parent directories to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.agents2 import Agent
 from dimos.agents2.spec import Model, Provider
+from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("test_agent_query")

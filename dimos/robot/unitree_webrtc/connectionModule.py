@@ -18,19 +18,17 @@
 
 import functools
 import logging
-import math
 import time
 import warnings
-from typing import Optional
 
-import reactivex as rx
 from dimos_lcm.sensor_msgs import CameraInfo
+import reactivex as rx
 from reactivex import operators as ops
 from reactivex.subject import Subject
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs import Header
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -111,7 +109,7 @@ class ConnectionModule(Module):
     _odom: PoseStamped = None
     _lidar: LidarMessage = None
 
-    def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
+    def __init__(self, ip: str | None = None, connection_type: str = "webrtc", *args, **kwargs):
         self.ip = ip
         self.connection_type = connection_type
         self.connection = None
@@ -221,7 +219,7 @@ class ConnectionModule(Module):
         self.tf.publish(camera_link, camera_optical)
 
     @rpc
-    def get_odom(self) -> Optional[PoseStamped]:
+    def get_odom(self) -> PoseStamped | None:
         """Get the robot's odometry.
 
         Returns:

@@ -13,8 +13,9 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import Optional
+
 from reactivex.observable import Observable
+
 from dimos.types.vector import Vector
 
 __all__ = ["ConnectionInterface"]
@@ -44,7 +45,7 @@ class ConnectionInterface(ABC):
         pass
 
     @abstractmethod
-    def get_video_stream(self, fps: int = 30) -> Optional[Observable]:
+    def get_video_stream(self, fps: int = 30) -> Observable | None:
         """Get the video stream from the robot's camera.
 
         Args:

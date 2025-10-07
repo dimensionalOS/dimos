@@ -14,9 +14,7 @@
 
 import time
 
-import pytest
-
-from dimos.utils.decorators import LatestAccumulator, RollingAverageAccumulator, limit
+from dimos.utils.decorators import RollingAverageAccumulator, limit
 
 
 def test_limit():

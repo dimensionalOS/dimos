@@ -20,17 +20,16 @@ This module provides two skills:
 2. Navigate - Queries an existing semantic map using natural language
 """
 
-import os
 import time
-from typing import Optional, Tuple
+
 import cv2
 from pydantic import Field
 
+from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
+from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.skills.skills import AbstractRobotSkill
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
-from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 
 logger = setup_logger(__file__)
@@ -397,10 +396,10 @@ class NavigateToGoal(AbstractRobotSkill):
     orientation at the goal position.
     """
 
-    position: Tuple[float, float] = Field(
+    position: tuple[float, float] = Field(
         (0.0, 0.0), description="Target position (x, y) in map frame"
     )
-    rotation: Optional[float] = Field(None, description="Target orientation (yaw) in radians")
+    rotation: float | None = Field(None, description="Target orientation (yaw) in radians")
     frame: str = Field("map", description="Reference frame for the position and rotation")
     timeout: float = Field(120.0, description="Maximum time (in seconds) allowed for navigation")
 

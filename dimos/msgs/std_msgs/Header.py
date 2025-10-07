@@ -14,11 +14,10 @@
 
 from __future__ import annotations
 
-import time
 from datetime import datetime
+import time
 
-from dimos_lcm.std_msgs import Header as LCMHeader
-from dimos_lcm.std_msgs import Time as LCMTime
+from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 from plum import dispatch
 
 # Import the actual LCM header type that's returned from decoding

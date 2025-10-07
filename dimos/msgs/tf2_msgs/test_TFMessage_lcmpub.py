@@ -13,9 +13,7 @@
 # limitations under the License.
 
 import time
-from dataclasses import dataclass
 
-import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
@@ -27,7 +25,6 @@ from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 # to actual LCM messages, foxglove running in parallel should render this
 @pytest.mark.skip
 def test_publish_transforms():
-    import tf_lcm_py
     from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
     lcm = LCM(autoconf=True)

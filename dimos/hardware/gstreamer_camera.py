@@ -33,7 +33,7 @@ import gi
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-from gi.repository import Gst, GLib
+from gi.repository import GLib, Gst
 
 logger = setup_logger("dimos.hardware.gstreamer_camera", level=logging.INFO)
 
@@ -224,7 +224,7 @@ class GstreamerCameraModule(Module):
             logger.warning(f"GStreamer warning: {warn}, {debug}")
         elif t == Gst.MessageType.STATE_CHANGED:
             if message.src == self.pipeline:
-                old_state, new_state, pending_state = message.parse_state_changed()
+                _old_state, new_state, _pending_state = message.parse_state_changed()
                 if new_state == Gst.State.PLAYING:
                     logger.info("Pipeline is now playing - connected to TCP server")
 

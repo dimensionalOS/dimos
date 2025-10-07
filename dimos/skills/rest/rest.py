@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import requests
-from dimos.skills.skills import AbstractSkill
-from pydantic import Field
 import logging
+
+from pydantic import Field
+import requests
+
+from dimos.skills.skills import AbstractSkill
 
 logger = logging.getLogger(__name__)
 

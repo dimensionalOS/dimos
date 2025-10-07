@@ -13,14 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import numpy as np
-import struct
 
+import numpy as np
+import pytest
 
 try:
-    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-    from sensor_msgs.msg import PointField as ROSPointField
+    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, PointField as ROSPointField
     from std_msgs.msg import Header as ROSHeader
 except ImportError:
     ROSPointCloud2 = None

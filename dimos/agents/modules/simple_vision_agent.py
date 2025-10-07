@@ -17,17 +17,15 @@
 import asyncio
 import base64
 import io
-import logging
 import threading
-from typing import Optional
 
 import numpy as np
 from PIL import Image as PILImage
 
-from dimos.core import Module, In, Out, rpc
+from dimos.agents.modules.gateway import UnifiedGatewayClient
+from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.logging_config import setup_logger
-from dimos.agents.modules.gateway import UnifiedGatewayClient
 
 logger = setup_logger("dimos.agents.modules.simple_vision_agent")
 
@@ -46,7 +44,7 @@ class SimpleVisionAgentModule(Module):
     def __init__(
         self,
         model: str = "openai::gpt-4o-mini",
-        system_prompt: str = None,
+        system_prompt: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ):
@@ -201,12 +199,12 @@ class SimpleVisionAgentModule(Module):
 
             traceback.print_exc()
             if self.response_out:
-                self.response_out.publish(f"Error: {str(e)}")
+                self.response_out.publish(f"Error: {e!s}")
         finally:
             with self._lock:
                 self._processing = False
 
-    def _encode_image(self, image: Image) -> Optional[str]:
+    def _encode_image(self, image: Image) -> str | None:
         """Encode image to base64."""
         try:
             # Convert to numpy array if needed

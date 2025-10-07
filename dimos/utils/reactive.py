@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import threading
-from typing import Optional, TypeVar, Generic, Any, Callable
+from typing import Any, Generic, TypeVar
 
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.scheduler import ThreadPoolScheduler
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
+from reactivex.scheduler import ThreadPoolScheduler
 from rxpy_backpressure import BackPressure
 
 from dimos.utils.threadpool import get_scheduler
@@ -32,7 +33,7 @@ T = TypeVar("T")
 #                           └──► observe_on(pool) ─► backpressure.latest ─► sub3 (slower)
 def backpressure(
     observable: Observable[T],
-    scheduler: Optional[ThreadPoolScheduler] = None,
+    scheduler: ThreadPoolScheduler | None = None,
     drop_unprocessed: bool = True,
 ) -> Observable[T]:
     if scheduler is None:
@@ -81,7 +82,7 @@ class LatestReader(Generic[T]):
             self._connection.dispose()
 
 
-def getter_ondemand(observable: Observable[T], timeout: Optional[float] = 30.0) -> T:
+def getter_ondemand(observable: Observable[T], timeout: float | None = 30.0) -> T:
     def getter():
         result = []
         error = []
@@ -128,7 +129,7 @@ T = TypeVar("T")
 
 def getter_streaming(
     source: Observable[T],
-    timeout: Optional[float] = 30.0,
+    timeout: float | None = 30.0,
     *,
     nonblocking: bool = False,
 ) -> LatestReader[T]:

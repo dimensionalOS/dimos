@@ -12,19 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
-import time
+from collections.abc import Callable
 from contextlib import contextmanager
-from typing import Any, Callable, List, Tuple
+import time
 
 import pytest
 
-from dimos.core import Module, rpc, start, stop
+from dimos.core import Module, rpc, start
 from dimos.protocol.rpc.lcmrpc import LCMRPC
-from dimos.protocol.rpc.spec import RPCClient, RPCServer
 from dimos.protocol.service.lcmservice import autoconf
 
-testgrid: List[Callable] = []
+testgrid: list[Callable] = []
 
 
 # test module we'll use for binding RPC methods

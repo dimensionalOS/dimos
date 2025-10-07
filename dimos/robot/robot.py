@@ -15,7 +15,6 @@
 """Minimal robot interface for DIMOS robots."""
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
 
 from reactivex import Observable
 
@@ -34,7 +33,7 @@ class Robot(ABC):
 
     def __init__(self):
         """Initialize the robot with basic properties."""
-        self.capabilities: List[RobotCapability] = []
+        self.capabilities: list[RobotCapability] = []
         self.skill_library = None
 
     def has_capability(self, capability: RobotCapability) -> bool:
@@ -85,7 +84,7 @@ class UnitreeRobot(Robot):
 
     @property
     @abstractmethod
-    def spatial_memory(self) -> Optional[SpatialMemory]: ...
+    def spatial_memory(self) -> SpatialMemory | None: ...
 
 
 class GpsRobot(ABC):

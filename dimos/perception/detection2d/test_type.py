@@ -12,26 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.perception.detection2d.conftest import detections2d, detections3d
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.perception.detection2d.type import (
     Detection2D,
     Detection3D,
     ImageDetections2D,
     ImageDetections3D,
 )
-from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.msgs.geometry_msgs import Transform, Vector3, PoseStamped
 
 
 def test_detections2d(detections2d):
-    print(f"\n=== ImageDetections2D Test ===")
+    print("\n=== ImageDetections2D Test ===")
     print(f"Type: {type(detections2d)}")
     print(f"Number of detections: {len(detections2d)}")
     print(f"Image timestamp: {detections2d.image.ts}")
     print(f"Image shape: {detections2d.image.shape}")
     print(f"Image frame_id: {detections2d.image.frame_id}")
 
-    print(f"\nFull detections object:")
+    print("\nFull detections object:")
     print(detections2d)
 
     # Basic type assertions
@@ -52,7 +51,7 @@ def test_detections2d(detections2d):
 
     # Test first detection with literal checks
     det = detections2d.detections[0]
-    print(f"\n--- Detection 0 (literal checks) ---")
+    print("\n--- Detection 0 (literal checks) ---")
     print(f"Type: {type(det)}")
     print(f"Name: {det.name}")
     print(f"Class ID: {det.class_id}")
@@ -111,14 +110,14 @@ def test_detections2d(detections2d):
 
 
 def test_detections3d(detections3d):
-    print(f"\n=== ImageDetections3D Test ===")
+    print("\n=== ImageDetections3D Test ===")
     print(f"Type: {type(detections3d)}")
     print(f"Number of detections: {len(detections3d)}")
     print(f"Image timestamp: {detections3d.image.ts}")
     print(f"Image shape: {detections3d.image.shape}")
     print(f"Image frame_id: {detections3d.image.frame_id}")
 
-    print(f"\nFull detections object:")
+    print("\nFull detections object:")
     print(detections3d)
 
     # Basic type assertions
@@ -139,7 +138,7 @@ def test_detections3d(detections3d):
 
     # Test first 3D detection with literal checks
     det = detections3d.detections[0]
-    print(f"\n--- Detection3D 0 (literal checks) ---")
+    print("\n--- Detection3D 0 (literal checks) ---")
     print(f"Type: {type(det)}")
     print(f"Name: {det.name}")
     print(f"Class ID: {det.class_id}")

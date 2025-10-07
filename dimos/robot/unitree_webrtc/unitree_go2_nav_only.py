@@ -20,7 +20,6 @@ import logging
 import os
 import time
 import warnings
-from typing import Optional
 
 from dimos_lcm.std_msgs import Bool, String
 
@@ -33,7 +32,6 @@ from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, Navig
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.protocol.tf import TF
@@ -44,7 +42,6 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.types.robot_capabilities import RobotCapability
-
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
@@ -125,7 +122,7 @@ class ConnectionModule(Module):
 
     def __init__(
         self,
-        ip: str = None,
+        ip: str | None = None,
         connection_type: str = "webrtc",
         rectify_image: bool = True,
         *args,
@@ -242,7 +239,7 @@ class ConnectionModule(Module):
             logger.error(f"Error publishing camera pose: {e}")
 
     @rpc
-    def get_odom(self) -> Optional[PoseStamped]:
+    def get_odom(self) -> PoseStamped | None:
         """Get the robot's odometry.
 
         Returns:
@@ -284,7 +281,7 @@ class UnitreeGo2NavOnly(Robot):
         self,
         ip: str,
         websocket_port: int = 7779,
-        connection_type: Optional[str] = "webrtc",
+        connection_type: str | None = "webrtc",
     ):
         """Initialize the navigation-only robot system.
 

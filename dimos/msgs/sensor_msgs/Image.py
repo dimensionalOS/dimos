@@ -13,19 +13,18 @@
 # limitations under the License.
 
 import base64
-import time
 from dataclasses import dataclass, field
-from datetime import timedelta
 from enum import Enum
-from typing import Literal, Optional, Tuple, TypedDict
+import time
+from typing import Literal, TypedDict
 
 import cv2
-import numpy as np
-import reactivex as rx
 
 # Import LCM types
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
+import numpy as np
+import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
@@ -104,7 +103,7 @@ class Image(Timestamped):
             raise ValueError("Invalid image dimensions")
 
     @property
-    def shape(self) -> Tuple[int, ...]:
+    def shape(self) -> tuple[int, ...]:
         """Get image shape."""
         return self.data.shape
 
@@ -160,7 +159,7 @@ class Image(Timestamped):
         return cls(data=cv_image, format=detected_format)
 
     @classmethod
-    def from_depth(cls, depth_data: np.ndarray, frame_id: str = "", ts: float = None) -> "Image":
+    def from_depth(cls, depth_data: np.ndarray, frame_id: str = "", ts: float | None = None) -> "Image":
         """Create Image from depth data (float32 array)."""
         if depth_data.dtype != np.float32:
             depth_data = depth_data.astype(np.float32)
@@ -371,7 +370,7 @@ class Image(Timestamped):
             }
         ]
 
-    def lcm_encode(self, frame_id: Optional[str] = None) -> LCMImage:
+    def lcm_encode(self, frame_id: str | None = None) -> LCMImage:
         """Convert to LCM Image message."""
         msg = LCMImage()
 

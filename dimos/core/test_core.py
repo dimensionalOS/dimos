@@ -15,6 +15,7 @@
 import time
 
 import pytest
+from reactivex.disposable import Disposable
 
 from dimos.core import (
     In,
@@ -29,7 +30,6 @@ from dimos.core.testing import MockRobotClient, dimos
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from reactivex.disposable import Disposable
 
 assert dimos
 

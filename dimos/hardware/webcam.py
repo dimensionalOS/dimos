@@ -12,31 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from abc import abstractmethod, abstractproperty
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from functools import cache
 import queue
 import threading
 import time
-from abc import ABC, abstractmethod, abstractproperty
-from dataclasses import dataclass, field
-from functools import cache
-from typing import Any, Callable, Generic, Literal, Optional, Protocol, TypeVar
+from typing import Any, Generic, Literal, Protocol, TypeVar
 
 import cv2
-import numpy as np
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import create
 from reactivex.observable import Observable
 
 from dimos.agents2 import Output, Reducer, Stream, skill
-from dimos.core import Module, Out, rpc
+from dimos.core import Out, rpc
 from dimos.core.module import DaskModule, ModuleConfig
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import ImageFormat
-from dimos.protocol.service import Configurable, Service
+from dimos.protocol.service import Configurable
 from dimos.utils.reactive import backpressure
 
 
 class CameraConfig(Protocol):
-    frame_id_prefix: Optional[str]
+    frame_id_prefix: str | None
 
 
 CameraConfigT = TypeVar("CameraConfigT", bound=CameraConfig)
@@ -61,8 +61,8 @@ class WebcamConfig(CameraConfig):
     frame_height: int = 480
     frequency: int = 10
     camera_info: CameraInfo = field(default_factory=CameraInfo)
-    frame_id_prefix: Optional[str] = None
-    stereo_slice: Optional[Literal["left", "right"]] = None  # For stereo cameras
+    frame_id_prefix: str | None = None
+    stereo_slice: Literal["left", "right"] | None = None  # For stereo cameras
 
 
 class Webcam(ColorCameraHardware[WebcamConfig]):
@@ -208,8 +208,8 @@ class ColorCameraModuleConfig(ModuleConfig):
 class ColorCameraModule(DaskModule):
     image: Out[Image] = None
     hardware: ColorCameraHardware = None
-    _module_subscription: Optional[Any] = None  # Subscription disposable
-    _skill_stream: Optional[Observable[Image]] = None
+    _module_subscription: Any | None = None  # Subscription disposable
+    _skill_stream: Observable[Image] | None = None
     default_config = ColorCameraModuleConfig
 
     def __init__(self, *args, **kwargs):
@@ -233,8 +233,7 @@ class ColorCameraModule(DaskModule):
         _queue = queue.Queue(maxsize=1)
         self.hardware.color_stream().subscribe(_queue.put)
 
-        for image in iter(_queue.get, None):
-            yield image
+        yield from iter(_queue.get, None)
 
     def stop(self):
         if self._module_subscription:

@@ -14,12 +14,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import functools
 import hashlib
-from dataclasses import dataclass
-from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-import numpy as np
 from dimos_lcm.foxglove_msgs.Color import Color
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
@@ -28,32 +27,33 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
 from dimos_lcm.foxglove_msgs.Point2 import Point2
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
+    Detection2D as ROSDetection2D,
     ObjectHypothesis,
     ObjectHypothesisWithPose,
     Point2D,
     Pose2D,
 )
-from dimos_lcm.vision_msgs import (
-    Detection2D as ROSDetection2D,
-)
+import numpy as np
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.types.timestamped import Timestamped, to_ros_stamp, to_timestamp
 
-Bbox = Tuple[float, float, float, float]
-CenteredBbox = Tuple[float, float, float, float]
-# yolo and detic have bad output formats
-InconvinientDetectionFormat = Tuple[List[Bbox], List[int], List[int], List[float], List[str]]
+if TYPE_CHECKING:
+    from dimos.msgs.sensor_msgs import Image, PointCloud2
 
-Detection = Tuple[Bbox, int, int, float, str]
-Detections = List[Detection]
+Bbox = tuple[float, float, float, float]
+CenteredBbox = tuple[float, float, float, float]
+# yolo and detic have bad output formats
+InconvinientDetectionFormat = tuple[list[Bbox], list[int], list[int], list[float], list[str]]
+
+Detection = tuple[Bbox, int, int, float, str]
+Detections = list[Detection]
 
 
 # yolo and detic have bad formats this translates into list of detections
@@ -62,7 +62,7 @@ def better_detection_format(inconvinient_detections: InconvinientDetectionFormat
     return [
         (bbox, track_id, class_id, confidence, name if name else "")
         for bbox, track_id, class_id, confidence, name in zip(
-            bboxes, track_ids, class_ids, confidences, names
+            bboxes, track_ids, class_ids, confidences, names, strict=False
         )
     ]
 
@@ -77,7 +77,7 @@ class Detection2D(Timestamped):
     ts: float
     image: Image
 
-    def to_repr_dict(self) -> Dict[str, Any]:
+    def to_repr_dict(self) -> dict[str, Any]:
         """Return a dictionary representation of the detection for display purposes."""
         x1, y1, x2, y2 = self.bbox
         return {
@@ -141,13 +141,13 @@ class Detection2D(Timestamped):
     @classmethod
     def from_detector(
         cls, raw_detections: InconvinientDetectionFormat, **kwargs
-    ) -> List["Detection2D"]:
+    ) -> list[Detection2D]:
         return [
             cls.from_detection(raw, **kwargs) for raw in better_detection_format(raw_detections)
         ]
 
     @classmethod
-    def from_detection(cls, raw_detection: Detection, **kwargs) -> "Detection2D":
+    def from_detection(cls, raw_detection: Detection, **kwargs) -> Detection2D:
         bbox, track_id, class_id, confidence, name = raw_detection
 
         return cls(
@@ -181,8 +181,8 @@ class Detection2D(Timestamped):
     def lcm_encode(self):
         return self.to_imageannotations().lcm_encode()
 
-    def to_text_annotation(self) -> List[TextAnnotation]:
-        x1, y1, x2, y2 = self.bbox
+    def to_text_annotation(self) -> list[TextAnnotation]:
+        x1, y1, _x2, y2 = self.bbox
 
         font_size = 20
 
@@ -205,7 +205,7 @@ class Detection2D(Timestamped):
             ),
         ]
 
-    def to_points_annotation(self) -> List[PointsAnnotation]:
+    def to_points_annotation(self) -> list[PointsAnnotation]:
         x1, y1, x2, y2 = self.bbox
 
         thickness = 1
@@ -242,7 +242,7 @@ class Detection2D(Timestamped):
         )
 
     @classmethod
-    def from_ros_detection2d(cls, ros_det: ROSDetection2D, **kwargs) -> "Detection2D":
+    def from_ros_detection2d(cls, ros_det: ROSDetection2D, **kwargs) -> Detection2D:
         """Convert from ROS Detection2D message to Detection2D object."""
         # Extract bbox from ROS format
         center_x = ros_det.bbox.center.position.x
@@ -300,7 +300,7 @@ class Detection2D(Timestamped):
             id=str(self.track_id),
         )
 
-    def to_3d(self, **kwargs) -> "Detection3D":
+    def to_3d(self, **kwargs) -> Detection3D:
         return Detection3D(
             image=self.image,
             bbox=self.bbox,
@@ -343,7 +343,7 @@ class Detection3D(Detection2D):
             orientation=(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
         )
 
-    def to_repr_dict(self) -> Dict[str, Any]:
+    def to_repr_dict(self) -> dict[str, Any]:
         d = super().to_repr_dict()
 
         # Add pointcloud info
@@ -392,9 +392,9 @@ def _hash_to_color(name: str) -> str:
 
 class ImageDetections(Generic[T]):
     image: Image
-    detections: List[T]
+    detections: list[T]
 
-    def __init__(self, image: Image, detections: List[T]):
+    def __init__(self, image: Image, detections: list[T]):
         self.image = image
         self.detections = detections
         for det in self.detections:
@@ -478,7 +478,7 @@ class ImageDetections2D(ImageDetections[Detection2D]):
     @classmethod
     def from_detector(
         cls, image: Image, raw_detections: InconvinientDetectionFormat, **kwargs
-    ) -> "ImageDetections2D":
+    ) -> ImageDetections2D:
         return cls(
             image=image,
             detections=Detection2D.from_detector(raw_detections, image=image, ts=image.ts),

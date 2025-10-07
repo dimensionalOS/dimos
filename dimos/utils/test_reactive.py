@@ -12,19 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
+from collections.abc import Callable
 import time
+from typing import Any, TypeVar
+
 import numpy as np
+import pytest
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.scheduler import ThreadPoolScheduler
-from typing import Callable, TypeVar, Any
 from reactivex.disposable import Disposable
+from reactivex.scheduler import ThreadPoolScheduler
+
 from dimos.utils.reactive import (
     backpressure,
-    getter_streaming,
-    getter_ondemand,
     callback_to_observable,
+    getter_ondemand,
+    getter_streaming,
 )
 
 

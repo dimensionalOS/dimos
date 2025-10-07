@@ -15,11 +15,6 @@
 from __future__ import annotations
 
 import struct
-import time
-from typing import Optional
-
-import numpy as np
-import open3d as o3d
 
 # Import LCM types
 from dimos_lcm.sensor_msgs.PointCloud2 import (
@@ -27,11 +22,12 @@ from dimos_lcm.sensor_msgs.PointCloud2 import (
 )
 from dimos_lcm.sensor_msgs.PointField import PointField
 from dimos_lcm.std_msgs.Header import Header
+import numpy as np
+import open3d as o3d
 
 # Import ROS types
 try:
-    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-    from sensor_msgs.msg import PointField as ROSPointField
+    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, PointField as ROSPointField
     from std_msgs.msg import Header as ROSHeader
 
     ROS_AVAILABLE = True
@@ -49,7 +45,7 @@ class PointCloud2(Timestamped):
         self,
         pointcloud: o3d.geometry.PointCloud = None,
         frame_id: str = "world",
-        ts: Optional[float] = None,
+        ts: float | None = None,
     ):
         self.ts = ts
         self.pointcloud = pointcloud if pointcloud is not None else o3d.geometry.PointCloud()
@@ -57,7 +53,7 @@ class PointCloud2(Timestamped):
 
     @classmethod
     def from_numpy(
-        cls, points: np.ndarray, frame_id: str = "world", timestamp: Optional[float] = None
+        cls, points: np.ndarray, frame_id: str = "world", timestamp: float | None = None
     ) -> PointCloud2:
         """Create PointCloud2 from numpy array of shape (N, 3).
 
@@ -81,7 +77,7 @@ class PointCloud2(Timestamped):
         """Get points as numpy array."""
         return np.asarray(self.pointcloud.points)
 
-    def lcm_encode(self, frame_id: Optional[str] = None) -> bytes:
+    def lcm_encode(self, frame_id: str | None = None) -> bytes:
         """Convert to LCM PointCloud2 message."""
         msg = LCMPointCloud2()
 
@@ -139,7 +135,7 @@ class PointCloud2(Timestamped):
         return msg.lcm_encode()
 
     @classmethod
-    def lcm_decode(cls, data: bytes) -> "PointCloud2":
+    def lcm_decode(cls, data: bytes) -> PointCloud2:
         msg = LCMPointCloud2.lcm_decode(data)
 
         if msg.width == 0 or msg.height == 0:
@@ -241,9 +237,9 @@ class PointCloud2(Timestamped):
 
     def filter_by_height(
         self,
-        min_height: Optional[float] = None,
-        max_height: Optional[float] = None,
-    ) -> "PointCloud2":
+        min_height: float | None = None,
+        max_height: float | None = None,
+    ) -> PointCloud2:
         """Filter points based on their height (z-coordinate).
 
         This method creates a new PointCloud2 containing only points within the specified
@@ -316,7 +312,7 @@ class PointCloud2(Timestamped):
         return f"PointCloud(points={len(self)}, frame_id='{self.frame_id}', ts={self.ts})"
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: "ROSPointCloud2") -> "PointCloud2":
+    def from_ros_msg(cls, ros_msg: ROSPointCloud2) -> PointCloud2:
         """Convert from ROS sensor_msgs/PointCloud2 message.
 
         Args:
@@ -427,7 +423,7 @@ class PointCloud2(Timestamped):
             ts=ts,
         )
 
-    def to_ros_msg(self) -> "ROSPointCloud2":
+    def to_ros_msg(self) -> ROSPointCloud2:
         """Convert to ROS sensor_msgs/PointCloud2 message.
 
         Returns:

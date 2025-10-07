@@ -20,7 +20,6 @@ import functools
 import logging
 import threading
 import time
-from typing import List
 
 from reactivex import Observable
 
@@ -28,7 +27,6 @@ from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
-
 
 LIDAR_FREQUENCY = 10
 ODOM_FREQUENCY = 50
@@ -45,8 +43,8 @@ class MujocoConnection:
             raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
         get_data("mujoco_sim")
         self.mujoco_thread = MujocoThread()
-        self._stream_threads: List[threading.Thread] = []
-        self._stop_events: List[threading.Event] = []
+        self._stream_threads: list[threading.Thread] = []
+        self._stop_events: list[threading.Event] = []
         self._is_cleaned_up = False
 
         # Register cleanup on exit

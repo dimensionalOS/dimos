@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+
 import numpy as np
+
 from dimos.models.qwen.video_query import BBox
 from dimos.models.vl.base import VlModel
 from dimos.utils.generic import extract_json_from_llm_response
@@ -21,7 +22,7 @@ from dimos.utils.generic import extract_json_from_llm_response
 
 def get_object_bbox_from_image(
     vl_model: VlModel, image_data: np.ndarray, object_description: str
-) -> Optional[BBox]:
+) -> BBox | None:
     if not isinstance(image_data, np.ndarray):
         raise ValueError("Frame must be a numpy array")
 

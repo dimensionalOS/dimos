@@ -18,10 +18,10 @@ import argparse
 import logging
 import time
 
-from dimos.hardware.gstreamer_camera import GstreamerCameraModule
 from dimos import core
-from dimos.protocol import pubsub
+from dimos.hardware.gstreamer_camera import GstreamerCameraModule
 from dimos.msgs.sensor_msgs import Image
+from dimos.protocol import pubsub
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

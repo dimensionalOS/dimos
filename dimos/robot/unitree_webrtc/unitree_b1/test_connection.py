@@ -22,12 +22,13 @@
 # should be used and tested. Additionally, tests should always use `try-finally`
 # to clean up even if the test fails.
 
-import time
 import threading
+import time
 
-from .connection import TestB1ConnectionModule
 from dimos.msgs.geometry_msgs import TwistStamped, Vector3
 from dimos.msgs.std_msgs.Int32 import Int32
+
+from .connection import TestB1ConnectionModule
 
 
 class TestB1Connection:
@@ -330,7 +331,7 @@ class TestB1Connection:
         conn.watchdog_thread.start()
 
         # Simulate sending movement commands for a while
-        for i in range(5):
+        for _i in range(5):
             twist = TwistStamped(
                 ts=time.time(),
                 frame_id="base_link",
@@ -392,7 +393,7 @@ class TestB1Connection:
 
         # Send commands from multiple threads rapidly
         def send_commands(thread_id):
-            for i in range(10):
+            for _i in range(10):
                 twist = TwistStamped(
                     ts=time.time(),
                     frame_id="base_link",

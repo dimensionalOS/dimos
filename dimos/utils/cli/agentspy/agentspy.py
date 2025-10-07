@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Deque, Dict, List, Optional, Union
+import time
+from typing import Any, Union
 
 from langchain_core.messages import (
     AIMessage,
@@ -25,18 +25,11 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from rich.console import Console
-from rich.table import Table
-from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, ScrollableContainer
-from textual.reactive import reactive
 from textual.widgets import Footer, RichLog
 
-from dimos.protocol.pubsub import lcm
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM
-from dimos.utils.logging_config import setup_logger
 
 # Type alias for all message types we might receive
 AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]
@@ -61,10 +54,10 @@ class AgentMessageMonitor:
     def __init__(self, topic: str = "/agent", max_messages: int = 1000):
         self.topic = topic
         self.max_messages = max_messages
-        self.messages: Deque[MessageEntry] = deque(maxlen=max_messages)
+        self.messages: deque[MessageEntry] = deque(maxlen=max_messages)
         self.transport = PickleLCM()
         self.transport.start()
-        self.callbacks: List[callable] = []
+        self.callbacks: list[callable] = []
         pass
 
     def start(self):
@@ -93,7 +86,7 @@ class AgentMessageMonitor:
         """Subscribe to new messages."""
         self.callbacks.append(callback)
 
-    def get_messages(self) -> List[MessageEntry]:
+    def get_messages(self) -> list[MessageEntry]:
         """Get all stored messages."""
         return list(self.messages)
 
@@ -172,7 +165,7 @@ class AgentSpyApp(App):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.monitor = AgentMessageMonitor()
-        self.message_log: Optional[RichLog] = None
+        self.message_log: RichLog | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the UI."""

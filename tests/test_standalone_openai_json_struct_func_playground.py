@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-import os
 
 # -----
 # # Milestone 1
@@ -115,10 +113,9 @@ import os
 
 # Milestone 2
 import json
-import os
-import requests
 
 from dotenv import load_dotenv
+import requests
 
 load_dotenv()
 

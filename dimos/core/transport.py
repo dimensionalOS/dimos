@@ -15,32 +15,23 @@
 from __future__ import annotations
 
 import traceback
-from typing import Any, Callable, Generic, List, Optional, Protocol, TypeVar
+from typing import TypeVar
 
 import dimos.core.colors as colors
 
 T = TypeVar("T")
 
-import traceback
 from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generic,
-    List,
-    Optional,
-    Protocol,
+    TYPE_CHECKING,
     TypeVar,
-    get_args,
-    get_origin,
-    get_type_hints,
 )
 
-import dimos.core.colors as colors
 from dimos.core.stream import In, RemoteIn, Transport
-from dimos.protocol.pubsub.lcmpubsub import LCM, PickleLCM
-from dimos.protocol.pubsub.lcmpubsub import Topic as LCMTopic
-from dimos.protocol.pubsub.shmpubsub import SharedMemory, PickleSharedMemory
+from dimos.protocol.pubsub.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
+from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 T = TypeVar("T")
 
@@ -156,7 +147,7 @@ class SHMTransport(PubSubTransport[T]):
 
 
 class DaskTransport(Transport[T]):
-    subscribers: List[Callable[[T], None]]
+    subscribers: list[Callable[[T], None]]
     _started: bool = False
 
     def __init__(self):

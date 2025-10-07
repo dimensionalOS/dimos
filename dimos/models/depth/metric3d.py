@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
-from PIL import Image
 import cv2
-import numpy as np
+import torch
 
 # May need to add this back for import to work
 # external_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'external', 'Metric3D'))
@@ -72,7 +70,7 @@ class Metric3D:
         img = self.rescale_input(img, self.rgb_origin)
 
         with torch.no_grad():
-            pred_depth, confidence, output_dict = self.depth_model.inference({"input": img})
+            pred_depth, _confidence, _output_dict = self.depth_model.inference({"input": img})
 
         # Convert to PIL format
         depth_image = self.unpad_transform_depth(pred_depth)

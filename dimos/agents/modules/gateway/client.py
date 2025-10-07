@@ -15,9 +15,11 @@
 """Unified gateway client for LLM access."""
 
 import asyncio
+from collections.abc import AsyncIterator, Iterator
 import logging
 import os
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
+from typing import Any
+
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -34,7 +36,7 @@ class UnifiedGatewayClient:
     """
 
     def __init__(
-        self, gateway_url: Optional[str] = None, timeout: float = 60.0, use_simple: bool = False
+        self, gateway_url: str | None = None, timeout: float = 60.0, use_simple: bool = False
     ):
         """Initialize the gateway client.
 
@@ -82,13 +84,13 @@ class UnifiedGatewayClient:
     def inference(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> Union[Dict[str, Any], Iterator[Dict[str, Any]]]:
+    ) -> dict[str, Any] | Iterator[dict[str, Any]]:
         """Synchronous inference call.
 
         Args:
@@ -117,13 +119,13 @@ class UnifiedGatewayClient:
     async def ainference(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
+    ) -> dict[str, Any] | AsyncIterator[dict[str, Any]]:
         """Asynchronous inference call.
 
         Args:

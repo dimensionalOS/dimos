@@ -16,8 +16,8 @@ import os
 import sys
 import time
 
-import pytest
 from dotenv import load_dotenv
+import pytest
 
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry

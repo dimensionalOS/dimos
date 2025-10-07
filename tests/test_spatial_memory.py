@@ -13,25 +13,20 @@
 # limitations under the License.
 
 import os
-import sys
 import time
-import pickle
-import numpy as np
+
+import chromadb
 import cv2
-import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
+import matplotlib.pyplot as plt
 import reactivex
 from reactivex import operators as ops
-import chromadb
 
 from dimos.agents.memory.visual_memory import VisualMemory
-
-import tests.test_header
+from dimos.msgs.geometry_msgs import Quaternion, Vector3
 
 # from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2  # Uncomment when properly configured
 from dimos.perception.spatial_perception import SpatialMemory
-from dimos.types.vector import Vector
-from dimos.msgs.geometry_msgs import Vector3, Quaternion
 
 
 def extract_pose_data(transform):
@@ -146,7 +141,7 @@ def main():
     def on_stored_frame(result):
         nonlocal stored_count
         # Only count actually stored frames (not debug frames)
-        if not result.get("stored", True) == False:
+        if not not result.get("stored", True):
             stored_count += 1
             pos = result["position"]
             if isinstance(pos, tuple):

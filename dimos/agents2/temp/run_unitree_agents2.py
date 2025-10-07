@@ -19,9 +19,9 @@ This is the migrated version using the new LangChain-based agent system.
 """
 
 import os
+from pathlib import Path
 import sys
 import time
-from pathlib import Path
 
 from dotenv import load_dotenv
 

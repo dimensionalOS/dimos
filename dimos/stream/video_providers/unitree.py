@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.stream.video_provider import AbstractVideoProvider
-
-from queue import Queue
-from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
-from aiortc import MediaStreamTrack
 import asyncio
-from reactivex import Observable, create, operators as ops
 import logging
+from queue import Queue
 import threading
 import time
+
+from aiortc import MediaStreamTrack
+from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
+from reactivex import Observable, create, operators as ops
+
+from dimos.stream.video_provider import AbstractVideoProvider
 
 
 class UnitreeVideoProvider(AbstractVideoProvider):
@@ -29,8 +30,8 @@ class UnitreeVideoProvider(AbstractVideoProvider):
         self,
         dev_name: str = "UnitreeGo2",
         connection_method: WebRTCConnectionMethod = WebRTCConnectionMethod.LocalSTA,
-        serial_number: str = None,
-        ip: str = None,
+        serial_number: str | None = None,
+        ip: str | None = None,
     ):
         """Initialize the Unitree video stream with WebRTC connection.
 

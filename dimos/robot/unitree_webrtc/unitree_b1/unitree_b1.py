@@ -20,18 +20,16 @@ Unitree B1 quadruped robot with simplified UDP control.
 Uses standard Twist interface for velocity commands.
 """
 
-import os
 import logging
-from typing import Optional
+import os
 
 from dimos import core
-from dimos.msgs.geometry_msgs import Twist, TwistStamped, PoseStamped
+from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.std_msgs import Int32
-from dimos.protocol.pubsub.lcmpubsub import LCM
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.robot import Robot
-from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
+from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 from dimos.robot.unitree_webrtc.unitree_b1.connection import (
     B1ConnectionModule,
     TestB1ConnectionModule,
@@ -69,8 +67,8 @@ class UnitreeB1(Robot):
         self,
         ip: str = "192.168.123.14",
         port: int = 9090,
-        output_dir: str = None,
-        skill_library: Optional[SkillLibrary] = None,
+        output_dir: str | None = None,
+        skill_library: SkillLibrary | None = None,
         enable_joystick: bool = False,
         enable_ros_bridge: bool = True,
         test_mode: bool = False,

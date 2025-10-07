@@ -16,21 +16,23 @@ from __future__ import annotations
 
 import enum
 from typing import (
+    TYPE_CHECKING,
     Any,
-    Callable,
     Generic,
-    Optional,
     TypeVar,
 )
 
-import reactivex as rx
 from dask.distributed import Actor
+import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
 import dimos.core.colors as colors
 import dimos.utils.reactive as reactive
 from dimos.utils.reactive import backpressure
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 T = TypeVar("T")
 
@@ -83,14 +85,14 @@ class Transport(ObservableMixin[T]):
 
 
 class Stream(Generic[T]):
-    _transport: Optional[Transport]
+    _transport: Transport | None
 
     def __init__(
         self,
         type: type[T],
         name: str,
-        owner: Optional[Any] = None,
-        transport: Optional[Transport] = None,
+        owner: Any | None = None,
+        transport: Transport | None = None,
     ):
         self.name = name
         self.owner = owner
@@ -113,7 +115,7 @@ class Stream(Generic[T]):
             return colors.green
         return lambda s: s
 
-    def __str__(self) -> str:  # noqa: D401
+    def __str__(self) -> str:
         return (
             self.__class__.__name__
             + " "
@@ -139,10 +141,10 @@ class Out(Stream[T]):
         return self._transport
 
     @property
-    def state(self) -> State:  # noqa: D401
+    def state(self) -> State:
         return State.UNBOUND if self.owner is None else State.READY
 
-    def __reduce__(self):  # noqa: D401
+    def __reduce__(self):
         if self.owner is None or not hasattr(self.owner, "ref"):
             raise ValueError("Cannot serialise Out without an owner ref")
         return (
@@ -163,7 +165,7 @@ class Out(Stream[T]):
 
 class RemoteStream(Stream[T]):
     @property
-    def state(self) -> State:  # noqa: D401
+    def state(self) -> State:
         return State.UNBOUND if self.owner is None else State.READY
 
     # this won't work but nvm
@@ -188,7 +190,7 @@ class RemoteOut(RemoteStream[T]):
 # representation of Input
 # as views from inside of the module
 class In(Stream[T], ObservableMixin[T]):
-    connection: Optional[RemoteOut[T]] = None
+    connection: RemoteOut[T] | None = None
     _transport: Transport
 
     def __str__(self):
@@ -199,7 +201,7 @@ class In(Stream[T], ObservableMixin[T]):
 
         return (mystr + " ◀─").ljust(60, "─") + f" {self.connection}"
 
-    def __reduce__(self):  # noqa: D401
+    def __reduce__(self):
         if self.owner is None or not hasattr(self.owner, "ref"):
             raise ValueError("Cannot serialise Out without an owner ref")
         return (RemoteIn, (self.type, self.name, self.owner.ref, self._transport))
@@ -211,7 +213,7 @@ class In(Stream[T], ObservableMixin[T]):
         return self._transport
 
     @property
-    def state(self) -> State:  # noqa: D401
+    def state(self) -> State:
         return State.UNBOUND if self.owner is None else State.READY
 
     # returns unsubscribe function

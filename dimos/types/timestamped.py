@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterable
 from datetime import datetime, timezone
-from typing import Generic, Iterable, Optional, Tuple, TypedDict, TypeVar, Union
+from typing import Generic, TypeVar, Union
 
 from dimos_lcm.builtin_interfaces import Time as ROSTime
 
@@ -112,14 +113,14 @@ T = TypeVar("T", bound=Timestamped)
 class TimestampedCollection(Generic[T]):
     """A collection of timestamped objects with efficient time-based operations."""
 
-    def __init__(self, items: Optional[Iterable[T]] = None):
+    def __init__(self, items: Iterable[T] | None = None):
         self._items = SortedKeyList(items or [], key=lambda x: x.ts)
 
     def add(self, item: T) -> None:
         """Add a timestamped item to the collection."""
         self._items.add(item)
 
-    def find_closest(self, timestamp: float, tolerance: Optional[float] = None) -> Optional[T]:
+    def find_closest(self, timestamp: float, tolerance: float | None = None) -> T | None:
         """Find the timestamped object closest to the given timestamp."""
         if not self._items:
             return None
@@ -155,12 +156,12 @@ class TimestampedCollection(Generic[T]):
 
         return self._items[closest_idx]
 
-    def find_before(self, timestamp: float) -> Optional[T]:
+    def find_before(self, timestamp: float) -> T | None:
         """Find the last item before the given timestamp."""
         idx = self._items.bisect_key_left(timestamp)
         return self._items[idx - 1] if idx > 0 else None
 
-    def find_after(self, timestamp: float) -> Optional[T]:
+    def find_after(self, timestamp: float) -> T | None:
         """Find the first item after the given timestamp."""
         idx = self._items.bisect_key_right(timestamp)
         return self._items[idx] if idx < len(self._items) else None
@@ -177,7 +178,7 @@ class TimestampedCollection(Generic[T]):
             return 0.0
         return self._items[-1].ts - self._items[0].ts
 
-    def time_range(self) -> Optional[Tuple[float, float]]:
+    def time_range(self) -> tuple[float, float] | None:
         """Get the time range (start, end) of the collection."""
         if not self._items:
             return None
@@ -190,12 +191,12 @@ class TimestampedCollection(Generic[T]):
         return TimestampedCollection(self._items[start_idx:end_idx])
 
     @property
-    def start_ts(self) -> Optional[float]:
+    def start_ts(self) -> float | None:
         """Get the start timestamp of the collection."""
         return self._items[0].ts if self._items else None
 
     @property
-    def end_ts(self) -> Optional[float]:
+    def end_ts(self) -> float | None:
         """Get the end timestamp of the collection."""
         return self._items[-1].ts if self._items else None
 
@@ -216,7 +217,7 @@ SECONDARY = TypeVar("SECONDARY", bound=Timestamped)
 class TimestampedBufferCollection(TimestampedCollection[T]):
     """A timestamped collection that maintains a sliding time window, dropping old messages."""
 
-    def __init__(self, window_duration: float, items: Optional[Iterable[T]] = None):
+    def __init__(self, window_duration: float, items: Iterable[T] | None = None):
         """
         Initialize with a time window duration in seconds.
 
@@ -249,7 +250,7 @@ def align_timestamped(
     secondary_observable: Observable[SECONDARY],
     buffer_size: float = 1.0,  # seconds
     match_tolerance: float = 0.05,  # seconds
-) -> Observable[Tuple[PRIMARY, SECONDARY]]:
+) -> Observable[tuple[PRIMARY, SECONDARY]]:
     from reactivex import create
     from reactivex.disposable import CompositeDisposable
 
@@ -287,7 +288,7 @@ def align_timestamped_multiple(
     *secondary_observables: Observable[SECONDARY],
     buffer_size: float = 1.0,  # seconds
     match_tolerance: float = 0.05,  # seconds
-) -> Observable[Tuple[PRIMARY, ...]]:
+) -> Observable[tuple[PRIMARY, ...]]:
     """Align a primary observable with multiple secondary observables.
 
     Args:

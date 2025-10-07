@@ -14,30 +14,22 @@
 
 from __future__ import annotations
 
-import pickle
-import subprocess
-import sys
-import threading
-import time
-import traceback
 from abc import abstractmethod
-from dataclasses import dataclass
-from types import FunctionType
+from collections.abc import Callable
+import time
 from typing import (
+    TYPE_CHECKING,
     Any,
-    Callable,
     Generic,
-    Optional,
-    Protocol,
-    Sequence,
     TypedDict,
     TypeVar,
-    runtime_checkable,
 )
 
-from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub
-from dimos.protocol.rpc.spec import Args, RPCClient, RPCInspectable, RPCServer, RPCSpec
-from dimos.protocol.service.spec import Service
+from dimos.protocol.pubsub.spec import PubSub
+from dimos.protocol.rpc.spec import Args, RPCSpec
+
+if TYPE_CHECKING:
+    from types import FunctionType
 
 MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")
@@ -74,7 +66,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     @abstractmethod
     def _encodeRPCRes(self, res: RPCRes) -> MsgT: ...
 
-    def call(self, name: str, arguments: Args, cb: Optional[Callable]):
+    def call(self, name: str, arguments: Args, cb: Callable | None):
         if cb is None:
             return self.call_nowait(name, arguments)
 
@@ -106,7 +98,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         req: RPCReq = {"name": name, "args": arguments, "id": None}
         self.publish(topic_req, self._encodeRPCReq(req))
 
-    def serve_rpc(self, f: FunctionType, name: Optional[str] = None):
+    def serve_rpc(self, f: FunctionType, name: str | None = None):
         if not name:
             name = f.__name__
 

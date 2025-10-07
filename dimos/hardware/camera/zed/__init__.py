@@ -15,6 +15,7 @@
 """ZED camera hardware interfaces."""
 
 from pathlib import Path
+
 from dimos.msgs.sensor_msgs.CameraInfo import CalibrationProvider
 
 # Check if ZED SDK is available
@@ -48,8 +49,8 @@ CALIBRATION_DIR = Path(__file__).parent
 CameraInfo = CalibrationProvider(CALIBRATION_DIR)
 
 __all__ = [
-    "ZEDCamera",
-    "ZEDModule",
     "HAS_ZED_SDK",
     "CameraInfo",
+    "ZEDCamera",
+    "ZEDModule",
 ]

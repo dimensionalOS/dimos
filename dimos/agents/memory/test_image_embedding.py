@@ -21,7 +21,6 @@ import time
 
 import numpy as np
 import pytest
-import reactivex as rx
 from reactivex import operators as ops
 
 from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
@@ -143,7 +142,7 @@ class TestImageEmbedding:
                     "embedding1": results[0]["embedding"],
                     "embedding2": results[1]["embedding"] if len(results) > 1 else None,
                 }
-                print(f"Saved embeddings for similarity testing")
+                print("Saved embeddings for similarity testing")
 
             print("CLIP embedding test passed successfully!")
 

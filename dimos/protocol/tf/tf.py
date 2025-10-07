@@ -14,12 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from abc import abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from functools import reduce
-from typing import Optional, TypeVar, Union
+from typing import TypeVar
 
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.tf2_msgs import TFMessage
@@ -57,8 +56,8 @@ class TFSpec(Service[TFConfig]):
         self,
         parent_frame: str,
         child_frame: str,
-        time_point: Optional[float] = None,
-        time_tolerance: Optional[float] = None,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
     ): ...
 
     def receive_transform(self, *args: Transform) -> None: ...
@@ -92,8 +91,8 @@ class TBuffer(TimestampedCollection[Transform]):
             self._items.pop(0)
 
     def get(
-        self, time_point: Optional[float] = None, time_tolerance: float = 1.0
-    ) -> Optional[Transform]:
+        self, time_point: float | None = None, time_tolerance: float = 1.0
+    ) -> Transform | None:
         """Get transform at specified time or latest if no time given."""
         if time_point is None:
             # Return the latest transform
@@ -169,9 +168,9 @@ class MultiTBuffer:
         self,
         parent_frame: str,
         child_frame: str,
-        time_point: Optional[float] = None,
-        time_tolerance: Optional[float] = None,
-    ) -> Optional[Transform]:
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> Transform | None:
         # Check forward direction
         key = (parent_frame, child_frame)
         if key in self.buffers:
@@ -185,7 +184,7 @@ class MultiTBuffer:
 
         return None
 
-    def get(self, *args, **kwargs) -> Optional[Transform]:
+    def get(self, *args, **kwargs) -> Transform | None:
         simple = self.get_transform(*args, **kwargs)
         if simple is not None:
             return simple
@@ -201,9 +200,9 @@ class MultiTBuffer:
         self,
         parent_frame: str,
         child_frame: str,
-        time_point: Optional[float] = None,
-        time_tolerance: Optional[float] = None,
-    ) -> Optional[list[Transform]]:
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> list[Transform] | None:
         """Search for shortest transform chain between parent and child frames using BFS."""
         # Check if direct transform exists (already checked in get_transform, but for clarity)
         direct = self.get_transform(parent_frame, child_frame, time_point, time_tolerance)
@@ -232,7 +231,7 @@ class MultiTBuffer:
                         current_frame, next_frame, time_point, time_tolerance
                     )
                     if transform:
-                        queue.append((next_frame, path + [transform]))
+                        queue.append((next_frame, [*path, transform]))
 
         return None
 
@@ -269,8 +268,8 @@ class MultiTBuffer:
 
 @dataclass
 class PubSubTFConfig(TFConfig):
-    topic: Optional[Topic] = None  # Required field but needs default for dataclass inheritance
-    pubsub: Union[type[PubSub], PubSub, None] = None
+    topic: Topic | None = None  # Required field but needs default for dataclass inheritance
+    pubsub: type[PubSub] | PubSub | None = None
     autostart: bool = True
 
 
@@ -321,9 +320,9 @@ class PubSubTF(MultiTBuffer, TFSpec):
         self,
         parent_frame: str,
         child_frame: str,
-        time_point: Optional[float] = None,
-        time_tolerance: Optional[float] = None,
-    ) -> Optional[Transform]:
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> Transform | None:
         return super().get(parent_frame, child_frame, time_point, time_tolerance)
 
     def receive_msg(self, msg: TFMessage, topic: Topic) -> None:
@@ -333,7 +332,7 @@ class PubSubTF(MultiTBuffer, TFSpec):
 @dataclass
 class LCMPubsubConfig(PubSubTFConfig):
     topic: Topic = field(default_factory=lambda: Topic("/tf", TFMessage))
-    pubsub: Union[type[PubSub], PubSub, None] = LCM
+    pubsub: type[PubSub] | PubSub | None = LCM
     autostart: bool = True
 
 

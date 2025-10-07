@@ -17,13 +17,9 @@ import shutil
 import tempfile
 import time
 
-import cv2
 import numpy as np
 import pytest
-import reactivex as rx
-from reactivex import Observable
 from reactivex import operators as ops
-from reactivex.subject import Subject
 
 from dimos.msgs.geometry_msgs import Pose
 from dimos.perception.spatial_perception import SpatialMemory

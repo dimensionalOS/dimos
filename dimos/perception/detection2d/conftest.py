@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import functools
-from typing import Optional, TypedDict
+from typing import TypedDict
 
-import pytest
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.sensor_msgs import CameraInfo, PointCloud2
+import pytest
 
 from dimos.core import start
 from dimos.core.transport import LCMTransport
@@ -42,8 +41,8 @@ class Moment(TypedDict, total=False):
     camera_info: CameraInfo
     transforms: list[Transform]
     tf: TF
-    annotations: Optional[ImageAnnotations]
-    detections: Optional[ImageDetections3D]
+    annotations: ImageAnnotations | None
+    detections: ImageDetections3D | None
 
 
 @pytest.fixture

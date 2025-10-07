@@ -15,15 +15,12 @@
 import os
 import time
 
-import cv2
 import numpy as np
 import pytest
-import reactivex as rx
 from reactivex import operators as ops
 
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.perception.segmentation.utils import extract_masks_bboxes_probs_names
-from dimos.stream import video_provider
 from dimos.stream.video_provider import VideoProvider
 
 
@@ -53,7 +50,6 @@ class TestSam2DSegmenter:
 
             # Note: conf and iou are parameters for process_image, not constructor
             # We'll monkey patch the process_image method to use lower thresholds
-            original_process_image = segmenter.process_image
 
             def patched_process_image(image):
                 results = segmenter.model.track(
@@ -70,7 +66,7 @@ class TestSam2DSegmenter:
                 )
 
                 if len(results) > 0:
-                    masks, bboxes, track_ids, probs, names, areas = (
+                    masks, bboxes, track_ids, probs, names, _areas = (
                         extract_masks_bboxes_probs_names(results[0])
                     )
                     return masks, bboxes, track_ids, probs, names
