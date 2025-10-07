@@ -516,6 +516,7 @@ class UnitreeGo2(UnitreeRobot):
             shm_channels=[
                 "/go2/color_image#sensor_msgs.Image",
                 "/go2/depth_image#sensor_msgs.Image",
+                "/go2/tracked_overlay#sensor_msgs.Image",
             ]
         )
 
@@ -554,8 +555,8 @@ class UnitreeGo2(UnitreeRobot):
         self.object_tracker.detection2darray.transport = core.LCMTransport(
             "/go2/detection2d", Detection2DArray
         )
-        self.object_tracker.tracked_overlay.transport = core.LCMTransport(
-            "/go2/tracked_overlay", Image
+        self.object_tracker.tracked_overlay.transport = core.pSHMTransport(
+            "/go2/tracked_overlay", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
 
         # Set up transports for bbox navigator
