@@ -36,7 +36,20 @@ def test_take_a_look_around(fake_robot, create_navigation_agent, mocker):
 
 
 def test_go_to_object(fake_robot, create_navigation_agent, mocker):
-    fake_robot.navigate_to_object.return_value = True
+    fake_robot.object_tracker = mocker.MagicMock()
+    fake_robot.object_tracker.is_tracking.side_effect = [True, True, True, True]  # Tracking active
+    fake_robot.navigator = mocker.MagicMock()
+
+    # Simulate navigation states: FOLLOWING_PATH -> IDLE (goal reached)
+    from dimos.navigation.bt_navigator.navigator import NavigatorState
+
+    fake_robot.navigator.get_state.side_effect = [
+        NavigatorState.FOLLOWING_PATH,
+        NavigatorState.FOLLOWING_PATH,
+        NavigatorState.IDLE,
+    ]
+    fake_robot.navigator.is_goal_reached.return_value = True
+
     mocker.patch(
         "dimos.agents2.skills.navigation.NavigationSkillContainer._navigate_by_tagged_location",
         return_value=None,
@@ -45,18 +58,22 @@ def test_go_to_object(fake_robot, create_navigation_agent, mocker):
         "dimos.agents2.skills.navigation.NavigationSkillContainer._navigate_using_semantic_map",
         return_value=None,
     )
+    mocker.patch("dimos.agents2.skills.navigation.time.sleep")
+
     agent = create_navigation_agent(fixture="test_go_to_object.json")
 
     agent.query("go to the chair")
 
-    fake_robot.navigate_to_object.assert_called_once()
-    actual_bbox = fake_robot.navigate_to_object.call_args[0][0]
+    fake_robot.object_tracker.track.assert_called_once()
+    actual_bbox = fake_robot.object_tracker.track.call_args[0][0]
     expected_bbox = (82, 51, 163, 159)
 
     for actual_val, expected_val in zip(actual_bbox, expected_bbox):
         assert abs(actual_val - expected_val) <= 5, (
             f"BBox {actual_bbox} not within ±5 of {expected_bbox}"
         )
+
+    fake_robot.object_tracker.stop_track.assert_called_once()
 
 
 def test_go_to_semantic_location(fake_robot, create_navigation_agent, mocker):
