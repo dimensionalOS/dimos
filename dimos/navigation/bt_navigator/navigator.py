@@ -18,12 +18,14 @@
 Navigator module for coordinating global and local planning.
 """
 
+from functools import partial
 import threading
 import time
 from enum import Enum
 from typing import Callable, Optional
 
 from dimos.core import Module, In, Out, rpc
+from dimos.core.blueprints import create_module_blueprint
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos_lcm.std_msgs import String
@@ -66,7 +68,7 @@ class BehaviorTreeNavigator(Module):
     global_costmap: In[OccupancyGrid] = None
 
     # LCM outputs
-    goal: Out[PoseStamped] = None
+    target: Out[PoseStamped] = None
     goal_reached: Out[Bool] = None
     navigation_state: Out[String] = None
 
@@ -120,6 +122,14 @@ class BehaviorTreeNavigator(Module):
         self.recovery_server = RecoveryServer(stuck_duration=5.0)
 
         logger.info("Navigator initialized with stuck detection")
+
+    @rpc
+    def set_HolonomicLocalPlanner_reset(self, callable) -> None:
+        self.reset_local_planner = callable
+
+    @rpc
+    def set_HolonomicLocalPlanner_atgl(self, callable) -> None:
+        self.check_goal_reached = callable
 
     @rpc
     def start(self):
@@ -298,7 +308,7 @@ class BehaviorTreeNavigator(Module):
                             frame_id=goal.frame_id,
                             ts=goal.ts,
                         )
-                        self.goal.publish(safe_goal)
+                        self.target.publish(safe_goal)
                         self.current_goal = safe_goal
                     else:
                         logger.warning("Could not find safe goal position, cancelling goal")
@@ -342,3 +352,6 @@ class BehaviorTreeNavigator(Module):
         self.recovery_server.reset()  # Reset recovery server when stopping
 
         logger.info("Navigator stopped")
+
+
+behavior_tree_navigator = partial(create_module_blueprint, BehaviorTreeNavigator)

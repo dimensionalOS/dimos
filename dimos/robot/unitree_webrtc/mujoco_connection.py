@@ -50,7 +50,7 @@ class MujocoConnection:
         self._is_cleaned_up = False
 
         # Register cleanup on exit
-        atexit.register(self.release)
+        atexit.register(self.stop)
 
     def start(self):
         self.mujoco_thread.start()

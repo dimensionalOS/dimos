@@ -19,6 +19,7 @@ WebSocket Visualization Module for Dimos navigation and mapping.
 """
 
 import asyncio
+from functools import partial
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -33,6 +34,7 @@ from starlette.routing import Route
 
 from dimos.core import Module, In, Out, rpc
 from dimos_lcm.std_msgs import Bool
+from dimos.core.blueprints import create_module_blueprint
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
@@ -62,17 +64,17 @@ class WebsocketVisModule(Module):
     """
 
     # LCM inputs
-    robot_pose: In[PoseStamped] = None
+    odom: In[PoseStamped] = None
     gps_location: In[LatLon] = None
     path: In[Path] = None
     global_costmap: In[OccupancyGrid] = None
 
     # LCM outputs
-    click_goal: Out[PoseStamped] = None
+    goal_request: Out[PoseStamped] = None
     gps_goal: Out[LatLon] = None
     explore_cmd: Out[Bool] = None
     stop_explore_cmd: Out[Bool] = None
-    movecmd: Out[Twist] = None
+    cmd_vel: Out[Twist] = None
     movecmd_stamped: Out[TwistStamped] = None
 
     def __init__(self, port: int = 7779, **kwargs):
@@ -192,7 +194,7 @@ class WebsocketVisModule(Module):
                 orientation=(0, 0, 0, 1),  # Default orientation
                 frame_id="world",
             )
-            self.click_goal.publish(goal)
+            self.goal_request.publish(goal)
             logger.info(f"Click goal published: ({goal.position.x:.2f}, {goal.position.y:.2f})")
 
         @self.sio.event
@@ -213,14 +215,14 @@ class WebsocketVisModule(Module):
         @self.sio.event
         async def move_command(sid, data):
             # Publish Twist if transport is configured
-            if self.movecmd and self.movecmd.transport:
+            if self.cmd_vel and self.cmd_vel.transport:
                 twist = Twist(
                     linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
                     angular=Vector3(
                         data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]
                     ),
                 )
-                self.movecmd.publish(twist)
+                self.cmd_vel.publish(twist)
 
             # Publish TwistStamped if transport is configured
             if self.movecmd_stamped and self.movecmd_stamped.transport:
@@ -293,3 +295,6 @@ class WebsocketVisModule(Module):
     def _emit(self, event: str, data: Any):
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             asyncio.run_coroutine_threadsafe(self.sio.emit(event, data), self._broadcast_loop)
+
+
+websocket_vis = partial(create_module_blueprint, WebsocketVisModule)

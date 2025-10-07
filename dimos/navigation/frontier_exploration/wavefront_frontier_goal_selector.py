@@ -19,6 +19,7 @@ This module provides frontier detection and exploration goal selection
 for autonomous navigation using the dimos Costmap and Vector types.
 """
 
+from functools import partial
 import threading
 from collections import deque
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from dimos.core import Module, In, Out, rpc
+from dimos.core.blueprints import create_module_blueprint
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, CostValues
 from dimos.utils.logging_config import setup_logger
@@ -91,8 +93,8 @@ class WavefrontFrontierExplorer(Module):
     """
 
     # LCM inputs
-    costmap: In[OccupancyGrid] = None
-    odometry: In[PoseStamped] = None
+    global_costmap: In[OccupancyGrid] = None
+    odom: In[PoseStamped] = None
     goal_reached: In[Bool] = None
     explore_cmd: In[Bool] = None
     stop_explore_cmd: In[Bool] = None
@@ -155,10 +157,10 @@ class WavefrontFrontierExplorer(Module):
     def start(self):
         super().start()
 
-        unsub = self.costmap.subscribe(self._on_costmap)
+        unsub = self.global_costmap.subscribe(self._on_costmap)
         self._disposables.add(Disposable(unsub))
 
-        unsub = self.odometry.subscribe(self._on_odometry)
+        unsub = self.odom.subscribe(self._on_odometry)
         self._disposables.add(Disposable(unsub))
 
         if self.goal_reached.transport is not None:
@@ -810,3 +812,6 @@ class WavefrontFrontierExplorer(Module):
                         f"No frontier found (attempt {consecutive_failures}/{max_consecutive_failures}). Retrying in 2 seconds..."
                     )
                     threading.Event().wait(2.0)
+
+
+wavefront_frontier_explorer = partial(create_module_blueprint, WavefrontFrontierExplorer)

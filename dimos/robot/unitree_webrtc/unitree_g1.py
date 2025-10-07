@@ -331,7 +331,7 @@ class UnitreeG1(Robot, Resource):
 
     def _start_modules(self):
         """Start all deployed modules."""
-        self._dimos.acquire_all_modules()
+        self._dimos.start_all_modules()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:

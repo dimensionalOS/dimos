@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from functools import partial
 from typing import Optional
 
 from dimos.core import In, Module, Out, rpc
+from dimos.core.blueprints import create_module_blueprint
 from dimos.msgs.geometry_msgs import Pose, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.global_planner.algo import astar
@@ -23,7 +24,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 from reactivex.disposable import Disposable
 
-logger = setup_logger("dimos.robot.unitree.global_planner")
+logger = setup_logger(__file__)
 
 import math
 from dimos.msgs.geometry_msgs import Quaternion, Vector3
@@ -217,3 +218,6 @@ class AstarPlanner(Module):
 
         logger.warning("No path found to the goal.")
         return None
+
+
+astar_planner = partial(create_module_blueprint, AstarPlanner)

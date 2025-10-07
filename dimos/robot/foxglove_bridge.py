@@ -13,12 +13,14 @@
 # limitations under the License.
 
 import asyncio
+from functools import partial
 import threading
 
 # this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_lcm
 from dimos_lcm.foxglove_bridge import FoxgloveBridge as LCMFoxgloveBridge
 
 from dimos.core import Module, rpc
+from dimos.core.blueprints import create_module_blueprint
 
 
 class FoxgloveBridge(Module):
@@ -58,3 +60,6 @@ class FoxgloveBridge(Module):
             self._thread.join(timeout=2)
 
         super().stop()
+
+
+foxglove_bridge = partial(create_module_blueprint, FoxgloveBridge)

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Generic, Optional, Type, TypeVar
+from typing import Optional, Type, TypeVar
 
 from pytest import Module
 from dimos import core
@@ -49,6 +49,9 @@ class Dimos(Resource):
         self._deployed_modules[module_class] = module
         return module
 
-    def acquire_all_modules(self) -> None:
+    def start_all_modules(self) -> None:
         for module in self._deployed_modules.values():
             module.start()
+
+    def get_instance(self, module: Type[T]) -> T | None:
+        return self._deployed_modules.get(module)

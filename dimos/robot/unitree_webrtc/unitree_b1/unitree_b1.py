@@ -130,7 +130,7 @@ class UnitreeB1(Robot, Resource):
             self.joystick.mode_out.transport = core.LCMTransport("/b1/mode", Int32)
             logger.info("Joystick module deployed - pygame window will open")
 
-        self._dimos.acquire_all_modules()
+        self._dimos.start_all_modules()
 
         self.connection.idle()  # Start in IDLE mode for safety
         logger.info("B1 started in IDLE mode (safety)")

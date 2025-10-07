@@ -28,6 +28,7 @@ from reactivex.disposable import CompositeDisposable
 from dimos import core
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
 from dimos.core import In, Module, Out, rpc
+from dimos.core.blueprints import create_module_blueprint
 from dimos.core.dimos import Dimos
 from dimos.core.resource import Resource
 from dimos.mapping.types import LatLon
@@ -136,11 +137,11 @@ class FakeRTC(Resource):
 class ConnectionModule(Module):
     """Module that handles robot sensor data, movement commands, and camera information."""
 
-    movecmd: In[Twist] = None
+    cmd_vel: In[Twist] = None
     odom: Out[PoseStamped] = None
     gps_location: Out[LatLon] = None
     lidar: Out[LidarMessage] = None
-    video: Out[Image] = None
+    color_image: Out[Image] = None
     camera_info: Out[CameraInfo] = None
     camera_pose: Out[PoseStamped] = None
     ip: str
@@ -235,10 +236,10 @@ class ConnectionModule(Module):
         if self.rectify_image:
             rectified_msg = rectify_image(msg, self.camera_matrix, self.dist_coeffs)
             self._last_image = rectified_msg
-            self.video.publish(rectified_msg)
+            self.color_image.publish(rectified_msg)
         else:
             self._last_image = msg
-            self.video.publish(msg)
+            self.color_image.publish(msg)
 
         # Publish camera info and pose synchronized with video
         timestamp = msg.ts if msg.ts else time.time()
@@ -325,6 +326,9 @@ class ConnectionModule(Module):
             The result of the publish request
         """
         return self.connection.publish_request(topic, data)
+
+
+connection = functools.partial(create_module_blueprint, ConnectionModule)
 
 
 class UnitreeGo2(UnitreeRobot, Resource):
@@ -442,10 +446,10 @@ class UnitreeGo2(UnitreeRobot, Resource):
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
         self.connection.gps_location.transport = core.pLCMTransport("/gps_location")
-        self.connection.video.transport = core.pSHMTransport(
+        self.connection.color_image.transport = core.pSHMTransport(
             "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
-        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.connection.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
         self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
         self.connection.camera_pose.transport = core.LCMTransport("/go2/camera_pose", PoseStamped)
 
@@ -491,7 +495,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
             "/stop_explore_cmd", Bool
         )
 
-        self.global_planner.target.connect(self.navigator.goal)
+        self.global_planner.target.connect(self.navigator.target)
 
         self.global_planner.global_costmap.connect(self.mapper.global_costmap)
         self.global_planner.odom.connect(self.connection.odom)
@@ -500,23 +504,23 @@ class UnitreeGo2(UnitreeRobot, Resource):
         self.local_planner.local_costmap.connect(self.mapper.local_costmap)
         self.local_planner.odom.connect(self.connection.odom)
 
-        self.connection.movecmd.connect(self.local_planner.cmd_vel)
+        self.connection.cmd_vel.connect(self.local_planner.cmd_vel)
 
         self.navigator.odom.connect(self.connection.odom)
 
-        self.frontier_explorer.costmap.connect(self.mapper.global_costmap)
-        self.frontier_explorer.odometry.connect(self.connection.odom)
+        self.frontier_explorer.global_costmap.connect(self.mapper.global_costmap)
+        self.frontier_explorer.odom.connect(self.connection.odom)
 
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
         self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
-        self.websocket_vis.click_goal.transport = core.LCMTransport("/goal_request", PoseStamped)
+        self.websocket_vis.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
         self.websocket_vis.gps_goal.transport = core.pLCMTransport("/gps_goal")
         self.websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
         self.websocket_vis.stop_explore_cmd.transport = core.LCMTransport("/stop_explore_cmd", Bool)
-        self.websocket_vis.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.websocket_vis.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
 
-        self.websocket_vis.robot_pose.connect(self.connection.odom)
+        self.websocket_vis.odom.connect(self.connection.odom)
         self.websocket_vis.gps_location.connect(self.connection.gps_location)
         self.websocket_vis.path.connect(self.global_planner.path)
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
@@ -540,7 +544,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
             output_dir=self.spatial_memory_dir,
         )
 
-        self.spatial_memory_module.video.transport = core.pSHMTransport(
+        self.spatial_memory_module.color_image.transport = core.pSHMTransport(
             "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
         self.spatial_memory_module.odom.transport = core.LCMTransport(
@@ -588,14 +592,14 @@ class UnitreeGo2(UnitreeRobot, Resource):
 
         # Connect object tracker inputs after camera module is deployed
         if self.object_tracker:
-            self.object_tracker.color_image.connect(self.connection.video)
+            self.object_tracker.color_image.connect(self.connection.color_image)
             self.object_tracker.depth.connect(self.depth_module.depth_image)
             self.object_tracker.camera_info.connect(self.connection.camera_info)
             logger.info("Object tracker connected to camera module")
 
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
-        self._dimos.acquire_all_modules()
+        self._dimos.start_all_modules()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
