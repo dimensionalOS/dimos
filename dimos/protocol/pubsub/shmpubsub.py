@@ -24,9 +24,10 @@ import os
 import struct
 import threading
 import time
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 
@@ -87,7 +88,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         def __init__(self, channel, capacity: int, cp_mod):
             self.channel = channel
             self.capacity = int(capacity)
-            self.shape = (self.capacity + 4,)  # +4 for uint32 length header
+            self.shape = (self.capacity + 20,)  # +20 for header: length(4) + uuid(16)
             self.dtype = np.uint8
             self.subs: list[Callable[[bytes, str], None]] = []
             self.stop = threading.Event()
@@ -96,7 +97,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             # TODO: implement an initializer variable for is_cuda once CUDA IPC is in
             self.cp = cp_mod
             self.last_local_payload: Optional[bytes] = None
-            self.suppress_counts = defaultdict(int)
+            self.suppress_counts: Dict[bytes, int] = defaultdict(int)  # UUID bytes as key
 
     # ----- init / lifecycle -------------------------------------------------
 
@@ -158,8 +159,11 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             logger.error(f"Payload too large: {L} > capacity {st.capacity}")
             raise ValueError(f"Payload too large: {L} > capacity {st.capacity}")
 
-        # Mark this payload to suppress its single echo (handles back-to-back publishes)
-        st.suppress_counts[payload_bytes] += 1
+        # Create a unique identifier using UUID4
+        message_id = uuid.uuid4().bytes  # 16 bytes
+
+        # Mark this message to suppress its echo
+        st.suppress_counts[message_id] += 1
 
         # Synchronous local delivery first (zero extra copies)
         for cb in list(st.subs):
@@ -169,11 +173,15 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
                 logger.warn(f"Payload couldn't be pushed to topic: {topic}")
                 pass
 
-        # Build host frame [len:4] + payload and publish
+        # Build host frame [len:4] + [uuid:16] + payload and publish
+        # We embed the message UUID in the frame for echo suppression
         host = np.zeros(st.shape, dtype=st.dtype)
-        host[:4] = np.frombuffer(struct.pack("<I", L), dtype=np.uint8)
+        # Pack: length(4) + uuid(16) + payload
+        header = struct.pack("<I", L + 16)  # L+16 for uuid
+        host[:4] = np.frombuffer(header, dtype=np.uint8)
+        host[4:20] = np.frombuffer(message_id, dtype=np.uint8)
         if L:
-            host[4 : 4 + L] = np.frombuffer(memoryview(payload_bytes), dtype=np.uint8)
+            host[20 : 20 + L] = np.frombuffer(memoryview(payload_bytes), dtype=np.uint8)
 
         st.channel.publish(host)
 
@@ -230,7 +238,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         """Change payload capacity (bytes) for a topic; returns new descriptor."""
         st = self._ensure_topic(topic)
         new_cap = int(capacity)
-        new_shape = (new_cap + 4,)
+        new_shape = (new_cap + 20,)  # +20 for header: length(4) + uuid(16)
         desc = st.channel.reconfigure(new_shape, np.uint8)
         st.capacity = new_cap
         st.shape = new_shape
@@ -253,7 +261,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
                 return f"psm_{h}_data", f"psm_{h}_ctrl"
 
             data_name, ctrl_name = _names_for_topic(topic, cap)
-            ch = CpuShmChannel((cap + 4,), np.uint8, data_name=data_name, ctrl_name=ctrl_name)
+            ch = CpuShmChannel((cap + 20,), np.uint8, data_name=data_name, ctrl_name=ctrl_name)
             st = SharedMemoryPubSubBase._TopicState(ch, cap, None)
             self._topics[topic] = st
             return st
@@ -269,19 +277,29 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             host = np.array(view, copy=True)
 
             try:
+                # Read header: length(4) + uuid(16)
                 L = struct.unpack("<I", host[:4].tobytes())[0]
-                if L == 0 or L < 0 or L > st.capacity:
+
+                if L < 16 or L > st.capacity + 16:
                     continue
 
-                payload = host[4 : 4 + L].tobytes()
+                # Extract UUID
+                message_id = host[4:20].tobytes()
+
+                # Extract actual payload (after removing the 16 bytes for uuid)
+                payload_len = L - 16
+                if payload_len > 0:
+                    payload = host[20 : 20 + payload_len].tobytes()
+                else:
+                    continue
 
                 # Drop exactly the number of local echoes we created
-                cnt = st.suppress_counts.get(payload, 0)
+                cnt = st.suppress_counts.get(message_id, 0)
                 if cnt > 0:
                     if cnt == 1:
-                        del st.suppress_counts[payload]
+                        del st.suppress_counts[message_id]
                     else:
-                        st.suppress_counts[payload] = cnt - 1
+                        st.suppress_counts[message_id] = cnt - 1
                     continue  # suppressed
 
             except Exception:

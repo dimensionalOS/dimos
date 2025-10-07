@@ -390,7 +390,8 @@ class UnitreeGo2(UnitreeRobot):
         self._deploy_connection()
         self._deploy_mapping()
         self._deploy_navigation()
-        self._deploy_visualization()
+        # self._deploy_visualization()
+        self._deploy_foxglove_bridge()
         self._deploy_perception()
         self._deploy_camera()
 
@@ -505,18 +506,19 @@ class UnitreeGo2(UnitreeRobot):
         self.websocket_vis.path.connect(self.global_planner.path)
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
 
+        # TODO: This should be moved.
+        def _set_goal(goal: LatLon):
+            self.set_gps_travel_goal_points([goal])
+
+        unsub = self.websocket_vis.gps_goal.transport.pure_observable().subscribe(_set_goal)
+
+    def _deploy_foxglove_bridge(self):
         self.foxglove_bridge = FoxgloveBridge(
             shm_channels=[
                 "/go2/color_image#sensor_msgs.Image",
                 "/go2/depth_image#sensor_msgs.Image",
             ]
         )
-
-        # TODO: This should be moved.
-        def _set_goal(goal: LatLon):
-            self.set_gps_travel_goal_points([goal])
-
-        unsub = self.websocket_vis.gps_goal.transport.pure_observable().subscribe(_set_goal)
 
     def _deploy_perception(self):
         """Deploy and configure perception modules."""
@@ -574,7 +576,6 @@ class UnitreeGo2(UnitreeRobot):
         self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
 
         logger.info("Camera module deployed and connected")
-
         # Connect object tracker inputs after camera module is deployed
         if self.object_tracker:
             self.object_tracker.color_image.connect(self.connection.video)
@@ -590,7 +591,7 @@ class UnitreeGo2(UnitreeRobot):
         self.local_planner.start()
         self.navigator.start()
         self.frontier_explorer.start()
-        self.websocket_vis.start()
+        # self.websocket_vis.start()
         self.foxglove_bridge.start()
         self.spatial_memory_module.start()
         self.depth_module.start()
