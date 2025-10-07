@@ -1,7 +1,6 @@
 import os
 from typing import Optional
 
-import np
 import numpy as np
 from openai import OpenAI
 
