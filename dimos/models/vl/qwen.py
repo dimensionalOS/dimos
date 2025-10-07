@@ -1,11 +1,9 @@
-import base64
-import io
 import os
-from typing import Optional, Union
+from typing import Optional
 
 import np
+import numpy as np
 from openai import OpenAI
-from PIL import Image
 
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
@@ -29,8 +27,7 @@ class QwenVlModel(VlModel):
             api_key=api_key,
         )
 
-    def query(self, image: Union[Image, np.ndarray], query: str) -> str:
-        # check if image is numpy array
+    def query(self, image: Image | np.ndarray, query: str) -> str:
         if isinstance(image, np.ndarray):
             import warnings
 
