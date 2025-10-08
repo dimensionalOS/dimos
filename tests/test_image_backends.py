@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
+
 import cv2
 import numpy as np
 import pytest
@@ -75,6 +77,31 @@ def _prepare_image(fmt: ImageFormat, shape=None) -> np.ndarray:
     raise ValueError("shape must be a tuple of length 2 or 3")
 
 
+@pytest.fixture
+def alloc_timer(request):
+    def _alloc(arr: np.ndarray, fmt: ImageFormat, *, to_cuda: bool = True, label: str | None = None):
+        tag = label or request.node.name
+        start = time.perf_counter()
+        cpu = Image.from_numpy(arr, format=fmt)
+        cpu_time = time.perf_counter() - start
+
+        gpu = None
+        gpu_time = None
+        if to_cuda:
+            arr_gpu = np.array(arr, copy=True)
+            start = time.perf_counter()
+            gpu = Image.from_numpy(arr_gpu, format=fmt, to_cuda=True)
+            gpu_time = time.perf_counter() - start
+
+        if gpu_time is not None:
+            print(f"[alloc {tag}] cpu={cpu_time:.6f}s gpu={gpu_time:.6f}s")
+        else:
+            print(f"[alloc {tag}] cpu={cpu_time:.6f}s")
+        return cpu, gpu, cpu_time, gpu_time
+
+    return _alloc
+
+
 @pytest.mark.parametrize(
     "shape,fmt",
     [
@@ -85,11 +112,10 @@ def _prepare_image(fmt: ImageFormat, shape=None) -> np.ndarray:
     ],
 )
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_color_conversions_parity(shape, fmt):
+def test_color_conversions_parity(shape, fmt, alloc_timer):
     arr = _prepare_image(fmt, shape)
-    # Build CPU and CUDA images with same logical content
-    cpu = Image.from_numpy(arr, format=fmt)
-    gpu = Image.from_numpy(arr, format=fmt, to_cuda=True)
+    # Build CPU and CUDA images with same logical content (timed allocations)
+    cpu, gpu, _, _ = alloc_timer(arr, fmt)
 
     # Test to_rgb -> to_bgr parity
     cpu_round = cpu.to_rgb().to_bgr().to_opencv()
@@ -102,10 +128,9 @@ def test_color_conversions_parity(shape, fmt):
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_grayscale_parity():
+def test_grayscale_parity(alloc_timer):
     arr = _prepare_image(ImageFormat.BGR, (48, 32, 3))
-    cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
-    gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
+    cpu, gpu, _, _ = alloc_timer(arr, ImageFormat.BGR)
 
     cpu_gray = cpu.to_grayscale().to_opencv()
     gpu_gray = gpu.to_grayscale().to_opencv()
@@ -119,11 +144,10 @@ def test_grayscale_parity():
 
 @pytest.mark.parametrize("fmt", [ImageFormat.BGR, ImageFormat.RGB, ImageFormat.BGRA])
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_resize_parity(fmt):
+def test_resize_parity(fmt, alloc_timer):
     shape = (60, 80, 3) if fmt in (ImageFormat.BGR, ImageFormat.RGB) else (60, 80, 4)
     arr = _prepare_image(fmt, shape)
-    cpu = Image.from_numpy(arr, format=fmt)
-    gpu = Image.from_numpy(arr, format=fmt, to_cuda=True)
+    cpu, gpu, _, _ = alloc_timer(arr, fmt)
 
     new_w, new_h = 37, 53
     cpu_res = cpu.resize(new_w, new_h).to_opencv()
@@ -136,27 +160,27 @@ def test_resize_parity(fmt):
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_perf_compare_alloc():
+def test_perf_compare_alloc(alloc_timer):
     arr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
-    import time
+    alloc_timer(arr, ImageFormat.BGR, label="test_perf_compare_alloc-setup")
 
+    runs = 5
     t0 = time.perf_counter()
-    for _ in range(5):
+    for _ in range(runs):
         _ = Image.from_numpy(arr, format=ImageFormat.BGR)
-    cpu_t = time.perf_counter() - t0
+    cpu_t = (time.perf_counter() - t0) / runs
     t0 = time.perf_counter()
-    for _ in range(5):
+    for _ in range(runs):
         _ = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
-    gpu_t = time.perf_counter() - t0
-    print(f"alloc cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
+    gpu_t = (time.perf_counter() - t0) / runs
+    print(f"alloc (avg per call) cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
     assert cpu_t > 0 and gpu_t > 0
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_sharpness_parity():
+def test_sharpness_parity(alloc_timer):
     arr = _prepare_image(ImageFormat.BGR, (64, 64, 3))
-    cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
-    gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
+    cpu, gpu, _, _ = alloc_timer(arr, ImageFormat.BGR)
 
     s_cpu = cpu.sharpness()
     s_gpu = gpu.sharpness()
@@ -166,11 +190,10 @@ def test_sharpness_parity():
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_to_opencv_parity():
+def test_to_opencv_parity(alloc_timer):
     # BGRA should drop alpha and produce BGR
     arr = _prepare_image(ImageFormat.BGRA, (32, 32, 4))
-    cpu = Image.from_numpy(arr, format=ImageFormat.BGRA)
-    gpu = Image.from_numpy(arr, format=ImageFormat.BGRA, to_cuda=True)
+    cpu, gpu, _, _ = alloc_timer(arr, ImageFormat.BGRA)
 
     cpu_bgr = cpu.to_opencv()
     gpu_bgr = gpu.to_opencv()
@@ -181,7 +204,7 @@ def test_to_opencv_parity():
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_solve_pnp_parity():
+def test_solve_pnp_parity(alloc_timer):
     # Synthetic camera and 3D points
     K = np.array([[400.0, 0.0, 32.0], [0.0, 400.0, 24.0], [0.0, 0.0, 1.0]], dtype=np.float64)
     dist = None
@@ -204,8 +227,7 @@ def test_solve_pnp_parity():
 
     # Build images using deterministic fixture content
     base_bgr = _prepare_image(ImageFormat.BGR, (48, 64, 3))
-    cpu = Image.from_numpy(base_bgr, format=ImageFormat.BGR)
-    gpu = Image.from_numpy(base_bgr.copy(), format=ImageFormat.BGR, to_cuda=True)
+    cpu, gpu, _, _ = alloc_timer(base_bgr, ImageFormat.BGR)
 
     ok_cpu, r_cpu, t_cpu = cpu.solve_pnp(obj, img_pts, K, dist)
     ok_gpu, r_gpu, t_gpu = gpu.solve_pnp(obj, img_pts, K, dist)
@@ -222,64 +244,61 @@ def test_solve_pnp_parity():
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_perf_compare_grayscale():
+def test_perf_compare_grayscale(alloc_timer):
     arr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
-    cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
-    gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
-    import time
+    cpu, gpu, _, _ = alloc_timer(arr, ImageFormat.BGR, label="test_perf_compare_grayscale-setup")
 
+    runs = 10
     t0 = time.perf_counter()
-    for _ in range(10):
+    for _ in range(runs):
         _ = cpu.to_grayscale()
-    cpu_t = time.perf_counter() - t0
+    cpu_t = (time.perf_counter() - t0) / runs
     t0 = time.perf_counter()
-    for _ in range(10):
+    for _ in range(runs):
         _ = gpu.to_grayscale()
-    gpu_t = time.perf_counter() - t0
-    print(f"grayscale cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
+    gpu_t = (time.perf_counter() - t0) / runs
+    print(f"grayscale (avg per call) cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
     assert cpu_t > 0 and gpu_t > 0
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_perf_compare_resize():
+def test_perf_compare_resize(alloc_timer):
     arr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
-    cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
-    gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
-    import time
+    cpu, gpu, _, _ = alloc_timer(arr, ImageFormat.BGR, label="test_perf_compare_resize-setup")
 
+    runs = 5
     t0 = time.perf_counter()
-    for _ in range(5):
+    for _ in range(runs):
         _ = cpu.resize(320, 240)
-    cpu_t = time.perf_counter() - t0
+    cpu_t = (time.perf_counter() - t0) / runs
     t0 = time.perf_counter()
-    for _ in range(5):
+    for _ in range(runs):
         _ = gpu.resize(320, 240)
-    gpu_t = time.perf_counter() - t0
-    print(f"resize cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
+    gpu_t = (time.perf_counter() - t0) / runs
+    print(f"resize (avg per call) cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
     assert cpu_t > 0 and gpu_t > 0
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_perf_compare_sharpness():
+def test_perf_compare_sharpness(alloc_timer):
     arr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
-    cpu = Image.from_numpy(arr, format=ImageFormat.BGR)
-    gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
-    import time
+    cpu, gpu, _, _ = alloc_timer(arr, ImageFormat.BGR, label="test_perf_compare_sharpness-setup")
 
+    runs = 3
     t0 = time.perf_counter()
-    for _ in range(3):
+    for _ in range(runs):
         _ = cpu.sharpness()
-    cpu_t = time.perf_counter() - t0
+    cpu_t = (time.perf_counter() - t0) / runs
     t0 = time.perf_counter()
-    for _ in range(3):
+    for _ in range(runs):
         _ = gpu.sharpness()
-    gpu_t = time.perf_counter() - t0
-    print(f"sharpness cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
+    gpu_t = (time.perf_counter() - t0) / runs
+    print(f"sharpness (avg per call) cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
     assert cpu_t > 0 and gpu_t > 0
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_perf_compare_solvepnp():
+def test_perf_compare_solvepnp(alloc_timer):
     K = np.array([[600.0, 0.0, 320.0], [0.0, 600.0, 240.0], [0.0, 0.0, 1.0]], dtype=np.float64)
     dist = None
     rng = np.random.default_rng(123)
@@ -289,24 +308,23 @@ def test_perf_compare_solvepnp():
     img_pts, _ = cv2.projectPoints(obj, rvec_true, tvec_true, K, dist)
     img_pts = img_pts.reshape(-1, 2).astype(np.float32)
     base_bgr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
-    cpu = Image.from_numpy(base_bgr, format=ImageFormat.BGR)
-    gpu = Image.from_numpy(base_bgr.copy(), format=ImageFormat.BGR, to_cuda=True)
-    import time
+    cpu, gpu, _, _ = alloc_timer(base_bgr, ImageFormat.BGR, label="test_perf_compare_solvepnp-setup")
 
+    runs = 5
     t0 = time.perf_counter()
-    for _ in range(5):
+    for _ in range(runs):
         _ = cpu.solve_pnp(obj, img_pts, K, dist)
-    cpu_t = time.perf_counter() - t0
+    cpu_t = (time.perf_counter() - t0) / runs
     t0 = time.perf_counter()
-    for _ in range(5):
+    for _ in range(runs):
         _ = gpu.solve_pnp(obj, img_pts, K, dist)
-    gpu_t = time.perf_counter() - t0
-    print(f"solvePnP cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
+    gpu_t = (time.perf_counter() - t0) / runs
+    print(f"solvePnP (avg per call) cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
     assert cpu_t > 0 and gpu_t > 0
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_perf_compare_tracker():
+def test_perf_compare_tracker(alloc_timer):
     H, W = 240, 320
     img_base = _prepare_image(ImageFormat.BGR, (H, W, 3))
     img1 = img_base.copy()
@@ -322,28 +340,26 @@ def test_perf_compare_tracker():
         (255, 255, 255),
         thickness=-1,
     )
-    cpu1 = Image.from_numpy(img1, format=ImageFormat.BGR)
-    cpu2 = Image.from_numpy(img2, format=ImageFormat.BGR)
-    gpu1 = Image.from_numpy(img1, format=ImageFormat.BGR, to_cuda=True)
-    gpu2 = Image.from_numpy(img2, format=ImageFormat.BGR, to_cuda=True)
+    cpu1, gpu1, _, _ = alloc_timer(img1, ImageFormat.BGR, label="test_perf_compare_tracker-frame1")
+    cpu2, gpu2, _, _ = alloc_timer(img2, ImageFormat.BGR, label="test_perf_compare_tracker-frame2")
     trk_cpu = cpu1.create_csrt_tracker(bbox0)
     trk_gpu = gpu1.create_csrt_tracker(bbox0)
-    import time
 
+    runs = 10
     t0 = time.perf_counter()
-    for _ in range(10):
+    for _ in range(runs):
         _ = cpu2.csrt_update(trk_cpu)
-    cpu_t = time.perf_counter() - t0
+    cpu_t = (time.perf_counter() - t0) / runs
     t0 = time.perf_counter()
-    for _ in range(10):
+    for _ in range(runs):
         _ = gpu2.csrt_update(trk_gpu)
-    gpu_t = time.perf_counter() - t0
-    print(f"tracker cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
+    gpu_t = (time.perf_counter() - t0) / runs
+    print(f"tracker (avg per call) cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
     assert cpu_t > 0 and gpu_t > 0
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_csrt_tracker_parity():
+def test_csrt_tracker_parity(alloc_timer):
     # Check tracker availability
     has_csrt = False
     if hasattr(cv2, "legacy") and hasattr(cv2.legacy, "TrackerCSRT_create"):
@@ -372,10 +388,8 @@ def test_csrt_tracker_parity():
         thickness=-1,
     )
 
-    cpu1 = Image.from_numpy(img1, format=ImageFormat.BGR)
-    cpu2 = Image.from_numpy(img2, format=ImageFormat.BGR)
-    gpu1 = Image.from_numpy(img1, format=ImageFormat.BGR, to_cuda=True)
-    gpu2 = Image.from_numpy(img2, format=ImageFormat.BGR, to_cuda=True)
+    cpu1, gpu1, _, _ = alloc_timer(img1, ImageFormat.BGR, label="test_csrt_tracker_parity-frame1")
+    cpu2, gpu2, _, _ = alloc_timer(img2, ImageFormat.BGR, label="test_csrt_tracker_parity-frame2")
 
     trk_cpu = cpu1.create_csrt_tracker(bbox0)
     ok_cpu, bbox_cpu = cpu2.csrt_update(trk_cpu)
@@ -392,7 +406,7 @@ def test_csrt_tracker_parity():
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_solve_pnp_ransac_with_outliers_and_distortion():
+def test_solve_pnp_ransac_with_outliers_and_distortion(alloc_timer):
     # Camera with distortion
     K = np.array([[500.0, 0.0, 320.0], [0.0, 500.0, 240.0], [0.0, 0.0, 1.0]], dtype=np.float64)
     dist = np.array([0.1, -0.05, 0.001, 0.001, 0.0], dtype=np.float64)
@@ -410,8 +424,7 @@ def test_solve_pnp_ransac_with_outliers_and_distortion():
     img_pts = img_pts.astype(np.float32)
 
     base_bgr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
-    cpu = Image.from_numpy(base_bgr, format=ImageFormat.BGR)
-    gpu = Image.from_numpy(base_bgr.copy(), format=ImageFormat.BGR, to_cuda=True)
+    _, gpu, _, _ = alloc_timer(base_bgr, ImageFormat.BGR, label="test_solve_pnp_ransac-setup")
 
     ok_gpu, r_gpu, t_gpu, mask_gpu = gpu.solve_pnp_ransac(
         obj, img_pts, K, dist, iterations_count=150, reprojection_error=3.0
@@ -429,7 +442,7 @@ def test_solve_pnp_ransac_with_outliers_and_distortion():
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_solve_pnp_batch_correctness_and_perf():
+def test_solve_pnp_batch_correctness_and_perf(alloc_timer):
     # Generate batched problems
     B, N = 8, 50
     rng = np.random.default_rng(99)
@@ -445,11 +458,9 @@ def test_solve_pnp_batch_correctness_and_perf():
     img = np.stack(img, axis=0).astype(np.float32)
 
     base_bgr = _prepare_image(ImageFormat.BGR, (10, 10, 3))
-    cpu = Image.from_numpy(base_bgr, format=ImageFormat.BGR)
-    gpu = Image.from_numpy(base_bgr.copy(), format=ImageFormat.BGR, to_cuda=True)
+    cpu, gpu, _, _ = alloc_timer(base_bgr, ImageFormat.BGR, label="test_solve_pnp_batch-setup")
 
     # CPU loop
-    import time
 
     t0 = time.perf_counter()
     r_list = []
@@ -459,13 +470,18 @@ def test_solve_pnp_batch_correctness_and_perf():
         assert ok
         r_list.append(r)
         t_list.append(t)
-    cpu_t = time.perf_counter() - t0
+    cpu_total = time.perf_counter() - t0
+    cpu_t = cpu_total / B
 
     # CUDA batched
     t0 = time.perf_counter()
     r_b, t_b = gpu.solve_pnp_batch(obj, img, K)
-    gpu_t = time.perf_counter() - t0
-    print(f"solvePnP-batch cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s (B={B}, N={N})")
+    gpu_total = time.perf_counter() - t0
+    gpu_t = gpu_total / B
+    print(
+        f"solvePnP-batch (avg per pose) cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s "
+        f"(B={B}, N={N})"
+    )
 
     # Check reprojection for a couple of batches
     for b in range(min(B, 4)):
