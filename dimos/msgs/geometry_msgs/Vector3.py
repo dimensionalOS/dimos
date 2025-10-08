@@ -271,6 +271,18 @@ class Vector3(LCMVector3):
             scalar_projection * onto_vector.y,
             scalar_projection * onto_vector.z,
         )
+    
+    def lcm_encode(self) -> bytes:
+        """Return the bytes representation expected by LCMTransport."""
+        return super().lcm_encode()
+
+    @classmethod
+    def lcm_decode(cls, data: bytes) -> "Vector3":
+        """Reconstruct a Vector3 from LCM bytes."""
+        from dimos_lcm.geometry_msgs import Vector3 as LCMVector3
+        lcm_vec = LCMVector3.lcm_decode(data)
+        return cls(lcm_vec)
+
 
     # this is here to test ros_observable_topic
     # doesn't happen irl afaik that we want a vector from ros message
