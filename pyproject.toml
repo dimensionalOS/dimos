@@ -148,8 +148,7 @@ cpu = [
 ]
 
 cuda = [
-    "cupy-cuda12x==13.6.0",
-    "nvidia-nvimgcodec-cu12[all]",
+    "pycuda",
     "onnxruntime-gpu>=1.17.1", # Only versions supporting both cuda11 and cuda12
     "ctransformers[cuda]==0.2.27",
     "mmengine>=0.10.3",
