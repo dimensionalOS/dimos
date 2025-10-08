@@ -73,3 +73,4 @@ def test_get_gps_position_for_queries(create_google_maps_agent, google_maps_skil
 
     regex = r".*37\.782601.*122\.413201.*37\.782602.*122\.413202.*37\.782603.*122\.413203.*"
     assert re.match(regex, response, re.DOTALL)
+    raise Exception("fail")
