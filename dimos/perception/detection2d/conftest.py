@@ -28,8 +28,10 @@ from dimos.perception.detection2d.moduleDB import ObjectDBModule
 from dimos.perception.detection2d.type import (
     Detection2D,
     Detection3D,
+    Detection3DPC,
     ImageDetections2D,
     ImageDetections3D,
+    ImageDetections3DPC,
 )
 from dimos.protocol.tf import TF
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
@@ -47,7 +49,7 @@ class Moment(TypedDict, total=False):
     transforms: list[Transform]
     tf: TF
     annotations: Optional[ImageAnnotations]
-    detections: Optional[ImageDetections3D]
+    detections: Optional[ImageDetections3DPC]
     markers: Optional[MarkerArray]
     scene_update: Optional[SceneUpdate]
 
@@ -57,7 +59,7 @@ class Moment2D(Moment):
 
 
 class Moment3D(Moment):
-    detections3d: ImageDetections3D
+    detections3dpc: ImageDetections3D
 
 
 @pytest.fixture
@@ -110,11 +112,11 @@ def detection2d(get_moment_2d) -> Detection2D:
 
 
 @pytest.fixture
-def detection3d(get_moment_3d) -> Detection3D:
+def detection3dpc(get_moment_3d) -> Detection3DPC:
     moment = get_moment_3d(seek=10.0)
-    assert len(moment["detections3d"]) > 0, "No detections found in the moment"
-    print(moment["detections3d"])
-    return moment["detections3d"][0]
+    assert len(moment["detections3dpc"]) > 0, "No detections found in the moment"
+    print(moment["detections3dpc"])
+    return moment["detections3dpc"][0]
 
 
 @pytest.fixture
@@ -150,7 +152,7 @@ def get_moment_3d(get_moment_2d) -> Callable[[], Moment2D]:
 
         return {
             **moment,
-            "detections3d": module.process_frame(
+            "detections3dpc": module.process_frame(
                 moment["detections2d"], moment["lidar_frame"], camera_transform
             ),
         }

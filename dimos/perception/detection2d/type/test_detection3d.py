@@ -16,9 +16,9 @@ import numpy as np
 import pytest
 
 
-def test_oriented_bounding_box(detection3d):
+def test_oriented_bounding_box(detection3dpc):
     """Test oriented bounding box calculation and values."""
-    obb = detection3d.get_oriented_bounding_box()
+    obb = detection3dpc.get_oriented_bounding_box()
     assert obb is not None, "Oriented bounding box should not be None"
 
     # Verify OBB center values
@@ -32,18 +32,18 @@ def test_oriented_bounding_box(detection3d):
     assert obb.extent[2] == pytest.approx(0.155, abs=0.1)
 
 
-def test_bounding_box_dimensions(detection3d):
+def test_bounding_box_dimensions(detection3dpc):
     """Test bounding box dimension calculation."""
-    dims = detection3d.get_bounding_box_dimensions()
+    dims = detection3dpc.get_bounding_box_dimensions()
     assert len(dims) == 3, "Bounding box dimensions should have 3 values"
     assert dims[0] == pytest.approx(0.350, abs=0.1)
     assert dims[1] == pytest.approx(0.250, abs=0.1)
     assert dims[2] == pytest.approx(0.550, abs=0.1)
 
 
-def test_axis_aligned_bounding_box(detection3d):
+def test_axis_aligned_bounding_box(detection3dpc):
     """Test axis-aligned bounding box calculation."""
-    aabb = detection3d.get_bounding_box()
+    aabb = detection3dpc.get_bounding_box()
     assert aabb is not None, "Axis-aligned bounding box should not be None"
 
     # Verify AABB min values
@@ -57,12 +57,12 @@ def test_axis_aligned_bounding_box(detection3d):
     assert aabb.max_bound[2] == pytest.approx(0.475, abs=0.1)
 
 
-def test_point_cloud_properties(detection3d):
+def test_point_cloud_properties(detection3dpc):
     """Test point cloud data and boundaries."""
-    pc_points = detection3d.pointcloud.points()
+    pc_points = detection3dpc.pointcloud.points()
     assert len(pc_points) in [69, 70]
-    assert detection3d.pointcloud.frame_id == "world", (
-        f"Expected frame_id 'world', got '{detection3d.pointcloud.frame_id}'"
+    assert detection3dpc.pointcloud.frame_id == "world", (
+        f"Expected frame_id 'world', got '{detection3dpc.pointcloud.frame_id}'"
     )
 
     # Extract xyz coordinates from points
@@ -86,9 +86,9 @@ def test_point_cloud_properties(detection3d):
     assert center[2] == pytest.approx(0.160, abs=0.1)
 
 
-def test_foxglove_scene_entity_generation(detection3d):
+def test_foxglove_scene_entity_generation(detection3dpc):
     """Test Foxglove scene entity creation and structure."""
-    entity = detection3d.to_foxglove_scene_entity("test_entity_123")
+    entity = detection3dpc.to_foxglove_scene_entity("test_entity_123")
 
     # Verify entity metadata
     assert entity.id == "1", f"Expected entity ID '1', got '{entity.id}'"
@@ -97,9 +97,9 @@ def test_foxglove_scene_entity_generation(detection3d):
     assert entity.texts_length == 1, f"Expected 1 text, got {entity.texts_length}"
 
 
-def test_foxglove_cube_properties(detection3d):
+def test_foxglove_cube_properties(detection3dpc):
     """Test Foxglove cube primitive properties."""
-    entity = detection3d.to_foxglove_scene_entity("test_entity_123")
+    entity = detection3dpc.to_foxglove_scene_entity("test_entity_123")
     cube = entity.cubes[0]
 
     # Verify position
@@ -119,9 +119,9 @@ def test_foxglove_cube_properties(detection3d):
     assert cube.color.a == pytest.approx(0.2, abs=0.1)
 
 
-def test_foxglove_text_label(detection3d):
+def test_foxglove_text_label(detection3dpc):
     """Test Foxglove text label properties."""
-    entity = detection3d.to_foxglove_scene_entity("test_entity_123")
+    entity = detection3dpc.to_foxglove_scene_entity("test_entity_123")
     text = entity.texts[0]
 
     assert text.text == "1/suitcase (81%)", f"Expected text '1/suitcase (81%)', got '{text.text}'"
@@ -131,11 +131,11 @@ def test_foxglove_text_label(detection3d):
     assert text.font_size == 20.0, f"Expected font size 20.0, got {text.font_size}"
 
 
-def test_detection_pose(detection3d):
+def test_detection_pose(detection3dpc):
     """Test detection pose and frame information."""
-    assert detection3d.pose.x == pytest.approx(-3.327, abs=0.1)
-    assert detection3d.pose.y == pytest.approx(-0.202, abs=0.1)
-    assert detection3d.pose.z == pytest.approx(0.160, abs=0.1)
-    assert detection3d.pose.frame_id == "world", (
-        f"Expected frame_id 'world', got '{detection3d.pose.frame_id}'"
+    assert detection3dpc.pose.x == pytest.approx(-3.327, abs=0.1)
+    assert detection3dpc.pose.y == pytest.approx(-0.202, abs=0.1)
+    assert detection3dpc.pose.z == pytest.approx(0.160, abs=0.1)
+    assert detection3dpc.pose.frame_id == "world", (
+        f"Expected frame_id 'world', got '{detection3dpc.pose.frame_id}'"
     )
