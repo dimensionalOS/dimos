@@ -768,6 +768,7 @@ class UnitreeGo2(UnitreeRobot):
         logger.info("Object tracking timed out")
         return False
 
+
 def main():
     """Main entry point."""
     ip = os.getenv("ROBOT_IP")
