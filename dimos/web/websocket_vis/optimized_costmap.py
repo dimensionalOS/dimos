@@ -32,7 +32,7 @@ class OptimizedCostmapEncoder:
         self.last_full_grid: Optional[np.ndarray] = None
         self.last_sent_time: float = 0
         self.chunk_hashes: Dict[Tuple[int, int], str] = {}
-        self.full_update_interval = 20.0  # Send full update every 20 seconds
+        self.full_update_interval = 3.0  # Send full update every 3 seconds
 
     def encode_costmap(self, grid: np.ndarray, force_full: bool = False) -> Dict[str, Any]:
         """Encode a costmap grid with optimizations.

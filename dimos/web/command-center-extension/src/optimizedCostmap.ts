@@ -62,7 +62,9 @@ export class OptimizedGrid {
 
   private decodeDelta(msg: EncodedOptimizedGrid): Float32Array {
     if (!this.fullGrid) {
-      throw new Error("No full grid available for delta update");
+      console.warn("No full grid available for delta update - skipping until full update arrives");
+      const size = msg.shape[0] * msg.shape[1];
+      return new Float32Array(size).fill(-1);
     }
 
     if (!msg.chunks) {
