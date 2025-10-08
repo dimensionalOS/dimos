@@ -514,19 +514,14 @@ class Image:
         return int(self.height * self.width)
 
     def __getstate__(self):
-        return {
-            'data': self.data,
-            'format': self.format,
-            'frame_id': self.frame_id,
-            'ts': self.ts
-        }
+        return {"data": self.data, "format": self.format, "frame_id": self.frame_id, "ts": self.ts}
 
     def __setstate__(self, state):
         self.__init__(
-            data=state.get('data'),
-            format=state.get('format'),
-            frame_id=state.get('frame_id'),
-            ts=state.get('ts')
+            data=state.get("data"),
+            format=state.get("format"),
+            frame_id=state.get("frame_id"),
+            ts=state.get("ts"),
         )
 
 
