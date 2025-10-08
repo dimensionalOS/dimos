@@ -137,6 +137,38 @@ class NumpyImage(AbstractImage):
             self.ts,
         )
 
+    def crop(self, x: int, y: int, width: int, height: int) -> "NumpyImage":
+        """Crop the image to the specified region.
+
+        Args:
+            x: Starting x coordinate (left edge)
+            y: Starting y coordinate (top edge)
+            width: Width of the cropped region
+            height: Height of the cropped region
+
+        Returns:
+            A new NumpyImage containing the cropped region
+        """
+        # Get current image dimensions
+        img_height, img_width = self.data.shape[:2]
+
+        # Clamp the crop region to image bounds
+        x = max(0, min(x, img_width))
+        y = max(0, min(y, img_height))
+        x_end = min(x + width, img_width)
+        y_end = min(y + height, img_height)
+
+        # Perform the crop using array slicing
+        if self.data.ndim == 2:
+            # Grayscale image
+            cropped_data = self.data[y:y_end, x:x_end]
+        else:
+            # Color image (HxWxC)
+            cropped_data = self.data[y:y_end, x:x_end, :]
+
+        # Return a new NumpyImage with the cropped data
+        return NumpyImage(cropped_data, self.format, self.frame_id, self.ts)
+
     def sharpness(self) -> float:
         gray = self.to_grayscale()
         sx = cv2.Sobel(gray.data, cv2.CV_32F, 1, 0, ksize=5)
