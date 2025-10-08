@@ -15,34 +15,39 @@
 from __future__ import annotations
 
 import base64
+import functools
 import time
 from typing import Optional
 
 import cv2
 import numpy as np
-
+import reactivex as rx
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
     AbstractImage,
-    ImageFormat,
     HAS_CUDA,
-    NVIMGCODEC_LAST_USED,
     HAS_NVIMGCODEC,
+    ImageFormat,
+    NVIMGCODEC_LAST_USED,
 )
-from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
 from dimos.msgs.sensor_msgs.image_impls.CudaImage import CudaImage
+from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
+from dimos.types.timestamped import TimestampedBufferCollection, to_human_readable
+from dimos.utils.reactive import quality_barrier
+from reactivex import operators as ops
+from reactivex.observable import Observable
+from reactivex.scheduler import ThreadPoolScheduler
 
 try:
     import cupy as cp  # type: ignore
 except Exception:
     cp = None  # type: ignore
-import reactivex as rx
-from reactivex import operators as ops
-from reactivex.observable import Observable
-from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.types.timestamped import TimestampedBufferCollection, to_human_readable
+try:
+    from sensor_msgs.msg import Image as ROSImage
+except ImportError:
+    ROSImage = None
 
 
 class Image:
@@ -291,7 +296,8 @@ class Image:
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> "Image":
         return Image(self._impl.resize(width, height, interpolation))
 
-    def sharpness(self) -> float:
+    def sharpness(self):
+        """Return sharpness score as a callable float for backward compatibility."""
         return self._impl.sharpness()
 
     def save(self, filepath: str) -> bool:
@@ -405,6 +411,91 @@ class Image:
     def csrt_update(self, *args, **kwargs):
         return self._impl.csrt_update(*args, **kwargs)  # type: ignore
 
+    @classmethod
+    def from_ros_msg(cls, ros_msg: ROSImage) -> "Image":
+        """Create an Image from a ROS sensor_msgs/Image message.
+
+        Args:
+            ros_msg: ROS Image message
+
+        Returns:
+            Image instance
+        """
+        # Convert timestamp from ROS header
+        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
+
+        # Parse encoding to determine format and data type
+        format_info = cls._parse_encoding(ros_msg.encoding)
+
+        # Convert data from ROS message (array.array) to numpy array
+        data_array = np.frombuffer(ros_msg.data, dtype=format_info["dtype"])
+
+        # Reshape to image dimensions
+        if format_info["channels"] == 1:
+            data_array = data_array.reshape((ros_msg.height, ros_msg.width))
+        else:
+            data_array = data_array.reshape(
+                (ros_msg.height, ros_msg.width, format_info["channels"])
+            )
+
+        # Crop to center 1/3 of the image (simulate 120-degree FOV from 360-degree)
+        original_width = data_array.shape[1]
+        crop_width = original_width // 3
+        start_x = (original_width - crop_width) // 2
+        end_x = start_x + crop_width
+
+        # Crop the image horizontally to center 1/3
+        if len(data_array.shape) == 2:
+            # Grayscale image
+            data_array = data_array[:, start_x:end_x]
+        else:
+            # Color image
+            data_array = data_array[:, start_x:end_x, :]
+
+        # Fix color channel order: if ROS sends RGB but we expect BGR, swap channels
+        # ROS typically uses rgb8 encoding, but OpenCV/our system expects BGR
+        if format_info["format"] == ImageFormat.RGB:
+            # Convert RGB to BGR by swapping channels
+            if len(data_array.shape) == 3 and data_array.shape[2] == 3:
+                data_array = data_array[:, :, [2, 1, 0]]  # RGB -> BGR
+                format_info["format"] = ImageFormat.BGR
+        elif format_info["format"] == ImageFormat.RGBA:
+            # Convert RGBA to BGRA by swapping channels
+            if len(data_array.shape) == 3 and data_array.shape[2] == 4:
+                data_array = data_array[:, :, [2, 1, 0, 3]]  # RGBA -> BGRA
+                format_info["format"] = ImageFormat.BGRA
+
+        return cls(
+            data=data_array,
+            format=format_info["format"],
+            frame_id=ros_msg.header.frame_id,
+            ts=ts,
+        )
+
+    @staticmethod
+    def _parse_encoding(encoding: str) -> dict:
+        """Translate ROS encoding strings into format metadata."""
+        encoding_map = {
+            "mono8": {"format": ImageFormat.GRAY, "dtype": np.uint8, "channels": 1},
+            "mono16": {"format": ImageFormat.GRAY16, "dtype": np.uint16, "channels": 1},
+            "rgb8": {"format": ImageFormat.RGB, "dtype": np.uint8, "channels": 3},
+            "rgba8": {"format": ImageFormat.RGBA, "dtype": np.uint8, "channels": 4},
+            "bgr8": {"format": ImageFormat.BGR, "dtype": np.uint8, "channels": 3},
+            "bgra8": {"format": ImageFormat.BGRA, "dtype": np.uint8, "channels": 4},
+            "32FC1": {"format": ImageFormat.DEPTH, "dtype": np.float32, "channels": 1},
+            "32FC3": {"format": ImageFormat.RGB, "dtype": np.float32, "channels": 3},
+            "64FC1": {"format": ImageFormat.DEPTH, "dtype": np.float64, "channels": 1},
+            "16UC1": {"format": ImageFormat.DEPTH16, "dtype": np.uint16, "channels": 1},
+            "16SC1": {"format": ImageFormat.DEPTH16, "dtype": np.int16, "channels": 1},
+        }
+
+        key = encoding.strip()
+        for candidate in (key, key.lower(), key.upper()):
+            if candidate in encoding_map:
+                return dict(encoding_map[candidate])
+
+        raise ValueError(f"Unsupported encoding: {encoding}")
+
     def __repr__(self) -> str:
         dev = "cuda" if self.is_cuda else "cpu"
         return f"Image(shape={self.shape}, format={self.format.value}, dtype={self.dtype}, dev={dev}, frame_id='{self.frame_id}', ts={self.ts})"
@@ -428,35 +519,43 @@ HAS_CUDA = HAS_CUDA
 ImageFormat = ImageFormat
 NVIMGCODEC_LAST_USED = NVIMGCODEC_LAST_USED
 HAS_NVIMGCODEC = HAS_NVIMGCODEC
-__all__ = ["HAS_CUDA", "ImageFormat", "NVIMGCODEC_LAST_USED", "HAS_NVIMGCODEC"]
+__all__ = [
+    "HAS_CUDA",
+    "ImageFormat",
+    "NVIMGCODEC_LAST_USED",
+    "HAS_NVIMGCODEC",
+    "sharpness_window",
+    "sharpness_barrier",
+]
 
 
 def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
-    """Periodically emit the sharpest Image seen within the sliding window.
+    """Emit the sharpest Image seen within each sliding time window."""
+    if target_frequency <= 0:
+        raise ValueError("target_frequency must be positive")
 
-    Args:
-        target_frequency: Emission frequency in Hz.
-        source: An observable stream of Image instances.
-
-    Returns:
-        Observable emitting the sharpest Image in the current window at the
-        specified frequency. Emits None if the window is empty.
-    """
     window = TimestampedBufferCollection(1.0 / target_frequency)
     source.subscribe(window.add)
 
     thread_scheduler = ThreadPoolScheduler(max_workers=1)
 
-    def find_best(*argv):
+    def find_best(*_args):
         if not window._items:
             return None
-
-        found = max(window._items, key=lambda x: x.sharpness())
-        return found
+        return max(window._items, key=lambda img: img.sharpness)
 
     return rx.interval(1.0 / target_frequency).pipe(
-        ops.observe_on(thread_scheduler), ops.map(find_best), ops.filter(lambda x: x is not None)
+        ops.observe_on(thread_scheduler),
+        ops.map(find_best),
+        ops.filter(lambda img: img is not None),
     )
+
+
+def sharpness_barrier(target_frequency: float):
+    """Select the sharpest Image within each time window."""
+    if target_frequency <= 0:
+        raise ValueError("target_frequency must be positive")
+    return quality_barrier(lambda image: image.sharpness, target_frequency)
 
 
 def _get_lcm_encoding(fmt: ImageFormat, dtype: np.dtype) -> str:

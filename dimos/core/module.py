@@ -117,7 +117,8 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer):
     @property
     def tf(self):
         if self._tf is None:
-            self._tf = self.config.tf_transport()
+            # self._tf = self.config.tf_transport()
+            self._tf = LCMTF()
         return self._tf
 
     @tf.setter

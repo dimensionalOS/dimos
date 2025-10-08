@@ -12,18 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import glob
-import os
-import pickle
 import subprocess
 import tarfile
 from functools import cache
 from pathlib import Path
-from typing import Any, Callable, Generic, Iterator, Optional, Type, TypeVar, Union
-
-from reactivex import from_iterable, interval
-from reactivex import operators as ops
-from reactivex.observable import Observable
+from typing import Optional, Union
 
 
 @cache
@@ -38,7 +31,9 @@ def _get_repo_root() -> Path:
 
 
 @cache
-def _get_data_dir() -> Path:
+def _get_data_dir(extra_path: Optional[str] = None) -> Path:
+    if extra_path:
+        return _get_repo_root() / "data" / extra_path
     return _get_repo_root() / "data"
 
 

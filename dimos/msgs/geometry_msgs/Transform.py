@@ -87,6 +87,9 @@ class Transform(Timestamped):
             ),
         )
 
+    def apply(self, other: "Transform") -> "Transform":
+        return self.__add__(other)
+
     def __add__(self, other: "Transform") -> "Transform":
         """Compose two transforms (transform composition).
 
@@ -248,7 +251,7 @@ class Transform(Timestamped):
         else:
             raise TypeError(f"Expected Pose or PoseStamped, got {type(pose).__name__}")
 
-    def to_pose(self) -> "PoseStamped":
+    def to_pose(self, **kwargs) -> "PoseStamped":
         """Create a Transform from a Pose or PoseStamped.
 
         Args:
@@ -262,9 +265,12 @@ class Transform(Timestamped):
 
         # Handle both Pose and PoseStamped
         return PoseStamped(
-            position=self.translation,
-            orientation=self.rotation,
-            frame_id=self.frame_id,
+            **{
+                "position": self.translation,
+                "orientation": self.rotation,
+                "frame_id": self.frame_id,
+            },
+            **kwargs,
         )
 
     def to_matrix(self) -> "np.ndarray":

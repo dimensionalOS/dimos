@@ -200,6 +200,9 @@ class SpatialVectorDB:
         processed_results = []
 
         for i, vector_id in enumerate(results["ids"]):
+            if isinstance(vector_id, list) and not vector_id:
+                continue
+
             lookup_id = vector_id[0] if isinstance(vector_id, list) else vector_id
 
             # Create the result dictionary with metadata regardless of image availability

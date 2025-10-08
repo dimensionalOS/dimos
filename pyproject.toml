@@ -111,6 +111,7 @@ dependencies = [
 
 [project.scripts]
 lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
+lcm-recorder = "dimos.utils.cli.recorder.run_recorder:main"
 foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
 skillspy = "dimos.utils.cli.skillspy.skillspy:main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"

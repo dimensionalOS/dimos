@@ -17,3 +17,6 @@ from dimos_lcm.vision_msgs.Detection2DArray import Detection2DArray as LCMDetect
 
 class Detection2DArray(LCMDetection2DArray):
     msg_name = "vision_msgs.Detection2DArray"
+
+    # for _get_field_type() to work when decoding in _decode_one()
+    __annotations__ = LCMDetection2DArray.__annotations__

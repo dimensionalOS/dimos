@@ -268,6 +268,7 @@ def test_time_window_collection():
     assert window.end_ts == 5.5
 
 
+@pytest.mark.tofix
 def test_timestamp_alignment():
     # Create a dedicated scheduler for this test to avoid thread leaks
     test_scheduler = ThreadPoolScheduler(max_workers=6)

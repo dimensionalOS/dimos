@@ -13,13 +13,13 @@
 # limitations under the License.
 
 import threading
-from typing import Optional, TypeVar, Generic, Any, Callable
+from typing import Any, Callable, Generic, Optional, TypeVar
 
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.scheduler import ThreadPoolScheduler
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
+from reactivex.scheduler import ThreadPoolScheduler
 from rxpy_backpressure import BackPressure
 
 from dimos.utils.threadpool import get_scheduler
@@ -197,3 +197,33 @@ def spy(name: str):
         return x
 
     return ops.map(spyfun)
+
+
+def quality_barrier(quality_func: Callable[[T], float], target_frequency: float):
+    """
+    RxPY pipe operator that selects the highest quality item within each time window.
+
+    Args:
+        quality_func: Function to compute quality score for each item
+        target_frequency: Output frequency in Hz (e.g., 1.0 for 1 item per second)
+
+    Returns:
+        A pipe operator that can be used with .pipe()
+    """
+    window_duration = 1.0 / target_frequency  # Duration of each window in seconds
+
+    def _quality_barrier(source: Observable[T]) -> Observable[T]:
+        return source.pipe(
+            # Create time-based windows
+            ops.window_with_time(window_duration),
+            # For each window, find the highest quality item
+            ops.flat_map(
+                lambda window: window.pipe(
+                    ops.to_list(),
+                    ops.map(lambda items: max(items, key=quality_func) if items else None),
+                    ops.filter(lambda x: x is not None),
+                )
+            ),
+        )
+
+    return _quality_barrier

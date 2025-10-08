@@ -18,42 +18,61 @@ Unitree G1 humanoid robot.
 Minimal implementation using WebRTC connection for robot control.
 """
 
+import logging
 import os
 import time
-import logging
 from typing import Optional
 
+from dimos_lcm.foxglove_msgs import SceneUpdate
+from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+from nav_msgs.msg import Odometry as ROSOdometry
+from sensor_msgs.msg import Image as ROSImage
+from sensor_msgs.msg import Joy as ROSJoy
+from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+from tf2_msgs.msg import TFMessage as ROSTFMessage
+
 from dimos import core
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
-from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
+from dimos.agents2 import Agent
+from dimos.agents2.cli.human import HumanInput
+from dimos.agents2.skills.ros_navigation import RosNavigation
+from dimos.agents2.spec import Model, Provider
+from dimos.core import In, Module, Out, rpc
+from dimos.hardware.camera import zed
+from dimos.hardware.camera.module import CameraModule
+from dimos.hardware.camera.webcam import Webcam
+from dimos.msgs.foxglove_msgs import ImageAnnotations
+from dimos.msgs.geometry_msgs import (
+    PoseStamped,
+    Quaternion,
+    Transform,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs import CameraInfo, PointCloud2
+from dimos.msgs.sensor_msgs import CameraInfo, Image, Joy, PointCloud2
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.perception.detection2d import Detection3DModule
+from dimos.perception.detection2d.moduleDB import ObjectDBModule
+from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
-from geometry_msgs.msg import TwistStamped as ROSTwistStamped
-from nav_msgs.msg import Odometry as ROSOdometry
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-from tf2_msgs.msg import TFMessage as ROSTFMessage
-from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
-
+from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
+from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree_webrtc.rosnav import NavigationModule
+from dimos.robot.unitree_webrtc.unitree_g1_skill_container import UnitreeG1SkillContainer
+from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
+from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1", level=logging.INFO)
-
-try:
-    from dimos.hardware.camera.zed import ZEDModule
-except ImportError:
-    logger.warning("ZEDModule not found. Please install pyzed to use ZED camera functionality.")
-    ZEDModule = None
 
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
@@ -123,6 +142,7 @@ class UnitreeG1(Robot):
         enable_joystick: bool = False,
         enable_connection: bool = True,
         enable_ros_bridge: bool = True,
+        enable_perception: bool = False,
         enable_camera: bool = False,
     ):
         """Initialize the G1 robot.
@@ -137,7 +157,7 @@ class UnitreeG1(Robot):
             enable_joystick: Enable pygame joystick control
             enable_connection: Enable robot connection module
             enable_ros_bridge: Enable ROS bridge
-            enable_camera: Enable ZED camera module
+            enable_camera: Enable web camera module
         """
         super().__init__()
         self.ip = ip
@@ -147,6 +167,7 @@ class UnitreeG1(Robot):
         self.enable_joystick = enable_joystick
         self.enable_connection = enable_connection
         self.enable_ros_bridge = enable_ros_bridge
+        self.enable_perception = enable_perception
         self.enable_camera = enable_camera
         self.websocket_port = websocket_port
         self.lcm = LCM()
@@ -166,28 +187,71 @@ class UnitreeG1(Robot):
         self.connection = None
         self.websocket_vis = None
         self.foxglove_bridge = None
+        self.spatial_memory_module = None
         self.joystick = None
         self.ros_bridge = None
-        self.zed_camera = None
-
+        self.camera = None
         self._setup_directories()
 
     def _setup_directories(self):
-        """Setup output directories."""
+        """Setup directories for spatial memory storage."""
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
 
+        # Initialize memory directories
+        self.memory_dir = os.path.join(self.output_dir, "memory")
+        os.makedirs(self.memory_dir, exist_ok=True)
+
+        # Initialize spatial memory properties
+        self.spatial_memory_dir = os.path.join(self.memory_dir, "spatial_memory")
+        self.spatial_memory_collection = "spatial_memory"
+        self.db_path = os.path.join(self.spatial_memory_dir, "chromadb_data")
+        self.visual_memory_path = os.path.join(self.spatial_memory_dir, "visual_memory.pkl")
+
+        # Create spatial memory directories
+        os.makedirs(self.spatial_memory_dir, exist_ok=True)
+        os.makedirs(self.db_path, exist_ok=True)
+
+    def _deploy_detection(self, goto):
+        detection = self.dimos.deploy(
+            ObjectDBModule, goto=goto, camera_info=zed.CameraInfo.SingleWebcam
+        )
+
+        detection.image.connect(self.camera.image)
+        detection.pointcloud.transport = core.LCMTransport("/map", PointCloud2)
+
+        detection.annotations.transport = core.LCMTransport("/annotations", ImageAnnotations)
+        detection.detections.transport = core.LCMTransport("/detections", Detection2DArray)
+
+        detection.scene_update.transport = core.LCMTransport("/scene_update", SceneUpdate)
+        detection.target.transport = core.LCMTransport("/target", PoseStamped)
+        detection.detected_pointcloud_0.transport = core.LCMTransport(
+            "/detected/pointcloud/0", PointCloud2
+        )
+        detection.detected_pointcloud_1.transport = core.LCMTransport(
+            "/detected/pointcloud/1", PointCloud2
+        )
+        detection.detected_pointcloud_2.transport = core.LCMTransport(
+            "/detected/pointcloud/2", PointCloud2
+        )
+
+        detection.detected_image_0.transport = core.LCMTransport("/detected/image/0", Image)
+        detection.detected_image_1.transport = core.LCMTransport("/detected/image/1", Image)
+        detection.detected_image_2.transport = core.LCMTransport("/detected/image/2", Image)
+
+        self.detection = detection
+
     def start(self):
         """Start the robot system with all modules."""
-        self.dimos = core.start(4)  # 2 workers for connection and visualization
+        self.dimos = core.start(8)  # 2 workers for connection and visualization
 
         if self.enable_connection:
             self._deploy_connection()
 
         self._deploy_visualization()
 
-        if self.enable_camera:
-            self._deploy_camera()
+        if self.enable_perception:
+            self._deploy_perception()
 
         if self.enable_joystick:
             self._deploy_joystick()
@@ -195,12 +259,65 @@ class UnitreeG1(Robot):
         if self.enable_ros_bridge:
             self._deploy_ros_bridge()
 
-        self._start_modules()
+        self.nav = self.dimos.deploy(NavigationModule)
+        self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+        self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
+        self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
+        self.nav.joy.transport = core.LCMTransport("/joy", Joy)
+        self.nav.start()
+
+        self._deploy_camera()
+        self._deploy_detection(self.nav.go_to)
 
         self.lcm.start()
 
+        # Setup agent with G1 skills
+        logger.info("Setting up agent with G1 skills...")
+
+        agent = Agent(
+            system_prompt="You are a helpful assistant controlling a Unitree G1 humanoid robot. You can control the robot's arms, movement modes, and navigation.",
+            model=Model.GPT_4O,
+            provider=Provider.OPENAI,
+        )
+
+        # Register G1-specific skill container
+        g1_skills = UnitreeG1SkillContainer(robot=self)
+        agent.register_skills(g1_skills)
+
+        human_input = self.dimos.deploy(HumanInput)
+        agent.register_skills(human_input)
+
+        if self.enable_perception:
+            agent.register_skills(self.detection)
+
+        # Register ROS navigation
+        ros_nav = RosNavigation(self)
+        ros_nav.__enter__()
+        agent.register_skills(ros_nav)
+
+        agent.run_implicit_skill("human")
+        agent.start()
+
+        # For logging
+        skills = [tool.name for tool in agent.get_tools()]
+        logger.info(f"Agent configured with {len(skills)} skills: {', '.join(skills)}")
+
+        agent.loop_thread()
+
         logger.info("UnitreeG1 initialized and started")
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
+        self._start_modules()
+
+    def stop(self):
+        self.lcm.stop()
+
+    def __enter__(self) -> "UnitreeG1":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+        return False
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
@@ -212,46 +329,28 @@ class UnitreeG1(Robot):
         self.connection.odom_pose.transport = core.LCMTransport("/odom", PoseStamped)
 
     def _deploy_camera(self):
-        """Deploy and configure the ZED camera module (real or fake based on replay_path)."""
+        """Deploy and configure a standard webcam module."""
+        logger.info("Deploying standard webcam module...")
 
-        if self.replay_path:
-            # Use FakeZEDModule for replay
-            from dimos.hardware.fake_zed_module import FakeZEDModule
-
-            logger.info(f"Deploying FakeZEDModule for replay from: {self.replay_path}")
-            self.zed_camera = self.dimos.deploy(
-                FakeZEDModule,
-                recording_path=self.replay_path,
-                frame_id="zed_camera",
-            )
-        else:
-            # Use real ZEDModule (with optional recording)
-            logger.info("Deploying ZED camera module...")
-            self.zed_camera = self.dimos.deploy(
-                ZEDModule,
-                camera_id=0,
-                resolution="HD720",
-                depth_mode="NEURAL",
-                fps=30,
-                enable_tracking=True,  # Enable for G1 pose estimation
-                enable_imu_fusion=True,
-                set_floor_as_origin=True,
-                publish_rate=30.0,
-                frame_id="zed_camera",
-                recording_path=self.recording_path,  # Pass recording path if provided
-            )
-
-        # Configure ZED LCM transports (same for both real and fake)
-        self.zed_camera.color_image.transport = core.pSHMTransport(
-            "/zed/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        self.camera = self.dimos.deploy(
+            CameraModule,
+            transform=Transform(
+                translation=Vector3(0.05, 0.0, 0.0),
+                rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
+                frame_id="sensor",
+                child_frame_id="camera_link",
+            ),
+            hardware=lambda: Webcam(
+                camera_index=0,
+                frequency=15,
+                stereo_slice="left",
+                camera_info=zed.CameraInfo.SingleWebcam,
+            ),
         )
-        self.zed_camera.depth_image.transport = core.pSHMTransport(
-            "/zed/depth_image", default_capacity=DEFAULT_CAPACITY_DEPTH_IMAGE
-        )
-        self.zed_camera.camera_info.transport = core.LCMTransport("/zed/camera_info", CameraInfo)
-        self.zed_camera.pose.transport = core.LCMTransport("/zed/pose", PoseStamped)
 
-        logger.info("ZED camera module configured")
+        self.camera.image.transport = core.LCMTransport("/image", Image)
+        self.camera.camera_info.transport = core.LCMTransport("/camera_info", CameraInfo)
+        logger.info("Webcam module configured")
 
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
@@ -268,6 +367,20 @@ class UnitreeG1(Robot):
                 "/zed/depth_image#sensor_msgs.Image",
             ]
         )
+
+    def _deploy_perception(self):
+        self.spatial_memory_module = self.dimos.deploy(
+            SpatialMemory,
+            collection_name=self.spatial_memory_collection,
+            db_path=self.db_path,
+            visual_memory_path=self.visual_memory_path,
+            output_dir=self.spatial_memory_dir,
+        )
+
+        self.spatial_memory_module.video.transport = core.LCMTransport("/image", Image)
+        self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
+
+        logger.info("Spatial memory module deployed and connected")
 
     def _deploy_joystick(self):
         """Deploy joystick control module."""
@@ -297,9 +410,30 @@ class UnitreeG1(Robot):
             "/tf", TFMessage, ROSTFMessage, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
-        # Add /registered_scan topic from ROS to DIMOS
+        from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+        from std_msgs.msg import Bool as ROSBool
+
+        from dimos.msgs.std_msgs import Bool
+
+        # Navigation control topics from autonomy stack
         self.ros_bridge.add_topic(
-            "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
+            "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
+        )
+        self.ros_bridge.add_topic(
+            "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
+        )
+        self.ros_bridge.add_topic(
+            "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+
+        self.ros_bridge.add_topic("/joy", Joy, ROSJoy, direction=BridgeDirection.DIMOS_TO_ROS)
+
+        self.ros_bridge.add_topic(
+            "/registered_scan",
+            PointCloud2,
+            ROSPointCloud2,
+            direction=BridgeDirection.ROS_TO_DIMOS,
+            remap_topic="/map",
         )
 
         logger.info(
@@ -310,11 +444,17 @@ class UnitreeG1(Robot):
         """Start all deployed modules."""
         if self.connection:
             self.connection.start()
-        self.websocket_vis.start()
+        # self.websocket_vis.start()
         self.foxglove_bridge.start()
 
-        if self.joystick:
-            self.joystick.start()
+        # if self.joystick:
+        #    self.joystick.start()
+
+        self.camera.start()
+        self.detection.start()
+
+        if self.enable_perception:
+            self.spatial_memory_module.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -356,11 +496,16 @@ class UnitreeG1(Robot):
 
         logger.info("UnitreeG1 shutdown complete")
 
+    @property
+    def spatial_memory(self) -> Optional[SpatialMemory]:
+        return self.spatial_memory_module
+
 
 def main():
     """Main entry point for testing."""
-    import os
     import argparse
+    import os
+
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -368,7 +513,7 @@ def main():
     parser = argparse.ArgumentParser(description="Unitree G1 Humanoid Robot Control")
     parser.add_argument("--ip", default=os.getenv("ROBOT_IP"), help="Robot IP address")
     parser.add_argument("--joystick", action="store_true", help="Enable pygame joystick control")
-    parser.add_argument("--camera", action="store_true", help="Enable ZED camera module")
+    parser.add_argument("--camera", action="store_true", help="Enable usb camera module")
     parser.add_argument("--output-dir", help="Output directory for logs/data")
     parser.add_argument("--record", help="Path to save recording")
     parser.add_argument("--replay", help="Path to replay recording from")
@@ -386,9 +531,23 @@ def main():
         enable_camera=args.camera,
         enable_connection=os.getenv("ROBOT_IP") is not None,
         enable_ros_bridge=True,
+        enable_perception=True,
     )
     robot.start()
 
+    # time.sleep(7)
+    # print("Starting navigation...")
+    # print(
+    #     robot.nav.go_to(
+    #         PoseStamped(
+    #             ts=time.time(),
+    #             frame_id="map",
+    #             position=Vector3(0.0, 0.0, 0.03),
+    #             orientation=Quaternion(0, 0, 0, 0),
+    #         ),
+    #         timeout=10,
+    #     ),
+    # )
     try:
         if args.joystick:
             print("\n" + "=" * 50)
