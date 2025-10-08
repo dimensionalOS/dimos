@@ -11,14 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import numpy as np
-import pytest
+
+import time
 
 from dimos.perception.detection2d.type.detection3d import Detection3D
 
 
-def test_guess_projection(get_moment_2d):
-    moment = get_moment_2d(seek=10.0)
+def test_guess_projection(get_moment_3d, publish_moment):
+    moment = get_moment_3d()
     for key, value in moment.items():
         print(key, "====================================")
         print(value)
@@ -28,4 +28,13 @@ def test_guess_projection(get_moment_2d):
     tf = moment.get("tf")
     transform = tf.get("camera_optical", "world", detection2d.ts, 5.0)
 
-    detection3d = Detection3D.from_2d(detection2d, 1.5, camera_info, transform)
+    # for stash
+    # detection3d = Detection3D.from_2d(detection2d, 1.5, camera_info, transform)
+    # print(detection3d)
+
+    # foxglove bridge needs 2 messages per topic to pass to foxglove
+    publish_moment(moment)
+    time.sleep(0.1)
+    publish_moment(moment)
+    time.sleep(0.1)
+    publish_moment(moment)

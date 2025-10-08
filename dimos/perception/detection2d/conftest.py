@@ -19,9 +19,10 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
 from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 
+from dimos.core import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
-from dimos.msgs.sensor_msgs import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
+from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.perception.detection2d.moduleDB import ObjectDBModule
@@ -102,6 +103,41 @@ def get_moment(tf):
         }
 
     return moment_provider
+
+
+@pytest.fixture
+def publish_moment():
+    def publisher(moment: Moment | Moment2D | Moment3D):
+        if moment.get("detections2d"):
+            # 2d annotations
+            annotations = LCMTransport("/annotations", ImageAnnotations)
+            annotations.publish(moment.get("detections2d").to_foxglove_annotations())
+
+            detections = LCMTransport("/detections", Detection2DArray)
+            detections.publish(moment.get("detections2d").to_ros_detection2d_array())
+
+        if moment.get("detections3dpc"):
+            scene_update = LCMTransport("/scene_update", SceneUpdate)
+            # 3d scene update
+            scene_update.publish(moment.get("detections3dpc").to_foxglove_scene_update())
+
+        lidar = LCMTransport("/lidar", PointCloud2)
+        lidar.publish(moment.get("lidar_frame"))
+
+        image = LCMTransport("/image", Image)
+        image.publish(moment.get("image_frame"))
+        camera_info = LCMTransport("/camera_info", CameraInfo)
+        camera_info.publish(moment.get("camera_info"))
+
+        tf = moment.get("tf")
+        tf.start()
+        tf.publish(*moment.get("transforms"))
+        tf.stop()
+
+    # moduleDB.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
+    # moduleDB.target.transport = LCMTransport("/target", PoseStamped)
+
+    return publisher
 
 
 @pytest.fixture
