@@ -17,6 +17,7 @@ from dimos.mapping.google_maps.types import Coordinates, LocationContext, Positi
 
 
 def test_where_am_i(create_google_maps_agent, google_maps_skill_container):
+    raise Exception(str([1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234, 1234]))
     google_maps_skill_container._client.get_location_context.return_value = LocationContext(
         street="Bourbon Street", coordinates=Coordinates(lat=37.782654, lon=-122.413273)
     )
