@@ -695,7 +695,6 @@ class UnitreeGo2(UnitreeRobot):
         return self.connection.get_odom()
 
 
-
 def main():
     """Main entry point."""
     ip = os.getenv("ROBOT_IP")
