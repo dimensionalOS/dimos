@@ -116,23 +116,29 @@ def publish_moment():
             detections = LCMTransport("/detections", Detection2DArray)
             detections.publish(moment.get("detections2d").to_ros_detection2d_array())
 
+            annotations.lcm.stop()
+            detections.lcm.stop()
+
         if moment.get("detections3dpc"):
             scene_update = LCMTransport("/scene_update", SceneUpdate)
             # 3d scene update
             scene_update.publish(moment.get("detections3dpc").to_foxglove_scene_update())
+            scene_update.lcm.stop()
 
         lidar = LCMTransport("/lidar", PointCloud2)
         lidar.publish(moment.get("lidar_frame"))
+        lidar.lcm.stop()
 
         image = LCMTransport("/image", Image)
         image.publish(moment.get("image_frame"))
+        image.lcm.stop()
+
         camera_info = LCMTransport("/camera_info", CameraInfo)
         camera_info.publish(moment.get("camera_info"))
+        camera_info.lcm.stop()
 
         tf = moment.get("tf")
-        tf.start()
         tf.publish(*moment.get("transforms"))
-        tf.stop()
 
     # moduleDB.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
     # moduleDB.target.transport = LCMTransport("/target", PoseStamped)
