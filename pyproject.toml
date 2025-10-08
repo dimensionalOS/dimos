@@ -10,7 +10,7 @@ where = ["."]
 include = ["dimos*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.html", "*.css", "*.js", "*.json", "*.txt", "*.yaml", "*.yml"]
+"*" = ["*.html", "*.css", "*.js", "*.json", "*.txt", "*.yaml", "*.yml", "*.urdf", "*.stl", "*.obj", "*.dae", "*.mtl"]
 
 [project]
 name = "dimos"
