@@ -41,7 +41,7 @@ except Exception:  # pragma: no cover
     csignal = None  # type: ignore
 
 
-_CUDA_SRC = r'''
+_CUDA_SRC = r"""
 extern "C" {
 
 __device__ __forceinline__ void rodrigues_R(const float r[3], float R[9]){
@@ -260,11 +260,12 @@ __global__ void pnp_gn_batch(
 }
 
 } // extern "C"
-'''
+"""
 
 if cp is not None:
-    _mod = cp.RawModule(code=_CUDA_SRC, options=('-std=c++14',), name_expressions=('pnp_gn_batch',))
-    _pnp_kernel = _mod.get_function('pnp_gn_batch')
+    _mod = cp.RawModule(code=_CUDA_SRC, options=("-std=c++14",), name_expressions=("pnp_gn_batch",))
+    _pnp_kernel = _mod.get_function("pnp_gn_batch")
+
 
 def _solve_pnp_cuda_kernel(obj, img, K, iterations=15, damping=1e-6):
     if cp is None:
@@ -341,6 +342,7 @@ def _solve_pnp_cuda_kernel(obj, img, K, iterations=15, damping=1e-6):
     if B == 1:
         return r_host[0], t_host[0]
     return r_host, t_host
+
 
 def _bgr_to_rgb_cuda(img):
     return img[..., ::-1]
@@ -718,7 +720,9 @@ class CudaImage(AbstractImage):
             obj = np.asarray(object_points_batch, dtype=np.float32)
             img = np.asarray(image_points_batch, dtype=np.float32)
             if obj.ndim != 3 or img.ndim != 3 or obj.shape[:2] != img.shape[:2]:
-                raise ValueError("Batched object/image arrays must be shaped (B,N,...) with matching sizes")
+                raise ValueError(
+                    "Batched object/image arrays must be shaped (B,N,...) with matching sizes"
+                )
             K = np.asarray(camera_matrix, dtype=np.float64)
             dist = None if dist_coeffs is None else np.asarray(dist_coeffs, dtype=np.float64)
             B = obj.shape[0]
@@ -744,9 +748,13 @@ class CudaImage(AbstractImage):
             return r_list, t_list
 
         return _solve_pnp_cuda_kernel(
-            object_points_batch, image_points_batch, camera_matrix, iterations=iterations, damping=damping
+            object_points_batch,
+            image_points_batch,
+            camera_matrix,
+            iterations=iterations,
+            damping=damping,
         )
-    
+
     def solve_pnp_ransac(
         self,
         object_points: np.ndarray,
@@ -796,23 +804,24 @@ class CudaImage(AbstractImage):
             rvec, tvec = _solve_pnp_cuda_kernel(obj[idx], img[idx], camera_matrix_np)
             R = _rodrigues(cp.asarray(rvec.flatten()))
             Xc = obj @ R.T + cp.asarray(tvec.flatten())
-            invZ = 1.0 / cp.clip(Xc[:,2], 1e-6, None)
-            u_hat = fx * Xc[:,0]*invZ + cx
-            v_hat = fy * Xc[:,1]*invZ + cy
-            err = cp.sqrt((img[:,0]-u_hat)**2 + (img[:,1]-v_hat)**2)
+            invZ = 1.0 / cp.clip(Xc[:, 2], 1e-6, None)
+            u_hat = fx * Xc[:, 0] * invZ + cx
+            v_hat = fy * Xc[:, 1] * invZ + cy
+            err = cp.sqrt((img[:, 0] - u_hat) ** 2 + (img[:, 1] - v_hat) ** 2)
             mask = (err < reprojection_error).astype(cp.uint8)
             inliers = int(mask.sum())
             if inliers > best_inliers:
                 best_inliers, best_r, best_t, best_mask = inliers, rvec, tvec, mask
-                if inliers >= int(confidence * N): break
+                if inliers >= int(confidence * N):
+                    break
 
         if best_inliers <= 0:
-            return False, np.zeros((3,1)), np.zeros((3,1)), np.zeros((N,),dtype=np.uint8)
+            return False, np.zeros((3, 1)), np.zeros((3, 1)), np.zeros((N,), dtype=np.uint8)
         in_idx = cp.nonzero(best_mask)[0]
         rvec, tvec = _solve_pnp_cuda_kernel(obj[in_idx], img[in_idx], camera_matrix_np)
         return True, rvec, tvec, cp.asnumpy(best_mask)
 
-        
+
 class _CudaTemplateTracker:
     def __init__(
         self,
