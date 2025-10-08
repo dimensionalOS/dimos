@@ -79,7 +79,9 @@ def _prepare_image(fmt: ImageFormat, shape=None) -> np.ndarray:
 
 @pytest.fixture
 def alloc_timer(request):
-    def _alloc(arr: np.ndarray, fmt: ImageFormat, *, to_cuda: bool = True, label: str | None = None):
+    def _alloc(
+        arr: np.ndarray, fmt: ImageFormat, *, to_cuda: bool = True, label: str | None = None
+    ):
         tag = label or request.node.name
         start = time.perf_counter()
         cpu = Image.from_numpy(arr, format=fmt)
@@ -308,7 +310,9 @@ def test_perf_compare_solvepnp(alloc_timer):
     img_pts, _ = cv2.projectPoints(obj, rvec_true, tvec_true, K, dist)
     img_pts = img_pts.reshape(-1, 2).astype(np.float32)
     base_bgr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
-    cpu, gpu, _, _ = alloc_timer(base_bgr, ImageFormat.BGR, label="test_perf_compare_solvepnp-setup")
+    cpu, gpu, _, _ = alloc_timer(
+        base_bgr, ImageFormat.BGR, label="test_perf_compare_solvepnp-setup"
+    )
 
     runs = 5
     t0 = time.perf_counter()
@@ -478,10 +482,7 @@ def test_solve_pnp_batch_correctness_and_perf(alloc_timer):
     r_b, t_b = gpu.solve_pnp_batch(obj, img, K)
     gpu_total = time.perf_counter() - t0
     gpu_t = gpu_total / B
-    print(
-        f"solvePnP-batch (avg per pose) cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s "
-        f"(B={B}, N={N})"
-    )
+    print(f"solvePnP-batch (avg per pose) cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s (B={B}, N={N})")
 
     # Check reprojection for a couple of batches
     for b in range(min(B, 4)):
