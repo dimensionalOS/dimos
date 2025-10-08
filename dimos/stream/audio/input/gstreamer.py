@@ -20,12 +20,15 @@ import time
 import numpy as np
 from reactivex import Observable, create, disposable
 
-import gi
+try:
+    import gi
 
-gi.require_version("Gst", "1.0")
-gi.require_version("GstApp", "1.0")
-gi.require_version("GstAudio", "1.0")
-from gi.repository import Gst, GstApp, GstAudio, GLib
+    gi.require_version("Gst", "1.0")
+    gi.require_version("GstApp", "1.0")
+    gi.require_version("GstAudio", "1.0")
+    from gi.repository import Gst, GstApp, GstAudio, GLib
+except (ImportError, ValueError) as exc:  # pragma: no cover - exercised in CI without GStreamer
+    raise ImportError("GStreamer dependencies are not available") from exc
 
 from dimos.stream.audio.base import AbstractAudioEmitter, AudioEvent
 from dimos.utils.gstreamer_manager import ensure_mainloop_running

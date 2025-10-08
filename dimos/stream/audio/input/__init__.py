@@ -13,7 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.stream.audio.input.gstreamer import GstreamerInput
-from dimos.stream.audio.input.player import FilePlayerInput
+__all__ = []
 
-__all__ = ["GstreamerInput", "FilePlayerInput"]
+try:
+    from dimos.stream.audio.input.gstreamer import GstreamerInput
+
+    __all__.append("GstreamerInput")
+except ImportError:  # pragma: no cover - exercised when optional deps missing
+    GstreamerInput = None  # type: ignore[assignment]
+
+try:
+    from dimos.stream.audio.input.player import FilePlayerInput  # type: ignore[attr-defined]
+
+    __all__.append("FilePlayerInput")
+except ImportError:  # pragma: no cover - optional feature
+    FilePlayerInput = None  # type: ignore[assignment]
