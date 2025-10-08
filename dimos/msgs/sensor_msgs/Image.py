@@ -13,17 +13,15 @@
 # limitations under the License.
 
 import base64
+import functools
 import time
 from dataclasses import dataclass, field
-from datetime import timedelta
 from enum import Enum
 from typing import Literal, Optional, Tuple, TypedDict
 
 import cv2
 import numpy as np
 import reactivex as rx
-
-# Import LCM types
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
 from reactivex import operators as ops
@@ -31,6 +29,12 @@ from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
+from dimos.utils.reactive import quality_barrier
+
+try:
+    from sensor_msgs.msg import Image as ROSImage
+except ImportError:
+    ROSImage = None
 
 
 class ImageFormat(Enum):
@@ -297,6 +301,7 @@ class Image(Timestamped):
             ts=self.ts,
         )
 
+    @functools.cached_property
     def sharpness(self) -> float:
         """
         Compute the Tenengrad focus measure for an image.
@@ -497,6 +502,67 @@ class Image(Timestamped):
 
         return encoding_map[encoding]
 
+    @classmethod
+    def from_ros_msg(cls, ros_msg: ROSImage) -> "Image":
+        """Create an Image from a ROS sensor_msgs/Image message.
+
+        Args:
+            ros_msg: ROS Image message
+
+        Returns:
+            Image instance
+        """
+        # Convert timestamp from ROS header
+        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
+
+        # Parse encoding to determine format and data type
+        format_info = cls._parse_encoding(ros_msg.encoding)
+
+        # Convert data from ROS message (array.array) to numpy array
+        data_array = np.frombuffer(ros_msg.data, dtype=format_info["dtype"])
+
+        # Reshape to image dimensions
+        if format_info["channels"] == 1:
+            data_array = data_array.reshape((ros_msg.height, ros_msg.width))
+        else:
+            data_array = data_array.reshape(
+                (ros_msg.height, ros_msg.width, format_info["channels"])
+            )
+
+        # Crop to center 1/3 of the image (simulate 120-degree FOV from 360-degree)
+        original_width = data_array.shape[1]
+        crop_width = original_width // 3
+        start_x = (original_width - crop_width) // 2
+        end_x = start_x + crop_width
+
+        # Crop the image horizontally to center 1/3
+        if len(data_array.shape) == 2:
+            # Grayscale image
+            data_array = data_array[:, start_x:end_x]
+        else:
+            # Color image
+            data_array = data_array[:, start_x:end_x, :]
+
+        # Fix color channel order: if ROS sends RGB but we expect BGR, swap channels
+        # ROS typically uses rgb8 encoding, but OpenCV/our system expects BGR
+        if format_info["format"] == ImageFormat.RGB:
+            # Convert RGB to BGR by swapping channels
+            if len(data_array.shape) == 3 and data_array.shape[2] == 3:
+                data_array = data_array[:, :, [2, 1, 0]]  # RGB -> BGR
+                format_info["format"] = ImageFormat.BGR
+        elif format_info["format"] == ImageFormat.RGBA:
+            # Convert RGBA to BGRA by swapping channels
+            if len(data_array.shape) == 3 and data_array.shape[2] == 4:
+                data_array = data_array[:, :, [2, 1, 0, 3]]  # RGBA -> BGRA
+                format_info["format"] = ImageFormat.BGRA
+
+        return cls(
+            data=data_array,
+            format=format_info["format"],
+            frame_id=ros_msg.header.frame_id,
+            ts=ts,
+        )
+
     def __repr__(self) -> str:
         """String representation."""
         return (
@@ -522,18 +588,8 @@ class Image(Timestamped):
 
 
 def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
-    window = TimestampedBufferCollection(1.0 / target_frequency)
-    source.subscribe(window.add)
+    raise NotImplementedError("use sharpness_barrier instead")
 
-    thread_scheduler = ThreadPoolScheduler(max_workers=1)
 
-    def find_best(*argv):
-        if not window._items:
-            return None
-
-        found = max(window._items, key=lambda x: x.sharpness())
-        return found
-
-    return rx.interval(1.0 / target_frequency).pipe(
-        ops.observe_on(thread_scheduler), ops.map(find_best), ops.filter(lambda x: x is not None)
-    )
+def sharpness_barrier(target_frequency: float):
+    return quality_barrier(lambda x: x.sharpness, target_frequency)

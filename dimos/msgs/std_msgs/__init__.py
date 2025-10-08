@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .Bool import Bool
 from .Header import Header
 from .Int32 import Int32
 
-__all__ = ["Header", "Int32"]
+__all__ = ["Bool", "Header", "Int32"]

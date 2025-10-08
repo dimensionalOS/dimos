@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import functools
 import struct
 import time
 from typing import Optional
@@ -27,6 +28,8 @@ from dimos_lcm.sensor_msgs.PointCloud2 import (
 )
 from dimos_lcm.sensor_msgs.PointField import PointField
 from dimos_lcm.std_msgs.Header import Header
+
+from dimos.msgs.geometry_msgs import Vector3
 
 # Import ROS types
 try:
@@ -73,13 +76,82 @@ class PointCloud2(Timestamped):
         pcd.points = o3d.utility.Vector3dVector(points)
         return cls(pointcloud=pcd, ts=timestamp, frame_id=frame_id)
 
+    def __str__(self) -> str:
+        return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self.pointcloud.points)})"
+
+    @functools.cached_property
+    def center(self) -> Vector3:
+        """Calculate the center of the pointcloud in world frame."""
+        center = np.asarray(self.pointcloud.points).mean(axis=0)
+        return Vector3(*center)
+
     def points(self):
         return self.pointcloud.points
+
+    def __add__(self, other: PointCloud2) -> PointCloud2:
+        """Combine two PointCloud2 instances into one.
+
+        The resulting point cloud contains points from both inputs.
+        The frame_id and timestamp are taken from the first point cloud.
+
+        Args:
+            other: Another PointCloud2 instance to combine with
+
+        Returns:
+            New PointCloud2 instance containing combined points
+        """
+        if not isinstance(other, PointCloud2):
+            raise ValueError("Can only add PointCloud2 to another PointCloud2")
+
+        return PointCloud2(
+            pointcloud=self.pointcloud + other.pointcloud,
+            frame_id=self.frame_id,
+            ts=max(self.ts, other.ts),
+        )
 
     # TODO what's the usual storage here? is it already numpy?
     def as_numpy(self) -> np.ndarray:
         """Get points as numpy array."""
         return np.asarray(self.pointcloud.points)
+
+    @functools.cache
+    def get_axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
+        """Get axis-aligned bounding box of the point cloud."""
+        return self.pointcloud.get_axis_aligned_bounding_box()
+
+    @functools.cache
+    def get_oriented_bounding_box(self) -> o3d.geometry.OrientedBoundingBox:
+        """Get oriented bounding box of the point cloud."""
+        return self.pointcloud.get_oriented_bounding_box()
+
+    @functools.cache
+    def get_bounding_box_dimensions(self) -> tuple[float, float, float]:
+        """Get dimensions (width, height, depth) of axis-aligned bounding box."""
+        bbox = self.get_axis_aligned_bounding_box()
+        extent = bbox.get_extent()
+        return tuple(extent)
+
+    def bounding_box_intersects(self, other: "PointCloud2") -> bool:
+        # Get axis-aligned bounding boxes
+        bbox1 = self.get_axis_aligned_bounding_box()
+        bbox2 = other.get_axis_aligned_bounding_box()
+
+        # Get min and max bounds
+        min1 = bbox1.get_min_bound()
+        max1 = bbox1.get_max_bound()
+        min2 = bbox2.get_min_bound()
+        max2 = bbox2.get_max_bound()
+
+        # Check overlap in all three dimensions
+        # Boxes intersect if they overlap in ALL dimensions
+        return (
+            min1[0] <= max2[0]
+            and max1[0] >= min2[0]
+            and min1[1] <= max2[1]
+            and max1[1] >= min2[1]
+            and min1[2] <= max2[2]
+            and max1[2] >= min2[2]
+        )
 
     def lcm_encode(self, frame_id: Optional[str] = None) -> bytes:
         """Convert to LCM PointCloud2 message."""

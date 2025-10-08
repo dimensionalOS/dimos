@@ -14,20 +14,22 @@
 
 import time
 from typing import Any, Optional
+
 import cv2
 from reactivex import Observable
+from reactivex.disposable import CompositeDisposable, Disposable
 
+from dimos.models.qwen.video_query import BBox
 from dimos.models.vl.qwen import QwenVlModel
+from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_location import RobotLocation
-from dimos.models.qwen.video_query import BBox
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
-from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 from dimos.navigation.bt_navigator.navigator import NavigatorState
 from reactivex.disposable import Disposable, CompositeDisposable
 
@@ -203,11 +205,7 @@ class NavigationSkillContainer(SkillContainer):
         if self._latest_image is None:
             return None
 
-        frame = cv2.cvtColor(self._latest_image.data, cv2.COLOR_RGB2BGR)
-        if frame is None:
-            return None
-
-        return get_object_bbox_from_image(self._vl_model, frame, query)
+        return get_object_bbox_from_image(self._vl_model, self._latest_image, query)
 
     def _navigate_using_semantic_map(self, query: str) -> str:
         results = self._robot.spatial_memory.query_by_text(query)

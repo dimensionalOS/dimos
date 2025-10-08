@@ -41,7 +41,7 @@ class Yolo2DDetector:
             device (str): Device to run inference on ('cuda' or 'cpu')
         """
         self.device = device
-        self.model = YOLO(get_data(model_path) / model_name)
+        self.model = YOLO(get_data(model_path) / model_name, task="detect")
 
         module_dir = os.path.dirname(__file__)
         self.tracker_config = os.path.join(module_dir, "config", "custom_tracker.yaml")
