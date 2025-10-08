@@ -20,7 +20,7 @@ import logging
 import os
 import time
 import warnings
-from typing import List, Optional
+from typing import Optional
 
 from reactivex import Observable
 
@@ -32,12 +32,11 @@ from dimos.msgs.std_msgs import Header
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.msgs.vision_msgs import Detection2DArray
 from dimos_lcm.std_msgs import String
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.perception.common.utils import (
-    extract_pose_from_detection3d,
     load_camera_info,
     load_camera_info_opencv,
     rectify_image,
@@ -53,7 +52,6 @@ from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLoca
 from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree_webrtc.depth_module import DepthModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -67,7 +65,6 @@ from dimos.navigation.bbox_navigation import BBoxNavigationModule
 from dimos_lcm.std_msgs import Bool
 from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_capabilities import RobotCapability
-from dimos.utils.transform_utils import offset_distance
 
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
@@ -565,15 +562,7 @@ class UnitreeGo2(UnitreeRobot):
 
     def _deploy_camera(self):
         """Deploy and configure the camera module."""
-        gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.5
-        self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
-
-        self.depth_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
-        self.depth_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
-        self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
-
-        logger.info("Camera module deployed and connected")
-        # Connect object tracker inputs after camera module is deployed
+        # Connect object tracker inputs
         if self.object_tracker:
             self.object_tracker.color_image.connect(self.connection.video)
             logger.info("Object tracker connected to camera")
@@ -705,68 +694,6 @@ class UnitreeGo2(UnitreeRobot):
         """
         return self.connection.get_odom()
 
-    def navigate_to_object(self, bbox: List[float], distance: float = 0.5, timeout: float = 30.0):
-        """Navigate to an object by tracking it and maintaining a specified distance.
-
-        Args:
-            bbox: Bounding box of the object to track [x1, y1, x2, y2]
-            distance: Distance to maintain from the object (meters)
-            timeout: Total timeout for the navigation (seconds)
-
-        Returns:
-            True if navigation completed successfully, False otherwise
-        """
-        if not self.object_tracker:
-            logger.error("Object tracker not initialized")
-            return False
-
-        logger.info(f"Starting object tracking with bbox: {bbox}")
-        self.object_tracker.track(bbox)
-
-        detection_topic = Topic("/go2/detection3d", Detection3DArray)
-        start_time = time.time()
-        goal_set = False
-
-        while time.time() - start_time < timeout:
-            if goal_set and self.navigator.get_state() == NavigatorState.IDLE:
-                logger.info("Waiting for goal result")
-                time.sleep(1.0)
-                if not self.navigator.is_goal_reached():
-                    logger.info("Goal cancelled, object tracking failed")
-                    return False
-                logger.info("Object tracking goal reached")
-                return True
-
-            if not self.object_tracker.is_tracking():
-                logger.debug("Object tracker lost target, restarting tracking")
-                self.object_tracker.track(bbox)
-
-            detection_msg = self.lcm.wait_for_message(detection_topic, timeout=1.0)
-            if detection_msg and getattr(detection_msg, "detections", []):
-                target_pose = extract_pose_from_detection3d(detection_msg.detections[0])
-                if target_pose is None:
-                    logger.debug("Detection did not contain a valid pose; skipping")
-                    continue
-
-                retracted_pose = offset_distance(
-                    target_pose, distance, approach_vector=Vector3(-1, 0, 0)
-                )
-
-                detection_header = getattr(detection_msg, "header", None)
-                frame_id = getattr(detection_header, "frame_id", "") or "camera_link"
-
-                goal_pose = PoseStamped(
-                    frame_id=frame_id,
-                    position=retracted_pose.position,
-                    orientation=retracted_pose.orientation,
-                )
-                self.navigator.set_goal(goal_pose)
-                goal_set = True
-
-            time.sleep(0.25)
-
-        logger.info("Object tracking timed out")
-        return False
 
 
 def main():
