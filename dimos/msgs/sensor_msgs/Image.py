@@ -296,6 +296,9 @@ class Image:
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> "Image":
         return Image(self._impl.resize(width, height, interpolation))
 
+    def crop(self, x: int, y: int, width: int, height: int) -> "Image":
+        return Image(self._impl.crop(x, y, width, height))
+
     def sharpness(self):
         """Return sharpness score as a callable float for backward compatibility."""
         return self._impl.sharpness()
