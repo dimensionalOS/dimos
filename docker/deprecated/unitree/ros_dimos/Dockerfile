@@ -88,18 +88,24 @@ WORKDIR /ros2_ws
 # Clone the repository with submodules
 RUN git clone --recurse-submodules https://github.com/dimensionalOS/go2_ros2_sdk src
 
-# Install Python requirements 
+# Install Python requirements
 RUN cd src && pip install -r requirements.txt
 
 # Create dimos directory structure
 RUN mkdir -p /app/dimos /app/docker
 
-COPY requirements.txt /app/
-
 WORKDIR /app
 
-# Install dimos requirements
-RUN pip install --no-cache-dir -r requirements.txt
+# Install UV
+ENV UV_SYSTEM_PYTHON=1
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+
+COPY pyproject.toml uv.lock ./
+
+# Install dimos requirements with UV
+RUN uv pip install .
 
 # Set PYTHONPATH permanently
 ENV PYTHONPATH=/app:${PYTHONPATH}

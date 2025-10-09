@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
     libavdevice-dev \
     libavutil-dev \
     libswscale-dev \
-    libpostproc-dev \ 
+    libpostproc-dev \
     gcc \
     make \
     portaudio19-dev \
@@ -22,17 +22,25 @@ RUN apt-get update && apt-get install -y \
     python3-all-dev \
     git \
     wget \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create symlink for python
 RUN ln -sf /usr/bin/python3.10 /usr/bin/python
 
+# Install UV
+ENV UV_SYSTEM_PYTHON=1
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
 # Change working directory to /app for proper relative pathing
 WORKDIR /app
 
-COPY requirements.txt ./
+# Copy project files for dependency installation
+COPY pyproject.toml uv.lock ./
 
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies with UV (including CUDA extras)
+RUN uv pip install .[cuda]
 
 COPY ./dimos ./dimos
 

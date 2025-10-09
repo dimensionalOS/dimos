@@ -9,19 +9,27 @@ RUN apt-get update && apt-get install -y \
     libavdevice-dev \
     libavutil-dev \
     libswscale-dev \
-    libpostproc-dev \ 
+    libpostproc-dev \
     gcc \
     make \
     portaudio19-dev \
     python3-pyaudio \
-    python3-all-dev
+    python3-all-dev \
+    curl
+
+# Install UV
+ENV UV_SYSTEM_PYTHON=1
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
 
 # Change working directory to /app for proper relative pathing
 WORKDIR /app
 
-COPY requirements.txt ./
 
-RUN pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml uv.lock ./
+
+# Install dependencies with UV
+RUN uv pip install .
 
 COPY ./dimos ./dimos
 

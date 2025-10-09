@@ -24,7 +24,7 @@ RUN git config --global --add safe.directory '*'
 
 WORKDIR /app
 
-# Install UV for fast Python package management
+# Install UV
 ENV UV_SYSTEM_PYTHON=1
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
