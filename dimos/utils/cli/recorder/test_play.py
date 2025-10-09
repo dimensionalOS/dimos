@@ -15,6 +15,7 @@
 import shutil
 import time
 
+import pytest
 from dimos_lcm.sensor_msgs import PointCloud2
 
 from dimos import core
