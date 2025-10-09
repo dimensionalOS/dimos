@@ -382,20 +382,6 @@ class UnitreeG1(Robot):
 
         logger.info("Spatial memory module deployed and connected")
 
-    def _deploy_perception(self):
-        self.spatial_memory_module = self.dimos.deploy(
-            SpatialMemory,
-            collection_name=self.spatial_memory_collection,
-            db_path=self.db_path,
-            visual_memory_path=self.visual_memory_path,
-            output_dir=self.spatial_memory_dir,
-        )
-
-        self.spatial_memory_module.video.transport = core.LCMTransport("/image", Image)
-        self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
-
-        logger.info("Spatial memory module deployed and connected")
-
     def _deploy_joystick(self):
         """Deploy joystick control module."""
         from dimos.robot.unitree_webrtc.g1_joystick_module import G1JoystickModule
