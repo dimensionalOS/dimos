@@ -20,17 +20,17 @@ from dimos.perception.detection2d.type.person import Person
 from dimos.utils.data import get_data
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def detector():
     return YoloPersonDetector()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def test_image():
     return Image.from_file(get_data("cafe.jpg"))
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def people(detector, test_image):
     return detector.detect_people(test_image)
 
