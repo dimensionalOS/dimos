@@ -59,15 +59,16 @@ We are shipping a first look at the DIMOS x Unitree Go2 integration, allowing fo
 Tested on Ubuntu 22.04/24.04
 
 ```bash
-sudo apt install python3-venv
-
 # Clone the repository
 git clone --branch dev --single-branch https://github.com/dimensionalOS/dimos.git
 cd dimos
 
-# Create and activate virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Setup virtual env and activate environment
+uv venv --python 3.10
+source .venv/bin/activate
 
 sudo apt install portaudio19-dev python3-pyaudio
 
@@ -75,21 +76,22 @@ sudo apt install portaudio19-dev python3-pyaudio
 sudo apt install git-lfs
 git lfs install
 
-# Install torch and torchvision if not already installed
-# Example CUDA 11.7, Pytorch 2.0.1 (replace with your required pytorch version if different)
-pip install torch==2.0.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
 
-#### Install dependencies
-```bash
-# CPU only (reccomended to attempt first)
-pip install -e .[cpu,dev]
+# Install dependencies
+# CPU only (recommended to attempt first)
+uv sync --extra dev --extra cpu
 
 # CUDA install
-pip install -e .[cuda,dev]
+uv sync --extra dev --extra cuda
 
 # Copy and configure environment variables
 cp default.env .env
+```
+
+**Note:** For CUDA 11.8 specifically, you can install torch separately before syncing:
+```bash
+uv pip install torch==2.0.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+uv sync --extra dev --extra cpu --no-install-project
 ```
 
 #### Test the install 
@@ -103,10 +105,19 @@ CONNECTION_TYPE=fake python dimos/robot/unitree_webrtc/unitree_go2.py
 ```
 
 #### Test Dimensional with a simulated UnitreeGo2 in MuJoCo (no robot required)
+
+**With GUI (local machine with display):**
 ```bash
-pip install -e .[sim]
-export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
-CONNECTION_TYPE=mujoco python dimos/robot/unitree_webrtc/unitree_go2.py 
+uv sync --extra dev --extra cpu --extra sim
+export DISPLAY=:0
+CONNECTION_TYPE=mujoco python dimos/robot/unitree_webrtc/unitree_go2.py
+```
+
+**Headless mode (SSH/server without display):**
+```bash
+uv sync --extra dev --extra cpu --extra sim
+sudo apt install xvfb  # Install if not already available
+xvfb-run -a CONNECTION_TYPE=mujoco python dimos/robot/unitree_webrtc/unitree_go2.py
 ```
 
 #### Test Dimensional with a real UnitreeGo2 over WebRTC
@@ -482,6 +493,6 @@ Huge thanks to!
 - Email: [build@dimensionalOS.com](mailto:build@dimensionalOS.com)
 
 ## Known Issues
-- Agent() failure to execute Nav2 action primitives (move, reverse, spinLeft, spinRight) is almost always due to the internal ROS2 collision avoidance, which will sometimes incorrectly display obstacles or be overly sensitive. Look for ```[behavior_server]: Collision Ahead - Exiting DriveOnHeading``` in the ROS logs. Reccomend restarting ROS2 or moving robot from objects to resolve. 
-- ```docker-compose up --build``` does not fully initialize the ROS2 environment due to ```std::bad_alloc``` errors. This will occur during continuous docker development if the ```docker-compose down``` is not run consistently before rebuilding and/or you are on a machine with less RAM, as ROS is very memory intensive. Reccomend running to clear your docker cache/images/containers with ```docker system prune``` and rebuild.
+- Agent() failure to execute Nav2 action primitives (move, reverse, spinLeft, spinRight) is almost always due to the internal ROS2 collision avoidance, which will sometimes incorrectly display obstacles or be overly sensitive. Look for ```[behavior_server]: Collision Ahead - Exiting DriveOnHeading``` in the ROS logs. recommend restarting ROS2 or moving robot from objects to resolve. 
+- ```docker-compose up --build``` does not fully initialize the ROS2 environment due to ```std::bad_alloc``` errors. This will occur during continuous docker development if the ```docker-compose down``` is not run consistently before rebuilding and/or you are on a machine with less RAM, as ROS is very memory intensive. recommend running to clear your docker cache/images/containers with ```docker system prune``` and rebuild.
 
