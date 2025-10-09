@@ -119,7 +119,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         min_height = 0.3 if self.connection_type == "mujoco" else 0.15
         gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.5
 
-        blueprint = autoconnect(
+        basic_robot = autoconnect(
             connection(self.ip, connection_type=self.connection_type),
             mapper(voxel_size=0.5, global_publish_interval=2.5, min_height=min_height),
             astar_planner(),
@@ -127,6 +127,11 @@ class UnitreeGo2(UnitreeRobot, Resource):
             behavior_tree_navigator(),
             wavefront_frontier_explorer(),
             websocket_vis(self.websocket_port),
+            foxglove_bridge(),
+        )
+
+        enhanced_robot = autoconnect(
+            basic_robot,
             spatial_memory(
                 db_path=self.db_path,
                 visual_memory_path=self.visual_memory_path,
@@ -135,10 +140,9 @@ class UnitreeGo2(UnitreeRobot, Resource):
             object_tracking(frame_id="camera_link"),
             depth_module(gt_depth_scale=gt_depth_scale),
             utilization(),
-            foxglove_bridge(),
         )
 
-        self._dimos = build_blueprint(blueprint)
+        self._dimos = build_blueprint(enhanced_robot)
 
         self._start_skills()
 

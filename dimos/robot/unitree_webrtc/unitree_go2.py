@@ -221,7 +221,7 @@ class ConnectionModule(Module):
         unsub = self.connection.video_stream().subscribe(self._on_video)
         self._disposables.add(unsub)
 
-        unsub = self.movecmd.subscribe(self.move)
+        unsub = self.cmd_vel.subscribe(self.move)
         self._disposables.add(unsub)
 
     @rpc

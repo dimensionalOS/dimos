@@ -123,8 +123,8 @@ class WebsocketVisModule(Module):
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
 
-        if self.robot_pose.connection is not None:
-            unsub = self.robot_pose.subscribe(self._on_robot_pose)
+        if self.odom.connection is not None:
+            unsub = self.odom.subscribe(self._on_robot_pose)
             self._disposables.add(Disposable(unsub))
 
         if self.gps_location.connection is not None:

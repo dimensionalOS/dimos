@@ -75,34 +75,35 @@ def build_blueprint(blueprints: ModuleBlueprintSet, n: int | None = None) -> Dim
 
     dimos.start()
 
+    # Deploy all modules.
     for blueprint in blueprints.blueprints:
         dimos.deploy(blueprint.module, *blueprint.args, **blueprint.kwargs)
 
+    # Gather all the In/Out connections.
     incoming = defaultdict(list)
     outgoing = defaultdict(list)
-
     for blueprint in blueprints.blueprints:
         for name, type in blueprint.incoming.items():
             incoming[(name, type)].append(blueprint.module)
         for name, type in blueprint.outgoing.items():
             outgoing[(name, type)].append(blueprint.module)
 
+    # Connect all In/Out connections by name and type.
     for name, type in set(incoming.keys()).union(outgoing.keys()):
-        print("-" * 100)
         topic = f"/{uuid4()}"
         use_pickled = "lcm_encode" not in type.__dict__
         for module in incoming[(name, type)] + outgoing[(name, type)]:
             instance = dimos.get_instance(module)
             transport = pLCMTransport(type) if use_pickled else LCMTransport(topic, type)
             getattr(instance, name).transport = transport
-            print(module.__name__, name, type.__name__, topic)
 
+    # Gather all RPC methods.
     rpc_methods = {}
     for blueprint in blueprints.blueprints:
         for method_name, method in blueprint.module.rpcs.items():
             rpc_methods[f"{blueprint.module.__name__}_{method_name}"] = method
 
-    print("x" * 100)
+    # Fulfil method requests (so modules can call each other).
     for blueprint in blueprints.blueprints:
         for method_name, method in blueprint.module.rpcs.items():
             if not method_name.startswith("set_"):
@@ -110,10 +111,8 @@ def build_blueprint(blueprints: ModuleBlueprintSet, n: int | None = None) -> Dim
             linked_name = method_name.removeprefix("set_")
             if linked_name not in rpc_methods:
                 continue
-            print("linking", blueprint.module.__name__, linked_name)
             instance = dimos.get_instance(blueprint.module)
             getattr(instance, method_name)(rpc_methods[linked_name])
-    print("x" * 100)
 
     dimos.start_all_modules()
 
