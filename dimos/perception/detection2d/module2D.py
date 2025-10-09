@@ -37,7 +37,7 @@ from dimos.utils.reactive import backpressure
 
 @dataclass
 class Config:
-    max_freq: float = 10  # hz
+    max_freq: float = 5  # hz
     detector: Optional[Callable[[Any], Detector]] = lambda: Yolo2DDetector()
     vlmodel: VlModel = QwenVlModel
 

@@ -28,7 +28,7 @@ from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.perception.detection2d.type.detection2d import Detection2D
+from dimos.perception.detection2d.type.detection2d import Detection2D, Detection2DBBox
 from dimos.perception.detection2d.type.imageDetections import ImageDetections
 from dimos.types.timestamped import to_ros_stamp
 
@@ -92,7 +92,7 @@ def radius_outlier(min_neighbors: int = 20, radius: float = 0.3) -> Detection3DF
 
 
 @dataclass
-class Detection3D(Detection2D):
+class Detection3D(Detection2DBBox):
     pointcloud: PointCloud2
     transform: Transform
     frame_id: str = "unknown"
