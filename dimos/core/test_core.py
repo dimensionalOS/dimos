@@ -29,6 +29,7 @@ from dimos.core.testing import MockRobotClient, dimos
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
+from reactivex.disposable import Disposable
 
 assert dimos
 
@@ -55,7 +56,8 @@ class Navigation(Module):
             print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
             self.mov.publish(msg.position)
 
-        self.odometry.subscribe(_odom)
+        unsub = self.odometry.subscribe(_odom)
+        self._disposables.add(Disposable(unsub))
 
         def _lidar(msg):
             self.lidar_msg_count += 1
@@ -64,7 +66,8 @@ class Navigation(Module):
             else:
                 print("RCV: unknown time", msg)
 
-        self.lidar.subscribe(_lidar)
+        unsub = self.lidar.subscribe(_lidar)
+        self._disposables.add(Disposable(unsub))
 
 
 def test_classmethods():
@@ -84,7 +87,7 @@ def test_classmethods():
     # Check that we have the expected RPC methods
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
-    assert len(class_rpcs) == 5
+    assert len(class_rpcs) == 6
 
     # Check that the values are callable
     assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
@@ -95,6 +98,8 @@ def test_classmethods():
         "navigate_to should have __rpc__ attribute"
     )
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
+
+    nav._close_module()
 
 
 @pytest.mark.module

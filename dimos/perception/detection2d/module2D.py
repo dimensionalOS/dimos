@@ -14,6 +14,7 @@
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
+import numpy as np
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )

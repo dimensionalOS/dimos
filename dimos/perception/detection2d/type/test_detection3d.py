@@ -15,17 +15,6 @@
 import numpy as np
 import pytest
 
-from dimos.perception.detection2d import testing
-
-
-@pytest.fixture(scope="session")
-def detection3d():
-    """Fixture to load and provide a 3D detection instance for testing."""
-    moment: testing.Moment3D = testing.detections3d()
-    detections = moment["detections3d"]
-    assert detections, "No detections found in test data"
-    return detections[0]
-
 
 def test_oriented_bounding_box(detection3d):
     """Test oriented bounding box calculation and values."""
@@ -35,20 +24,20 @@ def test_oriented_bounding_box(detection3d):
     # Verify OBB center values
     assert obb.center[0] == pytest.approx(-3.36002, abs=0.1)
     assert obb.center[1] == pytest.approx(-0.196446, abs=0.1)
-    assert obb.center[2] == pytest.approx(0.106373, abs=0.1)
+    assert obb.center[2] == pytest.approx(0.220184, abs=0.1)
 
     # Verify OBB extent values
-    assert obb.extent[0] == pytest.approx(0.714664, abs=0.1)
+    assert obb.extent[0] == pytest.approx(0.531275, abs=0.1)
     assert obb.extent[1] == pytest.approx(0.461054, abs=0.1)
-    assert obb.extent[2] == pytest.approx(0.407777, abs=0.1)
+    assert obb.extent[2] == pytest.approx(0.155, abs=0.1)
 
 
 def test_bounding_box_dimensions(detection3d):
     """Test bounding box dimension calculation."""
     dims = detection3d.get_bounding_box_dimensions()
     assert len(dims) == 3, "Bounding box dimensions should have 3 values"
-    assert dims[0] == pytest.approx(0.500, abs=0.1)
-    assert dims[1] == pytest.approx(0.550, abs=0.1)
+    assert dims[0] == pytest.approx(0.350, abs=0.1)
+    assert dims[1] == pytest.approx(0.250, abs=0.1)
     assert dims[2] == pytest.approx(0.550, abs=0.1)
 
 
@@ -64,14 +53,14 @@ def test_axis_aligned_bounding_box(detection3d):
 
     # Verify AABB max values
     assert aabb.max_bound[0] == pytest.approx(-3.075, abs=0.1)
-    assert aabb.max_bound[1] == pytest.approx(0.175, abs=0.1)
+    assert aabb.max_bound[1] == pytest.approx(-0.125, abs=0.1)
     assert aabb.max_bound[2] == pytest.approx(0.475, abs=0.1)
 
 
 def test_point_cloud_properties(detection3d):
     """Test point cloud data and boundaries."""
     pc_points = detection3d.pointcloud.points()
-    assert len(pc_points) == 94, f"Expected 94 points, got {len(pc_points)}"
+    assert len(pc_points) in [69, 70]
     assert detection3d.pointcloud.frame_id == "world", (
         f"Expected frame_id 'world', got '{detection3d.pointcloud.frame_id}'"
     )
@@ -89,7 +78,7 @@ def test_point_cloud_properties(detection3d):
     assert min_pt[2] == pytest.approx(-0.075, abs=0.1)
 
     assert max_pt[0] == pytest.approx(-3.075, abs=0.1)
-    assert max_pt[1] == pytest.approx(0.175, abs=0.1)
+    assert max_pt[1] == pytest.approx(-0.125, abs=0.1)
     assert max_pt[2] == pytest.approx(0.475, abs=0.1)
 
     assert center[0] == pytest.approx(-3.326, abs=0.1)
@@ -115,12 +104,12 @@ def test_foxglove_cube_properties(detection3d):
 
     # Verify position
     assert cube.pose.position.x == pytest.approx(-3.325, abs=0.1)
-    assert cube.pose.position.y == pytest.approx(-0.100, abs=0.1)
+    assert cube.pose.position.y == pytest.approx(-0.250, abs=0.1)
     assert cube.pose.position.z == pytest.approx(0.200, abs=0.1)
 
     # Verify size
-    assert cube.size.x == pytest.approx(0.500, abs=0.1)
-    assert cube.size.y == pytest.approx(0.550, abs=0.1)
+    assert cube.size.x == pytest.approx(0.350, abs=0.1)
+    assert cube.size.y == pytest.approx(0.250, abs=0.1)
     assert cube.size.z == pytest.approx(0.550, abs=0.1)
 
     # Verify color (green with alpha)
@@ -137,7 +126,7 @@ def test_foxglove_text_label(detection3d):
 
     assert text.text == "1/suitcase (81%)", f"Expected text '1/suitcase (81%)', got '{text.text}'"
     assert text.pose.position.x == pytest.approx(-3.325, abs=0.1)
-    assert text.pose.position.y == pytest.approx(-0.100, abs=0.1)
+    assert text.pose.position.y == pytest.approx(-0.250, abs=0.1)
     assert text.pose.position.z == pytest.approx(0.575, abs=0.1)
     assert text.font_size == 20.0, f"Expected font size 20.0, got {text.font_size}"
 

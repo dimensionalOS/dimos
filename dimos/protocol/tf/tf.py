@@ -281,7 +281,6 @@ class PubSubTF(MultiTBuffer, TFSpec):
         TFSpec.__init__(self, **kwargs)
         MultiTBuffer.__init__(self, self.config.buffer_size)
 
-        # Check if pubsub is a class (callable) or an instance
         pubsub_config = getattr(self.config, "pubsub", None)
         if pubsub_config is not None:
             if callable(pubsub_config):
@@ -291,7 +290,7 @@ class PubSubTF(MultiTBuffer, TFSpec):
         else:
             raise ValueError("PubSub configuration is missing")
 
-        if getattr(self.config, "autostart", True):
+        if self.config.autostart:
             self.start()
 
     def start(self, sub=True) -> None:

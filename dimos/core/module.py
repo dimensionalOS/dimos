@@ -23,6 +23,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
+from reactivex.disposable import CompositeDisposable
 
 from dask.distributed import Actor, get_worker
 
@@ -74,12 +75,14 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer):
     _tf: Optional[TFSpec] = None
     _loop: Optional[asyncio.AbstractEventLoop] = None
     _loop_thread: Optional[threading.Thread]
+    _disposables: CompositeDisposable
 
     default_config = ModuleConfig
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._loop, self._loop_thread = get_loop()
+        self._disposables = CompositeDisposable()
         # we can completely override comms protocols if we want
         try:
             # here we attempt to figure out if we are running on a dask worker
@@ -94,10 +97,16 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer):
     def _close_module(self):
         self._close_rpc()
         if hasattr(self, "_loop") and self._loop_thread:
-            self._loop.call_soon_threadsafe(self._loop.stop)
+            if self._loop_thread.is_alive():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+                self._loop_thread.join(timeout=2)
             self._loop = None
-            self._loop_thread.join(timeout=2)
             self._loop_thread = None
+        if hasattr(self, "_tf") and self._tf is not None:
+            self._tf.stop()
+            self._tf = None
+        if hasattr(self, "_disposables"):
+            self._disposables.dispose()
 
     def _close_rpc(self):
         # Using hasattr is needed because SkillCoordinator skips ModuleBase.__init__ and self.rpc is never set.

@@ -14,18 +14,23 @@
 
 import time
 from typing import Any, Optional
+
 import cv2
 from reactivex import Observable
+from reactivex.disposable import CompositeDisposable, Disposable
 
+from dimos.models.qwen.video_query import BBox
+from dimos.models.vl.qwen import QwenVlModel
+from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_location import RobotLocation
-from dimos.models.qwen.video_query import BBox, get_bbox_from_qwen_frame
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
-from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
+from dimos.navigation.bt_navigator.navigator import NavigatorState
 from reactivex.disposable import Disposable, CompositeDisposable
 
 logger = setup_logger(__file__)
@@ -46,6 +51,7 @@ class NavigationSkillContainer(SkillContainer):
         self._video_stream = video_stream
         self._similarity_threshold = 0.23
         self._started = False
+        self._vl_model = QwenVlModel()
 
     def __enter__(self) -> "NavigationSkillContainer":
         unsub = self._video_stream.subscribe(self._on_video)
@@ -55,6 +61,7 @@ class NavigationSkillContainer(SkillContainer):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._disposables.dispose()
+        self.stop()
         return False
 
     def _on_video(self, image: Image) -> None:
@@ -158,23 +165,47 @@ class NavigationSkillContainer(SkillContainer):
 
         logger.info(f"Found {query} at {bbox}")
 
-        success = self._robot.navigate_to_object(bbox)
+        # Start tracking - BBoxNavigationModule automatically generates goals
+        self._robot.object_tracker.track(bbox)
 
-        if not success:
-            logger.warning(f"Failed to navigate to '{query}' at {bbox}")
-            return None
+        start_time = time.time()
+        timeout = 30.0
+        goal_set = False
 
-        return "Successfully navigated to object from query '{query}'."
+        while time.time() - start_time < timeout:
+            # Check if navigator finished
+            if self._robot.navigator.get_state() == NavigatorState.IDLE and goal_set:
+                logger.info("Waiting for goal result")
+                time.sleep(1.0)
+                if not self._robot.navigator.is_goal_reached():
+                    logger.info(f"Goal cancelled, tracking '{query}' failed")
+                    self._robot.object_tracker.stop_track()
+                    return None
+                else:
+                    logger.info(f"Reached '{query}'")
+                    self._robot.object_tracker.stop_track()
+                    return f"Successfully arrived at '{query}'"
+
+            # If goal set and tracking lost, just continue (tracker will resume or timeout)
+            if goal_set and not self._robot.object_tracker.is_tracking():
+                continue
+
+            # BBoxNavigationModule automatically sends goals when tracker publishes
+            # Just check if we have any detections to mark goal_set
+            if self._robot.object_tracker.is_tracking():
+                goal_set = True
+
+            time.sleep(0.25)
+
+        logger.warning(f"Navigation to '{query}' timed out after {timeout}s")
+        self._robot.object_tracker.stop_track()
+        return None
 
     def _get_bbox_for_current_frame(self, query: str) -> Optional[BBox]:
         if self._latest_image is None:
             return None
 
-        frame = cv2.cvtColor(self._latest_image.data, cv2.COLOR_RGB2BGR)
-        if frame is None:
-            return None
-
-        return get_bbox_from_qwen_frame(frame, object_name=query)
+        return get_object_bbox_from_image(self._vl_model, self._latest_image, query)
 
     def _navigate_using_semantic_map(self, query: str) -> str:
         results = self._robot.spatial_memory.query_by_text(query)

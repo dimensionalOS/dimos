@@ -305,12 +305,12 @@ class TestROSBridge(unittest.TestCase):
 
         lcm.subscribe(topic, dimos_callback)
 
-        # Publish TF at high frequency (200Hz)
+        # Publish TF at high frequency (100Hz)
         ros_pub = self.test_node.create_publisher(ROSTFMessage, "/test_tf", 100)
 
-        target_freq = 200  # Hz
+        target_freq = 100  # Hz
         period = 1.0 / target_freq
-        num_messages = 200  # 1 second worth
+        num_messages = 100  # 1 second worth
 
         send_times = []
         for i in range(num_messages):

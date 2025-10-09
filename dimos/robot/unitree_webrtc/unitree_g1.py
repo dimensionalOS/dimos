@@ -22,23 +22,21 @@ import logging
 import os
 import time
 from typing import Optional
+
+from dimos_lcm.foxglove_msgs import SceneUpdate
+from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+from nav_msgs.msg import Odometry as ROSOdometry
+from sensor_msgs.msg import Image as ROSImage
+from sensor_msgs.msg import Joy as ROSJoy
+from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+from tf2_msgs.msg import TFMessage as ROSTFMessage
+
 from dimos import core
 from dimos.agents2 import Agent
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.skills.ros_navigation import RosNavigation
 from dimos.agents2.spec import Model, Provider
-from dimos.core import In, Module, Out, rpc
-from geometry_msgs.msg import PoseStamped as ROSPoseStamped
-
-from geometry_msgs.msg import PoseStamped as ROSPoseStamped
-from geometry_msgs.msg import TwistStamped as ROSTwistStamped
-
-from dimos_lcm.foxglove_msgs import SceneUpdate
-from nav_msgs.msg import Odometry as ROSOdometry
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy, Image as ROSImage
-from tf2_msgs.msg import TFMessage as ROSTFMessage
-
-from dimos import core
 from dimos.core import In, Module, Out, rpc
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
@@ -59,9 +57,6 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d import Detection3DModule
 from dimos.perception.detection2d.moduleDB import ObjectDBModule
-from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3, Quaternion
-from dimos.msgs.sensor_msgs import Image, CameraInfo
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
@@ -366,7 +361,26 @@ class UnitreeG1(Robot):
         # Note: robot_pose connection removed since odom was removed from G1ConnectionModule
 
         # Deploy Foxglove bridge
-        self.foxglove_bridge = FoxgloveBridge()
+        self.foxglove_bridge = FoxgloveBridge(
+            shm_channels=[
+                "/zed/color_image#sensor_msgs.Image",
+                "/zed/depth_image#sensor_msgs.Image",
+            ]
+        )
+
+    def _deploy_perception(self):
+        self.spatial_memory_module = self.dimos.deploy(
+            SpatialMemory,
+            collection_name=self.spatial_memory_collection,
+            db_path=self.db_path,
+            visual_memory_path=self.visual_memory_path,
+            output_dir=self.spatial_memory_dir,
+        )
+
+        self.spatial_memory_module.video.transport = core.LCMTransport("/image", Image)
+        self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
+
+        logger.info("Spatial memory module deployed and connected")
 
     def _deploy_perception(self):
         self.spatial_memory_module = self.dimos.deploy(
@@ -453,8 +467,8 @@ class UnitreeG1(Robot):
         self.camera.start()
         self.detection.start()
 
-        # if self.enable_perception:
-        # self.spatial_memory_module.start()
+        if self.enable_perception:
+            self.spatial_memory_module.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:

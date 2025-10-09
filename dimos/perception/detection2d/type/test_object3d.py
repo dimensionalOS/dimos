@@ -14,65 +14,11 @@
 
 import pytest
 
-from dimos.perception.detection2d import testing
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.perception.detection2d.moduleDB import Object3D, ObjectDBModule
 from dimos.perception.detection2d.type.detection3d import ImageDetections3D
-from dimos.protocol.service import lcmservice as lcm
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
-
-
-@pytest.fixture(scope="session", autouse=True)
-def setup_lcm():
-    """Configure LCM for the test session."""
-    lcm.autoconf()
-
-
-@pytest.fixture(scope="session")
-def object_db_module():
-    """Create and populate an ObjectDBModule with detections from multiple frames."""
-    module2d = Detection2DModule()
-    module3d = Detection3DModule(camera_info=ConnectionModule._camera_info())
-    moduleDB = ObjectDBModule(
-        camera_info=ConnectionModule._camera_info(),
-        goto=lambda obj_id: None,  # No-op for testing
-    )
-
-    # Process 5 frames to build up object history
-    for i in range(5):
-        seek_value = 10.0 + (i * 2)
-        moment = testing.get_moment(seek=seek_value)
-
-        # Process 2D detections
-        imageDetections2d = module2d.process_image_frame(moment["image_frame"])
-
-        # Get camera transform
-        camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
-
-        # Process 3D detections
-        imageDetections3d = module3d.process_frame(
-            imageDetections2d, moment["lidar_frame"], camera_transform
-        )
-
-        # Add to database
-        moduleDB.add_detections(imageDetections3d)
-
-    return moduleDB
-
-
-@pytest.fixture(scope="session")
-def first_object(object_db_module):
-    """Get the first object from the database."""
-    objects = list(object_db_module.objects.values())
-    assert len(objects) > 0, "No objects found in database"
-    return objects[0]
-
-
-@pytest.fixture(scope="session")
-def all_objects(object_db_module):
-    """Get all objects from the database."""
-    return list(object_db_module.objects.values())
 
 
 def test_object_db_module_populated(object_db_module):

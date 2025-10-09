@@ -11,28 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-import numpy as np
 import pytest
-
-from dimos.perception.detection2d import testing
-
-
-@pytest.fixture(scope="session")
-def detection2d():
-    """Fixture to load and provide a 2D detection instance for testing."""
-    moment = testing.detections2d()
-    detections = moment["detections2d"]
-    assert detections, "No detections found in test data"
-    assert len(detections.detections) > 0, "No individual detections in ImageDetections2D"
-    return detections.detections[0]
-
-
-@pytest.fixture(scope="session")
-def image_detections2d():
-    """Fixture to load the full ImageDetections2D object."""
-    moment = testing.detections2d()
-    return moment["detections2d"]
 
 
 def test_detection_basic_properties(detection2d):

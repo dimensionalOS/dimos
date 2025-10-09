@@ -101,6 +101,9 @@ def test_sync_query_with_thread():
     agent.register_skills(container)
     agent.start()
 
+    # Track the thread we might create
+    loop_thread = None
+
     # The agent's event loop should be running in the Module's thread
     # Let's check if it's running
     if agent._loop and agent._loop.is_running():
@@ -113,8 +116,8 @@ def test_sync_query_with_thread():
             asyncio.set_event_loop(agent._loop)
             agent._loop.run_forever()
 
-        thread = threading.Thread(target=run_loop, daemon=True)
-        thread.start()
+        loop_thread = threading.Thread(target=run_loop, daemon=False, name="EventLoopThread")
+        loop_thread.start()
         time.sleep(1)  # Give loop time to start
         logger.info("Started event loop in thread")
 
@@ -129,8 +132,23 @@ def test_sync_query_with_thread():
 
         traceback.print_exc()
 
-    # Clean up
+    # Clean up properly
+    # First stop the agent (this should stop its internal loop if any)
     agent.stop()
+
+    # Then stop the manually created event loop thread if we created one
+    if loop_thread and loop_thread.is_alive():
+        logger.info("Stopping manually created event loop thread...")
+        # Stop the event loop
+        if agent._loop and agent._loop.is_running():
+            agent._loop.call_soon_threadsafe(agent._loop.stop)
+        # Wait for thread to finish
+        loop_thread.join(timeout=5)
+        if loop_thread.is_alive():
+            logger.warning("Thread did not stop cleanly within timeout")
+
+    # Finally close the container
+    container._close_module()
 
 
 # def test_with_real_module_system():

@@ -119,7 +119,7 @@ class ImageDetections(Generic[T], TableStr):
     def ts(self) -> float:
         return self.image.ts
 
-    def __init__(self, image: Image, detections: Optional(List[T]) = None):
+    def __init__(self, image: Image, detections: Optional[List[T]] = None):
         self.image = image
         self.detections = detections or []
         for det in self.detections:

@@ -105,6 +105,20 @@ class Yolo2DDetector(Detector):
         """
         return plot_results(image, bboxes, track_ids, class_ids, confidences, names)
 
+    def stop(self):
+        """
+        Clean up resources used by the detector, including tracker threads.
+        """
+        if hasattr(self.model, "predictor") and self.model.predictor is not None:
+            predictor = self.model.predictor
+            if hasattr(predictor, "trackers") and predictor.trackers:
+                for tracker in predictor.trackers:
+                    if hasattr(tracker, "tracker") and hasattr(tracker.tracker, "gmc"):
+                        gmc = tracker.tracker.gmc
+                        if hasattr(gmc, "executor") and gmc.executor is not None:
+                            gmc.executor.shutdown(wait=True)
+            self.model.predictor = None
+
 
 def main():
     """Example usage of the Yolo2DDetector class."""

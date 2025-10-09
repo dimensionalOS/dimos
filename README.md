@@ -26,7 +26,7 @@ The framework enables neurosymbolic orchestration of Agents as generalized spati
 
 The result: cross-embodied *"Dimensional Applications"* exceptional at generalization and robust at symbolic action execution. 
 
-## DIMOS x Unitree Go2
+## DIMOS x Unitree Go2 (OUT OF DATE)
 
 We are shipping a first look at the DIMOS x Unitree Go2 integration, allowing for off-the-shelf Agents() to "call" Unitree ROS2 Nodes and WebRTC action primitives, including:
 
@@ -53,14 +53,16 @@ We are shipping a first look at the DIMOS x Unitree Go2 integration, allowing fo
 
 - **DimOS Interface / Development Tools**
   - Local development interface to control your robot, orchestrate agents, visualize camera/lidar streams, and debug your dimensional agentive application.
-    
-### Python Installation (Ubuntu 22.04)
+
+---
+## Python Installation
+Tested on Ubuntu 22.04/24.04
 
 ```bash
 sudo apt install python3-venv
 
 # Clone the repository
-git clone --recurse-submodules https://github.com/dimensionalOS/dimos.git
+git clone --branch dev --single-branch https://github.com/dimensionalOS/dimos.git
 cd dimos
 
 # Create and activate virtual environment
@@ -68,6 +70,10 @@ python3 -m venv venv
 source venv/bin/activate
 
 sudo apt install portaudio19-dev python3-pyaudio
+
+# Install LFS
+sudo apt install git-lfs
+git lfs install
 
 # Install torch and torchvision if not already installed
 # Example CUDA 11.7, Pytorch 2.0.1 (replace with your required pytorch version if different)
@@ -77,24 +83,45 @@ pip install torch==2.0.1 torchvision torchaudio --index-url https://download.pyt
 #### Install dependencies
 ```bash
 # CPU only (reccomended to attempt first)
-pip install .[cpu,dev]
+pip install -e .[cpu,dev]
 
 # CUDA install
-pip install .[cuda,dev]
+pip install -e .[cuda,dev]
 
 # Copy and configure environment variables
 cp default.env .env
 ```
 
-#### Test install 
+#### Test the install 
 ```bash 
 pytest -s dimos/
 ```
 
-#### Run the Stack with a connected UnitreeGO2 over WebRTC
+#### Test Dimensional with a replay UnitreeGo2 stream (no robot required)
 ```bash
-python tests/run.py
+CONNECTION_TYPE=fake python dimos/robot/unitree_webrtc/unitree_go2.py 
 ```
+
+#### Test Dimensional with a simulated UnitreeGo2 in MuJoCo (no robot required)
+```bash
+pip install -e .[sim]
+export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
+CONNECTION_TYPE=mujoco python dimos/robot/unitree_webrtc/unitree_go2.py 
+```
+
+#### Test Dimensional with a real UnitreeGo2 over WebRTC
+```bash
+export ROBOT_IP=192.168.X.XXX # Add the robot IP address
+python dimos/robot/unitree_webrtc/unitree_go2.py 
+```
+
+#### Test Dimensional with a real UnitreeGo2 running Agents
+*OpenAI / Alibaba keys required*
+```bash
+export ROBOT_IP=192.168.X.XXX # Add the robot IP address
+python dimos/robot/unitree_webrtc/run_agents2.py
+```
+---
 
 ### Agent API keys
 
@@ -166,7 +193,7 @@ yarn install
 yarn dev # you may need to run sudo if previously built via Docker
 ```
 
-### Project Structure 
+### Project Structure (OUT OF DATE)
 
 ```
 .
@@ -211,7 +238,7 @@ yarn dev # you may need to run sudo if previously built via Docker
 
 ## Building
 
-### Simple DimOS Application
+### Simple DimOS Application (OUT OF DATE)
 
 ```python
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
@@ -238,7 +265,7 @@ while True: # keep process running
 ```
 
 
-### DimOS Application with Agent chaining
+### DimOS Application with Agent chaining (OUT OF DATE)
 
 Let's build a simple DimOS application with Agent chaining. We define a ```planner``` as a ```PlanningAgent``` that takes in user input to devise a complex multi-step plan. This plan is passed step-by-step to an ```executor``` agent that can queue ```AbstractRobotSkill``` commands to the ```ROSCommandQueue```. 
 
@@ -278,7 +305,7 @@ while True: # keep process running
   time.sleep(1)
 ```
 
-### Calling Action Primitives
+### Calling Action Primitives (OUT OF DATE)
 
 Call action primitives directly from ```Robot()``` for prototyping and testing.
 

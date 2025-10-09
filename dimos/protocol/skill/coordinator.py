@@ -331,6 +331,12 @@ class SkillCoordinator(Module):
         if self._transport_unsub_fn:
             self._transport_unsub_fn()
 
+        # Stop all registered skill containers
+        for container in self._static_containers:
+            container.stop()
+        for container in self._dynamic_containers:
+            container.stop()
+
     def len(self) -> int:
         return len(self._skills)
 
