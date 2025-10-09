@@ -71,7 +71,7 @@ __device__ __forceinline__ void cross_mat(const float v[3], float S[9]){
   S[6]=-v[1];   S[7]= v[0]; S[8]=0.f;
 }
 
-// Solve a 6x6 system (JTJ * x = JTr) with Gauss–Jordan; JTJ is SPD after damping.
+// Solve a 6x6 system (JTJ * x = JTr) with Gauss-Jordan; JTJ is SPD after damping.
 __device__ void solve6_gauss_jordan(float A[36], float b[6], float x[6]){
   float M[6][7];
   #pragma unroll
