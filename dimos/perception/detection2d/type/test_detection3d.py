@@ -17,8 +17,8 @@ import time
 from dimos.perception.detection2d.type.detection3d import Detection3D
 
 
-def test_guess_projection(get_moment_3d, publish_moment):
-    moment = get_moment_3d(seek=10.0)
+def test_guess_projection(get_moment_2d, publish_moment):
+    moment = get_moment_2d(seek=10.0)
     for key, value in moment.items():
         print(key, "====================================")
         print(value)
@@ -33,8 +33,6 @@ def test_guess_projection(get_moment_3d, publish_moment):
     # print(detection3d)
 
     # foxglove bridge needs 2 messages per topic to pass to foxglove
-    publish_moment(moment)
-    time.sleep(0.1)
     publish_moment(moment)
     time.sleep(0.1)
     publish_moment(moment)
