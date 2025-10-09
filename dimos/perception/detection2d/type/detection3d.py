@@ -34,7 +34,7 @@ from dimos.types.timestamped import to_ros_stamp
 
 
 @dataclass
-class Detection3D(Detection2D):
+class Detection3D(Detection2DBBox):
     transform: Transform
     frame_id: str
 

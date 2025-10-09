@@ -228,7 +228,7 @@ class Detection2DBBox(Detection2D):
             TextAnnotation(
                 timestamp=to_ros_stamp(self.ts),
                 position=Point2(x=x1, y=y1),
-                text=f"{self.name}_{self.track_id}",
+                text=f"{self.name}_{self.class_id}_{self.track_id}",
                 font_size=font_size,
                 text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
                 background_color=Color(r=0, g=0, b=0, a=1),
