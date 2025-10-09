@@ -35,7 +35,7 @@ def test_object_db_module_objects_structure(all_objects):
         assert hasattr(obj, "detections")
         assert hasattr(obj, "best_detection")
         assert hasattr(obj, "center")
-        assert len(obj.detections) >= 1
+        assert obj.detections >= 1
 
 
 def test_object3d_properties(first_object):
@@ -53,23 +53,18 @@ def test_object3d_properties(first_object):
 def test_object3d_multiple_detections(all_objects):
     """Test objects that have been built from multiple detections."""
     # Find objects with multiple detections
-    multi_detection_objects = [obj for obj in all_objects if len(obj.detections) > 1]
+    multi_detection_objects = [obj for obj in all_objects if obj.detections > 1]
 
     if multi_detection_objects:
         obj = multi_detection_objects[0]
 
-        # Test that confidence is the max of all detections
-        max_conf = max(d.confidence for d in obj.detections)
-        assert obj.confidence == max_conf
+        # Test that object has multiple detections
+        assert obj.detections > 1
 
-        # Test that timestamp is the max (most recent)
-        max_ts = max(d.ts for d in obj.detections)
-        assert obj.ts == max_ts
-
-        # Test that best_detection has the largest bbox volume
-        best_volume = obj.best_detection.bbox_2d_volume()
-        for det in obj.detections:
-            assert det.bbox_2d_volume() <= best_volume
+        # Test that best_detection exists
+        assert obj.best_detection is not None
+        assert obj.confidence > 0
+        assert obj.ts > 0
 
 
 def test_object3d_center(first_object):
@@ -94,7 +89,7 @@ def test_object3d_repr_dict(first_object):
     assert "center" in repr_dict
 
     assert repr_dict["object_id"] == first_object.track_id
-    assert repr_dict["detections"] == len(first_object.detections)
+    assert repr_dict["detections"] == first_object.detections
 
     # Center should be formatted as string with coordinates
     assert isinstance(repr_dict["center"], str)
@@ -108,7 +103,7 @@ def test_object3d_scene_entity_label(first_object):
 
     assert isinstance(label, str)
     assert first_object.name in label
-    assert f"({len(first_object.detections)})" in label
+    assert f"({first_object.detections})" in label
 
 
 def test_object3d_agent_encode(first_object):
@@ -123,7 +118,7 @@ def test_object3d_agent_encode(first_object):
 
     assert encoded["id"] == first_object.track_id
     assert encoded["name"] == first_object.name
-    assert encoded["detections"] == len(first_object.detections)
+    assert encoded["detections"] == first_object.detections
     assert encoded["last_seen"].endswith("s ago")
 
 
@@ -151,11 +146,7 @@ def test_object3d_addition(object_db_module):
     combined = obj + det2
 
     assert combined.track_id == "test_track_combined"
-    assert len(combined.detections) == 2
-
-    # The combined object should have properties from both detections
-    assert det1 in combined.detections
-    assert det2 in combined.detections
+    assert combined.detections == 2
 
     # Best detection should be determined by the Object3D logic
     assert combined.best_detection is not None

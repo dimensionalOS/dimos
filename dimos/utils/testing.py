@@ -303,6 +303,7 @@ class TimedSensorReplay(SensorReplay[T]):
 
             scheduler = scheduler or TimeoutScheduler()
             disp = CompositeDisposable()
+            is_disposed = False
 
             iterator = self.iterate_ts(
                 seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
@@ -330,7 +331,11 @@ class TimedSensorReplay(SensorReplay[T]):
                 return disp
 
             def schedule_emission(message):
-                nonlocal next_message
+                nonlocal next_message, is_disposed
+
+                if is_disposed:
+                    return
+
                 ts, data = message
 
                 # Pre-load the following message while we have time
@@ -344,17 +349,31 @@ class TimedSensorReplay(SensorReplay[T]):
                 delay = max(0.0, target_time - time.time())
 
                 def emit():
+                    if is_disposed:
+                        return
                     observer.on_next(data)
                     if next_message is not None:
                         schedule_emission(next_message)
                     else:
                         observer.on_completed()
+                        # Dispose of the scheduler to clean up threads
+                        if hasattr(scheduler, "dispose"):
+                            scheduler.dispose()
 
                 disp.add(scheduler.schedule_relative(delay, lambda sc, _: emit()))
 
             schedule_emission(next_message)
 
-            return disp
+            # Create a custom disposable that properly cleans up
+            def dispose():
+                nonlocal is_disposed
+                is_disposed = True
+                disp.dispose()
+                # Ensure scheduler is disposed to clean up any threads
+                if hasattr(scheduler, "dispose"):
+                    scheduler.dispose()
+
+            return Disposable(dispose)
 
         from reactivex import create
 
