@@ -17,6 +17,7 @@ from typing import Generic, Iterable, List, Optional, Tuple, TypeVar, Union
 
 from dimos_lcm.builtin_interfaces import Time as ROSTime
 from reactivex import create
+from reactivex.disposable import CompositeDisposable
 
 # from dimos_lcm.std_msgs import Time as ROSTime
 from reactivex.observable import Observable
@@ -402,12 +403,7 @@ def align_timestamped(
             on_primary, on_error=observer.on_error, on_completed=observer.on_completed
         )
 
-        # Return cleanup function
-        def dispose():
-            for sub in secondary_subs:
-                sub.dispose()
-            primary_sub.dispose()
-
-        return dispose
+        # Return a CompositeDisposable for proper cleanup
+        return CompositeDisposable(primary_sub, *secondary_subs)
 
     return create(subscribe)

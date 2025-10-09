@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 import pytest
 from reactivex import operators as ops
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.types.timestamped import (
@@ -110,6 +111,16 @@ class SimpleTimestamped(Timestamped):
     def __init__(self, ts: float, data: str):
         super().__init__(ts)
         self.data = data
+
+
+@pytest.fixture
+def test_scheduler():
+    """Fixture that provides a ThreadPoolScheduler and cleans it up after the test."""
+    scheduler = ThreadPoolScheduler(max_workers=6)
+    yield scheduler
+    # Cleanup after test
+    scheduler.executor.shutdown(wait=True)
+    time.sleep(0.2)  # Give threads time to finish cleanup
 
 
 @pytest.fixture
@@ -267,7 +278,7 @@ def test_time_window_collection():
     assert window.end_ts == 5.5
 
 
-def test_timestamp_alignment():
+def test_timestamp_alignment(test_scheduler):
     speed = 5.0
 
     # ensure that lfs package is downloaded
@@ -297,9 +308,10 @@ def test_timestamp_alignment():
         return frame
 
     # fake reply of some 0.5s processor of video frames that drops messages
-    fake_video_processor = backpressure(video_raw.pipe(ops.map(spy))).pipe(
-        ops.map(process_video_frame)
-    )
+    # Pass the scheduler to backpressure to manage threads properly
+    fake_video_processor = backpressure(
+        video_raw.pipe(ops.map(spy)), scheduler=test_scheduler
+    ).pipe(ops.map(process_video_frame))
 
     aligned_frames = align_timestamped(fake_video_processor, video_raw).pipe(ops.to_list()).run()
 
@@ -317,6 +329,8 @@ def test_timestamp_alignment():
             f"Aligned pair: primary={primary.ts:.6f}, secondary={secondary.ts:.6f}, diff={diff:.6f}s"
         )
         assert diff <= 0.05
+
+    assert len(aligned_frames) == 4
 
 
 def test_timestamp_alignment_primary_first():
@@ -512,8 +526,9 @@ def test_timestamp_alignment_delayed_secondary():
 
 def test_timestamp_alignment_buffer_cleanup():
     """Test that old buffered primaries are cleaned up."""
-    from reactivex import Subject
     import time as time_module
+
+    from reactivex import Subject
 
     primary_subject = Subject()
     secondary_subject = Subject()

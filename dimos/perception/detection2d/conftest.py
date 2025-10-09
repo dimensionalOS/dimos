@@ -154,10 +154,9 @@ def detection2d(get_moment_2d) -> Detection2D:
 
 
 @pytest.fixture
-def detection3dpc(get_moment_3d) -> Detection3DPC:
-    moment = get_moment_3d(seek=10.0)
+def detection3dpc(get_moment_3dpc) -> Detection3DPC:
+    moment = get_moment_3dpc(seek=10.0)
     assert len(moment["detections3dpc"]) > 0, "No detections found in the moment"
-    print(moment["detections3dpc"])
     return moment["detections3dpc"][0]
 
 
@@ -179,19 +178,19 @@ def get_moment_2d(get_moment) -> Callable[[], Moment2D]:
 
 
 @pytest.fixture
-def get_moment_3d(get_moment_2d) -> Callable[[], Moment2D]:
+def get_moment_3dpc(get_moment_2d) -> Callable[[], Moment2D]:
     module = None
 
     def moment_provider(**kwargs) -> Moment2D:
         nonlocal module
         moment = get_moment_2d(**kwargs)
 
-        module = Detection3DModule(camera_info=moment["camera_info"])
+        if not module:
+            module = Detection3DModule(camera_info=moment["camera_info"])
 
         camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
         if camera_transform is None:
             raise ValueError("No camera_optical transform in tf")
-
         return {
             **moment,
             "detections3dpc": module.process_frame(
