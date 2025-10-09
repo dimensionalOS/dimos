@@ -44,10 +44,12 @@ def test_person_annotations():
     points_anns = person.to_points_annotation()
     print(f"\nPoints annotations: {len(points_anns)}")
 
-    # Count different types
-    bbox_count = sum(1 for ann in points_anns if ann.type == 2)  # LINE_LOOP
-    keypoint_count = sum(1 for ann in points_anns if ann.type == 0)  # POINTS
-    skeleton_count = sum(1 for ann in points_anns if ann.type == 1)  # LINE_LIST
+    # Count different types (use actual LCM constants)
+    from dimos_lcm.foxglove_msgs.ImageAnnotations import PointsAnnotation
+
+    bbox_count = sum(1 for ann in points_anns if ann.type == PointsAnnotation.LINE_LOOP)  # 2
+    keypoint_count = sum(1 for ann in points_anns if ann.type == PointsAnnotation.POINTS)  # 1
+    skeleton_count = sum(1 for ann in points_anns if ann.type == PointsAnnotation.LINE_LIST)  # 4
 
     print(f"  - Bounding boxes: {bbox_count}")
     print(f"  - Keypoint circles: {keypoint_count}")
