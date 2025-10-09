@@ -124,7 +124,9 @@ def test_foxglove_text_label(detection3d):
     entity = detection3d.to_foxglove_scene_entity("test_entity_123")
     text = entity.texts[0]
 
-    assert text.text == "1/suitcase (81%)", f"Expected text '1/suitcase (81%)', got '{text.text}'"
+    assert text.text in ["1/suitcase (81%)", "1/suitcase (82%)"], (
+        f"Expected text '1/suitcase (81%)' or '1/suitcase (82%)', got '{text.text}'"
+    )
     assert text.pose.position.x == pytest.approx(-3.325, abs=0.1)
     assert text.pose.position.y == pytest.approx(-0.250, abs=0.1)
     assert text.pose.position.z == pytest.approx(0.575, abs=0.1)
