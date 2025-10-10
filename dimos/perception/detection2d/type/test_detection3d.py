@@ -31,11 +31,12 @@ def test_guess_projection(get_moment_2d, publish_moment):
     # for stash
     # detection3d = Detection3D.from_2d(detection2d, 1.5, camera_info, transform)
     # print(detection3d)
-    
+
     # foxglove bridge needs 2 messages per topic to pass to foxglove
     publish_moment(moment)
     time.sleep(0.1)
     publish_moment(moment)
+
 
 def test_bounding_box_dimensions(detection3d):
     """Test bounding box dimension calculation."""
@@ -146,4 +147,3 @@ def test_detection_pose(detection3d):
     assert detection3d.pose.frame_id == "world", (
         f"Expected frame_id 'world', got '{detection3d.pose.frame_id}'"
     )
-
