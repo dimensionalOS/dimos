@@ -725,7 +725,7 @@ class FTPullModule(Module):
         prediction_gain: float = 0.3,
         door_opens_clockwise: bool = True,  # Most doors open clockwise
         rotation_axis: str = "z",
-        max_duration: float = 30.0,
+        max_duration: float = 45.0,
         end_angle: Optional[float] = None,
     ) -> str:
         """
