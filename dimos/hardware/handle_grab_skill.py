@@ -163,6 +163,7 @@ class HandleGrabModule(Module):
 
     def _init_fastsam(self):
         """Initialize FastSAM model"""
+        self.fastsam_model = None
         try:
             if not Path(self.fastsam_model_path).exists():
                 logger.warning(f"FastSAM model not found at {self.fastsam_model_path}")
