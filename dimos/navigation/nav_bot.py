@@ -27,6 +27,7 @@ from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 
 from dimos import core
+from dimos.protocol import pubsub
 from dimos.core import Module, In, Out, rpc
 from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped, Transform, Vector3
@@ -53,14 +54,13 @@ from reactivex.disposable import Disposable
 logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 
 
-class NavigationModule(Module, Node):
+class NavigationModule(Module):
     """
     Handles navigation control and odometry remapping.
     """
 
     goal_req: In[PoseStamped] = None
     cancel_goal: In[Bool] = None
-    soft_stop: In[Int8] = None
 
     pointcloud: Out[PointCloud2] = None
     global_pointcloud: Out[PointCloud2] = None
@@ -73,10 +73,10 @@ class NavigationModule(Module, Node):
     odom_pose: Out[PoseStamped] = None
 
     def __init__(self, sensor_to_base_link_transform=None, *args, **kwargs):
-        Module.__init__(self, *args, **kwargs)
+        super().__init__(*args, **kwargs)
         if not rclpy.ok():
             rclpy.init()
-        Node.__init__(self, "navigation_module")
+        self._node = Node("navigation_module")
 
         self.goal_reach = None
         self.sensor_to_base_link_transform = sensor_to_base_link_transform or [
@@ -90,31 +90,31 @@ class NavigationModule(Module, Node):
         self.spin_thread = None
 
         # ROS2 Publishers
-        self.goal_pose_pub = self.create_publisher(ROSPoseStamped, "/goal_pose", 10)
-        self.cancel_goal_pub = self.create_publisher(ROSBool, "/cancel_goal", 10)
-        self.soft_stop_pub = self.create_publisher(ROSInt8, "/soft_stop", 10)
-        self.joy_pub = self.create_publisher(ROSJoy, "/joy", 10)
+        self.goal_pose_pub = self._node.create_publisher(ROSPoseStamped, "/goal_pose", 10)
+        self.cancel_goal_pub = self._node.create_publisher(ROSBool, "/cancel_goal", 10)
+        self.soft_stop_pub = self._node.create_publisher(ROSInt8, "/soft_stop", 10)
+        self.joy_pub = self._node.create_publisher(ROSJoy, "/joy", 10)
 
         # ROS2 Subscribers
-        self.goal_reached_sub = self.create_subscription(
+        self.goal_reached_sub = self._node.create_subscription(
             ROSBool, "/goal_reached", self._on_ros_goal_reached, 10
         )
-        self.odom_sub = self.create_subscription(
+        self.odom_sub = self._node.create_subscription(
             ROSOdometry, "/state_estimation", self._on_ros_odom, 10
         )
-        self.cmd_vel_sub = self.create_subscription(
+        self.cmd_vel_sub = self._node.create_subscription(
             ROSTwistStamped, "/cmd_vel", self._on_ros_cmd_vel, 10
         )
-        self.goal_waypoint_sub = self.create_subscription(
+        self.goal_waypoint_sub = self._node.create_subscription(
             ROSPointStamped, "/way_point", self._on_ros_goal_waypoint, 10
         )
-        self.registered_scan_sub = self.create_subscription(
+        self.registered_scan_sub = self._node.create_subscription(
             ROSPointCloud2, "/registered_scan", self._on_ros_registered_scan, 10
         )
-        self.global_pointcloud_sub = self.create_subscription(
+        self.global_pointcloud_sub = self._node.create_subscription(
             ROSPointCloud2, "/terrain_map_ext", self._on_ros_global_pointcloud, 10
         )
-        self.path_sub = self.create_subscription(ROSPath, "/path", self._on_ros_path, 10)
+        self.path_sub = self._node.create_subscription(ROSPath, "/path", self._on_ros_path, 10)
 
         logger.info("NavigationModule initialized with ROS2 node")
 
@@ -134,7 +134,7 @@ class NavigationModule(Module, Node):
     def _spin_node(self):
         while self._running and rclpy.ok():
             try:
-                rclpy.spin_once(self, timeout_sec=0.1)
+                rclpy.spin_once(self._node, timeout_sec=0.1)
             except Exception as e:
                 if self._running:
                     logger.error(f"ROS2 spin error: {e}")
@@ -221,11 +221,6 @@ class NavigationModule(Module, Node):
     def _on_cancel_goal(self, msg: Bool):
         if msg.data:
             self.stop()
-
-    def _on_soft_stop(self, msg: Int8):
-        ros_int8 = ROSInt8()
-        ros_int8.data = msg.data
-        self.soft_stop_pub.publish(ros_int8)
 
     def _set_autonomy_mode(self):
         joy_msg = ROSJoy()
@@ -322,7 +317,7 @@ class NavigationModule(Module, Node):
             self._running = False
             if self.spin_thread:
                 self.spin_thread.join(timeout=1)
-            self.destroy_node()
+            self._node.destroy_node()
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
 
